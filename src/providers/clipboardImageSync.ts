@@ -348,11 +348,6 @@ export async function readImageFromOsClipboard(): Promise<{ mimeType: string; da
  * Does NOT re-write the image to the OS clipboard — it is already there (we
  * just read it). Re-writing would spawn a second PowerShell on Windows for no
  * functional gain and made image paste noticeably slower.
- *
- * Emits the trigger only for a known agent kind: a plain shell can't use the
- * image, and on Windows the trigger (Alt+V = ESC) would clear a half-typed
- * PSReadLine line. A hand-launched CLI reports no agentKind, so it must be
- * launched via the vault to get the trigger; preview bytes still return.
  */
 export async function handlePasteOsClipboardImage(
   tabId: string,
@@ -366,10 +361,8 @@ export async function handlePasteOsClipboardImage(
   if (!img?.data) {
     return null;
   }
-  if (context.agentKind) {
-    const platform = context.platform ?? process.platform;
-    writeToSession(tabId, getImagePastePtyTrigger(context.agentKind, platform));
-  }
+  const platform = context.platform ?? process.platform;
+  writeToSession(tabId, getImagePastePtyTrigger(context.agentKind, platform));
   return img;
 }
 

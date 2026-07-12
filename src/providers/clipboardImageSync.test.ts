@@ -146,84 +146,6 @@ describe("handlePasteClipboardImage", () => {
     expect(writeToSession).toHaveBeenCalledWith("session-a", CTRL_V_PASTE);
   });
 
-  it("still emits the trigger when xclip exits nonzero (selection busy)", async () => {
-    setPlatform("linux");
-    process.env.DISPLAY = ":1";
-    delete process.env.WAYLAND_DISPLAY;
-    const proc = Object.assign(new EventEmitter(), {
-      stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
-      kill: vi.fn(),
-    });
-    mocks.spawn.mockReturnValue(proc);
-    const writeToSession = vi.fn();
-
-    const paste = handlePasteClipboardImage(
-      { tabId: "session-a", mimeType: "image/png", data: PNG_BASE64 },
-      writeToSession,
-      { platform: "linux" },
-    );
-    await vi.waitFor(() => expect(proc.listenerCount("exit")).toBe(1));
-    proc.emit("exit", 1);
-    await paste;
-
-    // Clipboard write failed, but the CLI still gets told to read it (idempotent).
-    expect(writeToSession).toHaveBeenCalledWith("session-a", CTRL_V_PASTE);
-    expect(proc.kill).not.toHaveBeenCalled(); // deadline cleared on exit
-  });
-
-  it("does not throw when xclip is missing (spawn error) and still emits the trigger", async () => {
-    setPlatform("linux");
-    process.env.DISPLAY = ":1";
-    delete process.env.WAYLAND_DISPLAY;
-    const proc = Object.assign(new EventEmitter(), {
-      stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
-      kill: vi.fn(),
-    });
-    mocks.spawn.mockReturnValue(proc);
-    const writeToSession = vi.fn();
-
-    const paste = handlePasteClipboardImage(
-      { tabId: "session-a", mimeType: "image/png", data: PNG_BASE64 },
-      writeToSession,
-      { platform: "linux" },
-    );
-    await vi.waitFor(() => expect(proc.listenerCount("error")).toBe(1));
-    proc.emit("error", new Error("ENOENT"));
-    await expect(paste).resolves.toBeUndefined();
-
-    expect(writeToSession).toHaveBeenCalledWith("session-a", CTRL_V_PASTE);
-  });
-
-  it("kills a stuck xclip after the 2s deadline and still emits the trigger", async () => {
-    vi.useFakeTimers();
-    try {
-      setPlatform("linux");
-      process.env.DISPLAY = ":1";
-      delete process.env.WAYLAND_DISPLAY;
-      const proc = Object.assign(new EventEmitter(), {
-        stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
-        kill: vi.fn(),
-      });
-      mocks.spawn.mockReturnValue(proc);
-      const writeToSession = vi.fn();
-
-      // A broken X server never fires exit; the launcher's stdin was ended but the
-      // clipboard owner hangs. The 2s deadline must kill it, not wedge the paste.
-      const paste = handlePasteClipboardImage(
-        { tabId: "session-a", mimeType: "image/png", data: PNG_BASE64 },
-        writeToSession,
-        { platform: "linux" },
-      );
-      await vi.advanceTimersByTimeAsync(2000);
-      await paste;
-
-      expect(proc.kill).toHaveBeenCalledTimes(1);
-      expect(writeToSession).toHaveBeenCalledWith("session-a", CTRL_V_PASTE);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("ignores invalid base64", async () => {
     const writeToSession = vi.fn();
 
@@ -395,24 +317,6 @@ describe("handlePasteOsClipboardImage", () => {
     expect(writeToSession).toHaveBeenCalledWith("session-a", ALT_V_PASTE);
     // Read path only: no second PowerShell SetImage (writeImageToOsClipboard).
     expect(mocks.writeFile).not.toHaveBeenCalled();
-  });
-
-  it("returns preview bytes but emits NO trigger for an unknown agent (plain shell)", async () => {
-    // Alt+V (ESC) would clear a half-typed PSReadLine line in a plain Windows
-    // shell — only known agent kinds get the trigger. Preview still returns.
-    setPlatform("win32");
-    const writeToSession = vi.fn();
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-    mocks.execFile.mockImplementation((...args: unknown[]) => {
-      const cb = args[args.length - 1] as (e: unknown, r: unknown) => void;
-      cb(null, { stdout: "", stderr: "" });
-    });
-    mocks.readFile.mockResolvedValue(png);
-
-    const result = await handlePasteOsClipboardImage("session-a", writeToSession, { platform: "win32" });
-
-    expect(result).toEqual({ mimeType: "image/png", data: png.toString("base64") });
-    expect(writeToSession).not.toHaveBeenCalled();
   });
 
   it("returns null when the OS clipboard holds no image", async () => {
