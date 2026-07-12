@@ -5,13 +5,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  _resetTabClickTracker,
-  handleTabKeyboardShortcut,
-  type RenderTabBarDeps,
-  renderTabBar,
-  type TabKeyboardDeps,
-} from "./TabBarUtils";
+import { handleTabKeyboardShortcut, type RenderTabBarDeps, renderTabBar, type TabKeyboardDeps } from "./TabBarUtils";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -40,13 +34,11 @@ function createMockDeps(overrides: Partial<RenderTabBarDeps> = {}): RenderTabBar
 
 beforeEach(() => {
   document.body.innerHTML = "";
-  _resetTabClickTracker();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   document.body.innerHTML = "";
-  _resetTabClickTracker();
 });
 
 // ─── renderTabBar ───────────────────────────────────────────────────
@@ -137,17 +129,19 @@ describe("renderTabBar", () => {
     expect(lastChild?.textContent).toBe("+");
   });
 
-  it("clears previous content on re-render", () => {
+  it("preserves tab elements across re-renders", () => {
     const terminals = new Map<string, { name: string }>([
       ["tab-1", { name: "Terminal 1" }],
       ["tab-2", { name: "Terminal 2" }],
     ]);
     const deps = createMockDeps({ terminals: terminals as never, activeTabId: "tab-1" });
     renderTabBar(deps);
-    // Re-render
+    const before = deps.tabBarEl.querySelectorAll(".tab-item");
     renderTabBar(deps);
-    const tabs = deps.tabBarEl.querySelectorAll(".tab-item");
-    expect(tabs.length).toBe(2); // Not 4
+    const after = deps.tabBarEl.querySelectorAll(".tab-item");
+    expect(after.length).toBe(2);
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
   });
 
   // ─── Click Handlers ─────────────────────────────────────────────
@@ -274,6 +268,25 @@ describe("renderTabBar", () => {
     const tabs = deps.tabBarEl.querySelectorAll(".tab-item");
     expect(tabs[0].querySelector(".tab-name")?.textContent).toBe("user@host:~/dir");
     expect(tabs[1].querySelector(".tab-name")?.textContent).toBe("node index.js");
+  });
+
+  it("renders running, idle, and exited status indicators", () => {
+    const terminals = new Map<string, { name: string; activityStatus?: "idle" | "running"; exited?: boolean }>([
+      ["tab-1", { name: "Codex", activityStatus: "running" }],
+      ["tab-2", { name: "Grok", activityStatus: "idle" }],
+      ["tab-3", { name: "Shell", activityStatus: "running", exited: true }],
+    ]);
+    const deps = createMockDeps({ terminals: terminals as never, activeTabId: "tab-1" });
+
+    renderTabBar(deps);
+
+    const tabs = deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item");
+    expect(tabs[0].dataset.status).toBe("running");
+    expect(tabs[0].querySelector(".tab-status-running")).toBeTruthy();
+    expect(tabs[1].dataset.status).toBe("idle");
+    expect(tabs[1].querySelector(".tab-status-idle")).toBeTruthy();
+    expect(tabs[2].dataset.status).toBe("exited");
+    expect(tabs[2].querySelector(".tab-status-exited")).toBeTruthy();
   });
 });
 
@@ -422,7 +435,7 @@ describe("renderTabBar: tab DOM carries data-vscode-context for rename menu", ()
 });
 
 describe("renderTabBar: onTabRename + onAfterRender hooks", () => {
-  it("fires onTabRename on a second click within DBLCLICK_MS on the same tab", () => {
+  it("uses native dblclick for rename while preserving the tab node", () => {
     const onTabClick = vi.fn();
     const onTabRename = vi.fn();
     const terminals = new Map<string, { name: string }>([
@@ -436,50 +449,22 @@ describe("renderTabBar: onTabRename + onAfterRender hooks", () => {
       onTabRename,
     });
     renderTabBar(deps);
-    const tabs = deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item");
-    // First click — single-tab switch fires.
-    tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const tab = deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item")[1];
+    deps.activeTabId = "tab-2";
+    renderTabBar(deps);
+    expect(deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item")[1]).toBe(tab);
+
+    tab.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    tab.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
+    tab.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+
     expect(onTabClick).toHaveBeenCalledTimes(1);
     expect(onTabClick).toHaveBeenCalledWith("tab-2");
-    expect(onTabRename).not.toHaveBeenCalled();
-    // Second click (within DBLCLICK_MS, same tab) → rename, no extra onTabClick.
-    tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(onTabClick).toHaveBeenCalledTimes(1);
     expect(onTabRename).toHaveBeenCalledTimes(1);
-    expect(onTabRename).toHaveBeenCalledWith("tab-2", tabs[1]);
+    expect(onTabRename).toHaveBeenCalledWith("tab-2", tab);
   });
 
-  it("a slow second click (> DBLCLICK_MS) just switches again, does NOT rename", () => {
-    const onTabClick = vi.fn();
-    const onTabRename = vi.fn();
-    const terminals = new Map<string, { name: string }>([
-      ["tab-1", { name: "Terminal 1" }],
-      ["tab-2", { name: "Terminal 2" }],
-    ]);
-    const deps = createMockDeps({
-      terminals: terminals as never,
-      activeTabId: "tab-1",
-      onTabClick,
-      onTabRename,
-    });
-    // Drive Date.now() so we can simulate the time gap.
-    const realNow = Date.now;
-    let nowMs = 1_000_000;
-    Date.now = () => nowMs;
-    try {
-      renderTabBar(deps);
-      const tabs = deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item");
-      tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      nowMs += 400; // > 350ms threshold
-      tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect(onTabClick).toHaveBeenCalledTimes(2);
-      expect(onTabRename).not.toHaveBeenCalled();
-    } finally {
-      Date.now = realNow;
-    }
-  });
-
-  it("first click on tab A then fast click on tab B does NOT rename either", () => {
+  it("does not reinterpret regular clicks as rename after another switch path", () => {
     const onTabClick = vi.fn();
     const onTabRename = vi.fn();
     const terminals = new Map<string, { name: string }>([
@@ -494,8 +479,13 @@ describe("renderTabBar: onTabRename + onAfterRender hooks", () => {
     });
     renderTabBar(deps);
     const tabs = deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item");
-    tabs[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true })); // different tab
+    tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    deps.activeTabId = "tab-2";
+    renderTabBar(deps);
+    deps.activeTabId = "tab-1";
+    renderTabBar(deps);
+    tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+
     expect(onTabClick).toHaveBeenCalledTimes(2);
     expect(onTabRename).not.toHaveBeenCalled();
   });

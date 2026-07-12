@@ -30,6 +30,8 @@ export interface TerminalInstance {
   container: HTMLDivElement;
   /** Whether the PTY process has exited (terminal becomes read-only). */
   exited: boolean;
+  /** Recent PTY output activity used by the tab-bar status indicator. */
+  activityStatus: "idle" | "running";
   /**
    * Latest current working directory reported by the shell via OSC 7
    * (`ESC ]7;file://host/path BEL`). Modern shells emit this after every `cd`

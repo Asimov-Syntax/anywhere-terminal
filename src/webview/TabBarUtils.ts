@@ -14,6 +14,8 @@ export interface TabInfo {
   customName?: string | null;
   /** Whether the terminal process has exited. */
   exited?: boolean;
+  /** Recent PTY output activity for the status indicator. */
+  activityStatus?: "idle" | "running";
 }
 
 /** Minimal store interface for buildTabBarData — avoids importing full WebviewStateStore. */
@@ -42,34 +44,32 @@ export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
         name: activeInstance?.name ?? rootInstance?.name ?? tabId,
         customName: rootInstance?.customName ?? null,
         exited: (activeInstance ?? rootInstance)?.exited,
+        activityStatus: (activeInstance ?? rootInstance)?.activityStatus,
       });
     } else {
       // Single pane tab
       const instance = store.terminals.get(tabId);
       if (instance) {
-        tabTerminals.set(tabId, { name: instance.name, customName: instance.customName, exited: instance.exited });
+        tabTerminals.set(tabId, {
+          name: instance.name,
+          customName: instance.customName,
+          exited: instance.exited,
+          activityStatus: instance.activityStatus,
+        });
       }
     }
   }
   return tabTerminals;
 }
 
-/**
- * Manual double-click detection state. Browser native `dblclick` requires both
- * clicks on the SAME element, but `renderTabBar()` does `innerHTML = ""` and
- * recreates tab DOM on every render (including tab-switch re-renders), so the
- * second click lands on a different element and `dblclick` never fires.
- *
- * We track the last click epoch + tabId at module scope. A second click within
- * `DBLCLICK_MS` on the SAME tabId triggers `onTabRename` instead of `onTabClick`.
- */
-const DBLCLICK_MS = 350;
-let lastTabClick: { tabId: string; time: number } | null = null;
-
-/** Test-only hook: reset the module-level double-click tracker between tests. */
-export function _resetTabClickTracker(): void {
-  lastTabClick = null;
+interface TabHandlers {
+  id: string;
+  onTabClick: (tabId: string) => void;
+  onTabClose: (tabId: string) => void;
+  onTabRename?: (tabId: string, tabEl: HTMLElement) => void;
 }
+
+const tabHandlers = new WeakMap<HTMLElement, TabHandlers>();
 
 /** Dependencies for renderTabBar — injected for testability. */
 export interface RenderTabBarDeps {
@@ -95,8 +95,8 @@ export interface RenderTabBarDeps {
 /**
  * Render the tab bar UI inside the given element.
  *
- * - Clears existing content
- * - Creates tab elements with name + close button
+ * - Reconciles tab elements by ID so in-flight pointer events survive updates
+ * - Updates tab name, status, active state, and close button in place
  * - Appends "+" add button
  * - Hides tab bar when <= 1 tab (clean single-tab UX)
  * - Shows tab bar when 2+ tabs
@@ -104,12 +104,64 @@ export interface RenderTabBarDeps {
 export function renderTabBar(deps: RenderTabBarDeps): void {
   const { tabBarEl, terminals, activeTabId, onTabClick, onTabClose, onAddClick, onTabRename, onAfterRender } = deps;
 
-  // 1. Clear existing content
-  tabBarEl.innerHTML = "";
+  const existingTabs = new Map<string, HTMLDivElement>();
+  for (const child of Array.from(tabBarEl.children)) {
+    if (child instanceof HTMLDivElement && child.classList.contains("tab-item") && child.dataset.tabId) {
+      existingTabs.set(child.dataset.tabId, child);
+    }
+  }
 
-  // 2. Create tab elements
+  const orderedTabs: HTMLDivElement[] = [];
   for (const [id, instance] of terminals) {
-    const tab = document.createElement("div");
+    let tab = existingTabs.get(id);
+    if (!tab) {
+      tab = document.createElement("div");
+      const statusSpan = document.createElement("span");
+      statusSpan.className = "tab-status";
+      statusSpan.setAttribute("aria-hidden", "true");
+      tab.appendChild(statusSpan);
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "tab-name";
+      tab.appendChild(nameSpan);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "tab-close";
+      closeBtn.textContent = "\u00d7";
+      closeBtn.type = "button";
+      closeBtn.setAttribute("aria-label", "Close terminal tab");
+      closeBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const handlers = tabHandlers.get(tab!);
+        if (handlers) {
+          handlers.onTabClose(handlers.id);
+        }
+      });
+      closeBtn.addEventListener("dblclick", (event) => event.stopPropagation());
+      tab.appendChild(closeBtn);
+
+      tab.addEventListener("click", (event) => {
+        // The second click of a native double-click is followed by `dblclick`.
+        // Skip only that click; unlike the old timestamp heuristic, this cannot
+        // consume a later click after a keyboard/programmatic tab switch.
+        if (event.detail > 1) {
+          return;
+        }
+        const handlers = tabHandlers.get(tab!);
+        if (handlers) {
+          handlers.onTabClick(handlers.id);
+        }
+      });
+      tab.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        const handlers = tabHandlers.get(tab!);
+        handlers?.onTabRename?.(handlers.id, tab!);
+      });
+    }
+    existingTabs.delete(id);
+    orderedTabs.push(tab);
+    tabHandlers.set(tab, { id, onTabClick, onTabClose, onTabRename });
+
     tab.className = `tab-item${id === activeTabId ? " active" : ""}${instance.exited ? " tab-exited" : ""}`;
     tab.dataset.tabId = id;
     // VS Code native context menu support — `webviewSection == 'terminalTab'`
@@ -119,56 +171,63 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
     // Custom name takes priority over the auto-derived (OSC-mutated) `name`.
     // See add-tab-rename design.md D1.
     const displayName = instance.customName ?? instance.name;
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "tab-name";
-    nameSpan.textContent = instance.exited ? `${displayName} (exited)` : displayName;
-    tab.appendChild(nameSpan);
+    const nameSpan = tab.querySelector<HTMLElement>(".tab-name")!;
+    const renderedName = instance.exited ? `${displayName} (exited)` : displayName;
+    if (nameSpan.textContent !== renderedName) {
+      nameSpan.textContent = renderedName;
+    }
 
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "tab-close";
-    closeBtn.textContent = "\u00d7"; // ×
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onTabClose(id);
-    });
-    tab.appendChild(closeBtn);
-
-    tab.addEventListener("click", () => {
-      if (onTabRename) {
-        const now = Date.now();
-        if (lastTabClick && lastTabClick.tabId === id && now - lastTabClick.time < DBLCLICK_MS) {
-          // Second click on same tab within window → rename. Note: the first
-          // click already fired onTabClick (which may have switched tabs and
-          // re-rendered — that's why we can't rely on native `dblclick`).
-          lastTabClick = null;
-          onTabRename(id, tab);
-          return;
-        }
-        lastTabClick = { tabId: id, time: now };
-      }
-      onTabClick(id);
-    });
-
-    tabBarEl.appendChild(tab);
+    const status = instance.exited ? "exited" : (instance.activityStatus ?? "idle");
+    const statusSpan = tab.querySelector<HTMLElement>(".tab-status")!;
+    statusSpan.className = `tab-status tab-status-${status}`;
+    statusSpan.title =
+      status === "running" ? "Terminal is producing output" : status === "exited" ? "Terminal exited" : "Terminal idle";
+    tab.dataset.status = status;
   }
 
-  // 3. Append "+" add button
-  const addBtn = document.createElement("button");
-  addBtn.className = "tab-add";
-  addBtn.textContent = "+";
-  addBtn.addEventListener("click", () => {
-    onAddClick();
-  });
-  tabBarEl.appendChild(addBtn);
+  for (const staleTab of existingTabs.values()) {
+    staleTab.remove();
+  }
 
-  // 4. Toggle visibility: hide when <= 1 tab, show when 2+
+  let addBtn = Array.from(tabBarEl.children).find((child) => child.classList.contains("tab-add")) as
+    | HTMLButtonElement
+    | undefined;
+  if (!addBtn) {
+    addBtn = document.createElement("button");
+    addBtn.className = "tab-add";
+    addBtn.textContent = "+";
+    addBtn.type = "button";
+    addBtn.setAttribute("aria-label", "Create terminal tab");
+  }
+  addBtn.onclick = () => onAddClick();
+
+  // Preserve nodes that are already in the right position. Avoiding even a
+  // same-parent remove/reinsert is what keeps pointerdown/up targeting stable.
+  let cursor = tabBarEl.firstElementChild;
+  for (const tab of orderedTabs) {
+    if (tab !== cursor) {
+      tabBarEl.insertBefore(tab, cursor);
+    }
+    cursor = tab.nextElementSibling;
+  }
+  if (addBtn !== cursor) {
+    tabBarEl.insertBefore(addBtn, cursor);
+  }
+  cursor = addBtn.nextElementSibling;
+  while (cursor) {
+    const next = cursor.nextElementSibling;
+    cursor.remove();
+    cursor = next;
+  }
+
+  // Toggle visibility: hide when <= 1 tab, show when 2+
   if (terminals.size >= 2) {
     tabBarEl.classList.add("visible");
   } else {
     tabBarEl.classList.remove("visible");
   }
 
-  // 5. After-render hook (e.g. reposition the inline-rename overlay so it stays
+  // After-render hook (e.g. reposition the inline-rename overlay so it stays
   // anchored to the target tab across re-renders). See add-tab-rename D4.
   if (onAfterRender) {
     onAfterRender();

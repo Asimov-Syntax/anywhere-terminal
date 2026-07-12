@@ -955,11 +955,10 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
             const tabId = message.tabId;
             const session = this.sessionManager.getSession(tabId);
             const agentKind = session?.isAgentLaunch ? agentKindForExecutable(session.shell) : undefined;
-            void handlePasteOsClipboardImage(
-              tabId,
-              (tid, data) => this.sessionManager.writeToSession(tid, data),
-              { agentKind, platform: process.platform },
-            ).then((img) => {
+            void handlePasteOsClipboardImage(tabId, (tid, data) => this.sessionManager.writeToSession(tid, data), {
+              agentKind,
+              platform: process.platform,
+            }).then((img) => {
               if (img) {
                 this.safePostMessage(webviewView.webview, {
                   type: "clipboardImagePreview",

@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import {
   base64ToBlob,
   blobToBase64,
+  clipboardEventHasPlainText,
   ensurePngBlob,
   extractImageBlobFromClipboardItems,
   forwardImagePaste,
   ImagePasteDeduper,
   isPasteShortcut,
+  shouldHostReadOsClipboardImage,
 } from "./imagePasteBridge";
 
 describe("extractImageBlobFromClipboardItems", () => {
@@ -28,6 +30,38 @@ describe("extractImageBlobFromClipboardItems", () => {
     } as unknown as DataTransferItemList;
 
     expect(extractImageBlobFromClipboardItems(items)).toBeNull();
+  });
+});
+
+describe("clipboardEventHasPlainText", () => {
+  it("returns true when text/plain is non-empty", () => {
+    const data = { getData: (type: string) => (type === "text/plain" ? "hello" : "") } as DataTransfer;
+    expect(clipboardEventHasPlainText(data)).toBe(true);
+  });
+
+  it("returns false for empty text or missing clipboardData", () => {
+    const empty = { getData: () => "" } as unknown as DataTransfer;
+    expect(clipboardEventHasPlainText(empty)).toBe(false);
+    expect(clipboardEventHasPlainText(null)).toBe(false);
+    expect(clipboardEventHasPlainText(undefined)).toBe(false);
+  });
+});
+
+describe("shouldHostReadOsClipboardImage", () => {
+  it("is true only on Windows with neither image nor text", () => {
+    expect(shouldHostReadOsClipboardImage({ isWindows: true, hasImageBlob: false, hasPlainText: false })).toBe(true);
+  });
+
+  it("is false when text is present (native paste must win)", () => {
+    expect(shouldHostReadOsClipboardImage({ isWindows: true, hasImageBlob: false, hasPlainText: true })).toBe(false);
+  });
+
+  it("is false when an image blob is already visible", () => {
+    expect(shouldHostReadOsClipboardImage({ isWindows: true, hasImageBlob: true, hasPlainText: false })).toBe(false);
+  });
+
+  it("is false off Windows (Linux host cannot read OS image clipboard)", () => {
+    expect(shouldHostReadOsClipboardImage({ isWindows: false, hasImageBlob: false, hasPlainText: false })).toBe(false);
   });
 });
 

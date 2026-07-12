@@ -95,6 +95,7 @@ describe("Integration: tab lifecycle with WebviewStateStore", () => {
       terminal: t1 as unknown as Terminal,
       container: document.createElement("div"),
       exited: false,
+      activityStatus: "idle",
     });
 
     store.terminals.set("tab-2", {
@@ -104,6 +105,7 @@ describe("Integration: tab lifecycle with WebviewStateStore", () => {
       terminal: t2 as unknown as Terminal,
       container: document.createElement("div"),
       exited: false,
+      activityStatus: "idle",
     });
 
     store.setActiveTab("tab-1");
@@ -182,6 +184,7 @@ describe("Integration: config update applied to terminals via store", () => {
       terminal: t1 as unknown as Terminal,
       container: document.createElement("div"),
       exited: false,
+      activityStatus: "idle",
     });
     store.terminals.set("tab-2", {
       id: "tab-2",
@@ -190,6 +193,7 @@ describe("Integration: config update applied to terminals via store", () => {
       terminal: t2 as unknown as Terminal,
       container: document.createElement("div"),
       exited: false,
+      activityStatus: "idle",
     });
 
     // Simulate config update

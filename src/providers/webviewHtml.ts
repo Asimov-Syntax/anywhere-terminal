@@ -149,6 +149,30 @@ export function getTerminalHtml(
       background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
       border-bottom: 1px solid var(--vscode-focusBorder, #007acc);
     }
+    .tab-status {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 7px;
+      background: var(--vscode-descriptionForeground, #858585);
+      opacity: 0.55;
+    }
+    .tab-status-running {
+      background: var(--vscode-testing-iconPassed, #73c991);
+      opacity: 1;
+      animation: tab-status-pulse 1.2s ease-in-out infinite;
+    }
+    .tab-status-exited {
+      background: var(--vscode-testing-iconFailed, #f14c4c);
+      opacity: 0.8;
+    }
+    @keyframes tab-status-pulse {
+      0%, 100% { transform: scale(0.82); opacity: 0.65; }
+      50% { transform: scale(1); opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tab-status-running { animation: none; }
+    }
     .tab-close {
       display: flex;
       align-items: center;

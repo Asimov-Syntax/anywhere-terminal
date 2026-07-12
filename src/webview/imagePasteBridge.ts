@@ -17,6 +17,32 @@ export function extractImageBlobFromClipboardItems(items: DataTransferItemList):
   return null;
 }
 
+/**
+ * Whether the paste event carries non-empty plain text. Used to keep text paste
+ * on the native xterm path (instant) instead of waiting for a host OS-clipboard
+ * image probe.
+ */
+export function clipboardEventHasPlainText(data: DataTransfer | null | undefined): boolean {
+  if (!data) {
+    return false;
+  }
+  return (data.getData("text/plain") ?? "").length > 0;
+}
+
+/**
+ * Windows-only: when the webview paste event has neither `image/*` nor plain
+ * text, the OS clipboard may still hold a DIB/CF_BITMAP that only the host can
+ * read. Linux never needs this (host `readImageFromOsClipboard` is a no-op);
+ * macOS uses the native paste / Ctrl+V preview paths instead.
+ */
+export function shouldHostReadOsClipboardImage(opts: {
+  isWindows: boolean;
+  hasImageBlob: boolean;
+  hasPlainText: boolean;
+}): boolean {
+  return opts.isWindows && !opts.hasImageBlob && !opts.hasPlainText;
+}
+
 /** Whether the key event is a paste shortcut we should capture for preview. */
 export function isPasteShortcut(event: KeyboardEvent, isMac: boolean): boolean {
   if (event.type !== "keydown" || event.altKey || event.shiftKey) {

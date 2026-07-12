@@ -1,9 +1,11 @@
+import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ALT_V_PASTE, BRACKETED_EMPTY_PASTE, CTRL_V_PASTE } from "../shared/imagePasteTrigger";
 import { handlePasteClipboardImage, handlePasteOsClipboardImage, readImageFromOsClipboard } from "./clipboardImageSync";
 
 const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
+  spawn: vi.fn(),
   stat: vi.fn(),
   readFile: vi.fn(),
   mkdtemp: vi.fn(),
@@ -11,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   rm: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({ execFile: mocks.execFile, spawn: vi.fn() }));
+vi.mock("node:child_process", () => ({ execFile: mocks.execFile, spawn: mocks.spawn }));
 vi.mock("node:fs/promises", () => ({
   mkdtemp: mocks.mkdtemp,
   writeFile: mocks.writeFile,
@@ -40,6 +42,31 @@ afterEach(() => {
 const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64");
 
 describe("handlePasteClipboardImage", () => {
+  const origPlatform = process.platform;
+  const origDisplay = process.env.DISPLAY;
+  const origWaylandDisplay = process.env.WAYLAND_DISPLAY;
+  const setPlatform = (value: string): void => {
+    Object.defineProperty(process, "platform", { value });
+  };
+
+  beforeEach(() => {
+    setPlatform("darwin");
+  });
+
+  afterEach(() => {
+    setPlatform(origPlatform);
+    if (origDisplay === undefined) {
+      delete process.env.DISPLAY;
+    } else {
+      process.env.DISPLAY = origDisplay;
+    }
+    if (origWaylandDisplay === undefined) {
+      delete process.env.WAYLAND_DISPLAY;
+    } else {
+      process.env.WAYLAND_DISPLAY = origWaylandDisplay;
+    }
+  });
+
   it("emits the CLI-specific PTY trigger after attempting OS clipboard sync", async () => {
     const writeToSession = vi.fn();
 
@@ -86,6 +113,36 @@ describe("handlePasteClipboardImage", () => {
       platform: "darwin",
     });
 
+    expect(writeToSession).toHaveBeenCalledWith("session-a", CTRL_V_PASTE);
+  });
+
+  it("uses xclip without waiting for its background clipboard owner on Linux X11", async () => {
+    setPlatform("linux");
+    process.env.DISPLAY = ":1";
+    delete process.env.WAYLAND_DISPLAY;
+    expect(process.platform).toBe("linux");
+    expect(process.env.DISPLAY).toBe(":1");
+    const proc = Object.assign(new EventEmitter(), {
+      stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
+      kill: vi.fn(),
+    });
+    mocks.spawn.mockReturnValue(proc);
+    const writeToSession = vi.fn();
+
+    const paste = handlePasteClipboardImage(
+      { tabId: "session-a", mimeType: "image/png", data: PNG_BASE64 },
+      writeToSession,
+      { platform: "linux" },
+    );
+    await vi.waitFor(() => expect(proc.listenerCount("exit")).toBe(1));
+    proc.emit("exit", 0);
+    await paste;
+
+    expect(mocks.mkdtemp).not.toHaveBeenCalled();
+    expect(mocks.spawn).toHaveBeenCalledWith("xclip", ["-selection", "clipboard", "-t", "image/png", "-i"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    expect(proc.stdin.end).toHaveBeenCalledWith(Buffer.from(PNG_BASE64, "base64"));
     expect(writeToSession).toHaveBeenCalledWith("session-a", CTRL_V_PASTE);
   });
 
@@ -138,8 +195,10 @@ describe("readImageFromOsClipboard", () => {
     const result = await readImageFromOsClipboard();
 
     expect(result).toEqual({ mimeType: "image/png", data: png.toString("base64") });
+    // execFile(cmd, args, opts, cb) — binary is the first positional arg.
+    expect(mocks.execFile.mock.calls[0]?.[0]).toBe("powershell.exe");
     const argv = mocks.execFile.mock.calls[0]?.[1] as string[];
-    expect(argv[0]).toBe("powershell.exe");
+    expect(argv[0]).toBe("-NoProfile");
   });
 
   it("returns null on Windows when the clipboard holds no image", async () => {
@@ -239,7 +298,7 @@ describe("handlePasteOsClipboardImage", () => {
     setPlatform(origPlatform);
   });
 
-  it("reads from the OS clipboard, syncs, and emits the PTY trigger on Windows", async () => {
+  it("reads from the OS clipboard and emits the PTY trigger without re-writing", async () => {
     setPlatform("win32");
     const writeToSession = vi.fn();
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
@@ -256,6 +315,8 @@ describe("handlePasteOsClipboardImage", () => {
 
     expect(result).toEqual({ mimeType: "image/png", data: png.toString("base64") });
     expect(writeToSession).toHaveBeenCalledWith("session-a", ALT_V_PASTE);
+    // Read path only: no second PowerShell SetImage (writeImageToOsClipboard).
+    expect(mocks.writeFile).not.toHaveBeenCalled();
   });
 
   it("returns null when the OS clipboard holds no image", async () => {

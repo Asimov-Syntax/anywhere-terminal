@@ -439,6 +439,7 @@ export class TerminalFactory {
       terminal,
       container,
       exited: false,
+      activityStatus: "idle",
     };
 
     this.store.terminals.set(id, instance);

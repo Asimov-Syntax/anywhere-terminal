@@ -504,10 +504,10 @@ export interface RequestClipboardImagePreviewMessage {
 }
 
 /**
- * Webview → host: the webview couldn't read an image on Ctrl+V (common on Windows
- * where DIB/CF_BITMAP never surfaces as `image/*`). The host reads the OS
- * clipboard, mirrors it + emits the PTY trigger on hit, and replies with
- * `clipboardImagePreview` (cache) or `osClipboardPasteMiss` (paste text instead).
+ * Webview → host: Windows-only empty paste event (no `image/*`, no plain text)
+ * where the OS clipboard may still hold DIB/CF_BITMAP. The host reads the OS
+ * clipboard and emits the PTY trigger on hit; replies with `clipboardImagePreview`
+ * (cache) or `osClipboardPasteMiss` (no-op — text never uses this path).
  */
 export interface PasteOsClipboardImageMessage {
   type: "pasteOsClipboardImage";
@@ -515,7 +515,10 @@ export interface PasteOsClipboardImageMessage {
   tabId: string;
 }
 
-/** Host → webview: OS clipboard held no image after a `pasteOsClipboardImage` request. */
+/**
+ * Host → webview: OS clipboard held no image after a `pasteOsClipboardImage`
+ * request. Text paste is never deferred to this message (native paste path).
+ */
 export interface OsClipboardPasteMissMessage {
   type: "osClipboardPasteMiss";
   tabId: string;
