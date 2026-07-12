@@ -3,7 +3,7 @@
 // Extracted for testability. Pure DOM rendering function with dependency injection.
 // See: docs/design/flow-multi-tab.md#Data-Routing-Architecture
 
-import type { SplitNode } from "./SplitModel";
+import { getAllSessionIds, type SplitNode } from "./SplitModel";
 import type { TerminalInstance } from "./state/WebviewStateStore";
 
 /** Minimal terminal info needed for tab bar rendering. */
@@ -36,15 +36,20 @@ export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
     if (layout.type === "branch") {
       // Split tab — show active pane's name and exited state. Custom name lives
       // on the root tab and wins over per-pane process names (see add-tab-rename
-      // design.md D5 + split-focus-management spec).
+      // design.md D5 + split-focus-management spec). Activity aggregates across
+      // panes: any non-exited leaf still producing output lights the tab.
       const activePaneId = store.tabActivePaneIds.get(tabId) ?? tabId;
       const activeInstance = store.terminals.get(activePaneId);
       const rootInstance = store.terminals.get(tabId);
+      const anyRunning = getAllSessionIds(layout).some((sid) => {
+        const inst = store.terminals.get(sid);
+        return inst?.activityStatus === "running" && !inst.exited;
+      });
       tabTerminals.set(tabId, {
         name: activeInstance?.name ?? rootInstance?.name ?? tabId,
         customName: rootInstance?.customName ?? null,
         exited: (activeInstance ?? rootInstance)?.exited,
-        activityStatus: (activeInstance ?? rootInstance)?.activityStatus,
+        activityStatus: anyRunning ? "running" : "idle",
       });
     } else {
       // Single pane tab

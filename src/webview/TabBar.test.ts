@@ -5,7 +5,15 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handleTabKeyboardShortcut, type RenderTabBarDeps, renderTabBar, type TabKeyboardDeps } from "./TabBarUtils";
+import { createBranch, createLeaf } from "./SplitModel";
+import {
+  buildTabBarData,
+  handleTabKeyboardShortcut,
+  type RenderTabBarDeps,
+  renderTabBar,
+  type TabBarDataSource,
+  type TabKeyboardDeps,
+} from "./TabBarUtils";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -142,6 +150,34 @@ describe("renderTabBar", () => {
     expect(after.length).toBe(2);
     expect(after[0]).toBe(before[0]);
     expect(after[1]).toBe(before[1]);
+  });
+
+  it("reorders existing tab nodes in place without recreating them", () => {
+    const deps = createMockDeps({
+      terminals: new Map<string, { name: string }>([
+        ["tab-1", { name: "One" }],
+        ["tab-2", { name: "Two" }],
+      ]) as never,
+      activeTabId: "tab-1",
+    });
+    renderTabBar(deps);
+    const nodeA = deps.tabBarEl.querySelector<HTMLElement>('[data-tab-id="tab-1"]');
+    const nodeB = deps.tabBarEl.querySelector<HTMLElement>('[data-tab-id="tab-2"]');
+
+    // Re-render with the two tabs swapped in iteration order.
+    deps.terminals = new Map<string, { name: string }>([
+      ["tab-2", { name: "Two" }],
+      ["tab-1", { name: "One" }],
+    ]) as never;
+    renderTabBar(deps);
+
+    const tabs = deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item");
+    expect(tabs.length).toBe(2);
+    // Same DOM nodes, reused — just moved, not recreated.
+    expect(tabs[0]).toBe(nodeB);
+    expect(tabs[1]).toBe(nodeA);
+    // "+" button stays last after the reorder.
+    expect(deps.tabBarEl.lastElementChild?.classList.contains("tab-add")).toBe(true);
   });
 
   // ─── Click Handlers ─────────────────────────────────────────────
@@ -500,5 +536,42 @@ describe("renderTabBar: onTabRename + onAfterRender hooks", () => {
     });
     renderTabBar(deps);
     expect(onAfterRender).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── buildTabBarData: split-tab activity aggregation ────────────────
+
+describe("buildTabBarData", () => {
+  const source = (over: Partial<TabBarDataSource>): TabBarDataSource => ({
+    tabLayouts: new Map(),
+    tabActivePaneIds: new Map(),
+    terminals: new Map(),
+    ...over,
+  });
+
+  it("lights a split tab when ANY non-exited background pane is running", () => {
+    const store = source({
+      tabLayouts: new Map([["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-b"))]]),
+      tabActivePaneIds: new Map([["tab-1", "tab-1"]]), // active pane is idle
+      terminals: new Map([
+        ["tab-1", { name: "Shell", exited: false, activityStatus: "idle" }],
+        ["pane-b", { name: "Codex", exited: false, activityStatus: "running" }],
+      ]) as never,
+    });
+
+    expect(buildTabBarData(store).get("tab-1")?.activityStatus).toBe("running");
+  });
+
+  it("stays idle when every pane is idle, and ignores a running-but-exited pane", () => {
+    const idle = source({
+      tabLayouts: new Map([["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-b"))]]),
+      tabActivePaneIds: new Map([["tab-1", "tab-1"]]),
+      terminals: new Map([
+        ["tab-1", { name: "Shell", exited: false, activityStatus: "idle" }],
+        ["pane-b", { name: "Codex", exited: true, activityStatus: "running" }],
+      ]) as never,
+    });
+
+    expect(buildTabBarData(idle).get("tab-1")?.activityStatus).toBe("idle");
   });
 });
