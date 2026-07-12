@@ -4,6 +4,17 @@ All notable changes to **AnyWhere Terminal** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.8] — 2026-07-13
+
+### Added
+
+- **Terminal tabs now show activity at a glance.** Each tab carries a small status dot: it pulses green while the terminal is producing output, sits grey when idle, and turns red once the process has exited. In a split tab the dot lights up if *any* pane is still working, so a long-running command in a background pane is visible without switching to it. The pulse honors your system "reduce motion" setting.
+
+### Fixed
+
+- **Pasting a screenshot into Claude Code on Windows now works from Ctrl+V.** On Windows a copied screenshot lives on the clipboard as a device-independent bitmap (DIB) that the webview's paste event can't see, so Ctrl+V appeared to do nothing. When a Windows paste carries no visible image or text, the extension now reads the image from the OS clipboard host-side and fires the paste signal Claude Code uses there (Alt+V) — so a screenshot pastes with a plain Ctrl+V. Plain text paste stays on the native path and is unaffected.
+- **Pasting an image into an agent on Linux (X11) no longer stalls for ~2 seconds.** The extension writes the image to the X selection with `xclip`, which forks a background process that owns the selection; waiting on that process's inherited output pipe added a ~2s delay to every image paste. It now hands `xclip` the image over stdin and waits only until the selection is claimed, so the paste registers immediately.
+
 ## [0.17.7] — 2026-07-08
 
 ### Added
