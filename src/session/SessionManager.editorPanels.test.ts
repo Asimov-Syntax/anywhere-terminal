@@ -4,50 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAll, __setAppRoot, __setWorkspaceFolders } from "../test/__mocks__/vscode";
 
-vi.mock("../pty/processCwd", () => ({ queryProcessCwd: vi.fn(async () => undefined) }));
-vi.mock("../pty/PtyManager", () => ({
-  loadNodePty: vi.fn(() => ({ spawn: vi.fn() })),
-  detectShell: vi.fn(() => ({ shell: "/bin/zsh", args: ["--login"] })),
-  buildEnvironment: vi.fn(() => ({ PATH: "/usr/bin" })),
-  resolveWorkingDirectory: vi.fn(() => "/tmp"),
-}));
-vi.mock("../pty/PtySession", () => {
-  class MockPtySession {
-    id: string;
-    pid = 99000;
-    spawn = vi.fn();
-    write = vi.fn();
-    resize = vi.fn();
-    kill = vi.fn();
-    pause = vi.fn();
-    resume = vi.fn();
-    onData: any = undefined;
-    onExit: any = undefined;
-    constructor(id: string) {
-      this.id = id;
-    }
-  }
-  return { PtySession: MockPtySession };
-});
-vi.mock("./OutputBuffer", () => {
-  class MockOutputBuffer {
-    append = vi.fn();
-    dispose = vi.fn();
-    updateWebview = vi.fn();
-    pauseOutput = vi.fn();
-    resumeOutput = vi.fn();
-    handleAck = vi.fn();
-    flush = vi.fn();
-    bufferSize = 0;
-    unackedCharCount = 0;
-    constructor(
-      public _i: string,
-      public _w: unknown,
-      public _p: unknown,
-    ) {}
-  }
-  return { OutputBuffer: MockOutputBuffer };
-});
+vi.mock("../pty/processCwd", async () => (await import("../test/sessionMocks")).processCwdMock());
+vi.mock("../pty/PtyManager", async () => (await import("../test/sessionMocks")).ptyManagerMock());
+vi.mock("../pty/PtySession", async () => (await import("../test/sessionMocks")).ptySessionMock());
+vi.mock("./OutputBuffer", async () => (await import("../test/sessionMocks")).outputBufferMock());
 
 import { SessionManager } from "./SessionManager";
 

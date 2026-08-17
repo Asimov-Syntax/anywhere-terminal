@@ -4,81 +4,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAll, __setAppRoot, __setWorkspaceFolders } from "../test/__mocks__/vscode";
-import type { MessageSender } from "./OutputBuffer";
+import { mockPtySessions, mockWebview } from "../test/sessionMocks";
 
-const mockPtySessions: Array<{
-  id: string;
-  onData: ((data: string) => void) | undefined;
-}> = [];
-
-vi.mock("../pty/processCwd", () => ({
-  queryProcessCwd: vi.fn(async () => undefined),
-}));
-
-vi.mock("../pty/PtyManager", () => ({
-  loadNodePty: vi.fn(() => ({ spawn: vi.fn() })),
-  detectShell: vi.fn(() => ({ shell: "/bin/zsh", args: ["--login"] })),
-  buildEnvironment: vi.fn(() => ({ PATH: "/usr/bin" })),
-  resolveWorkingDirectory: vi.fn(() => "/tmp"),
-}));
-
-vi.mock("../pty/PtySession", () => {
-  class MockPtySession {
-    id: string;
-    pid = 99000;
-    spawn = vi.fn();
-    write = vi.fn();
-    resize = vi.fn();
-    kill = vi.fn();
-    pause = vi.fn();
-    resume = vi.fn();
-    setShellIntegrationSink = vi.fn();
-    setShellIntegrationNonce = vi.fn();
-    private _onDataCallback: ((data: string) => void) | undefined;
-    get onData() {
-      return this._onDataCallback;
-    }
-    set onData(cb: ((data: string) => void) | undefined) {
-      this._onDataCallback = cb;
-      const tracked = mockPtySessions.find((p) => p.id === this.id);
-      if (tracked) {
-        tracked.onData = cb;
-      }
-    }
-    onExit: any = undefined;
-    constructor(id: string) {
-      this.id = id;
-      mockPtySessions.push({ id, onData: undefined });
-    }
-  }
-  return { PtySession: MockPtySession };
-});
-
-vi.mock("./OutputBuffer", () => {
-  class MockOutputBuffer {
-    append = vi.fn();
-    dispose = vi.fn();
-    updateWebview = vi.fn();
-    pauseOutput = vi.fn();
-    resumeOutput = vi.fn();
-    handleAck = vi.fn();
-    flush = vi.fn();
-    bufferSize = 0;
-    unackedCharCount = 0;
-    constructor(
-      public _id: string,
-      public _w: unknown,
-      public _p: unknown,
-    ) {}
-  }
-  return { OutputBuffer: MockOutputBuffer };
-});
+vi.mock("../pty/processCwd", async () => (await import("../test/sessionMocks")).processCwdMock());
+vi.mock("../pty/PtyManager", async () => (await import("../test/sessionMocks")).ptyManagerMock());
+vi.mock("../pty/PtySession", async () => (await import("../test/sessionMocks")).ptySessionMock());
+vi.mock("./OutputBuffer", async () => (await import("../test/sessionMocks")).outputBufferMock());
 
 import { type HeadlessFactory, type HeadlessTerminalLike, SessionManager } from "./SessionManager";
-
-function mockWebview(): MessageSender {
-  return { postMessage: vi.fn(() => Promise.resolve(true)) };
-}
 
 function makeFactory(): { factory: HeadlessFactory; built: HeadlessTerminalLike[]; ctorCalls: number } {
   const built: HeadlessTerminalLike[] = [];
