@@ -106,3 +106,52 @@ describe("resolveClaudeSession — Windows / no pty pid", () => {
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "by-cwd", cwd: "/work/proj" });
   });
 });
+
+describe("resolveClaudeSession — headless one-shot exclusion", () => {
+  /** A headless `claude -p` registry entry (entrypoint measured as "sdk-cli"). */
+  function headless(sessionId: string, pid: number, cwd: string): RunningClaudeSession {
+    return { sessionId, pid, cwd, entrypoint: "sdk-cli" };
+  }
+
+  it("prefers the interactive session over a headless child with a newer transcript", async () => {
+    // The hook-spawned `claude -p` writes its transcript at that instant, so it
+    // wins pickNewest unless it is filtered out first.
+    const deps = makeDeps({
+      descendantPids: vi.fn(async () => [1001, 1002]),
+      listRunning: vi.fn(async () => [
+        { ...run("interactive", 1001, "/work/proj"), entrypoint: "cli" },
+        headless("one-shot", 1002, "/work/proj"),
+      ]),
+      sessionMtime: vi.fn(async (id: string) => (id === "one-shot" ? 999 : 100)),
+    });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "interactive", cwd: "/work/proj" });
+  });
+
+  it("falls through to the cwd fallbacks when the subtree holds only a headless run", async () => {
+    const deps = makeDeps({
+      descendantPids: vi.fn(async () => [1002]),
+      listRunning: vi.fn(async () => [headless("one-shot", 1002, "/work/proj")]),
+      newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "on-disk", cwd: "/work/proj" })),
+    });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj" });
+  });
+
+  it("excludes a headless run from the cwd fallback too", async () => {
+    // Step 2 matches on cwd alone, so a headless run in the same directory can
+    // hijack it just as easily as the subtree intersection.
+    const deps = makeDeps({
+      descendantPids: vi.fn(async () => []),
+      listRunning: vi.fn(async () => [headless("one-shot", 7777, "/work/proj")]),
+      newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "on-disk", cwd: "/work/proj" })),
+    });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj" });
+  });
+
+  it("keeps a session whose entrypoint is unknown", async () => {
+    const deps = makeDeps({
+      descendantPids: vi.fn(async () => [1002]),
+      listRunning: vi.fn(async () => [{ ...run("future", 1002, "/work/proj"), entrypoint: "some-new-value" }]),
+    });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "future", cwd: "/work/proj" });
+  });
+});

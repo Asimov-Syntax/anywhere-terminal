@@ -33,6 +33,21 @@ export interface TerminalInstance {
   /** Recent PTY output activity used by the tab-bar status indicator. */
   activityStatus: "idle" | "running";
   /**
+   * Decoration-stripped signature of the last title that triggered a tab-bar
+   * render. Lets an agent's spinner frames advance without re-rendering the tab
+   * bar ~10x/second. See `terminal/titleSignature.ts` and
+   * asimov/changes/fix-false-agent-signals/design.md D4.
+   */
+  lastTitleSignature?: string;
+  /**
+   * Whether that same title carried a decorative frame glyph. Compared
+   * alongside the signature: the tab label renders the RAW name, so
+   * `⠋ Fix tests` → `Fix tests` changes what is displayed even though the
+   * signature is identical, and gating on the signature alone froze a spinner
+   * on a finished agent's tab.
+   */
+  lastTitleDecorated?: boolean;
+  /**
    * Latest current working directory reported by the shell via OSC 7
    * (`ESC ]7;file://host/path BEL`). Modern shells emit this after every `cd`
    * when shell integration is enabled. Drives the right-click

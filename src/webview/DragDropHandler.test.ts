@@ -399,3 +399,54 @@ describe("DragDropHandler", () => {
     expect(overlay?.textContent).toBe("Drop to insert path");
   });
 });
+
+// ─── Injection regression guard ─────────────────────────────────────
+//
+// Claude Code leaves its composer editable when payload text and the Enter
+// terminator land in the same pty write — the text sits in the box, unsent,
+// and the caller believes it submitted. No AT path does this today; this guard
+// exists so a future programmatic send cannot regress into it without a red
+// test. See docs/research/20260822-orca-deep-dive/05-prompt-injection.md §1.5
+// and asimov/changes/fix-false-agent-signals/design.md D5.
+
+/**
+ * True when a payload ends with Enter preceded by a printable character.
+ * The "printable" part is load-bearing: a naive `/.+\r$/` also matches `\x1b`,
+ * flagging the legitimate bare Alt+Enter payload `"\x1b\r"`.
+ */
+const submitsTextInOneWrite = (data: string): boolean =>
+  data.endsWith("\r") && data.length > 1 && data.charCodeAt(data.length - 2) > 0x1f;
+
+describe("injection regression guard", () => {
+  it("recognises the failure shape it guards against", () => {
+    expect(submitsTextInOneWrite("run the tests\r")).toBe(true);
+    // Bare Alt+Enter (main.ts codex-on-Windows newline) carries no payload.
+    expect(submitsTextInOneWrite("\x1b\r")).toBe(false);
+    expect(submitsTextInOneWrite("\r")).toBe(false);
+    expect(submitsTextInOneWrite("'/Users/me/file.txt' ")).toBe(false);
+  });
+
+  it("never emits payload text terminated by Enter when a path is dropped", () => {
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    const posted: string[] = [];
+    const guarded = new DragDropHandler({
+      postMessage: (msg) => {
+        const data = (msg as { type?: string; data?: string }).data;
+        if ((msg as { type?: string }).type === "input" && typeof data === "string") {
+          posted.push(data);
+        }
+      },
+      getActiveSessionId: () => "session-1",
+      getTerminalExited: () => false,
+    });
+    guarded.setup(container2);
+
+    const dt = mockDataTransfer({ "text/plain": "/Users/me/file.txt" });
+    container2.dispatchEvent(makeDragEvent("drop", { dataTransfer: dt, shiftKey: true }));
+
+    expect(posted.length).toBeGreaterThan(0);
+    expect(posted.filter(submitsTextInOneWrite)).toEqual([]);
+    container2.remove();
+  });
+});

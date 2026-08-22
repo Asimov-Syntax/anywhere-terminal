@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listRunningClaudeSessions, type RunningSessionsDeps } from "./runningSessions";
+import { isHeadlessSession, listRunningClaudeSessions, type RunningSessionsDeps } from "./runningSessions";
 
 let tmpRoot: string;
 let sessionsDir: string;
@@ -103,5 +103,82 @@ describe("listRunningClaudeSessions", () => {
   it("returns [] when the registry dir does not exist", async () => {
     await fs.rm(sessionsDir, { recursive: true, force: true });
     expect(await listRunningClaudeSessions(opts(), aliveDeps([]))).toEqual([]);
+  });
+});
+
+describe("headless one-shot sessions", () => {
+  it("carries `entrypoint` through verbatim when the registry file has one", async () => {
+    await writePidFile(100, { pid: 100, sessionId: "a", cwd: "/w", entrypoint: "cli" });
+    await writePidFile(200, { pid: 200, sessionId: "b", cwd: "/w", entrypoint: "sdk-cli" });
+
+    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+
+    expect(result.find((r) => r.sessionId === "a")?.entrypoint).toBe("cli");
+    expect(result.find((r) => r.sessionId === "b")?.entrypoint).toBe("sdk-cli");
+  });
+
+  it("leaves `entrypoint` undefined when absent or not a string", async () => {
+    await writePidFile(100, { pid: 100, sessionId: "absent", cwd: "/w" });
+    await writePidFile(200, { pid: 200, sessionId: "nonstring", cwd: "/w", entrypoint: 42 });
+
+    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+
+    expect(result.find((r) => r.sessionId === "absent")?.entrypoint).toBeUndefined();
+    expect(result.find((r) => r.sessionId === "nonstring")?.entrypoint).toBeUndefined();
+  });
+
+  it("classifies only known headless entrypoints", () => {
+    // Measured against claude 2.1.239: `claude -p` writes entrypoint "sdk-cli"
+    // while an interactive session writes "cli".
+    expect(isHeadlessSession({ pid: 1, sessionId: "s", cwd: "/w", entrypoint: "sdk-cli" })).toBe(true);
+    expect(isHeadlessSession({ pid: 1, sessionId: "s", cwd: "/w", entrypoint: "cli" })).toBe(false);
+  });
+
+  it("keeps a session whose entrypoint is unknown, empty, or absent", () => {
+    // Allow-list, never `!== "cli"`: a future Claude release adding a new
+    // entrypoint value must degrade to today's behaviour, not silently stop
+    // resolving the user's real session. See design.md D2.
+    expect(isHeadlessSession({ pid: 1, sessionId: "s", cwd: "/w", entrypoint: "vscode" })).toBe(false);
+    expect(isHeadlessSession({ pid: 1, sessionId: "s", cwd: "/w", entrypoint: "" })).toBe(false);
+    expect(isHeadlessSession({ pid: 1, sessionId: "s", cwd: "/w" })).toBe(false);
+  });
+});
+
+describe("dedupe across two live entries sharing one sessionId", () => {
+  it("keeps the interactive entry even when the headless one started later", async () => {
+    // A `claude -p --resume <id>` child writes its own pid file for a session a
+    // terminal is still showing. Preferring newer `startedAt` alone would drop
+    // the interactive entry, and the caller's headless filter would then remove
+    // the survivor — erasing the sessionId entirely. See .reviews/round-1.md [W2].
+    await writePidFile(100, { pid: 100, sessionId: "shared", cwd: "/w", startedAt: 100, entrypoint: "cli" });
+    await writePidFile(200, { pid: 200, sessionId: "shared", cwd: "/w", startedAt: 999, entrypoint: "sdk-cli" });
+
+    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].pid).toBe(100);
+    expect(result[0].entrypoint).toBe("cli");
+  });
+
+  it("still prefers the newer entry when both have the same headless-ness", async () => {
+    await writePidFile(100, { pid: 100, sessionId: "shared", cwd: "/w", startedAt: 100, entrypoint: "cli" });
+    await writePidFile(200, { pid: 200, sessionId: "shared", cwd: "/w", startedAt: 999, entrypoint: "cli" });
+
+    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].pid).toBe(200);
+  });
+});
+
+describe("dedupe tie-break", () => {
+  it("resolves an exact tie by pid rather than readdir order", async () => {
+    await writePidFile(100, { pid: 100, sessionId: "shared", cwd: "/w", startedAt: 500, entrypoint: "cli" });
+    await writePidFile(200, { pid: 200, sessionId: "shared", cwd: "/w", startedAt: 500, entrypoint: "cli" });
+
+    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].pid).toBe(200);
   });
 });

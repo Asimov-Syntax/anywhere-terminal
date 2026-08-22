@@ -1,5 +1,4 @@
-# claude-running-session-map Specification
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Detect running Claude sessions
 
@@ -71,8 +70,3 @@ cwd fallbacks only.
   empty, or an unknown value
 - **THEN** it MUST still be selected, so a future Claude release cannot silently break
   resolution by renaming the field's values.
-
-### Requirement: Resolve a clicked subagent to its transcript detail
-
-GIVEN a resolved parent `sessionId` and a clicked `description`, the host SHALL enumerate that session's subagent stubs via the existing `listClaudeSubagentStubs(sessionId)` (which scans the parent's `subagents/` directory and reads each `agent-*.meta.json` `description`), **prefix‑match** `description` against those stub descriptions (ties broken by most‑recent file mtime), and read the chosen stub via the existing Claude subagent detail reader (including its `isSidechain` records). It SHALL reply with a `subagentPreviewResponse` carrying the same `requestId` plus either the `VaultSessionDetail` or an `error`/`notFound` marker. Resolution SHALL reuse the existing containment‑checked path resolvers (`resolveClaudeSubagentPath`) — it MUST NOT derive an encoded‑cwd path (no such encoder exists; the readers locate the parent by `sessionId`, so `cwd` is not an input to this step).
-

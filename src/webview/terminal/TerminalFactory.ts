@@ -25,6 +25,7 @@ import { fitTerminal as fitTerminalCore } from "../resize/XtermFitService";
 import { createLeaf, getAllSessionIds } from "../SplitModel";
 import type { TerminalInstance, WebviewStateStore } from "../state/WebviewStateStore";
 import type { ThemeManager } from "../theme/ThemeManager";
+import { applyTitleChange } from "./titleSignature";
 
 // ─── TerminalFactory ────────────────────────────────────────────────
 
@@ -444,12 +445,11 @@ export class TerminalFactory {
 
     this.store.terminals.set(id, instance);
 
-    // Listen for OSC title change events
+    // Listen for OSC title change events. Gated on a decoration-stripped
+    // signature so an agent's spinner frames don't re-render the whole tab bar
+    // once per frame — see terminal/titleSignature.ts.
     terminal.onTitleChange((newTitle: string) => {
-      if (newTitle) {
-        instance.name = newTitle;
-        this.onTabBarUpdate();
-      }
+      applyTitleChange(instance, newTitle, this.onTabBarUpdate);
     });
 
     // OSC 7 — shell-emitted current working directory updates. Modern shells

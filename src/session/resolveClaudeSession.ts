@@ -10,7 +10,7 @@
 // unit-tested without the host. The host (TerminalViewProvider) wires the real
 // implementations; on Windows `descendantPids` is `[]` so only the cwd fallbacks run.
 
-import type { RunningClaudeSession } from "../vault/readers/runningSessions";
+import { isHeadlessSession, type RunningClaudeSession } from "../vault/readers/runningSessions";
 
 export interface ResolveClaudeSessionDeps {
   /** The pane's pty pid (subtree root), or undefined when the session is unknown. */
@@ -51,7 +51,11 @@ export async function resolveClaudeSession(
   terminalId: string,
   deps: ResolveClaudeSessionDeps,
 ): Promise<{ sessionId: string; cwd: string } | null> {
-  const running = await deps.listRunning();
+  // Filtered up front, not per step: a hook-spawned `claude -p` is a descendant
+  // of this pty AND shares its cwd, so it can hijack steps 1 and 2 alike, and
+  // its just-written transcript wins the mtime tie-break. Step 3 reads from
+  // disk where no entrypoint exists — see design.md D3.
+  const running = (await deps.listRunning()).filter((session) => !isHeadlessSession(session));
 
   // Step 1 — exact: the claude node pid is a descendant of the pane's pty shell.
   const ptyPid = deps.getPtyPid(terminalId);
