@@ -1,0 +1,5 @@
+{"type":"user","cwd":"/Users/me/proj","gitBranch":"main","sessionId":"sess-cleared","timestamp":"2026-05-01T00:00:00Z","message":{"role":"user","content":[{"type":"text","text":"the first message of a session whose custom name was cleared"}]}}
+{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"On it."}]}}
+{"type":"custom-title","customTitle":"a name the user removed","sessionId":"sess-cleared"}
+{"type":"ai-title","aiTitle":"An auto-generated title","sessionId":"sess-cleared"}
+{"type":"custom-title","customTitle":"","sessionId":"sess-cleared"}

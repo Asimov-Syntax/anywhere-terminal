@@ -11,6 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude");
 const CMDS_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-cmds");
 const TITLE_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-title");
+const TITLE_PRECEDENCE_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-title-precedence");
 const SUBAGENT_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-subagents");
 const TEAM_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-teams");
 const WF_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-workflows");
@@ -46,6 +47,17 @@ describe("readClaudeSessions", () => {
     expect(entries).toHaveLength(1);
     // The newest ai-title wins over both the stale early one and the prompt.
     expect(entries[0].title).toBe("Redesign the AI Vault panel");
+  });
+
+  it("follows Claude's title precedence: custom-title > ai-title > last-prompt > first prompt", async () => {
+    const { entries } = await readClaudeSessions({ configDir: TITLE_PRECEDENCE_FIXTURE_ROOT });
+    const titles = Object.fromEntries(entries.map((e) => [e.sessionId, e.title]));
+    // The name the user gave the session in Claude wins over the generated title.
+    expect(titles["sess-named"]).toBe("add-command-receipt-replay");
+    // No ai-title yet (half a real store) → the last prompt, not the first message.
+    expect(titles["sess-lastprompt"]).toBe("/asimov-plan land the receipt contract");
+    // An empty custom-title CLEARS the name, as it does in Claude.
+    expect(titles["sess-cleared"]).toBe("An auto-generated title");
   });
 
   it("bounds the title to <=120 chars and strips newlines (D4)", async () => {

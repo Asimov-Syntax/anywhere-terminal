@@ -21,5 +21,7 @@
     "experimentalDecorators": true,
     "useUnknownInCatchVariables": false
   },
-  "exclude": ["vitest.config.mts", "third_party"]
+  // `asimov` holds debug-session repro scripts, which import from `src` but live
+  // outside `rootDir` — in the program they are TS6059 errors, not app sources.
+  "exclude": ["vitest.config.mts", "third_party", "asimov"]
 }

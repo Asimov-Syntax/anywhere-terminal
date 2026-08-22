@@ -1,0 +1,6 @@
+{"type":"user","cwd":"/Users/me/proj","gitBranch":"main","sessionId":"sess-named","timestamp":"2026-05-01T00:00:00Z","message":{"role":"user","content":[{"type":"text","text":"the first message, which is neither the generated title nor the name the user chose"}]}}
+{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"On it."}]}}
+{"type":"custom-title","customTitle":"a name the user cleared later","sessionId":"sess-named"}
+{"type":"ai-title","aiTitle":"An auto-generated title","sessionId":"sess-named"}
+{"type":"last-prompt","lastPrompt":"carry on please","sessionId":"sess-named"}
+{"type":"custom-title","customTitle":"add-command-receipt-replay","sessionId":"sess-named"}

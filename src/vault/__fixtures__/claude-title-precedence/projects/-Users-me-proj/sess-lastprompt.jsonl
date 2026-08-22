@@ -1,0 +1,3 @@
+{"type":"user","cwd":"/Users/me/proj","gitBranch":"main","sessionId":"sess-lastprompt","timestamp":"2026-05-01T00:00:00Z","message":{"role":"user","content":[{"type":"text","text":"the first message, which is not what claude displays for this session"}]}}
+{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"On it."}]}}
+{"type":"last-prompt","lastPrompt":"/asimov-plan land the receipt contract","sessionId":"sess-lastprompt"}

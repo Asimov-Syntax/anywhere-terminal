@@ -89,24 +89,58 @@ export function extractUserText(message: unknown): string | undefined {
   return undefined;
 }
 
-/** Bytes read from the file tail when hunting for the latest `ai-title`. */
+/** Bytes read from the file tail when hunting for the title trailer. */
 const AI_TITLE_TAIL_BYTES = 64 * 1024;
 
+/** The title-bearing trailer records Claude re-appends as a session evolves. */
+export interface ClaudeTailTitles {
+  /** `{type:"custom-title"}` — the name the user gave the session in Claude. */
+  customTitle?: string;
+  /** `{type:"ai-title"}` — the title Claude generated for the session. */
+  aiTitle?: string;
+  /** `{type:"last-prompt"}` — Claude's display fallback before the first prompt. */
+  lastPrompt?: string;
+}
+
+/** Read one trailer field, mirroring Claude: last record wins, empty clears. */
+function applyTailTitle(out: ClaudeTailTitles, obj: Record<string, unknown>): void {
+  const assign = (key: keyof ClaudeTailTitles, value: unknown): void => {
+    if (typeof value !== "string") {
+      return;
+    }
+    const trimmed = value.trim();
+    out[key] = trimmed || undefined;
+  };
+  switch (obj.type) {
+    case "custom-title":
+      assign("customTitle", obj.customTitle);
+      break;
+    case "ai-title":
+      assign("aiTitle", obj.aiTitle);
+      break;
+    case "last-prompt":
+      assign("lastPrompt", obj.lastPrompt);
+      break;
+  }
+}
+
 /**
- * Claude's UI title is an `{type:"ai-title", aiTitle}` record that Claude
- * regenerates and re-appends near the end of the session as it evolves — the
- * LATEST one wins. Those records sit scattered to EOF (a 86MB file is common),
- * so the forward metadata scan never reaches them. Read only the last
- * `AI_TITLE_TAIL_BYTES` (the freshest title reliably lands at/near EOF) and
- * return the last `aiTitle` found there — bounded regardless of file size.
+ * Claude re-appends its whole title trailer (`custom-title`, `ai-title`,
+ * `last-prompt`, …) near the end of the session as it evolves — the LATEST
+ * record of each type wins, and one carrying an empty string CLEARS that field.
+ * Those records sit scattered to EOF (a 86MB file is common), so the forward
+ * metadata scan never reaches them. Read only the last `AI_TITLE_TAIL_BYTES`
+ * (the freshest trailer reliably lands at/near EOF) — bounded regardless of
+ * file size.
  */
-export async function readLatestAiTitle(filePath: string): Promise<string | undefined> {
+export async function readLatestTailTitles(filePath: string): Promise<ClaudeTailTitles> {
+  const out: ClaudeTailTitles = {};
   let handle: fs.FileHandle | undefined;
   try {
     handle = await fs.open(filePath, "r");
     const { size } = await handle.stat();
     if (size === 0) {
-      return undefined;
+      return out;
     }
     const start = Math.max(0, size - AI_TITLE_TAIL_BYTES);
     const length = size - start;
@@ -116,7 +150,6 @@ export async function readLatestAiTitle(filePath: string): Promise<string | unde
     if (start > 0) {
       lines.shift(); // first line is likely truncated mid-record — drop it
     }
-    let title: string | undefined;
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) {
@@ -124,19 +157,16 @@ export async function readLatestAiTitle(filePath: string): Promise<string | unde
       }
       try {
         const obj = JSON.parse(trimmed);
-        if (obj && typeof obj === "object" && (obj as { type?: unknown }).type === "ai-title") {
-          const value = (obj as { aiTitle?: unknown }).aiTitle;
-          if (typeof value === "string" && value.trim()) {
-            title = value.trim(); // keep walking — the last record is the freshest
-          }
+        if (obj && typeof obj === "object") {
+          applyTailTitle(out, obj as Record<string, unknown>);
         }
       } catch {
         // skip a partial/corrupt line, keep scanning (D8)
       }
     }
-    return title;
+    return out;
   } catch {
-    return undefined; // unreadable tail → fall back to the first-prompt title
+    return out; // unreadable tail → fall back to the first-prompt title
   } finally {
     await handle?.close();
   }

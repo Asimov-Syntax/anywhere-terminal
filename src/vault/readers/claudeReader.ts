@@ -37,7 +37,7 @@ import {
   listJsonlFiles,
   resolveClaudeSessionPath,
 } from "./claudePaths";
-import { extractUserText, readLatestAiTitle, streamClaudeRecords } from "./claudeRecords";
+import { extractUserText, readLatestTailTitles, streamClaudeRecords } from "./claudeRecords";
 import {
   buildTeamThread,
   readClaudeTeamSegment,
@@ -72,6 +72,7 @@ interface ClaudeFileFields {
   gitBranch?: string;
   permissionMode?: string;
   model?: string;
+  /** The first human prompt (or a legacy summary) — the LAST resort for a title. */
   title?: string;
   /** True when at least one line parsed as JSON — otherwise the file is junk. */
   parsedAnyLine: boolean;
@@ -285,13 +286,16 @@ async function buildClaudeEntry(
   if (!fields) {
     return null;
   }
-  // Prefer Claude's own regenerated title; fall back to the first prompt.
-  const aiTitle = await readLatestAiTitle(filePath);
+  // Claude's own display precedence, so a row reads as it does in Claude: the
+  // name the user gave the session > the title Claude generated > the last
+  // prompt > the first prompt.
+  const tail = await readLatestTailTitles(filePath);
+  const title = tail.customTitle ?? tail.aiTitle ?? tail.lastPrompt ?? fields.title ?? "";
   const entry: VaultSessionEntry = {
     id: formatEntryId("claude", sessionId),
     agent: "claude",
     sessionId,
-    title: boundedPreview(aiTitle ?? fields.title ?? ""),
+    title: boundedPreview(title),
     cwd: fields.cwd ?? decodeProjectDir(path.basename(path.dirname(filePath))),
     modified: stat.mtimeMs,
     gitBranch: fields.gitBranch,
