@@ -6,8 +6,95 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".agents/skills/asimov-core/claude/hooks/knowledge-extract-session.sh",
-            "timeout": 10000
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/knowledge-extract-session.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov-debug/claude/hooks/run.sh\" pre-edit-gate.ts",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/run.sh\" build-pre-edit-gate.ts",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/run.sh\" ship-verb-guard.ts",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov-debug/claude/hooks/run.sh\" post-edit-touch.ts",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/run.sh\" build-edit-reset.ts",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/run.sh\" build-read-tick.ts",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov-debug/claude/hooks/run.sh\" stop-gate.ts",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/compact-resume.sh\"",
+            "timeout": 10
           }
         ]
       }
