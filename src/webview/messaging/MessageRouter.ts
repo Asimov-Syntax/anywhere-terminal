@@ -40,6 +40,8 @@ import type {
   TabRenamedMessage,
   ThemeChangedMessage,
   VaultContextCwdMessage,
+  VaultLaunchTargetsMessage,
+  VaultMessageRecordResponseMessage,
   VaultSessionDetailResponseMessage,
   VaultSessionsResponseMessage,
   WorkspaceRootChangedMessage,
@@ -96,6 +98,8 @@ export interface MessageHandlers {
   // Optional: a webview without a mounted vault panel safely ignores these.
   onVaultSessionsResponse?(msg: VaultSessionsResponseMessage): void;
   onVaultSessionDetailResponse?(msg: VaultSessionDetailResponseMessage): void;
+  onVaultMessageRecordResponse?(msg: VaultMessageRecordResponseMessage): void;
+  onVaultLaunchTargets?(msg: VaultLaunchTargetsMessage): void;
   onVaultContextCwd?(msg: VaultContextCwdMessage): void;
   onOpenVault?(msg: OpenVaultMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
@@ -219,6 +223,12 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "vaultSessionDetailResponse":
         handlers.onVaultSessionDetailResponse?.(msg);
+        break;
+      case "vaultMessageRecordResponse":
+        handlers.onVaultMessageRecordResponse?.(msg);
+        break;
+      case "vaultLaunchTargets":
+        handlers.onVaultLaunchTargets?.(msg);
         break;
       case "vaultContextCwd":
         handlers.onVaultContextCwd?.(msg);

@@ -37,6 +37,7 @@ import {
   truncate,
   truncateRich,
 } from "./detail";
+import { findRecordLine, type RecordLineResult } from "./recordLine";
 
 /** Bound the SQLite read so the vault list stays cheap (D2). */
 const ROW_LIMIT = 500;
@@ -839,6 +840,11 @@ export function classifyCodexRolloutEvents(
     if (!rec || typeof rec !== "object") {
       continue;
     }
+    if (rec.type === "__vault_gap__") {
+      timeline.push({ kind: "gap" });
+      lastAssistantItem = undefined;
+      continue;
+    }
     const payload = objField(rec.payload);
     if (!payload) {
       continue;
@@ -864,7 +870,13 @@ export function classifyCodexRolloutEvents(
             firstPrompt = truncate(m);
           }
           latestMessage = { role: "user", text: truncate(m), timestamp: ts };
-          timeline.push({ kind: "message", role: "user", text: truncateRich(m, MAX_MESSAGE_TEXT), timestamp: ts });
+          timeline.push({
+            kind: "message",
+            role: "user",
+            text: truncateRich(m, MAX_MESSAGE_TEXT),
+            timestamp: ts,
+            ...msgRefOf(rec),
+          });
         }
       } else if (ptype === "agent_message") {
         const m = asString(payload.message);
@@ -877,6 +889,7 @@ export function classifyCodexRolloutEvents(
             text: normalizeRich(m),
             timestamp: ts,
             ...(currentModel ? { model: currentModel } : {}),
+            ...msgRefOf(rec),
           };
           timeline.push(item);
           lastAssistantItem = item;
@@ -988,6 +1001,29 @@ export function classifyCodexRolloutEvents(
  * head + tail window so a large rollout never fully materializes (W1). Returns
  * `truncated` when the middle was dropped.
  */
+/**
+ * Codex records carry no id, so the locator is the record's physical line in the
+ * rollout — stamped here, while streaming, because the head+tail window drops the
+ * middle and positions would otherwise be unrecoverable downstream (D4).
+ * Non-enumerable so it never rides along into a raw record copy.
+ */
+const LINE_ORDINAL = "__lineOrdinal";
+
+function stampLineOrdinal(rec: Record<string, unknown>, lineNo: number): void {
+  Object.defineProperty(rec, LINE_ORDINAL, { value: lineNo, enumerable: false });
+}
+
+export function lineOrdinalOf(rec: Record<string, unknown>): number | undefined {
+  const n = (rec as { __lineOrdinal?: unknown }).__lineOrdinal;
+  return typeof n === "number" ? n : undefined;
+}
+
+/** `#<line>` locator, or nothing when the record did not come from a streamed file. */
+function msgRefOf(rec: Record<string, unknown>): { msgRef?: string } {
+  const n = lineOrdinalOf(rec);
+  return n === undefined ? {} : { msgRef: `#${n}` };
+}
+
 async function streamCodexRecords(
   filePath: string,
 ): Promise<{ records: Record<string, unknown>[]; truncated: boolean } | null> {
@@ -997,7 +1033,9 @@ async function streamCodexRecords(
   try {
     stream = createReadStream(filePath, { encoding: "utf8" });
     rl = readline.createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+    let lineNo = 0;
     for await (const line of rl) {
+      lineNo++;
       const trimmed = line.trim();
       if (!trimmed) {
         continue;
@@ -1005,6 +1043,7 @@ async function streamCodexRecords(
       try {
         const parsed = JSON.parse(trimmed);
         if (parsed && typeof parsed === "object") {
+          stampLineOrdinal(parsed as Record<string, unknown>, lineNo);
           buffer.push(parsed as Record<string, unknown>);
         }
       } catch {
@@ -1210,6 +1249,57 @@ function codexChildTimelineItem(
  * be located (full detail); otherwise return a labeled partial detail from the
  * `threads` index. Returns null when the session can't be located at all.
  */
+/**
+ * The verbatim rollout line at the `#<n>` locator (D4/D5). Codex records carry no
+ * id, so the position IS the address — resolved against the same rollout the
+ * detail was read from.
+ */
+/** The two payloads the timeline emits as messages (and stamps a locator on). */
+function isCodexMessageRecord(rec: Record<string, unknown>): boolean {
+  const ptype = objField(rec.payload)?.type;
+  return rec.type === "event_msg" && (ptype === "user_message" || ptype === "agent_message");
+}
+
+export async function readCodexMessageRecord(
+  sessionId: string,
+  msgRef: string,
+  options: CodexReaderOptions = {},
+  maxBytes?: number,
+): Promise<RecordLineResult> {
+  const ordinal = /^#(\d+)$/.exec(msgRef);
+  if (!isSafeCodexId(sessionId) || !ordinal) {
+    return { ok: false, reason: "not-found" };
+  }
+  const rolloutPath = await resolveCodexRolloutPath(sessionId, options);
+  if (!rolloutPath) {
+    return { ok: false, reason: "not-found" };
+  }
+  const target = Number(ordinal[1]);
+  // The ordinal alone would address any line, so a stale or off-by-one locator
+  // would hand back a tool call as if it were the message it names.
+  return findRecordLine(rolloutPath, (rec, lineNo) => lineNo === target && isCodexMessageRecord(rec), maxBytes, {
+    lineNo: target,
+  });
+}
+
+async function resolveCodexRolloutPath(sessionId: string, options: CodexReaderOptions): Promise<string | undefined> {
+  const { dbPath, sessionsDir } = codexDirs(options);
+  const thread = await queryCodexThread(sessionId, dbPath, options.readSqliteFn ?? readSqlite);
+  return pickRolloutPath(thread, sessionId, sessionsDir);
+}
+
+/** The index's rollout_path when it is contained, else a scan by filename. */
+async function pickRolloutPath(
+  thread: { rolloutPath?: string } | null,
+  sessionId: string,
+  sessionsDir: string,
+): Promise<string | undefined> {
+  if (thread?.rolloutPath && isUnder(thread.rolloutPath, sessionsDir)) {
+    return thread.rolloutPath;
+  }
+  return (await findCodexRolloutByFilename(sessionId, sessionsDir)) ?? undefined;
+}
+
 export async function readCodexDetail(
   sessionId: string,
   options: CodexReaderOptions = {},
@@ -1224,11 +1314,7 @@ export async function readCodexDetail(
   const thread = await queryCodexThread(sessionId, dbPath, readSqliteFn);
   const childStubs = await queryCodexDirectChildStubs(sessionId, dbPath, sessionsDir, readSqliteFn);
 
-  // Prefer the index's rollout_path (containment-checked); else scan by filename.
-  let rolloutPath = thread?.rolloutPath && isUnder(thread.rolloutPath, sessionsDir) ? thread.rolloutPath : undefined;
-  if (!rolloutPath) {
-    rolloutPath = (await findCodexRolloutByFilename(sessionId, sessionsDir)) ?? undefined;
-  }
+  const rolloutPath = await pickRolloutPath(thread, sessionId, sessionsDir);
 
   if (rolloutPath) {
     const read = await streamCodexRecords(rolloutPath);

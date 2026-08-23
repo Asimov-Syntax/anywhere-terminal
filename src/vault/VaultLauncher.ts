@@ -7,7 +7,7 @@
 // the argv from LaunchBuilder). It does NOT spawn — the provider owns the
 // createSession call + the `tabCreated` post so the terminal becomes visible (D5).
 
-import { build, type LaunchMode, VaultLaunchError } from "./LaunchBuilder";
+import { build, type ContinuationTarget, type LaunchMode, VaultLaunchError } from "./LaunchBuilder";
 import type { VaultService } from "./VaultService";
 
 export interface CreateSessionOptions {
@@ -31,7 +31,12 @@ export class VaultLauncher {
     private readonly hostEnv: Record<string, string | undefined> = process.env,
   ) {}
 
-  async resolve(entryId: string, mode: LaunchMode): Promise<CreateSessionOptions> {
+  async resolve(
+    entryId: string,
+    mode: LaunchMode,
+    prompt?: string,
+    target?: ContinuationTarget,
+  ): Promise<CreateSessionOptions> {
     // Resolve the single entry by id (point/locate-by-id lookup) instead of a full
     // `list()` over every agent store — launching must not block on scanning the
     // whole session index (e.g. the multi-GB opencode db). See VaultService.getEntry.
@@ -43,7 +48,7 @@ export class VaultLauncher {
       throw new VaultLaunchError(`Fork is not supported for ${entryId}`, "fork-unsupported");
     }
 
-    const spec = build(entry, mode, this.hostEnv);
+    const spec = build(entry, mode, this.hostEnv, prompt, target);
     // Spawn the agent CLI directly as the terminal's process (PTY root). This is
     // killed cleanly on window reload; on exit, the session manager respawns a
     // shell in the same tab so the user keeps an input prompt (see

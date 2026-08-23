@@ -2,7 +2,7 @@
 // Used by both Extension Host and WebView code.
 // See: docs/design/message-protocol.md
 
-import type { VaultListResult, VaultSessionDetail } from "../vault/types";
+import type { VaultLaunchTarget, VaultListResult, VaultSessionDetail } from "../vault/types";
 
 // ─── Shared Types ───────────────────────────────────────────────────
 
@@ -405,6 +405,44 @@ export interface RequestVaultSessionDetailMessage {
   limit?: number;
 }
 
+/**
+ * Webview → Extension: resolve one timeline message back to its stored record,
+ * for the per-message Raw copy (improve-vault-transcript-messages D5). `msgRef` is
+ * the opaque locator the reader stamped on the item — never a path.
+ */
+export interface RequestVaultMessageRecordMessage {
+  type: "requestVaultMessageRecord";
+  entryId: string;
+  msgRef: string;
+}
+
+/**
+ * Webview → Extension: start a NEW session seeded with a handoff prompt, after
+ * the reader confirmed it in the continuation dialog (D9/D10). `instruction` is
+ * the reader's OWN text — the webview never sends transcript content; `anchorRef`
+ * locates the assistant reply being continued from, which the host resolves
+ * itself. The stored session is left untouched — this is not a resume.
+ */
+export interface VaultContinueSessionMessage {
+  type: "vaultContinueSession";
+  entryId: string;
+  instruction: string;
+  confirmIntent: boolean;
+  /** Agent to start; defaults to the entry's own when absent. */
+  agent?: string;
+  /** Id of the chosen permission posture, from that agent's registry choices. */
+  permissionChoiceId?: string;
+  anchorRef?: string;
+}
+
+/**
+ * Webview → Extension: which agents this host can start a continuation in, and
+ * the permission postures each exposes (D11). Asked when the dialog opens.
+ */
+export interface RequestVaultLaunchTargetsMessage {
+  type: "requestVaultLaunchTargets";
+}
+
 /** Webview → Extension: reveal the session's file in the OS file manager. */
 export interface VaultRevealInOSMessage {
   type: "vaultRevealInOS";
@@ -591,6 +629,9 @@ export type WebViewToExtensionMessage =
   | VaultResumeMessage
   | VaultForkMessage
   | RequestVaultSessionDetailMessage
+  | RequestVaultMessageRecordMessage
+  | RequestVaultLaunchTargetsMessage
+  | VaultContinueSessionMessage
   | VaultRevealInOSMessage
   | VaultOpenSessionFileMessage
   | VaultOpenWorkingDirMessage
@@ -1078,6 +1119,27 @@ export type VaultSessionDetailResponseMessage =
   | (VaultSessionDetailResponseBase & { detail: VaultSessionDetail; error?: never })
   | (VaultSessionDetailResponseBase & { error: string; detail?: never });
 
+interface VaultMessageRecordResponseBase {
+  type: "vaultMessageRecordResponse";
+  /** Echoed so the webview can match the reply to its pending copy and drop stale ones. */
+  entryId: string;
+  msgRef: string;
+}
+
+/**
+ * Extension → Webview: reply to `requestVaultMessageRecord`. Same XOR shape as the
+ * detail response — exactly one of `record` / `error` is present.
+ */
+export type VaultMessageRecordResponseMessage =
+  | (VaultMessageRecordResponseBase & { record: string; error?: never })
+  | (VaultMessageRecordResponseBase & { error: string; record?: never });
+
+/** Extension → Webview: reply to `requestVaultLaunchTargets` (D11). */
+export interface VaultLaunchTargetsMessage {
+  type: "vaultLaunchTargets";
+  targets: VaultLaunchTarget[];
+}
+
 /**
  * Extension → Webview: reply to `requestVaultContextCwd`. Echoes `sessionId` so
  * the webview can drop a reply for a pane that is no longer active (stale-guard,
@@ -1165,6 +1227,8 @@ export type ExtensionToWebViewMessage =
   | FlashPaneMessage
   | VaultSessionsResponseMessage
   | VaultSessionDetailResponseMessage
+  | VaultMessageRecordResponseMessage
+  | VaultLaunchTargetsMessage
   | VaultContextCwdMessage
   | SubagentPreviewResponseMessage
   | ClipboardImagePreviewMessage

@@ -13,6 +13,7 @@ import type {
 import { attachTooltip } from "../ui/Tooltip";
 import { formatRelativeTime, formatStats, leafSegment } from "./format";
 import { ICON_CHEVRON_DOWN, ICON_COPY } from "./icons";
+import { bindLatestSuccess } from "./latestSuccess";
 import { renderMarkdownLite } from "./markdownLite";
 
 /** Reasoning longer than this (or multi-line) collapses to a single-line gist
@@ -63,33 +64,16 @@ export function copyableValue(opts: {
   label.className = "vault-preview-copyable-text";
   label.textContent = opts.text;
   btn.append(label, glyph);
-  let flashTimer: ReturnType<typeof setTimeout> | undefined;
-  // Only the newest activation may confirm. Clearing at click time is not enough:
-  // the completion path resumes after an await, so a superseded copy could still
-  // land its tick — and a later rejection would then leave that tick standing,
-  // confirming a copy the clipboard refused (review W2).
-  let generation = 0;
-  btn.addEventListener("click", () => {
-    const activation = ++generation;
-    void (async () => {
-      clearTimeout(flashTimer);
-      btn.classList.remove("is-copied");
-      try {
-        await opts.onCopy();
-      } catch {
-        return; // clipboard refused (no user activation, unfocused document) — no tick
-      }
-      if (activation !== generation) {
-        return; // superseded while in flight; the newer activation owns the tick
-      }
-      btn.classList.add("is-copied");
-      flashTimer = setTimeout(() => btn.classList.remove("is-copied"), COPIED_FLASH_MS);
-    })();
-  });
-  return { element: btn, dispose: attachTooltip(btn, { text: opts.tooltip }) };
+  const disposeCopy = bindLatestSuccess(btn, opts.onCopy);
+  const disposeTooltip = attachTooltip(btn, { text: opts.tooltip });
+  return {
+    element: btn,
+    dispose: () => {
+      disposeCopy();
+      disposeTooltip();
+    },
+  };
 }
-
-const COPIED_FLASH_MS = 1200;
 
 /** A meta row's plain-text value. Wrapped rather than appended as a bare text
  *  node so the row's one-line ellipsis can apply to it — a text node in a flex
@@ -192,6 +176,37 @@ function roleDot(): HTMLElement {
  * `renderMarkdownLite` never uses innerHTML — so the textContent-only safety rule
  * holds either way.
  */
+/**
+ * Which timeline item a rendered message came from, for the shared action bar
+ * (D6). A WeakMap rather than a dataset index: re-rendering a run replaces
+ * elements, and a stale index would silently copy the wrong message.
+ */
+export type VaultActionSource = Extract<VaultTimelineItem, { kind: "message" | "notice" | "compaction" }>;
+
+const actionSources = new WeakMap<HTMLElement, VaultActionSource>();
+
+export function bindActionSource(el: HTMLElement, item: VaultActionSource): void {
+  actionSources.set(el, item);
+  // A bound item carries actions, so it has to be reachable by Tab — the hover
+  // bar is otherwise mouse-only. A collapsible item already has a focusable head.
+  if (!el.querySelector("button, input, select, textarea, [tabindex]")) {
+    el.tabIndex = 0;
+  }
+}
+
+export function bindMessageSource(el: HTMLElement, item: Extract<VaultTimelineItem, { kind: "message" }>): void {
+  bindActionSource(el, item);
+}
+
+export function actionSourceOf(el: HTMLElement): VaultActionSource | undefined {
+  return actionSources.get(el);
+}
+
+export function messageSourceOf(el: HTMLElement): Extract<VaultTimelineItem, { kind: "message" }> | undefined {
+  const source = actionSourceOf(el);
+  return source?.kind === "message" ? source : undefined;
+}
+
 export function previewMessage(
   kind: string,
   roleLabel: string,
@@ -283,49 +298,121 @@ function thinkingGist(text: string): string {
  * (R5: `-webkit-line-clamp` can collapse block-child containers to height 0).
  */
 export function thinkingBlock(text: string): HTMLElement {
-  const collapsible = text.trim().length > THINKING_INLINE_MAX || text.includes("\n");
-  if (!collapsible) {
+  if (text.trim().length <= THINKING_INLINE_MAX && !text.includes("\n")) {
     return previewMessage("thinking", "Thinking", text, true);
   }
+  return collapsibleMessage({
+    kind: "thinking",
+    label: "Thinking",
+    gist: thinkingGist(text),
+    body: text,
+    legacyClass: "vault-preview-thinking",
+    expandTitle: "Show the full reasoning",
+    collapseTitle: "Collapse the reasoning",
+  });
+}
 
+/**
+ * One collapsed line — role chip + single-line gist + chevron — expanding to a
+ * markdown body on click. Shared by reasoning, background-task notices and
+ * compaction summaries: all three are bulk the reader wants folded away until
+ * asked for. `legacyClass` keeps a kind's original per-element class alongside
+ * the shared one so existing selectors still resolve.
+ */
+export function collapsibleMessage(spec: {
+  kind: string;
+  label: string;
+  gist: string;
+  body: string;
+  legacyClass?: string;
+  expandTitle: string;
+  collapseTitle: string;
+}): HTMLElement {
   const wrap = document.createElement("div");
-  wrap.className = "vault-preview-message vault-preview-message-thinking is-collapsible";
+  wrap.className = `vault-preview-message vault-preview-message-${spec.kind} is-collapsible`;
+  const cls = (name: string) => {
+    const shared = `vault-preview-collapsible-${name}`;
+    return spec.legacyClass ? `${shared} ${spec.legacyClass}-${name}` : shared;
+  };
 
-  // The head IS the toggle: role chip + one-line gist + chevron, all on one row.
   const head = document.createElement("button");
   head.type = "button";
-  head.className = "vault-preview-thinking-head";
-  head.title = "Show the full reasoning";
+  head.className = cls("head");
+  head.title = spec.expandTitle;
   head.setAttribute("aria-expanded", "false");
 
   const role = document.createElement("span");
   role.className = "vault-preview-message-role";
   const label = document.createElement("span");
-  label.textContent = "Thinking";
+  label.textContent = spec.label;
   role.append(roleDot(), label);
 
   const gist = document.createElement("span");
-  gist.className = "vault-preview-thinking-gist";
-  gist.textContent = thinkingGist(text);
+  gist.className = cls("gist");
+  gist.textContent = spec.gist;
 
   const chevron = document.createElement("span");
-  chevron.className = "vault-preview-thinking-chevron";
+  chevron.className = cls("chevron");
   chevron.innerHTML = ICON_CHEVRON_DOWN;
   chevron.setAttribute("aria-hidden", "true");
   head.append(role, gist, chevron);
 
   const body = document.createElement("div");
-  body.className = "vault-md vault-preview-thinking-body";
-  body.appendChild(renderMarkdownLite(text));
+  body.className = `vault-md ${cls("body")}`;
+  body.appendChild(renderMarkdownLite(spec.body));
 
   head.addEventListener("click", () => {
     const expanded = wrap.classList.toggle("is-expanded");
     head.setAttribute("aria-expanded", expanded ? "true" : "false");
-    head.title = expanded ? "Collapse the reasoning" : "Show the full reasoning";
+    head.title = expanded ? spec.collapseTitle : spec.expandTitle;
   });
 
   wrap.append(head, body);
   return wrap;
+}
+
+/**
+ * A background-task notification: the summary is the whole story at a glance, so
+ * it is the gist; the result body — which can be a full agent report — stays
+ * folded. No body → a plain line with no expander.
+ */
+export function noticeBlock(item: Extract<VaultTimelineItem, { kind: "notice" }>): HTMLElement {
+  const label = item.status ? `Background task · ${item.status}` : "Background task";
+  if (!item.body) {
+    return previewMessage("notice", label, item.summary);
+  }
+  return collapsibleMessage({
+    kind: "notice",
+    label,
+    gist: item.summary,
+    body: `${item.summary}\n\n${item.body}`,
+    expandTitle: "Show the task output",
+    collapseTitle: "Hide the task output",
+  });
+}
+
+/** A context-compaction summary — tens of KB the human never typed, so it reads
+ *  as one line until expanded. */
+export function compactionBlock(item: Extract<VaultTimelineItem, { kind: "compaction" }>): HTMLElement {
+  const text = item.text.trim();
+  if (text.length <= THINKING_INLINE_MAX && !text.includes("\n")) {
+    return previewMessage("compaction", "Context compacted", text);
+  }
+  return collapsibleMessage({
+    kind: "compaction",
+    label: "Context compacted",
+    gist: thinkingGist(text),
+    body: text,
+    expandTitle: "Show the compaction summary",
+    collapseTitle: "Hide the compaction summary",
+  });
+}
+
+export function timelineGap(): HTMLElement {
+  const gap = document.createElement("div");
+  gap.className = "vault-preview-gap";
+  gap.textContent = "Earlier transcript omitted";
+  return gap;
 }
 
 /**

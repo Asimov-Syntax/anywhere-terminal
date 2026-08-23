@@ -101,6 +101,22 @@ export interface CommandTemplate {
   args: Array<string | FlagFragment>;
 }
 
+/**
+ * One selectable permission posture for a continuation (D11). Permission is
+ * agent-shaped — Claude has one axis, Codex two, OpenCode none — so a choice
+ * carries the argv it contributes rather than a shared enum.
+ */
+export interface AgentPermissionChoice {
+  /** Stable id, matched against the entry's captured posture to preselect one. */
+  id: string;
+  label: string;
+  /** True when the choice bypasses the agent's permission checks — shown as such,
+   *  never inherited silently. */
+  dangerous?: boolean;
+  /** Argv tokens this choice contributes, ahead of the prompt. */
+  args: string[];
+}
+
 export interface AgentVaultDefinition {
   id: VaultAgentId;
   displayName: string;
@@ -111,12 +127,25 @@ export interface AgentVaultDefinition {
   /** Tokens: `{{sessionId}}` `{{sessionPath}}` `{{executable}}`. */
   resumeCommand: CommandTemplate;
   forkCommand?: CommandTemplate;
+  /** Starts a NEW session seeded with `{{prompt}}` (Continue in New Session).
+   *  Absent → the action is unavailable for that agent. */
+  continueCommand?: CommandTemplate;
   /** Minimum agent `--version` for fork support (e.g. opencode "1.1.54"). */
   forkMinVersion?: string;
   /** MVP: always launch in the session's recorded cwd. */
   cwdPolicy: "preserve";
   /** Env var names propagated to the spawned process (claude auth/config). */
   authEnvAllowlist?: string[];
+  /** Permission postures offerable when continuing into this agent (D11).
+   *  Absent → the agent exposes none and no control is shown. */
+  permissionChoices?: AgentPermissionChoice[];
+}
+
+/** One agent the reader may continue into, as the host reports it (D11). */
+export interface VaultLaunchTarget {
+  agent: VaultAgentId;
+  displayName: string;
+  permissionChoices: AgentPermissionChoice[];
 }
 
 export interface VaultSessionEntry {
@@ -201,8 +230,26 @@ export type VaultTimelineItem =
       model?: string;
       /** Per-message token usage; present only when recorded (enhance-vault-sessions D3/D6). */
       tokens?: VaultMessageTokens;
+      /** Opaque reader-owned locator for the source record; absent when the reader cannot address one. */
+      msgRef?: string;
     }
   | { kind: "thinking"; text: string; timestamp?: number }
+  /**
+   * A background-task notification the agent injected as a user-role record
+   * (Claude's `<task-notification>` envelope). `summary` is the one line the
+   * collapsed item shows, `body` the optional result the reader can expand —
+   * both bounded. Not a conversation turn: it never becomes `latestMessage`
+   * and never counts toward `messageCount` (improve-vault-transcript-messages D1).
+   */
+  | { kind: "notice"; summary: string; status?: string; body?: string; timestamp?: number; msgRef?: string }
+  /**
+   * A context-compaction summary the agent wrote into the user role
+   * (`isCompactSummary`). Bounded and rendered collapsed — left as a plain user
+   * message it dominates the transcript with tens of KB the human never typed.
+   */
+  | { kind: "compaction"; text: string; timestamp?: number; msgRef?: string }
+  /** A discontinuity where a bounded reader omitted source records. */
+  | { kind: "gap" }
   /**
    * An AskUserQuestion turn — a user decision point. Each pair is a question the
    * agent asked plus the option label(s) the user picked; `answer` is absent while

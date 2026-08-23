@@ -8,7 +8,18 @@ import type { VaultSessionDetail, VaultTimelineItem } from "../../vault/types";
 import { formatRelativeTime } from "./format";
 import { ICON_CHEVRON_DOWN } from "./icons";
 import { teammateAccent } from "./previewColors";
-import { activityStep, buildMessageMeta, previewMessage, questionBlock, thinkingBlock } from "./renderAtoms";
+import {
+  activityStep,
+  bindActionSource,
+  bindMessageSource,
+  buildMessageMeta,
+  compactionBlock,
+  noticeBlock,
+  previewMessage,
+  questionBlock,
+  thinkingBlock,
+  timelineGap,
+} from "./renderAtoms";
 import { renderWorkflowBoard } from "./workflowBoard";
 
 /** A prominent node that breaks the surrounding AI-output run and renders directly
@@ -20,7 +31,10 @@ function breaksRun(item: VaultTimelineItem): boolean {
     item.kind === "teammateTurn" ||
     item.kind === "teammateMessage" ||
     item.kind === "workflowBoard" ||
-    item.kind === "question"
+    item.kind === "question" ||
+    item.kind === "notice" ||
+    item.kind === "compaction" ||
+    item.kind === "gap"
   );
 }
 
@@ -122,7 +136,9 @@ function renderTimelineItem(item: VaultTimelineItem, bag: PreviewTimelineBag): H
     const suffix = item.timestamp ? ` · ${formatRelativeTime(item.timestamp)}` : "";
     // Model/tokens ride on assistant messages only (D3); user messages carry neither.
     const meta = item.role === "assistant" ? buildMessageMeta(item.model, item.tokens) : null;
-    return previewMessage(item.role, `${label}${suffix}`, item.text, true, meta);
+    const el = previewMessage(item.role, `${label}${suffix}`, item.text, true, meta);
+    bindMessageSource(el, item); // the shared action bar resolves the element back to this item (D6)
+    return el;
   }
   if (item.kind === "thinking") {
     return thinkingBlock(item.text);
@@ -141,6 +157,19 @@ function renderTimelineItem(item: VaultTimelineItem, bag: PreviewTimelineBag): H
   }
   if (item.kind === "workflowBoard") {
     return renderWorkflowBoard(item, bag);
+  }
+  if (item.kind === "notice") {
+    const el = noticeBlock(item);
+    bindActionSource(el, item);
+    return el;
+  }
+  if (item.kind === "compaction") {
+    const el = compactionBlock(item);
+    bindActionSource(el, item);
+    return el;
+  }
+  if (item.kind === "gap") {
+    return timelineGap();
   }
   return activityStep(item);
 }

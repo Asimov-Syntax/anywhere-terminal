@@ -8,12 +8,20 @@
 // Security: every host message carries `entryId` only (D9); untrusted strings go
 // through textContent; the only innerHTML lives in the closed-map icon builders.
 
-import type { VaultSessionDetailResponseMessage } from "../../types/messages";
-import type { VaultSessionDetail, VaultSessionEntry, VaultTimelineItem } from "../../vault/types";
+import type {
+  VaultLaunchTargetsMessage,
+  VaultMessageRecordResponseMessage,
+  VaultSessionDetailResponseMessage,
+} from "../../types/messages";
+import { extractMessageText } from "../../vault/messageText";
+import type { VaultLaunchTarget, VaultSessionDetail, VaultSessionEntry, VaultTimelineItem } from "../../vault/types";
 import type { VaultPreviewGeometry } from "../state/WebviewState";
 import { getAgentAccent, getAgentIcon, VAULT_ACCENTS } from "./agentIcons";
+import { type ContinueDialogResult, openContinueDialog } from "./ContinueDialog";
 import { FloatingPreviewShell } from "./FloatingPreviewShell";
+import type { ForkPoint } from "./forkPoint";
 import { agentLabel } from "./format";
+import { mountMessageActions } from "./messageActions";
 import { buildPreviewHeader as buildPreviewHeaderDom } from "./previewHeader";
 import { type BoardSelection, type PreviewTimelineBag, renderNestedInto, renderTimelineInto } from "./previewTimeline";
 import { buildPreviewMeta, loadingBody, type MetaCopyTarget } from "./renderAtoms";
@@ -69,6 +77,17 @@ export class PreviewController {
    *  API specifies no cross-call ordering, so concurrent writes could otherwise
    *  land in completion order rather than activation order (review B2). */
   private clipboardChain: Promise<void> = Promise.resolve();
+  /** Detaches the shared per-message action bar from the previously rendered body. */
+  private disposeMessageActions: (() => void) | undefined;
+  /** Closes the open continuation dialog, if one is up. */
+  private disposeContinueDialog: (() => void) | undefined;
+  /** Resolvers for launch-target queries awaiting the host's reply (D11). */
+  private pendingTargets: ((targets: VaultLaunchTarget[]) => void)[] = [];
+  /** Raw copies awaiting a host reply, keyed `<entryId> <msgRef>`. */
+  private readonly pendingRecords = new Map<
+    string,
+    { promise: Promise<string>; resolve: (v: string) => void; reject: (e: Error) => void }
+  >();
   /** The detail currently shown — kept so "show more" can re-render in place. */
   private activePreviewDetail: VaultSessionDetail | null = null;
   /** Keys (`<prefix>#<runIndex>`) of AI-runs expanded past the per-run cap. */
@@ -117,7 +136,9 @@ export class PreviewController {
       onScrollTop: () => this.scrollPreviewToTop(),
       onRequestClose: () => this.closePreview(),
       shouldCloseOnEscape: () => !deps.isContextMenuOpen(),
-      outsideCloseExclude: [".vault-row"],
+      // The continuation dialog mounts on <body>, outside the card — without this
+      // every click inside it reads as a click outside the preview and closes both.
+      outsideCloseExclude: [".vault-row", ".vault-continue"],
       onKeyDown: (e) => this.handleKeyDown(e),
     });
     this.timelineBag = {
@@ -230,11 +251,17 @@ export class PreviewController {
     }
   }
 
+  private disposeCurrentMessageActions(): void {
+    this.disposeMessageActions?.();
+    this.disposeMessageActions = undefined;
+  }
+
   private closePreview(): void {
     // Shell teardown: cancel any in-flight drag, clear content, reset the scroll
     // nav, dispose header tooltips, detach the document close-listeners. Geometry +
     // maximized survive in FloatingWindow so the next open restores them (#1).
     this.endTitleEdit(); // before hide(): the editor must not outlive the card (B1)
+    this.disposeCurrentMessageActions();
     this.shell.hide();
     this.activePreviewEntryId = null;
     this.activePreviewEntry = null;
@@ -248,6 +275,15 @@ export class PreviewController {
     this.previewScrollToTopLastCount = 0;
     this.followTailFingerprint = null;
     this.followPillCount = 0;
+    this.disposeContinueDialog?.();
+    this.disposeContinueDialog = undefined;
+    this.pendingTargets = [];
+    // No response will ever arrive for these now — settle them so the Raw
+    // buttons awaiting them unfreeze instead of hanging on a dead preview.
+    for (const pending of this.pendingRecords.values()) {
+      pending.reject(new Error("Preview closed"));
+    }
+    this.pendingRecords.clear();
     // Release the host's live-follow watcher (at most one active, D5).
     this.deps.postMessage({ type: "vaultWatchSession", entryId: null });
     this.deps.syncHighlight(); // clears aria-selected (activeEntryId is now null)
@@ -270,6 +306,108 @@ export class PreviewController {
    * active preview (stale-render guard). Renders the detail, a partial notice, or
    * an inline error; a nested reply routes to its expanded block independently.
    */
+  /**
+   * Settle the Raw copy waiting on this record (D5). Keyed by entry + locator so a
+   * reply for a message the user has since navigated away from resolves nothing.
+   */
+  handleMessageRecordResponse(msg: VaultMessageRecordResponseMessage): void {
+    const key = `${msg.entryId} ${msg.msgRef}`;
+    const pending = this.pendingRecords.get(key);
+    if (!pending) {
+      return;
+    }
+    this.pendingRecords.delete(key);
+    if (msg.record !== undefined) {
+      pending.resolve(msg.record);
+    } else {
+      pending.reject(new Error(msg.error ?? "Message record unavailable."));
+    }
+  }
+
+  /** Hand the message to the host and get out of the way — the new session opens
+   *  as a tab, and leaving the overlay up would cover it. */
+  /** Open the confirm dialog (D10). Nothing spawns until the reader starts it —
+   *  a continuation can run without permission checks, so one click is not enough. */
+  private continueFromMessage(entryId: string, fork: ForkPoint): void {
+    const entry = this.activePreviewEntry;
+    if (!entry || entry.id !== entryId) {
+      return;
+    }
+    this.disposeContinueDialog?.();
+    this.disposeContinueDialog = openContinueDialog(document.body, {
+      sourceLabel: `${entry.customName || entry.title} · ${agentLabel(entry.agent)}`,
+      cwd: entry.cwd,
+      agent: entry.agent,
+      ...(this.capturedPermissionOf(entry) ? { capturedPermission: this.capturedPermissionOf(entry) } : {}),
+      fork,
+      loadTargets: () => this.requestLaunchTargets(),
+      ...(fork.seedRef ? { loadInstruction: () => this.instructionTextOf(entryId, fork.seedRef as string) } : {}),
+      onConfirm: (result) => this.startContinuation(entryId, result),
+    });
+  }
+
+  /** The posture the stored session was running under, on whichever axis its
+   *  agent's choices are keyed (D11): Claude's permission mode, Codex's sandbox. */
+  private capturedPermissionOf(entry: VaultSessionEntry): string | undefined {
+    return entry.flags.permissionMode ?? entry.flags.sandbox;
+  }
+
+  /** The seed turn's untruncated text; the dialog falls back to the timeline's
+   *  capped text when this rejects. */
+  private async instructionTextOf(entryId: string, msgRef: string): Promise<string> {
+    const record = await this.requestMessageRecord(entryId, msgRef);
+    const parsed: unknown = JSON.parse(record);
+    return typeof parsed === "object" && parsed !== null
+      ? (extractMessageText(entryId.split(":")[0], record) ?? "")
+      : "";
+  }
+
+  private requestLaunchTargets(): Promise<VaultLaunchTarget[]> {
+    return new Promise((resolve) => {
+      this.pendingTargets.push(resolve);
+      this.deps.postMessage({ type: "requestVaultLaunchTargets" });
+    });
+  }
+
+  handleLaunchTargets(msg: VaultLaunchTargetsMessage): void {
+    const waiting = this.pendingTargets;
+    this.pendingTargets = [];
+    for (const resolve of waiting) {
+      resolve(msg.targets);
+    }
+  }
+
+  private startContinuation(entryId: string, result: ContinueDialogResult): void {
+    this.deps.postMessage({
+      type: "vaultContinueSession",
+      entryId,
+      instruction: result.instruction,
+      confirmIntent: result.confirmIntent,
+      agent: result.agent,
+      ...(result.permissionChoiceId ? { permissionChoiceId: result.permissionChoiceId } : {}),
+      ...(result.anchorRef ? { anchorRef: result.anchorRef } : {}),
+    });
+    this.closePreview();
+  }
+
+  /** Ask the host for one message's stored record; rejects if none comes back. */
+  private requestMessageRecord(entryId: string, msgRef: string): Promise<string> {
+    const key = `${entryId} ${msgRef}`;
+    const existing = this.pendingRecords.get(key);
+    if (existing) {
+      return existing.promise;
+    }
+    let resolve!: (value: string) => void;
+    let reject!: (err: Error) => void;
+    const promise = new Promise<string>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    this.pendingRecords.set(key, { promise, resolve, reject });
+    this.deps.postMessage({ type: "requestVaultMessageRecord", entryId, msgRef });
+    return promise;
+  }
+
   handleSessionDetailResponse(msg: VaultSessionDetailResponseMessage): void {
     const nestedContainers = this.pendingNested.get(msg.entryId);
     if (nestedContainers) {
@@ -560,16 +698,23 @@ export class PreviewController {
     // Queued behind earlier activations so the clipboard holds the LAST value
     // activated, not whichever write finished last (B2). Kept rejection-safe: one
     // refused write must not wedge every copy after it.
+    return this.copyText(value);
+  }
+
+  /** Queue one clipboard write behind the earlier ones (B2), rejection-safe. */
+  private copyText(value: string): Promise<void> {
     const write = this.clipboardChain.then(() => navigator.clipboard.writeText(value));
     this.clipboardChain = write.catch(() => {});
     return write;
   }
 
   private renderPreviewLoading(entry: VaultSessionEntry): void {
+    this.disposeCurrentMessageActions();
     this.shell.render(this.buildPreviewHeader(entry), loadingBody());
   }
 
   private renderPreviewError(entry: VaultSessionEntry, message: string): void {
+    this.disposeCurrentMessageActions();
     const body = document.createElement("div");
     body.className = "vault-preview-error";
     body.textContent = message;
@@ -603,6 +748,16 @@ export class PreviewController {
     // Full chronological transcript, run-grouped + capped. The same renderer is
     // reused for nested transcripts so capping + pinned conclusions match (D14).
     renderTimelineInto(body, detail.timeline ?? [], "root", this.timelineBag);
+
+    // One action bar for the whole transcript, revealed by delegation (D6). The
+    // body is rebuilt on every render, so the previous mount is dropped with it.
+    this.disposeCurrentMessageActions();
+    this.disposeMessageActions = mountMessageActions(body, {
+      copy: (text) => this.copyText(text),
+      copyRaw: (msgRef) => this.requestMessageRecord(entry.id, msgRef),
+      timeline: () => this.activePreviewDetail?.timeline ?? [],
+      continueFrom: (fork) => this.continueFromMessage(entry.id, fork),
+    });
 
     // Scroll to the top → load older messages (incremental, while more remain).
     // Scroll back to the bottom → the reader is caught up: dismiss the follow pill.

@@ -7,7 +7,9 @@
 // small per-agent reader (src/vault/readers/) because path layout + schema
 // differ per agent.
 
-import { type AgentVaultDefinition, VAULT_AGENT_IDS, type VaultAgentId } from "./types";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { type AgentVaultDefinition, VAULT_AGENT_IDS, type VaultAgentId, type VaultLaunchTarget } from "./types";
 
 // Re-exported for back-compat: the SINGLE source now lives in types.ts (so the
 // webview can share it without importing the host's launch data). See types.ts.
@@ -54,8 +56,30 @@ const claude: AgentVaultDefinition = {
     executable: "claude",
     args: ["--resume", "{{sessionId}}", "--fork-session"],
   },
+  // claude [--model <m>] [--permission-mode <p>] "<prompt>" — a NEW session seeded
+  // with the handoff prompt. Claude 2.x has no composer-prefill flag, so the
+  // positional prompt submits on launch, and it goes LAST so the flags parse.
+  // The run settings mirror resume: continuing must not silently drop the reader
+  // into a stricter session than the one they are continuing from.
+  continueCommand: {
+    executable: "claude",
+    args: [{ flag: "--model", from: "model" }, "{{prompt}}"],
+  },
   cwdPolicy: "preserve",
   authEnvAllowlist: [...CLAUDE_AUTH_ENV_ALLOWLIST],
+  // Ids ARE claude's own `--permission-mode` values, so a captured posture
+  // selects its choice by equality with no mapping table (D11).
+  permissionChoices: [
+    { id: "default", label: "Ask for permission", args: ["--permission-mode", "default"] },
+    { id: "plan", label: "Plan only", args: ["--permission-mode", "plan"] },
+    { id: "acceptEdits", label: "Accept edits", args: ["--permission-mode", "acceptEdits"] },
+    {
+      id: "bypassPermissions",
+      label: "Bypass permission checks",
+      dangerous: true,
+      args: ["--permission-mode", "bypassPermissions"],
+    },
+  ],
 };
 
 const codex: AgentVaultDefinition = {
@@ -84,7 +108,28 @@ const codex: AgentVaultDefinition = {
     executable: "codex",
     args: ["fork", "{{sessionId}}"],
   },
+  // codex [-m <m>] [-a <approval>] [-s <sandbox>] [-c …] "<prompt>"
+  continueCommand: {
+    executable: "codex",
+    args: [
+      { flag: "-m", from: "model" },
+      { flag: "-c", from: "reasoningEffort", valueTemplate: "model_reasoning_effort={{value}}" },
+      "{{prompt}}",
+    ],
+  },
   cwdPolicy: "preserve",
+  // Codex splits permission over approval AND sandbox, so a choice carries both
+  // and is identified by its sandbox value — the axis the entry captures (D11).
+  permissionChoices: [
+    { id: "read-only", label: "Read only", args: ["-a", "untrusted", "-s", "read-only"] },
+    { id: "workspace-write", label: "Write in the workspace", args: ["-a", "on-request", "-s", "workspace-write"] },
+    {
+      id: "danger-full-access",
+      label: "Full access, no approvals",
+      dangerous: true,
+      args: ["--dangerously-bypass-approvals-and-sandbox"],
+    },
+  ],
 };
 
 const opencode: AgentVaultDefinition = {
@@ -107,6 +152,11 @@ const opencode: AgentVaultDefinition = {
     args: ["--session", "{{sessionId}}", "--fork"],
   },
   forkMinVersion: "1.1.54",
+  // opencode [-m <model>] [--agent <agent>] --prompt "<prompt>"
+  continueCommand: {
+    executable: "opencode",
+    args: [{ flag: "-m", from: "model" }, { flag: "--agent", from: "agent" }, "--prompt", "{{prompt}}"],
+  },
   cwdPolicy: "preserve",
 };
 
@@ -129,6 +179,48 @@ export function getAgentDefinition(id: string): AgentVaultDefinition | undefined
  * pick the correct image-paste PTY trigger per running CLI. Returns undefined for
  * plain shells and unknown commands.
  */
+const execFileAsync = promisify(execFile);
+
+/** How long an agent gets to answer `--version` before it counts as absent. */
+const DETECT_TIMEOUT_MS = 2000;
+
+export interface AgentDetectDeps {
+  exec(file: string, args: string[], options: { timeout: number }): Promise<{ stdout: string; stderr: string }>;
+}
+
+const defaultDetectDeps: AgentDetectDeps = {
+  exec: (file, args, options) =>
+    execFileAsync(file, args, { timeout: options.timeout }).then(({ stdout, stderr }) => ({
+      stdout: stdout.toString(),
+      stderr: stderr.toString(),
+    })),
+};
+
+/**
+ * The agents a continuation can start, in registry order: those that can be
+ * seeded with a prompt at all AND whose executable answers on this host. Probed
+ * rather than assumed — the dialog offering an agent that is not installed would
+ * fail at spawn, after the reader committed (D11).
+ */
+export async function detectContinuationTargets(
+  deps: AgentDetectDeps = defaultDetectDeps,
+): Promise<VaultLaunchTarget[]> {
+  const candidates = AGENT_DEFINITIONS.filter((d) => d.continueCommand);
+  const present = await Promise.all(
+    candidates.map(async (d) => {
+      try {
+        await deps.exec(d.detect.executable, ["--version"], { timeout: DETECT_TIMEOUT_MS });
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+  );
+  return candidates
+    .filter((_, i) => present[i])
+    .map((d) => ({ agent: d.id, displayName: d.displayName, permissionChoices: d.permissionChoices ?? [] }));
+}
+
 export function agentKindForExecutable(executable: string | undefined): VaultAgentId | undefined {
   if (!executable) {
     return undefined;

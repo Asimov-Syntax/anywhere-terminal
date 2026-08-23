@@ -9,6 +9,7 @@
 // preview reflects the main conversation.
 
 import type { VaultActivityStep, VaultMessageTokens, VaultSessionDetail, VaultTimelineItem } from "../types";
+import { classifyUserRecord } from "./userRecord";
 
 /** ~600-char cap per text field (D5). */
 export const MAX_DETAIL_TEXT = 600;
@@ -94,7 +95,7 @@ export function createBoundedRecordBuffer(headMax = DETAIL_HEAD_RECORDS, tailMax
       for (let i = 0; i < ringCount; i++) {
         tail.push(ring[(ringStart + i) % tailMax]);
       }
-      return { records: [...head, ...tail], truncated: true };
+      return { records: [...head, GAP_RECORD, ...tail], truncated: true };
     },
   };
 }
@@ -112,6 +113,7 @@ export function boundTimeline(
 }
 
 type Rec = Record<string, unknown>;
+const GAP_RECORD: Rec = Object.freeze({ type: "__vault_gap__" });
 
 /**
  * A discovered sub-session (Claude `Agent`/`Task` spawn) the classifier can fold
@@ -302,6 +304,41 @@ export function toolLabel(name: string, input: unknown): string | undefined {
 const COMMAND_NAME_RE = /<command-name>([\s\S]*?)<\/command-name>/;
 const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
 
+const REMINDER_OPEN = "<system-reminder>";
+const REMINDER_CLOSE = "</system-reminder>";
+
+/**
+ * Remove every `<system-reminder>…</system-reminder>` block from a message.
+ * Claude appends these INSIDE an otherwise-human message, so an anchored
+ * `startsWith` never sees them and the reader rendered the whole envelope as
+ * the user's prompt. An unclosed block is left intact — a truncated tag is more
+ * likely a human quoting the tag than a real injection, and eating the rest of
+ * the message would be the worse failure. indexOf only: no regex over untrusted text.
+ */
+export function stripSystemReminders(text: string): string {
+  if (!text.includes(REMINDER_OPEN)) {
+    return text;
+  }
+  let out = "";
+  let from = 0;
+  for (;;) {
+    const open = text.indexOf(REMINDER_OPEN, from);
+    if (open < 0) {
+      break;
+    }
+    const close = text.indexOf(REMINDER_CLOSE, open + REMINDER_OPEN.length);
+    if (close < 0) {
+      break; // unclosed — keep the remainder verbatim
+    }
+    out += text.slice(from, open);
+    from = close + REMINDER_CLOSE.length;
+    if (text[from] === "\n") {
+      from++; // a reminder on its own line must not leave a blank one behind
+    }
+  }
+  return `${out}${text.slice(from)}`.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /**
  * Strip Claude Code's local-command wrappers from a user message, returning the
  * human-typed prompt — or `undefined` when the message is pure plumbing.
@@ -319,7 +356,7 @@ const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
  * kept verbatim — an `includes` check silently dropped such prompts whole.
  */
 export function cleanPromptText(raw: string): string | undefined {
-  const t = raw.trim();
+  const t = stripSystemReminders(raw).trim();
   if (!t) {
     return undefined;
   }
@@ -355,7 +392,7 @@ export function cleanPromptText(raw: string): string | undefined {
 }
 
 /** Join `text` blocks (or a string) from a message's `content`. */
-function extractText(content: unknown): string | undefined {
+export function extractText(content: unknown): string | undefined {
   if (typeof content === "string") {
     return content.trim() || undefined;
   }
@@ -369,6 +406,15 @@ function extractText(content: unknown): string | undefined {
     return text || undefined;
   }
   return undefined;
+}
+
+/**
+ * Claude addresses a record by its own `uuid`, so that is the locator (D4).
+ * Spread into the item so a record without one carries no key at all.
+ */
+function msgRefOf(rec: Rec): { msgRef?: string } {
+  const uuid = str(rec.uuid);
+  return uuid ? { msgRef: uuid } : {};
 }
 
 function parseTimestamp(rec: Rec): number {
@@ -555,6 +601,10 @@ export function classifyClaudeStyleEvents(records: Rec[], opts: ClassifyOptions 
     if (!rec || typeof rec !== "object") {
       continue;
     }
+    if (rec.type === "__vault_gap__") {
+      timeline.push({ kind: "gap" });
+      continue;
+    }
     if (rec.isSidechain === true && !includeSidechain) {
       continue; // subagent-thread record, not the main conversation (D5)
     }
@@ -594,18 +644,38 @@ export function classifyClaudeStyleEvents(records: Rec[], opts: ClassifyOptions 
         });
         continue;
       }
-      const text = raw ? cleanPromptText(raw) : undefined;
-      if (text) {
+      // Everything else in the user role goes through the one classifier: a real
+      // prompt, plumbing to drop, a background-task notification, or a compaction
+      // summary. Only a prompt is a conversation turn — the other two get their
+      // own timeline kind and touch neither `messageCount` nor `latestMessage`.
+      const cls = classifyUserRecord(rec);
+      const ts = parseTimestamp(rec);
+      const ref = msgRefOf(rec);
+      if (cls.kind === "prompt") {
         messageCount++;
         if (firstPrompt === undefined) {
-          firstPrompt = truncate(text);
+          firstPrompt = truncate(cls.text);
         }
-        const ts = parseTimestamp(rec);
-        latestMessage = { role: "user", text: truncate(text), timestamp: ts };
-        timeline.push({ kind: "message", role: "user", text: truncateRich(text, MAX_MESSAGE_TEXT), timestamp: ts });
+        latestMessage = { role: "user", text: truncate(cls.text), timestamp: ts };
+        timeline.push({
+          kind: "message",
+          role: "user",
+          text: truncateRich(cls.text, MAX_MESSAGE_TEXT),
+          timestamp: ts,
+          ...ref,
+        });
+      } else if (cls.kind === "notice") {
+        timeline.push({
+          kind: "notice",
+          summary: truncate(cls.summary),
+          ...(cls.status ? { status: truncate(cls.status) } : {}),
+          ...(cls.body ? { body: truncateRich(cls.body, MAX_MESSAGE_TEXT) } : {}),
+          timestamp: ts,
+          ...ref,
+        });
+      } else if (cls.kind === "compaction") {
+        timeline.push({ kind: "compaction", text: truncateRich(cls.text, MAX_MESSAGE_TEXT), timestamp: ts, ...ref });
       }
-      // A pure tool_result user message has no text → not a message, not
-      // first/latest, and never an activity step (tool plumbing, D6).
       continue;
     }
 
@@ -633,6 +703,7 @@ export function classifyClaudeStyleEvents(records: Rec[], opts: ClassifyOptions 
     const msgMeta = {
       ...(msgModel ? { model: msgModel } : {}),
       ...(msgTokens ? { tokens: msgTokens } : {}),
+      ...msgRefOf(rec),
     };
     if (Array.isArray(content)) {
       // Walk the content blocks in order so thinking / text / tool calls land in

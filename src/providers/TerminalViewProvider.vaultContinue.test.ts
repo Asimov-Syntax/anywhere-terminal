@@ -1,0 +1,245 @@
+// src/providers/TerminalViewProvider.vaultContinue.test.ts — continue-from-a-message
+// routing: resolve → recover text → compose the handoff → launch a NEW session
+// (improve-vault-transcript-messages 5_3).
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { __resetAll, __setAppRoot, __setWorkspaceFolders } from "../test/__mocks__/vscode";
+
+vi.mock("../pty/processCwd", async () => (await import("../test/sessionMocks")).processCwdMock());
+vi.mock("../pty/PtyManager", async () => (await import("../test/sessionMocks")).ptyManagerMock());
+vi.mock("../pty/PtySession", async () => (await import("../test/sessionMocks")).ptySessionMock());
+vi.mock("../session/OutputBuffer", async () => (await import("../test/sessionMocks")).outputBufferMock());
+
+import type * as vscode from "vscode";
+import { SessionManager } from "../session/SessionManager";
+import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
+import type { VaultLauncher } from "../vault/VaultLauncher";
+import type { VaultService } from "../vault/VaultService";
+import { TerminalViewProvider } from "./TerminalViewProvider";
+
+beforeEach(() => {
+  __resetAll();
+  __setAppRoot("/mock/vscode/app");
+  __setWorkspaceFolders([{ uri: { fsPath: "/mock/workspace" } }]);
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const ENTRY = {
+  id: "claude:s1",
+  agent: "claude",
+  sessionId: "s1",
+  title: "t",
+  cwd: "/work/proj",
+  modified: 1,
+  flags: {},
+  canFork: false,
+  sessionPath: "/store/s1.jsonl",
+};
+
+const ASSISTANT_RECORD = JSON.stringify({
+  type: "assistant",
+  uuid: "a-1",
+  message: { role: "assistant", content: "the previous reply" },
+});
+
+const USER_RECORD = JSON.stringify({
+  type: "user",
+  uuid: "u-1",
+  message: { role: "user", content: "make the parser bounded" },
+});
+
+type FakeVault = {
+  getEntry: ReturnType<typeof vi.fn>;
+  readMessageRecord: ReturnType<typeof vi.fn>;
+};
+
+function makeVault(over: Partial<FakeVault> = {}): FakeVault {
+  return {
+    getEntry: vi.fn(async () => ENTRY),
+    readMessageRecord: vi.fn(async () => ({ ok: true, line: ASSISTANT_RECORD })),
+    ...over,
+  };
+}
+
+const okResolve = () =>
+  vi.fn(async (_entryId: string, _mode: string, _prompt?: string) => ({
+    shell: "claude",
+    shellArgs: ["seeded"],
+    cwd: "/work/proj",
+    env: {},
+    isAgentLaunch: true,
+  }));
+
+function mount(vault: FakeVault, resolve: ReturnType<typeof okResolve> | ReturnType<typeof vi.fn> = okResolve()) {
+  const sm = new SessionManager();
+  const provider = new TerminalViewProvider(
+    { fsPath: "/mock/extension" } as vscode.Uri,
+    sm,
+    "sidebar",
+    null,
+    null,
+    vault as unknown as VaultService,
+    { resolve } as unknown as VaultLauncher,
+  );
+  const messageHandlers: Array<(msg: unknown) => void> = [];
+  const postMessageSpy = vi.fn((_m: unknown) => Promise.resolve(true));
+  const webviewView = {
+    visible: true,
+    viewType: "anywhereTerminal.sidebar",
+    webview: {
+      html: "",
+      options: {},
+      cspSource: "https://mock.csp.source",
+      asWebviewUri: (uri: { fsPath: string }) => uri.fsPath,
+      onDidReceiveMessage: (h: (msg: unknown) => void) => {
+        messageHandlers.push(h);
+        return { dispose: () => {} };
+      },
+      postMessage: postMessageSpy,
+    },
+    onDidChangeVisibility: () => ({ dispose: () => {} }),
+    onDidDispose: () => ({ dispose: () => {} }),
+  } as unknown as vscode.WebviewView;
+  provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+  return {
+    send: (msg: unknown) => {
+      for (const h of messageHandlers) {
+        h(msg);
+      }
+    },
+    resolve,
+    postMessageSpy,
+    dispose: () => sm.dispose(),
+  };
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+function errors(spy: ReturnType<typeof vi.fn>): string[] {
+  return spy.mock.calls
+    .map(([m]) => m as { type?: string; message?: string })
+    .filter((m) => m.type === "error")
+    .map((m) => m.message ?? "");
+}
+
+describe("vaultContinueSession", () => {
+  // D10: the reader authors the instruction in the confirm dialog, so the host
+  // composes around it rather than reading a message record for its text.
+  const confirmed = {
+    type: "vaultContinueSession" as const,
+    entryId: "claude:s1",
+    instruction: "make the parser bounded",
+    confirmIntent: false,
+  };
+
+  it("launches a new session in continue mode, seeded from the confirmed instruction", async () => {
+    const vault = makeVault();
+    const { send, resolve, postMessageSpy, dispose } = mount(vault);
+
+    send({ ...confirmed, anchorRef: "a-1" });
+    await tick();
+
+    expect(resolve).toHaveBeenCalledTimes(1);
+    const [entryId, mode, prompt] = resolve.mock.calls[0] as unknown as [string, string, string];
+    expect(entryId).toBe("claude:s1");
+    expect(mode).toBe("continue");
+    expect(prompt).toContain("make the parser bounded");
+    expect(prompt).toContain("a-1");
+    expect(vault.readMessageRecord).toHaveBeenCalledWith("claude:s1", "a-1");
+    // A new tab, not a resume of the stored session.
+    expect(postMessageSpy.mock.calls.some(([m]) => (m as { type?: string }).type === "tabCreated")).toBe(true);
+    expect(errors(postMessageSpy)).toEqual([]);
+    dispose();
+  });
+
+  it("carries the intent block only when the reader left the check on", async () => {
+    const vault = makeVault();
+    const { send, resolve, dispose } = mount(vault);
+
+    send({ ...confirmed, confirmIntent: true });
+    await tick();
+
+    const [, , prompt] = resolve.mock.calls[0] as unknown as [string, string, string];
+    expect(prompt).toMatch(/wait for my confirmation/i);
+    dispose();
+  });
+
+  it("rejects an anchor that resolves to a user record", async () => {
+    const vault = makeVault({ readMessageRecord: vi.fn(async () => ({ ok: true, line: USER_RECORD })) });
+    const { send, resolve, postMessageSpy, dispose } = mount(vault);
+
+    send({ ...confirmed, anchorRef: "u-1" });
+    await tick();
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(errors(postMessageSpy)).toEqual(["Continuation anchor is not an assistant message."]);
+    dispose();
+  });
+
+  it("rejects an anchor the store cannot return completely", async () => {
+    const vault = makeVault({ readMessageRecord: vi.fn(async () => ({ ok: false, reason: "too-large" })) });
+    const { send, resolve, postMessageSpy, dispose } = mount(vault);
+
+    send({ ...confirmed, anchorRef: "a-1" });
+    await tick();
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(errors(postMessageSpy)).toEqual(["Continuation anchor is too large."]);
+    dispose();
+  });
+
+  it("rejects a forged instruction above the shared cap before composing a prompt", async () => {
+    const vault = makeVault();
+    const { send, resolve, postMessageSpy, dispose } = mount(vault);
+
+    send({ ...confirmed, instruction: "x".repeat(MAX_CONTINUATION_INSTRUCTION + 1) });
+    await tick();
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(errors(postMessageSpy)).toEqual([`Instruction exceeds ${MAX_CONTINUATION_INSTRUCTION} characters.`]);
+    dispose();
+  });
+
+  it("reports an empty instruction instead of launching an unseeded session", async () => {
+    const vault = makeVault();
+    const { send, resolve, postMessageSpy, dispose } = mount(vault);
+
+    send({ ...confirmed, instruction: "   " });
+    await tick();
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(errors(postMessageSpy)).toEqual(["Could not compose a handoff prompt for this session."]);
+    dispose();
+  });
+
+  it("reports an unknown entry instead of launching", async () => {
+    const vault = makeVault({ getEntry: vi.fn(async () => null) });
+    const { send, resolve, postMessageSpy, dispose } = mount(vault);
+
+    send({ ...confirmed, entryId: "claude:gone" });
+    await tick();
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(errors(postMessageSpy)).toEqual(["Session not found."]);
+    dispose();
+  });
+
+  it("surfaces a launch failure as an error notice, not a broken tab", async () => {
+    const vault = makeVault();
+    const resolve = vi.fn(async (_entryId: string, _mode: string, _prompt?: string) => {
+      throw new Error("claude has no continue command");
+    });
+    const { send, postMessageSpy, dispose } = mount(vault, resolve);
+
+    send(confirmed);
+    await tick();
+
+    expect(errors(postMessageSpy)).toEqual(["claude has no continue command"]);
+    expect(postMessageSpy.mock.calls.some(([m]) => (m as { type?: string }).type === "tabCreated")).toBe(false);
+    dispose();
+  });
+});

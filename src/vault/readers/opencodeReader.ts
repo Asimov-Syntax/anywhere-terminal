@@ -30,6 +30,7 @@ import {
   truncate,
   truncateRich,
 } from "./detail";
+import { MAX_RECORD_BYTES, type RecordLineResult } from "./recordLine";
 
 /** Bound the read so the vault list stays cheap (D2). */
 const ROW_LIMIT = 500;
@@ -498,6 +499,7 @@ export function mapOpencodeRows(
           timestamp: m.timeCreated,
           ...(msgModel ? { model: msgModel } : {}),
           ...(msgTokens ? { tokens: msgTokens } : {}),
+          msgRef: m.id, // the message row id addresses the record (D4)
         },
       });
     }
@@ -585,6 +587,72 @@ export function mapOpencodeRows(
  * `part` rows by id (no full-table scan) and maps them. Returns null when the
  * id is unsafe, the query fails, or no rows exist (session not found).
  */
+/**
+ * One message row plus its parts, as JSON — OpenCode's "record" is rows in a DB,
+ * not a transcript line, so the Raw copy is the row set serialized here (D5).
+ */
+export async function readOpenCodeMessageRecord(
+  sessionId: string,
+  msgRef: string,
+  options: OpenCodeReaderOptions = {},
+  maxBytes = MAX_RECORD_BYTES,
+): Promise<RecordLineResult> {
+  if (!isSafeOpenCodeId(sessionId) || !isSafeOpenCodeId(msgRef)) {
+    return { ok: false, reason: "not-found" };
+  }
+  const { dbPath, readSqliteFn } = resolveOpencodePaths(options);
+  // Both ids are validated to `[A-Za-z0-9_-]+` above, so they introduce no
+  // injectable characters into these static queries. Preflight JSON encoding in
+  // SQLite before payload rows cross into the extension host (review B3).
+  const messageWhere = `id = '${msgRef}' AND session_id = '${sessionId}'`;
+  const partWhere = `message_id = '${msgRef}' AND session_id = '${sessionId}'`;
+  const rowJson = "json_object('id', id, 'time_created', time_created, 'data', data)";
+  const result = await readSqliteFn(
+    dbPath,
+    `WITH message_row AS (
+      SELECT ${rowJson} AS row_json FROM message WHERE ${messageWhere} LIMIT 1
+    ), part_rows AS (
+      SELECT id, time_created, ${rowJson} AS row_json FROM part WHERE ${partWhere}
+    ), record_size AS (
+      SELECT
+        (SELECT length(CAST(row_json AS BLOB)) FROM message_row)
+        + COALESCE((SELECT SUM(length(CAST(row_json AS BLOB))) FROM part_rows), 0)
+        + COALESCE((SELECT COUNT(*) FROM part_rows), 0) + 64 AS source_bytes
+    )
+    SELECT record_size.source_bytes,
+      CASE WHEN record_size.source_bytes <= ${Math.max(0, Math.floor(maxBytes))} THEN (
+        SELECT json_object(
+          'message', json(message_row.row_json),
+          'parts', json(COALESCE((
+            SELECT json_group_array(json(row_json)) FROM (
+              SELECT row_json FROM part_rows ORDER BY time_created ASC, id ASC
+            )
+          ), '[]'))
+        ) FROM message_row
+      ) END AS record_json
+    FROM record_size
+    WHERE EXISTS (SELECT 1 FROM message_row)`,
+  );
+  const row = result.status === "ok" ? result.rows[0] : undefined;
+  if (!row) {
+    return { ok: false, reason: "not-found" };
+  }
+  if (num(row.source_bytes) > maxBytes) {
+    return { ok: false, reason: "too-large" };
+  }
+  if (typeof row.record_json !== "string") {
+    return { ok: false, reason: "not-found" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.record_json);
+  } catch {
+    return { ok: false, reason: "not-found" };
+  }
+  const line = JSON.stringify(parsed, null, 2);
+  return Buffer.byteLength(line, "utf8") > maxBytes ? { ok: false, reason: "too-large" } : { ok: true, line };
+}
+
 export async function readOpenCodeDetail(
   sessionId: string,
   options: OpenCodeReaderOptions = {},
@@ -593,11 +661,7 @@ export async function readOpenCodeDetail(
   if (!isSafeOpenCodeId(sessionId)) {
     return null;
   }
-  const home = options.home ?? os.homedir();
-  const xdgData = process.env.XDG_DATA_HOME?.trim() || path.join(home, ".local", "share");
-  const dataDir = options.dataDir ?? path.join(xdgData, "opencode");
-  const dbPath = path.join(dataDir, "opencode.db");
-  const readSqliteFn = options.readSqliteFn ?? readSqlite;
+  const { dbPath, readSqliteFn } = resolveOpencodePaths(options);
 
   // `sessionId` is validated to `[A-Za-z0-9_-]+` above, so embedding it in the
   // static query introduces no injectable characters (no quotes/semicolons).
@@ -644,13 +708,28 @@ export async function readOpenCodeDetail(
   const childStubs = childRes.status === "ok" ? buildChildStubs(childRes.rows) : [];
   // No window overlap ⇒ the middle of a long transcript was dropped — flag it so
   // the preview shows the truncation marker (parity with the Claude buffer).
-  const windowTruncated =
-    msgRows.length >= DETAIL_MESSAGE_HEAD + DETAIL_MESSAGE_TAIL ||
-    partRows.length >= DETAIL_PART_HEAD + DETAIL_PART_TAIL;
+  const messageHeadIds = new Set(msgHeadRes.rows.map((row) => asString(row.id)).filter((id): id is string => !!id));
+  const messageTailIds = new Set(msgTailRes.rows.map((row) => asString(row.id)).filter((id): id is string => !!id));
+  const messageWindowTruncated =
+    msgHeadRes.rows.length >= DETAIL_MESSAGE_HEAD &&
+    msgTailRes.rows.length >= DETAIL_MESSAGE_TAIL &&
+    ![...messageTailIds].some((id) => messageHeadIds.has(id));
+  const windowTruncated = messageWindowTruncated || partRows.length >= DETAIL_PART_HEAD + DETAIL_PART_TAIL;
   const detail: VaultSessionDetail = {
     entryId: formatEntryId("opencode", sessionId),
     ...mapOpencodeRows(messages, parts, limit, childStubs),
   };
+  if (messageWindowTruncated) {
+    const firstTail = detail.timeline.findIndex(
+      (item) => item.kind === "message" && !!item.msgRef && messageTailIds.has(item.msgRef),
+    );
+    const keepsHead = detail.timeline
+      .slice(0, firstTail < 0 ? 0 : firstTail)
+      .some((item) => item.kind === "message" && !!item.msgRef && messageHeadIds.has(item.msgRef));
+    if (firstTail >= 0 && keepsHead) {
+      detail.timeline.splice(firstTail, 0, { kind: "gap" });
+    }
+  }
   if (windowTruncated) {
     detail.truncated = true;
   }

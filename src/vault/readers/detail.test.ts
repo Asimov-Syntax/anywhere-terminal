@@ -158,6 +158,81 @@ describe("cleanPromptText", () => {
   });
 });
 
+describe("classifyClaudeStyleEvents — injected records", () => {
+  const NOTIFICATION = [
+    "<task-notification>",
+    "<status>completed</status>",
+    '<summary>Background command "Re-run release 0.17.9" completed (exit code 0)</summary>',
+    "</task-notification>",
+  ].join("\n");
+
+  it("emits a notice item, not a user message, for a background-task notification", () => {
+    const out = classifyClaudeStyleEvents([
+      userText("ship it"),
+      userText(NOTIFICATION, { uuid: "notice-1" }),
+      assistantText("done"),
+    ]);
+    expect(out.timeline).toContainEqual(
+      expect.objectContaining({
+        kind: "notice",
+        summary: 'Background command "Re-run release 0.17.9" completed (exit code 0)',
+        status: "completed",
+        msgRef: "notice-1",
+      }),
+    );
+    const users = out.timeline.filter((i) => i.kind === "message" && i.role === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ text: "ship it" });
+    // Not a conversation turn: it must not become the latest message.
+    expect(out.latestMessage).toMatchObject({ role: "assistant", text: "done" });
+  });
+
+  it("emits a notice, not a user message, when the reader interrupts a response", () => {
+    const out = classifyClaudeStyleEvents([
+      userText("start"),
+      userText("[Request interrupted by user]", {
+        uuid: "interrupt-1",
+        interruptedMessageId: "msg_011CeKT6psxjRD2zHJkwrzD4",
+      }),
+    ]);
+    expect(out.timeline).toContainEqual(
+      expect.objectContaining({ kind: "notice", summary: "Request interrupted by user", msgRef: "interrupt-1" }),
+    );
+    expect(out.timeline.filter((item) => item.kind === "message" && item.role === "user")).toHaveLength(1);
+  });
+
+  it("emits a compaction item for a compact-summary record", () => {
+    const summary = "This session is being continued from a previous conversation that ran out of context.";
+    const out = classifyClaudeStyleEvents([
+      userText("start"),
+      userText(summary, { isCompactSummary: true, uuid: "compact-1" }),
+      userText("carry on"),
+    ]);
+    expect(out.timeline).toContainEqual(
+      expect.objectContaining({ kind: "compaction", text: summary, msgRef: "compact-1" }),
+    );
+    expect(out.timeline.filter((i) => i.kind === "message" && i.role === "user")).toHaveLength(2);
+  });
+
+  it("bounds a notification body and a compaction summary", () => {
+    const huge = "y".repeat(MAX_MESSAGE_TEXT + 500);
+    const withBody = NOTIFICATION.replace("</task-notification>", `<result>${huge}</result>\n</task-notification>`);
+    const out = classifyClaudeStyleEvents([userText(withBody), userText(huge, { isCompactSummary: true })]);
+    const notice = out.timeline.find((i) => i.kind === "notice");
+    const compaction = out.timeline.find((i) => i.kind === "compaction");
+    expect(notice?.kind === "notice" && notice.body?.length).toBeLessThanOrEqual(MAX_MESSAGE_TEXT + 1);
+    expect(compaction?.kind === "compaction" && compaction.text.length).toBeLessThanOrEqual(MAX_MESSAGE_TEXT + 1);
+  });
+
+  it("strips a system-reminder appended to a real prompt", () => {
+    const out = classifyClaudeStyleEvents([
+      userText("fix the UI\n<system-reminder>\nGoal check-in: still running\n</system-reminder>"),
+    ]);
+    expect(out.timeline).toContainEqual(expect.objectContaining({ kind: "message", role: "user", text: "fix the UI" }));
+    expect(out.firstPrompt).toBe("fix the UI");
+  });
+});
+
 describe("classifyClaudeStyleEvents", () => {
   it("captures the first prompt independently of the 12-step activity cap", () => {
     const records: Rec[] = [userText("the very first prompt")];
@@ -731,8 +806,20 @@ describe("createBoundedRecordBuffer (W1)", () => {
     }
     const { records, truncated } = buf.result();
     expect(truncated).toBe(true);
-    // head = first 2, tail = last 3.
-    expect(records.map((r) => (r as { i: number }).i)).toEqual([0, 1, 7, 8, 9]);
+    // head = first 2, then an explicit discontinuity, then the last 3.
+    expect(records.map((r) => ("i" in r ? r.i : r.type))).toEqual([0, 1, "__vault_gap__", 7, 8, 9]);
+  });
+
+  it("emits the discontinuity as a timeline gap", () => {
+    const buf = createBoundedRecordBuffer(1, 1);
+    buf.push(userText("first", { uuid: "u-1" }));
+    buf.push(assistantText("omitted", { uuid: "a-middle" }));
+    buf.push(userText("last", { uuid: "u-2" }));
+    expect(classifyClaudeStyleEvents(buf.result().records).timeline.map((item) => item.kind)).toEqual([
+      "message",
+      "gap",
+      "message",
+    ]);
   });
 });
 

@@ -7,7 +7,8 @@
 import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as readline from "node:readline";
-import { cleanPromptText, createBoundedRecordBuffer } from "./detail";
+import { createBoundedRecordBuffer } from "./detail";
+import { classifyUserRecord } from "./userRecord";
 
 /** Cap on a workflow manifest read (review W5): manifests are normally tens-to-
  *  hundreds of KB; skip anything larger rather than materialize + parse it. */
@@ -69,24 +70,16 @@ export function rawUserText(message: unknown): string | undefined {
   return undefined;
 }
 
-export function extractUserText(message: unknown): string | undefined {
-  if (typeof message !== "object" || message === null) {
+/** The human-typed prompt in a user RECORD, or undefined when the record is
+ *  anything else (plumbing, a task notification, an injected banner, a compaction
+ *  summary). Titles and `firstPrompt` come through here, so they classify exactly
+ *  as the timeline does — which needs the record's flags, not just its message. */
+export function extractUserText(rec: unknown): string | undefined {
+  if (!rec || typeof rec !== "object") {
     return undefined;
   }
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") {
-    return cleanPromptText(content);
-  }
-  if (Array.isArray(content)) {
-    const text = content
-      .filter((b): b is { type?: string; text?: string } => typeof b === "object" && b !== null)
-      .filter((b) => b.type === "text" && typeof b.text === "string")
-      .map((b) => b.text as string)
-      .join(" ")
-      .trim();
-    return text ? cleanPromptText(text) : undefined;
-  }
-  return undefined;
+  const cls = classifyUserRecord(rec as Record<string, unknown>);
+  return cls.kind === "prompt" ? cls.text : undefined;
 }
 
 /** Bytes read from the file tail when hunting for the late-written fields below.
@@ -245,7 +238,7 @@ export async function readFirstUserRecord(filePath: string): Promise<{ text: str
       if (obj.type !== "user") {
         continue;
       }
-      const text = extractUserText(obj.message);
+      const text = extractUserText(obj);
       if (text) {
         const t = obj.timestamp;
         const ts = typeof t === "string" ? Date.parse(t) : typeof t === "number" ? t : Number.NaN;

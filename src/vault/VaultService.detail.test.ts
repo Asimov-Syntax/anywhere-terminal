@@ -2,8 +2,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ReaderResultWithState } from "./cacheTypes";
+import type { RecordLineResult } from "./readers/recordLine";
 import type { VaultSessionDetail } from "./types";
-import { type VaultDetailReaders, type VaultReaders, VaultService } from "./VaultService";
+import { type VaultDetailReaders, type VaultReaders, type VaultRecordReaders, VaultService } from "./VaultService";
 
 /** A reader result with the (empty) cache state the incremental contract requires. */
 function readerResult(entries: ReaderResultWithState["entries"], unreadable = 0): ReaderResultWithState {
@@ -108,5 +109,45 @@ describe("VaultService.list: unreadable.reasons", () => {
     const svc = new VaultService({ readers: emptyReaders(), canForkOpenCodeFn: async () => false });
     const { unreadable } = await svc.list();
     expect(unreadable).toEqual({ count: 0, reasons: [] });
+  });
+});
+
+// improve-vault-transcript-messages 3_2 — the Raw-copy round-trip.
+describe("VaultService.readMessageRecord", () => {
+  function makeRecordReaders(over: Partial<VaultRecordReaders> = {}): VaultRecordReaders {
+    const none = vi.fn(async (): Promise<RecordLineResult> => ({ ok: false, reason: "not-found" }));
+    return { claude: none, codex: none, opencode: none, ...over };
+  }
+
+  it("dispatches to the agent's record reader with the bare session id and the locator", async () => {
+    const claude = vi.fn(async (): Promise<RecordLineResult> => ({ ok: true, line: '{"uuid":"u-1"}' }));
+    const svc = new VaultService({ recordReaders: makeRecordReaders({ claude }) });
+
+    expect(await svc.readMessageRecord("claude:abc-123", "u-1")).toEqual({ ok: true, line: '{"uuid":"u-1"}' });
+    expect(claude).toHaveBeenCalledWith("abc-123", "u-1");
+  });
+
+  it("routes codex and opencode ids to their own readers", async () => {
+    const codex = vi.fn(async (): Promise<RecordLineResult> => ({ ok: true, line: "codex-line" }));
+    const opencode = vi.fn(async (): Promise<RecordLineResult> => ({ ok: true, line: "oc-row" }));
+    const svc = new VaultService({ recordReaders: makeRecordReaders({ codex, opencode }) });
+
+    expect(await svc.readMessageRecord("codex:t1", "#4")).toEqual({ ok: true, line: "codex-line" });
+    expect(await svc.readMessageRecord("opencode:s1", "m2")).toEqual({ ok: true, line: "oc-row" });
+    expect(codex).toHaveBeenCalledWith("t1", "#4");
+    expect(opencode).toHaveBeenCalledWith("s1", "m2");
+  });
+
+  it("passes an oversized record through as a refusal, not as content", async () => {
+    const claude = vi.fn(async (): Promise<RecordLineResult> => ({ ok: false, reason: "too-large" }));
+    const svc = new VaultService({ recordReaders: makeRecordReaders({ claude }) });
+    expect(await svc.readMessageRecord("claude:abc", "u-1")).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("reports not-found for an unknown agent without consulting any reader", async () => {
+    const claude = vi.fn(async (): Promise<RecordLineResult> => ({ ok: true, line: "x" }));
+    const svc = new VaultService({ recordReaders: makeRecordReaders({ claude }) });
+    expect(await svc.readMessageRecord("gemini:abc", "u-1")).toEqual({ ok: false, reason: "not-found" });
+    expect(claude).not.toHaveBeenCalled();
   });
 });

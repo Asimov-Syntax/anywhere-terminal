@@ -126,7 +126,7 @@ export function teamContextCollector(): {
         ctx.colorByMember.set(tag.teammateId, tag.color);
       }
       if (!firstUserSeen && rec.type === "user" && rec.isMeta !== true && rec.isSidechain !== true) {
-        if (extractUserText(rec.message)) {
+        if (extractUserText(rec)) {
           firstUserSeen = true;
           ctx.selfIsMember = recordTeamIdentity(rec) !== null;
         }
@@ -257,7 +257,7 @@ async function readTeamMemberInfo(filePath: string, sessionId: string): Promise<
       if (obj.type !== "user" || obj.isMeta === true || obj.isSidechain === true) {
         continue;
       }
-      const text = extractUserText(obj.message);
+      const text = extractUserText(obj);
       if (!text) {
         continue; // a pure tool_result user record is not the identity record
       }

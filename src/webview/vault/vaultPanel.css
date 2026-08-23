@@ -1097,11 +1097,60 @@ body:has(#tab-bar.visible) .vault-preview--max {
   outline-offset: 1px;
 }
 .vault-preview-message {
+  position: relative;
   border-left: 2px solid color-mix(in srgb, var(--vscode-foreground) 15%, transparent);
   padding: 2px 0 2px 10px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--vscode-foreground);
+}
+
+/* Shared per-message action bar (improve-vault-transcript-messages D6). ONE bar
+   exists; hovering a message moves it into that message, so these rules style a
+   single element wherever it currently sits. */
+.vault-msg-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 2px;
+  padding: 1px;
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  /* Hidden until the message it sits in is hovered or holds focus — but never
+     hidden from the keyboard, which reaches it through :focus-within. */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease-in;
+}
+.vault-preview-message:hover > .vault-msg-actions,
+.vault-preview-message:focus-within > .vault-msg-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.vault-msg-actions-btn {
+  border: 0;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  cursor: pointer;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+}
+.vault-msg-actions-btn:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  color: var(--vscode-foreground);
+}
+.vault-msg-actions-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.vault-msg-actions-btn.is-copied {
+  color: var(--vscode-charts-green, var(--vscode-testing-iconPassed, #3fb950));
 }
 .vault-preview-message p {
   margin: 0;
@@ -1284,7 +1333,7 @@ body:has(#tab-bar.visible) .vault-preview--max {
    1-line ellipsis (below) is reliable where a multi-line clamp on the `.vault-md`
    block is not — `-webkit-line-clamp` can collapse block-child containers to
    height 0 in some webview engines (R5). */
-.vault-preview-thinking-head {
+.vault-preview-collapsible-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1298,16 +1347,16 @@ body:has(#tab-bar.visible) .vault-preview--max {
   cursor: pointer;
   text-align: left;
 }
-.vault-preview-thinking-head .vault-preview-message-role {
+.vault-preview-collapsible-head .vault-preview-message-role {
   flex: 0 0 auto;
   margin-bottom: 0;
 }
-.vault-preview-thinking-head:focus-visible {
+.vault-preview-collapsible-head:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
   border-radius: 3px;
 }
-.vault-preview-thinking-gist {
+.vault-preview-collapsible-gist {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1318,24 +1367,53 @@ body:has(#tab-bar.visible) .vault-preview--max {
   color: var(--vscode-descriptionForeground);
   opacity: 0.85;
 }
-.vault-preview-thinking-chevron {
+.vault-preview-collapsible-chevron {
   display: inline-flex;
   flex: 0 0 auto;
   color: var(--vscode-descriptionForeground);
   transition: transform 120ms ease-out;
 }
-.vault-preview-message-thinking.is-expanded .vault-preview-thinking-chevron {
+.vault-preview-message.is-expanded .vault-preview-collapsible-chevron {
   transform: rotate(180deg);
 }
-.vault-preview-thinking-body {
+.vault-preview-collapsible-body {
   margin-top: 4px;
 }
 /* Collapsed: hide the full body (the gist stands in). Expanded: hide the gist. */
-.vault-preview-message-thinking.is-collapsible:not(.is-expanded) .vault-preview-thinking-body {
+.vault-preview-message.is-collapsible:not(.is-expanded) .vault-preview-collapsible-body {
   display: none;
 }
-.vault-preview-message-thinking.is-expanded .vault-preview-thinking-gist {
+.vault-preview-message.is-expanded .vault-preview-collapsible-gist {
   display: none;
+}
+
+/* Injected records (improve-vault-transcript-messages D3): a background-task
+   notification and a context-compaction summary are agent bookkeeping, not the
+   conversation — indented with the AI run, muted, and folded to one line. */
+.vault-preview-message-notice,
+.vault-preview-message-compaction {
+  margin-left: 14px;
+  border-left-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  color: var(--vscode-descriptionForeground);
+}
+.vault-preview-message-notice .vault-preview-message-role,
+.vault-preview-message-compaction .vault-preview-message-role {
+  color: var(--vscode-descriptionForeground);
+}
+.vault-preview-message-notice .vault-preview-collapsible-gist,
+.vault-preview-message-compaction .vault-preview-collapsible-gist {
+  font-style: normal;
+}
+.vault-preview-gap {
+  margin: 8px 14px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  text-align: center;
+}
+.vault-preview-gap::before,
+.vault-preview-gap::after {
+  content: " ··· ";
+  opacity: 0.6;
 }
 
 /* === Rich message body (markdown-lite, nest-workflow-team-sessions D17) ===
@@ -2057,4 +2135,163 @@ body:has(#tab-bar.visible) .vault-preview--max {
 .vault-preview-newmsg-pill:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
+}
+
+/* Continuation confirm dialog (improve-vault-transcript-messages D10). It is
+   opened FROM the preview card, so it has to sit above it: .vault-preview is
+   z-index 1000, and anything lower renders behind the card and looks like a
+   click that did nothing. */
+.vault-continue {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 55%, transparent);
+}
+.vault-continue-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 32%);
+}
+.vault-continue-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.vault-continue-source {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.vault-continue-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.vault-continue-label:empty {
+  display: none;
+}
+.vault-continue-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+/* A read-only textarea, so a long reply scrolls and drags exactly like the
+   instruction editor below it. */
+.vault-continue-anchor {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  color: var(--vscode-descriptionForeground);
+}
+/* Border-box on every full-width field: this stylesheet opts in per rule rather
+   than globally, so `width: 100%` plus padding and a border overflows the card. */
+.vault-continue-instruction {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+}
+.vault-continue-count {
+  align-self: flex-end;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+/* Chromium paints the scrollbar corner and the resize grip itself, in its own
+   light defaults — a white frame under any field that both scrolls and resizes.
+   Repaint them from the theme, keeping a faint diagonal so the corner still
+   reads as a drag handle. */
+.vault-continue-anchor::-webkit-scrollbar-corner,
+.vault-continue-instruction::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.vault-continue-anchor::-webkit-resizer,
+.vault-continue-instruction::-webkit-resizer {
+  background: transparent;
+  background-image: linear-gradient(
+    135deg,
+    transparent 0 52%,
+    color-mix(in srgb, var(--vscode-foreground) 30%, transparent) 52% 60%,
+    transparent 60% 72%,
+    color-mix(in srgb, var(--vscode-foreground) 30%, transparent) 72% 80%,
+    transparent 80%
+  );
+}
+
+.vault-continue-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.vault-continue-select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border, transparent);
+}
+.vault-continue-danger,
+.vault-continue-status {
+  font-size: 11px;
+  color: var(--vscode-errorForeground, var(--vscode-descriptionForeground));
+}
+.vault-continue-cwd {
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-descriptionForeground);
+  word-break: break-all;
+}
+.vault-continue-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.vault-continue-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+.vault-continue-btn--primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border-color: transparent;
+}
+.vault-continue-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

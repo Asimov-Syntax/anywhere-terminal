@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteResult } from "../sqlite";
-import { classifyCodexRolloutEvents, readCodexDetail } from "./codexReader";
+import { classifyCodexRolloutEvents, readCodexDetail, readCodexMessageRecord } from "./codexReader";
 
 let codexDir: string;
 
@@ -51,6 +51,15 @@ describe("classifyCodexRolloutEvents", () => {
     ]);
     expect(out.latestMessage).toMatchObject({ role: "assistant", text: "here is the review" });
     expect(out.stats).toMatchObject({ messageCount: 2, toolCount: 3, subagentCount: 0, tokenCount: 12650 });
+  });
+
+  it("preserves the shared omitted-history sentinel as a timeline gap", () => {
+    const out = classifyCodexRolloutEvents([
+      rec("event_msg", { type: "agent_message", message: "head reply" }),
+      { type: "__vault_gap__" },
+      rec("event_msg", { type: "user_message", message: "tail prompt" }),
+    ]);
+    expect(out.timeline.map((item) => item.kind)).toEqual(["message", "gap", "message"]);
   });
 
   it("omits tokenCount when no token_count event is present", () => {
@@ -298,6 +307,30 @@ describe("readCodexDetail", () => {
     expect(detail?.partial).toBeUndefined();
   });
 
+  // improve-vault-transcript-messages 3_1 — a codex record has no id, so its
+  // locator is the physical rollout line it was parsed from.
+  it("stamps the rollout line ordinal on each message", async () => {
+    const sessionId = "019ceab2-21cf-74d1-865a-c17622800001";
+    const dir = path.join(codexDir, "sessions", "2026", "03", "14");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, `rollout-2026-03-14T11-54-28-${sessionId}.jsonl`),
+      // A blank line before the assistant turn: the locator must track the
+      // physical line, not the count of records kept.
+      `${jsonl([
+        rec("event_msg", { type: "user_message", message: "build it" }),
+        rec("response_item", { type: "function_call", name: "exec_command", arguments: '{"cmd":"ls"}' }),
+      ])}\n${jsonl([rec("event_msg", { type: "agent_message", message: "done" })])}`,
+    );
+    const noSqlite = async (): Promise<SqliteResult> => ({ rows: [], status: "no-sqlite3" });
+    const detail = await readCodexDetail(sessionId, { codexDir, readSqliteFn: noSqlite });
+    const messages = detail?.timeline.filter((t) => t.kind === "message");
+    expect(messages?.map((m) => (m.kind === "message" ? [m.role, m.msgRef] : null))).toEqual([
+      ["user", "#1"],
+      ["assistant", "#4"],
+    ]);
+  });
+
   it("returns a labeled partial detail from the threads index when no rollout exists", async () => {
     const sessionId = "no-rollout-here";
     const threadsRow: SqliteResult = {
@@ -422,5 +455,36 @@ describe("readCodexDetail", () => {
       readSqliteFn: async () => ({ rows: [], status: "ok" }),
     });
     expect(detail).toBeNull();
+  });
+});
+
+// .reviews/round-1.md L5 — the ordinal alone addressed any line, so a locator
+// off by one resolved a tool call as if it were the message.
+describe("readCodexMessageRecord", () => {
+  const noSqlite = async (): Promise<SqliteResult> => ({ rows: [], status: "no-sqlite3" });
+  const sessionId = "019ceab2-21cf-74d1-865a-c17622800002";
+
+  beforeEach(async () => {
+    const dir = path.join(codexDir, "sessions", "2026", "03", "14");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, `rollout-2026-03-14T11-54-28-${sessionId}.jsonl`),
+      `${[
+        rec("event_msg", { type: "user_message", message: "build it" }),
+        rec("response_item", { type: "function_call", name: "exec_command", arguments: '{"cmd":"ls"}' }),
+      ]
+        .map((r) => JSON.stringify(r))
+        .join("\n")}\n`,
+    );
+  });
+
+  it("resolves the message on the addressed line", async () => {
+    const res = await readCodexMessageRecord(sessionId, "#1", { codexDir, readSqliteFn: noSqlite });
+    expect(res.ok).toBe(true);
+  });
+
+  it("refuses a line that holds no message", async () => {
+    const res = await readCodexMessageRecord(sessionId, "#2", { codexDir, readSqliteFn: noSqlite });
+    expect(res.ok).toBe(false);
   });
 });

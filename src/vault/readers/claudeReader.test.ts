@@ -518,3 +518,33 @@ describe("readClaudeSessions incremental", () => {
     }
   });
 });
+
+// .reviews/round-1.md L1 — titles classified the message alone, so record flags
+// the timeline honours (compaction, meta) were invisible to them.
+describe("claude session titles — whole-record classification", () => {
+  async function storeWith(records: object[]): Promise<{ configDir: string; cleanup: () => Promise<void> }> {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "vault-claude-title-"));
+    const projDir = path.join(root, "projects", "-Users-me-proj");
+    await fsp.mkdir(projDir, { recursive: true });
+    await fsp.writeFile(path.join(projDir, "sess-t.jsonl"), records.map((r) => JSON.stringify(r)).join("\n"));
+    return { configDir: root, cleanup: () => fsp.rm(root, { recursive: true, force: true }) };
+  }
+
+  it("does not title a session from a compaction summary", async () => {
+    const { configDir, cleanup } = await storeWith([
+      {
+        type: "user",
+        cwd: "/Users/me/proj",
+        isCompactSummary: true,
+        message: { content: "This session is being continued from a previous conversation" },
+      },
+      { type: "user", cwd: "/Users/me/proj", message: { content: "the real first prompt" } },
+    ]);
+    try {
+      const { entries } = await readClaudeSessions({ configDir });
+      expect(entries[0].title).toBe("the real first prompt");
+    } finally {
+      await cleanup();
+    }
+  });
+});

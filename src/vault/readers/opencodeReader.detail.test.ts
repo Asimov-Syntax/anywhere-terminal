@@ -8,8 +8,10 @@ import {
   type OcMessageRow,
   type OcPartRow,
   readOpenCodeDetail,
+  readOpenCodeMessageRecord,
   splitOpencodeSubtaskTitle,
 } from "./opencodeReader";
+import { MAX_RECORD_BYTES } from "./recordLine";
 
 function msg(
   id: string,
@@ -90,6 +92,16 @@ describe("mapOpencodeRows", () => {
     ]);
     expect(out.latestMessage).toMatchObject({ role: "assistant", text: "done, look here", timestamp: 3 });
     expect(out.stats).toMatchObject({ messageCount: 3, toolCount: 2, subagentCount: 1, tokenCount: 135 });
+  });
+
+  // improve-vault-transcript-messages 3_1 — the message row id is the locator.
+  it("stamps the message row id on each message", () => {
+    const messages: OcMessageRow[] = [msg("m1", "user", 1), msg("m2", "assistant", 2)];
+    const parts: OcPartRow[] = [textPart("m1", 1, "make it faster"), textPart("m2", 2, "done")];
+    const out = mapOpencodeRows(messages, parts);
+    expect(
+      out.timeline.filter((t) => t.kind === "message").map((t) => (t.kind === "message" ? t.msgRef : null)),
+    ).toEqual(["m1", "m2"]);
   });
 
   it("attaches per-message model + tokens to assistant messages, not user ones", () => {
@@ -469,6 +481,7 @@ describe("readOpenCodeDetail head+tail windowing", () => {
     expect(last?.kind === "message" && last.role).toBe("assistant");
     expect(last?.kind === "message" && last.text).toContain("the final AI reply");
     expect(detail?.truncated).toBe(true);
+    expect(detail?.timeline.some((item) => item.kind === "gap")).toBe(true);
   });
 
   it("de-duplicates the overlapping head/tail windows on a short session (no double-count)", async () => {
@@ -544,5 +557,56 @@ describe("splitOpencodeSubtaskTitle", () => {
     // Empty description → blank title (caller falls back to the first message),
     // but the agent is still recovered so the @chip renders.
     expect(splitOpencodeSubtaskTitle("(@general subagent)")).toEqual({ title: "", agent: "general" });
+  });
+});
+
+// .reviews/round-1.md L2, L3 — the resolver borrowed the preview's part cap and
+// swallowed a failed part query, so a Raw copy could silently be a partial record.
+describe("readOpenCodeMessageRecord", () => {
+  const messageRow = { id: "msg_1", time_created: 1, data: JSON.stringify({ role: "user" }) };
+  const partRow = { id: "p1", time_created: 2, data: JSON.stringify({ type: "text", text: "hi" }) };
+
+  it("refuses a failed same-snapshot query", async () => {
+    const res = await readOpenCodeMessageRecord("ses_1", "msg_1", {
+      dataDir: "/x/oc",
+      readSqliteFn: vi.fn(
+        async (_db: string, _sql: string): Promise<SqliteResult> => ({
+          status: "query-error",
+          rows: [],
+          error: "database is locked",
+        }),
+      ),
+    });
+    expect(res.ok).toBe(false);
+  });
+
+  it("returns too-large from one query without fetching payloads later", async () => {
+    const readSqliteFn = vi.fn(
+      async (_db: string, _sql: string): Promise<SqliteResult> => ({
+        status: "ok",
+        rows: [{ source_bytes: MAX_RECORD_BYTES + 1, record_json: null }],
+      }),
+    );
+
+    await expect(readOpenCodeMessageRecord("ses_1", "msg_1", { dataDir: "/x/oc", readSqliteFn })).resolves.toEqual({
+      ok: false,
+      reason: "too-large",
+    });
+    expect(readSqliteFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the complete record from the same bounded snapshot", async () => {
+    const record = JSON.stringify({ message: messageRow, parts: [partRow] });
+    const readSqliteFn = vi.fn(
+      async (_db: string, _sql: string): Promise<SqliteResult> => ({
+        status: "ok",
+        rows: [{ source_bytes: Buffer.byteLength(record), record_json: record }],
+      }),
+    );
+
+    const result = await readOpenCodeMessageRecord("ses_1", "msg_1", { dataDir: "/x/oc", readSqliteFn });
+    expect(result.ok && JSON.parse(result.line)).toEqual({ message: messageRow, parts: [partRow] });
+    expect(readSqliteFn).toHaveBeenCalledTimes(1);
+    expect(readSqliteFn.mock.calls[0]?.[1]).toMatch(/CASE[\s\S]+json_group_array/i);
   });
 });

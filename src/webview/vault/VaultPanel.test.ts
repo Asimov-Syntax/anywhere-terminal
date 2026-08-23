@@ -1566,14 +1566,14 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(block?.classList.contains("is-collapsible")).toBe(true);
     expect(block?.classList.contains("is-expanded")).toBe(false);
     // Gist = first line with markdown noise stripped (no fade, no half-cut line).
-    expect(host.querySelector(".vault-preview-thinking-gist")?.textContent).toBe("Evaluating schema requirements");
+    expect(host.querySelector(".vault-preview-collapsible-gist")?.textContent).toBe("Evaluating schema requirements");
     // Clicking the head expands the full reasoning body.
-    const head = host.querySelector<HTMLButtonElement>(".vault-preview-thinking-head");
+    const head = host.querySelector<HTMLButtonElement>(".vault-preview-collapsible-head");
     expect(head?.getAttribute("aria-expanded")).toBe("false");
     head?.click();
     expect(block?.classList.contains("is-expanded")).toBe(true);
     expect(head?.getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelector(".vault-preview-thinking-body")?.textContent).toContain("empty description");
+    expect(host.querySelector(".vault-preview-collapsible-body")?.textContent).toContain("empty description");
   });
 
   it("keeps short reasoning inline (no gist/collapse)", () => {
@@ -1592,8 +1592,108 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
       }),
     });
     expect(host.querySelector(".vault-preview-message-thinking.is-collapsible")).toBeNull();
-    expect(host.querySelector(".vault-preview-thinking-gist")).toBeNull();
+    expect(host.querySelector(".vault-preview-collapsible-gist")).toBeNull();
     expect(host.querySelector(".vault-preview-message-thinking p")?.textContent).toBe("quick note");
+  });
+
+  it("renders a background-task notice as one collapsed line that expands to its result", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({
+        timeline: [
+          { kind: "message", role: "user", text: "go" },
+          {
+            kind: "notice",
+            summary: 'Background command "Re-run release 0.17.9" completed (exit code 0)',
+            status: "completed",
+            body: "## Review\n\nVERDICT: BLOCK",
+          },
+        ],
+      }),
+    });
+    const block = host.querySelector(".vault-preview-message-notice");
+    expect(block).not.toBeNull();
+    expect(block?.classList.contains("is-collapsible")).toBe(true);
+    expect(block?.classList.contains("is-expanded")).toBe(false);
+    expect(host.querySelector(".vault-preview-collapsible-gist")?.textContent).toContain("Re-run release 0.17.9");
+    // The status rides the role line so the collapsed line says what happened.
+    expect(block?.querySelector(".vault-preview-message-role")?.textContent).toContain("completed");
+    const head = block?.querySelector<HTMLButtonElement>(".vault-preview-collapsible-head");
+    head?.click();
+    expect(block?.classList.contains("is-expanded")).toBe(true);
+    expect(block?.querySelector(".vault-preview-collapsible-body")?.textContent).toContain("VERDICT: BLOCK");
+  });
+
+  it("renders a body-less notice as a plain line with no expander", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({
+        timeline: [
+          { kind: "message", role: "user", text: "go" },
+          { kind: "notice", summary: "Agent finished", status: "completed" },
+        ],
+      }),
+    });
+    const block = host.querySelector(".vault-preview-message-notice");
+    expect(block?.classList.contains("is-collapsible")).toBe(false);
+    expect(block?.querySelector(".vault-preview-collapsible-head")).toBeNull();
+    expect(block?.textContent).toContain("Agent finished");
+  });
+
+  it("renders a compaction summary collapsed", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    const text = "This session is being continued from a previous conversation.\n\nSummary:\n1. the user asked for X";
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({
+        timeline: [
+          { kind: "message", role: "user", text: "go" },
+          { kind: "compaction", text },
+        ],
+      }),
+    });
+    const block = host.querySelector(".vault-preview-message-compaction");
+    expect(block?.classList.contains("is-collapsible")).toBe(true);
+    expect(block?.querySelector(".vault-preview-message-role")?.textContent).toContain("Context compacted");
+    expect(block?.querySelector(".vault-preview-collapsible-body")?.textContent).toContain("the user asked for X");
+  });
+
+  it("never hides a notice behind a run cap", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({
+        timeline: [
+          { kind: "message", role: "user", text: "go" },
+          { kind: "tool", tool: "Bash", detail: "one" },
+          { kind: "tool", tool: "Bash", detail: "two" },
+          { kind: "tool", tool: "Bash", detail: "three" },
+          { kind: "tool", tool: "Bash", detail: "four" },
+          { kind: "notice", summary: "Agent finished" },
+        ],
+      }),
+    });
+    // The run is capped ("Show N more"), but the notice broke the run and stands.
+    expect(host.querySelector(".vault-preview-expand")).not.toBeNull();
+    expect(host.querySelector(".vault-preview-message-notice")?.textContent).toContain("Agent finished");
   });
 
   it("loads older messages when truncated: the button posts a larger limit; the grown response removes it", () => {

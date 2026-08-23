@@ -13,11 +13,12 @@ import {
 } from "./cacheTypes";
 import { canForkOpenCode } from "./forkSupport";
 import { claudeRoots, resolveClaudeSessionPath } from "./readers/claudePaths";
-import { readClaudeDetail, readClaudeEntry, readClaudeSessions } from "./readers/claudeReader";
+import { readClaudeDetail, readClaudeEntry, readClaudeMessageRecord, readClaudeSessions } from "./readers/claudeReader";
 import {
   codexStoreDirs,
   readCodexDetail,
   readCodexEntry,
+  readCodexMessageRecord,
   readCodexSessions,
   renameCodexThread,
 } from "./readers/codexReader";
@@ -26,9 +27,11 @@ import {
   opencodeStoreDirs,
   readOpenCodeDetail,
   readOpenCodeEntry,
+  readOpenCodeMessageRecord,
   readOpenCodeSessions,
   renameOpenCodeSession,
 } from "./readers/opencodeReader";
+import type { RecordLineResult } from "./readers/recordLine";
 import { getAgentDefinition, VAULT_AGENT_IDS, type VaultAgentId } from "./registry";
 import { parseEntryId, type VaultListResult, type VaultSessionDetail, type VaultSessionEntry } from "./types";
 import type { VaultCacheStore } from "./VaultCacheStore";
@@ -64,6 +67,10 @@ export type VaultDetailReaders = Record<
  *  Backs `getEntry`, the fast path for resume/fork. */
 export type VaultEntryReaders = Record<VaultAgentId, (sessionId: string) => Promise<VaultSessionEntry | null>>;
 
+/** Per-agent single-record readers: resolve the `msgRef` a timeline item carries
+ *  back to its stored record (improve-vault-transcript-messages D5). */
+export type VaultRecordReaders = Record<VaultAgentId, (sessionId: string, msgRef: string) => Promise<RecordLineResult>>;
+
 /** Writes a user-chosen title into an agent's own store; true iff a row was
  *  updated (write-vault-rename-to-store D1). Only the SQLite agents have one —
  *  Claude has no writable title field. */
@@ -73,6 +80,7 @@ export interface VaultServiceDeps {
   readers?: VaultReaders;
   detailReaders?: VaultDetailReaders;
   entryReaders?: VaultEntryReaders;
+  recordReaders?: VaultRecordReaders;
   /** Injectable opencode fork probe; defaults to the real version probe. */
   canForkOpenCodeFn?: (minVersion: string) => Promise<boolean>;
   /**
@@ -109,6 +117,12 @@ const defaultDetailReaders = {
   opencode: (sessionId, limit) => readOpenCodeDetail(sessionId, {}, limit),
 } satisfies VaultDetailReaders;
 
+const defaultRecordReaders = {
+  claude: (sessionId, msgRef) => readClaudeMessageRecord(sessionId, msgRef),
+  codex: (sessionId, msgRef) => readCodexMessageRecord(sessionId, msgRef),
+  opencode: (sessionId, msgRef) => readOpenCodeMessageRecord(sessionId, msgRef),
+} satisfies VaultRecordReaders;
+
 const defaultEntryReaders = {
   claude: (sessionId) => readClaudeEntry(sessionId),
   codex: (sessionId) => readCodexEntry(sessionId),
@@ -138,6 +152,7 @@ export class VaultService {
   private readonly readers: VaultReaders;
   private readonly detailReaders: VaultDetailReaders;
   private readonly entryReaders: VaultEntryReaders;
+  private readonly recordReaders: VaultRecordReaders;
   private readonly canForkOpenCodeFn: (minVersion: string) => Promise<boolean>;
   private readonly cacheStore?: VaultCacheStore;
   private readonly customNames?: VaultCustomNameRegistry;
@@ -153,6 +168,7 @@ export class VaultService {
     this.readers = deps.readers ?? defaultReaders;
     this.detailReaders = deps.detailReaders ?? defaultDetailReaders;
     this.entryReaders = deps.entryReaders ?? defaultEntryReaders;
+    this.recordReaders = deps.recordReaders ?? defaultRecordReaders;
     this.canForkOpenCodeFn = deps.canForkOpenCodeFn ?? ((min) => canForkOpenCode(min));
     this.cacheStore = deps.cacheStore;
     this.customNames = deps.customNames;
@@ -380,6 +396,20 @@ export class VaultService {
     // Clamp the webview-supplied limit so a forged/garbage value can't defeat the
     // reader's timeline bound (W2).
     return this.detailReaders[parsed.agent](parsed.sessionId, clampDetailLimit(limit));
+  }
+
+  /**
+   * Resolve one timeline message back to its stored record, for the per-message
+   * Raw copy and the continue handoff (D5). The store location comes from the
+   * entry id alone — the webview supplies an opaque locator, never a path — and a
+   * record above the 256 KB cap is refused rather than shipped.
+   */
+  async readMessageRecord(entryId: string, msgRef: string): Promise<RecordLineResult> {
+    const parsed = parseEntryId(entryId);
+    if (!parsed || !isVaultAgentId(parsed.agent)) {
+      return { ok: false, reason: "not-found" };
+    }
+    return this.recordReaders[parsed.agent](parsed.sessionId, msgRef);
   }
 
   /**

@@ -34,8 +34,11 @@ import {
   type ClaudeReaderOptions,
   claudeRoots,
   decodeProjectDir,
+  isSafeSessionId,
   listJsonlFiles,
   resolveClaudeSessionPath,
+  resolveClaudeSubagentPath,
+  resolveClaudeWorkflowAgentPath,
 } from "./claudePaths";
 import { extractUserText, readLatestTailFields, streamClaudeRecords } from "./claudeRecords";
 import {
@@ -55,6 +58,9 @@ import {
   mergeTimestampedItems,
   scopeDirectChildren,
 } from "./detail";
+import { findRecordLine, type RecordLineResult } from "./recordLine";
+
+const NOT_FOUND = { ok: false, reason: "not-found" } as const;
 
 export { listClaudeWorkflowStubs } from "./claudeChildren";
 // Re-export the public reader surface so existing importers (VaultService, the
@@ -140,7 +146,7 @@ async function parseClaudeFile(filePath: string): Promise<ClaudeFileFields | nul
         summary = obj.summary;
       }
       if (!haveUser && obj.type === "user" && obj.isMeta !== true && obj.isSidechain !== true) {
-        const text = extractUserText(obj.message);
+        const text = extractUserText(obj);
         if (text) {
           fields.title = text;
           // Team-member detection (D5, W2): decided on this FIRST identity record
@@ -250,6 +256,48 @@ export async function readClaudeDetail(
     }
   }
   return finalizeDetail(formatEntryId("claude", sessionId), detail, read.truncated);
+}
+
+/**
+ * The verbatim transcript line whose record carries `msgRef` (its `uuid`), for the
+ * per-message Raw copy (D5). Aggregate child ids (a workflow group, a team turn)
+ * span no single file and resolve to null. Returns null when nothing matches or the
+ * line exceeds `maxBytes`.
+ */
+export async function readClaudeMessageRecord(
+  sessionId: string,
+  msgRef: string,
+  options: ClaudeReaderOptions = {},
+  maxBytes?: number,
+): Promise<RecordLineResult> {
+  if (!isSafeSessionId(msgRef)) {
+    return NOT_FOUND;
+  }
+  const child = parseClaudeChildId(sessionId);
+  let filePath: string | null;
+  switch (child?.kind) {
+    case undefined:
+      filePath = await resolveClaudeSessionPath(sessionId, options);
+      break;
+    case "subagent":
+      filePath = await resolveClaudeSubagentPath(child.parentId, child.stem, options);
+      break;
+    case "wfagent":
+      filePath = await resolveClaudeWorkflowAgentPath(child.parentId, child.wfId, child.stem, options);
+      break;
+    default:
+      filePath = null;
+  }
+  // A uuid rides plumbing records too (summaries, trailers), so matching it
+  // alone would resolve one of those as the message the locator names.
+  return filePath
+    ? findRecordLine(
+        filePath,
+        (rec) => rec.uuid === msgRef && (rec.type === "user" || rec.type === "assistant"),
+        maxBytes,
+        { needles: [`"uuid":${JSON.stringify(msgRef)}`] },
+      )
+    : NOT_FOUND;
 }
 
 /** Dispatch a parsed child id to its resolver (nest-workflow-team-sessions D2). */

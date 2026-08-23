@@ -1,12 +1,13 @@
 // src/vault/registry.test.ts — Unit tests for the agent registry.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AGENT_ICONS } from "../webview/vault/agentIcons";
 import {
   AGENT_DEFINITIONS,
   AGENT_REGISTRY,
   agentKindForExecutable,
   CLAUDE_AUTH_ENV_ALLOWLIST,
+  detectContinuationTargets,
   getAgentDefinition,
   VAULT_AGENT_IDS,
 } from "./registry";
@@ -125,5 +126,52 @@ describe("agentKindForExecutable", () => {
     expect(agentKindForExecutable("grok")).toBeUndefined();
     expect(agentKindForExecutable("")).toBeUndefined();
     expect(agentKindForExecutable(undefined)).toBeUndefined();
+  });
+});
+
+// improve-vault-transcript-messages 8_2 — the continuation dialog offers agents
+// and permission postures; both are registry data the host filters by PATH (D11).
+describe("permissionChoices", () => {
+  it("gives claude one axis whose ids are its own permission modes", () => {
+    const ids = getAgentDefinition("claude")?.permissionChoices?.map((c) => c.id);
+    expect(ids).toContain("bypassPermissions");
+    expect(ids).toContain("plan");
+  });
+
+  it("marks a bypassing choice as dangerous, and an ordinary one not", () => {
+    const choices = getAgentDefinition("claude")?.permissionChoices ?? [];
+    expect(choices.find((c) => c.id === "bypassPermissions")?.dangerous).toBe(true);
+    expect(choices.find((c) => c.id === "plan")?.dangerous).toBeUndefined();
+  });
+
+  it("folds codex's two axes into one choice each", () => {
+    const choice = getAgentDefinition("codex")?.permissionChoices?.find((c) => c.id === "workspace-write");
+    expect(choice?.args).toEqual(["-a", "on-request", "-s", "workspace-write"]);
+  });
+
+  it("gives opencode none, so the dialog shows no permission control", () => {
+    expect(getAgentDefinition("opencode")?.permissionChoices).toBeUndefined();
+  });
+});
+
+describe("detectContinuationTargets", () => {
+  it("lists only agents whose executable answers, with their choices", async () => {
+    const exec = vi.fn(async (file: string) => {
+      if (file === "opencode") {
+        throw new Error("command not found");
+      }
+      return { stdout: "1.0.0", stderr: "" };
+    });
+    const targets = await detectContinuationTargets({ exec });
+    expect(targets.map((t) => t.agent)).toEqual(["claude", "codex"]);
+    expect(targets[0]).toMatchObject({ displayName: "Claude Code" });
+    expect(targets[0].permissionChoices.length).toBeGreaterThan(0);
+  });
+
+  it("reports nothing rather than throwing when no agent is installed", async () => {
+    const exec = vi.fn(async () => {
+      throw new Error("command not found");
+    });
+    expect(await detectContinuationTargets({ exec })).toEqual([]);
   });
 });

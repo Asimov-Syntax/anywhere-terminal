@@ -10,7 +10,7 @@
 import { getAgentDefinition } from "./registry";
 import type { AgentVaultDefinition, CommandTemplate, VaultSessionEntry } from "./types";
 
-export type LaunchMode = "resume" | "fork";
+export type LaunchMode = "resume" | "fork" | "continue";
 
 export interface LaunchSpec {
   file: string;
@@ -23,25 +23,33 @@ export interface LaunchSpec {
 export class VaultLaunchError extends Error {
   constructor(
     message: string,
-    readonly code: "unknown-agent" | "no-fork-command" | "fork-unsupported" | "unknown-entry",
+    readonly code:
+      | "unknown-agent"
+      | "no-fork-command"
+      | "fork-unsupported"
+      | "unknown-entry"
+      | "no-continue-command"
+      | "no-prompt"
+      | "unknown-permission-choice",
   ) {
     super(message);
     this.name = "VaultLaunchError";
   }
 }
 
-function substituteTokens(token: string, entry: VaultSessionEntry, executable: string): string {
+function substituteTokens(token: string, entry: VaultSessionEntry, executable: string, prompt: string): string {
   return token
     .replace(/\{\{sessionId\}\}/g, entry.sessionId)
     .replace(/\{\{sessionPath\}\}/g, "")
-    .replace(/\{\{executable\}\}/g, executable);
+    .replace(/\{\{executable\}\}/g, executable)
+    .replace(/\{\{prompt\}\}/g, prompt);
 }
 
-function expandArgs(template: CommandTemplate, entry: VaultSessionEntry): string[] {
+function expandArgs(template: CommandTemplate, entry: VaultSessionEntry, prompt = ""): string[] {
   const args: string[] = [];
   for (const part of template.args) {
     if (typeof part === "string") {
-      args.push(substituteTokens(part, entry, template.executable));
+      args.push(substituteTokens(part, entry, template.executable, prompt));
       continue;
     }
     // Flag fragment: emit [flag, value] only when the captured value is present.
@@ -105,6 +113,63 @@ function buildClaudeEnv(
   return env;
 }
 
+/** What the continuation dialog chose (D11); both fall back to the entry. */
+export interface ContinuationTarget {
+  agent?: string;
+  permissionChoiceId?: string;
+}
+
+/**
+ * The posture to launch under: the reader's choice, else the one the entry was
+ * captured with, on whichever axis this agent keys its choices by.
+ */
+function permissionArgs(def: AgentVaultDefinition, entry: VaultSessionEntry, chosenId?: string): string[] {
+  const choices = def.permissionChoices;
+  if (!choices?.length) {
+    return [];
+  }
+  if (chosenId !== undefined) {
+    const chosen = choices.find((c) => c.id === chosenId);
+    if (!chosen) {
+      throw new VaultLaunchError(`Unknown permission choice: ${chosenId}`, "unknown-permission-choice");
+    }
+    return chosen.args;
+  }
+  const captured = entry.flags.permissionMode ?? entry.flags.sandbox;
+  if (!captured) {
+    return [];
+  }
+  return (choices.find((c) => c.id === captured) ?? choices[0]).args;
+}
+
+function buildContinue(
+  entry: VaultSessionEntry,
+  hostEnv: Record<string, string | undefined>,
+  prompt: string | undefined,
+  target: ContinuationTarget | undefined,
+): LaunchSpec {
+  const agent = target?.agent ?? entry.agent;
+  const def = getAgentDefinition(agent);
+  if (!def?.continueCommand) {
+    throw new VaultLaunchError(`Unknown agent: ${agent}`, "unknown-agent");
+  }
+  if (!prompt?.trim()) {
+    throw new VaultLaunchError("Continue needs a prompt", "no-prompt");
+  }
+  // Captured flags describe the SOURCE agent's run — a claude model id means
+  // nothing to codex — so continuing into a different agent starts from none.
+  const source: VaultSessionEntry = agent === entry.agent ? entry : { ...entry, flags: {} };
+  return {
+    file: def.continueCommand.executable,
+    args: [
+      ...permissionArgs(def, source, target?.permissionChoiceId),
+      ...expandArgs(def.continueCommand, source, prompt),
+    ],
+    cwd: entry.cwd,
+    env: def.id === "claude" ? buildClaudeEnv(def, source, hostEnv) : {},
+  };
+}
+
 /**
  * Build the argv + env + cwd for resuming/forking `entry`. `hostEnv` is the
  * extension-host environment (typically `process.env`); only Claude's allowlist
@@ -115,10 +180,17 @@ export function build(
   entry: VaultSessionEntry,
   mode: LaunchMode,
   hostEnv: Record<string, string | undefined>,
+  prompt?: string,
+  target?: ContinuationTarget,
 ): LaunchSpec {
   const def = getAgentDefinition(entry.agent);
   if (!def) {
     throw new VaultLaunchError(`Unknown agent: ${entry.agent}`, "unknown-agent");
+  }
+  // `continue` is the one mode whose values come from the CALL, not the entry: the
+  // host composed the prompt (D7) and the reader chose the agent and posture (D11).
+  if (mode === "continue") {
+    return buildContinue(entry, hostEnv, prompt, target);
   }
   const template = mode === "fork" ? def.forkCommand : def.resumeCommand;
   if (!template) {

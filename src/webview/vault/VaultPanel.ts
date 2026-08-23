@@ -8,10 +8,15 @@
 // never innerHTML, so a crafted title cannot inject markup.
 
 import type {
+  RequestVaultLaunchTargetsMessage,
+  RequestVaultMessageRecordMessage,
   RequestVaultSessionDetailMessage,
   RequestVaultSessionsMessage,
+  VaultContinueSessionMessage,
   VaultCopyFilePathMessage,
   VaultCopyResumeCommandMessage,
+  VaultLaunchTargetsMessage,
+  VaultMessageRecordResponseMessage,
   VaultOpenSessionFileMessage,
   VaultOpenWorkingDirMessage,
   VaultRenameSessionMessage,
@@ -44,6 +49,9 @@ export type VaultPanelPostMessage = (
     | RequestVaultSessionsMessage
     | VaultResumeMessage
     | RequestVaultSessionDetailMessage
+    | RequestVaultMessageRecordMessage
+    | RequestVaultLaunchTargetsMessage
+    | VaultContinueSessionMessage
     | VaultRevealInOSMessage
     | VaultOpenSessionFileMessage
     | VaultOpenWorkingDirMessage
@@ -827,6 +835,14 @@ export class VaultPanel {
   /** Host → webview session-detail reply — forwarded to the preview controller. */
   handleSessionDetailResponse(msg: VaultSessionDetailResponseMessage): void {
     this.preview.handleSessionDetailResponse(msg);
+  }
+
+  handleLaunchTargets(msg: VaultLaunchTargetsMessage): void {
+    this.preview.handleLaunchTargets(msg);
+  }
+
+  handleMessageRecordResponse(msg: VaultMessageRecordResponseMessage): void {
+    this.preview.handleMessageRecordResponse(msg);
   }
 
   /** Release every owned resource: the refresh safety-timer, the context menu and

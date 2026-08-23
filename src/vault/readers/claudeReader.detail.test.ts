@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { VaultTimelineItem } from "../types";
-import { readClaudeDetail, resolveClaudeSessionPath } from "./claudeReader";
+import { readClaudeDetail, readClaudeMessageRecord, resolveClaudeSessionPath } from "./claudeReader";
 
 const isMessage = (t: VaultTimelineItem): t is Extract<VaultTimelineItem, { kind: "message" }> => t.kind === "message";
 
@@ -191,6 +191,46 @@ describe("readClaudeDetail", () => {
   });
 });
 
+// improve-vault-transcript-messages 3_1 — every message item carries the locator
+// the host later resolves back to its source record.
+describe("readClaudeDetail message locators", () => {
+  it("stamps the record uuid on user and assistant messages", async () => {
+    await writeSession("-Users-me-proj", "sess-ref", [
+      { type: "user", uuid: "u-1", message: { role: "user", content: "build the thing" } },
+      { type: "assistant", uuid: "a-1", message: { role: "assistant", content: [{ type: "text", text: "done" }] } },
+    ]);
+    const messages = (await readClaudeDetail("sess-ref", { configDir }))?.timeline.filter(isMessage);
+    expect(messages?.map((m) => [m.role, m.msgRef])).toEqual([
+      ["user", "u-1"],
+      ["assistant", "a-1"],
+    ]);
+  });
+
+  it("gives every text block of one assistant record the same locator", async () => {
+    await writeSession("-Users-me-proj", "sess-ref2", [
+      {
+        type: "assistant",
+        uuid: "a-9",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "first" },
+            { type: "text", text: "second" },
+          ],
+        },
+      },
+    ]);
+    const messages = (await readClaudeDetail("sess-ref2", { configDir }))?.timeline.filter(isMessage);
+    expect(messages?.map((m) => m.msgRef)).toEqual(["a-9", "a-9"]);
+  });
+
+  it("omits the locator when the record carries no uuid", async () => {
+    await writeSession("-Users-me-proj", "sess-ref3", [{ type: "user", message: { role: "user", content: "hi" } }]);
+    const messages = (await readClaudeDetail("sess-ref3", { configDir }))?.timeline.filter(isMessage);
+    expect(messages?.[0]).not.toHaveProperty("msgRef");
+  });
+});
+
 // support-nested-subagent-preview — a depth-2 tree (root → outer → inner), all
 // subagents stored flat under <sessionId>/subagents/, linked by meta.toolUseId.
 describe("readClaudeDetail nested subagents (depth-2)", () => {
@@ -286,5 +326,33 @@ describe("readClaudeDetail nested subagents (depth-2)", () => {
     expect(
       inner?.timeline.some((i) => i.kind === "message" && i.role === "assistant" && i.text.includes("inner done")),
     ).toBe(true);
+  });
+});
+
+// .reviews/round-1.md L6 — a uuid match alone addressed any record, so a locator
+// naming plumbing resolved it as if it were a message.
+describe("readClaudeMessageRecord", () => {
+  it("does not mistake a uuid quoted in oversized message content for the target field", async () => {
+    await writeSession("-Users-me-proj", "sess-quoted-ref", [
+      {
+        type: "user",
+        uuid: "other",
+        message: { role: "user", content: `quoted "target-uuid" ${"x".repeat(300)}` },
+      },
+      { type: "assistant", uuid: "target-uuid", message: { role: "assistant", content: "actual target" } },
+    ]);
+    expect(await readClaudeMessageRecord("sess-quoted-ref", "target-uuid", { configDir }, 100)).toEqual({
+      ok: true,
+      line: expect.stringContaining('"uuid":"target-uuid"'),
+    });
+  });
+
+  it("resolves a user record and refuses a non-message record with the same shape of id", async () => {
+    await writeSession("-Users-me-proj", "sess-rec", [
+      { type: "user", uuid: "u-1", message: { role: "user", content: "hello" } },
+      { type: "summary", uuid: "s-1", summary: "a compacted summary" },
+    ]);
+    expect((await readClaudeMessageRecord("sess-rec", "u-1", { configDir })).ok).toBe(true);
+    expect((await readClaudeMessageRecord("sess-rec", "s-1", { configDir })).ok).toBe(false);
   });
 });

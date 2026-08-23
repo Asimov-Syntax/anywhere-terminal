@@ -4,12 +4,15 @@ import { descendantPids } from "../pty/processTree";
 import { type ResolveClaudeSessionDeps, resolveClaudeSession } from "../session/resolveClaudeSession";
 import type { SessionManager } from "../session/SessionManager";
 import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
-import type { ThemeChangedMessage, WebViewToExtensionMessage } from "../types/messages";
-import { buildResumeCommandString, type LaunchMode } from "../vault/LaunchBuilder";
+import type { ThemeChangedMessage, VaultContinueSessionMessage, WebViewToExtensionMessage } from "../types/messages";
+import { buildContinuationPrompt } from "../vault/ContinuationPrompt";
+import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
+import { buildResumeCommandString, type ContinuationTarget, type LaunchMode } from "../vault/LaunchBuilder";
+import { resolveAssistantMessageRef } from "../vault/messageText";
 import { readClaudeSessions, resolveClaudeSessionPath } from "../vault/readers/claudeReader";
 import { listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
-import { agentKindForExecutable } from "../vault/registry";
+import { agentKindForExecutable, detectContinuationTargets } from "../vault/registry";
 import { parseEntryId, type VaultSessionEntry } from "../vault/types";
 import { normalizeVaultCustomName } from "../vault/VaultCustomNameRegistry";
 import type { VaultLauncher } from "../vault/VaultLauncher";
@@ -429,30 +432,98 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     if (!this.vaultLauncher) {
       return;
     }
-    const viewId = this.getViewId();
     try {
-      const opts = await this.vaultLauncher.resolve(entryId, mode);
-      const newSessionId = this.sessionManager.createSession(viewId, webview, {
-        shell: opts.shell,
-        shellArgs: opts.shellArgs,
-        cwd: opts.cwd,
-        env: opts.env,
-        isAgentLaunch: opts.isAgentLaunch,
-      });
-      const newSession = this.sessionManager.getSession(newSessionId);
-      if (newSession) {
-        void this.safeSendWithRetry(webview, {
-          type: "tabCreated",
-          tabId: newSessionId,
-          name: newSession.name,
-          customName: newSession.customName,
-        });
-      }
+      await this.launchVaultSession(entryId, mode, webview);
     } catch (err) {
       console.error("[AnyWhere Terminal] Failed to launch vault session:", err);
       void this.safeSendWithRetry(webview, {
         type: "error",
         message: err instanceof Error ? err.message : "Failed to launch AI session",
+        severity: "error",
+      });
+    }
+  }
+
+  /** Resolve a launch and open it as a new tab. Throws; callers own the error notice. */
+  private async launchVaultSession(
+    entryId: string,
+    mode: LaunchMode,
+    webview: vscode.Webview,
+    prompt?: string,
+    target?: ContinuationTarget,
+  ): Promise<void> {
+    if (!this.vaultLauncher) {
+      return;
+    }
+    const opts = await this.vaultLauncher.resolve(entryId, mode, prompt, target);
+    const newSessionId = this.sessionManager.createSession(this.getViewId(), webview, {
+      shell: opts.shell,
+      shellArgs: opts.shellArgs,
+      cwd: opts.cwd,
+      env: opts.env,
+      isAgentLaunch: opts.isAgentLaunch,
+    });
+    const newSession = this.sessionManager.getSession(newSessionId);
+    if (newSession) {
+      void this.safeSendWithRetry(webview, {
+        type: "tabCreated",
+        tabId: newSessionId,
+        name: newSession.name,
+        customName: newSession.customName,
+      });
+    }
+  }
+
+  /**
+   * Continue a stored session (D9/D10): compose the handoff prompt around the
+   * instruction the reader confirmed and launch a NEW session seeded with it. The
+   * stored session is never modified or resumed.
+   */
+  private async handleVaultContinue(msg: VaultContinueSessionMessage, webview: vscode.Webview): Promise<void> {
+    if (!this.vaultService || !this.vaultLauncher) {
+      return;
+    }
+    const { entryId } = msg;
+    try {
+      if (msg.instruction.length > MAX_CONTINUATION_INSTRUCTION) {
+        throw new Error(`Instruction exceeds ${MAX_CONTINUATION_INSTRUCTION} characters.`);
+      }
+      const entry = await this.vaultService.getEntry(entryId);
+      if (!entry) {
+        throw new Error("Session not found.");
+      }
+      let anchorRef: string | undefined;
+      if (msg.anchorRef) {
+        const resolved = await this.vaultService.readMessageRecord(entryId, msg.anchorRef);
+        if (!resolved.ok) {
+          throw new Error(
+            resolved.reason === "too-large"
+              ? "Continuation anchor is too large."
+              : "Continuation anchor was not found.",
+          );
+        }
+        anchorRef = resolveAssistantMessageRef(entry.agent, resolved.line, msg.anchorRef) ?? undefined;
+        if (!anchorRef) {
+          throw new Error("Continuation anchor is not an assistant message.");
+        }
+      }
+      const prompt = buildContinuationPrompt(entry, {
+        instruction: msg.instruction,
+        confirmIntent: msg.confirmIntent,
+        ...(anchorRef ? { anchorRef } : {}),
+      });
+      if (!prompt) {
+        throw new Error("Could not compose a handoff prompt for this session.");
+      }
+      await this.launchVaultSession(entryId, "continue", webview, prompt, {
+        ...(msg.agent ? { agent: msg.agent } : {}),
+        ...(msg.permissionChoiceId ? { permissionChoiceId: msg.permissionChoiceId } : {}),
+      });
+    } catch (err) {
+      console.error("[AnyWhere Terminal] Failed to continue vault session:", err);
+      void this.safeSendWithRetry(webview, {
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to continue AI session",
         severity: "error",
       });
     }
@@ -486,6 +557,46 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         entryId,
         error: err instanceof Error ? err.message : "Failed to read session detail",
       });
+    }
+  }
+
+  /**
+   * Resolve one message back to its stored record for the per-message Raw copy
+   * (improve-vault-transcript-messages D5). Both failure modes reply with an
+   * error rather than silence, so the webview can decline to confirm the copy.
+   */
+  /** Which agents this host can continue into (D11) — probed, not assumed, so the
+   *  dialog cannot offer an agent that would fail at spawn. */
+  private async handleRequestVaultLaunchTargets(webview: vscode.Webview): Promise<void> {
+    const targets = await detectContinuationTargets();
+    void this.safeSendWithRetry(webview, { type: "vaultLaunchTargets", targets });
+  }
+
+  private async handleRequestVaultMessageRecord(
+    entryId: string,
+    msgRef: string,
+    webview: vscode.Webview,
+  ): Promise<void> {
+    if (!this.vaultService) {
+      return;
+    }
+    const fail = (error: string): void => {
+      void this.safeSendWithRetry(webview, { type: "vaultMessageRecordResponse", entryId, msgRef, error });
+    };
+    try {
+      const res = await this.vaultService.readMessageRecord(entryId, msgRef);
+      if (res.ok) {
+        void this.safeSendWithRetry(webview, {
+          type: "vaultMessageRecordResponse",
+          entryId,
+          msgRef,
+          record: res.line,
+        });
+      } else {
+        fail(res.reason === "too-large" ? "That message is too large to copy." : "Message record not found.");
+      }
+    } catch (err) {
+      fail(err instanceof Error ? err.message : "Failed to read the message record");
     }
   }
 
@@ -1072,6 +1183,22 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
               webviewView.webview,
               typeof message.limit === "number" ? message.limit : undefined,
             );
+          }
+          break;
+
+        case "vaultContinueSession":
+          if (typeof message.entryId === "string" && typeof message.instruction === "string") {
+            void this.handleVaultContinue(message, webviewView.webview);
+          }
+          break;
+
+        case "requestVaultLaunchTargets":
+          void this.handleRequestVaultLaunchTargets(webviewView.webview);
+          break;
+
+        case "requestVaultMessageRecord":
+          if (typeof message.entryId === "string" && typeof message.msgRef === "string") {
+            void this.handleRequestVaultMessageRecord(message.entryId, message.msgRef, webviewView.webview);
           }
           break;
 
