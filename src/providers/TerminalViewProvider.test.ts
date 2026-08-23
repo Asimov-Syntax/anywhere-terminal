@@ -116,6 +116,7 @@ import { FileTreeHost } from "./fileTreeHost";
 import { openFileLink } from "./openFileLink";
 import { previewFileLink } from "./previewFileLink";
 import { TerminalViewProvider } from "./TerminalViewProvider";
+import type { VaultWatchCoordinator } from "./VaultWatchCoordinator";
 
 // ─── Test Setup ─────────────────────────────────────────────────────
 
@@ -1032,6 +1033,94 @@ describe("TerminalViewProvider: visibility pause/resume", () => {
 
     expect(pauseSpy).toHaveBeenCalledWith(provider.getViewId());
 
+    sm.dispose();
+  });
+});
+
+// ─── Vault Watch Coordinator Delegation ─────────────────────────────
+
+describe("TerminalViewProvider: vault watch coordinator", () => {
+  it("attaches, delegates session watches, and disposes the resolved webview client", async () => {
+    const sm = new SessionManager();
+    const client = { watchSession: vi.fn(async () => {}), dispose: vi.fn() };
+    const coordinator = { attach: vi.fn(() => client), dispose: vi.fn() } as unknown as VaultWatchCoordinator;
+    const provider = new TerminalViewProvider(
+      { fsPath: "/mock/extension" } as vscode.Uri,
+      sm,
+      "sidebar",
+      null,
+      null,
+      null,
+      null,
+      coordinator,
+    );
+    const { webviewView, messageHandlers, disposeHandlers } = createMockWebviewView();
+
+    provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+    expect(coordinator.attach).toHaveBeenCalledTimes(1);
+
+    for (const handler of messageHandlers) {
+      handler({ type: "vaultWatchSession", entryId: "claude:s1" });
+    }
+    await Promise.resolve();
+    expect(client.watchSession).toHaveBeenCalledWith("claude:s1");
+
+    for (const handler of disposeHandlers) {
+      handler();
+    }
+    expect(client.dispose).toHaveBeenCalledTimes(1);
+    sm.dispose();
+  });
+
+  it("keeps late messages and disposal bound to the client captured by each resolution", async () => {
+    const sm = new SessionManager();
+    const firstClient = { watchSession: vi.fn(async () => {}), dispose: vi.fn() };
+    const secondClient = { watchSession: vi.fn(async () => {}), dispose: vi.fn() };
+    const coordinator = {
+      attach: vi.fn().mockReturnValueOnce(firstClient).mockReturnValueOnce(secondClient),
+      dispose: vi.fn(),
+    } as unknown as VaultWatchCoordinator;
+    const provider = new TerminalViewProvider(
+      { fsPath: "/mock/extension" } as vscode.Uri,
+      sm,
+      "sidebar",
+      null,
+      null,
+      null,
+      null,
+      coordinator,
+    );
+    const first = createMockWebviewView();
+    const second = createMockWebviewView();
+
+    provider.resolveWebviewView(
+      first.webviewView,
+      {} as vscode.WebviewViewResolveContext,
+      {} as vscode.CancellationToken,
+    );
+    provider.resolveWebviewView(
+      second.webviewView,
+      {} as vscode.WebviewViewResolveContext,
+      {} as vscode.CancellationToken,
+    );
+
+    for (const handler of first.messageHandlers) {
+      handler({ type: "vaultWatchSession", entryId: "claude:old" });
+    }
+    await Promise.resolve();
+    expect(firstClient.watchSession).toHaveBeenCalledWith("claude:old");
+    expect(secondClient.watchSession).not.toHaveBeenCalled();
+
+    for (const handler of first.disposeHandlers) {
+      handler();
+    }
+    expect(secondClient.dispose).not.toHaveBeenCalled();
+
+    for (const handler of second.messageHandlers) {
+      handler({ type: "vaultWatchSession", entryId: "claude:new" });
+    }
+    await Promise.resolve();
+    expect(secondClient.watchSession).toHaveBeenCalledWith("claude:new");
     sm.dispose();
   });
 });

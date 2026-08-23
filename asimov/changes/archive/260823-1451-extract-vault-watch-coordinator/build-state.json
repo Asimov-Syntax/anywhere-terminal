@@ -1,0 +1,1166 @@
+{
+  "change": "extract-vault-watch-coordinator",
+  "leases": [],
+  "attempts": {},
+  "locked": [],
+  "verified": [
+    {
+      "task": "1_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "ce6c57839ff7ca0fe3fd327485396fe65a7a2016",
+      "at": 1787492615173,
+      "scope": [
+        "src/providers/VaultWatchCoordinator.ts",
+        "src/providers/VaultWatchCoordinator.test.ts"
+      ],
+      "testCmd": "bun test 'src/providers/VaultWatchCoordinator.test.ts'"
+    },
+    {
+      "task": "1_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "f96af31de27b675ec286e7a96ab1acef50ef696b",
+      "at": 1787493134922,
+      "scope": [
+        "src/extension.ts",
+        "src/providers/TerminalViewProvider.ts",
+        "src/providers/VaultWatchCoordinator.ts",
+        "src/providers/TerminalViewProvider.test.ts"
+      ],
+      "testCmd": "npx vitest run 'src/providers/TerminalViewProvider.test.ts'",
+      "testChange": {
+        "reason": "Added three delegation assertions because watcher ownership moved behind the new coordinator client; no inherited assertion changed or was removed.",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.test.ts"
+        ],
+        "assertionDelta": 3
+      }
+    },
+    {
+      "task": "2_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "9f39416f95d4c576e84c1c1492b16c8bb0b85d69",
+      "at": 1787494013711,
+      "scope": [
+        "src/providers/TerminalViewProvider.ts",
+        "src/providers/TerminalViewProvider.test.ts"
+      ],
+      "testCmd": "npx vitest run 'src/providers/TerminalViewProvider.test.ts'",
+      "testChange": {
+        "reason": "Added one re-resolution regression proving stale webview messages and delayed disposal stay bound to the captured watcher client; no inherited assertion changed or was removed.",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.test.ts",
+          "src/providers/VaultWatchCoordinator.test.ts"
+        ],
+        "assertionDelta": 4
+      }
+    },
+    {
+      "task": "2_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "51c36a7876934114a73f3ec537192d4769884394",
+      "at": 1787494146019,
+      "scope": [
+        "src/providers/VaultWatchCoordinator.ts",
+        "src/providers/VaultWatchCoordinator.test.ts"
+      ],
+      "testCmd": "bun test 'src/providers/VaultWatchCoordinator.test.ts'",
+      "testChange": {
+        "reason": "Added one two-client follow-isolation regression covering independent watchers, timers, generations, and callbacks; no inherited assertion changed or was removed.",
+        "deleted": [],
+        "modified": [
+          "src/providers/VaultWatchCoordinator.test.ts"
+        ],
+        "assertionDelta": 5
+      }
+    }
+  ],
+  "reads": 0,
+  "testBaseline": {
+    "src/session/SessionManager.scheduleDestroy.test.ts": {
+      "hash": "8d8df5090b19b276",
+      "assertions": 12
+    },
+    "src/session/sessionSnapshotEviction.test.ts": {
+      "hash": "63e631a707579f0f",
+      "assertions": 27
+    },
+    "src/session/OutputBuffer.test.ts": {
+      "hash": "ce39e263cadb5fc2",
+      "assertions": 88
+    },
+    "src/session/SessionManager.test.ts": {
+      "hash": "49def830fd954038",
+      "assertions": 201
+    },
+    "src/session/SessionManager.deactivate.test.ts": {
+      "hash": "f972ecf3ec630b1a",
+      "assertions": 10
+    },
+    "src/session/SessionManager.settingToggle.test.ts": {
+      "hash": "2928ba463e219059",
+      "assertions": 14
+    },
+    "src/session/SessionManager.shutdownLifecycle.test.ts": {
+      "hash": "50a0a2e5263f0566",
+      "assertions": 38
+    },
+    "src/session/SessionManager.hydrate.test.ts": {
+      "hash": "58388479aa22c2b2",
+      "assertions": 19
+    },
+    "src/session/SessionManager.editorPanels.test.ts": {
+      "hash": "d206690872b4d6c0",
+      "assertions": 10
+    },
+    "src/session/SessionManager.headlessMirror.test.ts": {
+      "hash": "5c3a9b8f520df0d6",
+      "assertions": 16
+    },
+    "src/session/SessionManager.snapshot.test.ts": {
+      "hash": "3ce234f4ce0e7f6e",
+      "assertions": 34
+    },
+    "src/session/SessionManager.trackedCommands.test.ts": {
+      "hash": "dc18980343a74d5f",
+      "assertions": 88
+    },
+    "src/session/SessionManager.persist.test.ts": {
+      "hash": "f0ad23cecfc05cab",
+      "assertions": 19
+    },
+    "src/session/SessionManager.exit.test.ts": {
+      "hash": "aed2ed2e62249765",
+      "assertions": 27
+    },
+    "src/session/SessionStorage.test.ts": {
+      "hash": "868477e5a08abd93",
+      "assertions": 50
+    },
+    "src/session/resolveClaudeSession.test.ts": {
+      "hash": "7ab6adb381d1ce67",
+      "assertions": 14
+    },
+    "src/session/SessionManager.getAllSessionsForView.test.ts": {
+      "hash": "8ebf714e58cafb7d",
+      "assertions": 11
+    },
+    "src/vault/messageText.test.ts": {
+      "hash": "7ee145429c41c72e",
+      "assertions": 19
+    },
+    "src/vault/LaunchBuilder.command.test.ts": {
+      "hash": "3cb599c89fcb6c3d",
+      "assertions": 6
+    },
+    "src/vault/sqlite.write.test.ts": {
+      "hash": "ec169089f996cb61",
+      "assertions": 14
+    },
+    "src/vault/VaultCustomNameRegistry.test.ts": {
+      "hash": "b200ebaf169b796f",
+      "assertions": 14
+    },
+    "src/vault/VaultService.test.ts": {
+      "hash": "fed8fe9cf42743d7",
+      "assertions": 69
+    },
+    "src/vault/storeStamp.test.ts": {
+      "hash": "728681a58733ed4b",
+      "assertions": 8
+    },
+    "src/vault/VaultService.watchTargets.test.ts": {
+      "hash": "ad2b9deccc917b0f",
+      "assertions": 11
+    },
+    "src/vault/VaultService.detail.test.ts": {
+      "hash": "f4516ee22b8b6b44",
+      "assertions": 24
+    },
+    "src/vault/VaultCacheStore.test.ts": {
+      "hash": "3392421b0ed35183",
+      "assertions": 30
+    },
+    "src/vault/LaunchBuilder.test.ts": {
+      "hash": "07cfab76c148cc0e",
+      "assertions": 41
+    },
+    "src/vault/ContinuationPrompt.test.ts": {
+      "hash": "7f2a3da350d99d66",
+      "assertions": 37
+    },
+    "src/vault/preview.test.ts": {
+      "hash": "7b952831e378ade7",
+      "assertions": 8
+    },
+    "src/vault/registry.test.ts": {
+      "hash": "8ef69db5af64f2e3",
+      "assertions": 41
+    },
+    "src/vault/VaultService.customName.test.ts": {
+      "hash": "ad036289b84fac59",
+      "assertions": 9
+    },
+    "src/vault/VaultLauncher.test.ts": {
+      "hash": "fcf54d7654ec5438",
+      "assertions": 13
+    },
+    "src/vault/sqlite.test.ts": {
+      "hash": "3f1261384723769f",
+      "assertions": 35
+    },
+    "src/vault/readers/subagentLookup.test.ts": {
+      "hash": "879655109cec54aa",
+      "assertions": 10
+    },
+    "src/vault/readers/userRecord.test.ts": {
+      "hash": "a2221365eda2bd63",
+      "assertions": 24
+    },
+    "src/vault/readers/claudeChildIds.test.ts": {
+      "hash": "90e8f926d6e0e15c",
+      "assertions": 22
+    },
+    "src/vault/readers/detail.test.ts": {
+      "hash": "818698c4664fbd7a",
+      "assertions": 146
+    },
+    "src/vault/readers/claudeReader.detail.test.ts": {
+      "hash": "87a80b1619ab609a",
+      "assertions": 34
+    },
+    "src/vault/readers/opencodeReader.detail.test.ts": {
+      "hash": "fc868563d7eaff99",
+      "assertions": 71
+    },
+    "src/vault/readers/runningSessions.test.ts": {
+      "hash": "692d4a7820ca9882",
+      "assertions": 29
+    },
+    "src/vault/readers/codexReader.rename.test.ts": {
+      "hash": "e63fd0ab162eaffb",
+      "assertions": 7
+    },
+    "src/vault/readers/claudeReader.test.ts": {
+      "hash": "bc300582ab8f92fa",
+      "assertions": 145
+    },
+    "src/vault/readers/codexReader.detail.test.ts": {
+      "hash": "20bc85c885ad562d",
+      "assertions": 42
+    },
+    "src/vault/readers/recordLine.test.ts": {
+      "hash": "a1d7b97d77dc8dd5",
+      "assertions": 11
+    },
+    "src/vault/readers/opencodeReader.rename.test.ts": {
+      "hash": "94436362174bb8ca",
+      "assertions": 6
+    },
+    "src/vault/readers/opencodeReader.test.ts": {
+      "hash": "d39db7fd41a6414c",
+      "assertions": 39
+    },
+    "src/vault/readers/codexReader.test.ts": {
+      "hash": "7a10a18084f4cb4c",
+      "assertions": 61
+    },
+    "src/commands/exportHelpers.test.ts": {
+      "hash": "e4b6bd763ee01762",
+      "assertions": 28
+    },
+    "src/commands/exportCommands.test.ts": {
+      "hash": "23cb612f2dbd8909",
+      "assertions": 38
+    },
+    "src/shared/imagePasteTrigger.test.ts": {
+      "hash": "0bbf2269ad68766b",
+      "assertions": 7
+    },
+    "src/utils/shellEscape.test.ts": {
+      "hash": "7e1d10daccc60ecc",
+      "assertions": 4
+    },
+    "src/webview/TabBar.test.ts": {
+      "hash": "19c5be37e0a325c3",
+      "assertions": 69
+    },
+    "src/webview/imagePasteBridge.test.ts": {
+      "hash": "87ab365bc96bb310",
+      "assertions": 29
+    },
+    "src/webview/tabRenameOverlay.test.ts": {
+      "hash": "c7ee96d1b6fde4b1",
+      "assertions": 33
+    },
+    "src/webview/InputHandler.test.ts": {
+      "hash": "5b47da3c930abe8c",
+      "assertions": 48
+    },
+    "src/webview/SplitContainer.test.ts": {
+      "hash": "0dcd6906e842bc43",
+      "assertions": 48
+    },
+    "src/webview/DragDropHandler.test.ts": {
+      "hash": "ce30f7c657cb0c5e",
+      "assertions": 48
+    },
+    "src/webview/splitIntegrationEdgeCases.test.ts": {
+      "hash": "29425be1ff21a4b2",
+      "assertions": 57
+    },
+    "src/webview/SplitResizeHandle.test.ts": {
+      "hash": "057e7a78c398649c",
+      "assertions": 20
+    },
+    "src/webview/SplitModel.test.ts": {
+      "hash": "9eb99311b5613379",
+      "assertions": 37
+    },
+    "src/webview/flow/FlowControl.test.ts": {
+      "hash": "e9beb4ea8c549df6",
+      "assertions": 18
+    },
+    "src/webview/vault/workflowBoard.test.ts": {
+      "hash": "bd35799c3d28cfdd",
+      "assertions": 73
+    },
+    "src/webview/vault/VaultPanel.test.ts": {
+      "hash": "ac4cf82ce030fd2f",
+      "assertions": 421
+    },
+    "src/webview/vault/messageActions.test.ts": {
+      "hash": "86ebedd9368f2f58",
+      "assertions": 49
+    },
+    "src/webview/vault/forkPoint.test.ts": {
+      "hash": "3a795899c09dc9bc",
+      "assertions": 9
+    },
+    "src/webview/vault/previewHeader.test.ts": {
+      "hash": "6a3cd8debb55c961",
+      "assertions": 22
+    },
+    "src/webview/vault/grouping.test.ts": {
+      "hash": "d3471e12d18d2660",
+      "assertions": 16
+    },
+    "src/webview/vault/ContinueDialog.test.ts": {
+      "hash": "0d0cf8ee21d750f9",
+      "assertions": 51
+    },
+    "src/webview/vault/vaultRenderSignature.test.ts": {
+      "hash": "b68ef65c3e9e3866",
+      "assertions": 16
+    },
+    "src/webview/vault/markdownLite.test.ts": {
+      "hash": "89e8bfb2b2b72e4c",
+      "assertions": 28
+    },
+    "src/webview/vault/FloatingPreviewShell.test.ts": {
+      "hash": "2ae7ffc752400269",
+      "assertions": 31
+    },
+    "src/webview/messaging/scrollbackDumpHandler.test.ts": {
+      "hash": "9d86870cce2a4d82",
+      "assertions": 29
+    },
+    "src/webview/messaging/MessageRouter.test.ts": {
+      "hash": "a84378d7dde31491",
+      "assertions": 4
+    },
+    "src/webview/resize/XtermFitService.test.ts": {
+      "hash": "36ed7ab5316857cc",
+      "assertions": 9
+    },
+    "src/webview/resize/ResizeCoordinator.test.ts": {
+      "hash": "95af430d9264fe4c",
+      "assertions": 9
+    },
+    "src/webview/links/HoverPreviewPopup.test.ts": {
+      "hash": "c30150d079912482",
+      "assertions": 112
+    },
+    "src/webview/links/subagentLineParser.test.ts": {
+      "hash": "9a840693104204fe",
+      "assertions": 19
+    },
+    "src/webview/links/imagePlaceholderParser.test.ts": {
+      "hash": "1c5651b363531cda",
+      "assertions": 7
+    },
+    "src/webview/links/FilePathLinkProvider.test.ts": {
+      "hash": "f00acbc48a5fc7c0",
+      "assertions": 62
+    },
+    "src/webview/links/markdownRenderer.test.ts": {
+      "hash": "9b6ad4812bc50508",
+      "assertions": 14
+    },
+    "src/webview/links/HoverPreviewController.test.ts": {
+      "hash": "bced25279b2379a6",
+      "assertions": 54
+    },
+    "src/webview/links/filePathParser.test.ts": {
+      "hash": "33ca8588ec998cf0",
+      "assertions": 131
+    },
+    "src/webview/links/SubagentPreviewPopup.test.ts": {
+      "hash": "497ace44bd9ceda2",
+      "assertions": 35
+    },
+    "src/webview/links/syntaxRenderer.test.ts": {
+      "hash": "822f88965577557a",
+      "assertions": 18
+    },
+    "src/webview/links/PastedImageStore.test.ts": {
+      "hash": "f972d9cc8f6953d7",
+      "assertions": 25
+    },
+    "src/webview/theme/ThemeManager.test.ts": {
+      "hash": "74c8f2cff99376dc",
+      "assertions": 23
+    },
+    "src/webview/state/WebviewStateStore.test.ts": {
+      "hash": "05a570709f16fff8",
+      "assertions": 35
+    },
+    "src/webview/state/WebviewStateStore.searchMode.test.ts": {
+      "hash": "b709f78b5cc15227",
+      "assertions": 5
+    },
+    "src/webview/terminal/restoreDivider.test.ts": {
+      "hash": "2066390c7b5d78a9",
+      "assertions": 5
+    },
+    "src/webview/terminal/titleSignature.test.ts": {
+      "hash": "c716fadd5df2c769",
+      "assertions": 25
+    },
+    "src/webview/terminal/TerminalActivityTracker.test.ts": {
+      "hash": "35db38cd74ae3866",
+      "assertions": 11
+    },
+    "src/webview/integration/webviewFlows.test.ts": {
+      "hash": "e268175608d045ea",
+      "assertions": 17
+    },
+    "src/webview/fileTree/Tree.flat-list.test.ts": {
+      "hash": "d19f972080fa6422",
+      "assertions": 7
+    },
+    "src/webview/fileTree/FileTreeContextMenu.test.ts": {
+      "hash": "ff3400ef3ee54110",
+      "assertions": 12
+    },
+    "src/webview/fileTree/ReadOnlyFileRenderer.test.ts": {
+      "hash": "520f3552e0e30286",
+      "assertions": 68
+    },
+    "src/webview/fileTree/Tree.test.ts": {
+      "hash": "9a62c32e047eb1e3",
+      "assertions": 80
+    },
+    "src/webview/fileTree/FileTreeController.test.ts": {
+      "hash": "8b7663288661add3",
+      "assertions": 7
+    },
+    "src/webview/fileTree/FileTreePanel.test.ts": {
+      "hash": "8a832be217166553",
+      "assertions": 86
+    },
+    "src/webview/fileTree/FileSystemDataSource.test.ts": {
+      "hash": "bb23fc5d891cab52",
+      "assertions": 116
+    },
+    "src/webview/fileTree/search/__tests__/matching.test.ts": {
+      "hash": "aa5f3cd3e2365d37",
+      "assertions": 25
+    },
+    "src/webview/fileTree/search/__tests__/renderHighlightedText.test.ts": {
+      "hash": "3564764f97eab38e",
+      "assertions": 7
+    },
+    "src/webview/fileTree/search/__tests__/FileTreeSearchController.test.ts": {
+      "hash": "330c10e553c55580",
+      "assertions": 35
+    },
+    "src/webview/ui/BannerService.test.ts": {
+      "hash": "0ffa313e8d5b5c7b",
+      "assertions": 14
+    },
+    "src/webview/ui/Tooltip.test.ts": {
+      "hash": "043e99f812945375",
+      "assertions": 23
+    },
+    "src/providers/previewFileLink.test.ts": {
+      "hash": "dcc959883816be11",
+      "assertions": 74
+    },
+    "src/providers/webviewHtml.test.ts": {
+      "hash": "5b1fc375e636ac32",
+      "assertions": 5
+    },
+    "src/providers/TerminalEditorProvider.panelId.test.ts": {
+      "hash": "c702a3d39996c7c4",
+      "assertions": 4
+    },
+    "src/providers/resolveCwdRelative.test.ts": {
+      "hash": "f361b839d1ac923d",
+      "assertions": 4
+    },
+    "src/providers/readFileForPreview.test.ts": {
+      "hash": "c6281fa5a0d242f5",
+      "assertions": 35
+    },
+    "src/providers/pathResolution.test.ts": {
+      "hash": "e2a580e312f43992",
+      "assertions": 31
+    },
+    "src/providers/VaultWatchCoordinator.test.ts": {
+      "hash": "861a3cd438397da9",
+      "assertions": 20
+    },
+    "src/providers/TerminalViewProvider.vaultRename.test.ts": {
+      "hash": "4bb16dad68c7edd1",
+      "assertions": 14
+    },
+    "src/providers/gitDecorationProvider.test.ts": {
+      "hash": "1fc9ff688459dad0",
+      "assertions": 55
+    },
+    "src/providers/TerminalEditorProvider.scheduledDestroy.test.ts": {
+      "hash": "1509cd50e89a195b",
+      "assertions": 4
+    },
+    "src/providers/openFileLink.test.ts": {
+      "hash": "fdf11680d58cb64f",
+      "assertions": 227
+    },
+    "src/providers/clipboardImageSync.test.ts": {
+      "hash": "f9a7f4755491228c",
+      "assertions": 30
+    },
+    "src/providers/gitStatusMapping.test.ts": {
+      "hash": "ae6bd48c86f7ac67",
+      "assertions": 9
+    },
+    "src/providers/fileTreeSearchHandler.test.ts": {
+      "hash": "8625dc92e6ee8a0d",
+      "assertions": 41
+    },
+    "src/providers/TerminalViewProvider.restore.test.ts": {
+      "hash": "e4dfa8678e25170d",
+      "assertions": 7
+    },
+    "src/providers/TerminalViewProvider.test.ts": {
+      "hash": "a1dfbe32a20c56b4",
+      "assertions": 77
+    },
+    "src/providers/TerminalPanelSerializer.test.ts": {
+      "hash": "676c5031140957fd",
+      "assertions": 7
+    },
+    "src/providers/fsWatcherPool.test.ts": {
+      "hash": "c549f9f8bfa8efed",
+      "assertions": 44
+    },
+    "src/providers/ActiveFileRevealer.test.ts": {
+      "hash": "7edc11b0e499ec36",
+      "assertions": 35
+    },
+    "src/providers/TerminalViewProvider.vaultContinue.test.ts": {
+      "hash": "3d8896b717b1553b",
+      "assertions": 21
+    },
+    "src/providers/previewValidation.test.ts": {
+      "hash": "089d8a648be686b6",
+      "assertions": 10
+    },
+    "src/providers/TerminalEditorProvider.test.ts": {
+      "hash": "9be443b061013113",
+      "assertions": 30
+    },
+    "src/providers/TerminalEditorProvider.onReady.test.ts": {
+      "hash": "9ca907a96e298985",
+      "assertions": 13
+    },
+    "src/providers/pathPreprocess.test.ts": {
+      "hash": "252fc040a9e0af5a",
+      "assertions": 14
+    },
+    "src/providers/resolveRenameTarget.test.ts": {
+      "hash": "c1c7062eab112453",
+      "assertions": 14
+    },
+    "src/providers/fileTreeHost.test.ts": {
+      "hash": "43736dd22b000bae",
+      "assertions": 122
+    },
+    "src/pty/PtyManager.test.ts": {
+      "hash": "d9bdc93d54e3dc7c",
+      "assertions": 53
+    },
+    "src/pty/oscParser.test.ts": {
+      "hash": "d7f1a998d8b2f3d5",
+      "assertions": 66
+    },
+    "src/pty/ShellIntegrationInjector.test.ts": {
+      "hash": "1fac7c646a7e16e1",
+      "assertions": 46
+    },
+    "src/pty/processCwd.test.ts": {
+      "hash": "0878688164bd23c8",
+      "assertions": 31
+    },
+    "src/pty/processTree.test.ts": {
+      "hash": "8a82a65909c34a3a",
+      "assertions": 20
+    },
+    "src/pty/PtySession.test.ts": {
+      "hash": "7c2148e96ceb02ae",
+      "assertions": 60
+    },
+    "src/test/fileTreeGitDecorations.integration.test.ts": {
+      "hash": "cc6db99384f8ed59",
+      "assertions": 17
+    },
+    "src/test/fileTreeRpc.integration.test.ts": {
+      "hash": "2da110225b07115e",
+      "assertions": 24
+    },
+    "src/test/extension.test.ts": {
+      "hash": "d6c11309e4451780",
+      "assertions": 2
+    },
+    "src/test/vendor-import.test.ts": {
+      "hash": "b3839cffed2bd495",
+      "assertions": 3
+    },
+    "src/test/vendor-filters.test.ts": {
+      "hash": "145bfa2a6ce6c9ed",
+      "assertions": 7
+    },
+    "src/types/errors.test.ts": {
+      "hash": "ae0e36f829a40550",
+      "assertions": 44
+    },
+    "src/settings/SettingsReader.test.ts": {
+      "hash": "4524171dea015d3c",
+      "assertions": 41
+    },
+    "src/settings/FileTreeSettingsReader.test.ts": {
+      "hash": "65581186055e3a92",
+      "assertions": 17
+    },
+    ".claude/skills/asimov-ship/recipes/github-env/scripts/__cases__/setup-github-env.casetest.ts": {
+      "hash": "db86a57d3914fb2b",
+      "assertions": 47
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/web-auth.casetest.ts": {
+      "hash": "2c4e324bf6567eb8",
+      "assertions": 11
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/probe-page.casetest.ts": {
+      "hash": "e9e02024b45580f7",
+      "assertions": 17
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/gates.casetest.ts": {
+      "hash": "708441458a92f90c",
+      "assertions": 62
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/probe-run.casetest.ts": {
+      "hash": "18676ea733291715",
+      "assertions": 92
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/doctor.casetest.ts": {
+      "hash": "1c33ff3958ea9df6",
+      "assertions": 22
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/sourcemap.casetest.ts": {
+      "hash": "fa5e84cf32306284",
+      "assertions": 72
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/screen.casetest.ts": {
+      "hash": "5bbd13348e36896a",
+      "assertions": 13
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/reprofiles.casetest.ts": {
+      "hash": "8bd147304a4b38a5",
+      "assertions": 11
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/run.casetest.ts": {
+      "hash": "6e80d4b3ee5b0f7a",
+      "assertions": 13
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/probe-marker.casetest.ts": {
+      "hash": "efe21e587f46776c",
+      "assertions": 45
+    },
+    ".claude/skills/asimov-debug/lib/__cases__/probe-check.casetest.ts": {
+      "hash": "1a6ff2b1cfff2122",
+      "assertions": 15
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/slug-dating.casetest.ts": {
+      "hash": "c95d2d2600625784",
+      "assertions": 37
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/install-hooks.casetest.ts": {
+      "hash": "ba181d5206cc2504",
+      "assertions": 28
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/session.casetest.ts": {
+      "hash": "c6fbde9bdf385f14",
+      "assertions": 104
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/report-gates.casetest.ts": {
+      "hash": "5ce86e87fa4caf87",
+      "assertions": 48
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/hook-launcher.casetest.ts": {
+      "hash": "dbc268e2f6d68f4a",
+      "assertions": 9
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/diff-purity.casetest.ts": {
+      "hash": "6b1c24bbf3188449",
+      "assertions": 18
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/repro-web.casetest.ts": {
+      "hash": "b43faf29c6832714",
+      "assertions": 19
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/acceptance.casetest.ts": {
+      "hash": "2f4194847db6e1b4",
+      "assertions": 27
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/oracle-freeze.casetest.ts": {
+      "hash": "f1dd1d759de1abb3",
+      "assertions": 182
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/harness.ts": {
+      "hash": "1c385220831008db",
+      "assertions": 0
+    },
+    ".claude/skills/asimov-debug/scripts/__cases__/observes-proof.casetest.ts": {
+      "hash": "2f1ab17b353d85be",
+      "assertions": 34
+    },
+    ".claude/skills/asimov/opencode/__cases__/plugin-gates.casetest.ts": {
+      "hash": "68568312107bb020",
+      "assertions": 30
+    },
+    ".claude/skills/asimov/lib/git/__cases__/worktree.casetest.ts": {
+      "hash": "05ae470df1240f55",
+      "assertions": 17
+    },
+    ".claude/skills/asimov/lib/git/__cases__/repo.casetest.ts": {
+      "hash": "78159f126a0fc9fa",
+      "assertions": 10
+    },
+    ".claude/skills/asimov/lib/git/__cases__/worktree-link.casetest.ts": {
+      "hash": "8975bbf517a28fb5",
+      "assertions": 16
+    },
+    ".claude/skills/asimov/lib/__cases__/contradiction.casetest.ts": {
+      "hash": "a52b9ab3aee6f16f",
+      "assertions": 24
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/knowledge-labels.casetest.ts": {
+      "hash": "f40cd8926cb05cdd",
+      "assertions": 24
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-indexer.casetest.ts": {
+      "hash": "76040f4992d539ff",
+      "assertions": 66
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-db.casetest.ts": {
+      "hash": "b0b64214dcfffe17",
+      "assertions": 29
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-vector.casetest.ts": {
+      "hash": "f00431de55f1a725",
+      "assertions": 9
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-chunker.casetest.ts": {
+      "hash": "a192d40fcd279bb2",
+      "assertions": 19
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/embeddings.casetest.ts": {
+      "hash": "9c160f576008be8e",
+      "assertions": 19
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-search.casetest.ts": {
+      "hash": "7d6de629e7beeee7",
+      "assertions": 47
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-consolidation.casetest.ts": {
+      "hash": "b7ac934d15e56ce1",
+      "assertions": 17
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-store.casetest.ts": {
+      "hash": "68b9b82dbf9554b0",
+      "assertions": 17
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-co-access.casetest.ts": {
+      "hash": "98554405d734c8af",
+      "assertions": 14
+    },
+    ".claude/skills/asimov/lib/memory/__cases__/memory-graph.casetest.ts": {
+      "hash": "721063a6c6c8f1df",
+      "assertions": 27
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/mutate.casetest.ts": {
+      "hash": "a14612b41cb57849",
+      "assertions": 39
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/file-shape.casetest.ts": {
+      "hash": "e9dcd607cb99af15",
+      "assertions": 97
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/ledger-shape-agreement.casetest.ts": {
+      "hash": "44bf917ad52c5b7b",
+      "assertions": 35
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/tasks-md-properties.casetest.ts": {
+      "hash": "e9fcc3a993991d41",
+      "assertions": 9
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/ledger-boundary.casetest.ts": {
+      "hash": "6f7cca412517acf1",
+      "assertions": 3
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/build-state.casetest.ts": {
+      "hash": "a8953c637e5d3dde",
+      "assertions": 19
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/build-gates.casetest.ts": {
+      "hash": "b2655d930b476f83",
+      "assertions": 76
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/autofix.casetest.ts": {
+      "hash": "95972958c5b1ba8c",
+      "assertions": 280
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/tasks-md.casetest.ts": {
+      "hash": "2a2df815a6fb4603",
+      "assertions": 202
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/plan-paths.casetest.ts": {
+      "hash": "f66003e90e536a29",
+      "assertions": 19
+    },
+    ".claude/skills/asimov/lib/asimov/__cases__/test-integrity.casetest.ts": {
+      "hash": "2da5a22c97e3b8ce",
+      "assertions": 30
+    },
+    ".claude/skills/asimov/scripts/ops/refactor/__cases__/scan.casetest.ts": {
+      "hash": "376e46205d80bdfd",
+      "assertions": 14
+    },
+    ".claude/skills/asimov/scripts/ops/refactor/__cases__/coupling.casetest.ts": {
+      "hash": "d9f8ec4029f9658f",
+      "assertions": 44
+    },
+    ".claude/skills/asimov/scripts/ops/worktree/__cases__/create.casetest.ts": {
+      "hash": "9e40a98c1a8a0f2a",
+      "assertions": 9
+    },
+    ".claude/skills/asimov/scripts/ops/memory/__cases__/learn.casetest.ts": {
+      "hash": "c46e990c369cd552",
+      "assertions": 53
+    },
+    ".claude/skills/asimov/scripts/ops/change/__cases__/validate-change.casetest.ts": {
+      "hash": "587e5d797b86522a",
+      "assertions": 273
+    },
+    ".claude/skills/asimov/scripts/ops/change/__cases__/archive-change.casetest.ts": {
+      "hash": "8dfb2573ea427e0b",
+      "assertions": 39
+    },
+    ".claude/skills/asimov/scripts/ops/change/__cases__/new-change.casetest.ts": {
+      "hash": "3f5472152db830ce",
+      "assertions": 6
+    },
+    ".claude/skills/asimov/scripts/ops/change/__cases__/build-task.casetest.ts": {
+      "hash": "0661a897e1e0e686",
+      "assertions": 422
+    },
+    ".claude/skills/asimov/scripts/ops/change/__cases__/list.casetest.ts": {
+      "hash": "f2d5e2d40de10332",
+      "assertions": 23
+    },
+    ".claude/skills/asimov/scripts/ops/change/__cases__/mutate-change.casetest.ts": {
+      "hash": "481ede16aee42720",
+      "assertions": 47
+    },
+    ".claude/skills/asimov/scripts/ops/change/__cases__/apply-deltas.casetest.ts": {
+      "hash": "642bd10c2a87bd7f",
+      "assertions": 41
+    },
+    ".claude/skills/asimov/scripts/__cases__/migrate.casetest.ts": {
+      "hash": "d1eb7c6e2fcc61c4",
+      "assertions": 29
+    },
+    ".claude/skills/asimov/scripts/__cases__/init.casetest.ts": {
+      "hash": "6b607a7a917bbc8e",
+      "assertions": 76
+    },
+    ".agents/skills/asimov-ship/recipes/github-env/scripts/__cases__/setup-github-env.casetest.ts": {
+      "hash": "db86a57d3914fb2b",
+      "assertions": 47
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/web-auth.casetest.ts": {
+      "hash": "2c4e324bf6567eb8",
+      "assertions": 11
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/probe-page.casetest.ts": {
+      "hash": "e9e02024b45580f7",
+      "assertions": 17
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/gates.casetest.ts": {
+      "hash": "708441458a92f90c",
+      "assertions": 62
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/probe-run.casetest.ts": {
+      "hash": "18676ea733291715",
+      "assertions": 92
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/doctor.casetest.ts": {
+      "hash": "1c33ff3958ea9df6",
+      "assertions": 22
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/sourcemap.casetest.ts": {
+      "hash": "fa5e84cf32306284",
+      "assertions": 72
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/screen.casetest.ts": {
+      "hash": "5bbd13348e36896a",
+      "assertions": 13
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/reprofiles.casetest.ts": {
+      "hash": "8bd147304a4b38a5",
+      "assertions": 11
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/run.casetest.ts": {
+      "hash": "6e80d4b3ee5b0f7a",
+      "assertions": 13
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/probe-marker.casetest.ts": {
+      "hash": "efe21e587f46776c",
+      "assertions": 45
+    },
+    ".agents/skills/asimov-debug/lib/__cases__/probe-check.casetest.ts": {
+      "hash": "1a6ff2b1cfff2122",
+      "assertions": 15
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/slug-dating.casetest.ts": {
+      "hash": "c95d2d2600625784",
+      "assertions": 37
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/install-hooks.casetest.ts": {
+      "hash": "ba181d5206cc2504",
+      "assertions": 28
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/session.casetest.ts": {
+      "hash": "c6fbde9bdf385f14",
+      "assertions": 104
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/report-gates.casetest.ts": {
+      "hash": "5ce86e87fa4caf87",
+      "assertions": 48
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/hook-launcher.casetest.ts": {
+      "hash": "dbc268e2f6d68f4a",
+      "assertions": 9
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/diff-purity.casetest.ts": {
+      "hash": "6b1c24bbf3188449",
+      "assertions": 18
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/repro-web.casetest.ts": {
+      "hash": "b43faf29c6832714",
+      "assertions": 19
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/acceptance.casetest.ts": {
+      "hash": "2f4194847db6e1b4",
+      "assertions": 27
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/oracle-freeze.casetest.ts": {
+      "hash": "f1dd1d759de1abb3",
+      "assertions": 182
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/harness.ts": {
+      "hash": "1c385220831008db",
+      "assertions": 0
+    },
+    ".agents/skills/asimov-debug/scripts/__cases__/observes-proof.casetest.ts": {
+      "hash": "2f1ab17b353d85be",
+      "assertions": 34
+    },
+    ".agents/skills/asimov/opencode/__cases__/plugin-gates.casetest.ts": {
+      "hash": "68568312107bb020",
+      "assertions": 30
+    },
+    ".agents/skills/asimov/lib/git/__cases__/worktree.casetest.ts": {
+      "hash": "05ae470df1240f55",
+      "assertions": 17
+    },
+    ".agents/skills/asimov/lib/git/__cases__/repo.casetest.ts": {
+      "hash": "78159f126a0fc9fa",
+      "assertions": 10
+    },
+    ".agents/skills/asimov/lib/git/__cases__/worktree-link.casetest.ts": {
+      "hash": "8975bbf517a28fb5",
+      "assertions": 16
+    },
+    ".agents/skills/asimov/lib/__cases__/contradiction.casetest.ts": {
+      "hash": "a52b9ab3aee6f16f",
+      "assertions": 24
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/knowledge-labels.casetest.ts": {
+      "hash": "f40cd8926cb05cdd",
+      "assertions": 24
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-indexer.casetest.ts": {
+      "hash": "76040f4992d539ff",
+      "assertions": 66
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-db.casetest.ts": {
+      "hash": "b0b64214dcfffe17",
+      "assertions": 29
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-vector.casetest.ts": {
+      "hash": "f00431de55f1a725",
+      "assertions": 9
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-chunker.casetest.ts": {
+      "hash": "a192d40fcd279bb2",
+      "assertions": 19
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/embeddings.casetest.ts": {
+      "hash": "9c160f576008be8e",
+      "assertions": 19
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-search.casetest.ts": {
+      "hash": "7d6de629e7beeee7",
+      "assertions": 47
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-consolidation.casetest.ts": {
+      "hash": "b7ac934d15e56ce1",
+      "assertions": 17
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-store.casetest.ts": {
+      "hash": "68b9b82dbf9554b0",
+      "assertions": 17
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-co-access.casetest.ts": {
+      "hash": "98554405d734c8af",
+      "assertions": 14
+    },
+    ".agents/skills/asimov/lib/memory/__cases__/memory-graph.casetest.ts": {
+      "hash": "721063a6c6c8f1df",
+      "assertions": 27
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/mutate.casetest.ts": {
+      "hash": "a14612b41cb57849",
+      "assertions": 39
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/file-shape.casetest.ts": {
+      "hash": "e9dcd607cb99af15",
+      "assertions": 97
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/ledger-shape-agreement.casetest.ts": {
+      "hash": "44bf917ad52c5b7b",
+      "assertions": 35
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/tasks-md-properties.casetest.ts": {
+      "hash": "e9fcc3a993991d41",
+      "assertions": 9
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/ledger-boundary.casetest.ts": {
+      "hash": "6f7cca412517acf1",
+      "assertions": 3
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/build-state.casetest.ts": {
+      "hash": "a8953c637e5d3dde",
+      "assertions": 19
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/build-gates.casetest.ts": {
+      "hash": "b2655d930b476f83",
+      "assertions": 76
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/autofix.casetest.ts": {
+      "hash": "95972958c5b1ba8c",
+      "assertions": 280
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/tasks-md.casetest.ts": {
+      "hash": "2a2df815a6fb4603",
+      "assertions": 202
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/plan-paths.casetest.ts": {
+      "hash": "f66003e90e536a29",
+      "assertions": 19
+    },
+    ".agents/skills/asimov/lib/asimov/__cases__/test-integrity.casetest.ts": {
+      "hash": "2da5a22c97e3b8ce",
+      "assertions": 30
+    },
+    ".agents/skills/asimov/scripts/ops/refactor/__cases__/scan.casetest.ts": {
+      "hash": "376e46205d80bdfd",
+      "assertions": 14
+    },
+    ".agents/skills/asimov/scripts/ops/refactor/__cases__/coupling.casetest.ts": {
+      "hash": "d9f8ec4029f9658f",
+      "assertions": 44
+    },
+    ".agents/skills/asimov/scripts/ops/worktree/__cases__/create.casetest.ts": {
+      "hash": "9e40a98c1a8a0f2a",
+      "assertions": 9
+    },
+    ".agents/skills/asimov/scripts/ops/memory/__cases__/learn.casetest.ts": {
+      "hash": "c46e990c369cd552",
+      "assertions": 53
+    },
+    ".agents/skills/asimov/scripts/ops/change/__cases__/validate-change.casetest.ts": {
+      "hash": "587e5d797b86522a",
+      "assertions": 273
+    },
+    ".agents/skills/asimov/scripts/ops/change/__cases__/archive-change.casetest.ts": {
+      "hash": "8dfb2573ea427e0b",
+      "assertions": 39
+    },
+    ".agents/skills/asimov/scripts/ops/change/__cases__/new-change.casetest.ts": {
+      "hash": "3f5472152db830ce",
+      "assertions": 6
+    },
+    ".agents/skills/asimov/scripts/ops/change/__cases__/build-task.casetest.ts": {
+      "hash": "0661a897e1e0e686",
+      "assertions": 422
+    },
+    ".agents/skills/asimov/scripts/ops/change/__cases__/list.casetest.ts": {
+      "hash": "f2d5e2d40de10332",
+      "assertions": 23
+    },
+    ".agents/skills/asimov/scripts/ops/change/__cases__/mutate-change.casetest.ts": {
+      "hash": "481ede16aee42720",
+      "assertions": 47
+    },
+    ".agents/skills/asimov/scripts/ops/change/__cases__/apply-deltas.casetest.ts": {
+      "hash": "642bd10c2a87bd7f",
+      "assertions": 41
+    },
+    ".agents/skills/asimov/scripts/__cases__/migrate.casetest.ts": {
+      "hash": "d1eb7c6e2fcc61c4",
+      "assertions": 29
+    },
+    ".agents/skills/asimov/scripts/__cases__/init.casetest.ts": {
+      "hash": "6b607a7a917bbc8e",
+      "assertions": 76
+    }
+  }
+}

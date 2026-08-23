@@ -27,15 +27,8 @@ import { DEFAULT_FIND_FILES_MAX_RESULTS, openFileLink } from "./openFileLink";
 import { previewFileLink } from "./previewFileLink";
 import { isValidPreviewRequest } from "./previewValidation";
 import { readBytesBounded } from "./readBytesBounded";
+import type { VaultWatchClient, VaultWatchCoordinator } from "./VaultWatchCoordinator";
 import { getTerminalHtml } from "./webviewHtml";
-
-/** Coalesce a burst of store-watch events into one trailing list refresh
- *  (enhance-vault-sessions D4). Sits on top of the watcher's own 150ms debounce. */
-const VAULT_STORE_REFRESH_DEBOUNCE_MS = 300;
-
-/** Debounce live-follow re-reads of the previewed session (D5, ≥400ms): bounds
- *  re-parse cost during a rapid append burst on an active session. */
-const VAULT_FOLLOW_REFRESH_DEBOUNCE_MS = 400;
 
 /**
  * Map VSCode's `ColorThemeKind` to the four-way `ThemeChangedMessage["kind"]`
@@ -100,24 +93,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    */
   private readonly _previewTokens = new Map<string, vscode.CancellationTokenSource>();
 
-  /**
-   * Vault auto-refresh (enhance-vault-sessions D4): store-wide FS-watch
-   * subscriptions (one per target dir) plus the coalescing trailing-refresh
-   * timer. Armed when the view resolves, disposed with the view.
-   */
-  private _vaultStoreWatchers: vscode.Disposable[] = [];
-  private _vaultStoreRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-
-  /**
-   * Vault live-follow (enhance-vault-sessions D5): AT MOST ONE follow watcher is
-   * active — the previewed session. It is torn down on
-   * `vaultWatchSession {entryId:null}` and on view dispose.
-   */
-  private _vaultFollowWatchers: vscode.Disposable[] = [];
-  private _vaultFollowRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Monotonic guard so a stale follow subscription (after a rapid switch) can't
-   *  push a detail for a session that is no longer the followed one. */
-  private _vaultFollowSeq = 0;
+  /** Per-resolved-webview vault watcher client owned by the shared coordinator. */
+  private _vaultWatchClient: VaultWatchClient | undefined;
 
   /**
    * Shared file-tree wiring (rootGeneration counter, workspaceRoot getter,
@@ -155,10 +132,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     private readonly sessionManager: SessionManager,
     private readonly location: "sidebar" | "panel" = "sidebar",
     gitDecorationProvider: GitDecorationProvider | null = null,
-    private readonly watcherPool: WatcherPool | null = null,
+    watcherPool: WatcherPool | null = null,
     /** AI coding vault — null in contexts where the vault is not wired (tests). */
     private readonly vaultService: VaultService | null = null,
     private readonly vaultLauncher: VaultLauncher | null = null,
+    private readonly vaultWatchCoordinator: VaultWatchCoordinator | null = null,
   ) {
     this.fileTreeHost = new FileTreeHost(gitDecorationProvider, watcherPool);
   }
@@ -181,10 +159,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
     // 3. Wire message handler and lifecycle handlers
     const disposables: vscode.Disposable[] = [];
+    let vaultWatchClient: VaultWatchClient | undefined;
 
     disposables.push(
       webviewView.webview.onDidReceiveMessage((msg: unknown) => {
-        this.handleMessage(msg, webviewView);
+        this.handleMessage(msg, webviewView, vaultWatchClient);
       }),
     );
 
@@ -246,9 +225,23 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       }),
     );
 
-    // 4c. Arm the vault store-watchers (enhance-vault-sessions D4) so the list
-    // auto-refreshes while the view is live. Disposed with the view below.
-    this.armVaultStoreWatchers(webviewView.webview);
+    // 4c. Attach one watcher client for this resolved webview. The shared
+    // coordinator owns its store/follow subscriptions and timers.
+    this._vaultWatchClient?.dispose();
+    vaultWatchClient = this.vaultWatchCoordinator?.attach({
+      refreshList: () => {
+        void this.autoRefreshVaultList(webviewView.webview);
+      },
+      postFollowDetail: (entryId, detail) => {
+        this.safePostMessage(webviewView.webview, {
+          type: "vaultSessionDetailResponse",
+          entryId,
+          detail,
+          followUpdate: true,
+        });
+      },
+    });
+    this._vaultWatchClient = vaultWatchClient;
 
     // 5. Wire dispose handler — clean up subscriptions but preserve sessions for re-creation.
     // Sessions are anchored to the Extension Host lifecycle, not the WebView lifecycle.
@@ -259,10 +252,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       }
       // Cancel + dispose any in-flight preview tokens — see design.md D10.
       this.cancelAllPreviewTokens();
-      // Release vault store + live-follow watchers (enhance-vault-sessions D4/D5).
-      this.disposeVaultStoreWatchers();
-      this.disposeVaultFollowWatchers();
-      this._vaultFollowSeq++;
+      // Release only the watcher client attached to this resolved webview.
+      vaultWatchClient?.dispose();
+      if (this._vaultWatchClient === vaultWatchClient) {
+        this._vaultWatchClient = undefined;
+      }
       // Pause output for the view — sessions survive but don't flush to a disposed webview
       this.sessionManager.pauseOutputForView(this.getViewId());
       this._view = undefined;
@@ -671,44 +665,6 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /**
-   * Arm the store-wide auto-refresh watchers (enhance-vault-sessions D4/3_3):
-   * one change-aware `subscribePattern` per store target. Any create/change/delete
-   * schedules a debounced, coalesced `refresh()` + push. Idempotent — disposes any
-   * prior set first (survives a re-resolve). No-op without a vault service or pool.
-   */
-  private armVaultStoreWatchers(webview: vscode.Webview): void {
-    if (!this.vaultService || !this.watcherPool) {
-      return;
-    }
-    this.disposeVaultStoreWatchers();
-    const onEvent = () => this.scheduleVaultStoreRefresh(webview);
-    for (const target of this.vaultService.getStoreWatchTargets()) {
-      try {
-        this._vaultStoreWatchers.push(
-          this.watcherPool.subscribePattern(target.baseDir, target.glob, {
-            create: onEvent,
-            change: onEvent,
-            delete: onEvent,
-          }),
-        );
-      } catch (err) {
-        console.error("[AnyWhere Terminal] Failed to watch vault store:", target.baseDir, err);
-      }
-    }
-  }
-
-  /** Coalesce a burst of store events into one trailing refresh (D4). */
-  private scheduleVaultStoreRefresh(webview: vscode.Webview): void {
-    if (this._vaultStoreRefreshTimer) {
-      clearTimeout(this._vaultStoreRefreshTimer);
-    }
-    this._vaultStoreRefreshTimer = setTimeout(() => {
-      this._vaultStoreRefreshTimer = undefined;
-      void this.autoRefreshVaultList(webview);
-    }, VAULT_STORE_REFRESH_DEBOUNCE_MS);
-  }
-
   /** Refresh the list from disk and push it, dropping the result if a newer
    *  request (manual open / rename) has taken ownership (`_vaultRefreshSeq`). */
   private async autoRefreshVaultList(webview: vscode.Webview): Promise<void> {
@@ -730,96 +686,6 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       console.error("[AnyWhere Terminal] Vault auto-refresh failed:", err);
     }
-  }
-
-  private disposeVaultStoreWatchers(): void {
-    if (this._vaultStoreRefreshTimer) {
-      clearTimeout(this._vaultStoreRefreshTimer);
-      this._vaultStoreRefreshTimer = undefined;
-    }
-    for (const d of this._vaultStoreWatchers) {
-      d.dispose();
-    }
-    this._vaultStoreWatchers = [];
-  }
-
-  /**
-   * Live-follow the previewed session (enhance-vault-sessions D5/3_4). At most one
-   * follow watcher is active: releases the prior one, then (for a non-null entry)
-   * subscribes change-aware to that session's file(s)/DB. On change it re-reads the
-   * bounded detail and pushes it with `followUpdate:true`. `_vaultFollowSeq` guards
-   * against a stale subscription resolving after a rapid switch. `entryId:null`
-   * releases the watcher.
-   */
-  private async handleVaultWatchSession(entryId: string | null, webview: vscode.Webview): Promise<void> {
-    if (!this.vaultService || !this.watcherPool) {
-      return;
-    }
-    this.disposeVaultFollowWatchers();
-    const seq = ++this._vaultFollowSeq;
-    if (!entryId) {
-      return;
-    }
-    const targets = await this.vaultService.resolveSessionWatchTargets(entryId);
-    if (seq !== this._vaultFollowSeq) {
-      return; // a newer watch/close superseded this subscription while resolving.
-    }
-    const onEvent = () => this.scheduleVaultFollowRefresh(entryId, seq, webview);
-    for (const target of targets) {
-      try {
-        this._vaultFollowWatchers.push(
-          this.watcherPool.subscribePattern(target.baseDir, target.glob, {
-            create: onEvent,
-            change: onEvent,
-            delete: onEvent,
-          }),
-        );
-      } catch (err) {
-        console.error("[AnyWhere Terminal] Failed to watch vault session:", entryId, err);
-      }
-    }
-  }
-
-  /** Coalesce a burst of follow events into one trailing bounded re-read (D5). */
-  private scheduleVaultFollowRefresh(entryId: string, seq: number, webview: vscode.Webview): void {
-    if (seq !== this._vaultFollowSeq) {
-      return; // a stale watcher fired after a switch/close.
-    }
-    if (this._vaultFollowRefreshTimer) {
-      clearTimeout(this._vaultFollowRefreshTimer);
-    }
-    this._vaultFollowRefreshTimer = setTimeout(() => {
-      this._vaultFollowRefreshTimer = undefined;
-      void this.pushVaultFollowDetail(entryId, seq, webview);
-    }, VAULT_FOLLOW_REFRESH_DEBOUNCE_MS);
-  }
-
-  private async pushVaultFollowDetail(entryId: string, seq: number, webview: vscode.Webview): Promise<void> {
-    if (!this.vaultService || seq !== this._vaultFollowSeq) {
-      return;
-    }
-    try {
-      const detail = await this.vaultService.getDetail(entryId);
-      if (seq !== this._vaultFollowSeq) {
-        return; // switched away while reading — drop this stale detail.
-      }
-      if (detail) {
-        this.safePostMessage(webview, { type: "vaultSessionDetailResponse", entryId, detail, followUpdate: true });
-      }
-    } catch (err) {
-      console.error("[AnyWhere Terminal] Vault follow re-read failed:", entryId, err);
-    }
-  }
-
-  private disposeVaultFollowWatchers(): void {
-    if (this._vaultFollowRefreshTimer) {
-      clearTimeout(this._vaultFollowRefreshTimer);
-      this._vaultFollowRefreshTimer = undefined;
-    }
-    for (const d of this._vaultFollowWatchers) {
-      d.dispose();
-    }
-    this._vaultFollowWatchers = [];
   }
 
   /**
@@ -1003,7 +869,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    *
    * See: docs/design/webview-provider.md#§8, docs/design/message-protocol.md#§10
    */
-  private handleMessage(msg: unknown, webviewView: vscode.WebviewView): void {
+  private handleMessage(msg: unknown, webviewView: vscode.WebviewView, vaultWatchClient?: VaultWatchClient): void {
     // Basic shape validation
     if (!msg || typeof msg !== "object" || !("type" in msg) || typeof (msg as { type: unknown }).type !== "string") {
       console.warn("[AnyWhere Terminal] Invalid message from webview:", msg);
@@ -1160,7 +1026,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
         case "vaultWatchSession":
           if (typeof message.entryId === "string" || message.entryId === null) {
-            void this.handleVaultWatchSession(message.entryId, webviewView.webview);
+            void vaultWatchClient?.watchSession(message.entryId);
           }
           break;
 

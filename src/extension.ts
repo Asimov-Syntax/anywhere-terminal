@@ -10,6 +10,7 @@ import { resolveRenameTargetTabId } from "./providers/resolveRenameTarget";
 import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalPanelSerializer } from "./providers/TerminalPanelSerializer";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
+import { VaultWatchCoordinator } from "./providers/VaultWatchCoordinator";
 import { loadNodePty } from "./pty/PtyManager";
 import { SessionManager } from "./session/SessionManager";
 import { SessionStorage } from "./session/SessionStorage";
@@ -131,6 +132,8 @@ export function activate(context: vscode.ExtensionContext) {
   const vaultCustomNames = new VaultCustomNameRegistry(context.globalState);
   const vaultService = new VaultService({ cacheStore: vaultCacheStore, customNames: vaultCustomNames });
   const vaultLauncher = new VaultLauncher(vaultService);
+  const vaultWatchCoordinator = new VaultWatchCoordinator({ watcherPool: fsWatcherPool, vaultService });
+  context.subscriptions.push(vaultWatchCoordinator);
 
   // Sidebar view
   const sidebarProvider = new TerminalViewProvider(
@@ -141,6 +144,7 @@ export function activate(context: vscode.ExtensionContext) {
     fsWatcherPool,
     vaultService,
     vaultLauncher,
+    vaultWatchCoordinator,
   );
 
   context.subscriptions.push(
@@ -158,6 +162,7 @@ export function activate(context: vscode.ExtensionContext) {
     fsWatcherPool,
     vaultService,
     vaultLauncher,
+    vaultWatchCoordinator,
   );
 
   context.subscriptions.push(
