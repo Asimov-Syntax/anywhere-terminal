@@ -4,6 +4,25 @@ All notable changes to **AnyWhere Terminal** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.9] — 2026-08-23
+
+### Added
+
+- **Copy anything out of a session preview with one click.** The preview header now carries three tidy rows — **Folder** (with the git branch beside it), **Session** (its id and transcript file), and **Activity** (age, messages, tokens) — and every value on them is click-to-copy, with a tick to confirm the copy landed. Hover any value to see its full, untruncated text; the folder row discloses the whole path, and the branch chip copies just the branch name.
+- **Rename a session straight from its preview.** Double-click the preview title and type — the same inline editor the session list uses, so the name sticks the same way. Enter saves, Escape cancels, and clicking away saves. It's a double-click because a single click still drags the preview window around.
+
+### Changed
+
+- **The preview title row is quieter.** The branch chip moved down into the Folder row where the rest of the session's context lives, and the two "jump to previous / next user message" buttons are gone from the header. Jumping now happens on **Alt+↑ / Alt+↓** while a preview is open, leaving the title room to show an actual title.
+
+### Fixed
+
+- **Resuming a Claude session now restores the permission mode you were last in.** The vault read only the *first* permission mode a transcript ever recorded, so a session you'd switched into (say) plan mode resumed under whatever mode it started in hours earlier. It now reads the latest mode the transcript records. Your existing session list is rebuilt once on the next refresh so already-indexed sessions get the corrected mode.
+- **Copying from the session preview is instant and always copies what you clicked.** Each copy used to travel to the extension host and trigger a full, uncached scan of every agent's session store — so clicking two values in quick succession left whichever scan finished last on the clipboard, which wasn't necessarily the one you clicked. The copy now happens in the preview itself, in the order you clicked, and nothing is scanned at all.
+- **Session list titles now match what Claude Code itself shows.** A session you'd named yourself, or one Claude hadn't generated a title for yet, fell all the way through to its first message. The reader now follows Claude's own precedence — your custom title, then Claude's generated title, then the last prompt, then the first — matching Claude for 146 of the 150 most recent real sessions (the other 4 record no title at all).
+- **Tab titles no longer redraw the whole tab bar ten times a second.** An agent animating a spinner in its terminal title drove a full tab-bar re-render on every frame, in every pane. Renders now happen only when a tab's title actually changes.
+- **Opening a subagent preview no longer lands on the wrong session.** A headless `claude -p` run — the kind a hook spawns in the background — registered itself as a live session and, having just written its transcript, won the tie-break against the interactive session you were actually looking at. Headless runs are now filtered out of that match.
+
 ## [0.17.8] — 2026-07-13
 
 ### Added
