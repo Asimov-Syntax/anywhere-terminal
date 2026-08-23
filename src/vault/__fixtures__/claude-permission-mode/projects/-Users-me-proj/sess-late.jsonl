@@ -1,0 +1,4 @@
+{"type":"user","cwd":"/Users/me/proj","gitBranch":"main","sessionId":"sess-late","timestamp":"2026-05-01T00:00:00Z","message":{"role":"user","content":"No mode recorded yet"}}
+{"type":"assistant","cwd":"/Users/me/proj","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"Understood."}]}}
+{"type":"user","permissionMode":"acceptEdits","sessionId":"sess-late","timestamp":"2026-05-01T00:02:00Z","message":{"role":"user","content":"Mode appears only after the metadata head"}}
+{"type":"assistant","cwd":"/Users/me/proj","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"Noted."}]}}

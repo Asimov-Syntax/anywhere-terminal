@@ -57,9 +57,13 @@ export interface ReaderResultWithState {
  */
 export type ListReader = (prev?: ReaderListCache) => Promise<ReaderResultWithState>;
 
-/** Current on-disk cache schema version. Bump on any incompatible shape change;
- *  `VaultCacheStore.load` discards any other version (→ full rebuild). */
-export const VAULT_CACHE_VERSION = 3 as const;
+/** Current on-disk cache schema version. Bump on any incompatible shape change —
+ *  or on any change to how a cached ENTRY is DERIVED, since an unchanged file
+ *  reuses its stored entry verbatim and would otherwise keep serving the old
+ *  derivation forever. `VaultCacheStore.load` discards any other version (→ full
+ *  rebuild). v4: Claude `permissionMode` is now the session's latest recorded
+ *  mode, not its first (improve-vault-session-detail D2). */
+export const VAULT_CACHE_VERSION = 4 as const;
 
 /** The persisted cache document (design.md D4). */
 export interface VaultListCacheFileV1 {

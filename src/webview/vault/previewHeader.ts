@@ -1,23 +1,24 @@
 // Pure builder for the floating preview's header (badge + optional agent chip +
 // title + action buttons + optional meta). Stateless and consumer-agnostic: the
 // caller passes a normalized model + callbacks, so the vault session preview and
-// the subagent popup render through ONE builder and cannot drift. Vault-only
-// actions (prev/next-user, resume) render only when their callback is supplied.
+// the subagent popup render through ONE builder and cannot drift. The vault-only
+// Resume action renders only when its callback is supplied.
+//
+// The title row is deliberately narrow: badge, title, actions. The session's git
+// branch now rides the meta block's Folder row instead, and per-message
+// navigation is keyboard-only — see the vault-session-preview spec.
 
 import { attachTooltip } from "../ui/Tooltip";
 import type { AgentIcon } from "./agentIcons";
-import { ICON_CLOSE, ICON_MAXIMIZE, ICON_NAV_NEXT, ICON_NAV_PREV, ICON_RESTORE, ICON_RESUME } from "./icons";
+import { ICON_CLOSE, ICON_MAXIMIZE, ICON_RESTORE, ICON_RESUME } from "./icons";
 
 export interface PreviewHeaderModel {
   /** Brand badge: the resolved icon, or a text fallback when none. */
   badge: { icon?: AgentIcon; ariaLabel?: string; fallbackText?: string };
   /** Optional chip between badge and title (subagent `@agentType`). */
   chip?: { text: string; className: string };
-  /** Session git branch (enhance-vault-sessions D2/D3) — renders a `⎇ <branch>`
-   *  chip in the title row when set (Claude/Codex; absent for OpenCode). */
-  branch?: string;
   title: string;
-  /** Pre-built meta block (vault Folder/Modified/Activity, or subagent Activity). */
+  /** Pre-built meta block (vault Folder/Session/Activity, or subagent Activity). */
   meta?: HTMLElement;
 }
 
@@ -26,11 +27,14 @@ export interface PreviewHeaderCallbacks {
   onMovePointerDown: (ev: PointerEvent) => void;
   onToggleMaximize: () => void;
   onClose: () => void;
-  /** Render prev/next-user nav only when both are provided (vault only). */
-  onPrevUser?: () => void;
-  onNextUser?: () => void;
   /** Render the Resume button only when provided (vault only). */
   onResume?: () => void;
+  /**
+   * Double-click the title to rename. Vault only — the subagent popup supplies
+   * nothing and so gets no listener at all. Double-click rather than click
+   * because the title is `flex: 1` and therefore most of the move handle (D7).
+   */
+  onRenameTitle?: (titleEl: HTMLElement) => void;
 }
 
 export function buildPreviewHeader(
@@ -60,18 +64,17 @@ export function buildPreviewHeader(
   const titleEl = document.createElement("h3");
   titleEl.className = "vault-preview-title";
   titleEl.textContent = model.title;
+  const onRenameTitle = cb.onRenameTitle;
+  if (onRenameTitle) {
+    titleEl.classList.add("is-renamable");
+    titleEl.title = "Double-click to rename";
+    titleEl.addEventListener("dblclick", () => onRenameTitle(titleEl));
+  }
 
   const actions = document.createElement("div");
   actions.className = "vault-preview-title-actions";
   const disposers: Array<() => void> = [];
 
-  // Vault-only prev/next-user nav (both or neither).
-  if (cb.onPrevUser && cb.onNextUser) {
-    const prevBtn = iconButton("vault-preview-nav-prev", "Jump to previous user message", ICON_NAV_PREV, cb.onPrevUser);
-    const nextBtn = iconButton("vault-preview-nav-next", "Jump to next user message", ICON_NAV_NEXT, cb.onNextUser);
-    actions.append(prevBtn, nextBtn);
-    disposers.push(attachTooltip(prevBtn), attachTooltip(nextBtn));
-  }
   // Vault-only Resume (a subagent is not independently launchable).
   if (cb.onResume) {
     const resumeBtn = document.createElement("button");
@@ -112,20 +115,6 @@ export function buildPreviewHeader(
     chip.className = model.chip.className;
     chip.textContent = model.chip.text;
     titleRow.appendChild(chip);
-  }
-  if (model.branch) {
-    const branchChip = document.createElement("span");
-    branchChip.className = "vault-preview-branch-chip";
-    branchChip.title = `Git branch: ${model.branch}`;
-    const icon = document.createElement("span");
-    icon.className = "vault-preview-branch-icon";
-    icon.textContent = "⎇";
-    icon.setAttribute("aria-hidden", "true");
-    const name = document.createElement("span");
-    name.className = "vault-preview-branch-name";
-    name.textContent = model.branch;
-    branchChip.append(icon, name);
-    titleRow.appendChild(branchChip);
   }
   titleRow.append(titleEl, actions);
   header.appendChild(titleRow);

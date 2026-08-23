@@ -125,20 +125,29 @@ export function renderRow(
 }
 
 /**
- * Turn a row's title into an inline rename editor (enhance-vault-sessions D1).
+ * Turn a title element into an inline rename editor (enhance-vault-sessions D1).
  * Enter (or blur) commits, Esc cancels, an empty value clears back to the derived
  * title (the host normalizes). Seeded with the current display name. Idempotent —
- * a no-op if the row is already being edited. The commit is fire-and-forget: the
- * host round-trips an overlaid list that re-renders the row with the new name.
+ * a no-op if that title is already being edited. The commit is fire-and-forget:
+ * the host round-trips an overlaid list that re-renders with the new name.
+ *
+ * Takes the title ELEMENT rather than a row, so the preview header's own title
+ * reuses this one editor and one commit path instead of growing a second (D7).
+ *
+ * Returns a handle that ends the edit the same way `blur` does. A caller that
+ * tears down the surrounding DOM MUST call it: removing a focused node does not
+ * reliably fire `blur`, so an owner relying on `onDone` alone can be left
+ * believing an editor is still open (review B1).
  */
 export function beginInlineRename(
-  row: HTMLElement,
+  titleEl: HTMLElement,
   entry: VaultSessionEntry,
   cb: { commit: (name: string) => void; onDone?: () => void },
-): void {
-  const titleEl = row.querySelector<HTMLElement>(".vault-row-title");
-  if (!titleEl || row.querySelector(".vault-row-rename-input")) {
-    return;
+): { end: () => void } {
+  // Already swapped for an editor — the title is detached until `finish` puts it
+  // back, which is what makes a second call a no-op.
+  if (!titleEl.isConnected) {
+    return { end: () => {} };
   }
   const input = document.createElement("input");
   input.type = "text";
@@ -179,6 +188,9 @@ export function beginInlineRename(
   titleEl.replaceWith(input);
   input.focus();
   input.select();
+  // Commits, like blur — leaving the editor by any route saves; only Escape
+  // cancels. `finish` is idempotent, so calling this after a real blur is a no-op.
+  return { end: () => finish(true) };
 }
 
 /** "Show N more" affordance that expands a group past the per-group cap. */

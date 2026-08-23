@@ -37,7 +37,7 @@ import {
   listJsonlFiles,
   resolveClaudeSessionPath,
 } from "./claudePaths";
-import { extractUserText, readLatestTailTitles, streamClaudeRecords } from "./claudeRecords";
+import { extractUserText, readLatestTailFields, streamClaudeRecords } from "./claudeRecords";
 import {
   buildTeamThread,
   readClaudeTeamSegment,
@@ -131,7 +131,9 @@ async function parseClaudeFile(filePath: string): Promise<ClaudeFileFields | nul
       if (fields.gitBranch === undefined && typeof obj.gitBranch === "string") {
         fields.gitBranch = obj.gitBranch;
       }
-      if (fields.permissionMode === undefined && typeof obj.permissionMode === "string") {
+      // Permission mode is session STATE, not an attribute — LAST one in this
+      // window wins, never the first (D1). The tail scan overrides it below.
+      if (typeof obj.permissionMode === "string") {
         fields.permissionMode = obj.permissionMode;
       }
       if (summary === undefined && obj.type === "summary" && typeof obj.summary === "string") {
@@ -289,7 +291,7 @@ async function buildClaudeEntry(
   // Claude's own display precedence, so a row reads as it does in Claude: the
   // name the user gave the session > the title Claude generated > the last
   // prompt > the first prompt.
-  const tail = await readLatestTailTitles(filePath);
+  const tail = await readLatestTailFields(filePath);
   const title = tail.customTitle ?? tail.aiTitle ?? tail.lastPrompt ?? fields.title ?? "";
   const entry: VaultSessionEntry = {
     id: formatEntryId("claude", sessionId),
@@ -301,7 +303,10 @@ async function buildClaudeEntry(
     gitBranch: fields.gitBranch,
     flags: {
       model: fields.model,
-      permissionMode: fields.permissionMode,
+      // The mode as of the END of the session: the tail scan sees every change the
+      // head window stopped short of, so it wins when it found one (D1). Neither
+      // scan finding one leaves the flag off — the CLI applies its own default.
+      permissionMode: tail.permissionMode ?? fields.permissionMode,
       configDir,
     },
     canFork: false, // resolved by VaultService (task 2_5)

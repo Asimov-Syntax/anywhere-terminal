@@ -288,7 +288,11 @@ describe("readCodexSessions: sandbox_policy → -s value", () => {
 
 describe("readCodexSessions: cache schema", () => {
   it("bumps the persisted vault list cache version to invalidate stale sandbox values", () => {
-    expect(VAULT_CACHE_VERSION).toBe(3);
+    // A FLOOR, not a pin: this guards that caches predating the sandbox fix (v<3)
+    // can never be reused. A literal made every later bump — for a derivation this
+    // test knows nothing about — fail here instead of where it belongs; the
+    // discard behaviour itself is asserted in VaultCacheStore.test.ts.
+    expect(VAULT_CACHE_VERSION).toBeGreaterThanOrEqual(3);
   });
 });
 

@@ -1,0 +1,2 @@
+{"type":"user","cwd":"/Users/me/proj","gitBranch":"main","sessionId":"sess-none","timestamp":"2026-05-01T00:00:00Z","message":{"role":"user","content":"No permission mode anywhere in this transcript"}}
+{"type":"assistant","cwd":"/Users/me/proj","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"Fine."}]}}

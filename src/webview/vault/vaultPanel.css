@@ -856,6 +856,13 @@ body:has(#tab-bar.visible) .vault-preview--max {
   overflow: hidden;
   word-break: break-word;
 }
+/* Renamable titles underline on hover — the only on-screen hint that the title
+   is editable, since the gesture is a double-click and the drag cursor stays. */
+.vault-preview-title.is-renamable:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
 .vault-preview-title-actions {
   display: inline-flex;
   align-items: center;
@@ -927,15 +934,107 @@ body:has(#tab-bar.visible) .vault-preview--max {
   font-size: 10px;
   padding-top: 1px;
 }
+/* A row holds several values side by side (folder + branch, id + path), so the
+   dd is a flex line: every child may shrink, none may wrap the card wider. */
 .vault-preview-meta dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   margin: 0;
   color: var(--vscode-foreground);
-  font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.vault-preview-meta-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Click-to-copy meta value: quiet until hovered, then a copy glyph + a subtle
+   plate; a tick replaces the glyph for the flash after a successful copy. */
+.vault-preview-copyable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.vault-preview-copyable:hover,
+.vault-preview-copyable:focus-visible {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+.vault-preview-copyable:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+/* Monospace rides the copyable values (paths, ids, branch) rather than the whole
+   row, so the Activity summary reads as prose instead of a log line. */
+.vault-preview-copyable-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
 }
+/* Fixed box, sized to ICON_COPY. The tick is drawn INSIDE it rather than
+   replacing it, so confirming a copy cannot change the button's width — a
+   swapped-in glyph of a different width reflowed the row on every click, and
+   again when the tick expired 1.2s later. */
+.vault-preview-copyable-icon {
+  position: relative;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 90ms ease-out;
+}
+/* Only the value under the pointer reveals its glyph. Row-level reveal lit the
+   branch chip's copy button while the pointer was on the folder — two buttons
+   armed, one pointer, and no way to tell which click would land where. */
+.vault-preview-copyable:hover .vault-preview-copyable-icon,
+.vault-preview-copyable:focus-visible .vault-preview-copyable-icon {
+  opacity: 1;
+}
+.vault-preview-copyable.is-copied {
+  color: var(--vscode-charts-green, var(--vscode-terminal-ansiGreen, inherit));
+}
+/* The tick stays visible without a hover — the confirmation has to survive the
+   pointer moving away from the button it just clicked. */
+.vault-preview-copyable.is-copied .vault-preview-copyable-icon {
+  opacity: 1;
+}
+.vault-preview-copyable.is-copied .vault-preview-copyable-icon svg {
+  visibility: hidden;
+}
+.vault-preview-copyable.is-copied .vault-preview-copyable-icon::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+}
+/* Every value hugs its own text. There is deliberately no rule that grows one:
+   the previous `:last-child:not(:only-child)` version was written for the
+   transcript path but matched the branch chip too, stretching a four-character
+   branch to its 40% cap. */
 .vault-preview-body {
   flex: 1;
   min-height: 0;
@@ -1913,18 +2012,10 @@ body:has(#tab-bar.visible) .vault-preview--max {
   line-height: 1.5;
   color: var(--vscode-descriptionForeground);
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-  cursor: default;
 }
 .vault-preview-branch-icon {
   flex: 0 0 auto;
   opacity: 0.85;
-}
-.vault-preview-branch-name {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-family: var(--vscode-editor-font-family, monospace);
 }
 
 /* Per-assistant-message model + token meta line (D3/D6): a compact, dim caption

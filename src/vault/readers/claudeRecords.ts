@@ -89,28 +89,37 @@ export function extractUserText(message: unknown): string | undefined {
   return undefined;
 }
 
-/** Bytes read from the file tail when hunting for the title trailer. */
-const AI_TITLE_TAIL_BYTES = 64 * 1024;
+/** Bytes read from the file tail when hunting for the late-written fields below.
+ *  256 KB rather than 64 KB: measured over 120 local transcripts, 64 KB reaches
+ *  the last `permissionMode` in 90 of the 109 that record one and 256 KB in 104,
+ *  for ~192 KB more on a read the list scan already performs per CHANGED file. */
+const TAIL_SCAN_BYTES = 256 * 1024;
 
-/** The title-bearing trailer records Claude re-appends as a session evolves. */
-export interface ClaudeTailTitles {
+/** The late-written fields Claude re-appends as a session evolves. */
+export interface ClaudeTailFields {
   /** `{type:"custom-title"}` — the name the user gave the session in Claude. */
   customTitle?: string;
   /** `{type:"ai-title"}` — the title Claude generated for the session. */
   aiTitle?: string;
   /** `{type:"last-prompt"}` — Claude's display fallback before the first prompt. */
   lastPrompt?: string;
+  /** The session's permission mode as of this point in the transcript. */
+  permissionMode?: string;
 }
 
 /** Read one trailer field, mirroring Claude: last record wins, empty clears. */
-function applyTailTitle(out: ClaudeTailTitles, obj: Record<string, unknown>): void {
-  const assign = (key: keyof ClaudeTailTitles, value: unknown): void => {
+function applyTailField(out: ClaudeTailFields, obj: Record<string, unknown>): void {
+  const assign = (key: keyof ClaudeTailFields, value: unknown): void => {
     if (typeof value !== "string") {
       return;
     }
     const trimmed = value.trim();
     out[key] = trimmed || undefined;
   };
+  // Permission mode is session STATE, re-recorded on every change. It rides BOTH a
+  // dedicated `{type:"permission-mode"}` record and ordinary records' top-level
+  // field, so it is read off any record rather than one record type (D1).
+  assign("permissionMode", obj.permissionMode);
   switch (obj.type) {
     case "custom-title":
       assign("customTitle", obj.customTitle);
@@ -126,15 +135,15 @@ function applyTailTitle(out: ClaudeTailTitles, obj: Record<string, unknown>): vo
 
 /**
  * Claude re-appends its whole title trailer (`custom-title`, `ai-title`,
- * `last-prompt`, …) near the end of the session as it evolves — the LATEST
- * record of each type wins, and one carrying an empty string CLEARS that field.
- * Those records sit scattered to EOF (a 86MB file is common), so the forward
- * metadata scan never reaches them. Read only the last `AI_TITLE_TAIL_BYTES`
- * (the freshest trailer reliably lands at/near EOF) — bounded regardless of
+ * `last-prompt`, …) near the end of the session as it evolves, and re-records
+ * `permissionMode` wherever the mode changes — the LATEST record of each wins,
+ * and a title carrying an empty string CLEARS that field. Those records sit
+ * scattered to EOF (a 86MB file is common), so the forward metadata scan never
+ * reaches them. Read only the last `TAIL_SCAN_BYTES` — bounded regardless of
  * file size.
  */
-export async function readLatestTailTitles(filePath: string): Promise<ClaudeTailTitles> {
-  const out: ClaudeTailTitles = {};
+export async function readLatestTailFields(filePath: string): Promise<ClaudeTailFields> {
+  const out: ClaudeTailFields = {};
   let handle: fs.FileHandle | undefined;
   try {
     handle = await fs.open(filePath, "r");
@@ -142,7 +151,7 @@ export async function readLatestTailTitles(filePath: string): Promise<ClaudeTail
     if (size === 0) {
       return out;
     }
-    const start = Math.max(0, size - AI_TITLE_TAIL_BYTES);
+    const start = Math.max(0, size - TAIL_SCAN_BYTES);
     const length = size - start;
     const buf = Buffer.alloc(length);
     await handle.read(buf, 0, length, start);
@@ -158,7 +167,7 @@ export async function readLatestTailTitles(filePath: string): Promise<ClaudeTail
       try {
         const obj = JSON.parse(trimmed);
         if (obj && typeof obj === "object") {
-          applyTailTitle(out, obj as Record<string, unknown>);
+          applyTailField(out, obj as Record<string, unknown>);
         }
       } catch {
         // skip a partial/corrupt line, keep scanning (D8)
@@ -166,7 +175,7 @@ export async function readLatestTailTitles(filePath: string): Promise<ClaudeTail
     }
     return out;
   } catch {
-    return out; // unreadable tail → fall back to the first-prompt title
+    return out; // unreadable tail → fall back to the head scan's title + mode
   } finally {
     await handle?.close();
   }

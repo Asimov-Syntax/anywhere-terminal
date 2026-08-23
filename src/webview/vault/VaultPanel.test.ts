@@ -17,12 +17,49 @@ afterEach(() => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
   resetTooltipForTests(); // detach the shared tooltip widget + clear its pending timer
   document.body.replaceChildren();
+  vi.unstubAllGlobals();
 });
 
 function createHost(): HTMLElement {
   const host = document.createElement("div");
   document.body.appendChild(host);
   return host;
+}
+
+/** Drain pending microtasks. Copies queue on a promise chain (review B2), so a
+ *  click's write is issued a few ticks later rather than synchronously. */
+async function flush(): Promise<void> {
+  // One macrotask turn: the microtask queue drains completely before it runs, so
+  // this settles a chain of any length without counting ticks.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Install a fake `navigator.clipboard` (jsdom ships none) and return the array
+ *  it records writes into, in call order. `onWrite` overrides the outcome so a
+ *  rejection can be exercised. Restored by the `vi.unstubAllGlobals` afterEach. */
+function stubClipboard(onWrite?: () => Promise<void>): string[] {
+  const writes: string[] = [];
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    clipboard: {
+      writeText: (text: string) => {
+        writes.push(text);
+        return onWrite ? onWrite() : Promise.resolve();
+      },
+    },
+  });
+  return writes;
+}
+
+/** Hover a tooltip target, let the show delay elapse, and return what the shared
+ *  widget rendered ("" when it stayed hidden). Requires fake timers. */
+function hoverTooltipText(target: HTMLElement): string {
+  target.dispatchEvent(new MouseEvent("mouseenter"));
+  vi.advanceTimersByTime(500);
+  const widget = document.getElementById("webview-tooltip-widget");
+  const text = widget && widget.style.display !== "none" ? (widget.textContent ?? "") : "";
+  target.dispatchEvent(new MouseEvent("mouseleave"));
+  return text;
 }
 
 function entry(over: Partial<VaultSessionEntry> = {}): VaultSessionEntry {
@@ -940,6 +977,406 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(host.querySelector(".vault-preview-message-tool")?.textContent).toContain("/a.ts");
     expect(host.querySelector(".vault-preview-message-assistant p")?.textContent).toBe("all done");
     expect(host.querySelector(".vault-preview-meta")?.textContent).toContain("1.6k tok");
+  });
+
+  it("meta block is Folder+branch / Session id+path / Activity age+stats, all copyable", async () => {
+    const host = createHost();
+    const writes = stubClipboard();
+    const posted: Array<{ type: string }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(
+      result([
+        entry({
+          id: "claude:a",
+          cwd: "/work/repo",
+          gitBranch: "main",
+          sessionId: "abc-123",
+          sessionPath: "/home/me/.claude/projects/-work-repo/abc-123.jsonl",
+          modified: Date.now() - 5 * 60_000,
+        }),
+      ]),
+    );
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    const rows = Array.from(host.querySelectorAll(".vault-preview-meta dt")).map((dt) => dt.textContent);
+    expect(rows).toEqual(["Folder", "Session", "Activity"]);
+
+    const dd = Array.from(host.querySelectorAll<HTMLElement>(".vault-preview-meta dd"));
+    expect(dd[0].textContent).toContain("repo");
+    expect(dd[0].querySelector(".vault-preview-branch-chip .vault-preview-copyable-text")?.textContent).toBe("main");
+    // The id shows in FULL — nothing in the row competes for its width. The
+    // transcript path reads "transcript", not the path: rendering the path only
+    // repeated the folder and the id while truncating the id to make room.
+    expect(dd[1].querySelector(".vault-preview-copyable-text")?.textContent).toBe("abc-123");
+    expect(dd[1].textContent).not.toContain(".jsonl");
+    const pathBtn = Array.from(dd[1].querySelectorAll<HTMLElement>(".vault-preview-copyable"))[1];
+    expect(pathBtn.querySelector(".vault-preview-copyable-text")?.textContent).toBe("transcript");
+    // The accessible name is the action, not the raw path the tooltip carries.
+    expect(pathBtn.getAttribute("aria-label")).toBe("Copy transcript path");
+    // The age is shown before any detail arrives — the row must not appear late.
+    expect(dd[2].textContent).toContain("5m ago");
+
+    // Each value copies its own untruncated text, written in the webview. Clicking
+    // three in a row must leave the LAST one on the clipboard — the host round-trip
+    // this replaced ran a full uncached vault scan per click and let whichever scan
+    // finished last win, so the pasted value belonged to an arbitrary button.
+    const copyables = Array.from(host.querySelectorAll<HTMLElement>(".vault-preview-meta .vault-preview-copyable"));
+    expect(copyables).toHaveLength(4);
+    for (const c of copyables) {
+      c.click();
+    }
+    await flush();
+    expect(writes).toEqual([
+      "/work/repo",
+      "main", // the branch chip copies too — it is a copy affordance, not a label
+      "abc-123",
+      "/home/me/.claude/projects/-work-repo/abc-123.jsonl",
+    ]);
+    // Nothing crosses the boundary at all now — no round-trip to race with.
+    expect(posted.some((m) => m.type.startsWith("vaultCopy"))).toBe(false);
+    expect(copyables[0].classList.contains("is-copied")).toBe(true);
+
+    // Stats join the age in place once the detail lands — still three rows.
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({ stats: { messageCount: 24, toolCount: 8, subagentCount: 0, tokenCount: 1650 } }),
+    });
+    expect(host.querySelectorAll(".vault-preview-meta dt")).toHaveLength(3);
+    const activity = host.querySelectorAll<HTMLElement>(".vault-preview-meta dd")[2].textContent ?? "";
+    expect(activity).toContain("5m ago");
+    expect(activity).toContain("24 msgs");
+    expect(activity).toContain("1.6k tok");
+  });
+
+  it("hovering a meta value discloses its untruncated text through the shared tooltip", () => {
+    const host = createHost();
+    stubClipboard();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(
+      result([
+        entry({
+          id: "claude:a",
+          cwd: "/work/repo",
+          gitBranch: "main",
+          sessionId: "abc-123",
+          sessionPath: "/home/me/.claude/projects/-work-repo/abc-123.jsonl",
+        }),
+      ]),
+    );
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    const copyables = Array.from(host.querySelectorAll<HTMLElement>(".vault-preview-meta .vault-preview-copyable"));
+    // Native `title` does not render in a VSCode webview — the reason every meta
+    // row disclosed nothing at all. The shared widget is the only tooltip there is.
+    expect(copyables.some((c) => c.hasAttribute("title"))).toBe(false);
+    vi.useFakeTimers();
+    try {
+      expect(hoverTooltipText(copyables[0])).toBe("/work/repo");
+      expect(hoverTooltipText(copyables[1])).toBe("Git branch: main");
+      expect(hoverTooltipText(copyables[2])).toBe("abc-123");
+      expect(hoverTooltipText(copyables[3])).toBe("/home/me/.claude/projects/-work-repo/abc-123.jsonl");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("meta copy does not confirm when the clipboard rejects the write", async () => {
+    const host = createHost();
+    stubClipboard(() => Promise.reject(new Error("denied")));
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", cwd: "/work/repo", sessionId: "abc-123" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    const first = host.querySelector<HTMLElement>(".vault-preview-meta .vault-preview-copyable");
+    first?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    // A tick here would tell the user a copy happened when the clipboard is untouched.
+    expect(first?.classList.contains("is-copied")).toBe(false);
+  });
+
+  it("double-clicking the preview title renames the session", async () => {
+    const host = createHost();
+    const posted: Array<{ type: string; name?: string }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", title: "old name" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    const title = host.querySelector<HTMLElement>(".vault-preview-title");
+    expect(title?.textContent).toBe("old name");
+    // A single click must still be free to move the card — only a double opens the editor.
+    title?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(host.querySelector(".vault-row-rename-input")).toBeNull();
+
+    title?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const input = host.querySelector<HTMLInputElement>(".vault-preview-header .vault-row-rename-input");
+    expect(input).not.toBeNull();
+    expect(input?.value).toBe("old name");
+
+    input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    // Escape cancels the edit; it must not also close the whole preview.
+    expect(host.querySelector(".vault-preview")).not.toBeNull();
+    expect(host.querySelector(".vault-row-rename-input")).toBeNull();
+
+    title?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const input2 = host.querySelector<HTMLInputElement>(".vault-preview-header .vault-row-rename-input");
+    if (input2) {
+      input2.value = "new name";
+    }
+    input2?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(posted.filter((m) => m.type === "vaultRenameSession")).toEqual([
+      { type: "vaultRenameSession", entryId: "claude:a", name: "new name" },
+    ]);
+  });
+
+  it("an open title editor survives a live transcript repaint", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", title: "old name" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    host
+      .querySelector<HTMLElement>(".vault-preview-title")
+      ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+
+    const input = host.querySelector<HTMLInputElement>(".vault-preview-header .vault-row-rename-input");
+    if (input) {
+      input.value = "half-typed";
+    }
+    // A live-follow update repaints the card. Rebuilding the header here would
+    // throw away what the user has typed.
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({ stats: { messageCount: 9, toolCount: 1, subagentCount: 0, tokenCount: 40 } }),
+    });
+    const after = host.querySelector<HTMLInputElement>(".vault-preview-header .vault-row-rename-input");
+    expect(after).not.toBeNull();
+    expect(after?.value).toBe("half-typed");
+  });
+
+  it("closing mid-rename does not carry the header into the next session (B1)", () => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(
+      result([entry({ id: "claude:a", title: "session A" }), entry({ id: "claude:b", title: "session B" })]),
+    );
+    const rows = host.querySelectorAll<HTMLElement>(".vault-row");
+    rows[0].click();
+    host
+      .querySelector<HTMLElement>(".vault-preview-title")
+      ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(host.querySelector(".vault-preview-header .vault-row-rename-input")).not.toBeNull();
+
+    // Close WITHOUT a blur: dispatching on document reaches the shell's close
+    // listener without touching the input, mirroring the real hazard — removing a
+    // focused node does not reliably fire blur.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    rows[1].click();
+
+    // The reopened header must belong to session B, not to A.
+    expect(host.querySelector(".vault-preview-header .vault-row-rename-input")).toBeNull();
+    expect(host.querySelector(".vault-preview-title")?.textContent).toBe("session B");
+    posted.length = 0;
+    host.querySelector<HTMLElement>(".vault-preview-resume")?.click();
+    expect(posted.find((m) => m.type === "vaultResume")?.entryId).toBe("claude:b");
+  });
+
+  it("copies land on the clipboard in activation order even when writes finish out of order (B2)", async () => {
+    const host = createHost();
+    const settled: Array<() => void> = [];
+    const writes: string[] = [];
+    // Every write parks until released, so completion order is ours to choose.
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: {
+        writeText: (text: string) =>
+          new Promise<void>((resolve) => {
+            writes.push(text);
+            settled.push(resolve);
+          }),
+      },
+    });
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", cwd: "/work/repo", sessionId: "abc-123" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    const copyables = Array.from(host.querySelectorAll<HTMLElement>(".vault-preview-meta .vault-preview-copyable"));
+    copyables[0].click(); // cwd
+    copyables[1].click(); // session id
+    await flush();
+    // Serialized: the second write must not even be issued until the first ends.
+    expect(writes).toEqual(["/work/repo"]);
+    settled[0]();
+    await flush();
+    expect(writes).toEqual(["/work/repo", "abc-123"]);
+  });
+
+  it("a committed rename updates the title still on screen (W1)", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", title: "old name" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    host
+      .querySelector<HTMLElement>(".vault-preview-title")
+      ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const input = host.querySelector<HTMLInputElement>(".vault-preview-header .vault-row-rename-input");
+    if (input) {
+      input.value = "new name";
+    }
+    input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    // The host normalizes and pushes the authoritative entry back.
+    panel.render(result([entry({ id: "claude:a", title: "old name", customName: "new name" })]));
+    expect(host.querySelector(".vault-preview-title")?.textContent).toBe("new name");
+  });
+
+  it("a failed copy never inherits the previous tick (W2)", async () => {
+    const host = createHost();
+    let fail = false;
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: () => (fail ? Promise.reject(new Error("denied")) : Promise.resolve()) },
+    });
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", cwd: "/work/repo" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    const first = host.querySelector<HTMLElement>(".vault-preview-meta .vault-preview-copyable");
+    first?.click();
+    await flush();
+    expect(first?.classList.contains("is-copied")).toBe(true);
+
+    fail = true;
+    first?.click();
+    await flush();
+    // The stale tick from the earlier success would read as "copied" for a copy
+    // that was refused.
+    expect(first?.classList.contains("is-copied")).toBe(false);
+  });
+
+  it("an overlapping activation owns the tick: late success, then rejection (W2)", async () => {
+    const host = createHost();
+    const settle: Array<(ok: boolean) => void> = [];
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: {
+        writeText: () =>
+          new Promise<void>((resolve, reject) => {
+            settle.push((ok) => (ok ? resolve() : reject(new Error("denied"))));
+          }),
+      },
+    });
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", cwd: "/work/repo" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    const btn = host.querySelector<HTMLElement>(".vault-preview-meta .vault-preview-copyable");
+
+    btn?.click(); // A — still pending
+    btn?.click(); // B — supersedes A before A ever resolves
+    await flush();
+    settle[0]?.(true); // A succeeds LATE, after B took over
+    await flush();
+    // A no longer owns the affordance, so its success must not confirm anything.
+    expect(btn?.classList.contains("is-copied")).toBe(false);
+
+    settle[1]?.(false); // B, the activation that owns it, is refused
+    await flush();
+    expect(btn?.classList.contains("is-copied")).toBe(false);
+  });
+
+  it("two overlapping successes leave exactly one live confirmation (W2)", async () => {
+    const host = createHost();
+    const settle: Array<() => void> = [];
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: () => new Promise<void>((resolve) => settle.push(resolve)) },
+    });
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a", cwd: "/work/repo" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    const btn = host.querySelector<HTMLElement>(".vault-preview-meta .vault-preview-copyable");
+
+    btn?.click();
+    btn?.click();
+    await flush();
+    settle[0]?.();
+    await flush();
+    settle[1]?.();
+    await flush();
+    expect(btn?.classList.contains("is-copied")).toBe(true);
+    // The superseded activation must not have left a timer that expires early and
+    // clears the live confirmation before its own interval.
+    await new Promise((r) => setTimeout(r, 60));
+    expect(btn?.classList.contains("is-copied")).toBe(true);
+  });
+
+  it("meta block omits the branch and the path when the session records neither", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode", sessionId: "oc-1" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    const dd = Array.from(host.querySelectorAll<HTMLElement>(".vault-preview-meta dd"));
+    expect(dd[0].querySelector(".vault-preview-branch-chip")).toBeNull();
+    expect(dd[1].textContent).toBe("oc-1");
+    expect(host.querySelectorAll(".vault-preview-meta .vault-preview-copyable")).toHaveLength(2);
+  });
+
+  it("Alt+Arrow jumps between user messages and never reaches the terminal", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({
+        timeline: [
+          { kind: "message", role: "user", text: "first ask", timestamp: 1 },
+          { kind: "message", role: "assistant", text: "reply", timestamp: 2 },
+          { kind: "message", role: "user", text: "second ask", timestamp: 3 },
+        ],
+      }),
+    });
+    const body = host.querySelector<HTMLElement>(".vault-preview-body");
+    if (!body) {
+      throw new Error("preview body missing");
+    }
+    const scrollTo = vi.fn();
+    body.scrollTo = scrollTo as unknown as HTMLElement["scrollTo"];
+    // jsdom lays nothing out — every rect is zero, so the jump has no target to
+    // find. Give the body and its two user messages real vertical positions.
+    const rectAt = (top: number) => () => ({ top }) as DOMRect;
+    body.getBoundingClientRect = rectAt(0);
+    const users = body.querySelectorAll<HTMLElement>(".vault-preview-message-user");
+    expect(users).toHaveLength(2);
+    users[0].getBoundingClientRect = rectAt(100);
+    users[1].getBoundingClientRect = rectAt(300);
+
+    const press = (key: string, altKey: boolean): KeyboardEvent => {
+      const ev = new KeyboardEvent("keydown", { key, altKey, bubbles: true, cancelable: true });
+      document.dispatchEvent(ev);
+      return ev;
+    };
+
+    // Jumps to the next user message — and is claimed, so the pty router
+    // downstream never sees the key.
+    expect(press("ArrowDown", true).defaultPrevented).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 92 }));
+    expect(press("ArrowUp", true).defaultPrevented).toBe(true);
+
+    // A bare arrow is the terminal's — the preview must not touch it.
+    expect(press("ArrowDown", false).defaultPrevented).toBe(false);
+
+    // An Alt+Arrow typed into the inline rename editor belongs to the caret.
+    scrollTo.mockClear();
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    expect(press("ArrowUp", true).defaultPrevented).toBe(false);
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
   it("renders an assistant message as rich markdown — line breaks, a table, and a code block (D17)", () => {

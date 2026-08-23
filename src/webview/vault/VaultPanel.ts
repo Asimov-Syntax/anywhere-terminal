@@ -804,8 +804,12 @@ export class VaultPanel {
    *  a concurrent list rebuild while editing, then commits by posting the rename —
    *  the host round-trips an overlaid list that repaints the row (D1). */
   private beginRename(entry: VaultSessionEntry, row: HTMLElement): void {
+    const titleEl = row.querySelector<HTMLElement>(".vault-row-title");
+    if (!titleEl) {
+      return;
+    }
     this.renamingEntryId = entry.id;
-    beginInlineRename(row, entry, {
+    beginInlineRename(titleEl, entry, {
       commit: (name) => this.postMessage({ type: "vaultRenameSession", entryId: entry.id, name }),
       onDone: () => {
         this.renamingEntryId = null;

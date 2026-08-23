@@ -15,6 +15,24 @@ const TITLE_PRECEDENCE_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "cla
 const SUBAGENT_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-subagents");
 const TEAM_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-teams");
 const WF_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-workflows");
+const PERMISSION_MODE_FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude-permission-mode");
+
+describe("readClaudeSessions: permission mode is the LATEST recorded mode", () => {
+  const modeOf = async (sessionId: string): Promise<string | undefined> =>
+    (await readClaudeEntry(sessionId, { configDir: PERMISSION_MODE_FIXTURE_ROOT }))?.flags.permissionMode;
+
+  it("takes the mode from a later permission-mode record over the earlier one", async () => {
+    expect(await modeOf("sess-changed")).toBe("default");
+  });
+
+  it("finds a mode recorded only after the metadata head scan stops", async () => {
+    expect(await modeOf("sess-late")).toBe("acceptEdits");
+  });
+
+  it("omits the mode when the transcript records none", async () => {
+    expect(await modeOf("sess-none")).toBeUndefined();
+  });
+});
 
 describe("readClaudeSessions", () => {
   it("reads the valid session and counts the malformed one as unreadable", async () => {

@@ -28,14 +28,14 @@ function metaDl(): HTMLElement {
 }
 
 describe("buildPreviewHeader: vault shape", () => {
-  it("renders badge (accent), title, meta, and all five actions in order", () => {
+  it("renders badge (accent), title, meta, and all three actions in order", () => {
     const { element } = buildPreviewHeader(
       {
         badge: { icon: getAgentIcon("claude"), ariaLabel: "Claude Code", fallbackText: "Cl" },
         title: "My session",
         meta: metaDl(),
       },
-      baseCb({ onPrevUser: () => {}, onNextUser: () => {}, onResume: () => {} }),
+      baseCb({ onResume: () => {} }),
     );
     const badge = element.querySelector(".vault-badge");
     expect(badge?.classList.contains("vault-badge--claude")).toBe(true);
@@ -45,13 +45,18 @@ describe("buildPreviewHeader: vault shape", () => {
     const actions = Array.from(element.querySelectorAll(".vault-preview-title-actions > button")).map((b) =>
       (b as HTMLElement).className.replace("vault-preview-icon-btn ", ""),
     );
-    expect(actions).toEqual([
-      "vault-preview-nav-prev",
-      "vault-preview-nav-next",
-      "vault-preview-resume",
-      "vault-preview-maximize",
-      "vault-preview-close",
-    ]);
+    expect(actions).toEqual(["vault-preview-resume", "vault-preview-maximize", "vault-preview-close"]);
+  });
+
+  it("the title row carries no branch chip and no per-message navigation", () => {
+    const { element } = buildPreviewHeader(
+      { badge: { fallbackText: "Cl" }, title: "My session", meta: metaDl() },
+      baseCb({ onResume: () => {} }),
+    );
+    const row = element.querySelector(".vault-preview-title-row") as HTMLElement;
+    expect(row.querySelector(".vault-preview-branch-chip")).toBeNull();
+    expect(row.querySelector(".vault-preview-nav-prev")).toBeNull();
+    expect(row.querySelector(".vault-preview-nav-next")).toBeNull();
   });
 
   it("falls back to text when no icon is resolved", () => {
@@ -75,7 +80,7 @@ describe("buildPreviewHeader: subagent shape", () => {
         chip: { text: "@Explore", className: "vault-preview-subagent-agent" },
         title: "Find the auth middleware",
       },
-      baseCb(), // no onResume / onPrevUser / onNextUser
+      baseCb(), // no onResume
     );
     expect(element.querySelector(".vault-preview-subagent-agent")?.textContent).toBe("@Explore");
     expect(element.querySelector(".vault-preview-title")?.textContent).toBe("Find the auth middleware");
@@ -110,25 +115,16 @@ describe("buildPreviewHeader: subagent shape", () => {
 });
 
 describe("buildPreviewHeader: callbacks", () => {
-  it("wires close, maximize, resume, and nav", () => {
+  it("wires close, maximize, and resume", () => {
     const onClose = vi.fn();
     const onToggleMaximize = vi.fn();
     const onResume = vi.fn();
-    const onPrevUser = vi.fn();
-    const onNextUser = vi.fn();
-    const { element } = buildPreviewHeader(
-      { badge: {}, title: "x" },
-      baseCb({ onClose, onToggleMaximize, onResume, onPrevUser, onNextUser }),
-    );
+    const { element } = buildPreviewHeader({ badge: {}, title: "x" }, baseCb({ onClose, onToggleMaximize, onResume }));
     element.querySelector<HTMLButtonElement>(".vault-preview-close")?.click();
     element.querySelector<HTMLButtonElement>(".vault-preview-maximize")?.click();
     element.querySelector<HTMLButtonElement>(".vault-preview-resume")?.click();
-    element.querySelector<HTMLButtonElement>(".vault-preview-nav-prev")?.click();
-    element.querySelector<HTMLButtonElement>(".vault-preview-nav-next")?.click();
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onToggleMaximize).toHaveBeenCalledTimes(1);
     expect(onResume).toHaveBeenCalledTimes(1);
-    expect(onPrevUser).toHaveBeenCalledTimes(1);
-    expect(onNextUser).toHaveBeenCalledTimes(1);
   });
 });

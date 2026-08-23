@@ -1,0 +1,5 @@
+{"type":"user","cwd":"/Users/me/proj","gitBranch":"main","permissionMode":"bypassPermissions","sessionId":"sess-changed","timestamp":"2026-05-01T00:00:00Z","message":{"role":"user","content":"Start the work under bypass"}}
+{"type":"assistant","cwd":"/Users/me/proj","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"On it."}]}}
+{"type":"user","permissionMode":"bypassPermissions","sessionId":"sess-changed","timestamp":"2026-05-01T00:01:00Z","message":{"role":"user","content":"Keep going"}}
+{"type":"permission-mode","permissionMode":"default","sessionId":"sess-changed"}
+{"type":"assistant","cwd":"/Users/me/proj","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"Switched to default."}]}}

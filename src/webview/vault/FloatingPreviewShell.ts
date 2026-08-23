@@ -31,6 +31,16 @@ export interface FloatingPreviewShellDeps {
   shouldCloseOnEscape?: () => boolean;
   /** Outside-click targets that must NOT dismiss (vault keeps `.vault-row` clicks). */
   outsideCloseExclude?: string[];
+  /**
+   * Optional per-consumer key bindings, delivered while the card is open. Bound
+   * in the CAPTURE phase — `main.ts` installs a capture-phase document router
+   * that forwards keys to the pty, and xterm's own handler consumes them when
+   * the terminal holds DOM focus — so a binding here must be able to claim the
+   * key first. The handler decides whether to `preventDefault`/`stopPropagation`.
+   * Kept separate from the close listeners so their phase is unaffected; a
+   * consumer that passes nothing (the subagent popup) gets no listener at all.
+   */
+  onKeyDown?: (e: KeyboardEvent) => void;
   /** Listen in the capture phase (subagent popup) vs bubble (vault default). */
   captureCloseListeners?: boolean;
 }
@@ -43,6 +53,7 @@ export class FloatingPreviewShell {
   private readonly tooltipDisposers: Array<() => void> = [];
   private onDocPointerDown?: (e: MouseEvent) => void;
   private onDocKeyDown?: (e: KeyboardEvent) => void;
+  private onDocKeyDownCapture?: (e: KeyboardEvent) => void;
 
   constructor(deps: FloatingPreviewShellDeps) {
     this.deps = deps;
@@ -132,6 +143,13 @@ export class FloatingPreviewShell {
     };
     document.addEventListener("mousedown", this.onDocPointerDown, capture);
     document.addEventListener("keydown", this.onDocKeyDown, capture);
+    // Consumer key bindings ride their own ALWAYS-capture listener, so they can
+    // claim a key before the pty router regardless of the close-listener phase.
+    const onKeyDown = this.deps.onKeyDown;
+    if (onKeyDown) {
+      this.onDocKeyDownCapture = (e) => onKeyDown(e);
+      document.addEventListener("keydown", this.onDocKeyDownCapture, true);
+    }
   }
 
   private detachCloseListeners(): void {
@@ -143,6 +161,10 @@ export class FloatingPreviewShell {
     if (this.onDocKeyDown) {
       document.removeEventListener("keydown", this.onDocKeyDown, capture);
       this.onDocKeyDown = undefined;
+    }
+    if (this.onDocKeyDownCapture) {
+      document.removeEventListener("keydown", this.onDocKeyDownCapture, true);
+      this.onDocKeyDownCapture = undefined;
     }
   }
 }

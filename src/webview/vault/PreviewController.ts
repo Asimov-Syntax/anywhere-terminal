@@ -16,8 +16,9 @@ import { FloatingPreviewShell } from "./FloatingPreviewShell";
 import { agentLabel } from "./format";
 import { buildPreviewHeader as buildPreviewHeaderDom } from "./previewHeader";
 import { type BoardSelection, type PreviewTimelineBag, renderNestedInto, renderTimelineInto } from "./previewTimeline";
-import { buildPreviewMeta, loadingBody } from "./renderAtoms";
+import { buildPreviewMeta, loadingBody, type MetaCopyTarget } from "./renderAtoms";
 import type { VaultPanelPostMessage } from "./VaultPanel";
+import { beginInlineRename } from "./vaultListView";
 
 /** Timeline items requested on the first open, and the step added per load-more. */
 const PREVIEW_LIMIT_DEFAULT = 400;
@@ -56,6 +57,18 @@ export class PreviewController {
   /** The entry id whose detail the open preview is for — stale responses (≠ this) are dropped. */
   private activePreviewEntryId: string | null = null;
   private activePreviewEntry: VaultSessionEntry | null = null;
+  /** The header currently mounted, held so an open rename editor can survive a
+   *  repaint (D7). */
+  private headerEl: HTMLElement | null = null;
+  /** True while the title's inline editor is open. */
+  private titleEditing = false;
+  /** Handle to the open title editor, so it can be ended without relying on blur. */
+  private titleEdit: { end: () => void } | null = null;
+  /** Serializes clipboard writes so the LAST affordance activated is the one that
+   *  ends up on the clipboard. `writeText` calls run in parallel and the Clipboard
+   *  API specifies no cross-call ordering, so concurrent writes could otherwise
+   *  land in completion order rather than activation order (review B2). */
+  private clipboardChain: Promise<void> = Promise.resolve();
   /** The detail currently shown — kept so "show more" can re-render in place. */
   private activePreviewDetail: VaultSessionDetail | null = null;
   /** Keys (`<prefix>#<runIndex>`) of AI-runs expanded past the per-run cap. */
@@ -105,6 +118,7 @@ export class PreviewController {
       onRequestClose: () => this.closePreview(),
       shouldCloseOnEscape: () => !deps.isContextMenuOpen(),
       outsideCloseExclude: [".vault-row"],
+      onKeyDown: (e) => this.handleKeyDown(e),
     });
     this.timelineBag = {
       isRunExpanded: (key) => this.expandedRuns.has(key),
@@ -148,6 +162,15 @@ export class PreviewController {
   /** Keep the active entry reference live when a host push skips the DOM re-render. */
   refreshActiveEntry(entry: VaultSessionEntry): void {
     this.activePreviewEntry = entry;
+    // A rename commits through the host and lands back here. Patch the mounted
+    // title rather than rebuilding the header — a repaint would re-track tooltips
+    // and disturb the open card (W1).
+    if (!this.titleEditing) {
+      const titleEl = this.headerEl?.querySelector<HTMLElement>(".vault-preview-title");
+      if (titleEl) {
+        titleEl.textContent = previewTitleOf(entry);
+      }
+    }
   }
 
   /** Tear down all owned resources. Closing the preview detaches the document
@@ -164,6 +187,9 @@ export class PreviewController {
    */
   open(entry: VaultSessionEntry): void {
     this.deps.closeContextMenu();
+    // Belt and braces with closePreview(): opening straight from one session to
+    // another must never inherit the previous entry's header (B1).
+    this.endTitleEdit();
 
     this.activePreviewEntryId = entry.id;
     this.activePreviewEntry = entry;
@@ -208,6 +234,7 @@ export class PreviewController {
     // Shell teardown: cancel any in-flight drag, clear content, reset the scroll
     // nav, dispose header tooltips, detach the document close-listeners. Geometry +
     // maximized survive in FloatingWindow so the next open restores them (#1).
+    this.endTitleEdit(); // before hide(): the editor must not outlive the card (B1)
     this.shell.hide();
     this.activePreviewEntryId = null;
     this.activePreviewEntry = null;
@@ -417,32 +444,125 @@ export class PreviewController {
   }
 
   private buildPreviewHeader(entry: VaultSessionEntry, detail?: VaultSessionDetail): HTMLElement {
+    // A live-follow update repaints on every new message. Rebuilding the header
+    // mid-rename would replace the editor and discard what was typed, so the open
+    // one is handed back untouched — which also skips the tooltip re-track (D7).
+    if (this.titleEditing && this.headerEl) {
+      return this.headerEl;
+    }
     // Tear down the prior build's tooltips before the new build attaches its own.
     this.shell.disposeTooltips();
     const label = agentLabel(entry.agent);
+    const meta = buildPreviewMeta(entry, detail, (target) => this.copyMeta(entry, target));
     const { element, disposers } = buildPreviewHeaderDom(
       {
         badge: { icon: getAgentIcon(entry.agent), ariaLabel: label, fallbackText: label.slice(0, 2) },
-        // A user rename overrides the derived title everywhere it's shown (D1).
-        title: entry.customName || entry.title || "(untitled session)",
-        branch: entry.gitBranch,
-        meta: buildPreviewMeta(entry, detail),
+        title: previewTitleOf(entry),
+        meta: meta.element,
       },
       {
         isMaximized: () => this.shell.floatingWindow.isMaximized(),
         onMovePointerDown: (ev) => this.shell.floatingWindow.startMove(ev),
-        onPrevUser: () => this.shell.scrollNav.scrollToAdjacentUser(-1),
-        onNextUser: () => this.shell.scrollNav.scrollToAdjacentUser(1),
         onResume: () => {
           this.deps.postMessage({ type: "vaultResume", entryId: entry.id });
           this.closePreview();
         },
         onToggleMaximize: () => this.shell.floatingWindow.toggleMaximize(),
         onClose: () => this.closePreview(),
+        onRenameTitle: (titleEl) => this.renameTitle(entry, titleEl),
       },
     );
-    this.shell.trackTooltips(disposers);
+    this.shell.trackTooltips([...disposers, ...meta.disposers]);
+    this.headerEl = element;
     return element;
+  }
+
+  /** Open the inline rename editor on the preview title. Same editor and same
+   *  commit as the session list's rename — one path, not two (D7). */
+  private renameTitle(entry: VaultSessionEntry, titleEl: HTMLElement): void {
+    this.titleEditing = true;
+    this.titleEdit = beginInlineRename(titleEl, entry, {
+      commit: (name) => this.deps.postMessage({ type: "vaultRenameSession", entryId: entry.id, name }),
+      onDone: () => {
+        this.titleEditing = false;
+        this.titleEdit = null;
+      },
+    });
+  }
+
+  /**
+   * End any open title edit and drop the retained header. MUST run before the
+   * card is hidden or bound to another entry: `buildPreviewHeader` hands back
+   * `headerEl` while `titleEditing` is set, so a stale flag would remount the
+   * PREVIOUS session's header — with its Resume, copy and rename callbacks still
+   * closed over that entry (review B1). Not left to `blur`, which is not
+   * guaranteed when a focused node is removed — the assumption that caused it.
+   */
+  private endTitleEdit(): void {
+    this.titleEdit?.end();
+    this.titleEdit = null;
+    this.titleEditing = false;
+    this.headerEl = null;
+  }
+
+  /**
+   * Alt+ArrowUp / Alt+ArrowDown jump to the previous / next user message — the
+   * keyboard replacement for the title row's removed jump buttons. Claimed in the
+   * capture phase and stopped dead, otherwise the pty key router (or xterm, when
+   * the terminal holds focus) delivers the key to the running agent instead.
+   * Declined while a text field owns the caret or the row context menu owns the
+   * layer, so it can never fight an inline rename.
+   */
+  private handleKeyDown(e: KeyboardEvent): void {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) {
+      return;
+    }
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") {
+      return;
+    }
+    // A text field owns the caret: Alt+Arrow is word/line movement there, so it
+    // passes through untouched.
+    if (isTextEntryFocused()) {
+      return;
+    }
+    // Claimed before the context-menu check: the menu suppresses navigation but
+    // never handles arrows, and the key must still not reach the terminal while
+    // the overlay is open (W3).
+    e.preventDefault();
+    e.stopPropagation();
+    if (this.deps.isContextMenuOpen()) {
+      return;
+    }
+    this.shell.scrollNav.scrollToAdjacentUser(e.key === "ArrowUp" ? -1 : 1);
+  }
+
+  /**
+   * A meta-block copy affordance was activated: write that value straight to the
+   * clipboard from here (D4). The value is text this preview already rendered,
+   * so asking the host for it bought nothing — and cost everything: each click
+   * ran a full uncached `VaultService.list()`, two quick clicks raced with no
+   * ordering, and a resolve miss returned silently and left the previous
+   * clipboard content in place. A local write is instant and ordered.
+   *
+   * D9 is untouched: it exists to stop the host ACTING on a webview-supplied
+   * path (opening, revealing, executing it). No host privilege is used here.
+   */
+  private copyMeta(entry: VaultSessionEntry, target: MetaCopyTarget): Promise<void> {
+    const value = {
+      cwd: entry.cwd,
+      gitBranch: entry.gitBranch,
+      sessionId: entry.sessionId,
+      sessionPath: entry.sessionPath,
+    }[target];
+    if (!value) {
+      return Promise.reject(new Error(`no ${target} recorded`));
+    }
+    // Queued behind earlier activations so the clipboard holds the LAST value
+    // activated, not whichever write finished last (B2). Kept rejection-safe: one
+    // refused write must not wedge every copy after it.
+    const write = this.clipboardChain.then(() => navigator.clipboard.writeText(value));
+    this.clipboardChain = write.catch(() => {});
+    return write;
   }
 
   private renderPreviewLoading(entry: VaultSessionEntry): void {
@@ -546,6 +666,21 @@ export class PreviewController {
       this.deps.postMessage({ type: "requestVaultSessionDetail", entryId });
     }
   }
+}
+
+/** Whether the caret currently sits in a text field (the inline rename editor, a
+ *  search box) — a keyboard binding must stand down rather than steal the key. */
+/** A user rename overrides the derived title everywhere it's shown (D1). */
+function previewTitleOf(entry: VaultSessionEntry): string {
+  return entry.customName || entry.title || "(untitled session)";
+}
+
+function isTextEntryFocused(): boolean {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement)) {
+    return false;
+  }
+  return el.isContentEditable || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
 }
 
 /** Whether a scroll container is at/near its bottom edge — the "following the

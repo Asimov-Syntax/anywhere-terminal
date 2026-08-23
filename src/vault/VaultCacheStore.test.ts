@@ -157,6 +157,30 @@ describe("VaultCacheStore", () => {
     expect(store.load()).toBeNull();
   });
 
+  it("discards stale version 3 caches whose Claude entries hold a first-wins permissionMode", () => {
+    harness.files.set(
+      CACHE_FILE,
+      JSON.stringify({
+        ...doc({
+          entries: [
+            {
+              id: "claude:sess",
+              agent: "claude",
+              sessionId: "sess",
+              title: "stale mode",
+              cwd: "/work",
+              modified: 10,
+              flags: { permissionMode: "bypassPermissions" },
+              canFork: false,
+            },
+          ],
+        }),
+        version: 3,
+      }),
+    );
+    expect(store.load()).toBeNull();
+  });
+
   it("rejects a structurally-invalid document (missing entries array)", () => {
     harness.files.set(CACHE_FILE, JSON.stringify({ version: VAULT_CACHE_VERSION, agents: {}, unreadable: {} }));
     expect(store.load()).toBeNull();

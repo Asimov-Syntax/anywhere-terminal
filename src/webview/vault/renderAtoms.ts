@@ -10,8 +10,9 @@ import type {
   VaultSessionEntry,
   VaultTimelineItem,
 } from "../../vault/types";
+import { attachTooltip } from "../ui/Tooltip";
 import { formatRelativeTime, formatStats, leafSegment } from "./format";
-import { ICON_CHEVRON_DOWN } from "./icons";
+import { ICON_CHEVRON_DOWN, ICON_COPY } from "./icons";
 import { renderMarkdownLite } from "./markdownLite";
 
 /** Reasoning longer than this (or multi-line) collapses to a single-line gist
@@ -19,29 +20,152 @@ import { renderMarkdownLite } from "./markdownLite";
  *  to one clean line until the user expands it. */
 const THINKING_INLINE_MAX = 90;
 
-/** Preview meta block: Folder / Modified / Activity (when detail is in). */
-export function buildPreviewMeta(entry: VaultSessionEntry, detail?: VaultSessionDetail): HTMLElement {
+/** Which of the entry's values a meta-block copy affordance writes. The value is
+ *  text the preview is already rendering, so the copy happens here rather than
+ *  round-tripping through the host (D4). */
+export type MetaCopyTarget = "cwd" | "gitBranch" | "sessionId" | "sessionPath";
+
+/**
+ * One click-to-copy meta value: shows `text`, discloses `tooltip` (the
+ * untruncated value) on hover, and on click copies before flashing a tick.
+ * The tooltip goes through the shared widget, not native `title` — a webview
+ * never renders the native one, which is why no meta row disclosed anything.
+ *
+ * The tick waits for `onCopy` to resolve and is skipped when it rejects: a tick
+ * is a claim that the clipboard now holds the value, and confirming a copy that
+ * never landed is worse than not confirming at all.
+ */
+export function copyableValue(opts: {
+  text: string;
+  /** Untruncated value, disclosed on hover. */
+  tooltip: string;
+  onCopy: () => void | Promise<void>;
+  /** Names the copy for assistive tech — "Copy branch name" reads better than
+   *  the raw value, which the tooltip already carries. */
+  action: string;
+  /** Extra class alongside `.vault-preview-copyable` (the branch chip's pill). */
+  className?: string;
+  /** Leading glyph rendered before the text (the branch `⎇`). */
+  prefix?: HTMLElement;
+}): { element: HTMLElement; dispose: () => void } {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = opts.className ? `vault-preview-copyable ${opts.className}` : "vault-preview-copyable";
+  btn.setAttribute("aria-label", opts.action);
+  const glyph = document.createElement("span");
+  glyph.className = "vault-preview-copyable-icon";
+  glyph.innerHTML = ICON_COPY; // static icon constant, never session-derived (W6)
+  glyph.setAttribute("aria-hidden", "true");
+  if (opts.prefix) {
+    btn.append(opts.prefix);
+  }
+  const label = document.createElement("span");
+  label.className = "vault-preview-copyable-text";
+  label.textContent = opts.text;
+  btn.append(label, glyph);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  // Only the newest activation may confirm. Clearing at click time is not enough:
+  // the completion path resumes after an await, so a superseded copy could still
+  // land its tick — and a later rejection would then leave that tick standing,
+  // confirming a copy the clipboard refused (review W2).
+  let generation = 0;
+  btn.addEventListener("click", () => {
+    const activation = ++generation;
+    void (async () => {
+      clearTimeout(flashTimer);
+      btn.classList.remove("is-copied");
+      try {
+        await opts.onCopy();
+      } catch {
+        return; // clipboard refused (no user activation, unfocused document) — no tick
+      }
+      if (activation !== generation) {
+        return; // superseded while in flight; the newer activation owns the tick
+      }
+      btn.classList.add("is-copied");
+      flashTimer = setTimeout(() => btn.classList.remove("is-copied"), COPIED_FLASH_MS);
+    })();
+  });
+  return { element: btn, dispose: attachTooltip(btn, { text: opts.tooltip }) };
+}
+
+const COPIED_FLASH_MS = 1200;
+
+/** A meta row's plain-text value. Wrapped rather than appended as a bare text
+ *  node so the row's one-line ellipsis can apply to it — a text node in a flex
+ *  row has no box to clamp. */
+function metaText(text: string): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "vault-preview-meta-text";
+  span.textContent = text;
+  return span;
+}
+
+/** The session's git branch as a `⎇ <branch>` chip in the Folder row — itself a
+ *  copy affordance, so the branch name can be lifted like every other value. */
+function branchChip(branch: string, onCopy: () => void | Promise<void>) {
+  const icon = document.createElement("span");
+  icon.className = "vault-preview-branch-icon";
+  icon.textContent = "⎇";
+  icon.setAttribute("aria-hidden", "true");
+  return copyableValue({
+    text: branch,
+    tooltip: `Git branch: ${branch}`,
+    action: "Copy branch name",
+    onCopy,
+    className: "vault-preview-branch-chip",
+    prefix: icon,
+  });
+}
+
+/**
+ * Preview meta block: Folder (+ branch), Session (id + transcript path), and
+ * Activity (age, joined by the stats once the detail is in). Exactly three rows,
+ * all present from the first render — the age is known at open time, so the
+ * block does not grow a row underneath the reader when the detail lands (D6).
+ */
+export function buildPreviewMeta(
+  entry: VaultSessionEntry,
+  detail?: VaultSessionDetail,
+  onCopy?: (target: MetaCopyTarget) => void,
+): { element: HTMLElement; disposers: Array<() => void> } {
   const dl = document.createElement("dl");
   dl.className = "vault-preview-meta";
-  const addRow = (term: string, value: string, title?: string) => {
+  const disposers: Array<() => void> = [];
+  const addRow = (term: string, ...values: Array<Node | string>) => {
     const dt = document.createElement("dt");
     dt.textContent = term;
     const dd = document.createElement("dd");
-    dd.textContent = value;
-    if (title) {
-      dd.title = title;
-    }
+    dd.append(...values);
     dl.append(dt, dd);
   };
-  addRow("Folder", leafSegment(entry.cwd), entry.cwd);
-  const modified = formatRelativeTime(entry.modified);
-  if (modified) {
-    addRow("Modified", modified);
+  const copyable = (text: string, tooltip: string, action: string, target: MetaCopyTarget): HTMLElement => {
+    const { element, dispose } = copyableValue({ text, tooltip, action, onCopy: () => onCopy?.(target) });
+    disposers.push(dispose);
+    return element;
+  };
+
+  const folder: Array<Node | string> = [copyable(leafSegment(entry.cwd), entry.cwd, "Copy folder path", "cwd")];
+  if (entry.gitBranch) {
+    const chip = branchChip(entry.gitBranch, () => onCopy?.("gitBranch"));
+    disposers.push(chip.dispose);
+    folder.push(chip.element);
   }
-  if (detail) {
-    addRow("Activity", formatStats(detail.stats));
+  addRow("Folder", ...folder);
+
+  const session: Array<Node | string> = [copyable(entry.sessionId, entry.sessionId, "Copy session id", "sessionId")];
+  if (entry.sessionPath) {
+    // Labelled "transcript", not the path itself: every character of Claude's
+    // path is the folder or the id, both already on screen. A word says what
+    // the copy yields; an icon made the reader guess.
+    session.push(copyable("transcript", entry.sessionPath, "Copy transcript path", "sessionPath"));
   }
-  return dl;
+  addRow("Session", ...session);
+
+  const age = formatRelativeTime(entry.modified);
+  const stats = detail ? formatStats(detail.stats) : "";
+  addRow("Activity", metaText([age, stats].filter(Boolean).join(" · ")));
+  return { element: dl, disposers };
 }
 
 /** Loading placeholder body. */

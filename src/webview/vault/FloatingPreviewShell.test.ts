@@ -34,6 +34,55 @@ function body(child = "hi"): HTMLElement {
   return b;
 }
 
+describe("FloatingPreviewShell: onKeyDown hook", () => {
+  it("delivers keys in the CAPTURE phase, ahead of a bubble-phase document listener", () => {
+    const seen: string[] = [];
+    const r = make({ onKeyDown: () => seen.push("shell") });
+    shell = r.s;
+    const bubble = () => seen.push("document");
+    document.addEventListener("keydown", bubble);
+    try {
+      r.s.render(body());
+      r.s.show();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, bubbles: true }));
+      // The terminal's own key router is capture-phase; the shell must see the
+      // event first so it can stop the key reaching the pty.
+      expect(seen).toEqual(["shell", "document"]);
+    } finally {
+      document.removeEventListener("keydown", bubble);
+    }
+  });
+
+  it("attaches only while open — no delivery before show() or after hide()", () => {
+    const onKeyDown = vi.fn();
+    const r = make({ onKeyDown });
+    shell = r.s;
+    const press = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true }));
+
+    press();
+    expect(onKeyDown).not.toHaveBeenCalled();
+
+    r.s.render(body());
+    r.s.show();
+    press();
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+
+    r.s.hide();
+    press();
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it("a shell with no onKeyDown (the subagent popup) attaches no key listener", () => {
+    const r = make();
+    shell = r.s;
+    r.s.render(body());
+    r.s.show();
+    // Escape still closes — the close listeners are independent of the hook.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(r.onRequestClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("FloatingPreviewShell: construction", () => {
   it("creates a .vault-preview aside with aria-label, role, and extra classes", () => {
     const r = make({ role: "dialog", classNames: ["vault-preview--claude"] });
