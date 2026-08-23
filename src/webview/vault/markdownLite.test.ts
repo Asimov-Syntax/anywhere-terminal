@@ -62,6 +62,19 @@ describe("renderMarkdownLite", () => {
     expect(ol.querySelectorAll("ol.md-list li")).toHaveLength(2);
   });
 
+  it("keeps indented bullets nested inside one ordered sequence", () => {
+    const host = render("1. first\n   - detail a\n\n2. second\n   - detail b\n\n3. third\n   - detail c");
+    const lists = host.querySelectorAll(":scope > ol.md-list");
+    expect(lists).toHaveLength(1);
+    const items = lists[0].querySelectorAll(":scope > li");
+    expect(items).toHaveLength(3);
+    expect(Array.from(items).map((item) => item.querySelector(":scope > ul.md-list > li")?.textContent)).toEqual([
+      "detail a",
+      "detail b",
+      "detail c",
+    ]);
+  });
+
   it("renders inline `code` and **bold** as elements, not literal markers", () => {
     const host = render("use `npm test` and **stop**");
     expect(host.querySelector("code.md-code-inline")?.textContent).toBe("npm test");

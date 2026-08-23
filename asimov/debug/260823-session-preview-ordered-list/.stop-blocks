@@ -1,0 +1,1 @@
+{"n":1,"reason":"An investigation ends with a filed finding, not with a description of one. Run `bun run asm debug report DIAGNOSED --summary '<fault at file:line, and why it produces the observed failure>'` — or BLOCKED / ESCALATED if that is the honest answer."}

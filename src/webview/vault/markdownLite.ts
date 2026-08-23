@@ -66,6 +66,60 @@ const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d{1,9}\.)\s+(.*)$/;
 const FENCE_RE = /^(```|~~~)/;
 
+function renderList(lines: string[], start: number): { list: HTMLOListElement | HTMLUListElement; next: number } {
+  const first = LIST_RE.exec(lines[start]);
+  if (!first) {
+    throw new Error("renderList requires a list item");
+  }
+
+  const baseIndent = first[1].length;
+  const ordered = /\d/.test(first[2]);
+  const list = document.createElement(ordered ? "ol" : "ul");
+  list.className = "md-list";
+  if (ordered) {
+    list.start = Number.parseInt(first[2], 10);
+  }
+
+  let i = start;
+  while (i < lines.length) {
+    const item = LIST_RE.exec(lines[i]);
+    if (!item || item[1].length !== baseIndent || /\d/.test(item[2]) !== ordered) {
+      break;
+    }
+
+    const li = document.createElement("li");
+    appendInline(li, item[3]);
+    i++;
+
+    while (i < lines.length) {
+      let next = i;
+      while (next < lines.length && lines[next].trim() === "") {
+        next++;
+      }
+      const following = next < lines.length ? LIST_RE.exec(lines[next]) : null;
+      if (!following) {
+        break;
+      }
+
+      const followingIndent = following[1].length;
+      if (followingIndent > baseIndent) {
+        const nested = renderList(lines, next);
+        li.appendChild(nested.list);
+        i = nested.next;
+        continue;
+      }
+      if (followingIndent === baseIndent && /\d/.test(following[2]) === ordered) {
+        i = next;
+      }
+      break;
+    }
+
+    list.appendChild(li);
+  }
+
+  return { list, next: i };
+}
+
 /**
  * Render markdown-lite `text` into a DocumentFragment of block elements. Safe by
  * construction (textContent only). The caller appends the fragment into a block
@@ -146,29 +200,11 @@ export function renderMarkdownLite(text: string): DocumentFragment {
       continue;
     }
 
-    // List — consecutive list items (ordered if the first marker is `N.`).
+    // List — indentation determines nesting; blank lines may separate items.
     if (LIST_RE.test(line)) {
-      const first = LIST_RE.exec(line);
-      const ordered = first ? /\d/.test(first[2]) : false;
-      const list = document.createElement(ordered ? "ol" : "ul");
-      list.className = "md-list";
-      while (i < lines.length) {
-        const item = LIST_RE.exec(lines[i]);
-        if (!item) {
-          break;
-        }
-        // A marker-type switch (`- ` ↔ `1. `) ends this list so the next item
-        // starts a fresh ol/ul — otherwise numbered steps render as bullets (or
-        // vice versa), a common shape in AI transcripts.
-        if (/\d/.test(item[2]) !== ordered) {
-          break;
-        }
-        const li = document.createElement("li");
-        appendInline(li, item[3]);
-        list.appendChild(li);
-        i++;
-      }
-      frag.appendChild(list);
+      const rendered = renderList(lines, i);
+      frag.appendChild(rendered.list);
+      i = rendered.next;
       continue;
     }
 
