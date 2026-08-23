@@ -53,7 +53,7 @@ export class EditorPanelRegistry {
   /** Hydrate from the persisted record (post-restart). */
   hydrate(record?: LiveEditorPanelsRecord): void {
     this.panels.clear();
-    if (!record || record.version !== 1 || !Array.isArray(record.panels)) {
+    if (record?.version !== 1 || !Array.isArray(record.panels)) {
       return;
     }
     for (const entry of record.panels) {

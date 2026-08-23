@@ -594,7 +594,7 @@ export class Tree<T extends object, TTemplate extends ITemplateData = ITemplateD
   collapse(element: T): void {
     this.assertNotDisposed();
     const node = this.nodes.get(element);
-    if (!node || !node.expanded) {
+    if (!node?.expanded) {
       return;
     }
     node.expanded = false;

@@ -550,7 +550,7 @@ export class SnapshotPersistence {
    */
   generateSnapshotMetadata(sessionId: string): { metadata: SessionSnapshotMetadata; buffer: string } | null {
     const session = this.getSession(sessionId);
-    if (!session || !session.headless) {
+    if (!session?.headless) {
       return null;
     }
 

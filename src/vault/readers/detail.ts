@@ -497,7 +497,7 @@ export function createSpawnIdCollector(includeSidechain: boolean): {
       }
       for (const b of content) {
         const block = asObj(b);
-        if (!block || block.type !== "tool_use") {
+        if (block?.type !== "tool_use") {
           continue;
         }
         const name = str(block.name);

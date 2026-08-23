@@ -46,7 +46,7 @@ function ensureWidget(doc: Document): HTMLDivElement {
 
 function show(target: HTMLElement, text: string): void {
   const doc = target.ownerDocument;
-  if (!doc || !doc.body.contains(target)) {
+  if (!doc?.body.contains(target)) {
     return;
   }
   const el = ensureWidget(doc);

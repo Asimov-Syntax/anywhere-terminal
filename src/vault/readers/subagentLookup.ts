@@ -105,7 +105,7 @@ export async function resolveSubagentDetailByEntryId(
   limit?: number,
 ): Promise<VaultSessionDetail | null> {
   const parsed = parseEntryId(entryId);
-  if (!parsed || parsed.agent !== "claude") {
+  if (parsed?.agent !== "claude") {
     return null;
   }
   return readClaudeDetail(parsed.sessionId, options, limit);
