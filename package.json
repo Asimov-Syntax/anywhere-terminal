@@ -2,7 +2,7 @@
   "name": "anywhere-terminal",
   "displayName": "AnyWhere Terminal",
   "description": "Run a real terminal anywhere in VS Code or Cursor — Primary Sidebar, Secondary Sidebar, bottom Panel, or as an editor tab. With tabs, split panes, theming, and WebGL rendering.",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "publisher": "huybuidac",
   "license": "MIT",
   "icon": "media/icon.png",
