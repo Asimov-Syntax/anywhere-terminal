@@ -4,14 +4,20 @@ All notable changes to **AnyWhere Terminal** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.18.0] — 2026-08-24
 
 ### Added
 
 - **Cursor CLI and IDE history join the AI Vault.** Cursor rows now follow the same preview-first click / Enter / Space contract as Claude Code, Codex, and OpenCode, with `CLI` / `IDE` source badges. Explicit detail requests decode compatible CLI `store.db` root graphs, project JSONL mirrors, and Cursor IDE Composer records locally through bounded read-only snapshots; schema drift falls back to metadata-only detail. Only validated CLI rows expose explicit Resume through the detected `agent` / `cursor-agent` executable; IDE history, project mirrors, forged or stale entries, fork, cross-store Resume, and ACP embedding cannot receive CLI Resume capability.
-- **Cursor sub-agents open their own transcript.** A Cursor `Task` / `Agent` step renders as an expandable `agent` card. When the step's result names a child agent saved under the same project, expanding the card loads that child's own step-by-step transcript; when no exact child exists, the card keeps the invocation's bounded prompt and result rather than inventing one. Child transcripts are view-only, are matched only inside the parent's own project, and never become Resume targets or standalone Vault rows — orphan project transcripts stay hidden.
+- **Cursor sub-agents open their own transcript.** A Cursor `Task` / `Agent` step renders as an expandable `agent` card, and repeated calls to the same agent — a background launch plus its later resumes — collapse into a single card labeled with the agent's declared type and carrying its latest result, instead of one card per call. When the agent's saved transcript exists under the same project, expanding the card loads that child's own step-by-step history across all its turns; when no exact child exists, the card keeps the invocation's bounded prompt and result rather than inventing one. Child transcripts are view-only, are matched only inside the parent's own project, and never become Resume targets or standalone Vault rows — orphan project transcripts stay hidden.
 - **Cursor Resume proves the session before it acts.** Resume and Copy Resume Command now read the chat's bounded store profile and require the stored agent identity to match the chat directory before anything else happens. A missing, locked, unsupported, or mismatched store refuses the action ahead of any executable probe — the clipboard is left untouched, no terminal is created, and the row stays in the list.
 - **Optional Cursor Agent activity and approval status.** The machine-scoped `anywhereTerminal.cursorAgent.hooks.enabled` setting adds fail-open, exactly owned user hooks that report authenticated pane-local working/idle activity; current-screen command approvals show an action-required tab state, including narrow wrapped menus. Disabling removes the managed entries, clears semantic identity immediately, and returns tabs to bounded PTY-output activity. The hook observer never persists or exposes raw payloads, prompts, shell output, account identity, or transcript content.
+- **Transcripts now read like the conversation you actually had.** Records the human never typed — background-task notifications, injected reminders, multi-kilobyte compaction blobs — no longer render as shouted USER messages: plumbing is dropped, and notifications and compaction summaries fold into their own quiet, collapsed items. The same classification feeds session titles, so a session is named after your first real prompt.
+- **Act on any single message in a preview.** Every message carries a copy affordance offering Markdown, JSON, or the original untruncated record, and **Continue in New Session** starts a fresh session of the same agent seeded from that exact point — the stored session is left untouched.
+
+### Fixed
+
+- **Nested lists in preview markdown keep their structure.** A sub-list inside a transcript message used to flatten into its parent; indentation levels now render as actual nested lists.
 
 ## [0.17.9] — 2026-08-23
 

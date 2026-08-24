@@ -74,9 +74,9 @@ function renderList(lines: string[], start: number): { list: HTMLOListElement | 
 
   const baseIndent = first[1].length;
   const ordered = /\d/.test(first[2]);
-  const list = document.createElement(ordered ? "ol" : "ul");
+  const list = ordered ? document.createElement("ol") : document.createElement("ul");
   list.className = "md-list";
-  if (ordered) {
+  if (list instanceof HTMLOListElement) {
     list.start = Number.parseInt(first[2], 10);
   }
 
