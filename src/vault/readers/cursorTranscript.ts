@@ -4,7 +4,12 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { VaultActivityStep, VaultTimelineItem } from "../types";
-import { type CursorNormalizedRecord, emptyCursorRecord, normalizeCursorRecord } from "./cursorNormalization";
+import {
+  type CursorNormalizedRecord,
+  emptyCursorRecord,
+  mergeCursorSubagentInvocations,
+  normalizeCursorRecord,
+} from "./cursorNormalization";
 import { type CursorPathFsDeps, isSafeCursorChatId } from "./cursorPaths";
 
 const READ_CHUNK_BYTES = 256 * 1024;
@@ -439,7 +444,6 @@ export async function readCursorTranscript(
   const activity: VaultActivityStep[] = [];
   let messageCount = 0;
   let toolCount = 0;
-  let subagentCount = 0;
   let pendingTail = false;
   while (localStart < buffer.length) {
     const newline = buffer.indexOf(0x0a, localStart);
@@ -457,7 +461,6 @@ export async function readCursorTranscript(
         activity.push(...normalized.activity);
         messageCount += normalized.messageCount;
         toolCount += normalized.toolCount;
-        subagentCount += normalized.subagentCount;
       } catch {
         if (completeAtEof) {
           pendingTail = true;
@@ -477,11 +480,18 @@ export async function readCursorTranscript(
   const windowEnd = start + buffer.length;
   const lastNewline = buffer.lastIndexOf(0x0a);
   const pendingBytes = lastNewline < 0 ? buffer.length : buffer.length - lastNewline - 1;
+  // The mirror reuses the normalizer without the store's correlation maps, so it
+  // applies the same one-card-per-agent pass itself (D11).
+  const mergedActivity = mergeCursorSubagentInvocations(activity);
   return {
     status: "ok",
-    timeline,
-    recentActivity: activity.slice(-12),
-    stats: { messageCount, toolCount, subagentCount },
+    timeline: mergeCursorSubagentInvocations(timeline),
+    recentActivity: mergedActivity.slice(-12),
+    stats: {
+      messageCount,
+      toolCount,
+      subagentCount: mergedActivity.filter((step) => step.kind === "subagent").length,
+    },
     truncated,
     nextOffset: pendingTail ? windowEnd - pendingBytes : windowEnd,
     pendingTail,

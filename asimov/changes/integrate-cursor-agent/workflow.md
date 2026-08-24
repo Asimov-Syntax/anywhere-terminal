@@ -45,3 +45,8 @@ Replan evidence: Cursor parent and child project JSONL share no metadata-level p
 Validation: 17 warnings remain only on previously verified tasks; revised pending tasks validate without warnings or lease overlap.
 Task 9_9: user walked the Extension Development Host smoke and accepted the UI; residual Cursor data-quality issues are deferred to a follow-up change rather than widening this one.
 Verify gate run: type check at the recorded markdownLite baseline, `biome check src/` down from 8 errors at HEAD to 0 (formatting only; 80 style warnings remain, 44 of them `useBlockStatements` in `cursorStore.ts`), unit suite 2806 pass.
+Round 5 reopen: all seven findings accepted, none rebutted; wave 11 also folds in the user-reported sub-agent identity defect, so accepted preview behaviour moves and Gate 2 was re-earned on the approved plan file rather than a silent build.
+Gate 2 (wave 11): user approved the fix plan directly, including opaque registry-scoped child ids (option B) over readable `project:` ids.
+Wave 11 evidence: chat `e02838b2-b235-439c-98ee-1ea72905d4f8` issues five `Task` calls; two carry `resume: 82e87c39-…` with no `subagent_type`, and that agent's own transcript holds all three turns — so per-call cards and the `@Task` label are both artefacts of ignoring `args.resume`.
+Wave 11 consequence: an unproven CLI store no longer falls back to its project mirror, and `stats.subagentCount` counts agents rather than invocations; both were presented and accepted at plan approval.
+Wave 11 verify gate: type check at the recorded `markdownLite.ts:80` baseline, `biome check src/` 0 errors / 84 style warnings, unit suite 2829 pass; per-card nested expansion replaced the shared per-child state, so two duplicate-card tests now expand each card.

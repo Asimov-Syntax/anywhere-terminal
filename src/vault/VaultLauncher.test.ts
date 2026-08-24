@@ -38,12 +38,13 @@ function makeEntry(overrides: Partial<VaultSessionEntry> = {}): VaultSessionEntr
 // the stub returns the matching entry as-is, preserving the test's canFork.
 function stubService(
   entries: VaultSessionEntry[],
-  verifyResumeIdentity: (entry: VaultSessionEntry) => Promise<boolean> = async () => true,
+  verify: (entry: VaultSessionEntry) => Promise<boolean> = async () => true,
 ): VaultService {
   return {
-    getEntry: async (entryId: string): Promise<VaultSessionEntry | null> =>
-      entries.find((e) => e.id === entryId) ?? null,
-    verifyResumeIdentity,
+    getLaunchTarget: async (entryId: string) => {
+      const entry = entries.find((e) => e.id === entryId);
+      return entry ? { entry, verify: () => verify(entry) } : null;
+    },
   } as unknown as VaultService;
 }
 
@@ -243,6 +244,27 @@ describe("VaultLauncher.resolve", () => {
       shell: "cursor-agent",
     });
     expect(verify).not.toHaveBeenCalled();
+  });
+
+  /** B17: the launch target carries the proof for the location it resolved, so
+   *  Resume never re-discovers the candidate and can't bind to a different one. */
+  it("resolves the launch target once and proves that same target", async () => {
+    const entry = cursorCliEntry();
+    const verify = vi.fn(async () => true);
+    let resolutions = 0;
+    const service = {
+      getLaunchTarget: async (entryId: string) => {
+        resolutions++;
+        return entryId === entry.id ? { entry, verify } : null;
+      },
+      getEntry: () => {
+        throw new Error("Resume must not fall back to a second discovery");
+      },
+    } as unknown as VaultService;
+
+    await new VaultLauncher(service, {}).resolve("cursor:chat-1", "resume");
+    expect(resolutions).toBe(1);
+    expect(verify).toHaveBeenCalledTimes(1);
   });
 
   it("throws unknown-entry for an id not in the list", async () => {

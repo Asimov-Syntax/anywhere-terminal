@@ -128,6 +128,15 @@ function taskIdFromText(text: string): string | undefined {
   return match?.[1].slice(0, MAX_TASK_ID_CHARS);
 }
 
+/** The safe agent-id shape shared by the `Agent ID:` result line and the
+ *  invocation's own `resume` argument — bounded, no path traversal. */
+function safeAgentId(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_TASK_ID_CHARS || value.includes("..")) {
+    return undefined;
+  }
+  return /^[A-Za-z0-9._-]+$/.test(value) ? value : undefined;
+}
+
 function childAgentIdFromText(text: string): string | undefined {
   const match = /(?:^|\n)Agent ID:\s*([A-Za-z0-9._-]{1,200})(?=\s*(?:\(|$))/i.exec(
     text.slice(0, MAX_SUBAGENT_RESULT_CHARS),
@@ -239,12 +248,17 @@ function toolCallStep(
     const subagentType = boundedName(input?.subagent_type);
     const title = pickString(args, ["description"]);
     const prompt = pickString(args, SUBAGENT_PROMPT_KEYS);
+    // A continuation call declares no `subagent_type` and names the agent it is
+    // resuming; that argument is the authoritative identity, since a continuation
+    // result does not always repeat the `Agent ID:` line (D11).
+    const childAgentId = safeAgentId(input?.resume);
     const step: CursorSubagentStep = {
       kind: "subagent",
       name: subagentType ?? name,
       ...(title ? { title } : {}),
       ...(prompt ? { prompt } : {}),
       ...(typeof input?.run_in_background === "boolean" ? { background: input.run_in_background } : {}),
+      ...(childAgentId ? { childAgentId } : {}),
     };
     const callId = correlationId(block);
     return { step, subagentCall: { ...(callId ? { callId } : {}), step } };
@@ -485,4 +499,87 @@ export function normalizeCursorRecord(value: unknown): CursorNormalizedRecord | 
     toolCount: activity.filter((step) => step.kind === "tool").length,
     subagentCount: activity.filter((step) => step.kind === "subagent").length,
   };
+}
+
+function isSubagentStep(item: { kind: string }): item is CursorSubagentStep {
+  return item.kind === "subagent";
+}
+
+/** The launch call is the one that declared a `subagent_type`; a continuation
+ *  falls back to the invoking tool's own name, which is never an agent type. */
+function launchStep(group: CursorSubagentStep[]): CursorSubagentStep {
+  return group.find((step) => !SUBAGENT_TOOL_NAMES.has(step.name.toLowerCase())) ?? group[0];
+}
+
+/** Set or drop a merged field — an explicit `undefined` would still serialize. */
+function assign<K extends keyof CursorSubagentStep>(
+  step: CursorSubagentStep,
+  key: K,
+  value: CursorSubagentStep[K] | undefined,
+): void {
+  if (value === undefined) {
+    delete step[key];
+  } else {
+    step[key] = value;
+  }
+}
+
+function lastWith<K extends keyof CursorSubagentStep>(
+  group: CursorSubagentStep[],
+  key: K,
+): CursorSubagentStep[K] | undefined {
+  for (let index = group.length - 1; index >= 0; index--) {
+    const value = group[index][key];
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Cursor addresses ONE sub-agent through many `Task` invocations: a launch call
+ * declares the type, and every continuation carries only `resume: <agent-id>`.
+ * Keyed by call id alone they render as unrelated cards, each continuation
+ * labelled with the invoking tool's name. Collapse invocations that name the same
+ * agent onto the first one — declared type, title and prompt from the launch
+ * call, result and status from the newest turn (D11).
+ *
+ * Applied by BOTH readers, since the JSONL mirror reuses this normalizer without
+ * the store's correlation maps. Steps are shared between a record's timeline and
+ * its activity, so merging mutates the surviving step in place and then drops the
+ * superseded ones from whichever array is passed; the mutation is idempotent, so
+ * a second array merges to the same result.
+ */
+export function mergeCursorSubagentInvocations<T extends { kind: string }>(items: T[]): T[] {
+  const groups = new Map<string, CursorSubagentStep[]>();
+  for (const item of items) {
+    if (!isSubagentStep(item) || !item.childAgentId) {
+      continue;
+    }
+    const group = groups.get(item.childAgentId);
+    if (group) {
+      group.push(item);
+    } else {
+      groups.set(item.childAgentId, [item]);
+    }
+  }
+
+  const superseded = new Set<unknown>();
+  for (const group of groups.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+    const launch = launchStep(group);
+    const surviving = group[0];
+    surviving.name = launch.name;
+    assign(surviving, "title", launch.title);
+    assign(surviving, "prompt", launch.prompt);
+    assign(surviving, "result", lastWith(group, "result"));
+    assign(surviving, "status", lastWith(group, "status"));
+    for (const step of group.slice(1)) {
+      superseded.add(step);
+    }
+  }
+  return superseded.size === 0 ? items : items.filter((item) => !superseded.has(item));
 }

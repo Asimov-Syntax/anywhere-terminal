@@ -108,16 +108,27 @@ export class PreviewController {
   /** Timeline length seen on the previous load-all step (terminates the loop when a
    *  capped, still-`truncated` response stops growing). */
   private previewScrollToTopLastCount = 0;
-  /** Nested subagent expansion state, keyed by child entryId (survives re-renders);
+  /** Nested expansion state, keyed by CARD (its place in the timeline, so two cards
+   *  addressing one child open independently) and stable across re-renders;
    *  `nestedDetails` caches fetched child transcripts; `pendingNested` routes an
    *  in-flight detail response to its block. All reset when the preview closes. */
   private readonly expandedNested = new Set<string>();
   private readonly nestedDetails = new Map<string, VaultSessionDetail>();
   /** Source-recorded invocation fallback, keyed by the child view-only identity. */
   private readonly nestedFallbacks = new WeakMap<HTMLElement, NestedInvocationFallback>();
-  /** Child entryId → every open block awaiting that detail. A Set (not one element)
-   *  so two blocks sharing a child entryId both resolve from a single response. */
-  private readonly pendingNested = new Map<string, Set<HTMLElement>>();
+  /** Child entryId → every open block awaiting that detail, plus the preview
+   *  generation that asked. A Set (not one element) so two blocks sharing a child
+   *  entryId both resolve from ONE request, and collapsing one leaves the others
+   *  waiting (W15). The generation drops a reply that outlived its preview (W16). */
+  private readonly pendingNested = new Map<string, { generation: number; bodies: Set<HTMLElement> }>();
+  /** Bumped whenever the open preview changes (open / switch / close), so a nested
+   *  reply for a previous preview can never populate a card in the current one. */
+  private previewGeneration = 0;
+  /** Child entryId → replies still owed to previews that are already gone. The host
+   *  echoes only `entryId`, so a reply for a dead request is otherwise
+   *  indistinguishable from the reopened preview's own; replies arrive in order, so
+   *  the first N for that id are the dead ones and are dropped (W16). */
+  private readonly orphanedNested = new Map<string, number>();
   /** Child entryIds whose cached detail is mid-render — breaks a self-referential
    *  cycle (a child that nests its own id) before it overflows the stack. */
   private readonly renderingNested = new Set<string>();
@@ -158,15 +169,22 @@ export class PreviewController {
       onExpandRun: (key) => {
         this.expandedRuns.add(key);
       },
-      isNestedExpanded: (entryId) => this.expandedNested.has(entryId),
-      setNestedExpanded: (entryId, expanded) => {
+      isNestedExpanded: (_entryId, cardKey) => this.expandedNested.has(cardKey),
+      setNestedExpanded: (entryId, expanded, cardKey, body) => {
         if (expanded) {
-          this.expandedNested.add(entryId);
-        } else {
-          // Collapse drops any in-flight nested request so a late response can't
-          // populate the now-hidden body (R4 stale-guard).
-          this.expandedNested.delete(entryId);
-          this.pendingNested.delete(entryId);
+          this.expandedNested.add(cardKey);
+          return;
+        }
+        // Collapse drops THIS card's share of the in-flight request so a late
+        // response can't populate the now-hidden body (R4 stale-guard) — the
+        // request itself survives while another open card still awaits it (W15).
+        this.expandedNested.delete(cardKey);
+        const pending = this.pendingNested.get(entryId);
+        if (pending) {
+          pending.bodies.delete(body);
+          if (pending.bodies.size === 0) {
+            this.pendingNested.delete(entryId);
+          }
         }
       },
       populateNested: (entryId, body, fallback) => this.populateNested(entryId, body, fallback),
@@ -224,6 +242,8 @@ export class PreviewController {
     this.activePreviewEntryId = entry.id;
     this.activePreviewEntry = entry;
     this.activePreviewDetail = null;
+    this.previewGeneration++; // opening/switching supersedes every in-flight nested reply
+    this.retirePendingNested();
     this.expandedRuns.clear();
     this.expandedNested.clear();
     this.nestedDetails.clear();
@@ -275,6 +295,8 @@ export class PreviewController {
     this.activePreviewEntryId = null;
     this.activePreviewEntry = null;
     this.activePreviewDetail = null;
+    this.previewGeneration++;
+    this.retirePendingNested();
     this.expandedRuns.clear();
     this.expandedNested.clear();
     this.nestedDetails.clear();
@@ -418,9 +440,23 @@ export class PreviewController {
   }
 
   handleSessionDetailResponse(msg: VaultSessionDetailResponseMessage): void {
-    const nestedContainers = this.pendingNested.get(msg.entryId);
-    if (nestedContainers) {
+    const orphaned = this.orphanedNested.get(msg.entryId);
+    if (orphaned) {
+      // Owed to a preview that has since closed or switched — consume one and drop.
+      if (orphaned > 1) {
+        this.orphanedNested.set(msg.entryId, orphaned - 1);
+      } else {
+        this.orphanedNested.delete(msg.entryId);
+      }
+      return;
+    }
+    const nested = this.pendingNested.get(msg.entryId);
+    if (nested) {
       this.pendingNested.delete(msg.entryId);
+      if (nested.generation !== this.previewGeneration) {
+        return; // the preview that asked is gone — never paint a superseded reply
+      }
+      const nestedContainers = nested.bodies;
       const usableDetail =
         msg.detail && !msg.error && msg.detail.contentKind !== "metadata-only" && msg.detail.partial !== true
           ? msg.detail
@@ -838,6 +874,15 @@ export class PreviewController {
     });
   }
 
+  /** Move every in-flight nested request onto the orphan ledger: its preview is
+   *  gone, so the reply it will still receive must be dropped rather than painted
+   *  into whatever card holds that child id next (W16). */
+  private retirePendingNested(): void {
+    for (const entryId of this.pendingNested.keys()) {
+      this.orphanedNested.set(entryId, (this.orphanedNested.get(entryId) ?? 0) + 1);
+    }
+  }
+
   /** Fill a subagent block's body: from cache, or lazily fetch the child detail. */
   private populateNested(entryId: string, body: HTMLElement, fallback?: NestedInvocationFallback): void {
     if (fallback) {
@@ -861,13 +906,13 @@ export class PreviewController {
       return;
     }
     body.replaceChildren(loadingBody());
-    const containers = this.pendingNested.get(entryId) ?? new Set<HTMLElement>();
-    const alreadyPending = containers.size > 0;
-    containers.add(body); // every open block sharing this entryId resolves together
-    this.pendingNested.set(entryId, containers);
-    if (!alreadyPending) {
-      this.deps.postMessage({ type: "requestVaultSessionDetail", entryId });
+    const pending = this.pendingNested.get(entryId);
+    if (pending && pending.generation === this.previewGeneration) {
+      pending.bodies.add(body); // every open card sharing this entryId resolves together
+      return;
     }
+    this.pendingNested.set(entryId, { generation: this.previewGeneration, bodies: new Set([body]) });
+    this.deps.postMessage({ type: "requestVaultSessionDetail", entryId });
   }
 }
 

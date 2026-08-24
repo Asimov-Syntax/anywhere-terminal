@@ -533,3 +533,76 @@
     1. Centralize launch and command-copy entry resolution plus proof in `src/vault/VaultLauncher.ts` and retain independent source-capability rejection.
     2. Route Resume command copy through the launcher in `src/providers/TerminalViewProvider.ts` rather than building from a separately resolved entry.
     3. Cover successful proof, mismatch, unavailable store, executable ordering, unchanged clipboard, no terminal creation, unsupported sources, and non-Cursor parity in `src/vault/VaultLauncher.test.ts` and `src/providers/TerminalViewProvider.test.ts`.
+
+## 10. Review Round 5 Fixes and Subagent Identity
+
+- [x] 11_1 Reject ambiguous Cursor store identity rows — verified: pnpm vitest run src/vault/readers/cursorStore.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: none
+  - **Refs**: specs/vault-session-launch/spec.md#cursor-explicit-resume-identity-proof; design.md D14; .reviews/round-5.md B16
+  - **Acceptance**:
+    - Outcome: A store whose supported `meta` table does not hold exactly one unique key-0 identity row fails the proof.
+    - Verify: command pnpm vitest run src/vault/readers/cursorStore.test.ts
+  - **Boundary**: The profile read stays bounded — no blob fetch and no transcript root follow.
+  - **Plan**:
+    1. Extend the bounded profile query and compatibility gate in `src/vault/readers/cursorStore.ts` with key-0 row-count and key-uniqueness evidence.
+    2. Cover duplicate, absent, and non-unique identity rows for both the proof and detail paths in `src/vault/readers/cursorStore.test.ts`.
+
+- [x] 11_2 Fail closed when Cursor store identity is unproven — verified: pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorReader.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: 11_1
+  - **Refs**: specs/vault-session-preview/spec.md#{cursor-agent-cli-transcript-preview, cursor-transcript-capability-fallback}; design.md D14; .reviews/round-5.md B15
+  - **Acceptance**:
+    - Outcome: A contradicting CLI store returns metadata-only detail.
+    - Verify: command pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorReader.test.ts
+  - **Boundary**: An absent, locked, or unsupported store must keep its existing same-cwd mirror fallback.
+  - **Plan**:
+    1. Distinguish a contradicted identity from other limited outcomes in the limited result of `src/vault/readers/cursorStore.ts`.
+    2. Refuse the same-project mirror fallback for a contradicted identity in `src/vault/readers/cursorReader.ts`.
+    3. Cover mismatch, unavailable snapshot, unsupported schema, and proven-but-unreadable-graph fallback in `src/vault/readers/cursorStore.test.ts` and `src/vault/readers/cursorReader.test.ts`.
+
+- [x] 11_3 Resolve the Cursor launch target once — verified: pnpm vitest run src/vault/VaultLauncher.test.ts src/vault/VaultService.test.ts src/vault/readers/cursorReader.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: 11_2
+  - **Refs**: specs/vault-session-launch/spec.md#{cursor-selected-resume-compatibility, cursor-explicit-resume-identity-proof}; design.md D14; .reviews/round-5.md B17
+  - **Acceptance**:
+    - Outcome: One explicit Cursor launch action discovers its candidate exactly once.
+    - Verify: command pnpm vitest run src/vault/VaultLauncher.test.ts src/vault/VaultService.test.ts src/vault/readers/cursorReader.test.ts
+  - **Boundary**: Non-Cursor launch resolution and the metadata-only list path stay unchanged.
+  - **Plan**:
+    1. Expose one resolved launch target carrying the mapped entry and its store path from `src/vault/readers/cursorReader.ts`.
+    2. Surface it through `src/vault/VaultService.ts` and consume it for both actions in `src/vault/VaultLauncher.ts`, proving the carried path.
+    3. Cover single discovery, carried-path proof, and non-Cursor parity in `src/vault/readers/cursorReader.test.ts`, `src/vault/VaultService.test.ts`, and `src/vault/VaultLauncher.test.ts`.
+
+- [x] 11_4 Serve Cursor child transcripts only through issued locators — verified: pnpm vitest run src/vault/VaultService.test.ts src/vault/readers/cursorReader.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: 11_3
+  - **Refs**: specs/agent-session-index/spec.md#cursor-child-transcript-identity; specs/vault-session-preview/spec.md#cursor-saved-child-transcript-drill-down; design.md D12; design.md D13; .reviews/round-5.md B14; .reviews/round-5.md W14
+  - **Acceptance**:
+    - Outcome: Child detail resolves only for a locator a parent detail issued, and one preview validates its project context once.
+    - Verify: command pnpm vitest run src/vault/VaultService.test.ts src/vault/readers/cursorReader.test.ts
+  - **Boundary**: The locator must not encode the storage bucket or transcript id, and the registry must stay bounded.
+  - **Plan**:
+    1. Issue opaque child locators when parent detail emits child stubs and resolve them from a bounded host-side registry in `src/vault/VaultService.ts` and `src/vault/readers/cursorReader.ts`.
+    2. Resolve the parent project context once per detail before the child loop in `src/vault/readers/cursorReader.ts`.
+    3. Cover unissued locators, stable re-issue across repeated parent reads, registry eviction, and single-context resolution in `src/vault/VaultService.test.ts` and `src/vault/readers/cursorReader.test.ts`.
+
+- [x] 11_5 Merge Cursor subagent continuations into one agent — verified: pnpm vitest run src/vault/readers/cursorNormalization.test.ts src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: 11_4
+  - **Refs**: specs/vault-session-preview/spec.md#{cursor-subagent-continuation-identity, cursor-saved-child-transcript-drill-down}; design.md D11
+  - **Acceptance**:
+    - Outcome: Repeated calls naming one Cursor agent render as a single typed card.
+    - Verify: command pnpm vitest run src/vault/readers/cursorNormalization.test.ts src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts
+  - **Boundary**: Merging must not fabricate turns, and an unsafe or unknown agent identity must leave the invocation untouched.
+  - **Plan**:
+    1. Read the bounded `resume` argument as an agent identity in `src/vault/readers/cursorNormalization.ts`.
+    2. Merge invocations by agent identity in a pass shared by the store and JSONL readers, keeping first-invocation order, declared type, and newest result, and count agents in stats — `src/vault/readers/cursorNormalization.ts`, `src/vault/readers/cursorStore.ts`, `src/vault/readers/cursorTranscript.ts`.
+    3. Cover the observed launch-plus-two-continuations shape, a continuation whose result omits the identity line, unsafe identities, and child linking of the merged card in `src/vault/readers/cursorNormalization.test.ts`, `src/vault/readers/cursorStore.test.ts`, `src/vault/readers/cursorTranscript.test.ts`, `src/vault/readers/cursorReader.test.ts`.
+
+- [x] 11_6 Track nested Cursor card state per card — verified: pnpm vitest run src/webview/vault/VaultPanel.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: none
+  - **Refs**: specs/vault-session-preview/spec.md#{cursor-subagent-run-preview, cursor-subagent-result-fallback}; .reviews/round-5.md W15; .reviews/round-5.md W16
+  - **Acceptance**:
+    - Outcome: Collapsing one sub-agent card leaves other open cards loading their detail, and a superseded child response never renders.
+    - Verify: command pnpm vitest run src/webview/vault/VaultPanel.test.ts
+  - **Boundary**: Duplicate cards must still share one child request rather than issuing one each.
+  - **Plan**:
+    1. Track expansion and pending membership per card body in `src/webview/vault/PreviewController.ts` while coalescing the underlying request by child id.
+    2. Add a preview request generation and drop superseded nested responses in `src/webview/vault/PreviewController.ts` and `src/webview/vault/previewTimeline.ts`.
+    3. Cover collapse with a second card open, close-and-reopen, and preview switching in `src/webview/vault/VaultPanel.test.ts`.

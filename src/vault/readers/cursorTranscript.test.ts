@@ -246,6 +246,58 @@ describe("readCursorTranscript", () => {
     expect(result.stats).toEqual({ messageCount: 2, toolCount: 1, subagentCount: 1 });
   });
 
+  /** D11: the mirror reuses the normalizer without the store's correlation maps,
+   *  so it must run the same one-card-per-agent merge itself. */
+  it("collapses resume continuations of one agent into a single card", async () => {
+    const candidate = await writeNested(
+      "project-a",
+      "chat-merge",
+      [
+        line({
+          role: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                name: "Task",
+                input: { subagent_type: "asm-oracle", description: "Oracle advisor ready", prompt: "Stand by" },
+              },
+            ],
+          },
+        }),
+        line({
+          role: "assistant",
+          message: {
+            content: [
+              { type: "tool_use", name: "Task", input: { description: "Follow-up 1", resume: "oracle-1" } },
+              { type: "tool_use", name: "Read", input: { file_path: "/tmp/a.ts" } },
+            ],
+          },
+        }),
+        line({
+          role: "assistant",
+          message: {
+            content: [{ type: "tool_use", name: "Task", input: { description: "Follow-up 2", resume: "oracle-1" } }],
+          },
+        }),
+      ].join(""),
+    );
+
+    const result = await readCursorTranscript(candidate, { projectsDir: root });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") {
+      return;
+    }
+    // The mirror carries no `Agent ID:` correlation, so the launch call stays its
+    // own card; the two continuations naming one agent become one.
+    expect(result.timeline).toEqual([
+      { kind: "subagent", name: "asm-oracle", title: "Oracle advisor ready", prompt: "Stand by" },
+      { kind: "subagent", name: "Task", title: "Follow-up 1", childAgentId: "oracle-1" },
+      { kind: "tool", tool: "Read", detail: "/tmp/a.ts" },
+    ]);
+    expect(result.stats.subagentCount).toBe(2);
+  });
+
   it("consumes a valid final JSON record without a newline", async () => {
     const candidate = await writeFlat(
       "project-a",

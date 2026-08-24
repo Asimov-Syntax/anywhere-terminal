@@ -17,6 +17,8 @@ A compatible Cursor Agent CLI detail request SHALL render a bounded chronologica
 
 The reader SHALL use the canonical CLI store when compatible and MAY use the matching project transcript JSONL as an incremental mirror or fallback without emitting a duplicate session row.
 
+The mirror SHALL NOT be read when the canonical store is readable and claims a different agent identity.
+
 ### Requirement: Cursor IDE Composer transcript preview
 
 A compatible Cursor IDE detail request SHALL render its local Composer conversation through the same bounded Vault timeline used by other providers.
@@ -35,11 +37,27 @@ Cursor Agent `Task` and `Agent` calls SHALL use the same collapsible `AGENT` car
 
 A correlated bounded result SHALL remain attached to its invocation without becoming another tool or conversation message.
 
+### Requirement: Cursor subagent continuation identity
+
+Calls naming the same bounded agent identity SHALL render as one card at the first invocation's position, carrying that agent's declared type, opening description, and newest correlated result.
+
+A continuation SHALL take its agent identity from the invocation's own bounded `resume` argument rather than the invoking tool's name.
+
+Sub-agent counts SHALL report distinct agents rather than invocations.
+
+#### Scenario: User previews a sub-agent that was resumed twice
+
+- **WHEN** one background launch declares a subagent type and two later calls carry only that agent's `resume` id
+- **THEN** the preview shows a single card labelled with the declared type
+- **AND** expanding it opens that agent's own saved transcript covering every turn
+
 ### Requirement: Cursor saved child transcript drill-down
 
-A safe Agent ID in a recognized result SHALL open a saved child transcript only when exactly one matching file exists in the validated parent project bucket.
+A bounded agent identity from a recognized invocation or its correlated result SHALL open a saved child transcript only when exactly one matching file exists in the validated parent project bucket.
 
-The child identity SHALL be source-qualified, non-resumable, and never resolved through a global id scan.
+The child SHALL be non-resumable and addressable only through a host-issued locator the parent detail emitted.
+
+An unissued locator SHALL be refused.
 
 ### Requirement: Cursor subagent result fallback
 

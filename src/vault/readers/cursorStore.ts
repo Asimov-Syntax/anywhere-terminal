@@ -5,6 +5,7 @@ import {
   type CursorNormalizedRecord,
   type CursorSubagentStep,
   type CursorToolResult,
+  mergeCursorSubagentInvocations,
   normalizeCursorRecord,
 } from "./cursorNormalization";
 
@@ -21,7 +22,8 @@ const SAFE_AGENT_ID_RE = /^[A-Za-z0-9._-]{1,200}$/;
 const CURSOR_PROFILE_SQL = `SELECT
   (SELECT user_version FROM pragma_user_version) AS user_version,
   (SELECT COUNT(*) FROM pragma_table_info('meta')) AS meta_columns,
-  (SELECT COUNT(*) FROM pragma_table_info('meta') WHERE name = 'key' AND upper(type) = 'TEXT') AS meta_key,
+  (SELECT COUNT(*) FROM pragma_table_info('meta') WHERE name = 'key' AND upper(type) = 'TEXT' AND pk = 1) AS meta_key,
+  (SELECT COUNT(*) FROM meta WHERE key = '0') AS meta_key_rows,
   (SELECT COUNT(*) FROM pragma_table_info('meta') WHERE name = 'value' AND upper(type) = 'TEXT') AS meta_value_column,
   (SELECT COUNT(*) FROM pragma_table_info('blobs')) AS blob_columns,
   (SELECT COUNT(*) FROM pragma_table_info('blobs') WHERE name = 'id' AND upper(type) = 'TEXT') AS blob_id,
@@ -45,7 +47,18 @@ export type CursorStoreResult =
       recentActivity: VaultActivityStep[];
       stats: CursorStoreStats;
     }
-  | { status: "limited"; reason: string };
+  | {
+      status: "limited";
+      reason: string;
+      /**
+       * The store was readable and named a DIFFERENT agent than the candidate
+       * directory. That contradiction is the stale/moved-directory signal, so the
+       * caller must not substitute the same-cwd project mirror for it (B15). An
+       * absent, locked, or unsupported store makes no competing claim and leaves
+       * this false.
+       */
+      identityContradicted?: boolean;
+    };
 
 interface ParsedFields {
   current: string[];
@@ -62,6 +75,10 @@ interface BlobFetchState {
 
 function limited(): CursorStoreResult {
   return { status: "limited", reason: LIMITED_REASON };
+}
+
+function identityContradicted(): CursorStoreResult {
+  return { status: "limited", reason: LIMITED_REASON, identityContradicted: true };
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
@@ -239,11 +256,16 @@ function normalizeRecord(data: Buffer): NormalizedRecord | undefined {
   return normalizeCursorRecord(raw);
 }
 
+/** `meta_key` requires the supported unique key column and `meta_key_rows` that
+ *  exactly one identity row exists: the profile query reads a single value, so
+ *  duplicate key-0 rows would otherwise let SQLite pick which identity proves
+ *  the store (B16). */
 function compatibleProfile(row: Record<string, unknown>): boolean {
   return (
     Number(row.user_version) === 1 &&
     Number(row.meta_columns) === 2 &&
     Number(row.meta_key) === 1 &&
+    Number(row.meta_key_rows) === 1 &&
     Number(row.meta_value_column) === 1 &&
     Number(row.blob_columns) === 2 &&
     Number(row.blob_id) === 1 &&
@@ -283,7 +305,8 @@ async function readCursorStoreProfile(snapshot: SqliteSnapshot): Promise<CursorS
 
 async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string): Promise<CursorStoreResult> {
   const profile = await readCursorStoreProfile(snapshot);
-  if (!profile || profile.agentId !== expectedAgentId) return limited();
+  if (!profile) return limited();
+  if (profile.agentId !== expectedAgentId) return identityContradicted();
   const rootValue =
     typeof profile.meta.latestRootBlobId === "string" ? profile.meta.latestRootBlobId : profile.meta.rootBlobId;
   if (typeof rootValue !== "string" || !HASH_RE.test(rootValue)) return limited();
@@ -315,7 +338,6 @@ async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string)
   let normalizedTextChars = 0;
   let messageCount = 0;
   let toolCount = 0;
-  let subagentCount = 0;
   const applyToolResult = (step: CursorSubagentStep, result: CursorToolResult) => {
     if (result.childAgentId) {
       step.childAgentId = result.childAgentId;
@@ -377,14 +399,20 @@ async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string)
     recentActivity.push(...record.activity);
     messageCount += record.messageCount;
     toolCount += record.toolCount;
-    subagentCount += record.subagentCount;
   }
 
+  // One agent, many invocations: collapse continuations onto their launch call
+  // before anything counts or links them, so the stat counts agents (D11).
+  const mergedActivity = mergeCursorSubagentInvocations(recentActivity);
   return {
     status: "ok",
-    timeline,
-    recentActivity,
-    stats: { messageCount, toolCount, subagentCount },
+    timeline: mergeCursorSubagentInvocations(timeline),
+    recentActivity: mergedActivity,
+    stats: {
+      messageCount,
+      toolCount,
+      subagentCount: mergedActivity.filter((step) => step.kind === "subagent").length,
+    },
   };
 }
 

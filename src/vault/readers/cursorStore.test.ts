@@ -107,6 +107,7 @@ function fakeSnapshot(blobs: Map<string, Buffer>, rootId: string, queries: strin
                 user_version: 1,
                 meta_columns: 2,
                 meta_key: 1,
+                meta_key_rows: 1,
                 meta_value_column: 1,
                 blob_columns: 2,
                 blob_id: 1,
@@ -510,6 +511,108 @@ describe("readCursorStoreDetail", () => {
     expect(result.stats).toEqual({ messageCount: 0, toolCount: 0, subagentCount: 2 });
   });
 
+  /** The shape observed in chat e02838b2: one background launch declaring the
+   *  type, then two continuations that carry only `resume` — one agent, three
+   *  invocations, and the continuations' results never repeat the Agent ID line. */
+  it("renders one card for a launch plus its resume continuations", async () => {
+    const launch = json({
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: "call-launch",
+          args: {
+            subagent_type: "asm-oracle",
+            description: "Oracle advisor ready",
+            prompt: "Stand by",
+            run_in_background: true,
+          },
+        },
+      ],
+    });
+    const launched = json({
+      type: "tool-result",
+      toolName: "Task",
+      toolCallId: "call-launch",
+      result: "Subagent is running in the background.\n\nAgent ID: oracle-1",
+    });
+    const continuations = [1, 2].flatMap((turn) => [
+      json({
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: `call-resume-${turn}`,
+            args: { description: `Oracle follow-up ${turn}`, prompt: `Question ${turn}`, resume: "oracle-1" },
+          },
+        ],
+      }),
+      json({
+        type: "tool-result",
+        toolName: "Task",
+        toolCallId: `call-resume-${turn}`,
+        result: `Answer ${turn}`,
+      }),
+    ]);
+    const records = [launch, launched, ...continuations];
+    await writeStore({
+      root: Buffer.concat(records.map((record) => field(1, hash(record)))),
+      blobs: records.map((data) => ({ data })),
+    });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toEqual([
+      {
+        kind: "subagent",
+        name: "asm-oracle",
+        title: "Oracle advisor ready",
+        prompt: "Stand by",
+        background: true,
+        childAgentId: "oracle-1",
+        result: "Answer 2",
+        status: "completed",
+      },
+    ]);
+    expect(result.recentActivity).toEqual(result.timeline);
+    expect(result.stats).toEqual({ messageCount: 0, toolCount: 0, subagentCount: 1 });
+  });
+
+  it("keeps invocations apart when the resume identity is unsafe or absent", async () => {
+    const calls = json({
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: "call-1",
+          args: { subagent_type: "asm-oracle", description: "Launch" },
+        },
+        {
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: "call-2",
+          args: { description: "Traversing resume", resume: "../../etc/passwd" },
+        },
+        { type: "tool-call", toolName: "Task", toolCallId: "call-3", args: { description: "No identity at all" } },
+      ],
+    });
+    await writeStore({
+      root: field(1, hash(calls)),
+      blobs: [{ data: calls }],
+    });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toHaveLength(3);
+    expect(result.stats.subagentCount).toBe(3);
+    expect(JSON.stringify(result.timeline)).not.toContain("passwd");
+  });
+
   it("caps a correlated subagent result", async () => {
     const call = json({
       role: "assistant",
@@ -536,14 +639,20 @@ describe("readCursorStoreDetail", () => {
   });
 
   it.each([
-    ["stored agent mismatch", { agentId: "different-chat" }],
-    ["unsupported schema", { userVersion: 2 }],
-  ])("fails closed for %s without returning transcript content", async (_name, fixture) => {
+    // A readable store naming another agent is flagged as contradicted so the
+    // caller withholds the project mirror too; schema drift only limits detail.
+    ["stored agent mismatch", { agentId: "different-chat" }, true],
+    ["unsupported schema", { userVersion: 2 }, false],
+  ])("fails closed for %s without returning transcript content", async (_name, fixture, contradicted) => {
     const message = json({ role: "user", content: "private transcript" });
     await writeStore({ ...fixture, root: field(1, hash(message)), blobs: [{ data: message }] });
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
-    expect(result).toEqual({ status: "limited", reason: "Cursor transcript is unavailable for this store." });
+    expect(result).toEqual({
+      status: "limited",
+      reason: "Cursor transcript is unavailable for this store.",
+      ...(contradicted ? { identityContradicted: true } : {}),
+    });
   });
 
   it("fails closed when a reachable blob does not match its SHA-256 id", async () => {
@@ -636,5 +745,44 @@ describe("verifyCursorStoreIdentity", () => {
   it("rejects an unsafe candidate chat id without opening the store", async () => {
     await writeStore({ agentId: "chat-1", root: Buffer.alloc(0) });
     await expect(verifyCursorStoreIdentity(dbPath, "../escape")).resolves.toBe(false);
+  });
+
+  /** B16: `LIMIT 1` picks one of several key-0 rows, so ambiguity must be
+   *  rejected by counting rows and requiring the supported unique-key schema. */
+  it("rejects an ambiguous identity: duplicate, absent, or non-unique key rows", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const metaHex = (agentId: string) =>
+      Buffer.from(JSON.stringify({ agentId, latestRootBlobId: hash(Buffer.alloc(0)) }), "utf8").toString("hex");
+
+    const write = (schema: string, rows: Array<[string, string]>) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec("PRAGMA user_version = 1");
+        db.exec(schema);
+        db.exec("CREATE TABLE blobs(id TEXT PRIMARY KEY, data BLOB NOT NULL)");
+        const insert = db.prepare("INSERT INTO meta(key, value) VALUES (?, ?)");
+        for (const [key, value] of rows) insert.run(key, value);
+      } finally {
+        db.close();
+      }
+    };
+
+    const nonUnique = "CREATE TABLE meta(key TEXT, value TEXT NOT NULL)";
+    const unique = "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)";
+
+    write(nonUnique, [
+      ["0", metaHex("chat-1")],
+      ["0", metaHex("someone-else")],
+    ]);
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(false);
+    expect((await readCursorStoreDetail(dbPath, "chat-1")).status).toBe("limited");
+
+    await fs.rm(dbPath, { force: true });
+    write(unique, [["1", metaHex("chat-1")]]);
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(false);
+
+    await fs.rm(dbPath, { force: true });
+    write(nonUnique, [["0", metaHex("chat-1")]]);
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(false);
   });
 });

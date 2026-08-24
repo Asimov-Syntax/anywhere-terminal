@@ -1182,9 +1182,11 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     } as const;
     panel.handleSessionDetailResponse(parent);
 
-    // One shared child id: expanding either card opens both on the next render.
-    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
-    panel.handleSessionDetailResponse(parent);
+    // Two cards, one child id: each opens on its own click (W15), and both wait on
+    // the single shared request.
+    for (const head of host.querySelectorAll<HTMLButtonElement>(".vault-preview-subagent-head")) {
+      head.click();
+    }
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "cursor:project:bucket:child-1",
@@ -1246,6 +1248,88 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     });
 
     expect(host.querySelector(".vault-preview")?.textContent).not.toContain("STALE CHILD");
+  });
+
+  /** W15: collapsing one card must not strand the others on "Loading…" — the
+   *  request they share survives while any of them is still open. */
+  it("keeps a second open card loading when the first one collapses", () => {
+    const host = createHost();
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [
+          { kind: "subagentSession", entryId: "opencode:ses_dup", title: "Sub A", firstMessage: "p" },
+          { kind: "subagentSession", entryId: "opencode:ses_dup", title: "Sub B", firstMessage: "p" },
+        ],
+      }),
+    });
+    const heads = () => [...host.querySelectorAll<HTMLButtonElement>(".vault-preview-subagent-head")];
+    heads()[0].click();
+    heads()[1].click();
+    expect(
+      posted.filter((m) => m.type === "requestVaultSessionDetail" && m.entryId === "opencode:ses_dup"),
+    ).toHaveLength(1);
+
+    heads()[0].click(); // collapse the first — the second is still waiting
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:ses_dup",
+      detail: detail({ entryId: "opencode:ses_dup", timeline: [{ kind: "message", role: "user", text: "CHILD" }] }),
+    });
+
+    const bodies = [...host.querySelectorAll(".vault-preview-subagent-body")];
+    expect(bodies[0].textContent).toBe("");
+    expect(bodies[1].textContent).toContain("CHILD");
+  });
+
+  /** W16: a reply that outlived its preview never paints, even when the same child
+   *  is expanded again in the reopened one. */
+  it("drops a nested reply from a closed preview and refetches on reopen", () => {
+    const host = createHost();
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    const parent = {
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [{ kind: "subagentSession", entryId: "opencode:ses_kid", title: "Sub", firstMessage: "p" }],
+      }),
+    } as const;
+    const openAndExpand = () => {
+      host.querySelector<HTMLElement>(".vault-row")?.click();
+      panel.handleSessionDetailResponse(parent);
+      host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    };
+    openAndExpand();
+    host.querySelector<HTMLButtonElement>(".vault-preview-close")?.click();
+    openAndExpand();
+
+    // The first preview's in-flight reply lands after the reopen: superseded.
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:ses_kid",
+      detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "STALE" }] }),
+    });
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).not.toContain("STALE");
+
+    // The reopened preview asked again, and its own reply does paint.
+    expect(
+      posted.filter((m) => m.type === "requestVaultSessionDetail" && m.entryId === "opencode:ses_kid"),
+    ).toHaveLength(2);
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:ses_kid",
+      detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "FRESH" }] }),
+    });
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toContain("FRESH");
   });
 
   it("meta block is Folder+branch / Session id+path / Activity age+stats, all copyable", async () => {
@@ -2669,13 +2753,15 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
         ],
       });
     panel.handleSessionDetailResponse({ type: "vaultSessionDetailResponse", entryId: "opencode:a", detail: dup() });
-    // Expand the first block → one child request in flight, its body added to the Set.
-    host.querySelectorAll<HTMLButtonElement>(".vault-preview-subagent-head")[0]?.click();
+    // Expand BOTH blocks → still ONE child request in flight, both bodies in its Set.
+    for (const head of host.querySelectorAll<HTMLButtonElement>(".vault-preview-subagent-head")) {
+      head.click();
+    }
     const childReqs = (): number =>
       posted.filter((m) => m.type === "requestVaultSessionDetail" && m.entryId === "opencode:ses_dup").length;
     expect(childReqs()).toBe(1);
-    // A load-more rebuild re-renders both blocks; both share the expanded entryId →
-    // both auto-populate the SAME pending id (no second request — already in flight).
+    // A load-more rebuild re-renders both blocks; each keeps its own expansion and
+    // re-attaches to the SAME pending id (no second request — already in flight).
     host.querySelector<HTMLButtonElement>(".vault-preview-loadmore")?.click();
     panel.handleSessionDetailResponse({ type: "vaultSessionDetailResponse", entryId: "opencode:a", detail: dup() });
     expect(childReqs()).toBe(1);

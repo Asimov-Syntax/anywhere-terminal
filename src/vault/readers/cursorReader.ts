@@ -70,9 +70,22 @@ const MAX_CURSOR_CHILD_LINKS = 64;
 
 export type CursorCombinedReaderOptions = CursorReaderOptions & CursorIdeReaderOptions;
 
+/**
+ * D12 child-transcript access boundary: the reader never publishes a derivable
+ * `project:<bucket>:<id>` on the wire. The host issues an opaque locator for the
+ * child it just resolved and keeps the mapping; with no issuer wired in, the
+ * child stays a bounded inline card rather than an unaddressable id.
+ */
+export type CursorChildLocatorIssuer = (child: {
+  parentSessionId: string;
+  childAgentId: string;
+  projectSessionId: string;
+}) => string;
+
 export type CursorDetailReaderOptions = CursorCombinedReaderOptions & {
   /** Injectable only for focused decoder tests; production uses one WAL-aware snapshot. */
   withSqliteSnapshotFn?: typeof withSqliteSnapshot;
+  issueChildLocator?: CursorChildLocatorIssuer;
 };
 
 /** Real fs, wrapped to the narrow {@link CursorFsDeps} shape — the default
@@ -452,18 +465,29 @@ async function resolveCursorProjectSession(
   return { candidate, entry: mapCursorProjectEntry(candidate, cwd, stamp) };
 }
 
+/** The exact same-project bucket for `cwd`, or null when that bucket names a
+ *  different directory (D12 exact point resolution). Validating the context is a
+ *  per-cwd fact, so it is resolved once and reused across a detail's children. */
+async function resolveCursorProjectContext(cwd: string, options: CursorCombinedReaderOptions): Promise<string | null> {
+  const projectBucket = cursorProjectBucketForCwd(cwd);
+  const projectCwd = await resolveCursorProjectCwd(projectBucket, options);
+  return projectCwd && sameCwd(projectCwd, cwd) ? projectBucket : null;
+}
+
+function cursorProjectTranscriptSessionId(projectBucket: string, transcriptId: string): string {
+  return `project:${Buffer.from(projectBucket, "utf8").toString("base64url")}:${transcriptId}`;
+}
+
 export async function resolveCursorProjectTranscriptForCwd(
   transcriptId: string,
   cwd: string,
   options: CursorCombinedReaderOptions = {},
 ): Promise<CursorTranscriptCandidate | null> {
-  const projectBucket = cursorProjectBucketForCwd(cwd);
-  const projectCwd = await resolveCursorProjectCwd(projectBucket, options);
-  if (!projectCwd || !sameCwd(projectCwd, cwd)) {
+  const projectBucket = await resolveCursorProjectContext(cwd, options);
+  if (!projectBucket) {
     return null;
   }
-  const projectSessionId = `project:${Buffer.from(projectBucket, "utf8").toString("base64url")}:${transcriptId}`;
-  return resolveCursorProjectTranscriptSession(projectSessionId, options);
+  return resolveCursorProjectTranscriptSession(cursorProjectTranscriptSessionId(projectBucket, transcriptId), options);
 }
 
 type CursorPrivateSubagentStep = Extract<VaultActivityStep, { kind: "subagent" }> & {
@@ -477,10 +501,13 @@ function visibleSubagentStep(step: CursorPrivateSubagentStep): Extract<VaultActi
 
 async function linkCursorChildSessions(
   timeline: VaultTimelineItem[],
+  parentSessionId: string,
   cwd: string,
-  options: CursorCombinedReaderOptions,
+  options: CursorDetailReaderOptions,
 ): Promise<VaultTimelineItem[]> {
+  const issueChildLocator = options.issueChildLocator;
   const resolved = new Map<string, CursorTranscriptCandidate | null>();
+  let projectBucket: string | null | undefined;
   let lookupCount = 0;
   const output: VaultTimelineItem[] = [];
   for (const item of timeline) {
@@ -493,7 +520,9 @@ async function linkCursorChildSessions(
       typeof privateStep.childAgentId === "string" && isSafeCursorChatId(privateStep.childAgentId)
         ? privateStep.childAgentId
         : undefined;
-    if (!childAgentId) {
+    // No issuer means nothing can address the child transcript, so resolving one
+    // would only spend I/O on a card that must stay inline.
+    if (!childAgentId || !issueChildLocator) {
       output.push(visibleSubagentStep(privateStep));
       continue;
     }
@@ -504,7 +533,17 @@ async function linkCursorChildSessions(
         continue;
       }
       lookupCount++;
-      candidate = await resolveCursorProjectTranscriptForCwd(childAgentId, cwd, options);
+      // W14: the parent cwd's project context is one fact for the whole detail —
+      // validate it once, then point-resolve each child leaf inside it.
+      if (projectBucket === undefined) {
+        projectBucket = await resolveCursorProjectContext(cwd, options);
+      }
+      candidate = projectBucket
+        ? await resolveCursorProjectTranscriptSession(
+            cursorProjectTranscriptSessionId(projectBucket, childAgentId),
+            options,
+          )
+        : null;
       resolved.set(childAgentId, candidate);
     }
     if (!candidate) {
@@ -513,7 +552,10 @@ async function linkCursorChildSessions(
     }
     output.push({
       kind: "subagentSession",
-      entryId: formatEntryId("cursor", cursorProjectSessionId(candidate)),
+      entryId: formatEntryId(
+        "cursor",
+        issueChildLocator({ parentSessionId, childAgentId, projectSessionId: cursorProjectSessionId(candidate) }),
+      ),
       title: privateStep.title ?? privateStep.prompt ?? privateStep.name,
       ...(privateStep.prompt ? { firstMessage: privateStep.prompt, prompt: privateStep.prompt } : {}),
       ...(privateStep.result ? { result: privateStep.result } : {}),
@@ -531,25 +573,35 @@ function visibleRecentActivity(activity: VaultActivityStep[]): VaultActivityStep
 }
 
 /**
- * D14 explicit Resume identity proof: point-resolves the CLI candidate for
- * `sessionId` and requires its bounded `store.db` identity to match the safe
- * chat-directory name before Resume/Copy Resume Command may proceed. Never
- * decodes transcript content and never used by the metadata-only list path.
- * IDE and project-transcript ids are never CLI Resume candidates, so they fail
- * closed without opening a store.
+ * D14 explicit Resume identity proof, resolved once per action. The bounded
+ * `store.db` identity must match the safe chat-directory name before Resume or
+ * Copy Resume Command may proceed; transcript content is never decoded and the
+ * metadata-only list path never calls this. IDE and project-transcript ids are
+ * never CLI Resume candidates, so they fail closed without opening a store.
+ *
+ * One resolution per explicit launch action. `resolveCursorChatCandidate`
+ * enumerates every chat bucket, so resolving the entry and then re-resolving it
+ * for the identity proof both doubled that scan and let the two resolutions
+ * observe different candidates across a move or delete-create (B17). The launcher
+ * takes the entry and its store path from here and proves that same path.
  */
-export async function verifyCursorResumeIdentity(
+export async function resolveCursorLaunchTarget(
   sessionId: string,
   options: CursorDetailReaderOptions = {},
-): Promise<boolean> {
+): Promise<{ entry: VaultSessionEntry; dbPath: string } | null> {
   if (sessionId.startsWith("ide:") || sessionId.startsWith("project:")) {
-    return false;
+    return null;
   }
-  const candidate = await resolveCursorChatCandidate(sessionId, options);
-  if (!candidate) {
-    return false;
-  }
-  return verifyCursorStoreIdentity(candidate.dbPath, candidate.chatId, {
+  const resolved = await resolveCursorCliSession(sessionId, options);
+  return resolved ? { entry: resolved.entry, dbPath: resolved.candidate.dbPath } : null;
+}
+
+/** Prove a Cursor store whose location was already resolved for this action. */
+export function verifyCursorLaunchTarget(
+  target: { entry: VaultSessionEntry; dbPath: string },
+  options: CursorDetailReaderOptions = {},
+): Promise<boolean> {
+  return verifyCursorStoreIdentity(target.dbPath, target.entry.sessionId, {
     withSqliteSnapshotFn: options.withSqliteSnapshotFn,
   });
 }
@@ -601,7 +653,7 @@ export async function readCursorDetail(
     const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
     const sourceTimeline =
       maxItems === undefined ? transcript.timeline : maxItems === 0 ? [] : transcript.timeline.slice(-maxItems);
-    const timeline = await linkCursorChildSessions(sourceTimeline, resolved.entry.cwd, options);
+    const timeline = await linkCursorChildSessions(sourceTimeline, sessionId, resolved.entry.cwd, options);
     return {
       entryId: resolved.entry.id,
       recentActivity: visibleRecentActivity(transcript.recentActivity).slice(-MAX_RECENT_ACTIVITY),
@@ -623,7 +675,10 @@ export async function readCursorDetail(
   });
   let decoded = store;
   let sourceTruncated = false;
-  if (store.status === "limited") {
+  // A store that names a different agent contradicts this directory; the mirror
+  // must not stand in for it. Capability drift (absent/locked/unsupported store)
+  // makes no competing claim and keeps its mirror (B15).
+  if (store.status === "limited" && !store.identityContradicted) {
     const transcriptCandidate = await resolveCursorProjectTranscriptForCwd(sessionId, entry.cwd, options);
     if (transcriptCandidate) {
       const transcript = await readCursorTranscript(transcriptCandidate, options);
@@ -653,7 +708,7 @@ export async function readCursorDetail(
   const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
   const sourceTimeline =
     maxItems === undefined ? decoded.timeline : maxItems === 0 ? [] : decoded.timeline.slice(-maxItems);
-  const timeline = await linkCursorChildSessions(sourceTimeline, entry.cwd, options);
+  const timeline = await linkCursorChildSessions(sourceTimeline, sessionId, entry.cwd, options);
   return {
     entryId: entry.id,
     recentActivity: visibleRecentActivity(decoded.recentActivity).slice(-MAX_RECENT_ACTIVITY),

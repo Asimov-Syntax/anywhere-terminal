@@ -3,6 +3,7 @@
 // See: specs/agent-session-index/spec.md (Aggregate and sort; Defensive parsing),
 //      specs/vault-session-launch/spec.md (Fork when supported), design.md D2,D8.
 
+import { createHash, randomBytes } from "node:crypto";
 import * as path from "node:path";
 import {
   type ListReader,
@@ -27,12 +28,14 @@ import { cursorIdeDbPath } from "./readers/cursorIdeReader";
 import { cursorChatsRoot } from "./readers/cursorPaths";
 import {
   type CursorCombinedReaderOptions,
+  type CursorDetailReaderOptions,
   readCursorDetail,
   readCursorEntry,
   readCursorMessageRecord,
   readCursorSessions,
+  resolveCursorLaunchTarget,
   resolveCursorSessionWatchPaths,
-  verifyCursorResumeIdentity,
+  verifyCursorLaunchTarget,
 } from "./readers/cursorReader";
 import { clampDetailLimit } from "./readers/detail";
 import {
@@ -116,11 +119,33 @@ export interface VaultServiceDeps {
   /** Cursor source roots used by watcher resolution; production uses platform defaults. */
   cursorReaderOptions?: CursorCombinedReaderOptions;
   /**
-   * Injectable Cursor D14 deferred store-identity proof; production uses the
-   * real point-resolution + bounded-store verifier. Only Cursor entries are
-   * routed through it — see {@link VaultService.verifyResumeIdentity}.
+   * Injectable Cursor D14 deferred store-identity proof; production uses the real
+   * point-resolution + bounded-store verifier. Only Cursor entries are routed
+   * through it — see {@link VaultService.getLaunchTarget}.
    */
-  verifyCursorResumeIdentityFn?: (sessionId: string, options: CursorCombinedReaderOptions) => Promise<boolean>;
+  resolveCursorLaunchTargetFn?: (
+    sessionId: string,
+    options: CursorCombinedReaderOptions,
+  ) => Promise<CursorLaunchTarget | null>;
+  verifyCursorLaunchTargetFn?: (target: CursorLaunchTarget, options: CursorCombinedReaderOptions) => Promise<boolean>;
+  /** Injectable Cursor detail decoder — the one reader handed a child-locator
+   *  issuer, so the D12 registry is exercised through it rather than around it. */
+  readCursorDetailFn?: (
+    sessionId: string,
+    limit: number | undefined,
+    options: CursorDetailReaderOptions,
+  ) => Promise<VaultSessionDetail | null>;
+}
+
+interface CursorLaunchTarget {
+  entry: VaultSessionEntry;
+  dbPath: string;
+}
+
+/** An entry resolved for launch plus the identity proof for that exact location. */
+export interface VaultLaunchTarget {
+  entry: VaultSessionEntry;
+  verify: () => Promise<boolean>;
 }
 
 // Readers stay option-first for back-compat; adapt them to the prev-only ListReader
@@ -171,6 +196,13 @@ export interface VaultWatchTarget {
   agent?: VaultAgentId;
 }
 
+/** Cursor child-transcript locator domain (design.md D13) — host-issued, never
+ *  a top-level row and never a launch operand. */
+const CURSOR_CHILD_PREFIX = "child:";
+/** Registry bound: a preview session can expand unboundedly many children, and
+ *  only the recently issued locators can still be on screen. */
+const MAX_CURSOR_CHILD_LOCATORS = 256;
+
 /** Glob-safe id (filename stems / uuids) — reject anything with path or glob
  *  metacharacters before interpolating an id into a watch glob. */
 function isGlobSafeId(id: string): boolean {
@@ -187,10 +219,24 @@ export class VaultService {
   private readonly customNames?: VaultCustomNameRegistry;
   private readonly nativeRenamers: Partial<Record<VaultAgentId, VaultNativeRenamer>>;
   private readonly cursorReaderOptions: CursorCombinedReaderOptions;
-  private readonly verifyCursorResumeIdentityFn: (
+  private readonly resolveCursorLaunchTargetFn: (
     sessionId: string,
     options: CursorCombinedReaderOptions,
+  ) => Promise<CursorLaunchTarget | null>;
+  private readonly verifyCursorLaunchTargetFn: (
+    target: CursorLaunchTarget,
+    options: CursorCombinedReaderOptions,
   ) => Promise<boolean>;
+  /**
+   * D12 child-transcript access boundary: locator → the project transcript id it
+   * stands for, most-recently-issued last. Only a locator this process handed out
+   * with a parent detail resolves, so a forged or hidden-orphan id decodes
+   * nothing. Bounded, because previews are unbounded over a session's lifetime.
+   */
+  private readonly cursorChildLocators = new Map<string, string>();
+  /** Per-process, so a locator is stable across live-follow re-reads of the same
+   *  parent (an expanded card survives refresh) yet is not derivable outside it. */
+  private readonly cursorChildSalt = randomBytes(16).toString("hex");
 
   /** In-memory copy of the persisted cache, lazily loaded from `cacheStore`. */
   private mem: VaultListCacheFileV1 | null = null;
@@ -216,9 +262,14 @@ export class VaultService {
       ...defaultReaders,
       cursor: (prev, hint) => readCursorSessions(prev, this.cursorReaderOptions, hint),
     };
+    const readCursorDetailFn = deps.readCursorDetailFn ?? readCursorDetail;
     this.detailReaders = deps.detailReaders ?? {
       ...defaultDetailReaders,
-      cursor: (sessionId, limit) => readCursorDetail(sessionId, limit, this.cursorReaderOptions),
+      cursor: (sessionId, limit) =>
+        readCursorDetailFn(sessionId, limit, {
+          ...this.cursorReaderOptions,
+          issueChildLocator: (child) => this.issueCursorChildLocator(child),
+        }),
     };
     this.entryReaders = deps.entryReaders ?? {
       ...defaultEntryReaders,
@@ -229,7 +280,8 @@ export class VaultService {
     this.cacheStore = deps.cacheStore;
     this.customNames = deps.customNames;
     this.nativeRenamers = deps.nativeRenamers ?? defaultNativeRenamers;
-    this.verifyCursorResumeIdentityFn = deps.verifyCursorResumeIdentityFn ?? verifyCursorResumeIdentity;
+    this.resolveCursorLaunchTargetFn = deps.resolveCursorLaunchTargetFn ?? resolveCursorLaunchTarget;
+    this.verifyCursorLaunchTargetFn = deps.verifyCursorLaunchTargetFn ?? verifyCursorLaunchTarget;
   }
 
   /**
@@ -671,9 +723,65 @@ export class VaultService {
     if (!parsed || !isVaultAgentId(parsed.agent)) {
       return null;
     }
+    if (parsed.agent === "cursor") {
+      const source = this.resolveCursorRequest(parsed.sessionId);
+      if (!source) {
+        return null;
+      }
+      const detail = await this.detailReaders.cursor(source, clampDetailLimit(limit));
+      // The child answers under the locator it was asked for; the project id it
+      // resolves to stays host-side.
+      return detail ? { ...detail, entryId } : null;
+    }
     // Clamp the webview-supplied limit so a forged/garbage value can't defeat the
     // reader's timeline bound (W2).
     return this.detailReaders[parsed.agent](parsed.sessionId, clampDetailLimit(limit));
+  }
+
+  /**
+   * Mint the opaque locator for one resolved child transcript and remember what
+   * it stands for. Derived from (parent, child, per-process salt) so repeated
+   * parent reads re-issue the SAME locator; re-inserting also refreshes recency.
+   */
+  private issueCursorChildLocator(child: {
+    parentSessionId: string;
+    childAgentId: string;
+    projectSessionId: string;
+  }): string {
+    const token = createHash("sha256")
+      .update(`${this.cursorChildSalt} ${child.parentSessionId} ${child.childAgentId}`)
+      .digest("hex")
+      .slice(0, 32);
+    const sessionId = `${CURSOR_CHILD_PREFIX}${token}`;
+    this.cursorChildLocators.delete(sessionId);
+    this.cursorChildLocators.set(sessionId, child.projectSessionId);
+    for (const stale of this.cursorChildLocators.keys()) {
+      if (this.cursorChildLocators.size <= MAX_CURSOR_CHILD_LOCATORS) {
+        break;
+      }
+      this.cursorChildLocators.delete(stale);
+    }
+    return sessionId;
+  }
+
+  /**
+   * Map a requested Cursor session id to the id the reader may open. A child
+   * locator resolves only from the registry above; a raw `project:` id is refused
+   * outright — project transcripts are never top-level rows, so nothing legitimate
+   * asks for one by name, and honouring it would publish the orphans the list
+   * deliberately hides (D12).
+   */
+  private resolveCursorRequest(sessionId: string): string | null {
+    if (sessionId.startsWith(CURSOR_CHILD_PREFIX)) {
+      const target = this.cursorChildLocators.get(sessionId);
+      if (target === undefined) {
+        return null;
+      }
+      this.cursorChildLocators.delete(sessionId);
+      this.cursorChildLocators.set(sessionId, target);
+      return target;
+    }
+    return sessionId.startsWith("project:") ? null : sessionId;
   }
 
   /**
@@ -703,7 +811,16 @@ export class VaultService {
     if (!parsed || !isVaultAgentId(parsed.agent)) {
       return null;
     }
-    const entry = await this.entryReaders[parsed.agent](parsed.sessionId);
+    let entry: VaultSessionEntry | null;
+    if (parsed.agent === "cursor") {
+      const source = this.resolveCursorRequest(parsed.sessionId);
+      entry = source ? await this.entryReaders.cursor(source) : null;
+      if (entry && source !== parsed.sessionId) {
+        entry = { ...entry, id: entryId, sessionId: parsed.sessionId };
+      }
+    } else {
+      entry = await this.entryReaders[parsed.agent](parsed.sessionId);
+    }
     if (!entry) {
       return null;
     }
@@ -721,18 +838,31 @@ export class VaultService {
   }
 
   /**
-   * D14 explicit Resume identity proof: only a Cursor CLI entry has a deferred
-   * store identity (list indexing never opens `store.db`, so `canResume` is a
-   * candidate, not a proof) — every other agent's Resume identity IS its
-   * sessionId, trusted by construction, so verification is a pass-through.
-   * Reads only the bounded supported store profile and identity metadata; it
-   * never follows a transcript root.
+   * One launch resolution per explicit action (B17). Only a Cursor CLI entry has
+   * a deferred store identity — list indexing never opens `store.db`, so
+   * `canResume` is a candidate, not a proof — and its target carries the resolved
+   * store path so the proof cannot re-discover a different candidate. Every other
+   * agent's Resume identity IS its sessionId, trusted by construction, so its
+   * verify is a pass-through.
    */
-  async verifyResumeIdentity(entry: VaultSessionEntry): Promise<boolean> {
-    if (entry.agent !== "cursor") {
-      return true;
+  async getLaunchTarget(entryId: string): Promise<VaultLaunchTarget | null> {
+    const parsed = parseEntryId(entryId);
+    if (!parsed || !isVaultAgentId(parsed.agent)) {
+      return null;
     }
-    return this.verifyCursorResumeIdentityFn(entry.sessionId, this.cursorReaderOptions);
+    if (parsed.agent !== "cursor") {
+      const entry = await this.getEntry(entryId);
+      return entry ? { entry, verify: async () => true } : null;
+    }
+    const target = await this.resolveCursorLaunchTargetFn(parsed.sessionId, this.cursorReaderOptions);
+    if (!target) {
+      return null;
+    }
+    target.entry.canFork = resolveCanFork(target.entry, false);
+    return {
+      entry: target.entry,
+      verify: () => this.verifyCursorLaunchTargetFn(target, this.cursorReaderOptions),
+    };
   }
 
   /**

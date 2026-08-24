@@ -1045,10 +1045,154 @@
         ],
         "assertionDelta": 0
       }
+    },
+    {
+      "task": "11_1",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "55e2c973f5dd2be3dff23e538360d79a6d7c09e8",
+      "at": 1787562682355,
+      "scope": [
+        "src/vault/readers/cursorStore.ts",
+        "src/vault/readers/cursorStore.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorStore.test.ts",
+      "testChange": {
+        "reason": "New B16 regression plus one fixture field: the fake snapshot now returns the meta_key_rows column the supported profile requires. No assertion removed or weakened.",
+        "deleted": [],
+        "modified": [
+          "src/vault/readers/cursorStore.test.ts"
+        ],
+        "assertionDelta": 4
+      }
+    },
+    {
+      "task": "11_2",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "acd945e6660b1ff7c8a7718c5dbdfcbcc3ec38cf",
+      "at": 1787562958154,
+      "scope": [
+        "src/vault/readers/cursorStore.ts",
+        "src/vault/readers/cursorReader.ts",
+        "src/vault/readers/cursorStore.test.ts",
+        "src/vault/readers/cursorReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorReader.test.ts",
+      "testChange": {
+        "reason": "New B15 regression, plus the existing fail-closed table now asserts the contradiction flag it gained. No assertion removed or weakened.",
+        "deleted": [],
+        "modified": [
+          "src/vault/readers/cursorReader.test.ts",
+          "src/vault/readers/cursorStore.test.ts"
+        ],
+        "assertionDelta": 5
+      }
+    },
+    {
+      "task": "11_3",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "afd149199428d8ee8a55fc3f31ecbe2e7fb86883",
+      "at": 1787563387155,
+      "scope": [
+        "src/vault/readers/cursorReader.ts",
+        "src/vault/VaultService.ts",
+        "src/vault/VaultLauncher.ts",
+        "src/vault/readers/cursorReader.test.ts",
+        "src/vault/VaultService.test.ts",
+        "src/vault/VaultLauncher.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/VaultLauncher.test.ts src/vault/VaultService.test.ts src/vault/readers/cursorReader.test.ts",
+      "testChange": {
+        "reason": "Resume/Copy now resolve one launch target that carries its own proof, so VaultLauncher/VaultService/cursorReader tests moved from the removed verifyResumeIdentity seam to getLaunchTarget + verifyCursorLaunchTarget",
+        "deleted": [],
+        "modified": [
+          "src/vault/VaultLauncher.test.ts",
+          "src/vault/VaultService.test.ts",
+          "src/vault/readers/cursorReader.test.ts"
+        ],
+        "assertionDelta": 6
+      }
+    },
+    {
+      "task": "11_4",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "3ed8dda728777b15d88463a877583d33607566c8",
+      "at": 1787563892247,
+      "scope": [
+        "src/vault/VaultService.ts",
+        "src/vault/readers/cursorReader.ts",
+        "src/vault/VaultService.test.ts",
+        "src/vault/readers/cursorReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/VaultService.test.ts src/vault/readers/cursorReader.test.ts",
+      "testChange": {
+        "reason": "Child cards now carry a host-issued opaque locator instead of a project id, so the reader tests supply a registry stand-in and assert the locator + single project-context validation",
+        "deleted": [],
+        "modified": [
+          "src/vault/VaultService.test.ts",
+          "src/vault/readers/cursorReader.test.ts"
+        ],
+        "assertionDelta": 18
+      }
+    },
+    {
+      "task": "11_5",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "ce0c03747d04fc29e6a16309ac1e19a254813a77",
+      "at": 1787564278953,
+      "scope": [
+        "src/vault/readers/cursorNormalization.ts",
+        "src/vault/readers/cursorStore.ts",
+        "src/vault/readers/cursorTranscript.ts",
+        "src/vault/readers/cursorNormalization.test.ts",
+        "src/vault/readers/cursorStore.test.ts",
+        "src/vault/readers/cursorTranscript.test.ts",
+        "src/vault/readers/cursorReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorNormalization.test.ts src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts",
+      "testChange": {
+        "reason": "One sub-agent addressed by many Task calls is now one card, so store/mirror fixtures gained the launch-plus-resume shape and a new cursorNormalization.test.ts covers the merge rules",
+        "deleted": [],
+        "modified": [
+          "src/vault/readers/cursorReader.test.ts",
+          "src/vault/readers/cursorStore.test.ts",
+          "src/vault/readers/cursorTranscript.test.ts"
+        ],
+        "assertionDelta": 14
+      }
+    },
+    {
+      "task": "11_6",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "4ac2a9a22b86b608e8e0dfbed157989eb14b55ef",
+      "at": 1787564699616,
+      "scope": [
+        "src/webview/vault/PreviewController.ts",
+        "src/webview/vault/previewTimeline.ts",
+        "src/webview/vault/VaultPanel.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/webview/vault/VaultPanel.test.ts",
+      "testChange": {
+        "reason": "Nested cards now hold expansion per card rather than per child id, so the two duplicate-card tests expand both cards explicitly; new tests cover collapse-with-another-open and close/reopen",
+        "deleted": [],
+        "modified": [
+          "src/webview/vault/VaultPanel.test.ts"
+        ],
+        "assertionDelta": 6
+      }
     }
   ],
-  "reads": 0,
+  "reads": 10,
   "testBaseline": {
+    "src/vault/readers/cursorNormalization.test.ts": {
+      "hash": "08c1dcf12d691096",
+      "assertions": 10
+    },
     "asimov/debug/260823-session-preview-ordered-list-verified/repro.test.ts": {
       "hash": "c2c788522d0cbe90",
       "assertions": 1
@@ -1342,8 +1486,8 @@
       "assertions": 14
     },
     "src/vault/VaultLauncher.test.ts": {
-      "hash": "be7a6fa092d10233",
-      "assertions": 33
+      "hash": "82396ce6688562c4",
+      "assertions": 35
     },
     "src/vault/VaultService.customName.test.ts": {
       "hash": "ad036289b84fac59",
@@ -1354,8 +1498,8 @@
       "assertions": 24
     },
     "src/vault/VaultService.test.ts": {
-      "hash": "2f7efa1c798bf2ae",
-      "assertions": 142
+      "hash": "8329ec682ac09258",
+      "assertions": 155
     },
     "src/vault/VaultService.watchTargets.test.ts": {
       "hash": "f91d4f856917df54",
@@ -1398,16 +1542,16 @@
       "assertions": 31
     },
     "src/vault/readers/cursorReader.test.ts": {
-      "hash": "b693002d0221ed5e",
-      "assertions": 157
+      "hash": "323fb9aefa07cdb6",
+      "assertions": 174
     },
     "src/vault/readers/cursorStore.test.ts": {
-      "hash": "f376a1782ea8d30b",
-      "assertions": 67
+      "hash": "d7d95dc8e27e37af",
+      "assertions": 79
     },
     "src/vault/readers/cursorTranscript.test.ts": {
-      "hash": "e23bbf4e14ff328f",
-      "assertions": 38
+      "hash": "0da60ade80c0f598",
+      "assertions": 41
     },
     "src/vault/readers/detail.test.ts": {
       "hash": "818698c4664fbd7a",
@@ -1642,8 +1786,8 @@
       "assertions": 31
     },
     "src/webview/vault/VaultPanel.test.ts": {
-      "hash": "7b3920eb3b7a7029",
-      "assertions": 485
+      "hash": "5112cd63d77627c6",
+      "assertions": 491
     },
     "src/webview/vault/forkPoint.test.ts": {
       "hash": "3a795899c09dc9bc",

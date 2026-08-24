@@ -80,18 +80,21 @@ export class VaultLauncher {
   private async resolveLaunchable(entryId: string, mode: LaunchMode): Promise<VaultSessionEntry> {
     // Resolve the single entry by id (point/locate-by-id lookup) instead of a full
     // `list()` over every agent store — launching must not block on scanning the
-    // whole session index (e.g. the multi-GB opencode db). See VaultService.getEntry.
-    const entry = await this.vaultService.getEntry(entryId);
-    if (!entry) {
+    // whole session index (e.g. the multi-GB opencode db). One resolution per
+    // action: the target carries the proof for the exact location it resolved, so
+    // discovery cannot run twice and land on a different candidate (D14).
+    const target = await this.vaultService.getLaunchTarget(entryId);
+    if (!target) {
       throw new VaultLaunchError(`No vault session: ${entryId}`, "unknown-entry");
     }
+    const { entry } = target;
     if (mode !== "resume") {
       return entry;
     }
     if (entry.canResume === false || (entry.agent === "cursor" && !isCursorCliResumableEntry(entry))) {
       throw new VaultLaunchError(`Resume is not supported for ${entryId}`, "resume-unsupported");
     }
-    if (!(await this.vaultService.verifyResumeIdentity(entry))) {
+    if (!(await target.verify())) {
       throw new VaultLaunchError(`Couldn't verify the stored session identity for ${entryId}`, "resume-unsupported");
     }
     return entry;

@@ -14,7 +14,8 @@ import {
   readCursorEntry,
   readCursorMessageRecord,
   readCursorSessions,
-  verifyCursorResumeIdentity,
+  resolveCursorLaunchTarget,
+  verifyCursorLaunchTarget,
 } from "./cursorReader";
 import { cursorProjectBucketForCwd } from "./cursorTranscript";
 
@@ -152,6 +153,23 @@ async function writeProjectTranscript(project: string, chatId: string, records: 
 
 async function writeProjectTranscriptForCwd(cwd: string, chatId: string, records: unknown[]): Promise<void> {
   return writeProjectTranscript(cursorProjectBucketForCwd(cwd), chatId, records);
+}
+
+/** Stand-in for the host registry (D12): records what the reader asked to be
+ *  issued and hands back an opaque locator, so the reader is never the component
+ *  that publishes a project id. */
+function recordingIssuer(): {
+  issueChildLocator: (child: { parentSessionId: string; childAgentId: string; projectSessionId: string }) => string;
+  issued: Array<{ parentSessionId: string; childAgentId: string; projectSessionId: string }>;
+} {
+  const issued: Array<{ parentSessionId: string; childAgentId: string; projectSessionId: string }> = [];
+  return {
+    issued,
+    issueChildLocator: (child) => {
+      issued.push(child);
+      return `child:token-${issued.length}`;
+    },
+  };
 }
 
 function projectSessionIdForCwd(cwd: string, chatId: string): string {
@@ -774,13 +792,20 @@ describe("readCursorEntry: point lookup", () => {
   });
 });
 
-describe("verifyCursorResumeIdentity: D14 explicit proof", () => {
+describe("Cursor launch target: D14 explicit proof", () => {
+  async function target(sessionId: string) {
+    const resolved = await resolveCursorLaunchTarget(sessionId, opts());
+    return resolved;
+  }
+
   it("matches a store whose agentId equals the candidate chat id", async () => {
     const dir = await writeChat("bucket-a", "chat-verify-ok", BASE_META);
     await fs.rm(path.join(dir, "store.db"));
     await writeCompatibleStore(dir, "chat-verify-ok", [{ role: "user", content: "hi" }]);
 
-    await expect(verifyCursorResumeIdentity("chat-verify-ok", opts())).resolves.toBe(true);
+    const resolved = await target("chat-verify-ok");
+    expect(resolved?.dbPath).toBe(path.join(dir, "store.db"));
+    await expect(verifyCursorLaunchTarget(resolved!, opts())).resolves.toBe(true);
   });
 
   it("rejects a mismatched stored identity", async () => {
@@ -788,22 +813,40 @@ describe("verifyCursorResumeIdentity: D14 explicit proof", () => {
     await fs.rm(path.join(dir, "store.db"));
     await writeCompatibleStore(dir, "another-chat", [{ role: "user", content: "hi" }]);
 
-    await expect(verifyCursorResumeIdentity("chat-verify-mismatch", opts())).resolves.toBe(false);
+    const resolved = await target("chat-verify-mismatch");
+    await expect(verifyCursorLaunchTarget(resolved!, opts())).resolves.toBe(false);
   });
 
   it("rejects when the store is unavailable (not a real sqlite file)", async () => {
     await writeChat("bucket-a", "chat-verify-unavailable", BASE_META);
 
-    await expect(verifyCursorResumeIdentity("chat-verify-unavailable", opts())).resolves.toBe(false);
+    const resolved = await target("chat-verify-unavailable");
+    await expect(verifyCursorLaunchTarget(resolved!, opts())).resolves.toBe(false);
   });
 
   it("rejects an unknown candidate id without opening any store", async () => {
-    await expect(verifyCursorResumeIdentity("chat-verify-missing", opts())).resolves.toBe(false);
+    await expect(target("chat-verify-missing")).resolves.toBeNull();
   });
 
   it("rejects non-CLI (IDE/project) source ids", async () => {
-    await expect(verifyCursorResumeIdentity("ide:composer-1", opts())).resolves.toBe(false);
-    await expect(verifyCursorResumeIdentity("project:d29tZQ:child-1", opts())).resolves.toBe(false);
+    await expect(target("ide:composer-1")).resolves.toBeNull();
+    await expect(target("project:d29tZQ:child-1")).resolves.toBeNull();
+  });
+
+  /** B17: the proof runs against the path the resolution returned, so a chat
+   *  directory replaced between the two steps cannot smuggle in its identity. */
+  it("proves the resolved location rather than re-discovering the chat id", async () => {
+    const dir = await writeChat("bucket-a", "chat-carried", BASE_META);
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "chat-carried", [{ role: "user", content: "hi" }]);
+    const resolved = await target("chat-carried");
+
+    const impostor = await writeChat("bucket-b", "chat-carried-impostor", BASE_META);
+    await fs.rm(path.join(impostor, "store.db"));
+    await writeCompatibleStore(impostor, "chat-carried", [{ role: "user", content: "hi" }]);
+
+    await expect(verifyCursorLaunchTarget(resolved!, opts())).resolves.toBe(true);
+    expect(resolved?.dbPath).toBe(path.join(dir, "store.db"));
   });
 });
 
@@ -866,12 +909,16 @@ describe("readCursorDetail: bounded CLI transcript", () => {
       },
     ]);
 
-    const detail = await readCursorDetail("parent-chat", undefined, opts());
+    const issuer = recordingIssuer();
+    const detail = await readCursorDetail("parent-chat", undefined, { ...opts(), ...issuer });
     const childSessionId = projectSessionIdForCwd(cwd, "child-1");
+    expect(issuer.issued).toEqual([
+      { parentSessionId: "parent-chat", childAgentId: "child-1", projectSessionId: childSessionId },
+    ]);
     expect(detail?.timeline).toEqual([
       {
         kind: "subagentSession",
-        entryId: `cursor:${childSessionId}`,
+        entryId: "cursor:child:token-1",
         title: "Find listener",
         firstMessage: "Inspect files",
         agent: "Explore",
@@ -916,7 +963,7 @@ describe("readCursorDetail: bounded CLI transcript", () => {
     ]);
     await writeProjectTranscriptForCwd(otherCwd, "child-1", []);
 
-    const detail = await readCursorDetail("parent-exact", undefined, opts());
+    const detail = await readCursorDetail("parent-exact", undefined, { ...opts(), ...recordingIssuer() });
     expect(detail?.timeline).toEqual([
       {
         kind: "subagent",
@@ -956,7 +1003,7 @@ describe("readCursorDetail: bounded CLI transcript", () => {
     const transcriptDir = path.join(projectsDir, cursorProjectBucketForCwd(cwd), "agent-transcripts");
     await fs.writeFile(path.join(transcriptDir, "child-1.jsonl"), "", "utf8");
 
-    const detail = await readCursorDetail("parent-ambiguous", undefined, opts());
+    const detail = await readCursorDetail("parent-ambiguous", undefined, { ...opts(), ...recordingIssuer() });
     expect(detail?.timeline).toEqual([
       {
         kind: "subagent",
@@ -966,6 +1013,138 @@ describe("readCursorDetail: bounded CLI transcript", () => {
         status: "completed",
       },
     ]);
+  });
+
+  /** The "Oracle advisor" defect: one agent, three invocations. The merged card
+   *  must link to the child transcript that holds all of its turns, and the
+   *  continuation's own `resume` argument must be enough — its result never
+   *  repeats the Agent ID line. */
+  it("links one merged card for an agent addressed by repeated resume calls", async () => {
+    const cwd = await writeWorkspace("child-resumed");
+    const dir = await writeChat("bucket-a", "parent-resumed", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "parent-resumed", [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "call-launch",
+            args: { subagent_type: "asm-oracle", description: "Oracle advisor ready", run_in_background: true },
+          },
+        ],
+      },
+      {
+        type: "tool-result",
+        toolName: "Task",
+        toolCallId: "call-launch",
+        result: "Subagent is running in the background.\n\nAgent ID: oracle-1",
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "call-resume",
+            args: { description: "Oracle 1+1 check", prompt: "Is 1+1 two?", resume: "oracle-1" },
+          },
+        ],
+      },
+      { type: "tool-result", toolName: "Task", toolCallId: "call-resume", result: "Yes." },
+    ]);
+    await writeProjectTranscriptForCwd(cwd, "oracle-1", [
+      { role: "user", message: { content: "Stand by" } },
+      { role: "assistant", message: { content: "Ready" } },
+      { role: "user", message: { content: "Is 1+1 two?" } },
+      { role: "assistant", message: { content: "Yes." } },
+    ]);
+
+    const issuer = recordingIssuer();
+    const detail = await readCursorDetail("parent-resumed", undefined, { ...opts(), ...issuer });
+    expect(detail?.timeline).toEqual([
+      {
+        kind: "subagentSession",
+        entryId: "cursor:child:token-1",
+        title: "Oracle advisor ready",
+        result: "Yes.",
+        status: "completed",
+        agent: "asm-oracle",
+      },
+    ]);
+    expect(detail?.stats.subagentCount).toBe(1);
+    expect(issuer.issued.map((child) => child.childAgentId)).toEqual(["oracle-1"]);
+  });
+
+  /** B14: no issuer, no addressable child — the reader must not publish the
+   *  project id, and must not spend a lookup resolving one either. */
+  it("keeps the inline card and skips child lookups when no locator issuer is wired in", async () => {
+    const cwd = await writeWorkspace("child-unissued");
+    const dir = await writeChat("bucket-a", "parent-unissued", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "parent-unissued", [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "task-call",
+            args: { subagent_type: "Explore", description: "Find listener" },
+          },
+        ],
+      },
+      { type: "tool-result", toolName: "Task", toolCallId: "task-call", result: "Done.\n\nAgent ID: child-1" },
+    ]);
+    await writeProjectTranscriptForCwd(cwd, "child-1", [{ role: "user", message: { content: "Inspect files" } }]);
+
+    const detail = await readCursorDetail("parent-unissued", undefined, opts());
+    expect(detail?.timeline.map((item) => item.kind)).toEqual(["subagent"]);
+    expect(JSON.stringify(detail?.timeline)).not.toContain("project:");
+  });
+
+  /** W14: the parent cwd's project context is one fact per detail read, not one
+   *  per child — N children must not mean N context validations. */
+  it("validates the parent project context once for many children", async () => {
+    const cwd = await writeWorkspace("child-many");
+    const dir = await writeChat("bucket-a", "parent-many", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    const childIds = ["child-a", "child-b", "child-c"];
+    await writeCompatibleStore(dir, "parent-many", [
+      {
+        role: "assistant",
+        content: childIds.map((childId) => ({
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: `call-${childId}`,
+          args: { subagent_type: "Explore", description: `Find ${childId}` },
+        })),
+      },
+      ...childIds.map((childId) => ({
+        type: "tool-result",
+        toolName: "Task",
+        toolCallId: `call-${childId}`,
+        result: `Done.\n\nAgent ID: ${childId}`,
+      })),
+    ]);
+    for (const childId of childIds) {
+      await writeProjectTranscriptForCwd(cwd, childId, [{ role: "user", message: { content: "go" } }]);
+    }
+
+    const pathsFs = createPassthroughPathFs();
+    const issuer = recordingIssuer();
+    const detail = await readCursorDetail("parent-many", undefined, { ...opts(undefined, pathsFs), ...issuer });
+    expect(detail?.timeline.map((item) => item.kind)).toEqual([
+      "subagentSession",
+      "subagentSession",
+      "subagentSession",
+    ]);
+    expect(issuer.issued.map((child) => child.childAgentId)).toEqual(childIds);
+    // Naming the bucket's directory walks the filesystem down to `cwd`; that walk
+    // reaches the cwd itself exactly once per context validation.
+    const cwdProbes = (pathsFs.stat as ReturnType<typeof vi.fn>).mock.calls.filter(([probed]) => probed === cwd);
+    expect(cwdProbes).toHaveLength(1);
   });
 
   it("uses a matching project transcript as a detail fallback without duplicating the CLI row", async () => {
@@ -988,6 +1167,34 @@ describe("readCursorDetail: bounded CLI transcript", () => {
       { kind: "message", role: "user", text: "From mirror" },
       { kind: "tool", tool: "Read", detail: "/tmp/mirror.ts" },
     ]);
+  });
+
+  /** B15: a readable store that names a different agent contradicts the directory —
+   *  the same-cwd mirror must not paper over it. An unsupported store makes no
+   *  competing claim, so its mirror still renders. */
+  it("refuses the mirror when the store claims a different identity, but keeps it for an unsupported store", async () => {
+    const cwd = await writeWorkspace("identity-conflict");
+    const dir = await writeChat("bucket-a", "chat-conflict", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "someone-elses-chat", [
+      { role: "user", content: "<user_query>Theirs</user_query>" },
+    ]);
+    await writeProjectTranscriptForCwd(cwd, "chat-conflict", [
+      { role: "user", message: { content: [{ type: "text", text: "From mirror" }] } },
+    ]);
+
+    const conflicted = await readCursorDetail("chat-conflict", undefined, opts());
+    expect(conflicted?.contentKind).toBe("metadata-only");
+    expect(conflicted?.timeline).toEqual([]);
+
+    const unsupported = await writeChat("bucket-a", "chat-unsupported", { ...BASE_META, cwd });
+    expect(unsupported).toBeTruthy();
+    await writeProjectTranscriptForCwd(cwd, "chat-unsupported", [
+      { role: "user", message: { content: [{ type: "text", text: "From mirror" }] } },
+    ]);
+    const drifted = await readCursorDetail("chat-unsupported", undefined, opts());
+    expect(drifted?.contentKind).toBe("timeline");
+    expect(drifted?.timeline).toEqual([{ kind: "message", role: "user", text: "From mirror" }]);
   });
 
   it("does not use an id-only project fallback from another cwd", async () => {

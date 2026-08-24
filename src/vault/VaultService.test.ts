@@ -8,7 +8,8 @@ import {
   type VaultListCacheFileV1,
 } from "./cacheTypes";
 import { __resetForkSupportCache, canForkOpenCode, gte, parseFirstSemver } from "./forkSupport";
-import type { VaultSessionEntry } from "./types";
+import type { CursorDetailReaderOptions } from "./readers/cursorReader";
+import type { VaultSessionDetail, VaultSessionEntry } from "./types";
 import type { VaultCacheStore } from "./VaultCacheStore";
 import {
   MAX_PENDING_VAULT_REFRESH_PATHS,
@@ -221,30 +222,142 @@ describe("VaultService.getEntry: single-entry resolve", () => {
   });
 });
 
-describe("VaultService.verifyResumeIdentity: D14 explicit proof", () => {
-  it("proves a matching Cursor store identity via the injected verifier", async () => {
+describe("VaultService.getLaunchTarget: D14 explicit proof, resolved once", () => {
+  const cursorTarget = (sessionId: string) => ({
+    entry: entry("cursor", sessionId, 1),
+    dbPath: `/chats/bucket/${sessionId}/store.db`,
+  });
+
+  it("proves the Cursor target the resolver returned, without re-resolving it", async () => {
+    const resolve = vi.fn(async (sessionId: string) => cursorTarget(sessionId));
     const verify = vi.fn(async () => true);
-    const svc = new VaultService({ verifyCursorResumeIdentityFn: verify });
-    await expect(svc.verifyResumeIdentity(entry("cursor", "chat-1", 1))).resolves.toBe(true);
-    expect(verify).toHaveBeenCalledWith("chat-1", {});
+    const svc = new VaultService({ resolveCursorLaunchTargetFn: resolve, verifyCursorLaunchTargetFn: verify });
+
+    const target = await svc.getLaunchTarget("cursor:chat-1");
+    await expect(target?.verify()).resolves.toBe(true);
+    expect(resolve).toHaveBeenCalledExactlyOnceWith("chat-1", {});
+    expect(verify).toHaveBeenCalledWith({ entry: target?.entry, dbPath: "/chats/bucket/chat-1/store.db" }, {});
   });
 
-  it("rejects a mismatched Cursor store identity", async () => {
-    const svc = new VaultService({ verifyCursorResumeIdentityFn: vi.fn(async () => false) });
-    await expect(svc.verifyResumeIdentity(entry("cursor", "chat-1", 1))).resolves.toBe(false);
+  it("rejects a mismatched or unavailable Cursor store identity", async () => {
+    const svc = new VaultService({
+      resolveCursorLaunchTargetFn: async (sessionId: string) => cursorTarget(sessionId),
+      verifyCursorLaunchTargetFn: vi.fn(async () => false),
+    });
+    const target = await svc.getLaunchTarget("cursor:chat-1");
+    await expect(target?.verify()).resolves.toBe(false);
   });
 
-  it("rejects when the Cursor store is unavailable", async () => {
-    const verify = vi.fn(async () => false);
-    const svc = new VaultService({ verifyCursorResumeIdentityFn: verify });
-    await expect(svc.verifyResumeIdentity(entry("cursor", "chat-unavailable", 1))).resolves.toBe(false);
+  it("returns nothing when the Cursor candidate does not resolve", async () => {
+    const svc = new VaultService({ resolveCursorLaunchTargetFn: async () => null });
+    await expect(svc.getLaunchTarget("cursor:chat-missing")).resolves.toBeNull();
   });
 
-  it("passes through non-Cursor entries without invoking the Cursor verifier", async () => {
-    const verify = vi.fn(async () => false);
-    const svc = new VaultService({ verifyCursorResumeIdentityFn: verify });
-    await expect(svc.verifyResumeIdentity(entry("claude", "session-1", 1))).resolves.toBe(true);
-    expect(verify).not.toHaveBeenCalled();
+  it("passes through non-Cursor entries without invoking the Cursor resolver", async () => {
+    const resolve = vi.fn(async () => null);
+    const svc = new VaultService({
+      entryReaders: makeEntryReaders({ claude: vi.fn(async () => entry("claude", "session-1", 1)) }),
+      resolveCursorLaunchTargetFn: resolve,
+    });
+    const target = await svc.getLaunchTarget("claude:session-1");
+    await expect(target?.verify()).resolves.toBe(true);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+});
+
+/** B14: a child transcript is reachable only through a locator this process
+ *  issued with a parent detail — never by naming its project id on the wire. */
+describe("VaultService: Cursor child-transcript locators", () => {
+  const CHILD_PROJECT_ID = "project:cHJvamVjdC0x:child-1";
+
+  /** Stands in for the real Cursor detail decoder: a parent read emits one child
+   *  stub through whatever issuer the service supplied; a child read echoes the
+   *  id it was opened with. */
+  function cursorDetailStub(children: Array<{ childAgentId: string; projectSessionId: string }> = []) {
+    const reads: string[] = [];
+    const fn = vi.fn(
+      async (
+        sessionId: string,
+        _limit: number | undefined,
+        options: CursorDetailReaderOptions,
+      ): Promise<VaultSessionDetail> => {
+        reads.push(sessionId);
+        return {
+          entryId: `cursor:${sessionId}`,
+          recentActivity: [],
+          timeline: children.map((child) => ({
+            kind: "subagentSession" as const,
+            entryId: `cursor:${options.issueChildLocator?.({ parentSessionId: sessionId, ...child }) ?? "unissued"}`,
+            title: child.childAgentId,
+          })),
+          stats: { messageCount: 0, toolCount: 0, subagentCount: children.length },
+          partial: false,
+          contentKind: "timeline",
+        };
+      },
+    );
+    return { fn, reads };
+  }
+
+  async function issuedChildId(svc: VaultService, parentEntryId = "cursor:parent-1"): Promise<string | undefined> {
+    const parent = await svc.getDetail(parentEntryId);
+    const item = parent?.timeline[0];
+    return item && item.kind === "subagentSession" ? item.entryId : undefined;
+  }
+
+  it("issues an opaque locator that resolves to the child transcript", async () => {
+    const stub = cursorDetailStub([{ childAgentId: "child-1", projectSessionId: CHILD_PROJECT_ID }]);
+    const svc = new VaultService({ readCursorDetailFn: stub.fn });
+
+    const childId = await issuedChildId(svc);
+    expect(childId).toMatch(/^cursor:child:[0-9a-f]{32}$/);
+    expect(childId).not.toContain("project");
+
+    const child = await svc.getDetail(childId ?? "");
+    // The locator is what the caller asked for, so it stays the answer's identity.
+    expect(child?.entryId).toBe(childId);
+    expect(stub.reads).toEqual(["parent-1", CHILD_PROJECT_ID]);
+  });
+
+  it("refuses a locator it never issued and a raw project id", async () => {
+    const stub = cursorDetailStub([{ childAgentId: "child-1", projectSessionId: CHILD_PROJECT_ID }]);
+    const svc = new VaultService({
+      readCursorDetailFn: stub.fn,
+      entryReaders: makeEntryReaders({ cursor: vi.fn(async () => entry("cursor", "child-1", 1)) }),
+    });
+    await issuedChildId(svc);
+    stub.reads.length = 0;
+
+    await expect(svc.getDetail(`cursor:child:${"0".repeat(32)}`)).resolves.toBeNull();
+    await expect(svc.getDetail(`cursor:${CHILD_PROJECT_ID}`)).resolves.toBeNull();
+    await expect(svc.getEntry(`cursor:${CHILD_PROJECT_ID}`)).resolves.toBeNull();
+    expect(stub.reads).toEqual([]);
+  });
+
+  it("re-issues the same locator when the parent detail is re-read", async () => {
+    const stub = cursorDetailStub([{ childAgentId: "child-1", projectSessionId: CHILD_PROJECT_ID }]);
+    const svc = new VaultService({ readCursorDetailFn: stub.fn });
+    expect(await issuedChildId(svc)).toBe(await issuedChildId(svc));
+  });
+
+  it("gives two parents distinct locators for the same child agent id", async () => {
+    const stub = cursorDetailStub([{ childAgentId: "child-1", projectSessionId: CHILD_PROJECT_ID }]);
+    const svc = new VaultService({ readCursorDetailFn: stub.fn });
+    expect(await issuedChildId(svc, "cursor:parent-1")).not.toBe(await issuedChildId(svc, "cursor:parent-2"));
+  });
+
+  it("evicts the oldest locators past the registry bound", async () => {
+    const stub = cursorDetailStub([{ childAgentId: "child-1", projectSessionId: CHILD_PROJECT_ID }]);
+    const svc = new VaultService({ readCursorDetailFn: stub.fn });
+
+    const first = await issuedChildId(svc, "cursor:parent-0");
+    for (let index = 1; index <= 256; index++) {
+      await issuedChildId(svc, `cursor:parent-${index}`);
+    }
+    await expect(svc.getDetail(first ?? "")).resolves.toBeNull();
+
+    const last = await issuedChildId(svc, "cursor:parent-256");
+    await expect(svc.getDetail(last ?? "")).resolves.not.toBeNull();
   });
 });
 

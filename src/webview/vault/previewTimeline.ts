@@ -61,10 +61,16 @@ export interface PreviewTimelineBag {
   isRunExpanded: (key: string) => boolean;
   /** Expand a run and re-render in place (owner preserves scroll). */
   onExpandRun: (key: string) => void;
-  /** Whether a nested subagent/teammate block is open (keyed by child entryId). */
-  isNestedExpanded: (entryId: string) => boolean;
-  /** Open/close a nested block; on close the owner also drops any in-flight request. */
-  setNestedExpanded: (entryId: string, expanded: boolean) => void;
+  /**
+   * Whether a nested subagent/teammate block is open. `cardKey` identifies the
+   * CARD (its place in this timeline), so two cards addressing the same child
+   * open and close independently; an owner that has no per-card state may ignore
+   * it and key by `entryId` alone.
+   */
+  isNestedExpanded: (entryId: string, cardKey: string) => boolean;
+  /** Open/close ONE nested card. On close the owner drops that card's share of any
+   *  in-flight request — `body` says which — leaving other open cards loading. */
+  setNestedExpanded: (entryId: string, expanded: boolean, cardKey: string, body: HTMLElement) => void;
   /** Fill a nested block's body from cache, or lazily fetch the child detail. */
   populateNested: (entryId: string, body: HTMLElement, fallback?: NestedInvocationFallback) => void;
   /** Read a workflow board's persisted selection (keyed by run id), or undefined. */
@@ -87,17 +93,18 @@ export function renderTimelineInto(
   keyPrefix: string,
   bag: PreviewTimelineBag,
 ): void {
+  const cardKeys = nestedCardKeys(timeline, keyPrefix);
   let i = 0;
   let runIndex = 0;
   while (i < timeline.length) {
     const item = timeline[i];
     if (item.kind === "message" && item.role === "user") {
-      container.appendChild(renderTimelineItem(item, bag));
+      container.appendChild(renderTimelineItem(item, bag, cardKeys));
       i++;
       continue;
     }
     if (breaksRun(item)) {
-      container.appendChild(renderTimelineItem(item, bag));
+      container.appendChild(renderTimelineItem(item, bag, cardKeys));
       i++;
       continue;
     }
@@ -113,7 +120,7 @@ export function renderTimelineInto(
       run.push(it);
       i++;
     }
-    renderRun(container, run, `${keyPrefix}#${runIndex++}`, bag);
+    renderRun(container, run, `${keyPrefix}#${runIndex++}`, bag, cardKeys);
   }
 }
 
@@ -154,8 +161,32 @@ export function renderNestedInvocationFallback(container: HTMLElement, fallback:
   card.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
 }
 
+/**
+ * Identify each nested card by WHICH occurrence of its child it is, scoped to the
+ * timeline it lives in — `<prefix>|<entryId>#<n>`. Two cards addressing one child
+ * therefore hold their own expansion state, and the key survives a load-more that
+ * prepends older items above them (a position-based key would not).
+ */
+function nestedCardKeys(timeline: VaultTimelineItem[], keyPrefix: string): Map<VaultTimelineItem, string> {
+  const keys = new Map<VaultTimelineItem, string>();
+  const counts = new Map<string, number>();
+  for (const item of timeline) {
+    if (item.kind !== "subagentSession" && item.kind !== "teammateTurn") {
+      continue;
+    }
+    const seen = counts.get(item.entryId) ?? 0;
+    counts.set(item.entryId, seen + 1);
+    keys.set(item, `${keyPrefix}|${item.entryId}#${seen}`);
+  }
+  return keys;
+}
+
 /** One timeline node: user/assistant message, thinking block, or tool/subagent step. */
-function renderTimelineItem(item: VaultTimelineItem, bag: PreviewTimelineBag): HTMLElement {
+function renderTimelineItem(
+  item: VaultTimelineItem,
+  bag: PreviewTimelineBag,
+  cardKeys: Map<VaultTimelineItem, string>,
+): HTMLElement {
   if (item.kind === "message") {
     const label = item.role === "assistant" ? "Assistant" : "User";
     const suffix = item.timestamp ? ` · ${formatRelativeTime(item.timestamp)}` : "";
@@ -172,10 +203,10 @@ function renderTimelineItem(item: VaultTimelineItem, bag: PreviewTimelineBag): H
     return questionBlock(item);
   }
   if (item.kind === "subagentSession") {
-    return renderSubagentSession(item, bag);
+    return renderSubagentSession(item, bag, cardKeys.get(item) ?? item.entryId);
   }
   if (item.kind === "teammateTurn") {
-    return renderTeammateTurn(item, bag);
+    return renderTeammateTurn(item, bag, cardKeys.get(item) ?? item.entryId);
   }
   if (item.kind === "teammateMessage") {
     return renderTeammateMessage(item);
@@ -202,11 +233,17 @@ function renderTimelineItem(item: VaultTimelineItem, bag: PreviewTimelineBag): H
 /** Render one AI-output run, capped at 3 behind a "Show N more". A capped run's
  *  concluding assistant message is pinned BELOW the expand so the highest-signal
  *  item stays visible: head (CAP-1) + expand + pinned conclusion. */
-function renderRun(body: HTMLElement, run: VaultTimelineItem[], key: string, bag: PreviewTimelineBag): void {
+function renderRun(
+  body: HTMLElement,
+  run: VaultTimelineItem[],
+  key: string,
+  bag: PreviewTimelineBag,
+  cardKeys: Map<VaultTimelineItem, string>,
+): void {
   const CAP = 3;
   if (bag.isRunExpanded(key) || run.length <= CAP) {
     for (const it of run) {
-      body.appendChild(renderTimelineItem(it, bag));
+      body.appendChild(renderTimelineItem(it, bag, cardKeys));
     }
     return;
   }
@@ -232,7 +269,7 @@ function renderRun(body: HTMLElement, run: VaultTimelineItem[], key: string, bag
   const pin = pinIndex >= CAP;
   const headCount = pin ? CAP - 1 : CAP;
   for (let k = 0; k < headCount; k++) {
-    body.appendChild(renderTimelineItem(run[k], bag));
+    body.appendChild(renderTimelineItem(run[k], bag, cardKeys));
   }
 
   const hidden = run.length - CAP;
@@ -242,7 +279,7 @@ function renderRun(body: HTMLElement, run: VaultTimelineItem[], key: string, bag
   btn.textContent = `Show ${hidden} more step${hidden === 1 ? "" : "s"}`;
   btn.title = "Show every step in this run";
   body.appendChild(btn);
-  const pinned = pin ? renderTimelineItem(run[pinIndex], bag) : null;
+  const pinned = pin ? renderTimelineItem(run[pinIndex], bag, cardKeys) : null;
   if (pinned) {
     body.appendChild(pinned);
   }
@@ -253,7 +290,7 @@ function renderRun(body: HTMLElement, run: VaultTimelineItem[], key: string, bag
     // revealed slice includes the conclusion at its natural index, so drop the pin.
     const frag = document.createDocumentFragment();
     for (let k = headCount; k < run.length; k++) {
-      frag.appendChild(renderTimelineItem(run[k], bag));
+      frag.appendChild(renderTimelineItem(run[k], bag, cardKeys));
     }
     btn.replaceWith(frag);
     pinned?.remove();
@@ -266,6 +303,7 @@ function renderRun(body: HTMLElement, run: VaultTimelineItem[], key: string, bag
 function renderTeammateTurn(
   item: Extract<VaultTimelineItem, { kind: "teammateTurn" }>,
   bag: PreviewTimelineBag,
+  cardKey: string,
 ): HTMLElement {
   const entryId = item.entryId;
   const block = document.createElement("div");
@@ -301,22 +339,22 @@ function renderTeammateTurn(
   body.className = "vault-preview-teammate-body";
 
   head.addEventListener("click", () => {
-    if (bag.isNestedExpanded(entryId)) {
-      bag.setNestedExpanded(entryId, false);
+    if (bag.isNestedExpanded(entryId, cardKey)) {
+      bag.setNestedExpanded(entryId, false, cardKey, body);
       block.classList.remove("is-open");
       head.setAttribute("aria-expanded", "false");
       body.replaceChildren();
     } else {
-      bag.setNestedExpanded(entryId, true);
+      bag.setNestedExpanded(entryId, true, cardKey, body);
       block.classList.add("is-open");
       head.setAttribute("aria-expanded", "true");
       bag.populateNested(entryId, body);
     }
   });
-  head.setAttribute("aria-expanded", bag.isNestedExpanded(entryId) ? "true" : "false");
+  head.setAttribute("aria-expanded", bag.isNestedExpanded(entryId, cardKey) ? "true" : "false");
 
   block.append(head, preview, body);
-  if (bag.isNestedExpanded(entryId)) {
+  if (bag.isNestedExpanded(entryId, cardKey)) {
     block.classList.add("is-open");
     bag.populateNested(entryId, body);
   }
@@ -338,6 +376,7 @@ function renderTeammateMessage(item: Extract<VaultTimelineItem, { kind: "teammat
 function renderSubagentSession(
   item: Extract<VaultTimelineItem, { kind: "subagentSession" }>,
   bag: PreviewTimelineBag,
+  cardKey: string,
 ): HTMLElement {
   const entryId = item.entryId;
   const block = document.createElement("div");
@@ -389,22 +428,22 @@ function renderSubagentSession(
       : undefined;
 
   head.addEventListener("click", () => {
-    if (bag.isNestedExpanded(entryId)) {
-      bag.setNestedExpanded(entryId, false);
+    if (bag.isNestedExpanded(entryId, cardKey)) {
+      bag.setNestedExpanded(entryId, false, cardKey, body);
       block.classList.remove("is-open");
       head.setAttribute("aria-expanded", "false");
       body.replaceChildren();
     } else {
-      bag.setNestedExpanded(entryId, true);
+      bag.setNestedExpanded(entryId, true, cardKey, body);
       block.classList.add("is-open");
       head.setAttribute("aria-expanded", "true");
       bag.populateNested(entryId, body, fallback);
     }
   });
-  head.setAttribute("aria-expanded", bag.isNestedExpanded(entryId) ? "true" : "false");
+  head.setAttribute("aria-expanded", bag.isNestedExpanded(entryId, cardKey) ? "true" : "false");
 
   block.append(head, firstMsg, body);
-  if (bag.isNestedExpanded(entryId)) {
+  if (bag.isNestedExpanded(entryId, cardKey)) {
     block.classList.add("is-open");
     bag.populateNested(entryId, body, fallback);
   }

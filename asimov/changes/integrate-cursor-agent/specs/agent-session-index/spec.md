@@ -56,9 +56,11 @@ A same-project CLI mirror SHALL remain detail-only, and Cursor IDE or project id
 
 ### Requirement: Cursor child transcript identity
 
-A child transcript SHALL be addressed only through a source-qualified project identity derived from the validated parent project and a bounded child Agent ID.
+A child transcript SHALL be addressed only through a host-issued locator that a parent detail emitted for a bounded child agent identity resolved inside the validated parent project.
 
-The system SHALL NOT globally match child ids across project buckets or pass them to `agent --resume`.
+The locator SHALL be opaque to its requester, SHALL remain stable while the parent detail is re-read, and SHALL be honoured only while the issuing registry still holds it.
+
+The system SHALL NOT globally match child ids across project buckets, serve an unissued locator, or pass either to `agent --resume`.
 
 ### Requirement: Safe Cursor session lookup
 
