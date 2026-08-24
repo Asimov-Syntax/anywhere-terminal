@@ -33,7 +33,9 @@ function varint(value: number): Buffer {
   do {
     let byte = remaining & 0x7f;
     remaining = Math.floor(remaining / 128);
-    if (remaining > 0) byte |= 0x80;
+    if (remaining > 0) {
+      byte |= 0x80;
+    }
     out.push(byte);
   } while (remaining > 0);
   return Buffer.from(out);
@@ -66,7 +68,9 @@ async function writeStore(fixture: StoreFixture): Promise<void> {
     db.prepare("INSERT INTO meta(key, value) VALUES ('0', ?)").run(meta.toString("hex"));
     const insert = db.prepare("INSERT INTO blobs(id, data) VALUES (?, ?)");
     insert.run(rootId, root);
-    for (const blob of fixture.blobs ?? []) insert.run(blob.id ?? hash(blob.data), blob.data);
+    for (const blob of fixture.blobs ?? []) {
+      insert.run(blob.id ?? hash(blob.data), blob.data);
+    }
   } finally {
     db.close();
   }
@@ -155,7 +159,9 @@ describe("readCursorStoreDetail", () => {
     const result = await readCursorStoreDetail(dbPath, "chat-1");
 
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([
       { kind: "message", role: "user", text: "Earlier question" },
       { kind: "message", role: "assistant", text: "Earlier answer" },
@@ -199,7 +205,9 @@ describe("readCursorStoreDetail", () => {
 
       const result = await readCursorStoreDetail(dbPath, "chat-1");
       expect(result.status).toBe("ok");
-      if (result.status !== "ok") return;
+      if (result.status !== "ok") {
+        return;
+      }
       expect(result.timeline).toEqual([{ kind: "message", role: "user", text: "WAL message" }]);
     } finally {
       db.close();
@@ -244,7 +252,9 @@ describe("readCursorStoreDetail", () => {
     const root = Buffer.concat(messages.map((message) => field(1, hash(message))));
     const rootId = hash(root);
     const blobs = new Map<string, Buffer>([[rootId, root]]);
-    for (const message of messages) blobs.set(hash(message), message);
+    for (const message of messages) {
+      blobs.set(hash(message), message);
+    }
     const queries: string[] = [];
 
     const result = await readCursorStoreDetail(dbPath, "chat-1", {
@@ -252,7 +262,9 @@ describe("readCursorStoreDetail", () => {
     });
 
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toHaveLength(70);
     // One root read plus bounded batches — never one query per blob.
     const reads = blobQueries(queries);
@@ -269,7 +281,9 @@ describe("readCursorStoreDetail", () => {
     const root = Buffer.concat(messages.map((message) => field(1, hash(message))));
     const rootId = hash(root);
     const blobs = new Map<string, Buffer>([[rootId, root]]);
-    for (const message of messages) blobs.set(hash(message), message);
+    for (const message of messages) {
+      blobs.set(hash(message), message);
+    }
     const queries: string[] = [];
 
     const result = await readCursorStoreDetail(dbPath, "chat-1", {
@@ -299,7 +313,9 @@ describe("readCursorStoreDetail", () => {
     const root = Buffer.concat(messages.map((message) => field(1, hash(message))));
     const rootId = hash(root);
     const blobs = new Map<string, Buffer>([[rootId, root]]);
-    for (const message of messages) blobs.set(hash(message), message);
+    for (const message of messages) {
+      blobs.set(hash(message), message);
+    }
     blobs.set(hash(messages[69]), Buffer.from("tampered private payload", "utf8"));
 
     const result = await readCursorStoreDetail(dbPath, "chat-1", {
@@ -322,7 +338,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([{ kind: "tool", tool: "Read", detail: "/tmp/a.ts" }]);
     expect(result.recentActivity).toEqual(result.timeline);
     expect(result.stats).toEqual({ messageCount: 0, toolCount: 1, subagentCount: 0 });
@@ -344,7 +362,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([{ kind: "message", role: "user", text: "Fix the failing test" }]);
     expect(result.stats).toEqual({ messageCount: 1, toolCount: 0, subagentCount: 0 });
   });
@@ -355,7 +375,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([{ kind: "message", role: "user", text: "Explain <Foo> in bar.ts" }]);
   });
 
@@ -373,11 +395,15 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toHaveLength(1);
     const item = result.timeline[0];
     expect(item.kind).toBe("notice");
-    if (item.kind !== "notice") return;
+    if (item.kind !== "notice") {
+      return;
+    }
     expect(item.summary).toBe("The background agent (task_id: task-42) has completed");
     expect(item.body?.length).toBeLessThanOrEqual(2000);
     expect(result.stats).toEqual({ messageCount: 0, toolCount: 0, subagentCount: 0 });
@@ -393,7 +419,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([{ kind: "message", role: "user", text: prompt }]);
     expect(result.stats).toEqual({ messageCount: 1, toolCount: 0, subagentCount: 0 });
   });
@@ -427,7 +455,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([
       { kind: "subagent", name: "code-reviewer", title: "Review the diff", background: true },
       { kind: "subagent", name: "test-runner", prompt: "x".repeat(2000), background: true },
@@ -485,7 +515,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([
       {
         kind: "subagent",
@@ -564,7 +596,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([
       {
         kind: "subagent",
@@ -607,7 +641,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toHaveLength(3);
     expect(result.stats.subagentCount).toBe(3);
     expect(JSON.stringify(result.timeline)).not.toContain("passwd");
@@ -631,10 +667,14 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     const subagent = result.timeline[0];
     expect(subagent.kind).toBe("subagent");
-    if (subagent.kind !== "subagent") return;
+    if (subagent.kind !== "subagent") {
+      return;
+    }
     expect(subagent.result).toHaveLength(64 * 1024);
   });
 
@@ -677,7 +717,9 @@ describe("readCursorStoreDetail", () => {
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     expect(result.timeline).toEqual([{ kind: "message", role: "user", text: "Visible" }]);
     expect(result.timeline[0]).not.toHaveProperty("msgRef");
   });
@@ -761,7 +803,9 @@ describe("verifyCursorStoreIdentity", () => {
         db.exec(schema);
         db.exec("CREATE TABLE blobs(id TEXT PRIMARY KEY, data BLOB NOT NULL)");
         const insert = db.prepare("INSERT INTO meta(key, value) VALUES (?, ?)");
-        for (const [key, value] of rows) insert.run(key, value);
+        for (const [key, value] of rows) {
+          insert.run(key, value);
+        }
       } finally {
         db.close();
       }

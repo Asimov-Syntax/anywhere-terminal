@@ -89,7 +89,9 @@ function decodeHex(value: unknown, maxChars: number): Buffer | undefined {
   if (typeof value !== "string" || value.length === 0 || value.length > maxChars || value.length % 2 !== 0) {
     return undefined;
   }
-  if (!/^[0-9a-f]+$/i.test(value)) return undefined;
+  if (!/^[0-9a-f]+$/i.test(value)) {
+    return undefined;
+  }
   return Buffer.from(value, "hex");
 }
 
@@ -99,41 +101,61 @@ function readVarint(data: Uint8Array, start: number): { value: number; next: num
   for (let index = start; index < data.length && index < start + 10; index++) {
     const byte = data[index];
     value += (byte & 0x7f) * factor;
-    if (!Number.isSafeInteger(value)) return undefined;
-    if ((byte & 0x80) === 0) return { value, next: index + 1 };
+    if (!Number.isSafeInteger(value)) {
+      return undefined;
+    }
+    if ((byte & 0x80) === 0) {
+      return { value, next: index + 1 };
+    }
     factor *= 128;
   }
   return undefined;
 }
 
 function directHash(value: Uint8Array): string | undefined {
-  if (value.length === 32) return Buffer.from(value).toString("hex");
+  if (value.length === 32) {
+    return Buffer.from(value).toString("hex");
+  }
   if (value.length === 64) {
     const text = Buffer.from(value).toString("ascii");
-    if (HASH_RE.test(text)) return text.toLowerCase();
+    if (HASH_RE.test(text)) {
+      return text.toLowerCase();
+    }
   }
   return undefined;
 }
 
 function nestedHash(value: Uint8Array): string | undefined {
   const direct = directHash(value);
-  if (direct) return direct;
+  if (direct) {
+    return direct;
+  }
   let offset = 0;
   while (offset < value.length) {
     const tag = readVarint(value, offset);
-    if (!tag) return undefined;
+    if (!tag) {
+      return undefined;
+    }
     offset = tag.next;
     const fieldNumber = Math.floor(tag.value / 8);
     const wireType = tag.value & 7;
-    if (wireType !== 2) return undefined;
+    if (wireType !== 2) {
+      return undefined;
+    }
     const length = readVarint(value, offset);
-    if (!length) return undefined;
+    if (!length) {
+      return undefined;
+    }
     offset = length.next;
     const end = offset + length.value;
-    if (end > value.length) return undefined;
+    if (end > value.length) {
+      return undefined;
+    }
     if (fieldNumber === 1) {
       const candidate = directHash(value.subarray(offset, end));
-      if (candidate) return candidate;
+      if (candidate) {
+        return candidate;
+      }
     }
     offset = end;
   }
@@ -145,35 +167,51 @@ function parseReferenceFields(data: Uint8Array, currentField: number, archiveFie
   let offset = 0;
   while (offset < data.length) {
     const tag = readVarint(data, offset);
-    if (!tag || tag.value === 0) return undefined;
+    if (!tag || tag.value === 0) {
+      return undefined;
+    }
     offset = tag.next;
     const fieldNumber = Math.floor(tag.value / 8);
     const wireType = tag.value & 7;
     if (wireType === 0) {
       const skipped = readVarint(data, offset);
-      if (!skipped) return undefined;
+      if (!skipped) {
+        return undefined;
+      }
       offset = skipped.next;
       continue;
     }
     if (wireType === 1) {
-      if (offset + 8 > data.length) return undefined;
+      if (offset + 8 > data.length) {
+        return undefined;
+      }
       offset += 8;
       continue;
     }
     if (wireType === 5) {
-      if (offset + 4 > data.length) return undefined;
+      if (offset + 4 > data.length) {
+        return undefined;
+      }
       offset += 4;
       continue;
     }
-    if (wireType !== 2) return undefined;
+    if (wireType !== 2) {
+      return undefined;
+    }
     const length = readVarint(data, offset);
-    if (!length) return undefined;
+    if (!length) {
+      return undefined;
+    }
     offset = length.next;
     const end = offset + length.value;
-    if (end > data.length) return undefined;
+    if (end > data.length) {
+      return undefined;
+    }
     if (fieldNumber === currentField || fieldNumber === archiveField) {
       const ref = nestedHash(data.subarray(offset, end));
-      if (!ref) return undefined;
+      if (!ref) {
+        return undefined;
+      }
       (fieldNumber === archiveField ? parsed.archives : parsed.current).push(ref);
     }
     offset = end;
@@ -207,32 +245,50 @@ async function fetchBlobs(snapshot: SqliteSnapshot, ids: readonly string[], stat
   const pending: string[] = [];
   const requested = new Set<string>();
   for (const id of ids) {
-    if (!HASH_RE.test(id) || state.blobs.has(id) || requested.has(id)) continue;
+    if (!HASH_RE.test(id) || state.blobs.has(id) || requested.has(id)) {
+      continue;
+    }
     requested.add(id);
     pending.push(id);
   }
 
   for (let offset = 0; offset < pending.length; ) {
     const remainingCount = MAX_CURSOR_BLOBS - state.count;
-    if (remainingCount <= 0) return;
+    if (remainingCount <= 0) {
+      return;
+    }
     const remainingBytes = MAX_CURSOR_STORE_BYTES - state.totalBytes;
     const maxBytes = Math.min(MAX_CURSOR_BLOB_BYTES, remainingBytes);
-    if (maxBytes <= 0) return;
+    if (maxBytes <= 0) {
+      return;
+    }
     const batch = pending.slice(offset, offset + Math.min(BLOB_BATCH_SIZE, remainingCount));
     offset += batch.length;
 
     const result = await snapshot.query(blobSql(batch, maxBytes, remainingBytes));
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") {
+      return;
+    }
     const wanted = new Set(batch);
     for (const row of result.rows) {
       const id = typeof row.id === "string" ? row.id : undefined;
-      if (!id || !wanted.delete(id)) continue;
+      if (!id || !wanted.delete(id)) {
+        continue;
+      }
       const byteLength = Number(row.byte_length);
-      if (!Number.isSafeInteger(byteLength) || byteLength > maxBytes) continue;
+      if (!Number.isSafeInteger(byteLength) || byteLength > maxBytes) {
+        continue;
+      }
       const data = decodeHex(row.data_hex, maxBytes * 2);
-      if (!data || data.length !== byteLength) continue;
-      if (createHash("sha256").update(data).digest("hex") !== id) continue;
-      if (state.count >= MAX_CURSOR_BLOBS || state.totalBytes + data.length > MAX_CURSOR_STORE_BYTES) return;
+      if (!data || data.length !== byteLength) {
+        continue;
+      }
+      if (createHash("sha256").update(data).digest("hex") !== id) {
+        continue;
+      }
+      if (state.count >= MAX_CURSOR_BLOBS || state.totalBytes + data.length > MAX_CURSOR_STORE_BYTES) {
+        return;
+      }
       state.count++;
       state.totalBytes += data.length;
       state.blobs.set(id, data);
@@ -287,43 +343,65 @@ interface CursorStoreProfile {
  */
 async function readCursorStoreProfile(snapshot: SqliteSnapshot): Promise<CursorStoreProfile | undefined> {
   const profileResult = await snapshot.query(CURSOR_PROFILE_SQL);
-  if (profileResult.status !== "ok" || profileResult.rows.length !== 1) return undefined;
+  if (profileResult.status !== "ok" || profileResult.rows.length !== 1) {
+    return undefined;
+  }
   const profile = profileResult.rows[0];
-  if (!compatibleProfile(profile)) return undefined;
+  if (!compatibleProfile(profile)) {
+    return undefined;
+  }
 
   const metaBytes = decodeHex(profile.meta_value, MAX_META_HEX_CHARS);
-  if (!metaBytes) return undefined;
+  if (!metaBytes) {
+    return undefined;
+  }
   let meta: Record<string, unknown> | undefined;
   try {
     meta = asObject(JSON.parse(metaBytes.toString("utf8")));
   } catch {
     return undefined;
   }
-  if (!meta || typeof meta.agentId !== "string") return undefined;
+  if (!meta || typeof meta.agentId !== "string") {
+    return undefined;
+  }
   return { agentId: meta.agentId, meta };
 }
 
 async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string): Promise<CursorStoreResult> {
   const profile = await readCursorStoreProfile(snapshot);
-  if (!profile) return limited();
-  if (profile.agentId !== expectedAgentId) return identityContradicted();
+  if (!profile) {
+    return limited();
+  }
+  if (profile.agentId !== expectedAgentId) {
+    return identityContradicted();
+  }
   const rootValue =
     typeof profile.meta.latestRootBlobId === "string" ? profile.meta.latestRootBlobId : profile.meta.rootBlobId;
-  if (typeof rootValue !== "string" || !HASH_RE.test(rootValue)) return limited();
+  if (typeof rootValue !== "string" || !HASH_RE.test(rootValue)) {
+    return limited();
+  }
 
   const fetchState: BlobFetchState = { blobs: new Map(), totalBytes: 0, count: 0 };
   const root = await fetchBlob(snapshot, rootValue, fetchState);
-  if (!root) return limited();
+  if (!root) {
+    return limited();
+  }
   const rootRefs = parseReferenceFields(root, 1, 13);
-  if (!rootRefs) return limited();
+  if (!rootRefs) {
+    return limited();
+  }
 
   const orderedMessageRefs: string[] = [];
   await fetchBlobs(snapshot, rootRefs.archives, fetchState);
   for (const archiveId of rootRefs.archives) {
     const archive = fetchState.blobs.get(archiveId);
-    if (!archive) return limited();
+    if (!archive) {
+      return limited();
+    }
     const archiveRefs = parseReferenceFields(archive, 1);
-    if (!archiveRefs) return limited();
+    if (!archiveRefs) {
+      return limited();
+    }
     orderedMessageRefs.push(...archiveRefs.current);
   }
   orderedMessageRefs.push(...rootRefs.current);
@@ -354,14 +432,22 @@ async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string)
   };
 
   for (const ref of orderedMessageRefs) {
-    if (seen.has(ref)) continue;
+    if (seen.has(ref)) {
+      continue;
+    }
     seen.add(ref);
     const data = fetchState.blobs.get(ref);
-    if (!data) return limited();
+    if (!data) {
+      return limited();
+    }
     const record = normalizeRecord(data);
-    if (!record) return limited();
+    if (!record) {
+      return limited();
+    }
     normalizedTextChars += record.textChars;
-    if (normalizedTextChars > MAX_NORMALIZED_TEXT_CHARS) return limited();
+    if (normalizedTextChars > MAX_NORMALIZED_TEXT_CHARS) {
+      return limited();
+    }
     for (const call of record.subagentCalls) {
       if (!call.callId) {
         continue;
@@ -421,7 +507,9 @@ export async function readCursorStoreDetail(
   expectedAgentId: string,
   options: CursorStoreOptions = {},
 ): Promise<CursorStoreResult> {
-  if (!SAFE_AGENT_ID_RE.test(expectedAgentId) || expectedAgentId.includes("..")) return limited();
+  if (!SAFE_AGENT_ID_RE.test(expectedAgentId) || expectedAgentId.includes("..")) {
+    return limited();
+  }
   const snapshotResult = await (options.withSqliteSnapshotFn ?? withSqliteSnapshot)(dbPath, (snapshot) =>
     decodeSnapshot(snapshot, expectedAgentId),
   );
@@ -441,7 +529,9 @@ export async function verifyCursorStoreIdentity(
   expectedAgentId: string,
   options: CursorStoreOptions = {},
 ): Promise<boolean> {
-  if (!SAFE_AGENT_ID_RE.test(expectedAgentId) || expectedAgentId.includes("..")) return false;
+  if (!SAFE_AGENT_ID_RE.test(expectedAgentId) || expectedAgentId.includes("..")) {
+    return false;
+  }
   const snapshotResult = await (options.withSqliteSnapshotFn ?? withSqliteSnapshot)(dbPath, async (snapshot) => {
     const profile = await readCursorStoreProfile(snapshot);
     return profile?.agentId === expectedAgentId;

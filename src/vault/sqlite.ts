@@ -291,7 +291,9 @@ export async function withSqliteSnapshot<T>(
 ): Promise<SqliteSnapshotResult<T>> {
   const useNode = await probeNodeSqlite(deps);
   const useCli = useNode ? false : await probeSqlite(deps);
-  if (!useNode && !useCli) return { status: "no-sqlite3" };
+  if (!useNode && !useCli) {
+    return { status: "no-sqlite3" };
+  }
 
   let exists = false;
   try {
@@ -299,7 +301,9 @@ export async function withSqliteSnapshot<T>(
   } catch {
     exists = false;
   }
-  if (!exists) return { status: "no-db" };
+  if (!exists) {
+    return { status: "no-db" };
+  }
 
   let tempDir: string | undefined;
   try {
@@ -309,7 +313,9 @@ export async function withSqliteSnapshot<T>(
     for (const suffix of ["-wal", "-shm"]) {
       const sidecar = dbPath + suffix;
       try {
-        if (await deps.exists(sidecar)) await deps.copy(sidecar, dbCopy + suffix);
+        if (await deps.exists(sidecar)) {
+          await deps.copy(sidecar, dbCopy + suffix);
+        }
       } catch {
         // Query the base copy when a sidecar disappears during the snapshot.
       }
@@ -321,7 +327,9 @@ export async function withSqliteSnapshot<T>(
   } catch (err) {
     return { status: "query-error", error: errorMessage(err) };
   } finally {
-    if (tempDir) await deps.rmrf(tempDir).catch(() => {});
+    if (tempDir) {
+      await deps.rmrf(tempDir).catch(() => {});
+    }
   }
 }
 
