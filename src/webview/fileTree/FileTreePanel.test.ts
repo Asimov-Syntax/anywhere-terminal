@@ -58,6 +58,15 @@ type AnyMsg =
   | import("../../types/messages").RequestSubscribeFsChangesMessage
   | import("../../types/messages").RequestUnsubscribeFsChangesMessage;
 
+/**
+ * Persisted state with `/workspace` expanded — the panel now mounts collapsed
+ * by default, so tests that drive the mounted tree seed a state where the user
+ * had left the root expanded.
+ */
+function expandedRootState(): { position: "left"; expandedPaths: string[] } {
+  return { position: "left", expandedPaths: ["/workspace"] };
+}
+
 function createHost(): HTMLElement {
   const host = document.createElement("div");
   host.style.height = "200px";
@@ -194,6 +203,7 @@ describe("FileTreePanel", () => {
       rootGeneration: 7,
       getActiveSessionId: () => "sess-A",
       postMessage: (m) => posted.push(m),
+      getPersistedState: expandedRootState,
     });
     const dataSource = (panel as unknown as { dataSource: { handleResponse(m: unknown): void } | null }).dataSource;
     if (!dataSource) {
@@ -255,6 +265,7 @@ describe("FileTreePanel", () => {
       rootGeneration: 7,
       getActiveSessionId: () => "sess-A",
       postMessage: (m) => posted.push(m),
+      getPersistedState: expandedRootState,
     });
     const dataSource = (panel as unknown as { dataSource: { handleResponse(m: unknown): void } | null }).dataSource;
     if (!dataSource) {
@@ -311,6 +322,7 @@ describe("FileTreePanel — refreshDirectoryByPath + refreshRootAndExpandedDirec
       rootGeneration: 1,
       getActiveSessionId: () => "sess",
       postMessage: (m) => posted.push(m),
+      getPersistedState: expandedRootState,
     });
     // The data source isn't exposed by the panel API; reach in by reading
     // the private field via a casted accessor for test purposes ONLY. The

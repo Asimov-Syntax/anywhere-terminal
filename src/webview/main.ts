@@ -950,7 +950,7 @@ function handleInit(msg: InitMessage): void {
   }
 
   // AI-vault panel — a collapsible section stacked directly above the file tree
-  // (no exclusivity; both visible). Default collapsed; the collapsed state
+  // (no exclusivity; both visible). Default expanded; the collapsed state
   // persists across reloads. See: add-ai-coding-vault/design.md D11.
   const vaultHost = document.getElementById("vault-panel");
   if (vaultHost) {
@@ -964,8 +964,8 @@ function handleInit(msg: InitMessage): void {
         }
         return store.tabActivePaneIds.get(tabId) ?? tabId;
       },
-      // Absent persisted value → collapsed (default).
-      getInitialCollapsed: () => store.getState().vaultCollapsed !== false,
+      // Absent persisted value → expanded (default).
+      getInitialCollapsed: () => store.getState().vaultCollapsed === true,
       persistCollapsed: (collapsed) => store.updateState({ vaultCollapsed: collapsed }),
       // "This folder only" scope — default off (show all).
       getInitialFolderOnly: () => store.getState().vaultFolderOnly === true,

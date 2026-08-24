@@ -4,6 +4,16 @@ All notable changes to **AnyWhere Terminal** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] — 2026-08-24
+
+### Changed
+
+- **The AI Vault opens with the panel, and the file tree starts out of the way.** A fresh install now comes up with the Vault expanded and the file tree collapsed to its header strip — the sessions you came for are visible without a click. Both sections still remember whatever you last chose, so an existing layout is left alone.
+
+### Fixed
+
+- **Code blocks in a session preview no longer look shredded.** Every line inside a fenced block was painted with its own ragged highlight box that stopped at the end of the text, because VS Code's own webview stylesheet gives `code` a background and the browser paints one box per line of an inline element. Fenced code now shows a single clean panel.
+
 ## [0.18.0] — 2026-08-24
 
 ### Added

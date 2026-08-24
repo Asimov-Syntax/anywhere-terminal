@@ -75,7 +75,7 @@ export interface WebviewState {
   /**
    * Whether the AI Vault section (stacked directly above the file tree inside
    * `#aux-region`) is collapsed to its header strip. Persisted so a reload
-   * restores the user's choice. Absent → collapsed (default).
+   * restores the user's choice. Absent → expanded (default).
    *
    * See: asimov/changes/add-ai-coding-vault/design.md D11.
    */

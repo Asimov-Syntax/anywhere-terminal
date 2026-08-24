@@ -1491,6 +1491,13 @@ body:has(#tab-bar.visible) .vault-preview--max {
   overflow-x: auto;
 }
 .vault-md .md-pre code {
+  /* VS Code's default webview stylesheet paints `code` with
+     `--vscode-textPreformat-background`. On an INLINE element that spans many
+     lines the browser paints one box per line fragment, each ending at the
+     text — the ragged per-line highlight inside the fence. Block display +
+     transparent background leaves only the `.md-pre` box. */
+  display: block;
+  background: none;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
   font-size: 11px;
   line-height: 1.45;
