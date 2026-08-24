@@ -1400,6 +1400,45 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(cards[1].classList.contains("is-open")).toBe(true);
   });
 
+  /** W19: the card-identity tuple must be injective — `(ses_x, a|b)` and
+   *  `(ses_x|a, b)` are DIFFERENT cards and must not share an occurrence group,
+   *  or a prepend of one renumbers the other and expansion transfers. */
+  it("keeps expansion on the open card when a delimiter-colliding tuple is prepended", () => {
+    const host = createHost();
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        truncated: true,
+        timeline: [{ kind: "subagentSession", entryId: "opencode:ses_x", title: "a|b", firstMessage: "p" }],
+      }),
+    });
+    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    expect(host.querySelector(".vault-preview-subagent")?.classList.contains("is-open")).toBe(true);
+
+    host.querySelector<HTMLButtonElement>(".vault-preview-loadmore")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        truncated: false,
+        timeline: [
+          { kind: "subagentSession", entryId: "opencode:ses_x|a", title: "b", firstMessage: "p" },
+          { kind: "subagentSession", entryId: "opencode:ses_x", title: "a|b", firstMessage: "p" },
+        ],
+      }),
+    });
+
+    const cards = [...host.querySelectorAll<HTMLElement>(".vault-preview-subagent")];
+    expect(cards).toHaveLength(2);
+    expect(cards[0].classList.contains("is-open")).toBe(false);
+    expect(cards[1].classList.contains("is-open")).toBe(true);
+  });
+
   /** W15: host reads complete out of order — the reopened preview's own reply can
    *  land BEFORE the closed preview's leftover. Identity comes from the echoed
    *  request id, never from arrival order. */

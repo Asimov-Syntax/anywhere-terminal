@@ -1260,6 +1260,26 @@
         "src/vault/readers/cursorNormalization.ts"
       ],
       "testCmd": "pnpm vitest run src/vault/readers/cursorNormalization.test.ts"
+    },
+    {
+      "task": "12_5",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "50fe4c2651ff40e88b715be0f64bced22237043e",
+      "at": 1787571289904,
+      "scope": [
+        "src/webview/vault/previewTimeline.ts",
+        "src/webview/vault/VaultPanel.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/webview/vault/VaultPanel.test.ts",
+      "testChange": {
+        "reason": "Addition only: one W19 regression (delimiter-colliding tuple prepend); no inherited assertion changed",
+        "deleted": [],
+        "modified": [
+          "src/webview/vault/VaultPanel.test.ts"
+        ],
+        "assertionDelta": 4
+      }
     }
   ],
   "reads": 0,
@@ -1861,8 +1881,8 @@
       "assertions": 31
     },
     "src/webview/vault/VaultPanel.test.ts": {
-      "hash": "ed34cefc700d01c7",
-      "assertions": 508
+      "hash": "13ac3ad06267be3a",
+      "assertions": 512
     },
     "src/webview/vault/forkPoint.test.ts": {
       "hash": "3a795899c09dc9bc",

@@ -649,3 +649,13 @@
     - Verify: command pnpm vitest run src/vault/readers/cursorNormalization.test.ts
   - **Plan**:
     1. Delegate the string-shape check in `src/vault/readers/cursorNormalization.ts` to `isSafeCursorChatId`, keeping the local type and bound guards.
+
+- [x] 12_5 Encode nested-card identity injectively — verified: pnpm vitest run src/webview/vault/VaultPanel.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
+  - **Deps**: 12_3
+  - **Refs**: .reviews/round-7.md W19
+  - **Acceptance**:
+    - Outcome: Distinct child-and-title tuples never share one nested-card occurrence group.
+    - Verify: command pnpm vitest run src/webview/vault/VaultPanel.test.ts
+  - **Plan**:
+    1. Encode the card identity tuple with `JSON.stringify` in `src/webview/vault/previewTimeline.ts`.
+    2. Add a prepend regression with two tuples that collide under delimiter concatenation in `src/webview/vault/VaultPanel.test.ts`.

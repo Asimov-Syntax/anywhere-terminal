@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
@@ -52,3 +52,4 @@ Wave 11 consequence: an unproven CLI store no longer falls back to its project m
 Wave 11 verify gate: type check at the recorded `markdownLite.ts:80` baseline, `biome check src/` 0 errors / 84 style warnings, unit suite 2829 pass; per-card nested expansion replaced the shared per-child state, so two duplicate-card tests now expand each card.
 Round 6 triage: B18/W15/S10 accepted, W18 accepted-modified (identity keys, since no per-invocation id may cross the wire), W17 rebutted — a structural census of three real project transcripts shows zero `tool_result` blocks, so mirror correlation has nothing to join.
 Wave 12 verify gate: type check at the `markdownLite.ts:80` baseline, `biome check src/` 0 errors / 84 style warnings, unit suite 2837 pass; the nested requestId replaced both the generation counter and the orphan ledger from wave 11.
+Round 7 (final): 0 BLOCK, W17 rebuttal sustained; the single WARN (W19 delimiter-collision in nested-card keys) was accepted and fixed as task 12_5 with the colliding-tuple regression — review loop closed at 0 outstanding findings.

@@ -177,7 +177,9 @@ function nestedCardKeys(timeline: VaultTimelineItem[], keyPrefix: string): Map<V
       continue;
     }
     const title = item.kind === "subagentSession" ? (item.title ?? "") : (item.preview ?? "");
-    const identity = `${item.entryId}|${title}`;
+    // JSON keeps the tuple injective — plain `|` concatenation let a `|` in the
+    // free-text title (or an unvalidated entry id) merge distinct cards (W19).
+    const identity = JSON.stringify([item.entryId, title]);
     const seen = counts.get(identity) ?? 0;
     counts.set(identity, seen + 1);
     keys.set(item, `${keyPrefix}|${identity}#${seen}`);
