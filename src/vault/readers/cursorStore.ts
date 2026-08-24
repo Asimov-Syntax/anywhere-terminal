@@ -5,6 +5,8 @@ import {
   type CursorNormalizedRecord,
   type CursorSubagentStep,
   type CursorToolResult,
+  collectCursorAgentTypes,
+  countCursorAgents,
   mergeCursorSubagentInvocations,
   normalizeCursorRecord,
 } from "./cursorNormalization";
@@ -487,17 +489,19 @@ async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string)
     toolCount += record.toolCount;
   }
 
-  // One agent, many invocations: collapse continuations onto their launch call
-  // before anything counts or links them, so the stat counts agents (D11).
-  const mergedActivity = mergeCursorSubagentInvocations(recentActivity);
+  // One agent, many invocations: give each its agent's declared type before
+  // anything counts or links them, resolving that type across both arrays so a
+  // display cut cannot hide the declaring launch (D2).
+  const declaredTypes = collectCursorAgentTypes(timeline, recentActivity);
+  const mergedActivity = mergeCursorSubagentInvocations(recentActivity, declaredTypes);
   return {
     status: "ok",
-    timeline: mergeCursorSubagentInvocations(timeline),
+    timeline: mergeCursorSubagentInvocations(timeline, declaredTypes),
     recentActivity: mergedActivity,
     stats: {
       messageCount,
       toolCount,
-      subagentCount: mergedActivity.filter((step) => step.kind === "subagent").length,
+      subagentCount: countCursorAgents(mergedActivity),
     },
   };
 }

@@ -36,6 +36,7 @@ import {
   readCursorIdeEntry,
   readCursorIdeSessions,
 } from "./cursorIdeReader";
+import { isCursorContinuationStep, isCursorDeclaredAgentType } from "./cursorNormalization";
 import {
   type CursorChatCandidate,
   type CursorFsDeps,
@@ -496,7 +497,9 @@ type CursorPrivateSubagentStep = Extract<VaultActivityStep, { kind: "subagent" }
 
 function visibleSubagentStep(step: CursorPrivateSubagentStep): Extract<VaultActivityStep, { kind: "subagent" }> {
   const { childAgentId: _childAgentId, ...visible } = step;
-  return visible;
+  // No decoded invocation declared a type for this agent, so `name` is the
+  // invoking tool's — say so rather than let it render as `@Task` (D2, review W2).
+  return isCursorDeclaredAgentType(visible.name) ? visible : { ...visible, undeclared: true };
 }
 
 async function linkCursorChildSessions(
@@ -507,6 +510,9 @@ async function linkCursorChildSessions(
 ): Promise<VaultTimelineItem[]> {
   const issueChildLocator = options.issueChildLocator;
   const resolved = new Map<string, CursorTranscriptCandidate | null>();
+  // One agent, one locator: every invocation of it must address the same child, and
+  // re-issuing per invocation would also churn the host's bounded registry (D3).
+  const locators = new Map<string, string>();
   let projectBucket: string | null | undefined;
   let lookupCount = 0;
   const output: VaultTimelineItem[] = [];
@@ -550,26 +556,37 @@ async function linkCursorChildSessions(
       output.push(visibleSubagentStep(privateStep));
       continue;
     }
-    output.push({
-      kind: "subagentSession",
-      entryId: formatEntryId(
+    let locator = locators.get(childAgentId);
+    if (locator === undefined) {
+      locator = formatEntryId(
         "cursor",
         issueChildLocator({ parentSessionId, childAgentId, projectSessionId: cursorProjectSessionId(candidate) }),
-      ),
+      );
+      locators.set(childAgentId, locator);
+    }
+    output.push({
+      kind: "subagentSession",
+      entryId: locator,
       title: privateStep.title ?? privateStep.prompt ?? privateStep.name,
       ...(privateStep.prompt ? { firstMessage: privateStep.prompt, prompt: privateStep.prompt } : {}),
       ...(privateStep.result ? { result: privateStep.result } : {}),
       ...(privateStep.status ? { status: privateStep.status } : {}),
-      agent: privateStep.name,
+      ...(privateStep.continuation ? { continuation: true } : {}),
+      // No declared type was decoded for this agent — show no chip rather than
+      // the invoking tool's own name (D2). Stated explicitly, not left implied by a
+      // missing `agent`: agentless group nodes share that shape (review round 2 W2).
+      ...(isCursorDeclaredAgentType(privateStep.name) ? { agent: privateStep.name } : { undeclared: true as const }),
     });
   }
   return output;
 }
 
+/** The 12-slot strip stays agent-level: a resumed agent occupies one slot, not one
+ *  per turn (D4). Locality is the timeline's job. */
 function visibleRecentActivity(activity: VaultActivityStep[]): VaultActivityStep[] {
-  return activity.map((step) =>
-    step.kind === "subagent" ? visibleSubagentStep(step as CursorPrivateSubagentStep) : step,
-  );
+  return activity
+    .filter((step) => !isCursorContinuationStep(step))
+    .map((step) => (step.kind === "subagent" ? visibleSubagentStep(step as CursorPrivateSubagentStep) : step));
 }
 
 /**

@@ -507,53 +507,56 @@ function isSubagentStep(item: { kind: string }): item is CursorSubagentStep {
   return item.kind === "subagent";
 }
 
-/** The launch call is the one that declared a `subagent_type`; a continuation
- *  falls back to the invoking tool's own name, which is never an agent type. */
-function launchStep(group: CursorSubagentStep[]): CursorSubagentStep {
-  return group.find((step) => !SUBAGENT_TOOL_NAMES.has(step.name.toLowerCase())) ?? group[0];
+/** A launch call declares a `subagent_type`; a continuation falls back to the
+ *  invoking tool's own name, which is never an agent type. */
+export function isCursorDeclaredAgentType(name: string): boolean {
+  return !SUBAGENT_TOOL_NAMES.has(name.toLowerCase());
 }
 
-/** Set or drop a merged field — an explicit `undefined` would still serialize. */
-function assign<K extends keyof CursorSubagentStep>(
-  step: CursorSubagentStep,
-  key: K,
-  value: CursorSubagentStep[K] | undefined,
-): void {
-  if (value === undefined) {
-    delete step[key];
-  } else {
-    step[key] = value;
-  }
+function declaredTypeIn(group: CursorSubagentStep[]): string | undefined {
+  return group.find((step) => isCursorDeclaredAgentType(step.name))?.name;
 }
 
-function lastWith<K extends keyof CursorSubagentStep>(
-  group: CursorSubagentStep[],
-  key: K,
-): CursorSubagentStep[K] | undefined {
-  for (let index = group.length - 1; index >= 0; index--) {
-    const value = group[index][key];
-    if (value !== undefined) {
-      return value;
+/**
+ * `childAgentId → declared agent type`, over every decoded invocation (D2).
+ *
+ * A reader's display window can cut the declaring launch out of the array it
+ * merges while a sibling array still holds it, so the map is built from all of
+ * them first and naming stops depending on which array is cut, or merged first.
+ */
+export function collectCursorAgentTypes(...groups: readonly (readonly { kind: string }[])[]): Map<string, string> {
+  const types = new Map<string, string>();
+  for (const items of groups) {
+    for (const item of items) {
+      if (!isSubagentStep(item) || !item.childAgentId || types.has(item.childAgentId)) {
+        continue;
+      }
+      if (isCursorDeclaredAgentType(item.name)) {
+        types.set(item.childAgentId, item.name);
+      }
     }
   }
-  return undefined;
+  return types;
 }
 
 /**
  * Cursor addresses ONE sub-agent through many `Task` invocations: a launch call
  * declares the type, and every continuation carries only `resume: <agent-id>`.
- * Keyed by call id alone they render as unrelated cards, each continuation
- * labelled with the invoking tool's name. Collapse invocations that name the same
- * agent onto the first one — declared type, title and prompt from the launch
- * call, result and status from the newest turn (D11).
+ * Keyed by call id alone they read as unrelated agents, each continuation
+ * labelled with the invoking tool's name. Give every invocation of one agent
+ * that agent's declared type, and mark the ones after the first so the preview
+ * can render them subordinate to the launch card at their own positions (D1).
  *
  * Applied by BOTH readers, since the JSONL mirror reuses this normalizer without
  * the store's correlation maps. Steps are shared between a record's timeline and
- * its activity, so merging mutates the surviving step in place and then drops the
- * superseded ones from whichever array is passed; the mutation is idempotent, so
- * a second array merges to the same result.
+ * its activity, so the pass copies rather than mutates: marking in place would
+ * let whichever array merged last decide the other's owner. Result and status
+ * stay per-invocation — each turn reports its own outcome.
  */
-export function mergeCursorSubagentInvocations<T extends { kind: string }>(items: T[]): T[] {
+export function mergeCursorSubagentInvocations<T extends { kind: string }>(
+  items: T[],
+  declaredTypes?: Map<string, string>,
+): T[] {
   const groups = new Map<string, CursorSubagentStep[]>();
   for (const item of items) {
     if (!isSubagentStep(item) || !item.childAgentId) {
@@ -566,22 +569,45 @@ export function mergeCursorSubagentInvocations<T extends { kind: string }>(items
       groups.set(item.childAgentId, [item]);
     }
   }
+  if (groups.size === 0) {
+    return items;
+  }
 
-  const superseded = new Set<unknown>();
-  for (const group of groups.values()) {
-    if (group.length < 2) {
+  const rewritten = new Map<unknown, CursorSubagentStep>();
+  for (const [childAgentId, group] of groups) {
+    const declared = declaredTypes?.get(childAgentId) ?? declaredTypeIn(group);
+    group.forEach((step, index) => {
+      const next: CursorSubagentStep = { ...step, ...(declared ? { name: declared } : {}) };
+      if (index > 0) {
+        next.continuation = true;
+      } else {
+        delete next.continuation;
+      }
+      rewritten.set(step, next);
+    });
+  }
+  return items.map((item) => (rewritten.get(item) as T | undefined) ?? item);
+}
+
+/** A re-invocation of an agent whose launch is already represented (D1). Shared so
+ *  the two reader paths cannot drift on what the agent-level surfaces exclude. */
+export function isCursorContinuationStep(step: { kind: string }): boolean {
+  return isSubagentStep(step) && step.continuation === true;
+}
+
+/** Distinct agents, not invocations: continuations of one agent count once (D4). */
+export function countCursorAgents(items: readonly { kind: string }[]): number {
+  const agents = new Set<string>();
+  let anonymous = 0;
+  for (const item of items) {
+    if (!isSubagentStep(item)) {
       continue;
     }
-    const launch = launchStep(group);
-    const surviving = group[0];
-    surviving.name = launch.name;
-    assign(surviving, "title", launch.title);
-    assign(surviving, "prompt", launch.prompt);
-    assign(surviving, "result", lastWith(group, "result"));
-    assign(surviving, "status", lastWith(group, "status"));
-    for (const step of group.slice(1)) {
-      superseded.add(step);
+    if (item.childAgentId) {
+      agents.add(item.childAgentId);
+    } else {
+      anonymous++;
     }
   }
-  return superseded.size === 0 ? items : items.filter((item) => !superseded.has(item));
+  return agents.size + anonymous;
 }

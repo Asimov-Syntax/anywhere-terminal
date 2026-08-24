@@ -6,7 +6,10 @@ import * as path from "node:path";
 import type { VaultActivityStep, VaultTimelineItem } from "../types";
 import {
   type CursorNormalizedRecord,
+  collectCursorAgentTypes,
+  countCursorAgents,
   emptyCursorRecord,
+  isCursorContinuationStep,
   mergeCursorSubagentInvocations,
   normalizeCursorRecord,
 } from "./cursorNormalization";
@@ -481,16 +484,21 @@ export async function readCursorTranscript(
   const lastNewline = buffer.lastIndexOf(0x0a);
   const pendingBytes = lastNewline < 0 ? buffer.length : buffer.length - lastNewline - 1;
   // The mirror reuses the normalizer without the store's correlation maps, so it
-  // applies the same one-card-per-agent pass itself (D11).
-  const mergedActivity = mergeCursorSubagentInvocations(activity);
+  // applies the same one-agent-many-invocations pass itself (D1). `activity` is
+  // uncapped, so it still holds a launch the MAX_TIMELINE_ITEMS splice above cut
+  // out of `timeline` — resolve declared types across both before merging either.
+  const declaredTypes = collectCursorAgentTypes(activity, timeline);
+  const mergedActivity = mergeCursorSubagentInvocations(activity, declaredTypes);
   return {
     status: "ok",
-    timeline: mergeCursorSubagentInvocations(timeline),
-    recentActivity: mergedActivity.slice(-12),
+    timeline: mergeCursorSubagentInvocations(timeline, declaredTypes),
+    // Filter before the cap: capping first lets a tail of 12+ resumes leave the
+    // strip empty once the reader drops continuations (review W1).
+    recentActivity: mergedActivity.filter((step) => !isCursorContinuationStep(step)).slice(-12),
     stats: {
       messageCount,
       toolCount,
-      subagentCount: mergedActivity.filter((step) => step.kind === "subagent").length,
+      subagentCount: countCursorAgents(mergedActivity),
     },
     truncated,
     nextOffset: pendingTail ? windowEnd - pendingBytes : windowEnd,

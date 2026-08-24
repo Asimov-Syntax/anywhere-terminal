@@ -1019,7 +1019,7 @@ describe("readCursorDetail: bounded CLI transcript", () => {
    *  must link to the child transcript that holds all of its turns, and the
    *  continuation's own `resume` argument must be enough — its result never
    *  repeats the Agent ID line. */
-  it("links one merged card for an agent addressed by repeated resume calls", async () => {
+  it("links every invocation of a resumed agent to one child, at its own position", async () => {
     const cwd = await writeWorkspace("child-resumed");
     const dir = await writeChat("bucket-a", "parent-resumed", { ...BASE_META, cwd });
     await fs.rm(path.join(dir, "store.db"));
@@ -1068,13 +1068,112 @@ describe("readCursorDetail: bounded CLI transcript", () => {
         kind: "subagentSession",
         entryId: "cursor:child:token-1",
         title: "Oracle advisor ready",
+        status: "running",
+        agent: "asm-oracle",
+      },
+      {
+        kind: "subagentSession",
+        entryId: "cursor:child:token-1",
+        title: "Oracle 1+1 check",
+        firstMessage: "Is 1+1 two?",
+        prompt: "Is 1+1 two?",
         result: "Yes.",
         status: "completed",
+        continuation: true,
         agent: "asm-oracle",
       },
     ]);
     expect(detail?.stats.subagentCount).toBe(1);
+    // One locator for the agent, not one per invocation.
     expect(issuer.issued.map((child) => child.childAgentId)).toEqual(["oracle-1"]);
+    // The 12-slot strip stays agent-level (D4).
+    expect(detail?.recentActivity.filter((step) => step.kind === "subagent")).toEqual([
+      {
+        kind: "subagent",
+        name: "asm-oracle",
+        title: "Oracle advisor ready",
+        background: true,
+        status: "running",
+      },
+    ]);
+  });
+
+  /** C2: the reader's `limit` slice runs after the merge, so a continuation can
+   *  outlive its launch card — it must stay visible and keep the declared type. */
+  it("keeps a continuation named when the limit slice cuts its launch card away", async () => {
+    const cwd = await writeWorkspace("child-cut");
+    const dir = await writeChat("bucket-a", "parent-cut", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "parent-cut", [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "call-launch",
+            args: { subagent_type: "asm-oracle", description: "Oracle advisor ready", run_in_background: true },
+          },
+        ],
+      },
+      {
+        type: "tool-result",
+        toolName: "Task",
+        toolCallId: "call-launch",
+        result: "Subagent is running in the background.\n\nAgent ID: oracle-1",
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "call-resume",
+            args: { description: "Oracle 1+1 check", resume: "oracle-1" },
+          },
+        ],
+      },
+    ]);
+    await writeProjectTranscriptForCwd(cwd, "oracle-1", [{ role: "assistant", message: { content: "Ready" } }]);
+
+    const detail = await readCursorDetail("parent-cut", 1, { ...opts(), ...recordingIssuer() });
+    expect(detail?.timeline).toEqual([
+      {
+        kind: "subagentSession",
+        entryId: "cursor:child:token-1",
+        title: "Oracle 1+1 check",
+        continuation: true,
+        agent: "asm-oracle",
+      },
+    ]);
+  });
+
+  /** W2: nothing declared this agent's type, so the invoking tool's name must not
+   *  reach the public step as an `@agent` chip (D2 floor). */
+  it("marks a sub-agent step undeclared when no decoded invocation named its type", async () => {
+    const cwd = await writeWorkspace("child-undeclared");
+    const dir = await writeChat("bucket-a", "parent-undeclared", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "parent-undeclared", [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "call-resume",
+            args: { description: "Oracle 1+1 check", resume: "oracle-1" },
+          },
+        ],
+      },
+    ]);
+
+    const detail = await readCursorDetail("parent-undeclared", undefined, { ...opts(), ...recordingIssuer() });
+    // No child transcript exists, so the step stays inline rather than linking.
+    expect(detail?.timeline).toEqual([{ kind: "subagent", name: "Task", title: "Oracle 1+1 check", undeclared: true }]);
+    expect(detail?.recentActivity).toEqual([
+      { kind: "subagent", name: "Task", title: "Oracle 1+1 check", undeclared: true },
+    ]);
   });
 
   /** B14: no issuer, no addressable child — the reader must not publish the

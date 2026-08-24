@@ -233,6 +233,11 @@ export type VaultActivityStep =
       result?: string;
       background?: boolean;
       status?: "running" | "completed" | "failed";
+      /** A re-invocation of an agent launched earlier in this session. */
+      continuation?: boolean;
+      /** The source never declared this agent's type, so `name` is the invoking
+       *  tool's own name — render the step without an `@agent` chip. */
+      undeclared?: boolean;
     };
 
 /**
@@ -305,6 +310,11 @@ export type VaultTimelineItem =
       /** Bounded invocation result retained when the lazy child detail is unavailable. */
       result?: string;
       status?: "running" | "completed" | "failed";
+      /** Render subordinate to the launch card addressing the same `entryId`. */
+      continuation?: boolean;
+      /** The source never declared an agent type — render no `@agent` chip, and
+       *  keep that true when a failed nested load falls back to the bounded card. */
+      undeclared?: boolean;
       timestamp?: number;
     }
   /**

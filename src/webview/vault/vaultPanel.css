@@ -1650,6 +1650,42 @@ body:has(#tab-bar.visible) .vault-preview--max {
 .vault-preview-subagent.is-open .vault-preview-subagent-firstmsg {
   display: none;
 }
+/* A resumed invocation of an agent whose launch card is already in this timeline:
+   indented one step further and drawn without the card fill, so the run reads as
+   one agent consulted repeatedly rather than several agents. */
+.vault-preview-subagent--continuation {
+  margin-left: 22px;
+  background: transparent;
+  border-color: color-mix(in srgb, var(--subagent-accent) 18%, transparent);
+  border-left-width: 2px;
+}
+.vault-preview-subagent-resumed {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--subagent-accent);
+}
+/* The turn an invocation began, revealed when its card is expanded (D6). A fading
+   accent, not persistent state: it answers "which turn was this?" once. */
+.vault-preview-message.is-invocation-focus {
+  border-radius: 4px;
+  /* Accent outlives the fade so the revealed turn stays identifiable. */
+  box-shadow: inset 2px 0 0 var(--vscode-textLink-foreground, #4aa3ff);
+  animation: vault-invocation-focus 2.4s ease-out 1;
+}
+@keyframes vault-invocation-focus {
+  from {
+    background: color-mix(in srgb, var(--vscode-textLink-foreground, #4aa3ff) 26%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vault-preview-message.is-invocation-focus {
+    animation: none;
+  }
+}
 .vault-preview-subagent-body {
   display: none;
   padding: 2px 8px 6px;

@@ -524,22 +524,29 @@ export function activityStep(step: VaultActivityStep): HTMLElement {
     chevron.className = "vault-preview-subagent-chevron";
     chevron.innerHTML = ICON_CHEVRON_DOWN;
     chevron.setAttribute("aria-hidden", "true");
-    const badge = document.createElement("span");
-    badge.className = "vault-preview-subagent-badge";
-    badge.textContent = "agent";
-    const agent = document.createElement("span");
-    agent.className = "vault-preview-subagent-agent";
-    agent.textContent = `@${step.name}`;
-    const sep = document.createElement("span");
-    sep.className = "vault-preview-subagent-sep";
-    sep.textContent = "·";
-    sep.setAttribute("aria-hidden", "true");
     const title = document.createElement("span");
     title.className = "vault-preview-subagent-title";
     title.textContent = step.title ?? step.prompt ?? step.name;
-    head.append(chevron, badge, agent, sep, title);
-    head.setAttribute("aria-label", `Subagent @${step.name}: ${title.textContent}`);
-    head.title = `Toggle subagent @${step.name}: ${title.textContent}`;
+    if (step.undeclared) {
+      // Source never declared an agent type — title only, no invented chip.
+      head.append(chevron, title);
+      head.setAttribute("aria-label", `Subagent: ${title.textContent}`);
+      head.title = `Toggle subagent: ${title.textContent}`;
+    } else {
+      const badge = document.createElement("span");
+      badge.className = "vault-preview-subagent-badge";
+      badge.textContent = "agent";
+      const agent = document.createElement("span");
+      agent.className = "vault-preview-subagent-agent";
+      agent.textContent = `@${step.name}`;
+      const sep = document.createElement("span");
+      sep.className = "vault-preview-subagent-sep";
+      sep.textContent = "·";
+      sep.setAttribute("aria-hidden", "true");
+      head.append(chevron, badge, agent, sep, title);
+      head.setAttribute("aria-label", `Subagent @${step.name}: ${title.textContent}`);
+      head.title = `Toggle subagent @${step.name}: ${title.textContent}`;
+    }
 
     const body = document.createElement("div");
     body.className = "vault-preview-subagent-body";

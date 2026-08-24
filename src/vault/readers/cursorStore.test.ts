@@ -546,7 +546,7 @@ describe("readCursorStoreDetail", () => {
   /** The shape observed in chat e02838b2: one background launch declaring the
    *  type, then two continuations that carry only `resume` — one agent, three
    *  invocations, and the continuations' results never repeat the Agent ID line. */
-  it("renders one card for a launch plus its resume continuations", async () => {
+  it("keeps a launch and its resume continuations as one agent at their own positions", async () => {
     const launch = json({
       role: "assistant",
       content: [
@@ -607,11 +607,31 @@ describe("readCursorStoreDetail", () => {
         prompt: "Stand by",
         background: true,
         childAgentId: "oracle-1",
+        status: "running",
+      },
+      {
+        kind: "subagent",
+        name: "asm-oracle",
+        title: "Oracle follow-up 1",
+        prompt: "Question 1",
+        childAgentId: "oracle-1",
+        result: "Answer 1",
+        status: "completed",
+        continuation: true,
+      },
+      {
+        kind: "subagent",
+        name: "asm-oracle",
+        title: "Oracle follow-up 2",
+        prompt: "Question 2",
+        childAgentId: "oracle-1",
         result: "Answer 2",
         status: "completed",
+        continuation: true,
       },
     ]);
     expect(result.recentActivity).toEqual(result.timeline);
+    // Three invocations, one agent (D4).
     expect(result.stats).toEqual({ messageCount: 0, toolCount: 0, subagentCount: 1 });
   });
 

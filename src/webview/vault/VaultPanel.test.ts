@@ -1168,6 +1168,137 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(fallback?.textContent).toContain("Result · completedVaultWatchCoordinator owns live follow.");
   });
 
+  /** D6: three invocations open ONE child, so an expanded row must reveal its own
+   *  turn rather than dumping the shared transcript at the top every time. */
+  const threeTurnChild = () =>
+    detail({
+      entryId: "cursor:child:tok",
+      timeline: [
+        { kind: "message", role: "user" as const, text: "You are the technical oracle for this repo." },
+        { kind: "message", role: "assistant" as const, text: "Standing by." },
+        { kind: "message", role: "user" as const, text: "Question from the user: what should I do next?" },
+        { kind: "message", role: "assistant" as const, text: "Ship the reader fix." },
+        {
+          kind: "message",
+          role: "user" as const,
+          text: "User question: 1+1=?\n\nReply in one short sentence with the answer.",
+        },
+        { kind: "message", role: "assistant" as const, text: "Two." },
+      ],
+    });
+
+  const expandInvocation = (prompt: string | undefined) => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [
+          {
+            kind: "subagentSession",
+            entryId: "cursor:child:tok",
+            title: "Oracle 1+1 check",
+            agent: "asm-oracle",
+            continuation: true,
+            ...(prompt !== undefined ? { prompt } : {}),
+          },
+        ],
+      }),
+    });
+    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:child:tok",
+      requestId: nestedRequestId(posted, "cursor:child:tok"),
+      detail: threeTurnChild(),
+    });
+    return host;
+  };
+
+  it("reveals the turn an expanded invocation began, not the transcript's first turn", () => {
+    const host = expandInvocation("User question: 1+1=?");
+    const focused = [...host.querySelectorAll(".is-invocation-focus")];
+    expect(focused).toHaveLength(1);
+    expect(focused[0].textContent).toContain("User question: 1+1=?");
+  });
+
+  it("marks nothing when no turn matches the invocation prompt", () => {
+    const host = expandInvocation("A question that this child transcript never received.");
+    expect(host.querySelector(".is-invocation-focus")).toBeNull();
+  });
+
+  it("marks nothing when the invocation recorded no prompt", () => {
+    const host = expandInvocation(undefined);
+    expect(host.querySelector(".is-invocation-focus")).toBeNull();
+  });
+
+  it("marks nothing on a prompt too short to be evidence of the same turn", () => {
+    const host = expandInvocation("Two.");
+    expect(host.querySelector(".is-invocation-focus")).toBeNull();
+  });
+
+  /** Real Cursor prompts carry blank lines, and rendered block elements concatenate
+   *  with no separator — so matching the whole prompt never matched anything. */
+  it("reveals the turn when the invocation prompt spans paragraphs", () => {
+    const host = expandInvocation("User question: 1+1=?\n\nReply in one short sentence with the answer.");
+    const focused = [...host.querySelectorAll(".is-invocation-focus")];
+    expect(focused).toHaveLength(1);
+    expect(focused[0].textContent).toContain("User question: 1+1=?");
+  });
+
+  /** Round-2 W2: the reconstructed fallback card must not invent an agent type for
+   *  a child whose type was never declared — the label was correct until the load
+   *  failed, and `@Agent` after. */
+  it("keeps an undeclared child chipless when its nested detail fails", () => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [
+          {
+            kind: "subagentSession",
+            entryId: "cursor:child:tok",
+            title: "Oracle 1+1 check",
+            prompt: "Is 1+1 two?",
+            result: "Yes.",
+            status: "completed",
+            undeclared: true,
+          },
+        ],
+      }),
+    });
+    // Collapsed: no chip, as round 1 established.
+    expect(host.querySelector(".vault-preview-subagent-agent")).toBeNull();
+
+    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:child:tok",
+      requestId: nestedRequestId(posted, "cursor:child:tok"),
+      error: "Child transcript unavailable.",
+    });
+
+    const body = host.querySelector(".vault-preview-subagent-body");
+    expect(body?.textContent).toContain("Is 1+1 two?");
+    // Still no fabricated `@Agent` anywhere in the reconstructed card.
+    expect(body?.querySelector(".vault-preview-subagent-agent")).toBeNull();
+    expect(body?.querySelector(".vault-preview-subagent-badge")).toBeNull();
+    expect(host.textContent).not.toContain("@Agent");
+  });
+
   it("keeps each invocation fallback when duplicate cards share one failed child detail", () => {
     const host = createHost();
     const posted: Array<{ type: string; entryId?: string | null }> = [];
@@ -2667,6 +2798,143 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     // Collapsed by default — no nested transcript yet.
     expect(block?.classList.contains("is-open")).toBe(false);
     expect(host.querySelector(".vault-preview-subagent-body .vault-preview-message")).toBeNull();
+  });
+
+  it("renders a resumed invocation as a slim continuation row under its launch card", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [
+          {
+            kind: "subagentSession",
+            entryId: "opencode:ses_kid",
+            title: "Oracle advisor ready",
+            firstMessage: "Stand by",
+            agent: "asm-oracle",
+          },
+          {
+            kind: "subagentSession",
+            entryId: "opencode:ses_kid",
+            title: "Oracle 1+1 check",
+            firstMessage: "Is 1+1 two?",
+            agent: "asm-oracle",
+            continuation: true,
+          },
+        ],
+      }),
+    });
+    const blocks = [...host.querySelectorAll(".vault-preview-subagent")];
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].classList.contains("vault-preview-subagent--continuation")).toBe(false);
+    const row = blocks[1];
+    expect(row.classList.contains("vault-preview-subagent--continuation")).toBe(true);
+    // Slim: the resumed glyph and agent chip, no `agent` badge, no first-message line.
+    expect(row.querySelector(".vault-preview-subagent-resumed")?.textContent).toBe("\u21bb");
+    expect(row.querySelector(".vault-preview-subagent-agent")?.textContent).toBe("@asm-oracle");
+    expect(row.querySelector(".vault-preview-subagent-title")?.textContent).toBe("Oracle 1+1 check");
+    expect(row.querySelector(".vault-preview-subagent-badge")).toBeNull();
+    expect(row.querySelector(".vault-preview-subagent-firstmsg")).toBeNull();
+  });
+
+  /** S1: the D2 floor path — a continuation whose agent type was never declared. */
+  it("renders a continuation with no declared agent as glyph + title only", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [
+          { kind: "subagentSession", entryId: "opencode:ses_kid", title: "Oracle 1+1 check", continuation: true },
+        ],
+      }),
+    });
+    const row = host.querySelector(".vault-preview-subagent--continuation");
+    expect(row).not.toBeNull();
+    expect(row?.querySelector(".vault-preview-subagent-resumed")?.textContent).toBe("\u21bb");
+    expect(row?.querySelector(".vault-preview-subagent-title")?.textContent).toBe("Oracle 1+1 check");
+    expect(row?.querySelector(".vault-preview-subagent-agent")).toBeNull();
+    expect(row?.querySelector(".vault-preview-subagent-badge")).toBeNull();
+  });
+
+  /** W2: an inline activity step whose agent type was never declared must not
+   *  render the invoking tool's name as an `@agent` chip. */
+  it("renders an undeclared sub-agent activity step without an agent chip", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [{ kind: "subagent", name: "Task", title: "Oracle 1+1 check", undeclared: true }],
+      }),
+    });
+    expect(host.querySelector(".vault-preview-subagent-title")?.textContent).toBe("Oracle 1+1 check");
+    expect(host.querySelector(".vault-preview-subagent-agent")).toBeNull();
+    expect(host.querySelector(".vault-preview-subagent-badge")).toBeNull();
+  });
+
+  it("still renders the agent chip for a declared sub-agent activity step", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [{ kind: "subagent", name: "asm-oracle", title: "Advise" }],
+      }),
+    });
+    expect(host.querySelector(".vault-preview-subagent-badge")?.textContent).toBe("agent");
+    expect(host.querySelector(".vault-preview-subagent-agent")?.textContent).toBe("@asm-oracle");
+  });
+
+  it("gives a continuation its own expansion state while addressing the same child", () => {
+    const host = createHost();
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [
+          { kind: "subagentSession", entryId: "opencode:ses_kid", title: "Launch", agent: "asm-oracle" },
+          {
+            kind: "subagentSession",
+            entryId: "opencode:ses_kid",
+            title: "Resume",
+            agent: "asm-oracle",
+            continuation: true,
+          },
+        ],
+      }),
+    });
+    const heads = () => [...host.querySelectorAll<HTMLButtonElement>(".vault-preview-subagent-head")];
+    heads()[1].click();
+    const blocks = () => [...host.querySelectorAll(".vault-preview-subagent")];
+    expect(blocks()[1].classList.contains("is-open")).toBe(true);
+    // Opening the continuation must not open the launch card that shares its entryId.
+    expect(blocks()[0].classList.contains("is-open")).toBe(false);
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "requestVaultSessionDetail", entryId: "opencode:ses_kid" }),
+    );
   });
 
   it("expanding a subagent block lazily requests the child and renders its transcript nested", () => {

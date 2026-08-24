@@ -248,7 +248,7 @@ describe("readCursorTranscript", () => {
 
   /** D11: the mirror reuses the normalizer without the store's correlation maps,
    *  so it must run the same one-card-per-agent merge itself. */
-  it("collapses resume continuations of one agent into a single card", async () => {
+  it("keeps resume continuations of one agent at their own positions", async () => {
     const candidate = await writeNested(
       "project-a",
       "chat-merge",
@@ -288,14 +288,46 @@ describe("readCursorTranscript", () => {
     if (result.status !== "ok") {
       return;
     }
-    // The mirror carries no `Agent ID:` correlation, so the launch call stays its
-    // own card; the two continuations naming one agent become one.
+    // The mirror carries no `Agent ID:` correlation, so the launch call is never keyed
+    // to the agent: its continuations group alone and, with no declared type to
+    // recover, keep the invoking tool's name off the chip (D2 floor).
     expect(result.timeline).toEqual([
       { kind: "subagent", name: "asm-oracle", title: "Oracle advisor ready", prompt: "Stand by" },
       { kind: "subagent", name: "Task", title: "Follow-up 1", childAgentId: "oracle-1" },
       { kind: "tool", tool: "Read", detail: "/tmp/a.ts" },
+      { kind: "subagent", name: "Task", title: "Follow-up 2", childAgentId: "oracle-1", continuation: true },
     ]);
     expect(result.stats.subagentCount).toBe(2);
+  });
+
+  /** W1: capping the strip before continuations are dropped left it empty once a
+   *  long resume run filled the tail. Filter first, then cap. */
+  it("keeps earlier activity in the strip when a resume run is longer than the cap", async () => {
+    const reads = [1, 2, 3].map((n) =>
+      line({
+        role: "assistant",
+        message: { content: [{ type: "tool_use", name: "Read", input: { file_path: `/tmp/${n}.ts` } }] },
+      }),
+    );
+    const resumes = Array.from({ length: 13 }, (_, n) =>
+      line({
+        role: "assistant",
+        message: {
+          content: [{ type: "tool_use", name: "Task", input: { description: `Turn ${n}`, resume: "oracle-1" } }],
+        },
+      }),
+    );
+    const candidate = await writeNested("project-a", "chat-longrun", [...reads, ...resumes].join(""));
+
+    const result = await readCursorTranscript(candidate, { projectsDir: root });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") {
+      return;
+    }
+    expect(result.recentActivity.filter((step) => step.kind === "tool")).toHaveLength(3);
+    // Exactly one agent-level entry survives: the run's first invocation.
+    expect(result.recentActivity.filter((step) => step.kind === "subagent")).toHaveLength(1);
+    expect(result.stats.subagentCount).toBe(1);
   });
 
   it("consumes a valid final JSON record without a newline", async () => {
