@@ -111,6 +111,9 @@ vi.mock("./previewFileLink", () => ({
 
 import type * as vscode from "vscode";
 import { SessionManager } from "../session/SessionManager";
+import { env as vscodeMockEnv } from "../test/__mocks__/vscode";
+import { VaultLaunchError } from "../vault/LaunchBuilder";
+import type { VaultLauncher } from "../vault/VaultLauncher";
 import type { VaultService } from "../vault/VaultService";
 import { FileTreeHost } from "./fileTreeHost";
 import { openFileLink } from "./openFileLink";
@@ -1199,6 +1202,72 @@ describe("TerminalViewProvider: split pane ghost tab fix", () => {
     // Tab strip still filters splits — the root-only view stays root-only.
     expect(sm.getTabsForView(provider.getViewId())).toHaveLength(1);
 
+    sm.dispose();
+  });
+});
+
+// ─── vaultCopyResumeCommand ─────────────────────────────────────────
+
+describe("TerminalViewProvider: vaultCopyResumeCommand", () => {
+  function wireCopy(launcher: Partial<VaultLauncher>): {
+    sm: SessionManager;
+    send: (msg: unknown) => void;
+    writeText: ReturnType<typeof vi.fn>;
+    postMessageSpy: ReturnType<typeof vi.fn>;
+  } {
+    const writeText = vi.fn(async () => {});
+    // The mock module has no clipboard of its own; the provider imports this
+    // very object, so defining it here is enough (and stays inside the test).
+    (vscodeMockEnv as { clipboard?: { writeText: unknown } }).clipboard = { writeText };
+    const sm = new SessionManager();
+    const provider = new TerminalViewProvider(
+      { fsPath: "/mock/extension" } as vscode.Uri,
+      sm,
+      "sidebar",
+      null,
+      null,
+      {} as VaultService,
+      launcher as VaultLauncher,
+    );
+    const { webviewView, messageHandlers, postMessageSpy } = createMockWebviewView();
+    provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+    return {
+      sm,
+      send: (msg: unknown) => {
+        for (const handler of messageHandlers) {
+          handler(msg);
+        }
+      },
+      writeText,
+      postMessageSpy,
+    };
+  }
+
+  afterEach(() => {
+    delete (vscodeMockEnv as { clipboard?: unknown }).clipboard;
+  });
+
+  it("copies the command the launcher built after its own gates passed", async () => {
+    const buildResumeCommand = vi.fn(async () => "cursor-agent --resume chat-1");
+    const { sm, send, writeText } = wireCopy({ buildResumeCommand });
+    send({ type: "vaultCopyResumeCommand", entryId: "cursor:chat-1" });
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("cursor-agent --resume chat-1"));
+    expect(buildResumeCommand).toHaveBeenCalledWith("cursor:chat-1");
+    sm.dispose();
+  });
+
+  it("leaves the clipboard untouched when the launcher refuses the entry", async () => {
+    const buildResumeCommand = vi.fn(async () => {
+      throw new VaultLaunchError("Couldn't verify the stored session identity", "resume-unsupported");
+    });
+    const { sm, send, writeText, postMessageSpy } = wireCopy({ buildResumeCommand });
+    send({ type: "vaultCopyResumeCommand", entryId: "cursor:chat-1" });
+    await vi.waitFor(() =>
+      expect(postMessageSpy.mock.calls.some((call: unknown[]) => (call[0] as { type: string }).type === "error")).toBe(
+        true,
+      ),
+    );
+    expect(writeText).not.toHaveBeenCalled();
     sm.dispose();
   });
 });

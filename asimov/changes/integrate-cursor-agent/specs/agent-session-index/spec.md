@@ -14,22 +14,31 @@ The cwd MUST be absolute, control-character-free, and no longer than 16 KiB; tim
 
 ### Requirement: Cursor CLI chat eligibility
 
-A Cursor CLI chat SHALL be listed only when `hasConversation` is `true`, `isSubagent` is not `true`, a sibling `store.db` exists, and the stored agent identity matches the safe chat-directory name.
+A Cursor CLI chat SHALL be listed only when `hasConversation` is `true`, `isSubagent` is not `true`, a sibling `store.db` exists, and its safe directory name is unique across the bounded CLI roots.
 
-Eligible entries SHALL carry a newline-free title capped at 120 characters, validated cwd, validated modified time, CLI source identity, and explicit Resume capability.
+Eligible entries SHALL carry a newline-free title capped at 120 characters, validated cwd and modified time, CLI source identity, and Resume source capability.
 
 #### Scenario: Cursor chat without conversation data is excluded
 
-- **WHEN** a Cursor CLI chat has no conversation, is a subagent, lacks `store.db`, or has a mismatched stored identity
+- **WHEN** a Cursor CLI chat has no conversation, is a subagent, lacks `store.db`, or has an ambiguous directory identity
 - **THEN** it does not appear as a resumable top-level Vault session
+
+### Requirement: Cursor deferred store identity proof
+
+Because supported schema-1 `meta.json` omits the stored agent identity, listing SHALL use the unique safe directory name as a candidate identity without opening `store.db`.
+
+Detail, Resume, and Copy Resume Command SHALL prove the bounded store identity before decoding content or performing the requested action.
+
+#### Scenario: Explicit action finds a mismatched store identity
+
+- **WHEN** the bounded store identity differs from the candidate chat-directory name
+- **THEN** transcript decoding and the requested action fail closed without substituting another identifier
 
 ### Requirement: Discover Cursor project transcripts
 
 The system SHALL recognize current nested and legacy flat Cursor project transcript JSONL layouts under `~/.cursor/projects/*/agent-transcripts/` as read-only transcript sources.
 
-A project transcript SHALL be emitted as a standalone non-resumable entry only when its source identity and cwd can be validated and it does not duplicate a validated Cursor CLI chat.
-
-Subagent transcript files SHALL NOT appear as independent top-level sessions.
+Project transcripts SHALL NOT appear as standalone Vault rows and MAY be used only as exact same-project CLI mirrors or exact child detail referenced by a recognized parent `Task` or `Agent` result.
 
 ### Requirement: Discover Cursor IDE Composer sessions
 
@@ -43,9 +52,13 @@ A missing, locked, unsupported, or malformed IDE store SHALL degrade without fai
 
 Cursor Agent CLI, project transcript, and Cursor IDE Composer identifiers SHALL remain distinct storage domains.
 
-When a project transcript and validated CLI store identify the same chat in the same storage context, the system SHALL emit one CLI entry and use the project transcript only as a detail source or fallback.
+A same-project CLI mirror SHALL remain detail-only, and Cursor IDE or project identifiers SHALL NOT be passed to `agent --resume`.
 
-The system SHALL NOT pass Cursor IDE or unvalidated project-transcript identifiers to `agent --resume`.
+### Requirement: Cursor child transcript identity
+
+A child transcript SHALL be addressed only through a source-qualified project identity derived from the validated parent project and a bounded child Agent ID.
+
+The system SHALL NOT globally match child ids across project buckets or pass them to `agent --resume`.
 
 ### Requirement: Safe Cursor session lookup
 

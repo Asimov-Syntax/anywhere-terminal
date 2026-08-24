@@ -8,7 +8,7 @@ import type { ThemeChangedMessage, VaultContinueSessionMessage, WebViewToExtensi
 import { buildContinuationPrompt } from "../vault/ContinuationPrompt";
 import type { VaultRefreshHint } from "../vault/cacheTypes";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
-import { buildResumeCommandString, type ContinuationTarget, type LaunchMode } from "../vault/LaunchBuilder";
+import type { ContinuationTarget, LaunchMode } from "../vault/LaunchBuilder";
 import { resolveAssistantMessageRef } from "../vault/messageText";
 import { readClaudeSessions, resolveClaudeSessionPath } from "../vault/readers/claudeReader";
 import { listRunningClaudeSessions } from "../vault/readers/runningSessions";
@@ -836,12 +836,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
   /** Build the session's resume command and copy it to the clipboard (host-side). */
   private async handleVaultCopyResumeCommand(entryId: string, webview: vscode.Webview): Promise<void> {
-    const entry = await this.resolveVaultEntry(entryId);
-    if (!entry) {
+    if (!this.vaultLauncher) {
       return;
     }
     try {
-      await vscode.env.clipboard.writeText(await buildResumeCommandString(entry));
+      // Through the launcher so the copy passes the same capability + identity
+      // gates as Resume itself; a rejected proof leaves the clipboard untouched.
+      await vscode.env.clipboard.writeText(await this.vaultLauncher.buildResumeCommand(entryId));
     } catch (err) {
       void this.safeSendWithRetry(webview, {
         type: "error",

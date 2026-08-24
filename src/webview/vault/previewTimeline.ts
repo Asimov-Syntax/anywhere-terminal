@@ -4,7 +4,7 @@
 // produced DOM stays byte-identical to the inlined version. Untrusted strings go
 // through textContent only; the lone innerHTML is the closed-map chevron icon.
 
-import type { VaultSessionDetail, VaultTimelineItem } from "../../vault/types";
+import type { VaultActivityStep, VaultSessionDetail, VaultTimelineItem } from "../../vault/types";
 import { formatRelativeTime } from "./format";
 import { ICON_CHEVRON_DOWN } from "./icons";
 import { teammateAccent } from "./previewColors";
@@ -48,6 +48,14 @@ export interface BoardSelection {
   agentEntryId: string | null;
 }
 
+export interface NestedInvocationFallback {
+  agent?: string;
+  title: string;
+  prompt?: string;
+  result?: string;
+  status?: "running" | "completed" | "failed";
+}
+
 export interface PreviewTimelineBag {
   /** Whether an AI-run (keyed `<prefix>#<idx>`) is expanded past its cap. */
   isRunExpanded: (key: string) => boolean;
@@ -58,7 +66,7 @@ export interface PreviewTimelineBag {
   /** Open/close a nested block; on close the owner also drops any in-flight request. */
   setNestedExpanded: (entryId: string, expanded: boolean) => void;
   /** Fill a nested block's body from cache, or lazily fetch the child detail. */
-  populateNested: (entryId: string, body: HTMLElement) => void;
+  populateNested: (entryId: string, body: HTMLElement, fallback?: NestedInvocationFallback) => void;
   /** Read a workflow board's persisted selection (keyed by run id), or undefined. */
   getBoardSelection: (boardKey: string) => BoardSelection | undefined;
   /** Persist a workflow board's selection (keyed by run id). Records only — must
@@ -127,6 +135,23 @@ export function renderNestedInto(
     return;
   }
   renderTimelineInto(container, timeline, entryId, bag);
+}
+
+/** Restore the bounded invocation card when a Cursor child detail cannot be read.
+ *  The original source-provided Prompt/Result stays visible; no child transcript is
+ *  inferred from the failed request. */
+export function renderNestedInvocationFallback(container: HTMLElement, fallback: NestedInvocationFallback): void {
+  const item: Extract<VaultActivityStep, { kind: "subagent" }> = {
+    kind: "subagent",
+    name: fallback.agent ?? "Agent",
+    title: fallback.title,
+    ...(fallback.prompt !== undefined ? { prompt: fallback.prompt } : {}),
+    ...(fallback.result !== undefined ? { result: fallback.result } : {}),
+    ...(fallback.status !== undefined ? { status: fallback.status } : {}),
+  };
+  const card = activityStep(item);
+  container.replaceChildren(card);
+  card.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
 }
 
 /** One timeline node: user/assistant message, thinking block, or tool/subagent step. */
@@ -358,6 +383,10 @@ function renderSubagentSession(
 
   const body = document.createElement("div");
   body.className = "vault-preview-subagent-body";
+  const fallback =
+    item.prompt !== undefined || item.result !== undefined
+      ? { agent: item.agent, title: item.title, prompt: item.prompt, result: item.result, status: item.status }
+      : undefined;
 
   head.addEventListener("click", () => {
     if (bag.isNestedExpanded(entryId)) {
@@ -369,7 +398,7 @@ function renderSubagentSession(
       bag.setNestedExpanded(entryId, true);
       block.classList.add("is-open");
       head.setAttribute("aria-expanded", "true");
-      bag.populateNested(entryId, body);
+      bag.populateNested(entryId, body, fallback);
     }
   });
   head.setAttribute("aria-expanded", bag.isNestedExpanded(entryId) ? "true" : "false");
@@ -377,7 +406,7 @@ function renderSubagentSession(
   block.append(head, firstMsg, body);
   if (bag.isNestedExpanded(entryId)) {
     block.classList.add("is-open");
-    bag.populateNested(entryId, body);
+    bag.populateNested(entryId, body, fallback);
   }
   return block;
 }

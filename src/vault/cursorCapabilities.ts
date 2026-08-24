@@ -20,7 +20,9 @@ import type { VaultSessionEntry } from "./types";
  * chat id that passes the canonical safe-id validator (no path traversal, no
  * unsafe characters).
  */
-export function isCursorCliResumableEntry(entry: Pick<VaultSessionEntry, "agent" | "source" | "canResume" | "id" | "sessionId">): boolean {
+export function isCursorCliResumableEntry(
+  entry: Pick<VaultSessionEntry, "agent" | "source" | "canResume" | "id" | "sessionId">,
+): boolean {
   return (
     entry.agent === "cursor" &&
     entry.source === "cli" &&

@@ -189,29 +189,39 @@ ConversationSummaryArchive.field 1  → archived JSON message refs
 
 Each blob is capped at 5 MiB to match the installed implementation, total decoded output is bounded, and only reachable blobs are fetched. Recognized JSON roles/content blocks normalize into existing messages and activity steps; system/generated summary records are filtered. Unknown wire types, hash mismatches, missing roots, oversized values, or schema drift return limited metadata.
 
-Cursor `Task`/`Agent` calls remain inline runs rather than fabricated child sessions because observed CLI sessions do not persist separate child JSONL files. The decoder correlates bounded root-reachable `tool-call` and `tool-result` blocks by `toolCallId`; blocking results attach to the invocation, while background launch results contribute only a safe task identity and later injected completion notices attach the final result. The webview reuses the existing collapsible `AGENT` card presentation with inline Prompt/Result content and never emits a standalone tool-result activity step.
+The decoder correlates bounded root-reachable Cursor `Task`/`Agent` `tool-call` and `tool-result` blocks by `toolCallId`; blocking results attach to the invocation, while background launch results contribute only a safe task identity and later injected completion notices attach the final result. It recognizes a child Agent ID only from those correlated bounded results, using a strict safe-id shape; unrelated tool output is never scanned for child identity.
+
+A child Agent ID is not a CLI Resume identity. After parent CLI detail validates the parent store and cwd, the combined reader derives that cwd's exact project bucket and point-resolves only `<bucket>/agent-transcripts/<child-id>/<child-id>.jsonl` or the legacy flat equivalent. Exactly one contained candidate converts the inline invocation into the existing lazy `subagentSession` shape with a source-qualified `cursor:project:<bucket>:<child-id>` entry id. Expanding the existing `AGENT` card therefore reuses nested-detail IPC and timeline rendering for the saved child transcript; no match, ambiguity, or limited child detail retains the bounded inline Prompt/Result card. No global child-id scan or fabricated transcript is permitted.
 
 ### D12: Treat project JSONL as a CLI mirror/fallback, not IDE identity
 
-The project transcript reader supports nested `<id>/<id>.jsonl` and legacy flat `<id>.jsonl`, skips `subagents/**` as top-level rows, and parses in bounded chunks with physical-line locators. It preserves text and tool-use structure, tolerates incomplete tails and malformed/unknown records locally, and never invents historical timestamps.
+The project transcript reader supports nested `<id>/<id>.jsonl` and legacy flat `<id>.jsonl` and parses an explicitly resolved file in bounded chunks with physical-line locators. It preserves text and tool-use structure, tolerates incomplete tails and malformed/unknown records locally, and never invents historical timestamps.
 
-When a JSONL id matches a validated CLI `agentId` in the same storage context, the CLI row owns Resume and the JSONL supplies incremental detail/fallback. An unmatched transcript is source-qualified and non-resumable, and is listed only when a safe cwd can be independently established.
+Project JSONL envelopes expose no metadata-level parent/child marker: observed parent and child files share the same `role` plus `message.content` shape. Listing every unmatched JSONL would therefore publish child agents as top-level sessions, while classifying them would require transcript-content scans during indexing. The accepted boundary lists neither: project JSONL is an exact detail source only. A same-project id matching a validated CLI chat supplies mirror/fallback detail; a safe Agent ID from a validated parent Task result supplies lazy child detail. Orphan unmatched JSONL remains hidden rather than weakening the metadata-only list contract.
 
 ### D13: Read Cursor IDE Composer as a separate SQLite source
 
 Cursor IDE Composer history is read from the supported local `globalStorage/state.vscdb` records using the same WAL-aware SQLite substrate and a Cursor IDE-specific compatibility profile derived from `claude-code-history-viewer`. IDE session ids never enter CLI Resume commands.
 
-User-visible Cursor entries carry source identity (`cli` or `ide`), while project JSONL remains an internal CLI-mirror/fallback classification unless unmatched. Vault ids use explicit non-colliding domains:
+Top-level user-visible Cursor entries carry source identity (`cli` or `ide`); project JSONL remains a view-only detail source. Vault ids use explicit non-colliding domains:
 
 ```text
-validated CLI:    cursor:<chat-id>
-unmatched JSONL:  cursor:project:<base64url-project-bucket>:<safe-transcript-id>
-IDE Composer:     cursor:ide:<base64url-storage-context>:<safe-composer-id>
+CLI row:              cursor:<chat-id>
+project/child detail: cursor:project:<base64url-project-bucket>:<safe-transcript-id>
+IDE Composer row:     cursor:ide:<base64url-storage-context>:<safe-composer-id>
 ```
 
-Only the first form supplies its unqualified `chat-id` as the CLI Resume operand. Decoders validate and containment-check every encoded storage context and leaf id before path construction.
+Only the first form may supply its unqualified `chat-id` as the CLI Resume operand, and only after the explicit identity proof below. Project identities exist solely so the existing nested-detail route can address an exact mirror or child transcript; they are never top-level rows or launch operands. Decoders validate and containment-check every encoded storage context and leaf id before path construction.
 
-Selected CLI detail may use an in-memory cache keyed by `chatId + latestRootBlobId`; project and IDE list caches store stamps and derived metadata only. Open previews watch only their exact DB/WAL or JSONL source, and changed-path refresh branches by Cursor source before generic chat-id validation.
+Selected CLI detail may use an in-memory cache keyed by `chatId + latestRootBlobId`; IDE list caches store stamps and derived metadata only. Open top-level previews watch their exact DB/WAL and matching mirror source; nested child detail remains an explicit lazy read. Changed-path refresh branches by top-level Cursor source before generic chat-id validation.
+
+### D14: Prove Cursor CLI identity on explicit Resume actions
+
+Supported schema-1 `meta.json` omits `agentId`, so list indexing cannot both remain metadata-only and prove the store identity. The list therefore treats a unique safe chat-directory name as a candidate CLI identity and `canResume` as source capability, not final authorization.
+
+Resume and Copy Resume Command share one host-side proof before executable resolution or side effects. The proof point-resolves the CLI candidate, opens one WAL-aware disposable snapshot, reads only the bounded supported store profile plus `meta['0']`, and requires stored `agentId === candidate.chatId`. Missing, locked, malformed, unsupported, or mismatched stores reject the action before command construction, clipboard mutation, or terminal creation; they do not remove the metadata row. Detail decoding reuses the same profile/identity parser before following transcript roots.
+
+`VaultLauncher` owns both launch and command-copy entry resolution so the proof cannot drift between actions. `LaunchBuilder` remains pure and retains its independent source/capability rejection; `TerminalViewProvider` no longer builds Resume strings from an entry it resolved separately.
 
 ## Interfaces
 
@@ -245,14 +255,37 @@ export interface CursorFileCacheEntry {
   dbPresent: boolean;
   entry: VaultSessionEntry;
 }
-// Cursor cache adds safe CLI locations plus project/IDE stamps and derived entries;
-// decoded transcript content is never persisted.
+// Cursor cache adds safe CLI locations plus IDE stamps and derived entries;
+// project JSONL is exact-detail-only and decoded transcript content is never persisted.
+
+// src/vault/readers/cursorStore.ts
+export async function verifyCursorStoreIdentity(
+  dbPath: string,
+  expectedAgentId: string,
+  options?: CursorStoreOptions,
+): Promise<boolean>;
+
+// src/vault/readers/cursorReader.ts
+export async function resolveCursorProjectTranscriptForCwd(
+  transcriptId: string,
+  cwd: string,
+  options?: CursorCombinedReaderOptions,
+): Promise<CursorTranscriptCandidate | null>;
 
 // src/vault/VaultService.ts
 export interface VaultWatchTarget {
   baseDir: string;
   glob: string;
   events?: Array<"create" | "change" | "delete">;
+}
+export class VaultService {
+  verifyResumeIdentity(entry: VaultSessionEntry): Promise<boolean>;
+}
+
+// src/vault/VaultLauncher.ts
+export class VaultLauncher {
+  resolve(entryId: string, mode: LaunchMode, prompt?: string, target?: ContinuationTarget): Promise<CreateSessionOptions>;
+  buildResumeCommand(entryId: string): Promise<string>;
 }
 
 // src/cursor/CursorHookRuntime.ts
@@ -294,10 +327,10 @@ setWaiting(sessionId: string, waiting: boolean): void;
 |---|---|---|
 | Cursor metadata readers | Private metadata drift, oversized fields, or duplicate ids corrupt the list | D3 exact schema/bounds, containment, grouped ambiguity rejection, unreadable accounting |
 | CLI transcript decoder | Private graph drift, malicious blobs, or WAL inconsistency exposes or misorders content | D11 one snapshot, root-reachable reads, hash verification, per-blob/total bounds, limited fallback |
-| Project transcript mirror | JSONL duplicates CLI rows or incomplete appends corrupt detail | D12 source reconciliation, byte-offset parsing, incomplete-tail tolerance, non-resumable unmatched entries |
+| Project transcript mirror | JSONL duplicates CLI rows, publishes child agents as rows, or crosses project context | D12 exact same-project point resolution only, no standalone project rows, byte-offset parsing, incomplete-tail tolerance |
 | Cursor IDE history | Composer ids or state records are mistaken for CLI chats | D13 source-qualified ids, separate compatibility profile, no Resume/Fork |
-| Resume identifier | A storage UUID is passed to an unrelated resume-id domain | D4 host and UI capability gates; only validated CLI entries enable selected Resume |
-| Cursor history scale | Chat count grows and active stores write continuously | D3/D13 metadata-only list caches, root-keyed detail reuse, exact-source preview watchers |
+| Resume identifier | A stale directory id or another storage UUID reaches `agent --resume` | D4 UI/source gates plus D14 explicit bounded store-identity proof for Resume and Copy |
+| Cursor history scale | Chat count grows and active stores write continuously | D3/D13 metadata-only top-level list caches, root-keyed detail reuse, exact-source preview watchers |
 | Executable aliases | An unrelated `agent` binary is launched | D2 requires interactive Cursor help capabilities; launch re-probes and falls back to `cursor-agent` |
 | Hook config | AT windows or future schemas clobber user hooks | D5 machine scope, stable ownership, bounded advisory lock, compare/retry, atomic replace, untouched unsupported schema |
 | Hook availability | Missing lifecycle events leave a tab stuck working | D7 exact event table, quiet completion, freshness lease, immediate disable clear, PTY-output fallback |

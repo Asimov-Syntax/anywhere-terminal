@@ -36,11 +36,26 @@ function makeEntry(overrides: Partial<VaultSessionEntry> = {}): VaultSessionEntr
 
 // The launcher resolves the single entry by id via getEntry (not the full list);
 // the stub returns the matching entry as-is, preserving the test's canFork.
-function stubService(entries: VaultSessionEntry[]): VaultService {
+function stubService(
+  entries: VaultSessionEntry[],
+  verifyResumeIdentity: (entry: VaultSessionEntry) => Promise<boolean> = async () => true,
+): VaultService {
   return {
     getEntry: async (entryId: string): Promise<VaultSessionEntry | null> =>
       entries.find((e) => e.id === entryId) ?? null,
+    verifyResumeIdentity,
   } as unknown as VaultService;
+}
+
+function cursorCliEntry(): VaultSessionEntry {
+  return makeEntry({
+    id: "cursor:chat-1",
+    agent: "cursor",
+    sessionId: "chat-1",
+    source: "cli",
+    canFork: false,
+    canResume: true,
+  });
 }
 
 describe("VaultLauncher.resolve", () => {
@@ -211,9 +226,67 @@ describe("VaultLauncher.resolve", () => {
     await expect(launcher.resolve("cursor:chat-1", "fork")).rejects.toMatchObject({ code: "fork-unsupported" });
   });
 
+  it("refuses a Cursor resume whose stored identity fails the proof, before any executable probe", async () => {
+    const verify = vi.fn(async () => false);
+    const launcher = new VaultLauncher(stubService([cursorCliEntry()], verify), {});
+    await expect(launcher.resolve("cursor:chat-1", "resume")).rejects.toMatchObject({
+      code: "resume-unsupported",
+    });
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(resolveAgentExecutable).not.toHaveBeenCalled();
+  });
+
+  it("skips the resume proof for continue and fork", async () => {
+    const verify = vi.fn(async () => false);
+    const launcher = new VaultLauncher(stubService([cursorCliEntry()], verify), {});
+    await expect(launcher.resolve("cursor:chat-1", "continue", "carry on")).resolves.toMatchObject({
+      shell: "cursor-agent",
+    });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it("throws unknown-entry for an id not in the list", async () => {
     const launcher = new VaultLauncher(stubService([]), {});
     await expect(launcher.resolve("claude:nope", "resume")).rejects.toBeInstanceOf(VaultLaunchError);
     await expect(launcher.resolve("claude:nope", "resume")).rejects.toMatchObject({ code: "unknown-entry" });
+  });
+});
+
+describe("VaultLauncher.buildResumeCommand", () => {
+  it("builds the Cursor resume command once the stored identity is proven", async () => {
+    const verify = vi.fn(async () => true);
+    const launcher = new VaultLauncher(stubService([cursorCliEntry()], verify), {});
+    await expect(launcher.buildResumeCommand("cursor:chat-1")).resolves.toBe("cursor-agent --resume chat-1");
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the command when the proof fails, without probing an executable", async () => {
+    const launcher = new VaultLauncher(
+      stubService([cursorCliEntry()], async () => false),
+      {},
+    );
+    await expect(launcher.buildResumeCommand("cursor:chat-1")).rejects.toMatchObject({
+      code: "resume-unsupported",
+    });
+    expect(resolveAgentExecutable).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-resumable Cursor sources and unknown entries", async () => {
+    const ide = makeEntry({
+      id: "cursor:ide:d29ya3NwYWNlLTE:composer-1",
+      agent: "cursor",
+      sessionId: "ide:d29ya3NwYWNlLTE:composer-1",
+      source: "ide",
+      canFork: false,
+      canResume: false,
+    });
+    const launcher = new VaultLauncher(stubService([ide]), {});
+    await expect(launcher.buildResumeCommand(ide.id)).rejects.toMatchObject({ code: "resume-unsupported" });
+    await expect(launcher.buildResumeCommand("cursor:missing")).rejects.toMatchObject({ code: "unknown-entry" });
+  });
+
+  it("keeps non-Cursor command copy unchanged", async () => {
+    const launcher = new VaultLauncher(stubService([makeEntry()]), {});
+    await expect(launcher.buildResumeCommand("claude:sess-1")).resolves.toBe("claude --resume sess-1");
   });
 });

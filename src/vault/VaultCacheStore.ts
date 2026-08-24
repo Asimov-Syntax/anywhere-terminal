@@ -17,7 +17,6 @@ import {
   isValidCursorLocationIndex,
   MAX_CURSOR_IDE_CACHE_ENTRIES,
   MAX_CURSOR_IDE_SOURCE_STAMPS,
-  MAX_CURSOR_PROJECT_CACHE_ENTRIES,
   VAULT_CACHE_VERSION,
   type VaultListCacheFileV1,
 } from "./cacheTypes";
@@ -90,27 +89,6 @@ function isValidCursorEntry(
     value.canResume === canResume &&
     value.canFork === false
   );
-}
-
-function isValidCursorProjects(value: unknown): boolean {
-  if (!isRecord(value)) {
-    return false;
-  }
-  const entries = Object.entries(value);
-  if (entries.length > MAX_CURSOR_PROJECT_CACHE_ENTRIES) {
-    return false;
-  }
-  for (const [filePath, cached] of entries) {
-    if (!path.isAbsolute(filePath) || filePath.length > 16 * 1024 || !isRecord(cached) || !isValidStamp(cached.stamp)) {
-      return false;
-    }
-    const sessionId =
-      isRecord(cached.entry) && typeof cached.entry.sessionId === "string" ? cached.entry.sessionId : "";
-    if (!sessionId.startsWith("project:") || !isValidCursorEntry(cached.entry, sessionId, undefined, false)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function isValidCursorIde(value: unknown): boolean {
@@ -192,10 +170,7 @@ function isValidReaderCache(c: unknown): boolean {
         return false;
       }
     }
-    if (v.projects !== undefined && !isValidCursorProjects(v.projects)) {
-      return false;
-    }
-    if (v.projectUnreadable !== undefined && (!isFiniteNumber(v.projectUnreadable) || v.projectUnreadable < 0)) {
+    if ("projects" in v || "projectUnreadable" in v) {
       return false;
     }
     if (v.ide !== undefined && !isValidCursorIde(v.ide)) {

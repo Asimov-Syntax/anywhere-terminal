@@ -221,6 +221,33 @@ describe("VaultService.getEntry: single-entry resolve", () => {
   });
 });
 
+describe("VaultService.verifyResumeIdentity: D14 explicit proof", () => {
+  it("proves a matching Cursor store identity via the injected verifier", async () => {
+    const verify = vi.fn(async () => true);
+    const svc = new VaultService({ verifyCursorResumeIdentityFn: verify });
+    await expect(svc.verifyResumeIdentity(entry("cursor", "chat-1", 1))).resolves.toBe(true);
+    expect(verify).toHaveBeenCalledWith("chat-1", {});
+  });
+
+  it("rejects a mismatched Cursor store identity", async () => {
+    const svc = new VaultService({ verifyCursorResumeIdentityFn: vi.fn(async () => false) });
+    await expect(svc.verifyResumeIdentity(entry("cursor", "chat-1", 1))).resolves.toBe(false);
+  });
+
+  it("rejects when the Cursor store is unavailable", async () => {
+    const verify = vi.fn(async () => false);
+    const svc = new VaultService({ verifyCursorResumeIdentityFn: verify });
+    await expect(svc.verifyResumeIdentity(entry("cursor", "chat-unavailable", 1))).resolves.toBe(false);
+  });
+
+  it("passes through non-Cursor entries without invoking the Cursor verifier", async () => {
+    const verify = vi.fn(async () => false);
+    const svc = new VaultService({ verifyCursorResumeIdentityFn: verify });
+    await expect(svc.verifyResumeIdentity(entry("claude", "session-1", 1))).resolves.toBe(true);
+    expect(verify).not.toHaveBeenCalled();
+  });
+});
+
 describe("VaultService cache: listCached + refresh", () => {
   function makeCacheStore(initial: VaultListCacheFileV1 | null = null) {
     let stored = initial;

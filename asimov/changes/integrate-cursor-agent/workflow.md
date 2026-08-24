@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -40,4 +40,8 @@ Final review: Three authorized rounds completed; accepted round-3 findings were 
 User feedback: Cursor must match the existing Vault contract — row activation previews; Resume remains explicit. Both Cursor Agent CLI history and Cursor IDE Composer history are now in scope.
 Replan: The accepted metadata-only design was invalidated after structural proof that bounded local CLI `store.db` decoding and IDE `state.vscdb` preview are feasible.
 Review cap: User explicitly authorized round 4 and one follow-up review after the two review-fix waves.
-Handback: Round-4 B9 conflicts with the installed schema — 13/13 schema-1 `meta.json` files omit `agentId`; proving it requires explicit `store.db` access, which list indexing forbids.
+Replan decision: User selected explicit Resume/Copy store-identity proof while keeping list indexing metadata-only; unmatched project JSONL stays hidden and is used only for exact CLI mirrors or same-project Agent-ID child detail.
+Replan evidence: Cursor parent and child project JSONL share no metadata-level parent marker; the reported saved child `81840b03-aaff-4158-8797-a52cce1ae3d2` resolves in the parent's exact project and normalizes to 2 messages plus 49 tool steps.
+Validation: 17 warnings remain only on previously verified tasks; revised pending tasks validate without warnings or lease overlap.
+Task 9_9: user walked the Extension Development Host smoke and accepted the UI; residual Cursor data-quality issues are deferred to a follow-up change rather than widening this one.
+Verify gate run: type check at the recorded markdownLite baseline, `biome check src/` down from 8 errors at HEAD to 0 (formatting only; 80 style warnings remain, 44 of them `useBlockStatements` in `cursorStore.ts`), unit suite 2806 pass.

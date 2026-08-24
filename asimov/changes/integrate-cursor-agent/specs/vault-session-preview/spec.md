@@ -31,11 +31,21 @@ A limited detail SHALL NOT fabricate transcript messages, tool activity, token u
 
 ### Requirement: Cursor subagent run preview
 
-Cursor Agent `Task` and `Agent` calls SHALL render with the same collapsible `AGENT` card presentation used by other Vault providers rather than as a plain `Subagent → <type>` activity message.
+Cursor Agent `Task` and `Agent` calls SHALL use the same collapsible `AGENT` card presentation as other Vault providers.
 
-When the canonical CLI store contains a correlated bounded tool result, expanding the card SHALL reveal the delegated prompt and final result without counting the result as a second tool or conversation message.
+A correlated bounded result SHALL remain attached to its invocation without becoming another tool or conversation message.
 
-Background launch acknowledgements and completion notifications SHALL be correlated by their safe task identity when available; a project JSONL mirror without result records SHALL still render the collapsible invocation card without fabricating a result or child transcript.
+### Requirement: Cursor saved child transcript drill-down
+
+A safe Agent ID in a recognized result SHALL open a saved child transcript only when exactly one matching file exists in the validated parent project bucket.
+
+The child identity SHALL be source-qualified, non-resumable, and never resolved through a global id scan.
+
+### Requirement: Cursor subagent result fallback
+
+A missing, unsafe, absent, ambiguous, or limited child transcript SHALL leave the card on its bounded Prompt and Result without fabricating content.
+
+Background launch and completion records MAY supply the child Agent ID only through their existing safe task correlation.
 
 ### Requirement: Cursor transcript privacy
 
@@ -49,4 +59,4 @@ Only normalized timeline records and explicitly sanitized recognized message rec
 
 Decoded Cursor timeline records SHALL support the existing provider-neutral preview navigation, text copy, sanitized raw-record copy where available, and Continue in New Session flow.
 
-Cursor Agent CLI Resume SHALL target the whole validated chat, never a message anchor; Cursor IDE and unmatched project-transcript entries SHALL remain non-resumable.
+Cursor Agent CLI Resume SHALL target the whole validated chat, never a message anchor; Cursor IDE and project-transcript detail identities SHALL remain non-resumable.

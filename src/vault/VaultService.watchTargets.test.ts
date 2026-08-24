@@ -44,12 +44,6 @@ describe("VaultService.getStoreWatchTargets", () => {
         },
         { baseDir: expect.any(String), glob: "**/store.db", events: ["create", "delete"], agent: "cursor" },
         {
-          baseDir: expect.stringContaining(path.join(".cursor", "projects")),
-          glob: "**/agent-transcripts/**/*.jsonl",
-          events: ["create", "change", "delete"],
-          agent: "cursor",
-        },
-        {
           baseDir: expect.stringContaining(path.join("Cursor", "User", "globalStorage")),
           glob: "state.vscdb",
           events: ["create", "change", "delete"],
@@ -63,6 +57,8 @@ describe("VaultService.getStoreWatchTargets", () => {
         },
       ]),
     );
+    expect(cursor).toHaveLength(4);
+    expect(cursor.some((target) => target.baseDir.includes(path.join(".cursor", "projects")))).toBe(false);
   });
 });
 

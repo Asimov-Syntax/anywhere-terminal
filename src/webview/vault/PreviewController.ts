@@ -23,7 +23,14 @@ import type { ForkPoint } from "./forkPoint";
 import { agentLabel } from "./format";
 import { mountMessageActions } from "./messageActions";
 import { buildPreviewHeader as buildPreviewHeaderDom } from "./previewHeader";
-import { type BoardSelection, type PreviewTimelineBag, renderNestedInto, renderTimelineInto } from "./previewTimeline";
+import {
+  type BoardSelection,
+  type NestedInvocationFallback,
+  type PreviewTimelineBag,
+  renderNestedInto,
+  renderNestedInvocationFallback,
+  renderTimelineInto,
+} from "./previewTimeline";
 import { buildPreviewMeta, loadingBody, type MetaCopyTarget } from "./renderAtoms";
 import type { VaultPanelPostMessage } from "./VaultPanel";
 import { beginInlineRename, canResumeVaultEntry, cursorSourceLabel } from "./vaultListView";
@@ -106,6 +113,8 @@ export class PreviewController {
    *  in-flight detail response to its block. All reset when the preview closes. */
   private readonly expandedNested = new Set<string>();
   private readonly nestedDetails = new Map<string, VaultSessionDetail>();
+  /** Source-recorded invocation fallback, keyed by the child view-only identity. */
+  private readonly nestedFallbacks = new WeakMap<HTMLElement, NestedInvocationFallback>();
   /** Child entryId → every open block awaiting that detail. A Set (not one element)
    *  so two blocks sharing a child entryId both resolve from a single response. */
   private readonly pendingNested = new Map<string, Set<HTMLElement>>();
@@ -160,7 +169,7 @@ export class PreviewController {
           this.pendingNested.delete(entryId);
         }
       },
-      populateNested: (entryId, body) => this.populateNested(entryId, body),
+      populateNested: (entryId, body, fallback) => this.populateNested(entryId, body, fallback),
       getBoardSelection: (boardKey) => this.boardSelections.get(boardKey),
       // Record only — the board already updated its own DOM; a re-render here would
       // be the very thing this persistence exists to avoid (D4).
@@ -412,16 +421,24 @@ export class PreviewController {
     const nestedContainers = this.pendingNested.get(msg.entryId);
     if (nestedContainers) {
       this.pendingNested.delete(msg.entryId);
-      if (msg.detail && !msg.error) {
-        this.nestedDetails.set(msg.entryId, msg.detail);
+      const usableDetail =
+        msg.detail && !msg.error && msg.detail.contentKind !== "metadata-only" && msg.detail.partial !== true
+          ? msg.detail
+          : undefined;
+      if (usableDetail) {
+        this.nestedDetails.set(msg.entryId, usableDetail);
         for (const container of nestedContainers) {
-          renderNestedInto(container, msg.detail, msg.entryId, this.timelineBag);
+          renderNestedInto(container, usableDetail, msg.entryId, this.timelineBag);
           scrollBoardDetailToEnd(container);
         }
       } else {
-        const text = msg.error ?? "Couldn't read this sub-session.";
         for (const container of nestedContainers) {
-          container.textContent = text;
+          const fallback = this.nestedFallbacks.get(container);
+          if (fallback) {
+            renderNestedInvocationFallback(container, fallback);
+          } else {
+            container.textContent = msg.error ?? "Couldn't read this sub-session.";
+          }
         }
       }
       return;
@@ -822,7 +839,10 @@ export class PreviewController {
   }
 
   /** Fill a subagent block's body: from cache, or lazily fetch the child detail. */
-  private populateNested(entryId: string, body: HTMLElement): void {
+  private populateNested(entryId: string, body: HTMLElement, fallback?: NestedInvocationFallback): void {
+    if (fallback) {
+      this.nestedFallbacks.set(body, fallback);
+    }
     const cached = this.nestedDetails.get(entryId);
     if (cached) {
       // Cached render is synchronous; if this id is already on the render stack the

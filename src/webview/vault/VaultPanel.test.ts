@@ -1062,6 +1062,192 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(head?.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("opens a saved Cursor child transcript through nested detail IPC", () => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: (message) => posted.push(message),
+      getInitialCollapsed: () => false,
+    });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [
+          {
+            kind: "subagentSession",
+            entryId: "cursor:project:bucket:child-1",
+            agent: "Explore",
+            title: "Inspect the watcher",
+            firstMessage: "Inspect the watcher and reader flow",
+            prompt: "Inspect the watcher and reader flow",
+            result: "VaultWatchCoordinator owns live follow.",
+            status: "completed",
+          },
+        ],
+      }),
+    });
+
+    const head = host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head");
+    head?.click();
+    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: "cursor:project:bucket:child-1" });
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:project:bucket:child-1",
+      detail: detail({
+        entryId: "cursor:project:bucket:child-1",
+        contentKind: "timeline",
+        timeline: [{ kind: "message", role: "assistant", text: "Child transcript rendered." }],
+      }),
+    });
+
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toContain("Child transcript rendered.");
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).not.toContain(
+      "VaultWatchCoordinator owns live follow.",
+    );
+  });
+
+  it("keeps the Cursor invocation fallback when a child detail fails", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [
+          {
+            kind: "subagentSession",
+            entryId: "cursor:project:bucket:child-1",
+            agent: "Explore",
+            title: "Inspect the watcher",
+            prompt: "Inspect the watcher and reader flow",
+            result: "VaultWatchCoordinator owns live follow.",
+            status: "completed",
+          },
+        ],
+      }),
+    });
+
+    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:project:bucket:child-1",
+      error: "Child transcript unavailable.",
+    });
+
+    const fallback = host.querySelector(".vault-preview-subagent-body");
+    expect(fallback?.textContent).toContain("PromptInspect the watcher and reader flow");
+    expect(fallback?.textContent).toContain("Result · completedVaultWatchCoordinator owns live follow.");
+  });
+
+  it("keeps each invocation fallback when duplicate cards share one failed child detail", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    const parent = {
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [
+          {
+            kind: "subagentSession",
+            entryId: "cursor:project:bucket:child-1",
+            agent: "Explore",
+            title: "First task",
+            prompt: "first prompt",
+            result: "first result",
+          },
+          {
+            kind: "subagentSession",
+            entryId: "cursor:project:bucket:child-1",
+            agent: "Explore",
+            title: "Second task",
+            prompt: "second prompt",
+            result: "second result",
+          },
+        ],
+      }),
+    } as const;
+    panel.handleSessionDetailResponse(parent);
+
+    // One shared child id: expanding either card opens both on the next render.
+    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    panel.handleSessionDetailResponse(parent);
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:project:bucket:child-1",
+      error: "Child transcript unavailable.",
+    });
+
+    // The fallback renders its own card inside each body; keep the outer two.
+    const bodies = [...host.querySelectorAll(".vault-preview-subagent-body")].filter(
+      (body) => body.querySelector(".vault-preview-subagent-head") !== null,
+    );
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].textContent).toContain("first prompt");
+    expect(bodies[0].textContent).toContain("first result");
+    expect(bodies[0].textContent).not.toContain("second prompt");
+    expect(bodies[1].textContent).toContain("second prompt");
+    expect(bodies[1].textContent).toContain("second result");
+    expect(bodies[1].textContent).not.toContain("first prompt");
+  });
+
+  it("drops a stale Cursor child detail response after switching previews", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(
+      result([
+        entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" }),
+        entry({ id: "claude:other", agent: "claude" }),
+      ]),
+    );
+    const rows = host.querySelectorAll<HTMLElement>(".vault-row");
+    rows[0].click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [
+          {
+            kind: "subagentSession",
+            entryId: "cursor:project:bucket:child-1",
+            agent: "Explore",
+            title: "Inspect the watcher",
+            prompt: "bounded prompt",
+            result: "bounded result",
+          },
+        ],
+      }),
+    });
+    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    rows[1].click();
+
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:project:bucket:child-1",
+      detail: detail({
+        entryId: "cursor:project:bucket:child-1",
+        timeline: [{ kind: "message", role: "assistant", text: "STALE CHILD" }],
+      }),
+    });
+
+    expect(host.querySelector(".vault-preview")?.textContent).not.toContain("STALE CHILD");
+  });
+
   it("meta block is Folder+branch / Session id+path / Activity age+stats, all copyable", async () => {
     const host = createHost();
     const writes = stubClipboard();

@@ -10,11 +10,13 @@
 import { isCursorCliResumableEntry } from "./cursorCapabilities";
 import {
   build,
+  buildResumeCommandString,
   type ContinuationTarget,
   type LaunchMode,
   resolveLaunchExecutable,
   VaultLaunchError,
 } from "./LaunchBuilder";
+import type { VaultSessionEntry } from "./types";
 import type { VaultService } from "./VaultService";
 
 export interface CreateSessionOptions {
@@ -44,19 +46,7 @@ export class VaultLauncher {
     prompt?: string,
     target?: ContinuationTarget,
   ): Promise<CreateSessionOptions> {
-    // Resolve the single entry by id (point/locate-by-id lookup) instead of a full
-    // `list()` over every agent store — launching must not block on scanning the
-    // whole session index (e.g. the multi-GB opencode db). See VaultService.getEntry.
-    const entry = await this.vaultService.getEntry(entryId);
-    if (!entry) {
-      throw new VaultLaunchError(`No vault session: ${entryId}`, "unknown-entry");
-    }
-    if (
-      mode === "resume" &&
-      (entry.canResume === false || (entry.agent === "cursor" && !isCursorCliResumableEntry(entry)))
-    ) {
-      throw new VaultLaunchError(`Resume is not supported for ${entryId}`, "resume-unsupported");
-    }
+    const entry = await this.resolveLaunchable(entryId, mode);
     if (mode === "fork" && !entry.canFork) {
       throw new VaultLaunchError(`Fork is not supported for ${entryId}`, "fork-unsupported");
     }
@@ -74,5 +64,36 @@ export class VaultLauncher {
       env: Object.keys(spec.env).length > 0 ? spec.env : undefined,
       isAgentLaunch: true,
     };
+  }
+
+  /** The shell-quoted resume command for an entry, gated by the same proof as
+   *  `resolve(entryId, "resume")` so a copy can't hand out a command the launcher
+   *  would refuse to run (spec: Cursor explicit Resume identity proof). */
+  async buildResumeCommand(entryId: string): Promise<string> {
+    const entry = await this.resolveLaunchable(entryId, "resume");
+    return buildResumeCommandString(entry);
+  }
+
+  /** Resolve an entry and settle every host-side gate that must precede an
+   *  executable probe or any external side effect: source capability first, then
+   *  Cursor's bounded store-identity proof (D14). */
+  private async resolveLaunchable(entryId: string, mode: LaunchMode): Promise<VaultSessionEntry> {
+    // Resolve the single entry by id (point/locate-by-id lookup) instead of a full
+    // `list()` over every agent store — launching must not block on scanning the
+    // whole session index (e.g. the multi-GB opencode db). See VaultService.getEntry.
+    const entry = await this.vaultService.getEntry(entryId);
+    if (!entry) {
+      throw new VaultLaunchError(`No vault session: ${entryId}`, "unknown-entry");
+    }
+    if (mode !== "resume") {
+      return entry;
+    }
+    if (entry.canResume === false || (entry.agent === "cursor" && !isCursorCliResumableEntry(entry))) {
+      throw new VaultLaunchError(`Resume is not supported for ${entryId}`, "resume-unsupported");
+    }
+    if (!(await this.vaultService.verifyResumeIdentity(entry))) {
+      throw new VaultLaunchError(`Couldn't verify the stored session identity for ${entryId}`, "resume-unsupported");
+    }
+    return entry;
   }
 }

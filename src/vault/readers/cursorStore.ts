@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { type SqliteSnapshot, withSqliteSnapshot } from "../sqlite";
 import type { VaultActivityStep, VaultTimelineItem } from "../types";
-import { type CursorNormalizedRecord, normalizeCursorRecord } from "./cursorNormalization";
+import {
+  type CursorNormalizedRecord,
+  type CursorSubagentStep,
+  type CursorToolResult,
+  normalizeCursorRecord,
+} from "./cursorNormalization";
 
 const MAX_META_HEX_CHARS = 128 * 1024;
 export const MAX_CURSOR_BLOB_BYTES = 5 * 1024 * 1024;
@@ -246,22 +251,41 @@ function compatibleProfile(row: Record<string, unknown>): boolean {
   );
 }
 
-async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string): Promise<CursorStoreResult> {
+interface CursorStoreProfile {
+  agentId: string;
+  meta: Record<string, unknown>;
+}
+
+/**
+ * D14/D9: read ONLY the bounded supported store profile plus `meta['0']` — no
+ * blob is fetched and no transcript root is followed. Shared by the deferred
+ * identity proof (`verifyCursorStoreIdentity`) and full detail decoding
+ * (`decodeSnapshot`), so the two paths can never drift on what "compatible and
+ * identified" means.
+ */
+async function readCursorStoreProfile(snapshot: SqliteSnapshot): Promise<CursorStoreProfile | undefined> {
   const profileResult = await snapshot.query(CURSOR_PROFILE_SQL);
-  if (profileResult.status !== "ok" || profileResult.rows.length !== 1) return limited();
+  if (profileResult.status !== "ok" || profileResult.rows.length !== 1) return undefined;
   const profile = profileResult.rows[0];
-  if (!compatibleProfile(profile)) return limited();
+  if (!compatibleProfile(profile)) return undefined;
 
   const metaBytes = decodeHex(profile.meta_value, MAX_META_HEX_CHARS);
-  if (!metaBytes) return limited();
+  if (!metaBytes) return undefined;
   let meta: Record<string, unknown> | undefined;
   try {
     meta = asObject(JSON.parse(metaBytes.toString("utf8")));
   } catch {
-    return limited();
+    return undefined;
   }
-  if (!meta || meta.agentId !== expectedAgentId) return limited();
-  const rootValue = typeof meta.latestRootBlobId === "string" ? meta.latestRootBlobId : meta.rootBlobId;
+  if (!meta || typeof meta.agentId !== "string") return undefined;
+  return { agentId: meta.agentId, meta };
+}
+
+async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string): Promise<CursorStoreResult> {
+  const profile = await readCursorStoreProfile(snapshot);
+  if (!profile || profile.agentId !== expectedAgentId) return limited();
+  const rootValue =
+    typeof profile.meta.latestRootBlobId === "string" ? profile.meta.latestRootBlobId : profile.meta.rootBlobId;
   if (typeof rootValue !== "string" || !HASH_RE.test(rootValue)) return limited();
 
   const fetchState: BlobFetchState = { blobs: new Map(), totalBytes: 0, count: 0 };
@@ -284,18 +308,18 @@ async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string)
 
   const timeline: VaultTimelineItem[] = [];
   const recentActivity: VaultActivityStep[] = [];
-  const subagentsByCallId = new Map<string, Extract<VaultActivityStep, { kind: "subagent" }>>();
-  const subagentsByTaskId = new Map<string, Extract<VaultActivityStep, { kind: "subagent" }>>();
-  const pendingResults = new Map<string, { result: string; taskId?: string }>();
+  const subagentsByCallId = new Map<string, CursorSubagentStep>();
+  const subagentsByTaskId = new Map<string, CursorSubagentStep>();
+  const pendingResults = new Map<string, CursorToolResult>();
   const seen = new Set<string>();
   let normalizedTextChars = 0;
   let messageCount = 0;
   let toolCount = 0;
   let subagentCount = 0;
-  const applyToolResult = (
-    step: Extract<VaultActivityStep, { kind: "subagent" }>,
-    result: { result: string; taskId?: string },
-  ) => {
+  const applyToolResult = (step: CursorSubagentStep, result: CursorToolResult) => {
+    if (result.childAgentId) {
+      step.childAgentId = result.childAgentId;
+    }
     if (step.background) {
       step.status = "running";
       if (result.taskId) {
@@ -342,6 +366,9 @@ async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string)
         if (record.notice.result) {
           step.result = record.notice.result;
         }
+        if (record.notice.childAgentId) {
+          step.childAgentId = record.notice.childAgentId;
+        }
         step.status = "completed";
         correlatedNotice = true;
       }
@@ -371,4 +398,25 @@ export async function readCursorStoreDetail(
     decodeSnapshot(snapshot, expectedAgentId),
   );
   return snapshotResult.status === "ok" ? snapshotResult.value : limited();
+}
+
+/**
+ * D14 explicit Resume identity proof: open one WAL-aware disposable snapshot,
+ * read only the bounded supported store profile plus `meta['0']`, and require
+ * `agentId === expectedAgentId`. An unavailable (missing/locked), malformed, or
+ * unsupported store, and a mismatched identity, all reject the same way — the
+ * caller never learns WHY, only that Resume/Copy must not proceed. Never fetches
+ * a blob, so it cannot follow a transcript root.
+ */
+export async function verifyCursorStoreIdentity(
+  dbPath: string,
+  expectedAgentId: string,
+  options: CursorStoreOptions = {},
+): Promise<boolean> {
+  if (!SAFE_AGENT_ID_RE.test(expectedAgentId) || expectedAgentId.includes("..")) return false;
+  const snapshotResult = await (options.withSqliteSnapshotFn ?? withSqliteSnapshot)(dbPath, async (snapshot) => {
+    const profile = await readCursorStoreProfile(snapshot);
+    return profile?.agentId === expectedAgentId;
+  });
+  return snapshotResult.status === "ok" && snapshotResult.value === true;
 }

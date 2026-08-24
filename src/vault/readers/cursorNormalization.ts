@@ -30,20 +30,27 @@ const SUBAGENT_PROMPT_KEYS = ["prompt", "task"];
 const REASONING_LEAK_RE =
   /\n{2,}\*\*(?:Considering|Thinking|Planning|Inspecting|Exploring|Reviewing|Troubleshooting|Diagnosing|Evaluating|Running|Checking|Reading|Understanding|Analyzing|Debugging|Responding)\b[^*\n]{0,80}\*\*\n{2,}/;
 
+export type CursorSubagentStep = Extract<VaultActivityStep, { kind: "subagent" }> & {
+  /** Private, unqualified child id; the combined reader must source-qualify or remove it before IPC. */
+  childAgentId?: string;
+};
+
 export interface CursorSubagentCall {
   callId?: string;
-  step: Extract<VaultActivityStep, { kind: "subagent" }>;
+  step: CursorSubagentStep;
 }
 
 export interface CursorToolResult {
   callId: string;
   result: string;
   taskId?: string;
+  childAgentId?: string;
 }
 
 export interface CursorNoticeCorrelation {
   taskId: string;
   result?: string;
+  childAgentId?: string;
 }
 
 export interface CursorNormalizedRecord {
@@ -63,7 +70,7 @@ export interface CursorNormalizedRecord {
 
 export type CursorUserText =
   | { kind: "prompt"; text: string }
-  | { kind: "notice"; summary: string; body?: string; taskId?: string; result?: string }
+  | { kind: "notice"; summary: string; body?: string; taskId?: string; result?: string; childAgentId?: string }
   | { kind: "drop" };
 
 const EMPTY: CursorNormalizedRecord = {
@@ -121,6 +128,14 @@ function taskIdFromText(text: string): string | undefined {
   return match?.[1].slice(0, MAX_TASK_ID_CHARS);
 }
 
+function childAgentIdFromText(text: string): string | undefined {
+  const match = /(?:^|\n)Agent ID:\s*([A-Za-z0-9._-]{1,200})(?=\s*(?:\(|$))/i.exec(
+    text.slice(0, MAX_SUBAGENT_RESULT_CHARS),
+  );
+  const id = match?.[1];
+  return id && !id.includes("..") ? id : undefined;
+}
+
 function noticeResult(text: string): string | undefined {
   const match = /(?:^|\n)Result:\s*([\s\S]*)$/i.exec(text);
   const result = match?.[1].trim();
@@ -141,12 +156,14 @@ function asNotice(text: string): CursorUserText {
     .slice(0, MAX_NOTICE_BODY_CHARS);
   const taskId = taskIdFromText(text);
   const result = noticeResult(text);
+  const childAgentId = result ? childAgentIdFromText(result) : undefined;
   return {
     kind: "notice",
     summary,
     ...(body ? { body } : {}),
     ...(taskId ? { taskId } : {}),
     ...(result ? { result } : {}),
+    ...(childAgentId ? { childAgentId } : {}),
   };
 }
 
@@ -222,7 +239,7 @@ function toolCallStep(
     const subagentType = boundedName(input?.subagent_type);
     const title = pickString(args, ["description"]);
     const prompt = pickString(args, SUBAGENT_PROMPT_KEYS);
-    const step: Extract<VaultActivityStep, { kind: "subagent" }> = {
+    const step: CursorSubagentStep = {
       kind: "subagent",
       name: subagentType ?? name,
       ...(title ? { title } : {}),
@@ -296,7 +313,13 @@ function toolResultFromBlock(block: Record<string, unknown>): CursorToolResult |
     return undefined;
   }
   const taskId = taskIdFromText(result);
-  return { callId, result, ...(taskId ? { taskId } : {}) };
+  const childAgentId = childAgentIdFromText(result);
+  return {
+    callId,
+    result,
+    ...(taskId ? { taskId } : {}),
+    ...(childAgentId ? { childAgentId } : {}),
+  };
 }
 
 function standaloneToolResults(record: Record<string, unknown>): CursorToolResult[] {
@@ -430,6 +453,7 @@ export function normalizeCursorRecord(value: unknown): CursorNormalizedRecord | 
         notice = {
           taskId: classified.taskId,
           ...(classified.result ? { result: classified.result } : {}),
+          ...(classified.childAgentId ? { childAgentId: classified.childAgentId } : {}),
         };
       }
     }

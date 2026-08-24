@@ -8,7 +8,6 @@ import {
   MAX_CURSOR_IDE_CACHE_ENTRIES,
   MAX_CURSOR_IDE_SOURCE_STAMPS,
   MAX_CURSOR_LOCATION_IDS,
-  MAX_CURSOR_PROJECT_CACHE_ENTRIES,
   VAULT_CACHE_VERSION,
   type VaultListCacheFileV1,
 } from "./cacheTypes";
@@ -292,9 +291,8 @@ describe("VaultCacheStore", () => {
       expect(store.load()).toEqual(good);
     });
 
-    it("round-trips metadata-only CLI, project, and IDE Cursor caches", async () => {
+    it("round-trips metadata-only CLI and IDE Cursor caches", async () => {
       const cliEntry = cursorEntry("chat-1", "cli");
-      const projectEntry = cursorEntry("project:YnVja2V0LWE:project-1");
       const ideEntry = cursorEntry("ide:d29ya3NwYWNlLTE:composer-1", "ide");
       const good = doc({
         agents: {
@@ -307,13 +305,6 @@ describe("VaultCacheStore", () => {
               byId: { "chat-1": ["bucket-a"], "duplicate-chat": ["bucket-a", "bucket-b"] },
               overflowed: false,
             },
-            projects: {
-              "/home/me/.cursor/projects/bucket-a/agent-transcripts/project-1.jsonl": {
-                stamp: { mtimeMs: 6, size: 10 },
-                entry: projectEntry,
-              },
-            },
-            projectUnreadable: 3,
             ide: {
               sources: {
                 "/home/me/.config/Cursor/User/globalStorage/state.vscdb": { mtimeMs: 7, size: 11 },
@@ -346,20 +337,17 @@ describe("VaultCacheStore", () => {
       expect(store.load()).toBeNull();
     });
 
-    it("rejects malformed or oversized project transcript metadata", () => {
-      const projects = Object.fromEntries(
-        Array.from({ length: MAX_CURSOR_PROJECT_CACHE_ENTRIES + 1 }, (_, index) => [
-          `/tmp/project-${index}.jsonl`,
-          { stamp: { mtimeMs: 1, size: 2 }, entry: cursorEntry(`project:YnVja2V0LWE:project-${index}`) },
-        ]),
-      );
+    it.each([
+      ["project entries", { projects: {} }],
+      ["project unreadable count", { projectUnreadable: 0 }],
+    ])("rejects legacy Cursor %s cache state", (_reason, legacy) => {
       const bad = doc({
         agents: {
           cursor: {
             kind: "cursor-files",
             chats: {},
             locations: { byId: {}, overflowed: false },
-            projects,
+            ...legacy,
           },
         },
       });
@@ -460,14 +448,6 @@ describe("VaultCacheStore", () => {
       [
         "non-finite unreadable count",
         { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, unreadableById: { chat: "x" } },
-      ],
-      [
-        "negative project unreadable count",
-        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, projectUnreadable: -1 },
-      ],
-      [
-        "non-finite project unreadable count",
-        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, projectUnreadable: "x" },
       ],
       [
         "negative rejected count",

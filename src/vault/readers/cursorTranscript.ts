@@ -187,9 +187,7 @@ function candidate(
   return { projectBucket, transcriptId, filePath, layout };
 }
 
-export async function listCursorTranscriptCandidates(
-  options: CursorTranscriptOptions = {},
-): Promise<{
+export async function listCursorTranscriptCandidates(options: CursorTranscriptOptions = {}): Promise<{
   candidates: CursorTranscriptCandidate[];
   ambiguousIds: ReadonlySet<string>;
   rejected: number;

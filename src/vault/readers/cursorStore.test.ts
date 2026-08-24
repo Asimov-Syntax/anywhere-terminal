@@ -4,7 +4,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { withSqliteSnapshot } from "../sqlite";
-import { MAX_CURSOR_BLOB_BYTES, MAX_CURSOR_STORE_BYTES, readCursorStoreDetail } from "./cursorStore";
+import {
+  MAX_CURSOR_BLOB_BYTES,
+  MAX_CURSOR_STORE_BYTES,
+  readCursorStoreDetail,
+  verifyCursorStoreIdentity,
+} from "./cursorStore";
 
 let tmpRoot: string;
 let dbPath: string;
@@ -458,7 +463,7 @@ describe("readCursorStoreDetail", () => {
       type: "tool-result",
       toolName: "Task",
       toolCallId: "blocking-call",
-      result: "The listener is in VaultWatchCoordinator.",
+      result: "The listener is in VaultWatchCoordinator.\n\nAgent ID: child-1",
     });
     const backgroundLaunch = json({
       type: "tool-result",
@@ -466,7 +471,10 @@ describe("readCursorStoreDetail", () => {
       toolCallId: "background-call",
       result: "Background task launched (task_id: task-42)",
     });
-    const completion = json({ role: "user", content: `<user_query>${INJECTED_NOTIFICATION}</user_query>` });
+    const completion = json({
+      role: "user",
+      content: `<user_query>${INJECTED_NOTIFICATION}\nAgent ID: background-child</user_query>`,
+    });
     await writeStore({
       root: Buffer.concat(
         [calls, blockingResult, backgroundLaunch, completion].map((record) => field(1, hash(record))),
@@ -483,7 +491,8 @@ describe("readCursorStoreDetail", () => {
         name: "Explore",
         title: "Find the listener",
         prompt: "Inspect the watcher flow",
-        result: "The listener is in VaultWatchCoordinator.",
+        result: "The listener is in VaultWatchCoordinator.\n\nAgent ID: child-1",
+        childAgentId: "child-1",
         status: "completed",
       },
       {
@@ -491,7 +500,8 @@ describe("readCursorStoreDetail", () => {
         name: "generalPurpose",
         title: "Check the architecture",
         prompt: "Review the source layout",
-        result: "all checks green",
+        result: "all checks green\nAgent ID: background-child",
+        childAgentId: "background-child",
         background: true,
         status: "completed",
       },
@@ -561,5 +571,70 @@ describe("readCursorStoreDetail", () => {
     if (result.status !== "ok") return;
     expect(result.timeline).toEqual([{ kind: "message", role: "user", text: "Visible" }]);
     expect(result.timeline[0]).not.toHaveProperty("msgRef");
+  });
+});
+
+describe("verifyCursorStoreIdentity", () => {
+  it("matches when the bounded store's agentId equals the candidate chat id", async () => {
+    await writeStore({ agentId: "chat-1", root: Buffer.alloc(0) });
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(true);
+  });
+
+  it("rejects a mismatched stored identity", async () => {
+    await writeStore({ agentId: "different-chat", root: Buffer.alloc(0) });
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(false);
+  });
+
+  it("rejects an unsupported schema", async () => {
+    await writeStore({ agentId: "chat-1", userVersion: 2, root: Buffer.alloc(0) });
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(false);
+  });
+
+  it("rejects malformed meta JSON", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec("PRAGMA user_version = 1");
+      db.exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      db.exec("CREATE TABLE blobs(id TEXT PRIMARY KEY, data BLOB NOT NULL)");
+      db.prepare("INSERT INTO meta(key, value) VALUES ('0', ?)").run(Buffer.from("not json", "utf8").toString("hex"));
+    } finally {
+      db.close();
+    }
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(false);
+  });
+
+  it("rejects an absent store", async () => {
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1")).resolves.toBe(false);
+  });
+
+  it("rejects a locked/unreadable snapshot", async () => {
+    const locked: typeof withSqliteSnapshot = async () => ({ status: "query-error", error: "database is locked" });
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1", { withSqliteSnapshotFn: locked })).resolves.toBe(false);
+  });
+
+  it("never follows the transcript root — only profile and identity are read", async () => {
+    const message = json({ role: "user", content: "private transcript" });
+    const root = field(1, hash(message));
+    const rootId = hash(root);
+    const queries: string[] = [];
+    const withSnapshot = fakeSnapshot(
+      new Map([
+        [rootId, root],
+        [hash(message), message],
+      ]),
+      rootId,
+      queries,
+    );
+
+    await expect(verifyCursorStoreIdentity(dbPath, "chat-1", { withSqliteSnapshotFn: withSnapshot })).resolves.toBe(
+      true,
+    );
+    expect(blobQueries(queries)).toHaveLength(0);
+  });
+
+  it("rejects an unsafe candidate chat id without opening the store", async () => {
+    await writeStore({ agentId: "chat-1", root: Buffer.alloc(0) });
+    await expect(verifyCursorStoreIdentity(dbPath, "../escape")).resolves.toBe(false);
   });
 });

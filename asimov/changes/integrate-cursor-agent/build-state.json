@@ -880,6 +880,171 @@
         ],
         "assertionDelta": 39
       }
+    },
+    {
+      "task": "10_5",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "fbf140a71d849147fecc60b32698dd2ff41fca21",
+      "at": 1787557167790,
+      "scope": [
+        "src/vault/readers/cursorReader.ts",
+        "src/vault/readers/cursorTranscript.ts",
+        "src/vault/cacheTypes.ts",
+        "src/vault/VaultCacheStore.ts",
+        "src/vault/VaultCacheStore.test.ts",
+        "src/vault/readers/cursorReader.test.ts",
+        "src/vault/readers/cursorTranscript.test.ts",
+        "src/vault/readers/cursorIdeReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorReader.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorIdeReader.test.ts src/vault/VaultCacheStore.test.ts",
+      "testChange": {
+        "reason": "The approved replan removes standalone project JSONL rows and persisted project list state while retaining exact source-qualified detail lookup.",
+        "deleted": [],
+        "modified": [
+          "src/vault/VaultCacheStore.test.ts",
+          "src/vault/readers/cursorReader.test.ts"
+        ],
+        "assertionDelta": -4
+      }
+    },
+    {
+      "task": "10_9",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "a440940f9b9c753954098e26640316d224d817cb",
+      "at": 1787557461330,
+      "scope": [
+        "src/vault/readers/cursorReader.ts",
+        "src/vault/readers/cursorPaths.ts",
+        "src/vault/VaultService.ts",
+        "src/vault/VaultService.watchTargets.test.ts",
+        "src/vault/readers/cursorReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorReader.test.ts src/vault/VaultService.watchTargets.test.ts",
+      "testChange": {
+        "reason": "Project-only Cursor hints now leave the top-level list untouched, mixed project hints refresh only their CLI or IDE source, and project JSONL is removed from store-wide list watches.",
+        "deleted": [],
+        "modified": [
+          "src/vault/VaultService.watchTargets.test.ts",
+          "src/vault/readers/cursorReader.test.ts"
+        ],
+        "assertionDelta": 5
+      }
+    },
+    {
+      "task": "10_7",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "e80ce8e2490217b001a5554c80255673c003367f",
+      "at": 1787558126292,
+      "scope": [
+        "src/vault/readers/cursorNormalization.ts",
+        "src/vault/readers/cursorStore.ts",
+        "src/vault/readers/cursorTranscript.ts",
+        "src/vault/readers/cursorReader.ts",
+        "src/vault/readers/cursorStore.test.ts",
+        "src/vault/readers/cursorTranscript.test.ts",
+        "src/vault/readers/cursorReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts",
+      "testChange": {
+        "reason": "Cursor Task results now preserve bounded child Agent IDs internally and parent detail emits source-qualified lazy child sessions only for exact same-project transcripts.",
+        "deleted": [],
+        "modified": [
+          "src/vault/readers/cursorReader.test.ts",
+          "src/vault/readers/cursorStore.test.ts"
+        ],
+        "assertionDelta": 4
+      }
+    },
+    {
+      "task": "10_10",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "82d4a3527c92b4bd052d976eccc511bacdfae1e6",
+      "at": 1787559213033,
+      "scope": [
+        "src/vault/types.ts",
+        "src/vault/readers/cursorReader.ts",
+        "src/webview/vault/previewTimeline.ts",
+        "src/webview/vault/PreviewController.ts",
+        "src/vault/readers/cursorReader.test.ts",
+        "src/webview/vault/VaultPanel.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorReader.test.ts src/webview/vault/VaultPanel.test.ts",
+      "testChange": {
+        "reason": "New tests only: lazy Cursor child cards keep their bounded Prompt/Result when the child detail request fails (per-card fallback). No existing assertion was removed or weakened.",
+        "deleted": [],
+        "modified": [
+          "src/vault/VaultService.test.ts",
+          "src/vault/readers/cursorReader.test.ts",
+          "src/vault/readers/cursorStore.test.ts",
+          "src/webview/vault/VaultPanel.test.ts"
+        ],
+        "assertionDelta": 34
+      }
+    },
+    {
+      "task": "10_8",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "c667a390f1bd97bde2cae8bd54a0fc70e8abc504",
+      "at": 1787559328477,
+      "scope": [
+        "src/vault/readers/cursorStore.ts",
+        "src/vault/readers/cursorStore.test.ts",
+        "src/vault/readers/cursorReader.ts",
+        "src/vault/VaultService.ts",
+        "src/vault/readers/cursorReader.test.ts",
+        "src/vault/VaultService.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorReader.test.ts src/vault/VaultService.test.ts"
+    },
+    {
+      "task": "10_11",
+      "cmd": "pnpm run check-types; pnpm run test:unit",
+      "exit": 0,
+      "tree": "5bdd67946d5e34d833b63fa22056aca06ce3d1e5",
+      "at": 1787559600144,
+      "scope": [
+        "src/vault/VaultLauncher.ts",
+        "src/providers/TerminalViewProvider.ts",
+        "src/vault/VaultLauncher.test.ts",
+        "src/providers/TerminalViewProvider.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/VaultLauncher.test.ts src/providers/TerminalViewProvider.test.ts",
+      "testChange": {
+        "reason": "New tests only for the proof gate (launcher refuses unverified Resume/command-copy before probing an executable; provider copy routes through the launcher). The existing stubService gained verifyResumeIdentity because VaultService now exposes it; no assertion was removed or weakened.",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.test.ts",
+          "src/vault/VaultLauncher.test.ts"
+        ],
+        "assertionDelta": 16
+      }
+    },
+    {
+      "task": "9_9",
+      "cmd": "manual",
+      "exit": 0,
+      "tree": "d19f421647abd03dfb649f9356f6ad7d4ee40de6",
+      "at": 1787560139603,
+      "scope": [
+        "README.md",
+        "CHANGELOG.md",
+        "src/webview/vault/vaultPanel.css"
+      ],
+      "manual": "User ran the Extension Development Host smoke: CLI row, IDE row, sub-agent card, and proof-gated CLI Resume behave as specified; UI accepted. Residual data-quality issues reported and deferred to a follow-up change.",
+      "testChange": {
+        "reason": "Formatting only: biome format applied to VaultWatchCoordinator.test.ts and cursorStore.test.ts to clear this change own format errors at the verify gate. No assertion added, removed, or weakened.",
+        "deleted": [],
+        "modified": [
+          "src/providers/VaultWatchCoordinator.test.ts",
+          "src/vault/readers/cursorStore.test.ts"
+        ],
+        "assertionDelta": 0
+      }
     }
   ],
   "reads": 0,
@@ -945,8 +1110,8 @@
       "assertions": 7
     },
     "src/providers/TerminalViewProvider.test.ts": {
-      "hash": "97955292d50c176c",
-      "assertions": 77
+      "hash": "d7a64fef00c5c618",
+      "assertions": 81
     },
     "src/providers/TerminalViewProvider.vaultContinue.test.ts": {
       "hash": "3d8896b717b1553b",
@@ -957,7 +1122,7 @@
       "assertions": 14
     },
     "src/providers/VaultWatchCoordinator.test.ts": {
-      "hash": "b0a59a2abd438c96",
+      "hash": "495b17f59538d982",
       "assertions": 47
     },
     "src/providers/clipboardImageSync.test.ts": {
@@ -1169,7 +1334,7 @@
       "assertions": 53
     },
     "src/vault/VaultCacheStore.test.ts": {
-      "hash": "fd08ad19384e1b09",
+      "hash": "d1907cf890238ccd",
       "assertions": 38
     },
     "src/vault/VaultCustomNameRegistry.test.ts": {
@@ -1177,8 +1342,8 @@
       "assertions": 14
     },
     "src/vault/VaultLauncher.test.ts": {
-      "hash": "595157157c670e5e",
-      "assertions": 21
+      "hash": "be7a6fa092d10233",
+      "assertions": 33
     },
     "src/vault/VaultService.customName.test.ts": {
       "hash": "ad036289b84fac59",
@@ -1189,12 +1354,12 @@
       "assertions": 24
     },
     "src/vault/VaultService.test.ts": {
-      "hash": "ba8560bdd22bf08b",
-      "assertions": 136
+      "hash": "2f7efa1c798bf2ae",
+      "assertions": 142
     },
     "src/vault/VaultService.watchTargets.test.ts": {
-      "hash": "c02143427a9617c1",
-      "assertions": 21
+      "hash": "f91d4f856917df54",
+      "assertions": 22
     },
     "src/vault/messageText.test.ts": {
       "hash": "7ee145429c41c72e",
@@ -1233,12 +1398,12 @@
       "assertions": 31
     },
     "src/vault/readers/cursorReader.test.ts": {
-      "hash": "353b7a946f15af41",
-      "assertions": 147
+      "hash": "b693002d0221ed5e",
+      "assertions": 157
     },
     "src/vault/readers/cursorStore.test.ts": {
-      "hash": "d67a82accf4d19a7",
-      "assertions": 58
+      "hash": "f376a1782ea8d30b",
+      "assertions": 67
     },
     "src/vault/readers/cursorTranscript.test.ts": {
       "hash": "e23bbf4e14ff328f",
@@ -1477,8 +1642,8 @@
       "assertions": 31
     },
     "src/webview/vault/VaultPanel.test.ts": {
-      "hash": "e0284db8f81f287c",
-      "assertions": 472
+      "hash": "7b3920eb3b7a7029",
+      "assertions": 485
     },
     "src/webview/vault/forkPoint.test.ts": {
       "hash": "3a795899c09dc9bc",

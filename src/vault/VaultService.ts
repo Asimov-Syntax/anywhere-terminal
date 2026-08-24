@@ -32,8 +32,8 @@ import {
   readCursorMessageRecord,
   readCursorSessions,
   resolveCursorSessionWatchPaths,
+  verifyCursorResumeIdentity,
 } from "./readers/cursorReader";
-import { cursorProjectsRoot } from "./readers/cursorTranscript";
 import { clampDetailLimit } from "./readers/detail";
 import {
   opencodeStoreDirs,
@@ -115,6 +115,12 @@ export interface VaultServiceDeps {
   nativeRenamers?: Partial<Record<VaultAgentId, VaultNativeRenamer>>;
   /** Cursor source roots used by watcher resolution; production uses platform defaults. */
   cursorReaderOptions?: CursorCombinedReaderOptions;
+  /**
+   * Injectable Cursor D14 deferred store-identity proof; production uses the
+   * real point-resolution + bounded-store verifier. Only Cursor entries are
+   * routed through it — see {@link VaultService.verifyResumeIdentity}.
+   */
+  verifyCursorResumeIdentityFn?: (sessionId: string, options: CursorCombinedReaderOptions) => Promise<boolean>;
 }
 
 // Readers stay option-first for back-compat; adapt them to the prev-only ListReader
@@ -181,6 +187,10 @@ export class VaultService {
   private readonly customNames?: VaultCustomNameRegistry;
   private readonly nativeRenamers: Partial<Record<VaultAgentId, VaultNativeRenamer>>;
   private readonly cursorReaderOptions: CursorCombinedReaderOptions;
+  private readonly verifyCursorResumeIdentityFn: (
+    sessionId: string,
+    options: CursorCombinedReaderOptions,
+  ) => Promise<boolean>;
 
   /** In-memory copy of the persisted cache, lazily loaded from `cacheStore`. */
   private mem: VaultListCacheFileV1 | null = null;
@@ -219,6 +229,7 @@ export class VaultService {
     this.cacheStore = deps.cacheStore;
     this.customNames = deps.customNames;
     this.nativeRenamers = deps.nativeRenamers ?? defaultNativeRenamers;
+    this.verifyCursorResumeIdentityFn = deps.verifyCursorResumeIdentityFn ?? verifyCursorResumeIdentity;
   }
 
   /**
@@ -710,6 +721,21 @@ export class VaultService {
   }
 
   /**
+   * D14 explicit Resume identity proof: only a Cursor CLI entry has a deferred
+   * store identity (list indexing never opens `store.db`, so `canResume` is a
+   * candidate, not a proof) — every other agent's Resume identity IS its
+   * sessionId, trusted by construction, so verification is a pass-through.
+   * Reads only the bounded supported store profile and identity metadata; it
+   * never follows a transcript root.
+   */
+  async verifyResumeIdentity(entry: VaultSessionEntry): Promise<boolean> {
+    if (entry.agent !== "cursor") {
+      return true;
+    }
+    return this.verifyCursorResumeIdentityFn(entry.sessionId, this.cursorReaderOptions);
+  }
+
+  /**
    * Store-wide FS-watch targets for auto-refresh (enhance-vault-sessions D4):
    * agent session roots scoped to their stores (never all of $HOME). WAL
    * DBs are matched with a `<db>*` glob so `-wal`/`-shm` writes are seen too.
@@ -721,7 +747,6 @@ export class VaultService {
     const codex = codexStoreDirs();
     const opencode = opencodeStoreDirs();
     const cursor = cursorChatsRoot(this.cursorReaderOptions);
-    const cursorProjects = cursorProjectsRoot(this.cursorReaderOptions);
     const cursorIde = cursorIdeDbPath(this.cursorReaderOptions);
     return [
       { baseDir: projectsDir, glob: "**/*.jsonl" },
@@ -730,12 +755,6 @@ export class VaultService {
       { baseDir: path.dirname(opencode.dbPath), glob: `${path.basename(opencode.dbPath)}*` },
       { baseDir: cursor, glob: "**/meta.json", events: ["create", "change", "delete"], agent: "cursor" },
       { baseDir: cursor, glob: "**/store.db", events: ["create", "delete"], agent: "cursor" },
-      {
-        baseDir: cursorProjects,
-        glob: "**/agent-transcripts/**/*.jsonl",
-        events: ["create", "change", "delete"],
-        agent: "cursor",
-      },
       {
         baseDir: path.dirname(cursorIde),
         glob: path.basename(cursorIde),

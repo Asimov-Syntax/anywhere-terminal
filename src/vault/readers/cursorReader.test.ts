@@ -14,6 +14,7 @@ import {
   readCursorEntry,
   readCursorMessageRecord,
   readCursorSessions,
+  verifyCursorResumeIdentity,
 } from "./cursorReader";
 import { cursorProjectBucketForCwd } from "./cursorTranscript";
 
@@ -325,23 +326,13 @@ describe("readCursorSessions: duplicate chat-id ambiguity", () => {
 });
 
 describe("readCursorSessions: project source reconciliation", () => {
-  it("lists and resolves an unmatched project transcript as non-resumable", async () => {
+  it("hides an unmatched project transcript while keeping exact detail addressable", async () => {
     const cwd = await writeWorkspace("project-standalone");
-    await writeProjectTranscriptForCwd(cwd, "project-1", [
-      { role: "user", message: { content: "Project question" } },
-    ]);
+    await writeProjectTranscriptForCwd(cwd, "project-1", [{ role: "user", message: { content: "Project question" } }]);
 
     const listed = await readCursorSessions(undefined, opts());
     const sessionId = projectSessionIdForCwd(cwd, "project-1");
-    expect(listed.entries).toEqual([
-      expect.objectContaining({
-        id: `cursor:${sessionId}`,
-        sessionId,
-        cwd,
-        canResume: false,
-        canFork: false,
-      }),
-    ]);
+    expect(listed.entries).toEqual([]);
     await expect(readCursorEntry(sessionId, opts())).resolves.toMatchObject({ id: `cursor:${sessionId}` });
     await expect(readCursorDetail(sessionId, undefined, opts())).resolves.toMatchObject({
       contentKind: "timeline",
@@ -358,15 +349,10 @@ describe("readCursorSessions: project source reconciliation", () => {
 
     const listed = await readCursorSessions(undefined, opts());
 
-    expect(listed.entries.map((entry) => [entry.sessionId, entry.cwd]).sort()).toEqual(
-      [
-        ["shared-id", cliCwd],
-        [projectSessionIdForCwd(otherCwd, "shared-id"), otherCwd],
-      ].sort(),
-    );
+    expect(listed.entries.map((entry) => [entry.sessionId, entry.cwd])).toEqual([["shared-id", cliCwd]]);
   });
 
-  it("keeps duplicate transcript ids from distinct project cwd domains", async () => {
+  it("hides duplicate transcript ids from distinct project cwd domains", async () => {
     const firstCwd = await writeWorkspace("project-dup-a");
     const secondCwd = await writeWorkspace("project-dup-b");
     await writeProjectTranscriptForCwd(firstCwd, "dup-project", []);
@@ -374,9 +360,7 @@ describe("readCursorSessions: project source reconciliation", () => {
 
     const listed = await readCursorSessions(undefined, opts());
 
-    expect(listed.entries.map((entry) => entry.sessionId).sort()).toEqual(
-      [projectSessionIdForCwd(firstCwd, "dup-project"), projectSessionIdForCwd(secondCwd, "dup-project")].sort(),
-    );
+    expect(listed.entries).toEqual([]);
   });
 });
 
@@ -526,7 +510,11 @@ describe("readCursorSessions: cache reuse and fallback", () => {
 
     await new Promise((r) => setTimeout(r, 5));
     const metaPath = path.join(chatsDir, "bucket-a", "chat-refresh", "meta.json");
-    await fs.writeFile(metaPath, JSON.stringify({ ...BASE_META, agentId: "chat-refresh", title: "Updated title" }), "utf8");
+    await fs.writeFile(
+      metaPath,
+      JSON.stringify({ ...BASE_META, agentId: "chat-refresh", title: "Updated title" }),
+      "utf8",
+    );
 
     const second = await readCursorSessions(first.cache, opts());
     expect(second.entries).toHaveLength(1);
@@ -571,7 +559,11 @@ describe("readCursorSessions: cache reuse and fallback", () => {
     expect(deps.open).not.toHaveBeenCalled();
 
     await fs.rm(ideDbPath);
-    await fs.writeFile(path.join(chatDir, "meta.json"), JSON.stringify({ ...BASE_META, agentId: "chat-1", title: "CLI two" }), "utf8");
+    await fs.writeFile(
+      path.join(chatDir, "meta.json"),
+      JSON.stringify({ ...BASE_META, agentId: "chat-1", title: "CLI two" }),
+      "utf8",
+    );
     const cliRefresh = await readCursorSessions(ideRefresh.cache, opts(), {
       paths: [path.join(chatDir, "meta.json")],
     });
@@ -597,12 +589,11 @@ describe("readCursorSessions: cache reuse and fallback", () => {
       "project-mixed.jsonl",
     );
     await writeIdeHeader("IDE two");
-    const mixedIde = await readCursorSessions(first.cache, opts(), { paths: [projectFile, `${ideDbPath}-wal`] });
-    expect(mixedIde.entries.map((entry) => entry.title).sort()).toEqual([
-      "Fix the flaky test",
-      "IDE two",
-      "project-mixed",
-    ]);
+    const deps = createPassthroughFs();
+    const mixedIde = await readCursorSessions(first.cache, opts(deps), { paths: [projectFile, `${ideDbPath}-wal`] });
+    expect(mixedIde.entries.map((entry) => entry.title).sort()).toEqual(["Fix the flaky test", "IDE two"]);
+    expect(deps.stat).not.toHaveBeenCalled();
+    expect(deps.open).not.toHaveBeenCalled();
 
     await fs.writeFile(
       path.join(chatDir, "meta.json"),
@@ -616,8 +607,8 @@ describe("readCursorSessions: cache reuse and fallback", () => {
     expect(mixedCli.entries.map((entry) => entry.title).sort()).toEqual(["CLI two", "IDE two"]);
   });
 
-  it("rebuilds all Cursor sources for a project-only hint and surfaces a standalone transcript", async () => {
-    const chatDir = await writeChat("bucket-a", "chat-1", BASE_META);
+  it("treats a project-only hint as a top-level list no-op", async () => {
+    await writeChat("bucket-a", "chat-1", BASE_META);
     await writeIdeHeader("IDE one");
     const first = await readCursorSessions(undefined, opts());
     const cwd = await writeWorkspace("standalone-project");
@@ -629,18 +620,13 @@ describe("readCursorSessions: cache reuse and fallback", () => {
       "project-only",
       "project-only.jsonl",
     );
-    await Promise.all([fs.rm(chatDir, { recursive: true }), fs.rm(ideDbPath)]);
+    const deps = createPassthroughFs();
 
-    const refreshed = await readCursorSessions(first.cache, opts(), { paths: [projectFile] });
+    const refreshed = await readCursorSessions(first.cache, opts(deps), { paths: [projectFile] });
 
-    expect(refreshed.entries).toHaveLength(1);
-    expect(refreshed.entries[0]).toMatchObject({
-      id: expect.stringContaining("cursor:project:"),
-      sessionId: expect.stringContaining("project:"),
-      cwd,
-      canResume: false,
-      canFork: false,
-    });
+    expect(refreshed.entries).toEqual(first.entries);
+    expect(deps.stat).not.toHaveBeenCalled();
+    expect(deps.open).not.toHaveBeenCalled();
   });
 
   it("targeted refresh resolves persisted bucket locations without enumerating historical buckets", async () => {
@@ -657,7 +643,11 @@ describe("readCursorSessions: cache reuse and fallback", () => {
     (pathsFs.readdir as ReturnType<typeof vi.fn>).mockClear();
     (pathsFs.stat as ReturnType<typeof vi.fn>).mockClear();
 
-    await fs.writeFile(path.join(changedDir, "meta.json"), JSON.stringify({ ...BASE_META, agentId: "chat-changed", title: "Changed" }), "utf8");
+    await fs.writeFile(
+      path.join(changedDir, "meta.json"),
+      JSON.stringify({ ...BASE_META, agentId: "chat-changed", title: "Changed" }),
+      "utf8",
+    );
     const second = await readCursorSessions(first.cache, opts(deps, pathsFs), {
       paths: [path.join(changedDir, "meta.json")],
     });
@@ -689,7 +679,11 @@ describe("readCursorSessions: cache reuse and fallback", () => {
     } as unknown as ReaderListCache;
     (pathsFs.readdir as ReturnType<typeof vi.fn>).mockClear();
 
-    await fs.writeFile(path.join(changedDir, "meta.json"), JSON.stringify({ ...BASE_META, agentId: "chat-changed", title: "Changed" }), "utf8");
+    await fs.writeFile(
+      path.join(changedDir, "meta.json"),
+      JSON.stringify({ ...BASE_META, agentId: "chat-changed", title: "Changed" }),
+      "utf8",
+    );
     const refreshed = await readCursorSessions(stale, opts(undefined, pathsFs), {
       paths: [path.join(changedDir, "meta.json")],
     });
@@ -780,6 +774,39 @@ describe("readCursorEntry: point lookup", () => {
   });
 });
 
+describe("verifyCursorResumeIdentity: D14 explicit proof", () => {
+  it("matches a store whose agentId equals the candidate chat id", async () => {
+    const dir = await writeChat("bucket-a", "chat-verify-ok", BASE_META);
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "chat-verify-ok", [{ role: "user", content: "hi" }]);
+
+    await expect(verifyCursorResumeIdentity("chat-verify-ok", opts())).resolves.toBe(true);
+  });
+
+  it("rejects a mismatched stored identity", async () => {
+    const dir = await writeChat("bucket-a", "chat-verify-mismatch", BASE_META);
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "another-chat", [{ role: "user", content: "hi" }]);
+
+    await expect(verifyCursorResumeIdentity("chat-verify-mismatch", opts())).resolves.toBe(false);
+  });
+
+  it("rejects when the store is unavailable (not a real sqlite file)", async () => {
+    await writeChat("bucket-a", "chat-verify-unavailable", BASE_META);
+
+    await expect(verifyCursorResumeIdentity("chat-verify-unavailable", opts())).resolves.toBe(false);
+  });
+
+  it("rejects an unknown candidate id without opening any store", async () => {
+    await expect(verifyCursorResumeIdentity("chat-verify-missing", opts())).resolves.toBe(false);
+  });
+
+  it("rejects non-CLI (IDE/project) source ids", async () => {
+    await expect(verifyCursorResumeIdentity("ide:composer-1", opts())).resolves.toBe(false);
+    await expect(verifyCursorResumeIdentity("project:d29tZQ:child-1", opts())).resolves.toBe(false);
+  });
+});
+
 describe("readCursorDetail: bounded CLI transcript", () => {
   it("returns a decoded timeline for a compatible store", async () => {
     const dir = await writeChat("bucket-a", "chat-detail-ok", BASE_META);
@@ -801,6 +828,144 @@ describe("readCursorDetail: bounded CLI transcript", () => {
     expect(detail?.timeline.map((item) => item.kind)).toEqual(["message", "message", "tool"]);
     expect(detail?.timeline.every((item) => !("msgRef" in item))).toBe(true);
     expect(detail?.stats).toEqual({ messageCount: 2, toolCount: 1, subagentCount: 0 });
+  });
+
+  it("links a safe Agent ID to one exact same-project child transcript", async () => {
+    const cwd = await writeWorkspace("child-parent");
+    const dir = await writeChat("bucket-a", "parent-chat", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "parent-chat", [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "task-call",
+            args: { subagent_type: "Explore", description: "Find listener", prompt: "Inspect files" },
+          },
+        ],
+      },
+      {
+        type: "tool-result",
+        toolName: "Task",
+        toolCallId: "task-call",
+        result: "Child completed.\n\nAgent ID: child-1",
+      },
+    ]);
+    await writeProjectTranscriptForCwd(cwd, "child-1", [
+      { role: "user", message: { content: "Inspect files" } },
+      {
+        role: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "Found it" },
+            { type: "tool_use", name: "Read", input: { file_path: "/tmp/child.ts" } },
+          ],
+        },
+      },
+    ]);
+
+    const detail = await readCursorDetail("parent-chat", undefined, opts());
+    const childSessionId = projectSessionIdForCwd(cwd, "child-1");
+    expect(detail?.timeline).toEqual([
+      {
+        kind: "subagentSession",
+        entryId: `cursor:${childSessionId}`,
+        title: "Find listener",
+        firstMessage: "Inspect files",
+        agent: "Explore",
+        prompt: "Inspect files",
+        result: "Child completed.\n\nAgent ID: child-1",
+        status: "completed",
+      },
+    ]);
+    await expect(readCursorDetail(childSessionId, undefined, opts())).resolves.toMatchObject({
+      contentKind: "timeline",
+      timeline: [
+        { kind: "message", role: "user", text: "Inspect files" },
+        { kind: "message", role: "assistant", text: "Found it" },
+        { kind: "tool", tool: "Read", detail: "/tmp/child.ts" },
+      ],
+    });
+  });
+
+  it("does not link the same Agent ID from another project", async () => {
+    const parentCwd = await writeWorkspace("child-parent-exact");
+    const otherCwd = await writeWorkspace("child-other");
+    const dir = await writeChat("bucket-a", "parent-exact", { ...BASE_META, cwd: parentCwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "parent-exact", [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "task-call",
+            args: { subagent_type: "Explore", description: "Find listener", prompt: "Inspect files" },
+          },
+        ],
+      },
+      {
+        type: "tool-result",
+        toolName: "Task",
+        toolCallId: "task-call",
+        result: "Child completed.\n\nAgent ID: child-1",
+      },
+    ]);
+    await writeProjectTranscriptForCwd(otherCwd, "child-1", []);
+
+    const detail = await readCursorDetail("parent-exact", undefined, opts());
+    expect(detail?.timeline).toEqual([
+      {
+        kind: "subagent",
+        name: "Explore",
+        title: "Find listener",
+        prompt: "Inspect files",
+        result: "Child completed.\n\nAgent ID: child-1",
+        status: "completed",
+      },
+    ]);
+  });
+
+  it("keeps the inline result when both child transcript layouts exist", async () => {
+    const cwd = await writeWorkspace("child-ambiguous");
+    const dir = await writeChat("bucket-a", "parent-ambiguous", { ...BASE_META, cwd });
+    await fs.rm(path.join(dir, "store.db"));
+    await writeCompatibleStore(dir, "parent-ambiguous", [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "Task",
+            toolCallId: "task-call",
+            args: { subagent_type: "Explore", description: "Find listener" },
+          },
+        ],
+      },
+      {
+        type: "tool-result",
+        toolName: "Task",
+        toolCallId: "task-call",
+        result: "Child completed.\n\nAgent ID: child-1",
+      },
+    ]);
+    await writeProjectTranscriptForCwd(cwd, "child-1", []);
+    const transcriptDir = path.join(projectsDir, cursorProjectBucketForCwd(cwd), "agent-transcripts");
+    await fs.writeFile(path.join(transcriptDir, "child-1.jsonl"), "", "utf8");
+
+    const detail = await readCursorDetail("parent-ambiguous", undefined, opts());
+    expect(detail?.timeline).toEqual([
+      {
+        kind: "subagent",
+        name: "Explore",
+        title: "Find listener",
+        result: "Child completed.\n\nAgent ID: child-1",
+        status: "completed",
+      },
+    ]);
   });
 
   it("uses a matching project transcript as a detail fallback without duplicating the CLI row", async () => {

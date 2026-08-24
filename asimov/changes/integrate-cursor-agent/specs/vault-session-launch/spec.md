@@ -13,14 +13,26 @@ The probe MUST require positional prompt support plus `--resume`, `--mode plan`,
 
 ### Requirement: Cursor selected resume compatibility
 
-A validated schema-1 Cursor Agent CLI entry SHALL use its safe chat-directory name as the `chatId` passed to the detected CLI's `--resume [chatId]` option.
+A validated Cursor Agent CLI entry SHALL use its safe directory name as the `chatId` passed to the detected CLI's `--resume [chatId]` option after explicit identity proof.
 
-The executable probe MUST accept the official `agent` help shape (`Start the Cursor Agent`, positional `[prompt...]`, `--resume [chatId]`, plan mode, and force) while continuing to reject unrelated `agent` binaries.
+The executable probe MUST accept the official `agent` help shape while continuing to reject unrelated `agent` binaries.
+
+### Requirement: Cursor explicit Resume identity proof
+
+Resume and Copy Resume Command SHALL read only the bounded supported store profile and require its agent identity to match the candidate directory name before executable probing or side effects.
+
+An unavailable, malformed, unsupported, or mismatched store SHALL reject the action without removing its metadata row from the Vault list.
 
 #### Scenario: User explicitly resumes a compatible Cursor CLI chat
 
-- **WHEN** the user invokes Resume from the row action, preview header, or context menu
+- **WHEN** the user invokes Resume from the row action, preview header, or context menu and the explicit store identity proof matches
 - **THEN** the system starts `<resolved-executable> --resume <chat-id>` as a visible terminal in the chat cwd
+
+#### Scenario: User copies a Cursor Resume command
+
+- **WHEN** the user invokes Copy Resume Command and the explicit store identity proof matches
+- **THEN** the system copies `<resolved-executable> --resume <chat-id>`
+- **AND** a failed proof leaves the clipboard unchanged
 
 ### Requirement: Cursor source capability enforcement
 

@@ -15,7 +15,6 @@ import * as path from "node:path";
 import type {
   CursorFileCacheEntry,
   CursorLocationIndex,
-  CursorProjectCacheEntry,
   FileStamp,
   ReaderListCache,
   ReaderRefreshHint,
@@ -23,7 +22,13 @@ import type {
 } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import type { withSqliteSnapshot } from "../sqlite";
-import { formatEntryId, type VaultSessionDetail, type VaultSessionEntry } from "../types";
+import {
+  formatEntryId,
+  type VaultActivityStep,
+  type VaultSessionDetail,
+  type VaultSessionEntry,
+  type VaultTimelineItem,
+} from "../types";
 import {
   type CursorIdeReaderOptions,
   cursorIdeDbPath,
@@ -36,17 +41,17 @@ import {
   type CursorFsDeps,
   type CursorReaderOptions,
   cursorChatsRoot,
+  isSafeCursorChatId,
   listCursorChatCandidates,
   resolveChangedCursorChatCandidates,
   resolveCursorChatCandidate,
 } from "./cursorPaths";
-import { readCursorStoreDetail } from "./cursorStore";
+import { readCursorStoreDetail, verifyCursorStoreIdentity } from "./cursorStore";
 import {
   type CursorTranscriptCandidate,
   cursorProjectBucketForCwd,
   cursorProjectSessionId,
   cursorProjectsRoot,
-  listCursorTranscriptCandidates,
   readCursorTranscript,
   resolveCursorProjectCwd,
   resolveCursorProjectTranscriptSession,
@@ -61,6 +66,7 @@ const MAX_CWD_CHARS = 16 * 1024;
 
 const PARTIAL_LIMITED_REASON = "Cursor transcript is unavailable for this store.";
 const MAX_RECENT_ACTIVITY = 12;
+const MAX_CURSOR_CHILD_LINKS = 64;
 
 export type CursorCombinedReaderOptions = CursorReaderOptions & CursorIdeReaderOptions;
 
@@ -235,26 +241,9 @@ function cursorResult(
   unreadableById: Record<string, number>,
   rejected: number,
   ide: { entries: VaultSessionEntry[]; unreadable: number; sources: Record<string, FileStamp> },
-  projects: Record<string, CursorProjectCacheEntry> = {},
-  projectUnreadable = 0,
 ): ReaderResultWithState {
-  const standaloneProjects = Object.values(projects)
-    .map((project) => project.entry)
-    .filter((entry) => {
-      const transcriptId = entry.sessionId.slice(entry.sessionId.lastIndexOf(":") + 1);
-      const cliEntry = chats[transcriptId]?.entry;
-      return !cliEntry || !sameCwd(cliEntry.cwd, entry.cwd);
-    });
-  const entries = [
-    ...Object.values(chats).map((chat) => chat.entry),
-    ...standaloneProjects,
-    ...ide.entries,
-  ];
-  const unreadable =
-    ide.unreadable +
-    projectUnreadable +
-    rejected +
-    Object.values(unreadableById).reduce((sum, count) => sum + count, 0);
+  const entries = [...Object.values(chats).map((chat) => chat.entry), ...ide.entries];
+  const unreadable = ide.unreadable + rejected + Object.values(unreadableById).reduce((sum, count) => sum + count, 0);
   return {
     entries,
     unreadable,
@@ -263,8 +252,6 @@ function cursorResult(
       chats,
       locations,
       ide: { sources: ide.sources, entries: ide.entries, unreadable: ide.unreadable },
-      projects,
-      projectUnreadable,
       unreadableById,
       rejected,
     },
@@ -290,11 +277,7 @@ function sameCwd(a: string, b: string): boolean {
   return path.resolve(a) === path.resolve(b);
 }
 
-function mapCursorProjectEntry(
-  candidate: CursorTranscriptCandidate,
-  cwd: string,
-  stamp: FileStamp,
-): VaultSessionEntry {
+function mapCursorProjectEntry(candidate: CursorTranscriptCandidate, cwd: string, stamp: FileStamp): VaultSessionEntry {
   const sessionId = cursorProjectSessionId(candidate);
   return {
     id: formatEntryId("cursor", sessionId),
@@ -309,49 +292,11 @@ function mapCursorProjectEntry(
   };
 }
 
-async function readCursorProjects(
-  previous: Record<string, CursorProjectCacheEntry> | undefined,
-  options: CursorCombinedReaderOptions,
-  deps: CursorFsDeps,
-): Promise<{ projects: Record<string, CursorProjectCacheEntry>; unreadable: number }> {
-  const listed = await listCursorTranscriptCandidates(options);
-  if (listed.overflowed) {
-    return { projects: {}, unreadable: listed.rejected + 1 };
-  }
-
-  const projects: Record<string, CursorProjectCacheEntry> = {};
-  const cwdByBucket = new Map<string, string | null>();
-  let unreadable = listed.rejected;
-  for (const candidate of listed.candidates) {
-    const stamp = await statFileOrNull(candidate.filePath, deps);
-    if (!stamp) {
-      unreadable++;
-      continue;
-    }
-    let cwd = cwdByBucket.get(candidate.projectBucket);
-    if (cwd === undefined) {
-      cwd = await resolveCursorProjectCwd(candidate.projectBucket, options);
-      cwdByBucket.set(candidate.projectBucket, cwd);
-    }
-    if (!cwd) {
-      unreadable++;
-      continue;
-    }
-    const cached = previous?.[candidate.filePath];
-    const entry =
-      cached && sameStamp(cached.stamp, stamp) && sameCwd(cached.entry.cwd, cwd)
-        ? cached.entry
-        : mapCursorProjectEntry(candidate, cwd, stamp);
-    projects[candidate.filePath] = { stamp, entry };
-  }
-  return { projects, unreadable };
-}
-
 function cursorHintKinds(
   paths: readonly string[],
   options: CursorCombinedReaderOptions,
-): Set<"cli" | "project" | "ide" | "unknown"> {
-  const kinds = new Set<"cli" | "project" | "ide" | "unknown">();
+): Set<"cli" | "ide" | "unknown"> {
+  const kinds = new Set<"cli" | "ide" | "unknown">();
   const chatsRoot = cursorChatsRoot(options);
   const projectsRoot = cursorProjectsRoot(options);
   const ideDb = cursorIdeDbPath(options);
@@ -362,9 +307,7 @@ function cursorHintKinds(
       kinds.add("ide");
     } else if (isWithin(chatsRoot, changedPath)) {
       kinds.add("cli");
-    } else if (isWithin(projectsRoot, changedPath)) {
-      kinds.add("project");
-    } else {
+    } else if (!isWithin(projectsRoot, changedPath)) {
       kinds.add("unknown");
     }
   }
@@ -386,7 +329,16 @@ export async function readCursorSessions(
 
   if (hint && prevCursor) {
     const kinds = cursorHintKinds(hint.paths, options);
-    if (kinds.has("unknown") || kinds.size !== 1 || kinds.has("project")) {
+    if (kinds.size === 0) {
+      return cursorResult(
+        prevCursor.chats,
+        prevCursor.locations,
+        prevCursor.unreadableById ?? {},
+        prevCursor.rejected ?? 0,
+        cachedIde(prevCursor),
+      );
+    }
+    if (kinds.has("unknown") || kinds.size !== 1) {
       return readCursorSessions(prev, options);
     }
     if (kinds.has("ide")) {
@@ -396,8 +348,6 @@ export async function readCursorSessions(
         prevCursor.unreadableById ?? {},
         prevCursor.rejected ?? 0,
         await readCursorIdeSessions(options),
-        prevCursor.projects,
-        prevCursor.projectUnreadable ?? 0,
       );
     }
     const { groups, locations, metaChanged, requiresFullScan } = await resolveChangedCursorChatCandidates(
@@ -429,15 +379,7 @@ export async function readCursorSessions(
         unreadableById[chatId] = next.unreadable;
       }
     }
-    return cursorResult(
-      chats,
-      locations,
-      unreadableById,
-      prevCursor.rejected ?? 0,
-      cachedIde(prevCursor),
-      prevCursor.projects,
-      prevCursor.projectUnreadable ?? 0,
-    );
+    return cursorResult(chats, locations, unreadableById, prevCursor.rejected ?? 0, cachedIde(prevCursor));
   }
 
   const { candidates, ambiguousById, locations, rejected } = await listCursorChatCandidates(options);
@@ -453,19 +395,8 @@ export async function readCursorSessions(
       unreadableById[candidate.chatId] = next.unreadable;
     }
   }
-  const [ide, projectResult] = await Promise.all([
-    readCursorIdeSessions(options),
-    readCursorProjects(prevCursor?.projects, options, deps),
-  ]);
-  return cursorResult(
-    chats,
-    locations,
-    unreadableById,
-    rejected,
-    ide,
-    projectResult.projects,
-    projectResult.unreadable,
-  );
+  const ide = await readCursorIdeSessions(options);
+  return cursorResult(chats, locations, unreadableById, rejected, ide);
 }
 
 interface ResolvedCursorCliSession {
@@ -521,8 +452,8 @@ async function resolveCursorProjectSession(
   return { candidate, entry: mapCursorProjectEntry(candidate, cwd, stamp) };
 }
 
-export async function resolveCursorCliProjectTranscript(
-  chatId: string,
+export async function resolveCursorProjectTranscriptForCwd(
+  transcriptId: string,
   cwd: string,
   options: CursorCombinedReaderOptions = {},
 ): Promise<CursorTranscriptCandidate | null> {
@@ -531,8 +462,96 @@ export async function resolveCursorCliProjectTranscript(
   if (!projectCwd || !sameCwd(projectCwd, cwd)) {
     return null;
   }
-  const projectSessionId = `project:${Buffer.from(projectBucket, "utf8").toString("base64url")}:${chatId}`;
+  const projectSessionId = `project:${Buffer.from(projectBucket, "utf8").toString("base64url")}:${transcriptId}`;
   return resolveCursorProjectTranscriptSession(projectSessionId, options);
+}
+
+type CursorPrivateSubagentStep = Extract<VaultActivityStep, { kind: "subagent" }> & {
+  childAgentId?: unknown;
+};
+
+function visibleSubagentStep(step: CursorPrivateSubagentStep): Extract<VaultActivityStep, { kind: "subagent" }> {
+  const { childAgentId: _childAgentId, ...visible } = step;
+  return visible;
+}
+
+async function linkCursorChildSessions(
+  timeline: VaultTimelineItem[],
+  cwd: string,
+  options: CursorCombinedReaderOptions,
+): Promise<VaultTimelineItem[]> {
+  const resolved = new Map<string, CursorTranscriptCandidate | null>();
+  let lookupCount = 0;
+  const output: VaultTimelineItem[] = [];
+  for (const item of timeline) {
+    if (item.kind !== "subagent") {
+      output.push(item);
+      continue;
+    }
+    const privateStep = item as CursorPrivateSubagentStep;
+    const childAgentId =
+      typeof privateStep.childAgentId === "string" && isSafeCursorChatId(privateStep.childAgentId)
+        ? privateStep.childAgentId
+        : undefined;
+    if (!childAgentId) {
+      output.push(visibleSubagentStep(privateStep));
+      continue;
+    }
+    let candidate = resolved.get(childAgentId);
+    if (candidate === undefined) {
+      if (lookupCount >= MAX_CURSOR_CHILD_LINKS) {
+        output.push(visibleSubagentStep(privateStep));
+        continue;
+      }
+      lookupCount++;
+      candidate = await resolveCursorProjectTranscriptForCwd(childAgentId, cwd, options);
+      resolved.set(childAgentId, candidate);
+    }
+    if (!candidate) {
+      output.push(visibleSubagentStep(privateStep));
+      continue;
+    }
+    output.push({
+      kind: "subagentSession",
+      entryId: formatEntryId("cursor", cursorProjectSessionId(candidate)),
+      title: privateStep.title ?? privateStep.prompt ?? privateStep.name,
+      ...(privateStep.prompt ? { firstMessage: privateStep.prompt, prompt: privateStep.prompt } : {}),
+      ...(privateStep.result ? { result: privateStep.result } : {}),
+      ...(privateStep.status ? { status: privateStep.status } : {}),
+      agent: privateStep.name,
+    });
+  }
+  return output;
+}
+
+function visibleRecentActivity(activity: VaultActivityStep[]): VaultActivityStep[] {
+  return activity.map((step) =>
+    step.kind === "subagent" ? visibleSubagentStep(step as CursorPrivateSubagentStep) : step,
+  );
+}
+
+/**
+ * D14 explicit Resume identity proof: point-resolves the CLI candidate for
+ * `sessionId` and requires its bounded `store.db` identity to match the safe
+ * chat-directory name before Resume/Copy Resume Command may proceed. Never
+ * decodes transcript content and never used by the metadata-only list path.
+ * IDE and project-transcript ids are never CLI Resume candidates, so they fail
+ * closed without opening a store.
+ */
+export async function verifyCursorResumeIdentity(
+  sessionId: string,
+  options: CursorDetailReaderOptions = {},
+): Promise<boolean> {
+  if (sessionId.startsWith("ide:") || sessionId.startsWith("project:")) {
+    return false;
+  }
+  const candidate = await resolveCursorChatCandidate(sessionId, options);
+  if (!candidate) {
+    return false;
+  }
+  return verifyCursorStoreIdentity(candidate.dbPath, candidate.chatId, {
+    withSqliteSnapshotFn: options.withSqliteSnapshotFn,
+  });
 }
 
 /**
@@ -580,11 +599,12 @@ export async function readCursorDetail(
       };
     }
     const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
-    const timeline =
+    const sourceTimeline =
       maxItems === undefined ? transcript.timeline : maxItems === 0 ? [] : transcript.timeline.slice(-maxItems);
+    const timeline = await linkCursorChildSessions(sourceTimeline, resolved.entry.cwd, options);
     return {
       entryId: resolved.entry.id,
-      recentActivity: transcript.recentActivity.slice(-MAX_RECENT_ACTIVITY),
+      recentActivity: visibleRecentActivity(transcript.recentActivity).slice(-MAX_RECENT_ACTIVITY),
       timeline,
       stats: transcript.stats,
       partial: false,
@@ -604,7 +624,7 @@ export async function readCursorDetail(
   let decoded = store;
   let sourceTruncated = false;
   if (store.status === "limited") {
-    const transcriptCandidate = await resolveCursorCliProjectTranscript(sessionId, entry.cwd, options);
+    const transcriptCandidate = await resolveCursorProjectTranscriptForCwd(sessionId, entry.cwd, options);
     if (transcriptCandidate) {
       const transcript = await readCursorTranscript(transcriptCandidate, options);
       if (transcript.status === "ok") {
@@ -631,10 +651,12 @@ export async function readCursorDetail(
   }
 
   const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
-  const timeline = maxItems === undefined ? decoded.timeline : maxItems === 0 ? [] : decoded.timeline.slice(-maxItems);
+  const sourceTimeline =
+    maxItems === undefined ? decoded.timeline : maxItems === 0 ? [] : decoded.timeline.slice(-maxItems);
+  const timeline = await linkCursorChildSessions(sourceTimeline, entry.cwd, options);
   return {
     entryId: entry.id,
-    recentActivity: decoded.recentActivity.slice(-MAX_RECENT_ACTIVITY),
+    recentActivity: visibleRecentActivity(decoded.recentActivity).slice(-MAX_RECENT_ACTIVITY),
     timeline,
     stats: decoded.stats,
     partial: false,
@@ -664,7 +686,7 @@ export async function resolveCursorSessionWatchPaths(
     return [];
   }
   const paths = [resolved.candidate.dbPath, `${resolved.candidate.dbPath}-wal`];
-  const transcript = await resolveCursorCliProjectTranscript(sessionId, resolved.entry.cwd, options);
+  const transcript = await resolveCursorProjectTranscriptForCwd(sessionId, resolved.entry.cwd, options);
   if (transcript) {
     paths.push(transcript.filePath);
   }

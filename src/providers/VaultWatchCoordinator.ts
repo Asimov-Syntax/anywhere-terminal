@@ -225,12 +225,7 @@ class FollowWatchLifecycle implements Disposable {
       read.inFlight = false;
       const dirtyRefreshSeq = read.dirtyRefreshSeq;
       read.dirtyRefreshSeq = undefined;
-      if (
-        dirtyRefreshSeq !== undefined &&
-        !this.disposed &&
-        seq === this.seq &&
-        dirtyRefreshSeq === this.refreshSeq
-      ) {
+      if (dirtyRefreshSeq !== undefined && !this.disposed && seq === this.seq && dirtyRefreshSeq === this.refreshSeq) {
         void this.pushDetail(entryId, seq, dirtyRefreshSeq);
       } else if (entryId !== this.watchedEntryId) {
         this.detailReads.delete(entryId);

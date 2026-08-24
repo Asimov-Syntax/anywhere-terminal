@@ -300,6 +300,11 @@ export type VaultTimelineItem =
       title: string;
       firstMessage?: string;
       agent?: string;
+      /** Bounded invocation prompt retained when the lazy child detail is unavailable. */
+      prompt?: string;
+      /** Bounded invocation result retained when the lazy child detail is unavailable. */
+      result?: string;
+      status?: "running" | "completed" | "failed";
       timestamp?: number;
     }
   /**

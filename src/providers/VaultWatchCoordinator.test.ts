@@ -268,7 +268,9 @@ describe("VaultWatchCoordinator", () => {
     vi.useFakeTimers();
     const { coordinator, subscriptions, vaultService, detail } = createHarness();
     let resolveOld: ((detail: VaultSessionDetail) => void) | undefined;
-    vaultService.getDetail.mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve))).mockResolvedValueOnce(detail);
+    vaultService.getDetail
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)))
+      .mockResolvedValueOnce(detail);
     const postFollowDetail = vi.fn();
     const client = coordinator.attach({ refreshList: vi.fn(), postFollowDetail });
     await client.watchSession("claude:old");

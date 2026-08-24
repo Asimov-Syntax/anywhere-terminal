@@ -398,16 +398,16 @@
   - **Plan**:
     1. Apply formatter-equivalent edits only in `src/vault/readers/cursorStore.ts`, `src/vault/readers/cursorStore.test.ts`, and `src/vault/sqlite.ts`.
 
-- [ ] 9_9 Document and smoke Cursor CLI plus IDE preview parity
-  - **Deps**: 9_6, 9_8
-  - **Refs**: specs/vault-session-preview/spec.md#{cursor-row-activation-opens-preview, cursor-agent-cli-transcript-preview, cursor-ide-composer-transcript-preview, cursor-transcript-privacy}; specs/vault-session-launch/spec.md#{cursor-selected-resume-compatibility, cursor-source-capability-enforcement}; design.md D11; design.md D12; design.md D13
+- [x] 9_9 Document and smoke Cursor CLI plus IDE preview parity — verified: manual — User ran the Extension Development Host smoke: CLI row, IDE row, sub-agent card, and proof-gated CLI Resume behave as specified; UI accepted. Residual data-quality issues reported and deferred to a follow-up change.
+  - **Deps**: 9_6, 9_8, 10_9, 10_10, 10_11
+  - **Refs**: specs/vault-session-preview/spec.md#{cursor-row-activation-opens-preview, cursor-agent-cli-transcript-preview, cursor-ide-composer-transcript-preview, cursor-subagent-run-preview, cursor-transcript-privacy}; specs/vault-session-launch/spec.md#{cursor-selected-resume-compatibility, cursor-source-capability-enforcement}; design.md D11; design.md D12; design.md D13; design.md D14
   - **Acceptance**:
     - Outcome: Guidance and local smoke show preview-first CLI and IDE history with CLI-only Resume.
     - Verify: manual open one compatible CLI row and one IDE row in the Extension Development Host, confirm bounded preview and actions, then explicitly Resume the CLI row without exposing transcript content in logs
   - **Plan**:
-    1. Update `./README.md` and `./CHANGELOG.md` for CLI and IDE source badges, preview-first activation, explicit CLI-only Resume, local transcript privacy, schema fallback, and unsupported ACP, fork, and cross-store Resume.
-    2. Update `src/webview/vault/vaultPanel.css` only if source badges need presentation changes.
-    3. Run the manual smoke without copying, logging, or submitting transcript content; record only capability and state outcomes.
+    1. Update `./README.md` and `./CHANGELOG.md` for CLI and IDE source badges, preview-first activation, explicit proof-gated CLI Resume, exact same-project child-agent drill-down, local transcript privacy, schema fallback, hidden orphan project JSONL, and unsupported ACP, fork, and cross-store Resume.
+    2. Update `src/webview/vault/vaultPanel.css` only if source badges or nested AGENT fallback need presentation changes.
+    3. Run the manual smoke without copying, logging, or submitting transcript content; record only capability and state outcomes, including one expanded saved child agent and one successful proof-gated CLI Resume.
 
 - [x] 10_1 Normalize Cursor CLI timeline semantics and batch store reads — verified: pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
   - **Deps**: 9_2, 9_3
@@ -464,14 +464,72 @@
     3. Reuse the existing AGENT card classes in `src/webview/vault/renderAtoms.ts` for a locally collapsible inline run with Prompt and Result bodies; do not issue a nested-detail RPC when no child transcript exists.
     4. Cover paired calls and results, background completion correlation, missing results, result bounds, store and mirror parity, AGENT labeling, and toggle behavior in `src/vault/readers/cursorStore.test.ts`, `src/vault/readers/cursorTranscript.test.ts`, `src/vault/readers/cursorReader.test.ts`, and `src/webview/vault/VaultPanel.test.ts`; isolate `src/vault/readers/cursorIdeReader.test.ts` from the installed project-transcript directory so full-suite verification cannot ingest user history.
 
-- [ ] 10_5 Complete Cursor source identity and reconciliation
+- [x] 10_5 Remove standalone Cursor project rows — verified: pnpm vitest run src/vault/readers/cursorReader.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorIdeReader.test.ts src/vault/VaultCacheStore.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
   - **Deps**: 10_1
-  - **Refs**: specs/agent-session-index/spec.md#{discover-cursor-project-transcripts, cursor-source-identity-and-deduplication, safe-cursor-session-lookup}; specs/vault-session-launch/spec.md#{cursor-selected-resume-compatibility, cursor-source-capability-enforcement}; design.md D12; .reviews/round-4.md#{B7, B8, B9, B10, B11, B12}
+  - **Refs**: specs/agent-session-index/spec.md#{cursor-cli-chat-eligibility, cursor-deferred-store-identity-proof, discover-cursor-project-transcripts, cursor-source-identity-and-deduplication, safe-cursor-session-lookup, cursor-indexing-is-metadata-only}; design.md D12; .reviews/round-4.md#{B7, B8, B10, B11, B12}
   - **Acceptance**:
-    - Outcome: Cursor CLI, project mirror, and IDE entries resolve with bounded source-qualified identity; unmatched projects surface non-resumably, mixed hints refresh every changed source, and selected detail lookup avoids global duplicate scans.
-    - Verify: command pnpm vitest run src/vault/readers/cursorReader.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/VaultCacheStore.test.ts src/vault/VaultService.watchTargets.test.ts
+    - Outcome: Cursor listing contains only metadata-derived CLI and IDE rows; project JSONL remains exact-detail-only.
+    - Verify: command pnpm vitest run src/vault/readers/cursorReader.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorIdeReader.test.ts src/vault/VaultCacheStore.test.ts
+  - **Boundary**: Session listing must not open `store.db` or decode project transcript content.
   - **Plan**:
-    1. Require exact safe `meta.agentId` binding for list and point lookup in `src/vault/readers/cursorReader.ts` with regression coverage in `src/vault/readers/cursorReader.test.ts`.
-    2. Index bounded project candidates, reconcile CLI mirrors only through proven storage context, emit source-qualified standalone project entries, and add exact project entry and detail lookup across `src/vault/readers/cursorReader.ts`, `src/vault/readers/cursorTranscript.ts`, `src/vault/readers/cursorReader.test.ts`, and `src/vault/readers/cursorTranscript.test.ts`.
-    3. Promote mixed-source Cursor hints to a complete refresh and remove repeated selected-session discovery through exact validated locations in `src/vault/readers/cursorReader.ts`, `src/vault/readers/cursorPaths.ts`, and `src/vault/readers/cursorReader.test.ts`.
-    4. Enforce project discovery and location caps plus metadata-only cache validation in `src/vault/cacheTypes.ts`, `src/vault/VaultCacheStore.ts`, `src/vault/VaultCacheStore.test.ts`, and preserve exact follow targets in `src/vault/VaultService.ts` and `src/vault/VaultService.watchTargets.test.ts`.
+    1. Keep unique safe CLI directory ids as metadata-only candidate identities and remove standalone project entries from `src/vault/readers/cursorReader.ts`; preserve exact project point resolution in `src/vault/readers/cursorTranscript.ts` for detail callers.
+    2. Remove project-derived list and cache state and reject stale persisted variants through a cache-version bump in `src/vault/cacheTypes.ts`, `src/vault/VaultCacheStore.ts`, and `src/vault/VaultCacheStore.test.ts`.
+    3. Cover hidden orphan and child JSONL, exact same-project CLI mirror fallback, duplicate ids, cache migration, and containment in `src/vault/readers/cursorReader.test.ts`, `src/vault/readers/cursorTranscript.test.ts`, and `src/vault/readers/cursorIdeReader.test.ts`.
+
+- [x] 10_9 Reconcile Cursor refresh and watch routing — verified: pnpm vitest run src/vault/readers/cursorReader.test.ts src/vault/VaultService.watchTargets.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
+  - **Deps**: 10_5
+  - **Refs**: specs/agent-session-index/spec.md#{cursor-source-identity-and-deduplication, safe-cursor-session-lookup}; design.md D12; design.md D13; .reviews/round-4.md#{B7, B11, B12}
+  - **Acceptance**:
+    - Outcome: Mixed CLI and IDE hints are reflected in one refreshed Cursor top-level list.
+    - Verify: command pnpm vitest run src/vault/readers/cursorReader.test.ts src/vault/VaultService.watchTargets.test.ts
+  - **Plan**:
+    1. Simplify mixed CLI and IDE hint handling in `src/vault/readers/cursorReader.ts` and retain exact CLI location refresh in `src/vault/readers/cursorPaths.ts`.
+    2. Remove project JSONL from top-level list refresh while preserving exact parent mirror follow targets in `src/vault/VaultService.ts` and `src/vault/VaultService.watchTargets.test.ts`.
+    3. Cover mixed hints, project-only list no-ops, deletion, overflow promotion, and exact follow paths in `src/vault/readers/cursorReader.test.ts`.
+
+- [x] 10_7 Resolve saved Cursor child transcript identities — verified: pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
+  - **Deps**: 10_6, 10_9
+  - **Refs**: specs/vault-session-preview/spec.md#{cursor-subagent-run-preview, cursor-saved-child-transcript-drill-down}; specs/agent-session-index/spec.md#{discover-cursor-project-transcripts, cursor-child-transcript-identity}; design.md D11; design.md D12
+  - **Acceptance**:
+    - Outcome: Parent detail emits a lazy child-session stub only for one exact same-project Agent ID.
+    - Verify: command pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts
+  - **Boundary**: Child Agent IDs are view-only project identities and must never enter Resume, list indexing, or a global id scan.
+  - **Plan**:
+    1. Parse a bounded safe child Agent ID only from correlated Cursor `Task` or `Agent` results in `src/vault/readers/cursorNormalization.ts` and preserve it privately through `src/vault/readers/cursorStore.ts`.
+    2. Generalize exact same-cwd project point resolution in `src/vault/readers/cursorTranscript.ts`; in `src/vault/readers/cursorReader.ts`, emit a source-qualified `subagentSession` only when one contained child transcript exists in the validated parent project.
+    3. Cover blocking and background Agent IDs, same id in another project, absent and ambiguous child layouts, and full child tool timelines in `src/vault/readers/cursorStore.test.ts`, `src/vault/readers/cursorTranscript.test.ts`, and `src/vault/readers/cursorReader.test.ts`.
+
+- [x] 10_10 Preserve fallback in lazy Cursor child previews — verified: pnpm vitest run src/vault/readers/cursorReader.test.ts src/webview/vault/VaultPanel.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: 10_7
+  - **Refs**: specs/vault-session-preview/spec.md#{cursor-saved-child-transcript-drill-down, cursor-subagent-result-fallback}; design.md D11
+  - **Acceptance**:
+    - Outcome: Expanded Cursor AGENT cards render child timelines and preserve bounded fallback when child detail fails.
+    - Verify: command pnpm vitest run src/vault/readers/cursorReader.test.ts src/webview/vault/VaultPanel.test.ts
+  - **Plan**:
+    1. Extend `src/vault/types.ts` so a lazy `subagentSession` may carry bounded invocation fallback, and populate it from `src/vault/readers/cursorReader.ts` without changing the child view-only identity.
+    2. Update `src/webview/vault/previewTimeline.ts` and `src/webview/vault/PreviewController.ts` to render Prompt and Result fallback after a failed child detail request.
+    3. Cover fallback field propagation in `src/vault/readers/cursorReader.test.ts` plus lazy nested-detail IPC, successful child rendering, stale-response guards, and failed-detail fallback in `src/webview/vault/VaultPanel.test.ts`.
+
+- [x] 10_8 Verify Cursor store identity at the reader boundary — verified: pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorReader.test.ts src/vault/VaultService.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: 10_3, 10_7
+  - **Refs**: specs/vault-session-launch/spec.md#cursor-explicit-resume-identity-proof; specs/agent-session-index/spec.md#cursor-deferred-store-identity-proof; design.md D14; .reviews/round-4.md#B9
+  - **Acceptance**:
+    - Outcome: Cursor reader and VaultService reject Resume identity when bounded store metadata does not match.
+    - Verify: command pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorReader.test.ts src/vault/VaultService.test.ts
+  - **Boundary**: The proof may read only the supported bounded store profile and identity metadata; it must not follow transcript roots.
+  - **Plan**:
+    1. Extract a shared bounded profile and identity parser and add `verifyCursorStoreIdentity` in `src/vault/readers/cursorStore.ts`, with locked, malformed, unsupported, absent, matching, and mismatched fixtures in `src/vault/readers/cursorStore.test.ts`.
+    2. Add exact CLI point verification in `src/vault/readers/cursorReader.ts` and expose it through `src/vault/VaultService.ts`, retaining the metadata-only list path.
+    3. Cover matching, mismatched, unavailable, and non-Cursor verification in `src/vault/readers/cursorReader.test.ts` and `src/vault/VaultService.test.ts`.
+
+- [x] 10_11 Proof-gate Cursor launch and command copy — verified: pnpm vitest run src/vault/VaultLauncher.test.ts src/providers/TerminalViewProvider.test.ts && pnpm run check-types; pnpm run test:unit exit 0
+  - **Deps**: 10_8
+  - **Refs**: specs/vault-session-launch/spec.md#{cursor-selected-resume-compatibility, cursor-explicit-resume-identity-proof, cursor-source-capability-enforcement}; design.md D14
+  - **Acceptance**:
+    - Outcome: Unverified Cursor Resume and command-copy requests create no external side effects.
+    - Verify: command pnpm vitest run src/vault/VaultLauncher.test.ts src/providers/TerminalViewProvider.test.ts
+  - **Boundary**: Failed proof must not probe executables, mutate the clipboard, or create a terminal.
+  - **Plan**:
+    1. Centralize launch and command-copy entry resolution plus proof in `src/vault/VaultLauncher.ts` and retain independent source-capability rejection.
+    2. Route Resume command copy through the launcher in `src/providers/TerminalViewProvider.ts` rather than building from a separately resolved entry.
+    3. Cover successful proof, mismatch, unavailable store, executable ordering, unchanged clipboard, no terminal creation, unsupported sources, and non-Cursor parity in `src/vault/VaultLauncher.test.ts` and `src/providers/TerminalViewProvider.test.ts`.

@@ -27,12 +27,6 @@ export interface CursorFileCacheEntry {
   entry: VaultSessionEntry;
 }
 
-/** Metadata-only cache for one independently listed project transcript. */
-export interface CursorProjectCacheEntry {
-  stamp: FileStamp;
-  entry: VaultSessionEntry;
-}
-
 /** Metadata-only cache for the Cursor IDE global store. */
 export interface CursorIdeCache {
   sources: Record<string /* state.vscdb and -wal absolute paths */, FileStamp>;
@@ -43,7 +37,6 @@ export interface CursorIdeCache {
 export const CURSOR_CHAT_ID_RE = /^[A-Za-z0-9._-]{1,200}$/;
 export const MAX_CURSOR_LOCATION_IDS = 4096;
 export const MAX_CURSOR_LOCATION_BUCKETS = 8192;
-export const MAX_CURSOR_PROJECT_CACHE_ENTRIES = 4096;
 export const MAX_CURSOR_IDE_CACHE_ENTRIES = 4096;
 export const MAX_CURSOR_IDE_SOURCE_STAMPS = 3;
 const MAX_CURSOR_BUCKET_CHARS = 200;
@@ -153,10 +146,6 @@ export type ReaderListCache =
       kind: "cursor-files";
       chats: Record<string /* chat id */, CursorFileCacheEntry>;
       locations: CursorLocationIndex;
-      /** Independently listed project transcript metadata, keyed by absolute JSONL path. */
-      projects?: Record<string, CursorProjectCacheEntry>;
-      /** Unreadable/ambiguous project sources from the read that produced `projects`. */
-      projectUnreadable?: number;
       /** Cursor IDE list metadata keyed by the global SQLite source stamps. */
       ide?: CursorIdeCache;
       /** Per-safe-id accounting only; no rejected path is joined or read. */
@@ -184,10 +173,10 @@ export type ListReader = (prev?: ReaderListCache, hint?: ReaderRefreshHint) => P
  *  or on any change to how a cached ENTRY is DERIVED, since an unchanged file
  *  reuses its stored entry verbatim and would otherwise keep serving the old
  *  derivation forever. `VaultCacheStore.load` discards any other version (→ full
- *  rebuild). v6: Cursor entries include source-qualified CLI/IDE metadata and
- *  source-specific project/IDE freshness state. v7 revalidates stored CLI identity
- *  and persists independently listed project-source unreadable accounting. */
-export const VAULT_CACHE_VERSION = 7 as const;
+ *  rebuild). v6 added source-qualified Cursor metadata; v7 added standalone project
+ *  freshness state. v8 removes project transcripts from the top-level list/cache —
+ *  they remain exact, explicit detail sources only. */
+export const VAULT_CACHE_VERSION = 8 as const;
 
 /** The persisted cache document (design.md D4). */
 export interface VaultListCacheFileV1 {
