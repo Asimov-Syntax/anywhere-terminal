@@ -141,6 +141,16 @@ describe("VaultLauncher.resolve", () => {
         canFork: false,
         canResume: true,
       }),
+      // Source-qualified and marked resumable, but a forged path-traversing chat id —
+      // the canonical isSafeCursorChatId validator must still reject it at this boundary.
+      makeEntry({
+        id: "cursor:../../etc/passwd",
+        agent: "cursor",
+        sessionId: "../../etc/passwd",
+        source: "cli",
+        canFork: false,
+        canResume: true,
+      }),
     ];
     const launcher = new VaultLauncher(stubService(entries), {});
 

@@ -775,22 +775,115 @@
         ],
         "assertionDelta": 0
       }
+    },
+    {
+      "task": "10_1",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "572b3ed15c9b41572d416e1ec20918108eae6bba",
+      "at": 1787545626425,
+      "scope": [
+        "src/vault/readers/cursorNormalization.ts",
+        "src/vault/readers/cursorStore.ts",
+        "src/vault/readers/cursorTranscript.ts",
+        "src/vault/readers/cursorStore.test.ts",
+        "src/vault/readers/cursorTranscript.test.ts",
+        "src/vault/readers/cursorReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/vault/readers/cursorReader.test.ts",
+      "testChange": {
+        "reason": "Added synthetic Cursor wrapper, notice, tool-call dialect, Task subagent, store batching, and store/mirror parity regressions required by the accepted decoder correction.",
+        "deleted": [],
+        "modified": [
+          "src/providers/VaultWatchCoordinator.test.ts",
+          "src/vault/LaunchBuilder.command.test.ts",
+          "src/vault/LaunchBuilder.test.ts",
+          "src/vault/VaultLauncher.test.ts",
+          "src/vault/readers/cursorReader.test.ts",
+          "src/vault/readers/cursorStore.test.ts",
+          "src/vault/readers/cursorTranscript.test.ts",
+          "src/webview/vault/vaultRenderSignature.test.ts"
+        ],
+        "assertionDelta": 57
+      }
+    },
+    {
+      "task": "10_2",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "f6162058f8615e98526259fae2b13fe1c4e84cc6",
+      "at": 1787545687336,
+      "scope": [
+        "src/providers/VaultWatchCoordinator.ts",
+        "src/providers/VaultWatchCoordinator.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/providers/VaultWatchCoordinator.test.ts"
+    },
+    {
+      "task": "10_3",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "484e928d207e9887851fb44ef73ba6584289b372",
+      "at": 1787545710723,
+      "scope": [
+        "src/vault/cursorCapabilities.ts",
+        "src/vault/LaunchBuilder.ts",
+        "src/vault/VaultLauncher.ts",
+        "src/vault/LaunchBuilder.test.ts",
+        "src/vault/LaunchBuilder.command.test.ts",
+        "src/vault/VaultLauncher.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/LaunchBuilder.test.ts src/vault/LaunchBuilder.command.test.ts src/vault/VaultLauncher.test.ts"
+    },
+    {
+      "task": "10_4",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "c65517351daeb45b8439ec22bec6ee43a8c1d1fc",
+      "at": 1787545731160,
+      "scope": [
+        "src/webview/vault/vaultRenderSignature.ts",
+        "src/webview/vault/vaultRenderSignature.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/webview/vault/vaultRenderSignature.test.ts"
+    },
+    {
+      "task": "10_6",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "a6f9af13c999c06309bd72b6cb73ef190bbac5b2",
+      "at": 1787549350919,
+      "scope": [
+        "src/vault/types.ts",
+        "src/vault/readers/cursorNormalization.ts",
+        "src/vault/readers/cursorStore.ts",
+        "src/vault/readers/cursorTranscript.ts",
+        "src/webview/vault/renderAtoms.ts",
+        "src/vault/readers/cursorStore.test.ts",
+        "src/vault/readers/cursorTranscript.test.ts",
+        "src/vault/readers/cursorReader.test.ts",
+        "src/webview/vault/VaultPanel.test.ts",
+        "src/vault/readers/cursorIdeReader.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorStore.test.ts src/vault/readers/cursorTranscript.test.ts src/webview/vault/VaultPanel.test.ts",
+      "testChange": {
+        "reason": "Inline subagent activity now uses the accepted shared collapsible AGENT card contract, store/mirror expectations now distinguish title from prompt, and the combined IDE fixture is isolated from installed Cursor project history.",
+        "deleted": [],
+        "modified": [
+          "src/vault/VaultCacheStore.test.ts",
+          "src/vault/VaultService.watchTargets.test.ts",
+          "src/vault/readers/cursorIdeReader.test.ts",
+          "src/vault/readers/cursorReader.test.ts",
+          "src/vault/readers/cursorStore.test.ts",
+          "src/vault/readers/cursorTranscript.test.ts",
+          "src/webview/vault/VaultPanel.test.ts"
+        ],
+        "assertionDelta": 39
+      }
     }
   ],
   "reads": 0,
   "testBaseline": {
-    "src/vault/readers/cursorIdeReader.test.ts": {
-      "hash": "a3b4412a44728d14",
-      "assertions": 31
-    },
-    "src/vault/readers/cursorStore.test.ts": {
-      "hash": "698290c40fcc6968",
-      "assertions": 19
-    },
-    "src/vault/readers/cursorTranscript.test.ts": {
-      "hash": "4549388e7a98d948",
-      "assertions": 28
-    },
     "asimov/debug/260823-session-preview-ordered-list-verified/repro.test.ts": {
       "hash": "c2c788522d0cbe90",
       "assertions": 1
@@ -864,8 +957,8 @@
       "assertions": 14
     },
     "src/providers/VaultWatchCoordinator.test.ts": {
-      "hash": "613bce230f9e641f",
-      "assertions": 37
+      "hash": "b0a59a2abd438c96",
+      "assertions": 47
     },
     "src/providers/clipboardImageSync.test.ts": {
       "hash": "f9a7f4755491228c",
@@ -1068,15 +1161,15 @@
       "assertions": 37
     },
     "src/vault/LaunchBuilder.command.test.ts": {
-      "hash": "b61991a5a786f509",
-      "assertions": 11
+      "hash": "f36449f8c017bb8e",
+      "assertions": 12
     },
     "src/vault/LaunchBuilder.test.ts": {
-      "hash": "c4cd36a0c720079b",
-      "assertions": 52
+      "hash": "51e311ee1db69aa6",
+      "assertions": 53
     },
     "src/vault/VaultCacheStore.test.ts": {
-      "hash": "9b80428f6cf8d8f9",
+      "hash": "fd08ad19384e1b09",
       "assertions": 38
     },
     "src/vault/VaultCustomNameRegistry.test.ts": {
@@ -1084,7 +1177,7 @@
       "assertions": 14
     },
     "src/vault/VaultLauncher.test.ts": {
-      "hash": "3eae63c46659b28b",
+      "hash": "595157157c670e5e",
       "assertions": 21
     },
     "src/vault/VaultService.customName.test.ts": {
@@ -1100,7 +1193,7 @@
       "assertions": 136
     },
     "src/vault/VaultService.watchTargets.test.ts": {
-      "hash": "5ebaa04583cf056b",
+      "hash": "c02143427a9617c1",
       "assertions": 21
     },
     "src/vault/messageText.test.ts": {
@@ -1135,9 +1228,21 @@
       "hash": "7a10a18084f4cb4c",
       "assertions": 61
     },
+    "src/vault/readers/cursorIdeReader.test.ts": {
+      "hash": "22918cd813a08ce1",
+      "assertions": 31
+    },
     "src/vault/readers/cursorReader.test.ts": {
-      "hash": "59c998cf0e7df007",
-      "assertions": 129
+      "hash": "353b7a946f15af41",
+      "assertions": 147
+    },
+    "src/vault/readers/cursorStore.test.ts": {
+      "hash": "d67a82accf4d19a7",
+      "assertions": 58
+    },
+    "src/vault/readers/cursorTranscript.test.ts": {
+      "hash": "e23bbf4e14ff328f",
+      "assertions": 38
     },
     "src/vault/readers/detail.test.ts": {
       "hash": "818698c4664fbd7a",
@@ -1372,8 +1477,8 @@
       "assertions": 31
     },
     "src/webview/vault/VaultPanel.test.ts": {
-      "hash": "32641a3356a7f788",
-      "assertions": 457
+      "hash": "e0284db8f81f287c",
+      "assertions": 472
     },
     "src/webview/vault/forkPoint.test.ts": {
       "hash": "3a795899c09dc9bc",
@@ -1396,8 +1501,8 @@
       "assertions": 22
     },
     "src/webview/vault/vaultRenderSignature.test.ts": {
-      "hash": "f7c2a5a8e60fbd9c",
-      "assertions": 18
+      "hash": "641d3671076dd520",
+      "assertions": 20
     },
     "src/webview/vault/workflowBoard.test.ts": {
       "hash": "bd35799c3d28cfdd",

@@ -32,6 +32,10 @@ export function entriesSignature(entries: readonly VaultSessionEntry[]): string 
         // Explicit false hides Resume; undefined preserves legacy resume behavior.
         e.canResume === false ? "0" : "1",
         e.sessionPath ?? "",
+        // Cursor's `cli`/`ide` storage domain drives badges and capability-gated
+        // actions (e.g. resume); a source-only delta must not be masked
+        // (integrate-cursor-agent D6).
+        e.source ?? "",
         JSON.stringify(e.flags ?? {}),
       ].join(FIELD_SEP),
     )

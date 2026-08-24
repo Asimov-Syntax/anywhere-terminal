@@ -4,17 +4,18 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { VaultActivityStep, VaultTimelineItem } from "../types";
+import { type CursorNormalizedRecord, emptyCursorRecord, normalizeCursorRecord } from "./cursorNormalization";
 import { type CursorPathFsDeps, isSafeCursorChatId } from "./cursorPaths";
 
 const READ_CHUNK_BYTES = 256 * 1024;
 const MAX_READ_BYTES = 32 * 1024 * 1024;
 export const MAX_CURSOR_TRANSCRIPT_LINE_BYTES = 2 * 1024 * 1024;
 const MAX_TIMELINE_ITEMS = 500;
-const MAX_TEXT_CHARS = 256 * 1024;
-const MAX_TOOL_DETAIL_CHARS = 2000;
 const MAX_PROJECT_BUCKET_CHARS = 512;
-const REASONING_LEAK_RE =
-  /\n{2,}\*\*(?:Considering|Thinking|Planning|Inspecting|Exploring|Reviewing|Troubleshooting|Diagnosing|Evaluating|Running|Checking|Reading|Understanding|Analyzing|Debugging|Responding)\b[^*\n]{0,80}\*\*\n{2,}/;
+export const MAX_CURSOR_PROJECT_BUCKETS = 1024;
+export const MAX_CURSOR_PROJECT_CANDIDATES = 4096;
+const MAX_CURSOR_PROJECT_PATH_CHECKS = 4096;
+const MAX_CURSOR_PROJECT_PATH_DEPTH = 32;
 
 export interface CursorTranscriptCandidate {
   transcriptId: string;
@@ -52,6 +53,7 @@ export type CursorTranscriptResult =
 const REAL_PATH_FS: CursorPathFsDeps = {
   readdir: (p, options) => fs.readdir(p, options),
   stat: (p) => fs.stat(p),
+  lstat: (p) => fs.lstat(p),
 };
 
 const REAL_FS: CursorTranscriptFsDeps = {
@@ -64,6 +66,86 @@ export function cursorProjectsRoot(options: CursorTranscriptOptions = {}): strin
     return options.projectsDir;
   }
   return path.join(options.home ?? os.homedir(), ".cursor", "projects");
+}
+
+/** Cursor's project directory encoding: absolute separators and drive colon become hyphens. */
+export function cursorProjectBucketForCwd(cwd: string): string {
+  return cwd.replace(/\\/g, "/").replace(/^\/+/, "").replace(/:/g, "-").replace(/\//g, "-");
+}
+
+async function isRealDirectory(candidatePath: string, deps: CursorPathFsDeps): Promise<boolean> {
+  try {
+    if (deps.lstat) {
+      const stat = await deps.lstat(candidatePath);
+      return stat.isDirectory() && !stat.isSymbolicLink();
+    }
+    return (await deps.stat(candidatePath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Decode one project bucket only when exactly one real, non-symlinked cwd matches. */
+export async function resolveCursorProjectCwd(
+  projectBucket: string,
+  options: CursorTranscriptOptions = {},
+): Promise<string | null> {
+  if (!isSafeProjectBucket(projectBucket)) {
+    return null;
+  }
+  const deps = options.pathsFs ?? REAL_PATH_FS;
+  let basePath = path.parse(path.resolve("/")).root;
+  let remaining = projectBucket;
+  if (process.platform === "win32") {
+    const drive = /^([A-Za-z])--(.+)$/.exec(projectBucket);
+    if (!drive) {
+      return null;
+    }
+    basePath = `${drive[1].toUpperCase()}:\\`;
+    remaining = drive[2];
+  }
+
+  const matches = new Set<string>();
+  const visited = new Set<string>();
+  let checks = 0;
+  const walk = async (base: string, encoded: string, depth: number): Promise<void> => {
+    if (matches.size > 1 || depth > MAX_CURSOR_PROJECT_PATH_DEPTH || checks >= MAX_CURSOR_PROJECT_PATH_CHECKS) {
+      return;
+    }
+    const stateKey = `${base}\0${encoded}`;
+    if (visited.has(stateKey)) {
+      return;
+    }
+    visited.add(stateKey);
+
+    checks++;
+    const leaf = path.join(base, encoded);
+    if (await isRealDirectory(leaf, deps)) {
+      matches.add(path.resolve(leaf));
+      if (matches.size > 1) {
+        return;
+      }
+    }
+
+    for (let index = encoded.indexOf("-"); index >= 0; index = encoded.indexOf("-", index + 1)) {
+      if (index === 0 || index === encoded.length - 1 || checks >= MAX_CURSOR_PROJECT_PATH_CHECKS) {
+        continue;
+      }
+      const segment = encoded.slice(0, index);
+      const nextBase = path.join(base, segment);
+      checks++;
+      if (!(await isRealDirectory(nextBase, deps))) {
+        continue;
+      }
+      await walk(nextBase, encoded.slice(index + 1), depth + 1);
+      if (matches.size > 1) {
+        return;
+      }
+    }
+  };
+
+  await walk(basePath, remaining, 0);
+  return matches.size === 1 ? [...matches][0] : null;
 }
 
 function isSafeProjectBucket(value: string): boolean {
@@ -107,13 +189,23 @@ function candidate(
 
 export async function listCursorTranscriptCandidates(
   options: CursorTranscriptOptions = {},
-): Promise<{ candidates: CursorTranscriptCandidate[]; ambiguousIds: ReadonlySet<string>; rejected: number }> {
+): Promise<{
+  candidates: CursorTranscriptCandidate[];
+  ambiguousIds: ReadonlySet<string>;
+  rejected: number;
+  overflowed: boolean;
+}> {
   const root = cursorProjectsRoot(options);
   const deps = options.pathsFs ?? REAL_PATH_FS;
-  const byId = new Map<string, CursorTranscriptCandidate[]>();
-  let rejected = 0;
+  const projects = (await readdir(root, deps)).sort((a, b) => a.name.localeCompare(b.name));
+  if (projects.length > MAX_CURSOR_PROJECT_BUCKETS) {
+    return { candidates: [], ambiguousIds: new Set(), rejected: 0, overflowed: true };
+  }
 
-  for (const project of (await readdir(root, deps)).sort((a, b) => a.name.localeCompare(b.name))) {
+  const bySource = new Map<string, CursorTranscriptCandidate[]>();
+  let rejected = 0;
+  let candidateCount = 0;
+  for (const project of projects) {
     if (!project.isDirectory() || !isSafeProjectBucket(project.name)) {
       if (project.isDirectory()) {
         rejected++;
@@ -125,7 +217,11 @@ export async function listCursorTranscriptCandidates(
       rejected++;
       continue;
     }
-    for (const entry of (await readdir(transcriptsDir, deps)).sort((a, b) => a.name.localeCompare(b.name))) {
+    const entries = (await readdir(transcriptsDir, deps)).sort((a, b) => a.name.localeCompare(b.name));
+    if (candidateCount + entries.length > MAX_CURSOR_PROJECT_CANDIDATES) {
+      return { candidates: [], ambiguousIds: new Set(), rejected, overflowed: true };
+    }
+    for (const entry of entries) {
       let found: CursorTranscriptCandidate | undefined;
       if (entry.isFile() && entry.name.endsWith(".jsonl")) {
         const transcriptId = entry.name.slice(0, -".jsonl".length);
@@ -140,9 +236,7 @@ export async function listCursorTranscriptCandidates(
         );
         if (found) {
           try {
-            if (!(await deps.stat(found.filePath)).isDirectory()) {
-              // `CursorPathFsDeps.stat` exposes only isDirectory; false means a file.
-            } else {
+            if ((await deps.stat(found.filePath)).isDirectory()) {
               found = undefined;
             }
           } catch {
@@ -155,25 +249,29 @@ export async function listCursorTranscriptCandidates(
       if (!found) {
         continue;
       }
-      const group = byId.get(found.transcriptId);
+      candidateCount++;
+      const sourceKey = `${found.projectBucket}\0${found.transcriptId}`;
+      const group = bySource.get(sourceKey);
       if (group) {
         group.push(found);
       } else {
-        byId.set(found.transcriptId, [found]);
+        bySource.set(sourceKey, [found]);
       }
     }
   }
 
   const candidates: CursorTranscriptCandidate[] = [];
-  const ambiguousIds = new Set<string>();
-  for (const [transcriptId, group] of byId) {
-    if (group.length === 1) {
-      candidates.push(group[0]);
-    } else {
-      ambiguousIds.add(transcriptId);
+  const byId = new Map<string, number>();
+  for (const group of bySource.values()) {
+    if (group.length !== 1) {
+      rejected += group.length;
+      continue;
     }
+    candidates.push(group[0]);
+    byId.set(group[0].transcriptId, (byId.get(group[0].transcriptId) ?? 0) + 1);
   }
-  return { candidates, ambiguousIds, rejected };
+  const ambiguousIds = new Set([...byId].filter(([, count]) => count > 1).map(([transcriptId]) => transcriptId));
+  return { candidates, ambiguousIds, rejected, overflowed: false };
 }
 
 export function cursorProjectSessionId(candidate: CursorTranscriptCandidate): string {
@@ -240,128 +338,10 @@ export async function resolveCursorTranscriptCandidate(
   return candidates.find((item) => item.transcriptId === transcriptId) ?? null;
 }
 
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
-function boundedText(value: unknown): string | undefined {
-  return typeof value === "string" && value.length <= MAX_TEXT_CHARS ? value : undefined;
-}
-
-function toolDetail(input: unknown): string | undefined {
-  const record = asObject(input);
-  if (!record) {
-    return undefined;
-  }
-  for (const key of ["file_path", "path", "command", "query", "description"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.length > 0) {
-      return value.slice(0, MAX_TOOL_DETAIL_CHARS);
-    }
-  }
-  return undefined;
-}
-
-function toolResultText(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return value.slice(0, MAX_TOOL_DETAIL_CHARS);
-  }
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const text: string[] = [];
-  for (const item of value) {
-    if (typeof item === "string") {
-      text.push(item);
-    } else {
-      const block = asObject(item);
-      if (block && block.type === "text" && typeof block.text === "string") {
-        text.push(block.text);
-      }
-    }
-  }
-  return text.join("\n").slice(0, MAX_TOOL_DETAIL_CHARS) || undefined;
-}
-
-function toolName(record: Record<string, unknown>): string {
-  for (const key of ["name", "toolName", "tool_name"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.length > 0 && value.length <= 200) {
-      return value;
-    }
-  }
-  return "Tool result";
-}
-
-function normalizeLine(value: unknown): { timeline: VaultTimelineItem[]; activity: VaultActivityStep[] } {
-  const envelope = asObject(value);
-  if (!envelope || envelope.type === "turn_ended") {
-    return { timeline: [], activity: [] };
-  }
-  const message = asObject(envelope.message);
-  const record = message ? { ...envelope, ...message } : envelope;
-  const role = record.role;
-  if (role === "system" || role === "reasoning" || record.type === "thinking" || record.type === "reasoning") {
-    return { timeline: [], activity: [] };
-  }
-  if (role === "tool" || role === "tool_result" || record.type === "tool_result") {
-    const tool: VaultActivityStep = {
-      kind: "tool",
-      tool: toolName(record),
-      ...(toolResultText(record.content ?? record.output ?? record.result)
-        ? { detail: toolResultText(record.content ?? record.output ?? record.result) }
-        : {}),
-    };
-    return { timeline: [tool], activity: [tool] };
-  }
-  if (role !== "user" && role !== "assistant") {
-    return { timeline: [], activity: [] };
-  }
-
-  const texts: string[] = [];
-  const activity: VaultActivityStep[] = [];
-  const content = record.content;
-  if (typeof content === "string") {
-    const text = boundedText(content);
-    if (text !== undefined) {
-      texts.push(text);
-    }
-  } else if (Array.isArray(content)) {
-    for (const item of content) {
-      const block = asObject(item);
-      if (!block) {
-        continue;
-      }
-      if (block.type === "text" || block.type === "input_text" || block.type === "output_text") {
-        const text = boundedText(block.text);
-        if (text !== undefined) {
-          texts.push(text);
-        }
-      } else if (block.type === "tool_use" || block.type === "tool_call" || block.type === "tool-call") {
-        if (typeof block.name === "string" && block.name.length > 0 && block.name.length <= 200) {
-          const detail = toolDetail(block.input ?? block.arguments);
-          activity.push({ kind: "tool", tool: block.name, ...(detail ? { detail } : {}) });
-        }
-      } else if (block.type === "tool_result") {
-        const detail = toolResultText(block.content ?? block.text ?? block.output);
-        activity.push({ kind: "tool", tool: toolName(block), ...(detail ? { detail } : {}) });
-      }
-    }
-  }
-
-  let text = texts.join("\n");
-  if (role === "assistant") {
-    const marker = REASONING_LEAK_RE.exec(text);
-    if (marker && marker.index > 0) {
-      text = text.slice(0, marker.index).trimEnd();
-    }
-  }
-  const timeline: VaultTimelineItem[] = [];
-  if (text.length > 0) {
-    timeline.push({ kind: "message", role, text });
-  }
-  timeline.push(...activity);
-  return { timeline, activity };
+/** The JSONL mirror shares the CLI store's classifier, so the same chat reads the
+ *  same way whichever source served it (D11/D12). */
+function normalizeLine(value: unknown): CursorNormalizedRecord {
+  return normalizeCursorRecord(value) ?? emptyCursorRecord();
 }
 
 async function readWindow(
@@ -461,6 +441,7 @@ export async function readCursorTranscript(
   const activity: VaultActivityStep[] = [];
   let messageCount = 0;
   let toolCount = 0;
+  let subagentCount = 0;
   let pendingTail = false;
   while (localStart < buffer.length) {
     const newline = buffer.indexOf(0x0a, localStart);
@@ -474,16 +455,11 @@ export async function readCursorTranscript(
       try {
         const parsed = JSON.parse(line.toString("utf8"));
         const normalized = normalizeLine(parsed);
-        for (const item of normalized.timeline) {
-          timeline.push(item);
-          if (item.kind === "message") {
-            messageCount++;
-          }
-          if (item.kind === "tool") {
-            toolCount++;
-          }
-        }
+        timeline.push(...normalized.timeline);
         activity.push(...normalized.activity);
+        messageCount += normalized.messageCount;
+        toolCount += normalized.toolCount;
+        subagentCount += normalized.subagentCount;
       } catch {
         if (completeAtEof) {
           pendingTail = true;
@@ -507,7 +483,7 @@ export async function readCursorTranscript(
     status: "ok",
     timeline,
     recentActivity: activity.slice(-12),
-    stats: { messageCount, toolCount, subagentCount: 0 },
+    stats: { messageCount, toolCount, subagentCount },
     truncated,
     nextOffset: pendingTail ? windowEnd - pendingBytes : windowEnd,
     pendingTail,

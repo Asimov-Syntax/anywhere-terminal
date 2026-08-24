@@ -1,13 +1,16 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type CursorTranscriptCandidate,
+  cursorProjectBucketForCwd,
   cursorProjectSessionId,
   listCursorTranscriptCandidates,
+  MAX_CURSOR_PROJECT_BUCKETS,
   MAX_CURSOR_TRANSCRIPT_LINE_BYTES,
   readCursorTranscript,
+  resolveCursorProjectCwd,
   resolveCursorProjectTranscriptSession,
   resolveCursorTranscriptCandidate,
 } from "./cursorTranscript";
@@ -42,6 +45,14 @@ function line(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
 }
 
+/** Synthetic stand-in for the injected background-completion template (see
+ *  cursorStore.test.ts) — no private transcript content. */
+const INJECTED_NOTIFICATION = [
+  "The background agent (task_id: task-42) has completed",
+  "This is an automated notification; do not reply to it directly.",
+  "Result: all checks green",
+].join("\n");
+
 describe("Cursor project transcript discovery", () => {
   it("discovers nested and legacy flat transcripts but not subagent files", async () => {
     await writeNested("project-a", "chat-nested", line({ role: "user", message: { content: "nested" } }));
@@ -62,12 +73,15 @@ describe("Cursor project transcript discovery", () => {
     expect(result.ambiguousIds.size).toBe(0);
   });
 
-  it("rejects duplicate transcript ids across project buckets", async () => {
+  it("keeps duplicate ids source-qualified while rejecting id-only resolution", async () => {
     await writeNested("project-a", "chat-1", "");
     await writeNested("project-b", "chat-1", "");
 
     const result = await listCursorTranscriptCandidates({ projectsDir: root });
-    expect(result.candidates).toEqual([]);
+    expect(result.candidates.map((candidate) => cursorProjectSessionId(candidate)).sort()).toEqual([
+      "project:cHJvamVjdC1h:chat-1",
+      "project:cHJvamVjdC1i:chat-1",
+    ]);
     expect(result.ambiguousIds.has("chat-1")).toBe(true);
     await expect(resolveCursorTranscriptCandidate("chat-1", { projectsDir: root })).resolves.toBeNull();
   });
@@ -81,6 +95,46 @@ describe("Cursor project transcript discovery", () => {
     await expect(
       resolveCursorProjectTranscriptSession("project:cHJvamVjdC1i:chat-1", { projectsDir: root }),
     ).resolves.toMatchObject({ projectBucket: "project-b" });
+  });
+
+  it("decodes one filesystem-validated project cwd without guessing hyphen boundaries", async () => {
+    const cwdPath = path.join(root, "workspaces", "my-hyphenated-project");
+    await fs.mkdir(cwdPath, { recursive: true });
+    const cwd = await fs.realpath(cwdPath);
+    const bucket = cursorProjectBucketForCwd(cwd);
+
+    await expect(resolveCursorProjectCwd(bucket)).resolves.toBe(cwd);
+  });
+
+  it("rejects an encoded project cwd when multiple real paths match", async () => {
+    const basePath = path.join(root, "ambiguous");
+    const firstPath = path.join(basePath, "a-b", "c");
+    const secondPath = path.join(basePath, "a", "b-c");
+    await Promise.all([fs.mkdir(firstPath, { recursive: true }), fs.mkdir(secondPath, { recursive: true })]);
+    const [first, second] = await Promise.all([fs.realpath(firstPath), fs.realpath(secondPath)]);
+    const bucket = cursorProjectBucketForCwd(first);
+    expect(cursorProjectBucketForCwd(second)).toBe(bucket);
+
+    await expect(resolveCursorProjectCwd(bucket)).resolves.toBeNull();
+  });
+
+  it("fails closed when project discovery exceeds its bucket ceiling", async () => {
+    const fakeDirectory = (name: string) =>
+      ({ name, isDirectory: () => true, isFile: () => false }) as unknown as import("node:fs").Dirent;
+    const pathsFs = {
+      readdir: vi.fn(async (dir: string) =>
+        dir === root
+          ? Array.from({ length: MAX_CURSOR_PROJECT_BUCKETS + 1 }, (_, index) => fakeDirectory(`project-${index}`))
+          : [],
+      ),
+      stat: vi.fn(),
+    };
+
+    const result = await listCursorTranscriptCandidates({ projectsDir: root, pathsFs });
+
+    expect(result.candidates).toEqual([]);
+    expect(result.overflowed).toBe(true);
+    expect(pathsFs.readdir).toHaveBeenCalledTimes(1);
   });
 
   it("rejects malformed project sessions and ambiguous layouts", async () => {
@@ -135,9 +189,61 @@ describe("readCursorTranscript", () => {
       { kind: "message", role: "user", text: "Question" },
       { kind: "message", role: "assistant", text: "Answer" },
       { kind: "tool", tool: "Read", detail: "/tmp/a.ts" },
-      { kind: "tool", tool: "Read", detail: "contents" },
     ]);
-    expect(result.stats).toEqual({ messageCount: 2, toolCount: 2, subagentCount: 0 });
+    expect(result.stats).toEqual({ messageCount: 2, toolCount: 1, subagentCount: 0 });
+  });
+
+  it("classifies wrapped queries, injected bootstrap, notices, and subagents like the CLI store", async () => {
+    const candidate = await writeNested(
+      "project-a",
+      "chat-classify",
+      [
+        line({ role: "user", message: { content: "<user_info>Directory: /work</user_info>\nEnvironment ready." } }),
+        line({
+          role: "user",
+          message: {
+            content: "<timestamp>2026-08-24T10:00:00Z</timestamp>\n<user_query>Fix the failing test</user_query>",
+          },
+        }),
+        line({
+          role: "assistant",
+          message: {
+            content: [
+              { type: "tool_use", name: "Task", input: { subagent_type: "code-reviewer", description: "Review" } },
+              { type: "tool_use", name: "Read", input: { file_path: "/tmp/a.ts" } },
+            ],
+          },
+        }),
+        line({ type: "tool_result", name: "Read", content: "contents" }),
+        line({ role: "user", message: { content: `<user_query>${INJECTED_NOTIFICATION}</user_query>` } }),
+        line({
+          role: "user",
+          message: { content: "<user_query>Did the task_id notification fire once it has completed?</user_query>" },
+        }),
+      ].join(""),
+    );
+
+    const result = await readCursorTranscript(candidate, { projectsDir: root });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") {
+      return;
+    }
+    expect(result.timeline).toEqual([
+      { kind: "message", role: "user", text: "Fix the failing test" },
+      { kind: "subagent", name: "code-reviewer", title: "Review" },
+      { kind: "tool", tool: "Read", detail: "/tmp/a.ts" },
+      {
+        kind: "notice",
+        summary: "The background agent (task_id: task-42) has completed",
+        body: "This is an automated notification; do not reply to it directly.\nResult: all checks green",
+      },
+      { kind: "message", role: "user", text: "Did the task_id notification fire once it has completed?" },
+    ]);
+    expect(result.recentActivity).toEqual([
+      { kind: "subagent", name: "code-reviewer", title: "Review" },
+      { kind: "tool", tool: "Read", detail: "/tmp/a.ts" },
+    ]);
+    expect(result.stats).toEqual({ messageCount: 2, toolCount: 1, subagentCount: 1 });
   });
 
   it("consumes a valid final JSON record without a newline", async () => {

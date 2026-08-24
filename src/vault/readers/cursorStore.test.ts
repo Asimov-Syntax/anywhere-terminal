@@ -3,8 +3,8 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { withSqliteSnapshot } from "../sqlite";
-import { readCursorStoreDetail } from "./cursorStore";
+import type { withSqliteSnapshot } from "../sqlite";
+import { MAX_CURSOR_BLOB_BYTES, MAX_CURSOR_STORE_BYTES, readCursorStoreDetail } from "./cursorStore";
 
 let tmpRoot: string;
 let dbPath: string;
@@ -69,6 +69,58 @@ async function writeStore(fixture: StoreFixture): Promise<void> {
 
 function json(value: unknown): Buffer {
   return Buffer.from(JSON.stringify(value), "utf8");
+}
+
+/** A synthetic stand-in for the injected background-completion template: the
+ *  opening phrase plus every marker the real envelope carries. No private
+ *  transcript content is used. */
+const INJECTED_NOTIFICATION = [
+  "The background agent (task_id: task-42) has completed",
+  "This is an automated notification; do not reply to it directly.",
+  "Result: all checks green",
+].join("\n");
+
+function blobQueries(queries: string[]): string[] {
+  return queries.filter((sql) => sql.includes("FROM blobs"));
+}
+
+/** An in-memory stand-in for one WAL-aware snapshot, so tests can observe the
+ *  exact SQL the decoder issues without a private fixture store. */
+function fakeSnapshot(blobs: Map<string, Buffer>, rootId: string, queries: string[]): typeof withSqliteSnapshot {
+  const metaValue = Buffer.from(JSON.stringify({ agentId: "chat-1", latestRootBlobId: rootId }), "utf8").toString(
+    "hex",
+  );
+  return (async (_path, callback) => {
+    const value = await callback({
+      query: async (sql: string) => {
+        queries.push(sql);
+        if (sql.includes("pragma_user_version")) {
+          return {
+            status: "ok" as const,
+            rows: [
+              {
+                user_version: 1,
+                meta_columns: 2,
+                meta_key: 1,
+                meta_value_column: 1,
+                blob_columns: 2,
+                blob_id: 1,
+                blob_data: 1,
+                meta_value: metaValue,
+              },
+            ],
+          };
+        }
+        const ids = (sql.match(/'[0-9a-f]{64}'/g) ?? []).map((quoted) => quoted.slice(1, -1));
+        const rows = ids
+          .map((id) => ({ id, data: blobs.get(id) }))
+          .filter((row): row is { id: string; data: Buffer } => row.data !== undefined)
+          .map((row) => ({ id: row.id, data_hex: row.data.toString("hex"), byte_length: row.data.length }));
+        return { status: "ok" as const, rows };
+      },
+    });
+    return { status: "ok" as const, value };
+  }) as typeof withSqliteSnapshot;
 }
 
 describe("readCursorStoreDetail", () => {
@@ -163,72 +215,314 @@ describe("readCursorStoreDetail", () => {
     const rootId = hash(root);
     const privateBlob = Buffer.from("unrelated private blob", "utf8");
     const privateId = hash(privateBlob);
-    const blobs = new Map([
-      [rootId, root],
-      [messageId, message],
-      [privateId, privateBlob],
-    ]);
-    const metaValue = Buffer.from(JSON.stringify({ agentId: "chat-1", latestRootBlobId: rootId }), "utf8").toString(
-      "hex",
-    );
     const queries: string[] = [];
-    const withSnapshot = (async (_path, callback) => {
-      const value = await callback({
-        query: async (sql: string) => {
-          queries.push(sql);
-          if (sql.includes("pragma_user_version")) {
-            return {
-              status: "ok" as const,
-              rows: [
-                {
-                  user_version: 1,
-                  meta_columns: 2,
-                  meta_key: 1,
-                  meta_value_column: 1,
-                  blob_columns: 2,
-                  blob_id: 1,
-                  blob_data: 1,
-                  meta_value: metaValue,
-                },
-              ],
-            };
-          }
-          const id = sql.match(/WHERE id = '([0-9a-f]{64})'/)?.[1];
-          const data = id ? blobs.get(id) : undefined;
-          return data
-            ? { status: "ok" as const, rows: [{ id, data_hex: data.toString("hex"), byte_length: data.length }] }
-            : { status: "ok" as const, rows: [] };
-        },
-      });
-      return { status: "ok" as const, value };
-    }) as typeof withSqliteSnapshot;
+    const withSnapshot = fakeSnapshot(
+      new Map([
+        [rootId, root],
+        [messageId, message],
+        [privateId, privateBlob],
+      ]),
+      rootId,
+      queries,
+    );
 
     const result = await readCursorStoreDetail(dbPath, "chat-1", { withSqliteSnapshotFn: withSnapshot });
     expect(result.status).toBe("ok");
-    expect(queries.filter((sql) => sql.includes("FROM blobs"))).toHaveLength(2);
+    expect(blobQueries(queries)).toHaveLength(2);
     expect(queries.every((sql) => !sql.includes(privateId))).toBe(true);
-    expect(queries.filter((sql) => sql.includes("FROM blobs")).every((sql) => sql.includes("WHERE id ="))).toBe(true);
+    expect(blobQueries(queries).every((sql) => sql.includes("WHERE id IN ("))).toBe(true);
   });
 
-  it("normalizes recognized tool-result records and blocks as bounded activity", async () => {
-    const toolRecord = json({ role: "tool", name: "Read", content: "file contents" });
-    const assistant = json({
+  it("batches proven root-reachable message reads while keeping per-blob and total bounds", async () => {
+    const messages = Array.from({ length: 70 }, (_, index) => json({ role: "user", content: `Message ${index}` }));
+    const root = Buffer.concat(messages.map((message) => field(1, hash(message))));
+    const rootId = hash(root);
+    const blobs = new Map<string, Buffer>([[rootId, root]]);
+    for (const message of messages) blobs.set(hash(message), message);
+    const queries: string[] = [];
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1", {
+      withSqliteSnapshotFn: fakeSnapshot(blobs, rootId, queries),
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toHaveLength(70);
+    // One root read plus bounded batches — never one query per blob.
+    const reads = blobQueries(queries);
+    expect(reads.length).toBeGreaterThan(1);
+    expect(reads.length).toBeLessThanOrEqual(4);
+    for (const sql of reads) {
+      expect(sql).toContain(`length(data) <= ${MAX_CURSOR_BLOB_BYTES}`);
+      expect((sql.match(/'[0-9a-f]{64}'/g) ?? []).length).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it("caps cumulative selected bytes inside the batch query, not only per row", async () => {
+    const messages = Array.from({ length: 70 }, (_, index) => json({ role: "user", content: `Message ${index}` }));
+    const root = Buffer.concat(messages.map((message) => field(1, hash(message))));
+    const rootId = hash(root);
+    const blobs = new Map<string, Buffer>([[rootId, root]]);
+    for (const message of messages) blobs.set(hash(message), message);
+    const queries: string[] = [];
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1", {
+      withSqliteSnapshotFn: fakeSnapshot(blobs, rootId, queries),
+    });
+    expect(result.status).toBe("ok");
+
+    const budgets = blobQueries(queries).map((sql) => {
+      // A per-row `length(data)` cap alone lets 64 ids materialize 64x the cap:
+      // the query itself must stop at the remaining TOTAL budget.
+      expect(sql).toContain("SUM(len) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING)");
+      const guard = sql.match(/running_bytes <= (\d+)/);
+      expect(guard).not.toBeNull();
+      return Number(guard?.[1]);
+    });
+    expect(budgets.length).toBeGreaterThan(1);
+    expect(budgets[0]).toBe(MAX_CURSOR_STORE_BYTES);
+    // Each batch is capped by what the already-read bytes left behind.
+    for (let index = 1; index < budgets.length; index++) {
+      expect(budgets[index]).toBeLessThan(budgets[index - 1]);
+      expect(budgets[index]).toBeLessThanOrEqual(MAX_CURSOR_STORE_BYTES);
+    }
+  });
+
+  it("fails closed when a batched blob does not match its SHA-256 id", async () => {
+    const messages = Array.from({ length: 70 }, (_, index) => json({ role: "user", content: `Message ${index}` }));
+    const root = Buffer.concat(messages.map((message) => field(1, hash(message))));
+    const rootId = hash(root);
+    const blobs = new Map<string, Buffer>([[rootId, root]]);
+    for (const message of messages) blobs.set(hash(message), message);
+    blobs.set(hash(messages[69]), Buffer.from("tampered private payload", "utf8"));
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1", {
+      withSqliteSnapshotFn: fakeSnapshot(blobs, rootId, []),
+    });
+    expect(result).toEqual({ status: "limited", reason: "Cursor transcript is unavailable for this store." });
+  });
+
+  it("ignores standalone tool results instead of counting them as activity", async () => {
+    const call = json({
       role: "assistant",
-      content: [{ type: "tool_result", name: "Shell", content: "command output" }],
+      content: [{ type: "tool-call", toolName: "Read", args: { file_path: "/tmp/a.ts" }, toolCallId: "call-1" }],
+    });
+    const toolRecord = json({ type: "tool-result", toolName: "Read", result: "file contents", toolCallId: "call-1" });
+    const orphanResult = json({ role: "tool", name: "Shell", content: "command output" });
+    await writeStore({
+      root: Buffer.concat([field(1, hash(call)), field(1, hash(toolRecord)), field(1, hash(orphanResult))]),
+      blobs: [call, toolRecord, orphanResult].map((data) => ({ data })),
+    });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toEqual([{ kind: "tool", tool: "Read", detail: "/tmp/a.ts" }]);
+    expect(result.recentActivity).toEqual(result.timeline);
+    expect(result.stats).toEqual({ messageCount: 0, toolCount: 1, subagentCount: 0 });
+  });
+
+  it("shows only the wrapped user query and discards injected bootstrap context", async () => {
+    const bootstrap = json({
+      role: "user",
+      content: "<user_info>Directory: /work\nShell: zsh</user_info>\nEnvironment ready.",
+    });
+    const real = json({
+      role: "user",
+      content: "<timestamp>2026-08-24T10:00:00Z</timestamp>\n<user_query>Fix the failing test</user_query>",
     });
     await writeStore({
-      root: Buffer.concat([field(1, hash(toolRecord)), field(1, hash(assistant))]),
-      blobs: [toolRecord, assistant].map((data) => ({ data })),
+      root: Buffer.concat([field(1, hash(bootstrap)), field(1, hash(real))]),
+      blobs: [bootstrap, real].map((data) => ({ data })),
+    });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toEqual([{ kind: "message", role: "user", text: "Fix the failing test" }]);
+    expect(result.stats).toEqual({ messageCount: 1, toolCount: 0, subagentCount: 0 });
+  });
+
+  it("retains unknown tags in a real user query", async () => {
+    const real = json({ role: "user", content: "<user_query>Explain <Foo> in bar.ts</user_query>" });
+    await writeStore({ root: field(1, hash(real)), blobs: [{ data: real }] });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toEqual([{ kind: "message", role: "user", text: "Explain <Foo> in bar.ts" }]);
+  });
+
+  it("turns an injected background completion into a bounded notice, not a message", async () => {
+    const notice = json({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `<user_query>${INJECTED_NOTIFICATION}\n${"result line ".repeat(500)}</user_query>`,
+        },
+      ],
+    });
+    await writeStore({ root: field(1, hash(notice)), blobs: [{ data: notice }] });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toHaveLength(1);
+    const item = result.timeline[0];
+    expect(item.kind).toBe("notice");
+    if (item.kind !== "notice") return;
+    expect(item.summary).toBe("The background agent (task_id: task-42) has completed");
+    expect(item.body?.length).toBeLessThanOrEqual(2000);
+    expect(result.stats).toEqual({ messageCount: 0, toolCount: 0, subagentCount: 0 });
+  });
+
+  it.each([
+    ["a question about notification wiring", "Did the task_id notification fire after the job has completed?"],
+    ["a report about a completed task", "My background task has completed but no notification arrived for task_id 7"],
+    ["a partial template quote", "The task_id has completed — do not ask me again"],
+  ])("keeps human text mentioning %s as a real prompt", async (_name, prompt) => {
+    const record = json({ role: "user", content: `<user_query>${prompt}</user_query>` });
+    await writeStore({ root: field(1, hash(record)), blobs: [{ data: record }] });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toEqual([{ kind: "message", role: "user", text: prompt }]);
+    expect(result.stats).toEqual({ messageCount: 1, toolCount: 0, subagentCount: 0 });
+  });
+
+  it("maps Task and Agent calls to bounded subagent steps counted apart from tools", async () => {
+    const assistant = json({
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: "call-1",
+          args: { subagent_type: "code-reviewer", description: "Review the diff", run_in_background: true },
+        },
+        {
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: "call-2",
+          args: { subagent_type: "test-runner", prompt: "x".repeat(5000), run_in_background: true },
+        },
+        {
+          type: "tool-call",
+          toolName: "Agent",
+          toolCallId: "call-3",
+          args: { subagent_type: "docs-writer", description: "Write release notes" },
+        },
+        { type: "tool-call", toolName: "Read", toolCallId: "call-4", args: { file_path: "/tmp/a.ts" } },
+      ],
+    });
+    await writeStore({ root: field(1, hash(assistant)), blobs: [{ data: assistant }] });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.timeline).toEqual([
+      { kind: "subagent", name: "code-reviewer", title: "Review the diff", background: true },
+      { kind: "subagent", name: "test-runner", prompt: "x".repeat(2000), background: true },
+      { kind: "subagent", name: "docs-writer", title: "Write release notes" },
+      { kind: "tool", tool: "Read", detail: "/tmp/a.ts" },
+    ]);
+    expect(result.stats).toEqual({ messageCount: 0, toolCount: 1, subagentCount: 3 });
+  });
+
+  it("correlates blocking and background Task results without emitting notices or result tools", async () => {
+    const calls = json({
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: "blocking-call",
+          args: { subagent_type: "Explore", description: "Find the listener", prompt: "Inspect the watcher flow" },
+        },
+        {
+          type: "tool-call",
+          toolName: "Task",
+          toolCallId: "background-call",
+          args: {
+            subagent_type: "generalPurpose",
+            description: "Check the architecture",
+            prompt: "Review the source layout",
+            run_in_background: true,
+          },
+        },
+      ],
+    });
+    const blockingResult = json({
+      type: "tool-result",
+      toolName: "Task",
+      toolCallId: "blocking-call",
+      result: "The listener is in VaultWatchCoordinator.",
+    });
+    const backgroundLaunch = json({
+      type: "tool-result",
+      toolName: "Task",
+      toolCallId: "background-call",
+      result: "Background task launched (task_id: task-42)",
+    });
+    const completion = json({ role: "user", content: `<user_query>${INJECTED_NOTIFICATION}</user_query>` });
+    await writeStore({
+      root: Buffer.concat(
+        [calls, blockingResult, backgroundLaunch, completion].map((record) => field(1, hash(record))),
+      ),
+      blobs: [calls, blockingResult, backgroundLaunch, completion].map((data) => ({ data })),
     });
 
     const result = await readCursorStoreDetail(dbPath, "chat-1");
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
     expect(result.timeline).toEqual([
-      { kind: "tool", tool: "Read", detail: "file contents" },
-      { kind: "tool", tool: "Shell", detail: "command output" },
+      {
+        kind: "subagent",
+        name: "Explore",
+        title: "Find the listener",
+        prompt: "Inspect the watcher flow",
+        result: "The listener is in VaultWatchCoordinator.",
+        status: "completed",
+      },
+      {
+        kind: "subagent",
+        name: "generalPurpose",
+        title: "Check the architecture",
+        prompt: "Review the source layout",
+        result: "all checks green",
+        background: true,
+        status: "completed",
+      },
     ]);
     expect(result.recentActivity).toEqual(result.timeline);
+    expect(result.stats).toEqual({ messageCount: 0, toolCount: 0, subagentCount: 2 });
+  });
+
+  it("caps a correlated subagent result", async () => {
+    const call = json({
+      role: "assistant",
+      content: [{ type: "tool-call", toolName: "Task", toolCallId: "call-1", args: { subagent_type: "Explore" } }],
+    });
+    const toolResult = json({
+      type: "tool-result",
+      toolName: "Task",
+      toolCallId: "call-1",
+      result: "x".repeat(100 * 1024),
+    });
+    await writeStore({
+      root: Buffer.concat([field(1, hash(call)), field(1, hash(toolResult))]),
+      blobs: [call, toolResult].map((data) => ({ data })),
+    });
+
+    const result = await readCursorStoreDetail(dbPath, "chat-1");
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    const subagent = result.timeline[0];
+    expect(subagent.kind).toBe("subagent");
+    if (subagent.kind !== "subagent") return;
+    expect(subagent.result).toHaveLength(64 * 1024);
   });
 
   it.each([

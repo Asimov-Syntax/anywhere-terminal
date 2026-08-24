@@ -260,11 +260,38 @@ describe("build: cursor", () => {
       }),
       cursorEntry({ canResume: true }),
       cursorEntry({ source: "ide", canResume: true }),
+      // Canonical id/source/canResume but a forged, path-traversing chat id —
+      // the canonical isSafeCursorChatId validator must still reject it.
+      cursorEntry({
+        id: "cursor:../../etc/passwd",
+        sessionId: "../../etc/passwd",
+        source: "cli",
+        canResume: true,
+      }),
+      // Source-qualified and safe id, but the id no longer matches `cursor:${sessionId}`.
+      cursorEntry({
+        id: "cursor:some-other-id",
+        sessionId: "chat-1",
+        source: "cli",
+        canResume: true,
+      }),
     ]) {
       expect(() => build(unsupported, "resume", {}, undefined, undefined, "cursor-agent")).toThrow(
         expect.objectContaining({ code: "resume-unsupported" }),
       );
     }
+  });
+
+  it("accepts a fully canonical, source-qualified Cursor CLI Resume entry", () => {
+    const spec = build(
+      cursorEntry({ source: "cli", canResume: true }),
+      "resume",
+      {},
+      undefined,
+      undefined,
+      "cursor-agent",
+    );
+    expect(spec.args).toEqual(["--resume", "chat-1"]);
   });
 });
 

@@ -52,8 +52,8 @@
 - evidence: `isCompatibleMeta` validates only `schemaVersion` and `cwd`; `isEligible` checks only conversation presence, subagent state, and sibling database presence. Neither requires the stored `agentId` to be a safe string equal to `candidate.chatId`, yet `mapCursorMeta` marks the directory id `canResume: true`. Point lookup repeats the same incomplete checks. The accepted session-index requirement explicitly excludes absent or mismatched stored identity.
 - impact: A moved, stale, or malformed `meta.json` can publish a resumable row under the wrong chat id, and host-side re-resolution preserves the false capability before constructing `--resume <directory-id>`.
 - suggestedFix: Require `meta.agentId === candidate.chatId` as part of list and point-lookup eligibility before emitting an entry or setting Resume capability. Add absent and mismatched identity fixtures.
-- status: accepted
-- triage: Confirmed: schema/cwd/conversation checks never bind `meta.agentId` to the safe chat-directory id before granting CLI Resume. Require exact identity in list and point lookup.
+- status: rejected
+- triage: Rebutted by installed-schema evidence: all 13 observed schema-1 `meta.json` files omit `agentId`, while the identity exists only inside `store.db`. Requiring `meta.agentId` removes every real CLI row; reading store metadata during list indexing violates the accepted metadata-only/privacy boundary. The plan must choose deferred identity proof at explicit Resume/detail time or retain the documented directory-id contract.
 
 ### B10
 

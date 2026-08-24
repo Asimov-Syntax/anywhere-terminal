@@ -7,6 +7,7 @@
 // the argv from LaunchBuilder). It does NOT spawn — the provider owns the
 // createSession call + the `tabCreated` post so the terminal becomes visible (D5).
 
+import { isCursorCliResumableEntry } from "./cursorCapabilities";
 import {
   build,
   type ContinuationTarget,
@@ -52,13 +53,7 @@ export class VaultLauncher {
     }
     if (
       mode === "resume" &&
-      (entry.canResume === false ||
-        (entry.agent === "cursor" &&
-          (entry.source !== "cli" ||
-            entry.canResume !== true ||
-            entry.id !== `cursor:${entry.sessionId}` ||
-            !/^[A-Za-z0-9._-]{1,200}$/.test(entry.sessionId) ||
-            entry.sessionId.includes(".."))))
+      (entry.canResume === false || (entry.agent === "cursor" && !isCursorCliResumableEntry(entry)))
     ) {
       throw new VaultLaunchError(`Resume is not supported for ${entryId}`, "resume-unsupported");
     }

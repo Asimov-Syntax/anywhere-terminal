@@ -221,7 +221,19 @@ export interface VaultMessageTokens {
  */
 export type VaultActivityStep =
   | { kind: "tool"; tool: string; detail?: string; diff?: { added: number; removed: number } }
-  | { kind: "subagent"; name: string; prompt?: string };
+  | {
+      kind: "subagent";
+      /** Agent type, rendered as the `@agent` chip. */
+      name: string;
+      /** Short delegated-task label shown while collapsed. */
+      title?: string;
+      /** Bounded delegated prompt revealed on expand. */
+      prompt?: string;
+      /** Bounded final result revealed on expand when the source records one. */
+      result?: string;
+      background?: boolean;
+      status?: "running" | "completed" | "failed";
+    };
 
 /**
  * One entry in the preview's full conversation timeline: a user/assistant

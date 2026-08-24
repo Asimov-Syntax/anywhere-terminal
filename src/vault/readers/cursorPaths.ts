@@ -39,6 +39,7 @@ export interface CursorFsDeps {
 export interface CursorPathFsDeps {
   readdir: (p: string, options: { withFileTypes: true }) => Promise<Dirent[]>;
   stat: (p: string) => Promise<{ isDirectory(): boolean }>;
+  lstat?: (p: string) => Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean }>;
 }
 
 export interface CursorReaderOptions {
@@ -57,6 +58,7 @@ export interface CursorReaderOptions {
 const REAL_PATH_FS: CursorPathFsDeps = {
   readdir: (p, options) => fs.readdir(p, options),
   stat: (p) => fs.stat(p),
+  lstat: (p) => fs.lstat(p),
 };
 
 export function cursorChatsRoot(options: CursorReaderOptions = {}): string {

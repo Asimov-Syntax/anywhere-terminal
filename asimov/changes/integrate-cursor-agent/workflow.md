@@ -39,4 +39,5 @@ Verification baseline: `pnpm run check-types` has one pre-existing error in unto
 Final review: Three authorized rounds completed; accepted round-3 findings were fixed and fully verified without opening a fourth review.
 User feedback: Cursor must match the existing Vault contract — row activation previews; Resume remains explicit. Both Cursor Agent CLI history and Cursor IDE Composer history are now in scope.
 Replan: The accepted metadata-only design was invalidated after structural proof that bounded local CLI `store.db` decoding and IDE `state.vscdb` preview are feasible.
-Review cap: Three authorized rounds covered the prior scope; no fourth review round is authorized unless the user explicitly extends the cap.
+Review cap: User explicitly authorized round 4 and one follow-up review after the two review-fix waves.
+Handback: Round-4 B9 conflicts with the installed schema — 13/13 schema-1 `meta.json` files omit `agentId`; proving it requires explicit `store.db` access, which list indexing forbids.

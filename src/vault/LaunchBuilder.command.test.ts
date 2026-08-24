@@ -113,6 +113,19 @@ describe("buildResumeCommandString", () => {
         entry({ id: "cursor:chat-1", agent: "cursor", sessionId: "chat-1", source: "ide", canResume: true }),
       ),
     ).rejects.toMatchObject({ code: "resume-unsupported" });
+    // Source-qualified and marked resumable, but a forged path-traversing chat id —
+    // the canonical isSafeCursorChatId validator must still reject it.
+    await expect(
+      buildResumeCommandString(
+        entry({
+          id: "cursor:../../etc/passwd",
+          agent: "cursor",
+          sessionId: "../../etc/passwd",
+          source: "cli",
+          canResume: true,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "resume-unsupported" });
     expect(resolveAgentExecutable).not.toHaveBeenCalled();
   });
 

@@ -195,6 +195,9 @@ function isValidReaderCache(c: unknown): boolean {
     if (v.projects !== undefined && !isValidCursorProjects(v.projects)) {
       return false;
     }
+    if (v.projectUnreadable !== undefined && (!isFiniteNumber(v.projectUnreadable) || v.projectUnreadable < 0)) {
+      return false;
+    }
     if (v.ide !== undefined && !isValidCursorIde(v.ide)) {
       return false;
     }

@@ -155,8 +155,8 @@ describe("VaultCacheStore", () => {
     expect(store.load()).toBeNull();
   });
 
-  it("discards stale version 5 caches without source-qualified Cursor metadata", () => {
-    harness.files.set(CACHE_FILE, JSON.stringify({ ...doc(), version: 5 }));
+  it.each([5, 6])("discards stale version %s Cursor cache derivations", (version) => {
+    harness.files.set(CACHE_FILE, JSON.stringify({ ...doc(), version }));
     expect(store.load()).toBeNull();
   });
 
@@ -313,6 +313,7 @@ describe("VaultCacheStore", () => {
                 entry: projectEntry,
               },
             },
+            projectUnreadable: 3,
             ide: {
               sources: {
                 "/home/me/.config/Cursor/User/globalStorage/state.vscdb": { mtimeMs: 7, size: 11 },
@@ -459,6 +460,14 @@ describe("VaultCacheStore", () => {
       [
         "non-finite unreadable count",
         { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, unreadableById: { chat: "x" } },
+      ],
+      [
+        "negative project unreadable count",
+        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, projectUnreadable: -1 },
+      ],
+      [
+        "non-finite project unreadable count",
+        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, projectUnreadable: "x" },
       ],
       [
         "negative rejected count",

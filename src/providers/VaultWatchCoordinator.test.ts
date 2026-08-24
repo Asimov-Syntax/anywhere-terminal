@@ -203,7 +203,7 @@ describe("VaultWatchCoordinator", () => {
     coordinator.dispose();
   });
 
-  it("suppresses an in-flight detail invalidated by a newer source event", async () => {
+  it("serializes active detail reads and coalesces newer events into one stale-safe follow-up", async () => {
     vi.useFakeTimers();
     const { coordinator, subscriptions, vaultService } = createHarness();
     let resolveOld: ((detail: VaultSessionDetail) => void) | undefined;
@@ -222,14 +222,100 @@ describe("VaultWatchCoordinator", () => {
     await Promise.resolve();
     follow?.handlers.change?.(uri("/cursor/chat/store.db-wal"));
     vi.advanceTimersByTime(400);
-    await Promise.resolve();
-    await Promise.resolve();
+    follow?.handlers.change?.(uri("/cursor/chat/store.db-wal"));
+    vi.advanceTimersByTime(400);
+
+    expect(vaultService.getDetail).toHaveBeenCalledTimes(1);
     resolveOld?.(oldDetail);
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
 
+    expect(vaultService.getDetail).toHaveBeenCalledTimes(2);
     expect(postFollowDetail).toHaveBeenCalledTimes(1);
     expect(postFollowDetail).toHaveBeenCalledWith("cursor:chat", newDetail);
+    coordinator.dispose();
+  });
+
+  it("runs a coalesced follow-up after an active detail read fails", async () => {
+    vi.useFakeTimers();
+    const { coordinator, subscriptions, vaultService, detail } = createHarness();
+    let rejectFirst: ((error: Error) => void) | undefined;
+    vaultService.getDetail
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectFirst = reject)))
+      .mockResolvedValueOnce(detail);
+    const postFollowDetail = vi.fn();
+    const client = coordinator.attach({ refreshList: vi.fn(), postFollowDetail });
+    await client.watchSession("claude:s1");
+    const follow = subscriptions.at(-1);
+
+    follow?.handlers.change?.(uri("/sessions/claude:s1.jsonl"));
+    vi.advanceTimersByTime(400);
+    await Promise.resolve();
+    follow?.handlers.change?.(uri("/sessions/claude:s1.jsonl"));
+    vi.advanceTimersByTime(400);
+    rejectFirst?.(new Error("read failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(vaultService.getDetail).toHaveBeenCalledTimes(2);
+    expect(postFollowDetail).toHaveBeenCalledWith("claude:s1", detail);
+    coordinator.dispose();
+  });
+
+  it("does not let an active old entry block a newly watched entry", async () => {
+    vi.useFakeTimers();
+    const { coordinator, subscriptions, vaultService, detail } = createHarness();
+    let resolveOld: ((detail: VaultSessionDetail) => void) | undefined;
+    vaultService.getDetail.mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve))).mockResolvedValueOnce(detail);
+    const postFollowDetail = vi.fn();
+    const client = coordinator.attach({ refreshList: vi.fn(), postFollowDetail });
+    await client.watchSession("claude:old");
+    const oldFollow = subscriptions.at(-1);
+
+    oldFollow?.handlers.change?.(uri("/sessions/claude:old.jsonl"));
+    vi.advanceTimersByTime(400);
+    await Promise.resolve();
+    await client.watchSession("claude:new");
+    const newFollow = subscriptions.at(-1);
+    newFollow?.handlers.change?.(uri("/sessions/claude:new.jsonl"));
+    vi.advanceTimersByTime(400);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(vaultService.getDetail).toHaveBeenNthCalledWith(1, "claude:old");
+    expect(vaultService.getDetail).toHaveBeenNthCalledWith(2, "claude:new");
+    resolveOld?.(detail);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(postFollowDetail).toHaveBeenCalledTimes(1);
+    expect(postFollowDetail).toHaveBeenCalledWith("claude:new", detail);
+    coordinator.dispose();
+  });
+
+  it("does not post or follow up after disposal during an active detail read", async () => {
+    vi.useFakeTimers();
+    const { coordinator, subscriptions, vaultService, detail } = createHarness();
+    let resolveDetail: ((detail: VaultSessionDetail) => void) | undefined;
+    vaultService.getDetail.mockImplementationOnce(() => new Promise((resolve) => (resolveDetail = resolve)));
+    const postFollowDetail = vi.fn();
+    const client = coordinator.attach({ refreshList: vi.fn(), postFollowDetail });
+    await client.watchSession("claude:s1");
+    const follow = subscriptions.at(-1);
+
+    follow?.handlers.change?.(uri("/sessions/claude:s1.jsonl"));
+    vi.advanceTimersByTime(400);
+    await Promise.resolve();
+    follow?.handlers.change?.(uri("/sessions/claude:s1.jsonl"));
+    vi.advanceTimersByTime(400);
+    client.dispose();
+    resolveDetail?.(detail);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(vaultService.getDetail).toHaveBeenCalledTimes(1);
+    expect(postFollowDetail).not.toHaveBeenCalled();
     coordinator.dispose();
   });
 

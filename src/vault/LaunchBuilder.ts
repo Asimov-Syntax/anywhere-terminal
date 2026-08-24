@@ -9,6 +9,7 @@
 
 import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
 import { posixShellQuote } from "../utils/posixShellQuote";
+import { isCursorCliResumableEntry } from "./cursorCapabilities";
 import { getAgentDefinition } from "./registry";
 import type { AgentVaultDefinition, CommandTemplate, VaultSessionEntry } from "./types";
 
@@ -83,8 +84,7 @@ function assertLaunchCapability(entry: VaultSessionEntry, mode: LaunchMode): voi
     return;
   }
   if (entry.agent === "cursor") {
-    const validCliId = /^[A-Za-z0-9._-]{1,200}$/.test(entry.sessionId) && !entry.sessionId.includes("..");
-    if (entry.source !== "cli" || entry.canResume !== true || !validCliId || entry.id !== `cursor:${entry.sessionId}`) {
+    if (!isCursorCliResumableEntry(entry)) {
       throw new VaultLaunchError(`Resume is not supported for ${entry.id}`, "resume-unsupported");
     }
     return;

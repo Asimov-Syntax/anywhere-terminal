@@ -992,9 +992,11 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
         stats: { messageCount: 5, toolCount: 1, subagentCount: 1, tokenCount: 1650 },
       }),
     });
-    // One node per timeline item, in order (2 messages + tool + subagent).
+    // Messages/tools remain ordinary nodes; a subagent uses the shared AGENT card.
     const items = host.querySelectorAll(".vault-preview-body .vault-preview-message");
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(3);
+    expect(host.querySelector(".vault-preview-subagent-badge")?.textContent).toBe("agent");
+    expect(host.querySelector(".vault-preview-subagent-agent")?.textContent).toBe("@asm-finder");
     // Untrusted text is written via textContent (not parsed as HTML).
     const firstP = host.querySelector(".vault-preview-message-user p");
     expect(firstP?.textContent).toBe("<b>do</b> the thing");
@@ -1002,6 +1004,62 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(host.querySelector(".vault-preview-message-tool")?.textContent).toContain("/a.ts");
     expect(host.querySelector(".vault-preview-message-assistant p")?.textContent).toBe("all done");
     expect(host.querySelector(".vault-preview-meta")?.textContent).toContain("1.6k tok");
+  });
+
+  it("renders a Cursor subagent run as a collapsible AGENT card with prompt and result", () => {
+    const host = createHost();
+    const posted: Array<{ type: string }> = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: (message) => posted.push(message),
+      getInitialCollapsed: () => false,
+    });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [
+          {
+            kind: "subagent",
+            name: "Explore",
+            title: "Find Claude session listen",
+            prompt: "Inspect the watcher and reader flow",
+            result: "VaultWatchCoordinator owns live follow.",
+            status: "completed",
+          },
+        ],
+        stats: { messageCount: 0, toolCount: 0, subagentCount: 1 },
+      }),
+    });
+
+    const block = host.querySelector(".vault-preview-subagent");
+    const head = host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head");
+    expect(block).not.toBeNull();
+    expect(host.querySelector(".vault-preview-subagent-badge")?.textContent).toBe("agent");
+    expect(host.querySelector(".vault-preview-subagent-agent")?.textContent).toBe("@Explore");
+    expect(host.querySelector(".vault-preview-subagent-title")?.textContent).toBe("Find Claude session listen");
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toBe("");
+    const detailRequests = posted.filter((message) => message.type === "requestVaultSessionDetail").length;
+
+    head?.click();
+    expect(posted.filter((message) => message.type === "requestVaultSessionDetail")).toHaveLength(detailRequests);
+    expect(block?.classList.contains("is-open")).toBe(true);
+    expect(head?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toContain(
+      "PromptInspect the watcher and reader flow",
+    );
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toContain(
+      "Result · completedVaultWatchCoordinator owns live follow.",
+    );
+
+    head?.click();
+    expect(block?.classList.contains("is-open")).toBe(false);
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("meta block is Folder+branch / Session id+path / Activity age+stats, all copyable", async () => {

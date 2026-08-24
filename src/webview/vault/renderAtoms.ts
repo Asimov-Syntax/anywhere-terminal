@@ -513,8 +513,59 @@ function questionOptions(
 /** Render one recent-activity step (tool call or subagent invocation). */
 export function activityStep(step: VaultActivityStep): HTMLElement {
   if (step.kind === "subagent") {
-    const label = `Subagent → ${step.name}`;
-    return previewMessage("subagent", label, step.prompt ?? "");
+    const block = document.createElement("div");
+    block.className = "vault-preview-subagent";
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "vault-preview-subagent-head";
+    head.setAttribute("aria-expanded", "false");
+    const chevron = document.createElement("span");
+    chevron.className = "vault-preview-subagent-chevron";
+    chevron.innerHTML = ICON_CHEVRON_DOWN;
+    chevron.setAttribute("aria-hidden", "true");
+    const badge = document.createElement("span");
+    badge.className = "vault-preview-subagent-badge";
+    badge.textContent = "agent";
+    const agent = document.createElement("span");
+    agent.className = "vault-preview-subagent-agent";
+    agent.textContent = `@${step.name}`;
+    const sep = document.createElement("span");
+    sep.className = "vault-preview-subagent-sep";
+    sep.textContent = "·";
+    sep.setAttribute("aria-hidden", "true");
+    const title = document.createElement("span");
+    title.className = "vault-preview-subagent-title";
+    title.textContent = step.title ?? step.prompt ?? step.name;
+    head.append(chevron, badge, agent, sep, title);
+    head.setAttribute("aria-label", `Subagent @${step.name}: ${title.textContent}`);
+    head.title = `Toggle subagent @${step.name}: ${title.textContent}`;
+
+    const body = document.createElement("div");
+    body.className = "vault-preview-subagent-body";
+    const populateBody = () => {
+      body.replaceChildren();
+      if (step.prompt && step.prompt !== step.title) {
+        body.append(previewMessage("user", "Prompt", step.prompt, true));
+      }
+      if (step.result) {
+        const suffix = step.status ? ` · ${step.status}` : "";
+        body.append(previewMessage("assistant", `Result${suffix}`, step.result, true));
+      }
+    };
+
+    head.addEventListener("click", () => {
+      const open = !block.classList.contains("is-open");
+      block.classList.toggle("is-open", open);
+      head.setAttribute("aria-expanded", String(open));
+      if (open) {
+        populateBody();
+      } else {
+        body.replaceChildren();
+      }
+    });
+    block.append(head, body);
+    return block;
   }
   const wrap = document.createElement("div");
   wrap.className = "vault-preview-message vault-preview-message-tool";

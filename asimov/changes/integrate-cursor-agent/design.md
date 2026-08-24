@@ -189,6 +189,8 @@ ConversationSummaryArchive.field 1  → archived JSON message refs
 
 Each blob is capped at 5 MiB to match the installed implementation, total decoded output is bounded, and only reachable blobs are fetched. Recognized JSON roles/content blocks normalize into existing messages and activity steps; system/generated summary records are filtered. Unknown wire types, hash mismatches, missing roots, oversized values, or schema drift return limited metadata.
 
+Cursor `Task`/`Agent` calls remain inline runs rather than fabricated child sessions because observed CLI sessions do not persist separate child JSONL files. The decoder correlates bounded root-reachable `tool-call` and `tool-result` blocks by `toolCallId`; blocking results attach to the invocation, while background launch results contribute only a safe task identity and later injected completion notices attach the final result. The webview reuses the existing collapsible `AGENT` card presentation with inline Prompt/Result content and never emits a standalone tool-result activity step.
+
 ### D12: Treat project JSONL as a CLI mirror/fallback, not IDE identity
 
 The project transcript reader supports nested `<id>/<id>.jsonl` and legacy flat `<id>.jsonl`, skips `subagents/**` as top-level rows, and parses in bounded chunks with physical-line locators. It preserves text and tool-use structure, tolerates incomplete tails and malformed/unknown records locally, and never invents historical timestamps.

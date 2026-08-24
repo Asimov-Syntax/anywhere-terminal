@@ -41,7 +41,16 @@ import {
   resolveCursorChatCandidate,
 } from "./cursorPaths";
 import { readCursorStoreDetail } from "./cursorStore";
-import { cursorProjectsRoot, readCursorTranscript, resolveCursorTranscriptCandidate } from "./cursorTranscript";
+import {
+  type CursorTranscriptCandidate,
+  cursorProjectBucketForCwd,
+  cursorProjectSessionId,
+  cursorProjectsRoot,
+  listCursorTranscriptCandidates,
+  readCursorTranscript,
+  resolveCursorProjectCwd,
+  resolveCursorProjectTranscriptSession,
+} from "./cursorTranscript";
 import type { RecordLineResult } from "./recordLine";
 
 export type { CursorFsDeps, CursorPathFsDeps, CursorReaderOptions } from "./cursorPaths";
@@ -158,7 +167,7 @@ async function readMeta(
   }
 }
 
-/** True iff the parsed metadata is schema-1 and its `cwd` passes the compatibility profile. */
+/** True iff the parsed metadata is schema-1 and its cwd passes the compatibility profile. */
 function isCompatibleMeta(meta: Record<string, unknown>): boolean {
   return meta.schemaVersion === 1 && isValidCwd(meta.cwd);
 }
@@ -227,9 +236,25 @@ function cursorResult(
   rejected: number,
   ide: { entries: VaultSessionEntry[]; unreadable: number; sources: Record<string, FileStamp> },
   projects: Record<string, CursorProjectCacheEntry> = {},
+  projectUnreadable = 0,
 ): ReaderResultWithState {
-  const entries = [...Object.values(chats).map((chat) => chat.entry), ...ide.entries];
-  const unreadable = ide.unreadable + rejected + Object.values(unreadableById).reduce((sum, count) => sum + count, 0);
+  const standaloneProjects = Object.values(projects)
+    .map((project) => project.entry)
+    .filter((entry) => {
+      const transcriptId = entry.sessionId.slice(entry.sessionId.lastIndexOf(":") + 1);
+      const cliEntry = chats[transcriptId]?.entry;
+      return !cliEntry || !sameCwd(cliEntry.cwd, entry.cwd);
+    });
+  const entries = [
+    ...Object.values(chats).map((chat) => chat.entry),
+    ...standaloneProjects,
+    ...ide.entries,
+  ];
+  const unreadable =
+    ide.unreadable +
+    projectUnreadable +
+    rejected +
+    Object.values(unreadableById).reduce((sum, count) => sum + count, 0);
   return {
     entries,
     unreadable,
@@ -239,6 +264,7 @@ function cursorResult(
       locations,
       ide: { sources: ide.sources, entries: ide.entries, unreadable: ide.unreadable },
       projects,
+      projectUnreadable,
       unreadableById,
       rejected,
     },
@@ -258,6 +284,67 @@ function cachedIde(prev: ReaderListCache | undefined): {
   return prev?.kind === "cursor-files" && prev.ide
     ? { entries: prev.ide.entries, unreadable: prev.ide.unreadable, sources: prev.ide.sources }
     : { entries: [], unreadable: 0, sources: {} };
+}
+
+function sameCwd(a: string, b: string): boolean {
+  return path.resolve(a) === path.resolve(b);
+}
+
+function mapCursorProjectEntry(
+  candidate: CursorTranscriptCandidate,
+  cwd: string,
+  stamp: FileStamp,
+): VaultSessionEntry {
+  const sessionId = cursorProjectSessionId(candidate);
+  return {
+    id: formatEntryId("cursor", sessionId),
+    agent: "cursor",
+    sessionId,
+    title: boundedPreview(candidate.transcriptId),
+    cwd,
+    modified: stamp.mtimeMs,
+    flags: {},
+    canFork: false,
+    canResume: false,
+  };
+}
+
+async function readCursorProjects(
+  previous: Record<string, CursorProjectCacheEntry> | undefined,
+  options: CursorCombinedReaderOptions,
+  deps: CursorFsDeps,
+): Promise<{ projects: Record<string, CursorProjectCacheEntry>; unreadable: number }> {
+  const listed = await listCursorTranscriptCandidates(options);
+  if (listed.overflowed) {
+    return { projects: {}, unreadable: listed.rejected + 1 };
+  }
+
+  const projects: Record<string, CursorProjectCacheEntry> = {};
+  const cwdByBucket = new Map<string, string | null>();
+  let unreadable = listed.rejected;
+  for (const candidate of listed.candidates) {
+    const stamp = await statFileOrNull(candidate.filePath, deps);
+    if (!stamp) {
+      unreadable++;
+      continue;
+    }
+    let cwd = cwdByBucket.get(candidate.projectBucket);
+    if (cwd === undefined) {
+      cwd = await resolveCursorProjectCwd(candidate.projectBucket, options);
+      cwdByBucket.set(candidate.projectBucket, cwd);
+    }
+    if (!cwd) {
+      unreadable++;
+      continue;
+    }
+    const cached = previous?.[candidate.filePath];
+    const entry =
+      cached && sameStamp(cached.stamp, stamp) && sameCwd(cached.entry.cwd, cwd)
+        ? cached.entry
+        : mapCursorProjectEntry(candidate, cwd, stamp);
+    projects[candidate.filePath] = { stamp, entry };
+  }
+  return { projects, unreadable };
 }
 
 function cursorHintKinds(
@@ -299,7 +386,7 @@ export async function readCursorSessions(
 
   if (hint && prevCursor) {
     const kinds = cursorHintKinds(hint.paths, options);
-    if (kinds.has("unknown") || (kinds.has("cli") && kinds.has("ide"))) {
+    if (kinds.has("unknown") || kinds.size !== 1 || kinds.has("project")) {
       return readCursorSessions(prev, options);
     }
     if (kinds.has("ide")) {
@@ -310,16 +397,7 @@ export async function readCursorSessions(
         prevCursor.rejected ?? 0,
         await readCursorIdeSessions(options),
         prevCursor.projects,
-      );
-    }
-    if (kinds.has("project") || kinds.size === 0) {
-      return cursorResult(
-        prevCursor.chats,
-        prevCursor.locations,
-        prevCursor.unreadableById ?? {},
-        prevCursor.rejected ?? 0,
-        cachedIde(prevCursor),
-        prevCursor.projects,
+        prevCursor.projectUnreadable ?? 0,
       );
     }
     const { groups, locations, metaChanged, requiresFullScan } = await resolveChangedCursorChatCandidates(
@@ -358,6 +436,7 @@ export async function readCursorSessions(
       prevCursor.rejected ?? 0,
       cachedIde(prevCursor),
       prevCursor.projects,
+      prevCursor.projectUnreadable ?? 0,
     );
   }
 
@@ -374,21 +453,35 @@ export async function readCursorSessions(
       unreadableById[candidate.chatId] = next.unreadable;
     }
   }
-  return cursorResult(chats, locations, unreadableById, rejected, await readCursorIdeSessions(options));
+  const [ide, projectResult] = await Promise.all([
+    readCursorIdeSessions(options),
+    readCursorProjects(prevCursor?.projects, options, deps),
+  ]);
+  return cursorResult(
+    chats,
+    locations,
+    unreadableById,
+    rejected,
+    ide,
+    projectResult.projects,
+    projectResult.unreadable,
+  );
 }
 
-/**
- * Resolve ONE Cursor chat to its launch entry by id — the point-lookup
- * counterpart to readCursorSessions (safe-cursor-chat-lookup). Returns null for
- * an unsafe/ambiguous id, incompatible/malformed metadata, or an ineligible chat.
- */
-export async function readCursorEntry(
+interface ResolvedCursorCliSession {
+  candidate: CursorChatCandidate;
+  entry: VaultSessionEntry;
+}
+
+interface ResolvedCursorProjectSession {
+  candidate: CursorTranscriptCandidate;
+  entry: VaultSessionEntry;
+}
+
+async function resolveCursorCliSession(
   sessionId: string,
-  options: CursorCombinedReaderOptions = {},
-): Promise<VaultSessionEntry | null> {
-  if (sessionId.startsWith("ide:")) {
-    return readCursorIdeEntry(sessionId, options);
-  }
+  options: CursorCombinedReaderOptions,
+): Promise<ResolvedCursorCliSession | null> {
   const candidate = await resolveCursorChatCandidate(sessionId, options);
   if (!candidate) {
     return null;
@@ -406,7 +499,57 @@ export async function readCursorEntry(
   if (!isEligible(meta, dbPresent)) {
     return null;
   }
-  return mapCursorMeta(candidate, meta, metaStamp);
+  return { candidate, entry: mapCursorMeta(candidate, meta, metaStamp) };
+}
+
+async function resolveCursorProjectSession(
+  sessionId: string,
+  options: CursorCombinedReaderOptions,
+): Promise<ResolvedCursorProjectSession | null> {
+  const candidate = await resolveCursorProjectTranscriptSession(sessionId, options);
+  if (!candidate) {
+    return null;
+  }
+  const deps = options.fs ?? REAL_FS;
+  const [stamp, cwd] = await Promise.all([
+    statFileOrNull(candidate.filePath, deps),
+    resolveCursorProjectCwd(candidate.projectBucket, options),
+  ]);
+  if (!stamp || !cwd) {
+    return null;
+  }
+  return { candidate, entry: mapCursorProjectEntry(candidate, cwd, stamp) };
+}
+
+export async function resolveCursorCliProjectTranscript(
+  chatId: string,
+  cwd: string,
+  options: CursorCombinedReaderOptions = {},
+): Promise<CursorTranscriptCandidate | null> {
+  const projectBucket = cursorProjectBucketForCwd(cwd);
+  const projectCwd = await resolveCursorProjectCwd(projectBucket, options);
+  if (!projectCwd || !sameCwd(projectCwd, cwd)) {
+    return null;
+  }
+  const projectSessionId = `project:${Buffer.from(projectBucket, "utf8").toString("base64url")}:${chatId}`;
+  return resolveCursorProjectTranscriptSession(projectSessionId, options);
+}
+
+/**
+ * Resolve ONE Cursor session to its metadata entry. Source-qualified project and
+ * IDE ids never fall through to the CLI chat-id domain.
+ */
+export async function readCursorEntry(
+  sessionId: string,
+  options: CursorCombinedReaderOptions = {},
+): Promise<VaultSessionEntry | null> {
+  if (sessionId.startsWith("ide:")) {
+    return readCursorIdeEntry(sessionId, options);
+  }
+  if (sessionId.startsWith("project:")) {
+    return (await resolveCursorProjectSession(sessionId, options))?.entry ?? null;
+  }
+  return (await resolveCursorCliSession(sessionId, options))?.entry ?? null;
 }
 
 /** Explicit detail decoding is isolated from metadata-only list refreshes. Any
@@ -419,22 +562,49 @@ export async function readCursorDetail(
   if (sessionId.startsWith("ide:")) {
     return readCursorIdeDetail(sessionId, limit, options);
   }
-  const entry = await readCursorEntry(sessionId, options);
-  if (!entry) {
-    return null;
-  }
-  const candidate = await resolveCursorChatCandidate(sessionId, options);
-  if (!candidate) {
-    return null;
+  if (sessionId.startsWith("project:")) {
+    const resolved = await resolveCursorProjectSession(sessionId, options);
+    if (!resolved) {
+      return null;
+    }
+    const transcript = await readCursorTranscript(resolved.candidate, options);
+    if (transcript.status === "limited") {
+      return {
+        entryId: resolved.entry.id,
+        recentActivity: [],
+        timeline: [],
+        stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
+        partial: true,
+        limitedReason: transcript.reason,
+        contentKind: "metadata-only",
+      };
+    }
+    const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
+    const timeline =
+      maxItems === undefined ? transcript.timeline : maxItems === 0 ? [] : transcript.timeline.slice(-maxItems);
+    return {
+      entryId: resolved.entry.id,
+      recentActivity: transcript.recentActivity.slice(-MAX_RECENT_ACTIVITY),
+      timeline,
+      stats: transcript.stats,
+      partial: false,
+      truncated: transcript.truncated || (maxItems !== undefined && transcript.timeline.length > maxItems),
+      contentKind: "timeline",
+    };
   }
 
+  const resolved = await resolveCursorCliSession(sessionId, options);
+  if (!resolved) {
+    return null;
+  }
+  const { candidate, entry } = resolved;
   const store = await readCursorStoreDetail(candidate.dbPath, sessionId, {
     withSqliteSnapshotFn: options.withSqliteSnapshotFn,
   });
   let decoded = store;
   let sourceTruncated = false;
   if (store.status === "limited") {
-    const transcriptCandidate = await resolveCursorTranscriptCandidate(sessionId, options);
+    const transcriptCandidate = await resolveCursorCliProjectTranscript(sessionId, entry.cwd, options);
     if (transcriptCandidate) {
       const transcript = await readCursorTranscript(transcriptCandidate, options);
       if (transcript.status === "ok") {
@@ -471,6 +641,34 @@ export async function readCursorDetail(
     truncated: sourceTruncated || (maxItems !== undefined && decoded.timeline.length > maxItems),
     contentKind: "timeline",
   };
+}
+
+export async function resolveCursorSessionWatchPaths(
+  sessionId: string,
+  options: CursorCombinedReaderOptions = {},
+): Promise<string[]> {
+  if (sessionId.startsWith("ide:")) {
+    const entry = await readCursorIdeEntry(sessionId, options);
+    if (!entry) {
+      return [];
+    }
+    const dbPath = cursorIdeDbPath(options);
+    return [dbPath, `${dbPath}-wal`];
+  }
+  if (sessionId.startsWith("project:")) {
+    const resolved = await resolveCursorProjectSession(sessionId, options);
+    return resolved ? [resolved.candidate.filePath] : [];
+  }
+  const resolved = await resolveCursorCliSession(sessionId, options);
+  if (!resolved) {
+    return [];
+  }
+  const paths = [resolved.candidate.dbPath, `${resolved.candidate.dbPath}-wal`];
+  const transcript = await resolveCursorCliProjectTranscript(sessionId, resolved.entry.cwd, options);
+  if (transcript) {
+    paths.push(transcript.filePath);
+  }
+  return paths;
 }
 
 /** Cursor timelines intentionally omit `msgRef`: the private SQLite/protobuf

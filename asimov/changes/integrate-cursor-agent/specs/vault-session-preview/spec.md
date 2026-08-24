@@ -29,6 +29,14 @@ Unsupported schema versions, missing roots, hash mismatches, oversized records, 
 
 A limited detail SHALL NOT fabricate transcript messages, tool activity, token usage, model state, timestamps, cwd, sub-sessions, or message-level actions.
 
+### Requirement: Cursor subagent run preview
+
+Cursor Agent `Task` and `Agent` calls SHALL render with the same collapsible `AGENT` card presentation used by other Vault providers rather than as a plain `Subagent → <type>` activity message.
+
+When the canonical CLI store contains a correlated bounded tool result, expanding the card SHALL reveal the delegated prompt and final result without counting the result as a second tool or conversation message.
+
+Background launch acknowledgements and completion notifications SHALL be correlated by their safe task identity when available; a project JSONL mirror without result records SHALL still render the collapsible invocation card without fabricating a result or child transcript.
+
 ### Requirement: Cursor transcript privacy
 
 Cursor transcript decoding SHALL remain local to the extension and SHALL be read-only, bounded, containment-checked, and WAL-aware.

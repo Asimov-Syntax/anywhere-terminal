@@ -149,6 +149,8 @@ class FollowWatchLifecycle implements Disposable {
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private seq = 0;
   private refreshSeq = 0;
+  private watchedEntryId: string | undefined;
+  private readonly detailReads = new Map<string, { inFlight: boolean; dirtyRefreshSeq: number | undefined }>();
   private disposed = false;
 
   constructor(
@@ -160,8 +162,13 @@ class FollowWatchLifecycle implements Disposable {
     if (this.disposed) {
       return;
     }
+    const previousEntryId = this.watchedEntryId;
     this.disposeWatchers();
     const seq = ++this.seq;
+    this.watchedEntryId = entryId ?? undefined;
+    if (previousEntryId && previousEntryId !== entryId && !this.detailReads.get(previousEntryId)?.inFlight) {
+      this.detailReads.delete(previousEntryId);
+    }
     if (!entryId) {
       return;
     }
@@ -197,6 +204,13 @@ class FollowWatchLifecycle implements Disposable {
     if (this.disposed || seq !== this.seq || refreshSeq !== this.refreshSeq) {
       return;
     }
+    const read = this.detailReads.get(entryId) ?? { inFlight: false, dirtyRefreshSeq: undefined };
+    this.detailReads.set(entryId, read);
+    if (read.inFlight) {
+      read.dirtyRefreshSeq = refreshSeq;
+      return;
+    }
+    read.inFlight = true;
     try {
       const detail = await this.deps.vaultService.getDetail(entryId);
       if (this.disposed || seq !== this.seq || refreshSeq !== this.refreshSeq) {
@@ -207,6 +221,20 @@ class FollowWatchLifecycle implements Disposable {
       }
     } catch (err) {
       console.error("[AnyWhere Terminal] Vault follow re-read failed:", entryId, err);
+    } finally {
+      read.inFlight = false;
+      const dirtyRefreshSeq = read.dirtyRefreshSeq;
+      read.dirtyRefreshSeq = undefined;
+      if (
+        dirtyRefreshSeq !== undefined &&
+        !this.disposed &&
+        seq === this.seq &&
+        dirtyRefreshSeq === this.refreshSeq
+      ) {
+        void this.pushDetail(entryId, seq, dirtyRefreshSeq);
+      } else if (entryId !== this.watchedEntryId) {
+        this.detailReads.delete(entryId);
+      }
     }
   }
 
@@ -229,6 +257,7 @@ class FollowWatchLifecycle implements Disposable {
     this.disposed = true;
     this.seq++;
     this.disposeWatchers();
+    this.detailReads.clear();
   }
 }
 

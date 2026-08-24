@@ -155,6 +155,8 @@ export type ReaderListCache =
       locations: CursorLocationIndex;
       /** Independently listed project transcript metadata, keyed by absolute JSONL path. */
       projects?: Record<string, CursorProjectCacheEntry>;
+      /** Unreadable/ambiguous project sources from the read that produced `projects`. */
+      projectUnreadable?: number;
       /** Cursor IDE list metadata keyed by the global SQLite source stamps. */
       ide?: CursorIdeCache;
       /** Per-safe-id accounting only; no rejected path is joined or read. */
@@ -183,8 +185,9 @@ export type ListReader = (prev?: ReaderListCache, hint?: ReaderRefreshHint) => P
  *  reuses its stored entry verbatim and would otherwise keep serving the old
  *  derivation forever. `VaultCacheStore.load` discards any other version (→ full
  *  rebuild). v6: Cursor entries include source-qualified CLI/IDE metadata and
- *  source-specific project/IDE freshness state. */
-export const VAULT_CACHE_VERSION = 6 as const;
+ *  source-specific project/IDE freshness state. v7 revalidates stored CLI identity
+ *  and persists independently listed project-source unreadable accounting. */
+export const VAULT_CACHE_VERSION = 7 as const;
 
 /** The persisted cache document (design.md D4). */
 export interface VaultListCacheFileV1 {

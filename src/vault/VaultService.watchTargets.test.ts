@@ -7,6 +7,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { cursorProjectBucketForCwd } from "./readers/cursorTranscript";
 import { VaultService } from "./VaultService";
 
 const svc = new VaultService();
@@ -83,11 +84,23 @@ describe("VaultService.resolveSessionWatchTargets", () => {
       const chatsDir = path.join(root, "chats");
       const projectsDir = path.join(root, "projects");
       const ideDbPath = path.join(root, "state.vscdb");
+      const workspacePath = path.join(root, "workspace");
+      await fs.mkdir(workspacePath, { recursive: true });
+      const workspace = await fs.realpath(workspacePath);
+      const projectBucket = cursorProjectBucketForCwd(workspace);
       const chatDir = path.join(chatsDir, "bucket-a", "chat-1");
-      const transcriptDir = path.join(projectsDir, "project-a", "agent-transcripts", "chat-1");
+      const transcriptDir = path.join(projectsDir, projectBucket, "agent-transcripts", "chat-1");
       await Promise.all([fs.mkdir(chatDir, { recursive: true }), fs.mkdir(transcriptDir, { recursive: true })]);
       await Promise.all([
-        fs.writeFile(path.join(chatDir, "meta.json"), "{}"),
+        fs.writeFile(
+          path.join(chatDir, "meta.json"),
+          JSON.stringify({
+            schemaVersion: 1,
+            agentId: "chat-1",
+            hasConversation: true,
+            cwd: workspace,
+          }),
+        ),
         fs.writeFile(path.join(chatDir, "store.db"), ""),
         fs.writeFile(path.join(transcriptDir, "chat-1.jsonl"), ""),
       ]);
@@ -113,7 +126,8 @@ describe("VaultService.resolveSessionWatchTargets", () => {
 
       const cli = await cursorSvc.resolveSessionWatchTargets("cursor:chat-1");
       expect(cli.map((target) => target.glob)).toEqual(["store.db", "store.db-wal", "chat-1.jsonl"]);
-      await expect(cursorSvc.resolveSessionWatchTargets("cursor:project:cHJvamVjdC1h:chat-1")).resolves.toEqual([
+      const projectSessionId = `project:${Buffer.from(projectBucket, "utf8").toString("base64url")}:chat-1`;
+      await expect(cursorSvc.resolveSessionWatchTargets(`cursor:${projectSessionId}`)).resolves.toEqual([
         { baseDir: transcriptDir, glob: "chat-1.jsonl" },
       ]);
       await expect(cursorSvc.resolveSessionWatchTargets("cursor:ide:d29ya3NwYWNlLTE:composer-1")).resolves.toEqual([

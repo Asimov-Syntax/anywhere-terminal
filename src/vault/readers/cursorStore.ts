@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { type SqliteSnapshot, withSqliteSnapshot } from "../sqlite";
 import type { VaultActivityStep, VaultTimelineItem } from "../types";
+import { type CursorNormalizedRecord, normalizeCursorRecord } from "./cursorNormalization";
 
 const MAX_META_HEX_CHARS = 128 * 1024;
 export const MAX_CURSOR_BLOB_BYTES = 5 * 1024 * 1024;
 export const MAX_CURSOR_STORE_BYTES = 20 * 1024 * 1024;
 const MAX_CURSOR_BLOBS = 4096;
-const MAX_RECORD_TEXT_CHARS = 256 * 1024;
+const BLOB_BATCH_SIZE = 64;
 const MAX_NORMALIZED_TEXT_CHARS = 2 * 1024 * 1024;
-const MAX_TOOL_DETAIL_CHARS = 2000;
 const LIMITED_REASON = "Cursor transcript is unavailable for this store.";
 const HASH_RE = /^[0-9a-f]{64}$/i;
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9._-]{1,200}$/;
@@ -47,13 +47,7 @@ interface ParsedFields {
   archives: string[];
 }
 
-interface NormalizedRecord {
-  timeline: VaultTimelineItem[];
-  activity: VaultActivityStep[];
-  textChars: number;
-  messageCount: number;
-  toolCount: number;
-}
+type NormalizedRecord = CursorNormalizedRecord;
 
 interface BlobFetchState {
   blobs: Map<string, Buffer>;
@@ -165,86 +159,69 @@ function parseReferenceFields(data: Uint8Array, currentField: number, archiveFie
   return parsed;
 }
 
-function blobSql(id: string, maxBytes: number): string {
-  return `SELECT id, hex(data) AS data_hex, length(data) AS byte_length
-FROM blobs
-WHERE id = '${id}' AND length(data) <= ${maxBytes}
-LIMIT 1`;
+/**
+ * One batch read. The cumulative guard is part of the QUERY, not the row loop:
+ * the inner scan projects lengths only (no blob bytes enter the sorter), the
+ * window sum orders them deterministically, and `hex(data)` is applied only to
+ * the prefix that still fits the remaining total budget. Without it a 64-id
+ * batch could materialize 64 × the per-blob cap before any check ran.
+ */
+function blobSql(ids: string[], maxBlobBytes: number, remainingBytes: number): string {
+  const list = ids.map((id) => `'${id}'`).join(", ");
+  return `SELECT b.id AS id, hex(b.data) AS data_hex, length(b.data) AS byte_length
+FROM blobs b
+JOIN (
+  SELECT id, SUM(len) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) AS running_bytes
+  FROM (SELECT id, length(data) AS len FROM blobs WHERE id IN (${list}) AND length(data) <= ${maxBlobBytes})
+) fit ON fit.id = b.id
+WHERE fit.running_bytes <= ${remainingBytes}
+LIMIT ${ids.length}`;
+}
+
+/** Fetch already-proven root-reachable hashes in bounded batches. Batching is a
+ *  transport detail only: every row still passes the same per-blob byte,
+ *  SHA-256, blob-count, and total-byte checks a single read applied (round-4 W13). */
+async function fetchBlobs(snapshot: SqliteSnapshot, ids: readonly string[], state: BlobFetchState): Promise<void> {
+  const pending: string[] = [];
+  const requested = new Set<string>();
+  for (const id of ids) {
+    if (!HASH_RE.test(id) || state.blobs.has(id) || requested.has(id)) continue;
+    requested.add(id);
+    pending.push(id);
+  }
+
+  for (let offset = 0; offset < pending.length; ) {
+    const remainingCount = MAX_CURSOR_BLOBS - state.count;
+    if (remainingCount <= 0) return;
+    const remainingBytes = MAX_CURSOR_STORE_BYTES - state.totalBytes;
+    const maxBytes = Math.min(MAX_CURSOR_BLOB_BYTES, remainingBytes);
+    if (maxBytes <= 0) return;
+    const batch = pending.slice(offset, offset + Math.min(BLOB_BATCH_SIZE, remainingCount));
+    offset += batch.length;
+
+    const result = await snapshot.query(blobSql(batch, maxBytes, remainingBytes));
+    if (result.status !== "ok") return;
+    const wanted = new Set(batch);
+    for (const row of result.rows) {
+      const id = typeof row.id === "string" ? row.id : undefined;
+      if (!id || !wanted.delete(id)) continue;
+      const byteLength = Number(row.byte_length);
+      if (!Number.isSafeInteger(byteLength) || byteLength > maxBytes) continue;
+      const data = decodeHex(row.data_hex, maxBytes * 2);
+      if (!data || data.length !== byteLength) continue;
+      if (createHash("sha256").update(data).digest("hex") !== id) continue;
+      if (state.count >= MAX_CURSOR_BLOBS || state.totalBytes + data.length > MAX_CURSOR_STORE_BYTES) return;
+      state.count++;
+      state.totalBytes += data.length;
+      state.blobs.set(id, data);
+    }
+  }
 }
 
 async function fetchBlob(snapshot: SqliteSnapshot, id: string, state: BlobFetchState): Promise<Buffer | undefined> {
   const normalizedId = id.toLowerCase();
-  if (!HASH_RE.test(normalizedId)) return undefined;
-  const cached = state.blobs.get(normalizedId);
-  if (cached) return cached;
-  if (state.count >= MAX_CURSOR_BLOBS) return undefined;
-  const remainingBytes = MAX_CURSOR_STORE_BYTES - state.totalBytes;
-  const maxBytes = Math.min(MAX_CURSOR_BLOB_BYTES, remainingBytes);
-  if (maxBytes <= 0) return undefined;
-
-  const result = await snapshot.query(blobSql(normalizedId, maxBytes));
-  if (result.status !== "ok" || result.rows.length !== 1) return undefined;
-  const row = result.rows[0];
-  if (row.id !== normalizedId || Number(row.byte_length) > maxBytes) return undefined;
-  const data = decodeHex(row.data_hex, maxBytes * 2);
-  if (!data || data.length !== Number(row.byte_length)) return undefined;
-  if (createHash("sha256").update(data).digest("hex") !== normalizedId) return undefined;
-
-  state.count++;
-  state.totalBytes += data.length;
-  if (state.totalBytes > MAX_CURSOR_STORE_BYTES) return undefined;
-  state.blobs.set(normalizedId, data);
-  return data;
-}
-
-function timestamp(record: Record<string, unknown>): number | undefined {
-  for (const key of ["timestampMs", "timestamp_ms", "createdAtMs", "created_at_ms"]) {
-    const value = record[key];
-    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
-  }
-  return undefined;
-}
-
-function textValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length <= MAX_RECORD_TEXT_CHARS ? value : undefined;
-}
-
-function toolDetail(input: unknown): string | undefined {
-  const obj = asObject(input);
-  if (!obj) return undefined;
-  for (const key of ["file_path", "path", "command", "query", "description"]) {
-    const value = obj[key];
-    if (typeof value === "string" && value.length > 0) return value.slice(0, MAX_TOOL_DETAIL_CHARS);
-  }
-  return undefined;
-}
-
-function toolResultText(value: unknown): string | undefined {
-  if (typeof value === "string") return value.slice(0, MAX_TOOL_DETAIL_CHARS);
-  if (!Array.isArray(value)) return undefined;
-  const parts: string[] = [];
-  for (const item of value) {
-    if (typeof item === "string") parts.push(item);
-    else {
-      const block = asObject(item);
-      if (block && (block.type === "text" || block.type === "tool_result") && typeof block.text === "string") {
-        parts.push(block.text);
-      }
-    }
-  }
-  return parts.join("\n").slice(0, MAX_TOOL_DETAIL_CHARS) || undefined;
-}
-
-function toolName(record: Record<string, unknown>): string {
-  for (const key of ["name", "toolName", "tool_name"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.length > 0 && value.length <= 200) return value;
-  }
-  return "Tool result";
-}
-
-function normalizedTool(tool: string, detail?: string): VaultActivityStep {
-  return { kind: "tool", tool, ...(detail ? { detail } : {}) };
+  await fetchBlobs(snapshot, [normalizedId], state);
+  return state.blobs.get(normalizedId);
 }
 
 function normalizeRecord(data: Buffer): NormalizedRecord | undefined {
@@ -254,85 +231,7 @@ function normalizeRecord(data: Buffer): NormalizedRecord | undefined {
   } catch {
     return undefined;
   }
-  const envelope = asObject(raw);
-  if (!envelope) return undefined;
-  const message = asObject(envelope.message);
-  const record = message ? { ...envelope, ...message } : envelope;
-  if (
-    [envelope, record].some(
-      (value) =>
-        value.isSummary === true ||
-        value.isGenerated === true ||
-        value.generated === true ||
-        value.type === "summary" ||
-        value.type === "reasoning" ||
-        value.type === "thinking" ||
-        value.role === "system" ||
-        value.role === "reasoning",
-    )
-  ) {
-    return { timeline: [], activity: [], textChars: 0, messageCount: 0, toolCount: 0 };
-  }
-
-  if (record.role === "tool" || record.role === "tool_result" || record.type === "tool_result") {
-    const detail = toolResultText(record.content ?? record.output ?? record.result);
-    const tool = normalizedTool(toolName(record), detail);
-    return { timeline: [tool], activity: [tool], textChars: detail?.length ?? 0, messageCount: 0, toolCount: 1 };
-  }
-
-  const role = record.role;
-  if (role !== "user" && role !== "assistant") {
-    return { timeline: [], activity: [], textChars: 0, messageCount: 0, toolCount: 0 };
-  }
-
-  const texts: string[] = [];
-  const tools: VaultActivityStep[] = [];
-  const content = record.content;
-  if (typeof content === "string") {
-    const text = textValue(content);
-    if (text === undefined) return undefined;
-    texts.push(text);
-  } else if (Array.isArray(content)) {
-    for (const blockValue of content) {
-      const block = asObject(blockValue);
-      if (!block) continue;
-      if (block.type === "text" || block.type === "input_text" || block.type === "output_text") {
-        const text = textValue(block.text);
-        if (text === undefined) return undefined;
-        texts.push(text);
-      } else if (
-        role === "assistant" &&
-        (block.type === "tool_use" || block.type === "tool_call" || block.type === "tool-call") &&
-        typeof block.name === "string" &&
-        block.name.length > 0 &&
-        block.name.length <= 200
-      ) {
-        tools.push(normalizedTool(block.name, toolDetail(block.input ?? block.arguments)));
-      } else if (block.type === "tool_result") {
-        const detail = toolResultText(block.content ?? block.text ?? block.output);
-        tools.push(normalizedTool(toolName(block), detail));
-      }
-    }
-  } else {
-    const text = textValue(record.text);
-    if (text !== undefined) texts.push(text);
-  }
-
-  const text = texts.join("\n");
-  const ts = timestamp(record) ?? timestamp(envelope);
-  const timeline: VaultTimelineItem[] = [];
-  if (text.length > 0) {
-    timeline.push({ kind: "message", role, text, ...(ts !== undefined ? { timestamp: ts } : {}) });
-  }
-  timeline.push(...tools);
-  return {
-    timeline,
-    activity: tools,
-    textChars:
-      text.length + tools.reduce((sum, tool) => sum + (tool.kind === "tool" ? (tool.detail?.length ?? 0) : 0), 0),
-    messageCount: text.length > 0 ? 1 : 0,
-    toolCount: tools.length,
-  };
+  return normalizeCursorRecord(raw);
 }
 
 function compatibleProfile(row: Record<string, unknown>): boolean {
@@ -372,41 +271,93 @@ async function decodeSnapshot(snapshot: SqliteSnapshot, expectedAgentId: string)
   if (!rootRefs) return limited();
 
   const orderedMessageRefs: string[] = [];
+  await fetchBlobs(snapshot, rootRefs.archives, fetchState);
   for (const archiveId of rootRefs.archives) {
-    const archive = await fetchBlob(snapshot, archiveId, fetchState);
+    const archive = fetchState.blobs.get(archiveId);
     if (!archive) return limited();
     const archiveRefs = parseReferenceFields(archive, 1);
     if (!archiveRefs) return limited();
     orderedMessageRefs.push(...archiveRefs.current);
   }
   orderedMessageRefs.push(...rootRefs.current);
+  await fetchBlobs(snapshot, orderedMessageRefs, fetchState);
 
   const timeline: VaultTimelineItem[] = [];
   const recentActivity: VaultActivityStep[] = [];
+  const subagentsByCallId = new Map<string, Extract<VaultActivityStep, { kind: "subagent" }>>();
+  const subagentsByTaskId = new Map<string, Extract<VaultActivityStep, { kind: "subagent" }>>();
+  const pendingResults = new Map<string, { result: string; taskId?: string }>();
   const seen = new Set<string>();
   let normalizedTextChars = 0;
   let messageCount = 0;
   let toolCount = 0;
+  let subagentCount = 0;
+  const applyToolResult = (
+    step: Extract<VaultActivityStep, { kind: "subagent" }>,
+    result: { result: string; taskId?: string },
+  ) => {
+    if (step.background) {
+      step.status = "running";
+      if (result.taskId) {
+        subagentsByTaskId.set(result.taskId, step);
+      }
+      return;
+    }
+    step.result = result.result;
+    step.status = "completed";
+  };
+
   for (const ref of orderedMessageRefs) {
     if (seen.has(ref)) continue;
     seen.add(ref);
-    const data = await fetchBlob(snapshot, ref, fetchState);
+    const data = fetchState.blobs.get(ref);
     if (!data) return limited();
     const record = normalizeRecord(data);
     if (!record) return limited();
     normalizedTextChars += record.textChars;
     if (normalizedTextChars > MAX_NORMALIZED_TEXT_CHARS) return limited();
-    timeline.push(...record.timeline);
+    for (const call of record.subagentCalls) {
+      if (!call.callId) {
+        continue;
+      }
+      subagentsByCallId.set(call.callId, call.step);
+      const pending = pendingResults.get(call.callId);
+      if (pending) {
+        pendingResults.delete(call.callId);
+        applyToolResult(call.step, pending);
+      }
+    }
+    for (const result of record.toolResults) {
+      const step = subagentsByCallId.get(result.callId);
+      if (step) {
+        applyToolResult(step, result);
+      } else {
+        pendingResults.set(result.callId, result);
+      }
+    }
+    let correlatedNotice = false;
+    if (record.notice) {
+      const step = subagentsByTaskId.get(record.notice.taskId);
+      if (step) {
+        if (record.notice.result) {
+          step.result = record.notice.result;
+        }
+        step.status = "completed";
+        correlatedNotice = true;
+      }
+    }
+    timeline.push(...(correlatedNotice ? record.timeline.filter((item) => item.kind !== "notice") : record.timeline));
     recentActivity.push(...record.activity);
     messageCount += record.messageCount;
     toolCount += record.toolCount;
+    subagentCount += record.subagentCount;
   }
 
   return {
     status: "ok",
     timeline,
     recentActivity,
-    stats: { messageCount, toolCount, subagentCount: 0 },
+    stats: { messageCount, toolCount, subagentCount },
   };
 }
 

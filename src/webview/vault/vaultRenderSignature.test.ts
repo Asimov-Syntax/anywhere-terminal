@@ -67,6 +67,12 @@ describe("entriesSignature", () => {
     expect(entriesSignature([entry({ gitBranch: "main" })])).not.toBe(entriesSignature([entry({ gitBranch: "dev" })]));
   });
 
+  it("changes when source changes (drives Cursor badges and capability-gated actions)", () => {
+    const base = entriesSignature([entry()]);
+    expect(entriesSignature([entry({ source: "cli" })])).not.toBe(base);
+    expect(entriesSignature([entry({ source: "ide" })])).not.toBe(entriesSignature([entry({ source: "cli" })]));
+  });
+
   it("changes when the order changes", () => {
     const a = entry({ id: "claude:c1" });
     const b = entry({ id: "codex:x1", agent: "codex" });

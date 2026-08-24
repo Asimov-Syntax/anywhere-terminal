@@ -149,12 +149,17 @@ describe("Cursor IDE Composer list", () => {
   it("integrates IDE entries and details through the combined Cursor reader", async () => {
     await writeIdeStore([{ id: "composer-1" }]);
     const chatsDir = path.join(root, "chats");
-    await fs.mkdir(chatsDir);
+    const projectsDir = path.join(root, "projects");
+    await Promise.all([fs.mkdir(chatsDir), fs.mkdir(projectsDir)]);
 
-    const listed = await readCursorSessions(undefined, { chatsDir, ideDbPath: dbPath });
+    const listed = await readCursorSessions(undefined, { chatsDir, projectsDir, ideDbPath: dbPath });
     expect(listed.entries.map((entry) => entry.sessionId)).toEqual(["ide:d29ya3NwYWNlLTE:composer-1"]);
 
-    const detail = await readCursorDetail("ide:d29ya3NwYWNlLTE:composer-1", undefined, { chatsDir, ideDbPath: dbPath });
+    const detail = await readCursorDetail("ide:d29ya3NwYWNlLTE:composer-1", undefined, {
+      chatsDir,
+      projectsDir,
+      ideDbPath: dbPath,
+    });
     expect(detail?.contentKind).toBe("timeline");
     expect(detail?.timeline.map((item) => item.kind)).toEqual(["message", "message"]);
   });

@@ -24,19 +24,16 @@ import {
   renameCodexThread,
 } from "./readers/codexReader";
 import { cursorIdeDbPath } from "./readers/cursorIdeReader";
-import { cursorChatsRoot, resolveCursorChatCandidate } from "./readers/cursorPaths";
+import { cursorChatsRoot } from "./readers/cursorPaths";
 import {
   type CursorCombinedReaderOptions,
   readCursorDetail,
   readCursorEntry,
   readCursorMessageRecord,
   readCursorSessions,
+  resolveCursorSessionWatchPaths,
 } from "./readers/cursorReader";
-import {
-  cursorProjectsRoot,
-  resolveCursorProjectTranscriptSession,
-  resolveCursorTranscriptCandidate,
-} from "./readers/cursorTranscript";
+import { cursorProjectsRoot } from "./readers/cursorTranscript";
 import { clampDetailLimit } from "./readers/detail";
 import {
   opencodeStoreDirs,
@@ -767,39 +764,10 @@ export class VaultService {
       return [];
     }
     if (parsed.agent === "cursor") {
-      if (parsed.sessionId.startsWith("ide:")) {
-        const entry = await readCursorEntry(parsed.sessionId, this.cursorReaderOptions);
-        if (entry?.source !== "ide") {
-          return [];
-        }
-        const dbPath = cursorIdeDbPath(this.cursorReaderOptions);
-        return [
-          { baseDir: path.dirname(dbPath), glob: path.basename(dbPath) },
-          { baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}-wal` },
-        ];
-      }
-      if (parsed.sessionId.startsWith("project:")) {
-        const transcript = await resolveCursorProjectTranscriptSession(parsed.sessionId, this.cursorReaderOptions);
-        return transcript
-          ? [{ baseDir: path.dirname(transcript.filePath), glob: path.basename(transcript.filePath) }]
-          : [];
-      }
-      if (!isGlobSafeId(parsed.sessionId)) {
-        return [];
-      }
-      const chat = await resolveCursorChatCandidate(parsed.sessionId, this.cursorReaderOptions);
-      if (!chat) {
-        return [];
-      }
-      const targets: VaultWatchTarget[] = [
-        { baseDir: path.dirname(chat.dbPath), glob: path.basename(chat.dbPath) },
-        { baseDir: path.dirname(chat.dbPath), glob: `${path.basename(chat.dbPath)}-wal` },
-      ];
-      const transcript = await resolveCursorTranscriptCandidate(parsed.sessionId, this.cursorReaderOptions);
-      if (transcript) {
-        targets.push({ baseDir: path.dirname(transcript.filePath), glob: path.basename(transcript.filePath) });
-      }
-      return targets;
+      return (await resolveCursorSessionWatchPaths(parsed.sessionId, this.cursorReaderOptions)).map((sourcePath) => ({
+        baseDir: path.dirname(sourcePath),
+        glob: path.basename(sourcePath),
+      }));
     }
     if (!isGlobSafeId(parsed.sessionId)) {
       return [];
