@@ -116,19 +116,15 @@ export class PreviewController {
   private readonly nestedDetails = new Map<string, VaultSessionDetail>();
   /** Source-recorded invocation fallback, keyed by the child view-only identity. */
   private readonly nestedFallbacks = new WeakMap<HTMLElement, NestedInvocationFallback>();
-  /** Child entryId → every open block awaiting that detail, plus the preview
-   *  generation that asked. A Set (not one element) so two blocks sharing a child
-   *  entryId both resolve from ONE request, and collapsing one leaves the others
-   *  waiting (W15). The generation drops a reply that outlived its preview (W16). */
-  private readonly pendingNested = new Map<string, { generation: number; bodies: Set<HTMLElement> }>();
-  /** Bumped whenever the open preview changes (open / switch / close), so a nested
-   *  reply for a previous preview can never populate a card in the current one. */
-  private previewGeneration = 0;
-  /** Child entryId → replies still owed to previews that are already gone. The host
-   *  echoes only `entryId`, so a reply for a dead request is otherwise
-   *  indistinguishable from the reopened preview's own; replies arrive in order, so
-   *  the first N for that id are the dead ones and are dropped (W16). */
-  private readonly orphanedNested = new Map<string, number>();
+  /** Child entryId → the in-flight request's id plus every open block awaiting it.
+   *  A Set (not one element) so two blocks sharing a child entryId both resolve
+   *  from ONE request, and collapsing one leaves the others waiting (W15). The
+   *  host echoes `requestId` verbatim, so a reply renders only when it matches the
+   *  request still pending here — a reply that outlived its preview, its card, or
+   *  arrived out of order matches nothing and is dropped (W15/W16). */
+  private readonly pendingNested = new Map<string, { requestId: string; bodies: Set<HTMLElement> }>();
+  /** Monotonic source of nested request ids — unique for this webview's lifetime. */
+  private nestedRequestSeq = 0;
   /** Child entryIds whose cached detail is mid-render — breaks a self-referential
    *  cycle (a child that nests its own id) before it overflows the stack. */
   private readonly renderingNested = new Set<string>();
@@ -242,11 +238,11 @@ export class PreviewController {
     this.activePreviewEntryId = entry.id;
     this.activePreviewEntry = entry;
     this.activePreviewDetail = null;
-    this.previewGeneration++; // opening/switching supersedes every in-flight nested reply
-    this.retirePendingNested();
     this.expandedRuns.clear();
     this.expandedNested.clear();
     this.nestedDetails.clear();
+    // Opening/switching supersedes every in-flight nested reply: their request
+    // ids leave with the pending entries, so those replies match nothing (W16).
     this.pendingNested.clear();
     this.boardSelections.clear();
     this.previewLimit = PREVIEW_LIMIT_DEFAULT;
@@ -295,8 +291,6 @@ export class PreviewController {
     this.activePreviewEntryId = null;
     this.activePreviewEntry = null;
     this.activePreviewDetail = null;
-    this.previewGeneration++;
-    this.retirePendingNested();
     this.expandedRuns.clear();
     this.expandedNested.clear();
     this.nestedDetails.clear();
@@ -440,22 +434,16 @@ export class PreviewController {
   }
 
   handleSessionDetailResponse(msg: VaultSessionDetailResponseMessage): void {
-    const orphaned = this.orphanedNested.get(msg.entryId);
-    if (orphaned) {
-      // Owed to a preview that has since closed or switched — consume one and drop.
-      if (orphaned > 1) {
-        this.orphanedNested.set(msg.entryId, orphaned - 1);
-      } else {
-        this.orphanedNested.delete(msg.entryId);
+    if (msg.requestId !== undefined) {
+      // Only nested requests carry an id, so this reply is nested. It renders
+      // exactly when the request it echoes is still the one pending — a reply for
+      // a closed preview, a collapsed card, or an older duplicate request matches
+      // nothing and is dropped, whatever order the host completed them in (W15).
+      const nested = this.pendingNested.get(msg.entryId);
+      if (!nested || nested.requestId !== msg.requestId) {
+        return;
       }
-      return;
-    }
-    const nested = this.pendingNested.get(msg.entryId);
-    if (nested) {
       this.pendingNested.delete(msg.entryId);
-      if (nested.generation !== this.previewGeneration) {
-        return; // the preview that asked is gone — never paint a superseded reply
-      }
       const nestedContainers = nested.bodies;
       const usableDetail =
         msg.detail && !msg.error && msg.detail.contentKind !== "metadata-only" && msg.detail.partial !== true
@@ -874,15 +862,6 @@ export class PreviewController {
     });
   }
 
-  /** Move every in-flight nested request onto the orphan ledger: its preview is
-   *  gone, so the reply it will still receive must be dropped rather than painted
-   *  into whatever card holds that child id next (W16). */
-  private retirePendingNested(): void {
-    for (const entryId of this.pendingNested.keys()) {
-      this.orphanedNested.set(entryId, (this.orphanedNested.get(entryId) ?? 0) + 1);
-    }
-  }
-
   /** Fill a subagent block's body: from cache, or lazily fetch the child detail. */
   private populateNested(entryId: string, body: HTMLElement, fallback?: NestedInvocationFallback): void {
     if (fallback) {
@@ -907,12 +886,13 @@ export class PreviewController {
     }
     body.replaceChildren(loadingBody());
     const pending = this.pendingNested.get(entryId);
-    if (pending && pending.generation === this.previewGeneration) {
+    if (pending) {
       pending.bodies.add(body); // every open card sharing this entryId resolves together
       return;
     }
-    this.pendingNested.set(entryId, { generation: this.previewGeneration, bodies: new Set([body]) });
-    this.deps.postMessage({ type: "requestVaultSessionDetail", entryId });
+    const requestId = `nested-${++this.nestedRequestSeq}`;
+    this.pendingNested.set(entryId, { requestId, bodies: new Set([body]) });
+    this.deps.postMessage({ type: "requestVaultSessionDetail", entryId, requestId });
   }
 }
 

@@ -534,23 +534,28 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     entryId: string,
     webview: vscode.Webview,
     limit?: number,
+    requestId?: string,
   ): Promise<void> {
     if (!this.vaultService) {
       return;
     }
+    // Echoed verbatim on every reply path — reads complete out of order, so the
+    // webview correlates a nested reply by this token, not by entry id (W15).
+    const echo = requestId !== undefined ? { requestId } : {};
     try {
       const detail = await this.vaultService.getDetail(entryId, limit);
       void this.safeSendWithRetry(
         webview,
         detail
-          ? { type: "vaultSessionDetailResponse", entryId, detail }
-          : { type: "vaultSessionDetailResponse", entryId, error: "Session not found." },
+          ? { type: "vaultSessionDetailResponse", entryId, detail, ...echo }
+          : { type: "vaultSessionDetailResponse", entryId, error: "Session not found.", ...echo },
       );
     } catch (err) {
       void this.safeSendWithRetry(webview, {
         type: "vaultSessionDetailResponse",
         entryId,
         error: err instanceof Error ? err.message : "Failed to read session detail",
+        ...echo,
       });
     }
   }
@@ -1045,6 +1050,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
               message.entryId,
               webviewView.webview,
               typeof message.limit === "number" ? message.limit : undefined,
+              typeof message.requestId === "string" ? message.requestId : undefined,
             );
           }
           break;

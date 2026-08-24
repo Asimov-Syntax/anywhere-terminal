@@ -1185,14 +1185,85 @@
         ],
         "assertionDelta": 6
       }
+    },
+    {
+      "task": "12_1",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "3d05f6e3639b7d2d7db4d5c4b036d828802f71e0",
+      "at": 1787568012491,
+      "scope": [
+        "src/vault/VaultLauncher.ts",
+        "src/vault/VaultLauncher.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/VaultLauncher.test.ts",
+      "testChange": {
+        "reason": "Additions only: three B18 regressions (IDE/child Continue, resume unchanged) plus a getEntry stub mirroring the real service; no inherited assertion weakened",
+        "deleted": [],
+        "modified": [
+          "src/vault/VaultLauncher.test.ts"
+        ],
+        "assertionDelta": 3
+      }
+    },
+    {
+      "task": "12_2",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "628c7c53ac6f0a13ccb4dbc377d42a2afde973a3",
+      "at": 1787568503972,
+      "scope": [
+        "src/types/messages.ts",
+        "src/providers/TerminalViewProvider.ts",
+        "src/webview/vault/PreviewController.ts",
+        "src/webview/vault/VaultPanel.test.ts",
+        "src/providers/TerminalViewProvider.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/webview/vault/VaultPanel.test.ts src/providers/TerminalViewProvider.test.ts",
+      "testChange": {
+        "reason": "Nested replies now must echo the webview requestId (W15): every nested-reply site in VaultPanel.test.ts echoes the captured id via a shared helper, exact-equality request assertions tolerate the new field, and two out-of-order/abandoned-request regressions plus a host echo describe were added; no inherited assertion weakened",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.test.ts",
+          "src/webview/vault/VaultPanel.test.ts"
+        ],
+        "assertionDelta": 16
+      }
+    },
+    {
+      "task": "12_3",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "0db7e9e6c2f554ade9ceb7de5de46a2380cd4bbe",
+      "at": 1787568585663,
+      "scope": [
+        "src/webview/vault/previewTimeline.ts",
+        "src/webview/vault/VaultPanel.test.ts"
+      ],
+      "testCmd": "pnpm vitest run src/webview/vault/VaultPanel.test.ts",
+      "testChange": {
+        "reason": "Addition only: one W18 regression (load-more prepending an older same-child card); no inherited assertion changed",
+        "deleted": [],
+        "modified": [
+          "src/webview/vault/VaultPanel.test.ts"
+        ],
+        "assertionDelta": 6
+      }
+    },
+    {
+      "task": "12_4",
+      "cmd": "typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ \"$typecheck_status\" -eq 0 ]; then :; elif [ \"$(printf \"%s\\n\" \"$typecheck_output\" | grep -c \"error TS\")\" -eq 1 ] && printf \"%s\\n\" \"$typecheck_output\" | grep -q \"src/webview/vault/markdownLite.ts(80,10): error TS2339\"; then printf \"%s\\n\" \"Known pre-existing markdownLite.ts type error only\"; else printf \"%s\\n\" \"$typecheck_output\"; exit 1; fi; pnpm run test:unit",
+      "exit": 0,
+      "tree": "fcb473de29e8ecfe92c14587fc27c0cd249db835",
+      "at": 1787568628683,
+      "scope": [
+        "src/vault/readers/cursorNormalization.ts"
+      ],
+      "testCmd": "pnpm vitest run src/vault/readers/cursorNormalization.test.ts"
     }
   ],
-  "reads": 10,
+  "reads": 0,
   "testBaseline": {
-    "src/vault/readers/cursorNormalization.test.ts": {
-      "hash": "08c1dcf12d691096",
-      "assertions": 10
-    },
     "asimov/debug/260823-session-preview-ordered-list-verified/repro.test.ts": {
       "hash": "c2c788522d0cbe90",
       "assertions": 1
@@ -1254,8 +1325,8 @@
       "assertions": 7
     },
     "src/providers/TerminalViewProvider.test.ts": {
-      "hash": "d7a64fef00c5c618",
-      "assertions": 81
+      "hash": "2f0aa2100a812260",
+      "assertions": 86
     },
     "src/providers/TerminalViewProvider.vaultContinue.test.ts": {
       "hash": "3d8896b717b1553b",
@@ -1486,8 +1557,8 @@
       "assertions": 14
     },
     "src/vault/VaultLauncher.test.ts": {
-      "hash": "82396ce6688562c4",
-      "assertions": 35
+      "hash": "624af34847f89cbb",
+      "assertions": 38
     },
     "src/vault/VaultService.customName.test.ts": {
       "hash": "ad036289b84fac59",
@@ -1540,6 +1611,10 @@
     "src/vault/readers/cursorIdeReader.test.ts": {
       "hash": "22918cd813a08ce1",
       "assertions": 31
+    },
+    "src/vault/readers/cursorNormalization.test.ts": {
+      "hash": "08c1dcf12d691096",
+      "assertions": 10
     },
     "src/vault/readers/cursorReader.test.ts": {
       "hash": "323fb9aefa07cdb6",
@@ -1786,8 +1861,8 @@
       "assertions": 31
     },
     "src/webview/vault/VaultPanel.test.ts": {
-      "hash": "5112cd63d77627c6",
-      "assertions": 491
+      "hash": "ed34cefc700d01c7",
+      "assertions": 508
     },
     "src/webview/vault/forkPoint.test.ts": {
       "hash": "3a795899c09dc9bc",

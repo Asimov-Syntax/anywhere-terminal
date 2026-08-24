@@ -403,6 +403,13 @@ export interface RequestVaultSessionDetailMessage {
    * older messages when the user scrolls to the top of the transcript.
    */
   limit?: number;
+  /**
+   * Opaque webview-chosen token echoed verbatim in the response. Sent only by
+   * nested (sub-agent card) detail requests so a reply can be matched to the
+   * exact request that produced it — host reads complete out of order, so the
+   * entry id alone cannot correlate them (round-6 W15).
+   */
+  requestId?: string;
 }
 
 /**
@@ -1108,6 +1115,12 @@ interface VaultSessionDetailResponseBase {
    * otherwise it surfaces a "new messages" indicator.
    */
   followUpdate?: boolean;
+  /**
+   * The request's `requestId`, echoed verbatim. Present exactly when the request
+   * carried one; host-initiated follow pushes never do. A reply bearing one is a
+   * nested reply and renders only while that request is still pending (W15).
+   */
+  requestId?: string;
 }
 
 /**

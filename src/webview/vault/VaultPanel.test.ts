@@ -890,7 +890,9 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     // Clicking lazily fetches THIS turn's segment by its view-only :turn: id.
     host.querySelector<HTMLButtonElement>(".vault-preview-teammate-head")?.click();
     expect(node?.classList.contains("is-open")).toBe(true);
-    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: "claude:m:turn:0" });
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "requestVaultSessionDetail", entryId: "claude:m:turn:0" }),
+    );
   });
 
   it("renders a peer-DM teammateTurn with the peer name as direction + neutral fallback color", () => {
@@ -1062,6 +1064,18 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(head?.getAttribute("aria-expanded")).toBe("false");
   });
 
+  /** The requestId the panel attached to its nth (default last) nested detail
+   *  request for a child — replies must echo it to render (W15). */
+  const nestedRequestId = (posted: Array<{ type: string }>, entryId: string, nth = -1): string => {
+    const req = posted
+      .filter((m) => m.type === "requestVaultSessionDetail" && (m as { entryId?: string }).entryId === entryId)
+      .at(nth) as { requestId?: string } | undefined;
+    if (typeof req?.requestId !== "string") {
+      throw new Error(`no nested detail request for ${entryId}`);
+    }
+    return req.requestId;
+  };
+
   it("opens a saved Cursor child transcript through nested detail IPC", () => {
     const host = createHost();
     const posted: Array<{ type: string; entryId?: string | null }> = [];
@@ -1095,10 +1109,13 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
     const head = host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head");
     head?.click();
-    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: "cursor:project:bucket:child-1" });
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "requestVaultSessionDetail", entryId: "cursor:project:bucket:child-1" }),
+    );
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "cursor:project:bucket:child-1",
+      requestId: nestedRequestId(posted, "cursor:project:bucket:child-1"),
       detail: detail({
         entryId: "cursor:project:bucket:child-1",
         contentKind: "timeline",
@@ -1114,7 +1131,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("keeps the Cursor invocation fallback when a child detail fails", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     panel.handleSessionDetailResponse({
@@ -1141,6 +1159,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "cursor:project:bucket:child-1",
+      requestId: nestedRequestId(posted, "cursor:project:bucket:child-1"),
       error: "Child transcript unavailable.",
     });
 
@@ -1151,7 +1170,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("keeps each invocation fallback when duplicate cards share one failed child detail", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     const parent = {
@@ -1190,6 +1210,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "cursor:project:bucket:child-1",
+      requestId: nestedRequestId(posted, "cursor:project:bucket:child-1"),
       error: "Child transcript unavailable.",
     });
 
@@ -1208,7 +1229,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("drops a stale Cursor child detail response after switching previews", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(
       result([
         entry({ id: "cursor:chat-1", agent: "cursor", source: "cli" }),
@@ -1236,11 +1258,13 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
       }),
     });
     host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    const staleRequestId = nestedRequestId(posted, "cursor:project:bucket:child-1");
     rows[1].click();
 
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "cursor:project:bucket:child-1",
+      requestId: staleRequestId,
       detail: detail({
         entryId: "cursor:project:bucket:child-1",
         timeline: [{ kind: "message", role: "assistant", text: "STALE CHILD" }],
@@ -1280,6 +1304,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_dup",
+      requestId: nestedRequestId(posted, "opencode:ses_dup"),
       detail: detail({ entryId: "opencode:ses_dup", timeline: [{ kind: "message", role: "user", text: "CHILD" }] }),
     });
 
@@ -1316,6 +1341,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid", 0),
       detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "STALE" }] }),
     });
     expect(host.querySelector(".vault-preview-subagent-body")?.textContent).not.toContain("STALE");
@@ -1327,9 +1353,133 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid", 1),
       detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "FRESH" }] }),
     });
     expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toContain("FRESH");
+  });
+
+  /** W18: card keys must not shift when load-more PREPENDS an older card naming
+   *  the same child — identity is (child, title, nth among identical), not the
+   *  card's occurrence index in the whole timeline. */
+  it("keeps the open duplicate card expanded when load-more prepends an older same-child card", () => {
+    const host = createHost();
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        truncated: true,
+        timeline: [{ kind: "subagentSession", entryId: "opencode:ses_dup", title: "Recent task", firstMessage: "p" }],
+      }),
+    });
+    host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    expect(host.querySelector(".vault-preview-subagent")?.classList.contains("is-open")).toBe(true);
+
+    host.querySelector<HTMLButtonElement>(".vault-preview-loadmore")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        truncated: false,
+        timeline: [
+          { kind: "subagentSession", entryId: "opencode:ses_dup", title: "Older task", firstMessage: "p" },
+          { kind: "subagentSession", entryId: "opencode:ses_dup", title: "Recent task", firstMessage: "p" },
+        ],
+      }),
+    });
+
+    const cards = [...host.querySelectorAll<HTMLElement>(".vault-preview-subagent")];
+    expect(cards).toHaveLength(2);
+    expect(cards[0].querySelector(".vault-preview-subagent-title")?.textContent).toBe("Older task");
+    expect(cards[0].classList.contains("is-open")).toBe(false);
+    expect(cards[1].querySelector(".vault-preview-subagent-title")?.textContent).toBe("Recent task");
+    expect(cards[1].classList.contains("is-open")).toBe(true);
+  });
+
+  /** W15: host reads complete out of order — the reopened preview's own reply can
+   *  land BEFORE the closed preview's leftover. Identity comes from the echoed
+   *  request id, never from arrival order. */
+  it("keeps the fresh nested reply when it lands before the closed preview's leftover", () => {
+    const host = createHost();
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    const parent = {
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [{ kind: "subagentSession", entryId: "opencode:ses_kid", title: "Sub", firstMessage: "p" }],
+      }),
+    } as const;
+    const openAndExpand = () => {
+      host.querySelector<HTMLElement>(".vault-row")?.click();
+      panel.handleSessionDetailResponse(parent);
+      host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
+    };
+    openAndExpand();
+    host.querySelector<HTMLButtonElement>(".vault-preview-close")?.click();
+    openAndExpand();
+
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid", 1),
+      detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "FRESH" }] }),
+    });
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toContain("FRESH");
+
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid", 0),
+      detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "STALE" }] }),
+    });
+    const body = host.querySelector(".vault-preview-subagent-body")?.textContent;
+    expect(body).toContain("FRESH");
+    expect(body).not.toContain("STALE");
+  });
+
+  /** W15: collapsing the LAST waiting card abandons its request; re-expanding asks
+   *  again, and the abandoned request's late reply must not satisfy the new one. */
+  it("ignores the abandoned reply after the last waiting card collapses and re-expands", () => {
+    const host = createHost();
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:a",
+      detail: detail({
+        entryId: "opencode:a",
+        timeline: [{ kind: "subagentSession", entryId: "opencode:ses_kid", title: "Sub", firstMessage: "p" }],
+      }),
+    });
+    const head = () => host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head");
+    head()?.click(); // expand → first request
+    head()?.click(); // collapse the only waiting card — its request is abandoned
+    head()?.click(); // re-expand → second request
+
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid", 0),
+      detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "OLD" }] }),
+    });
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).not.toContain("OLD");
+
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid", 1),
+      detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "NEW" }] }),
+    });
+    expect(host.querySelector(".vault-preview-subagent-body")?.textContent).toContain("NEW");
   });
 
   it("meta block is Folder+branch / Session id+path / Activity age+stats, all copyable", async () => {
@@ -2496,12 +2646,15 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     });
     host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
     // Expanding posts a detail request for the CHILD entry id (lazy fetch).
-    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: "opencode:ses_kid" });
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "requestVaultSessionDetail", entryId: "opencode:ses_kid" }),
+    );
     expect(host.querySelector(".vault-preview-subagent")?.classList.contains("is-open")).toBe(true);
     // The child's response renders into the block (not the root, despite entryId ≠ active).
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid"),
       detail: detail({
         entryId: "opencode:ses_kid",
         timeline: [
@@ -2536,7 +2689,9 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
     // Expanding the group lazily requests the workflow group id.
     host.querySelector<HTMLButtonElement>(".vault-preview-subagent-head")?.click();
-    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: "claude:wfp:workflow:wf1" });
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "requestVaultSessionDetail", entryId: "claude:wfp:workflow:wf1" }),
+    );
 
     // The group resolves to a single workflowBoard item → the board mounts nested.
     const AID = "claude:wfp:wfagent:wf1:agent-aaa";
@@ -2544,6 +2699,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "claude:wfp:workflow:wf1",
+      requestId: nestedRequestId(posted, "claude:wfp:workflow:wf1"),
       detail: detail({
         entryId: "claude:wfp:workflow:wf1",
         timeline: [
@@ -2572,13 +2728,14 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     // detail request through the REAL PreviewController populateNested/pendingNested.
     leaves()[0].click();
     leaves()[1].click();
-    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: AID });
-    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: BID });
+    expect(posted).toContainEqual(expect.objectContaining({ type: "requestVaultSessionDetail", entryId: AID }));
+    expect(posted).toContainEqual(expect.objectContaining({ type: "requestVaultSessionDetail", entryId: BID }));
 
     // beta resolves → its transcript renders in the visible right pane.
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: BID,
+      requestId: nestedRequestId(posted, BID),
       detail: detail({ entryId: BID, timeline: [{ kind: "message", role: "assistant", text: "beta transcript" }] }),
     });
     expect(host.querySelector(".vault-wfboard-detail-body")?.textContent).toContain("beta transcript");
@@ -2588,6 +2745,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: AID,
+      requestId: nestedRequestId(posted, AID),
       detail: detail({ entryId: AID, timeline: [{ kind: "message", role: "assistant", text: "alpha transcript" }] }),
     });
     const visible = host.querySelector(".vault-wfboard-detail-body")?.textContent ?? "";
@@ -2601,7 +2759,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("2_4b: expanding a run inside an open agent transcript keeps the agent open (issue 4)", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "claude:wfp2", agent: "claude" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
 
@@ -2631,6 +2790,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: AID,
+      requestId: nestedRequestId(posted, AID),
       detail: detail({
         entryId: AID,
         timeline: [1, 2, 3, 4, 5].map((n) => ({ kind: "tool", tool: "Bash", detail: `step ${n}` })),
@@ -2651,7 +2811,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("2_4c: scrolls an agent's transcript pane to the last message on open (#3)", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "claude:wfp3", agent: "claude" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     const AID = "claude:wfp3:wfagent:wfx:agent-aaa";
@@ -2691,6 +2852,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: AID,
+      requestId: nestedRequestId(posted, AID),
       detail: detail({ entryId: AID, timeline: [{ kind: "message", role: "assistant", text: "the conclusion" }] }),
     });
     expect(scrolledTo).toBe(777); // jumped to the bottom (last message)
@@ -2698,7 +2860,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("caps + pins the conclusion inside a nested subagent transcript (like the root)", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     panel.handleSessionDetailResponse({
@@ -2714,6 +2877,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid"),
       detail: detail({
         entryId: "opencode:ses_kid",
         timeline: [
@@ -2769,6 +2933,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_dup",
+      requestId: nestedRequestId(posted, "opencode:ses_dup"),
       detail: detail({ entryId: "opencode:ses_dup", timeline: [{ kind: "message", role: "user", text: "DUP-CHILD" }] }),
     });
     // Both visible blocks resolve — the earlier one is no longer stuck loading.
@@ -2781,7 +2946,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("does not stack-overflow on a self-referential nested detail (cycle guard)", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     panel.handleSessionDetailResponse({
@@ -2799,6 +2965,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
       panel.handleSessionDetailResponse({
         type: "vaultSessionDetailResponse",
         entryId: "opencode:ses_self",
+        requestId: nestedRequestId(posted, "opencode:ses_self"),
         detail: detail({
           entryId: "opencode:ses_self",
           timeline: [
@@ -2850,6 +3017,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid"),
       detail: detail({
         entryId: "opencode:ses_kid",
         timeline: [
@@ -2885,7 +3053,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("collapsing a subagent block clears its nested body", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     panel.handleSessionDetailResponse({
@@ -2901,6 +3070,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid"),
       detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "hi" }] }),
     });
     expect(host.querySelector(".vault-preview-subagent-body .vault-preview-message")).not.toBeNull();
@@ -2911,7 +3081,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("collapsing mid-load drops the pending request so a late response can't populate the hidden body (R4)", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     panel.handleSessionDetailResponse({
@@ -2929,6 +3100,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid"),
       detail: detail({ entryId: "opencode:ses_kid", timeline: [{ kind: "message", role: "user", text: "late" }] }),
     });
     expect(host.querySelector(".vault-preview-subagent-body .vault-preview-message")).toBeNull();
@@ -2936,7 +3108,8 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
 
   it("nests multiple tiers: a child's own subagentSession renders as a further block", () => {
     const host = createHost();
-    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const posted: { type: string; entryId?: string | null }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
     panel.render(result([entry({ id: "opencode:a", agent: "opencode" })]));
     host.querySelector<HTMLElement>(".vault-row")?.click();
     panel.handleSessionDetailResponse({
@@ -2952,6 +3125,7 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     panel.handleSessionDetailResponse({
       type: "vaultSessionDetailResponse",
       entryId: "opencode:ses_kid",
+      requestId: nestedRequestId(posted, "opencode:ses_kid"),
       detail: detail({
         entryId: "opencode:ses_kid",
         timeline: [{ kind: "subagentSession", entryId: "opencode:ses_grandkid", title: "Grandchild sub" }],

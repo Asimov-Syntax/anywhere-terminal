@@ -606,3 +606,46 @@
     1. Track expansion and pending membership per card body in `src/webview/vault/PreviewController.ts` while coalescing the underlying request by child id.
     2. Add a preview request generation and drop superseded nested responses in `src/webview/vault/PreviewController.ts` and `src/webview/vault/previewTimeline.ts`.
     3. Cover collapse with a second card open, close-and-reopen, and preview switching in `src/webview/vault/VaultPanel.test.ts`.
+
+## 11. Review Round 6 Fixes
+
+- [x] 12_1 Restore Continue and Fork for non-CLI Cursor entries — verified: pnpm vitest run src/vault/VaultLauncher.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
+  - **Deps**: none
+  - **Refs**: specs/vault-session-launch/spec.md#{cursor-selected-resume-compatibility, cursor-explicit-resume-identity-proof}; design.md D14; .reviews/round-6.md B18
+  - **Acceptance**:
+    - Outcome: Cursor IDE and issued-child entries continue and fork successfully again.
+    - Verify: command pnpm vitest run src/vault/VaultLauncher.test.ts
+  - **Plan**:
+    1. Branch on mode in `src/vault/VaultLauncher.ts` so only Resume and the resume-command copy take the launch target; Continue and Fork resolve through the entry lookup.
+    2. Cover Cursor IDE Continue and issued-child Continue through the real service wiring in `src/vault/VaultLauncher.test.ts`.
+
+- [x] 12_2 Correlate nested detail replies by an echoed request id — verified: pnpm vitest run src/webview/vault/VaultPanel.test.ts src/providers/TerminalViewProvider.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
+  - **Deps**: none
+  - **Refs**: specs/vault-session-preview/spec.md#{cursor-subagent-run-preview, cursor-subagent-result-fallback}; .reviews/round-6.md W15
+  - **Acceptance**:
+    - Outcome: A nested detail reply renders only when its echoed request id matches the pending nested request.
+    - Verify: command pnpm vitest run src/webview/vault/VaultPanel.test.ts src/providers/TerminalViewProvider.test.ts
+  - **Boundary**: Root open, load-more, and live-follow replies keep their existing entry-id guards; the id must stay opaque to the host.
+  - **Plan**:
+    1. Add an optional echoed `requestId` to the session-detail request and response in `src/types/messages.ts` and echo it verbatim in `src/providers/TerminalViewProvider.ts`.
+    2. Key pending nested requests by that id in `src/webview/vault/PreviewController.ts`, dropping any nested-tagged reply that matches no pending request, and remove the generation counter and orphan ledger.
+    3. Cover out-of-order replies after after the preview is closed and reopened, and collapse of the last waiting card in `src/webview/vault/VaultPanel.test.ts`, plus request-id echo on success and error in `src/providers/TerminalViewProvider.test.ts`.
+
+- [x] 12_3 Keep duplicate-card expansion stable across prepending history — verified: pnpm vitest run src/webview/vault/VaultPanel.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
+  - **Deps**: 12_2
+  - **Refs**: specs/vault-session-preview/spec.md#cursor-subagent-run-preview; .reviews/round-6.md W18
+  - **Acceptance**:
+    - Outcome: An open duplicate card keeps its expansion when load-more prepends an older card naming the same child.
+    - Verify: command pnpm vitest run src/webview/vault/VaultPanel.test.ts
+  - **Plan**:
+    1. Key nested cards by child id plus card title plus occurrence-within-identical in `src/webview/vault/previewTimeline.ts`.
+    2. Add a load-more regression that prepends an older same-child card in `src/webview/vault/VaultPanel.test.ts`.
+
+- [x] 12_4 Delegate resume-agent validation to the canonical id rule — verified: pnpm vitest run src/vault/readers/cursorNormalization.test.ts && typecheck_output=$(pnpm run check-types 2>&1); typecheck_status=$?; if [ "$typecheck_status" -eq 0 ]; then :; elif [ "$(printf "%s\n" "$typecheck_output" | grep -c "error TS")" -eq 1 ] && printf "%s\n" "$typecheck_output" | grep -q "src/webview/vault/markdownLite.ts(80,10): error TS2339"; then printf "%s\n" "Known pre-existing markdownLite.ts type error only"; else printf "%s\n" "$typecheck_output"; exit 1; fi; pnpm run test:unit exit 0
+  - **Deps**: none
+  - **Refs**: .reviews/round-6.md S10
+  - **Acceptance**:
+    - Outcome: The resume-agent identity accepts exactly what the canonical Cursor id validator accepts.
+    - Verify: command pnpm vitest run src/vault/readers/cursorNormalization.test.ts
+  - **Plan**:
+    1. Delegate the string-shape check in `src/vault/readers/cursorNormalization.ts` to `isSafeCursorChatId`, keeping the local type and bound guards.

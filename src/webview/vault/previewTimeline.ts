@@ -162,10 +162,12 @@ export function renderNestedInvocationFallback(container: HTMLElement, fallback:
 }
 
 /**
- * Identify each nested card by WHICH occurrence of its child it is, scoped to the
- * timeline it lives in — `<prefix>|<entryId>#<n>`. Two cards addressing one child
- * therefore hold their own expansion state, and the key survives a load-more that
- * prepends older items above them (a position-based key would not).
+ * Identify each nested card by `<prefix>|<entryId>|<title>#<n>`, scoped to the
+ * timeline it lives in. Two cards addressing one child therefore hold their own
+ * expansion state, and because `n` counts only cards identical in BOTH child and
+ * title, the key survives a load-more that prepends an older same-child card as
+ * well as a live-follow append (an occurrence-in-timeline index survives neither).
+ * Cards identical in child AND title remain indistinguishable — the honest floor.
  */
 function nestedCardKeys(timeline: VaultTimelineItem[], keyPrefix: string): Map<VaultTimelineItem, string> {
   const keys = new Map<VaultTimelineItem, string>();
@@ -174,9 +176,11 @@ function nestedCardKeys(timeline: VaultTimelineItem[], keyPrefix: string): Map<V
     if (item.kind !== "subagentSession" && item.kind !== "teammateTurn") {
       continue;
     }
-    const seen = counts.get(item.entryId) ?? 0;
-    counts.set(item.entryId, seen + 1);
-    keys.set(item, `${keyPrefix}|${item.entryId}#${seen}`);
+    const title = item.kind === "subagentSession" ? (item.title ?? "") : (item.preview ?? "");
+    const identity = `${item.entryId}|${title}`;
+    const seen = counts.get(identity) ?? 0;
+    counts.set(identity, seen + 1);
+    keys.set(item, `${keyPrefix}|${identity}#${seen}`);
   }
   return keys;
 }

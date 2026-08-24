@@ -45,6 +45,16 @@ function stubService(
       const entry = entries.find((e) => e.id === entryId);
       return entry ? { entry, verify: () => verify(entry) } : null;
     },
+    getEntry: async (entryId: string) => entries.find((e) => e.id === entryId) ?? null,
+  } as unknown as VaultService;
+}
+
+/** The real service's launch-target resolver is CLI-only: a Cursor IDE entry or an
+ *  issued child locator resolves through getEntry but has NO launch target (B18). */
+function cliOnlyService(entry: VaultSessionEntry): VaultService {
+  return {
+    getLaunchTarget: async () => null,
+    getEntry: async (entryId: string) => (entryId === entry.id ? entry : null),
   } as unknown as VaultService;
 }
 
@@ -265,6 +275,44 @@ describe("VaultLauncher.resolve", () => {
     await new VaultLauncher(service, {}).resolve("cursor:chat-1", "resume");
     expect(resolutions).toBe(1);
     expect(verify).toHaveBeenCalledTimes(1);
+  });
+
+  /** B18: Continue/Fork must not require a CLI launch target — a Cursor IDE
+   *  entry and an issued child locator resolve only through getEntry. */
+  it("continues a Cursor IDE entry that has no CLI launch target", async () => {
+    const ide = makeEntry({
+      id: "cursor:ide:d29ya3NwYWNlLTE:composer-1",
+      agent: "cursor",
+      sessionId: "ide:d29ya3NwYWNlLTE:composer-1",
+      source: "ide",
+      canFork: false,
+      canResume: false,
+    });
+    const launcher = new VaultLauncher(cliOnlyService(ide), {});
+    await expect(launcher.resolve(ide.id, "continue", "carry on")).resolves.toMatchObject({
+      shell: "cursor-agent",
+      shellArgs: ["carry on"],
+    });
+  });
+
+  it("continues an issued Cursor child entry that has no CLI launch target", async () => {
+    const child = makeEntry({
+      id: "cursor:child:0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      agent: "cursor",
+      sessionId: "child:0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      source: "cli",
+      canFork: false,
+      canResume: false,
+    });
+    const launcher = new VaultLauncher(cliOnlyService(child), {});
+    await expect(launcher.resolve(child.id, "continue", "carry on")).resolves.toMatchObject({
+      shell: "cursor-agent",
+    });
+  });
+
+  it("still refuses Resume when only getEntry can resolve the entry", async () => {
+    const launcher = new VaultLauncher(cliOnlyService(cursorCliEntry()), {});
+    await expect(launcher.resolve("cursor:chat-1", "resume")).rejects.toMatchObject({ code: "unknown-entry" });
   });
 
   it("throws unknown-entry for an id not in the list", async () => {

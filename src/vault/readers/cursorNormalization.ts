@@ -11,6 +11,7 @@
 // Bounded and local: no raw blob, argument, or result value is logged or cached,
 // and every emitted string is capped.
 
+import { isSafeCursorChatId } from "../cacheTypes";
 import type { VaultActivityStep, VaultTimelineItem } from "../types";
 
 const MAX_RECORD_TEXT_CHARS = 256 * 1024;
@@ -128,13 +129,14 @@ function taskIdFromText(text: string): string | undefined {
   return match?.[1].slice(0, MAX_TASK_ID_CHARS);
 }
 
-/** The safe agent-id shape shared by the `Agent ID:` result line and the
- *  invocation's own `resume` argument — bounded, no path traversal. */
+/** The agent id carried by the `Agent ID:` result line and the invocation's own
+ *  `resume` argument — the canonical Cursor id rule owns the shape (S10); only
+ *  the normalizer's own bound stays local. */
 function safeAgentId(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_TASK_ID_CHARS || value.includes("..")) {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_TASK_ID_CHARS) {
     return undefined;
   }
-  return /^[A-Za-z0-9._-]+$/.test(value) ? value : undefined;
+  return isSafeCursorChatId(value) ? value : undefined;
 }
 
 function childAgentIdFromText(text: string): string | undefined {

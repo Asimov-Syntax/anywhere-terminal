@@ -787,6 +787,87 @@ describe("TerminalViewProvider: vault fresh-response supersession (F4)", () => {
   });
 });
 
+// ─── session-detail requestId echo (round-6 W15) ────────────────────
+
+describe("TerminalViewProvider: session-detail requestId echo", () => {
+  function providerWith(vault: Partial<VaultService>): {
+    messageHandlers: Array<(msg: unknown) => void>;
+    postMessageSpy: ReturnType<typeof vi.fn>;
+    dispose: () => void;
+  } {
+    const sm = new SessionManager();
+    const provider = new TerminalViewProvider(
+      { fsPath: "/mock/extension" } as vscode.Uri,
+      sm,
+      "sidebar",
+      null,
+      null,
+      vault as VaultService,
+    );
+    const { webviewView, messageHandlers, postMessageSpy } = createMockWebviewView();
+    provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+    for (const handler of messageHandlers) {
+      handler({ type: "ready" });
+    }
+    postMessageSpy.mockReset();
+    postMessageSpy.mockImplementation(() => Promise.resolve(true));
+    return { messageHandlers, postMessageSpy, dispose: () => sm.dispose() };
+  }
+
+  const detailResponses = (spy: ReturnType<typeof vi.fn>) =>
+    spy.mock.calls.map(([m]) => m as Record<string, unknown>).filter((m) => m.type === "vaultSessionDetailResponse");
+
+  it("echoes the requestId on success and error, and omits it when the request carried none", async () => {
+    const { messageHandlers, postMessageSpy, dispose } = providerWith({
+      getDetail: async (entryId: string) =>
+        entryId === "claude:ok"
+          ? {
+              entryId,
+              contentKind: "timeline" as const,
+              timeline: [],
+              recentActivity: [],
+              stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
+            }
+          : null,
+    });
+    for (const handler of messageHandlers) {
+      handler({ type: "requestVaultSessionDetail", entryId: "claude:ok", requestId: "nested-7" });
+      handler({ type: "requestVaultSessionDetail", entryId: "claude:missing", requestId: "nested-8" });
+      handler({ type: "requestVaultSessionDetail", entryId: "claude:ok" });
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const responses = detailResponses(postMessageSpy);
+    expect(responses.find((m) => m.requestId === "nested-7")).toMatchObject({ entryId: "claude:ok" });
+    expect(responses.find((m) => m.requestId === "nested-8")).toMatchObject({
+      entryId: "claude:missing",
+      error: "Session not found.",
+    });
+    const untagged = responses.filter((m) => m.requestId === undefined);
+    expect(untagged).toHaveLength(1);
+    expect("requestId" in untagged[0]).toBe(false);
+    dispose();
+  });
+
+  it("echoes the requestId when the read throws", async () => {
+    const { messageHandlers, postMessageSpy, dispose } = providerWith({
+      getDetail: async () => {
+        throw new Error("boom");
+      },
+    });
+    for (const handler of messageHandlers) {
+      handler({ type: "requestVaultSessionDetail", entryId: "claude:x", requestId: "nested-9" });
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(detailResponses(postMessageSpy).find((m) => m.requestId === "nested-9")).toMatchObject({
+      entryId: "claude:x",
+      error: "boom",
+    });
+    dispose();
+  });
+});
+
 // ─── safeSendWithRetry ──────────────────────────────────────────────
 
 describe("TerminalViewProvider: safeSendWithRetry via createTab", () => {
