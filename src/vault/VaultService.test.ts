@@ -10,7 +10,12 @@ import {
 import { __resetForkSupportCache, canForkOpenCode, gte, parseFirstSemver } from "./forkSupport";
 import type { VaultSessionEntry } from "./types";
 import type { VaultCacheStore } from "./VaultCacheStore";
-import { type VaultEntryReaders, type VaultReaders, VaultService } from "./VaultService";
+import {
+  MAX_PENDING_VAULT_REFRESH_PATHS,
+  type VaultEntryReaders,
+  type VaultReaders,
+  VaultService,
+} from "./VaultService";
 
 function entry(agent: string, sessionId: string, modified: number): VaultSessionEntry {
   return {
@@ -29,11 +34,20 @@ function result(entries: VaultSessionEntry[], unreadable = 0): ReaderResultWithS
   return { entries, unreadable, cache: { kind: "store", sources: {}, entries, unreadable } };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 function makeReaders(overrides: Partial<VaultReaders> = {}): VaultReaders {
   return {
     claude: vi.fn(async () => result([])),
     codex: vi.fn(async () => result([])),
     opencode: vi.fn(async () => result([])),
+    cursor: vi.fn(async () => result([])),
     ...overrides,
   };
 }
@@ -43,6 +57,7 @@ function makeEntryReaders(overrides: Partial<VaultEntryReaders> = {}): VaultEntr
     claude: vi.fn(async () => null),
     codex: vi.fn(async () => null),
     opencode: vi.fn(async () => null),
+    cursor: vi.fn(async () => null),
     ...overrides,
   };
 }
@@ -147,12 +162,17 @@ describe("VaultService.getEntry: single-entry resolve", () => {
     const claude = vi.fn(async () => entry("claude", "c1", 1));
     const codex = vi.fn(async () => null);
     const opencode = vi.fn(async () => null);
-    const svc = new VaultService({ entryReaders: { claude, codex, opencode }, canForkOpenCodeFn: async () => false });
+    const cursor = vi.fn(async () => null);
+    const svc = new VaultService({
+      entryReaders: { claude, codex, opencode, cursor },
+      canForkOpenCodeFn: async () => false,
+    });
     const e = await svc.getEntry("claude:c1");
     expect(e?.id).toBe("claude:c1");
     expect(claude).toHaveBeenCalledWith("c1");
     expect(codex).not.toHaveBeenCalled();
     expect(opencode).not.toHaveBeenCalled();
+    expect(cursor).not.toHaveBeenCalled();
   });
 
   it("returns null for an unknown agent or a malformed id", async () => {
@@ -280,6 +300,292 @@ describe("VaultService cache: listCached + refresh", () => {
     const prev = claude.mock.calls[1][0];
     expect(prev?.kind).toBe("store");
     expect(prev?.kind === "store" && prev.entries.map((e) => e.id)).toEqual(["claude:c1"]);
+  });
+
+  it("targets only the hinted reader and carries untouched cached segments + unreadable state", async () => {
+    const claude = vi.fn(async () => result([entry("claude", "c1", 30)], 2));
+    const codex = vi.fn(async () => result([entry("codex", "x1", 20)]));
+    const opencode = vi.fn(async () => result([entry("opencode", "o1", 10)]));
+    const cursor = vi.fn(async () => result([entry("cursor", "chat-old", 1)]));
+    const cache = makeCacheStore(null);
+    const svc = new VaultService({
+      readers: { claude, codex, opencode, cursor },
+      canForkOpenCodeFn: async () => false,
+      cacheStore: cache.store as unknown as VaultCacheStore,
+    });
+    const seeded = await svc.refresh();
+    const priorClaudeCache = cache.current?.agents.claude;
+    claude.mockClear();
+    codex.mockClear();
+    opencode.mockClear();
+    cursor.mockClear();
+    cursor.mockResolvedValue(result([entry("cursor", "chat-new", 40)]));
+
+    const refreshed = await svc.refresh({
+      hint: { agent: "cursor", paths: ["/cursor/a/chat-new/meta.json"] },
+    });
+
+    expect(cursor).toHaveBeenCalledWith(expect.anything(), { paths: ["/cursor/a/chat-new/meta.json"] });
+    expect(claude).not.toHaveBeenCalled();
+    expect(codex).not.toHaveBeenCalled();
+    expect(opencode).not.toHaveBeenCalled();
+    expect(refreshed.entries.map((e) => e.id)).toEqual(["cursor:chat-new", "claude:c1", "codex:x1", "opencode:o1"]);
+    expect(refreshed.unreadable).toEqual(seeded.unreadable);
+    expect(cache.current?.agents.claude).toBe(priorClaudeCache);
+    expect(cache.current?.entries.map((e) => e.id)).toEqual(refreshed.entries.map((e) => e.id));
+  });
+
+  it("promotes a cold hinted refresh to a complete read", async () => {
+    const readers = makeReaders({
+      claude: vi.fn(async () => result([entry("claude", "c1", 4)])),
+      codex: vi.fn(async () => result([entry("codex", "x1", 3)])),
+      opencode: vi.fn(async () => result([entry("opencode", "o1", 2)])),
+      cursor: vi.fn(async () => result([entry("cursor", "chat", 1)])),
+    });
+    const svc = new VaultService({ readers, canForkOpenCodeFn: async () => false });
+
+    const refreshed = await svc.refresh({
+      hint: { agent: "cursor", paths: ["/cursor/a/chat/meta.json"] },
+    });
+
+    expect(refreshed.entries.map((e) => e.id)).toEqual(["claude:c1", "codex:x1", "opencode:o1", "cursor:chat"]);
+    for (const reader of Object.values(readers)) {
+      expect(reader).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(reader).mock.calls[0][1]).toBeUndefined();
+    }
+  });
+
+  it("promotes an oversized pending path set to one complete refresh", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const cursor = vi
+      .fn()
+      .mockResolvedValueOnce(result([entry("cursor", "seed", 1)]))
+      .mockImplementationOnce(() => activeRead.promise)
+      .mockResolvedValueOnce(result([entry("cursor", "complete", 3)]));
+    const readers = makeReaders({
+      cursor,
+      claude: vi.fn(async () => result([entry("claude", "complete", 2)])),
+    });
+    const svc = new VaultService({ readers, canForkOpenCodeFn: async () => false });
+    await svc.refresh();
+    for (const reader of Object.values(readers)) {
+      vi.mocked(reader).mockClear();
+    }
+
+    const active = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/active/meta.json"] } });
+    await Promise.resolve();
+    const overflow = svc.refresh({
+      hint: {
+        agent: "cursor",
+        paths: Array.from({ length: MAX_PENDING_VAULT_REFRESH_PATHS + 1 }, (_, index) => `/cursor/${index}/meta.json`),
+      },
+    });
+    activeRead.resolve(result([entry("cursor", "active", 2)]));
+
+    await active;
+    const completed = await overflow;
+    expect(completed.entries.map((e) => e.id)).toEqual(["cursor:complete", "claude:complete"]);
+    expect(cursor).toHaveBeenCalledTimes(2);
+    expect(cursor.mock.calls[1][1]).toBeUndefined();
+    expect(readers.claude).toHaveBeenCalledTimes(1);
+    expect(readers.codex).toHaveBeenCalledTimes(1);
+    expect(readers.opencode).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses duplicate client delivery before I/O but retains a later same-path hint", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const cursor = vi
+      .fn()
+      .mockResolvedValueOnce(result([entry("cursor", "seed", 1)]))
+      .mockImplementationOnce(() => activeRead.promise)
+      .mockResolvedValueOnce(result([entry("cursor", "follow-up", 3)]));
+    const svc = new VaultService({ readers: makeReaders({ cursor }), canForkOpenCodeFn: async () => false });
+    await svc.refresh();
+    cursor.mockClear();
+
+    const hint = { agent: "cursor" as const, paths: ["/cursor/a/meta.json"] };
+    const active = svc.refresh({ hint });
+    const duplicateClient = svc.refresh({ hint });
+    await Promise.resolve();
+    const genuinelyLater = svc.refresh({ hint });
+    activeRead.resolve(result([entry("cursor", "active", 2)]));
+
+    const [activeResult, duplicateResult, laterResult] = await Promise.all([active, duplicateClient, genuinelyLater]);
+    expect(duplicateResult).toEqual(activeResult);
+    expect(laterResult.entries[0].id).toBe("cursor:follow-up");
+    expect(cursor).toHaveBeenCalledTimes(2);
+    expect(cursor.mock.calls[1][1]).toEqual({ paths: hint.paths });
+  });
+
+  it("retains a hint that arrives after its reader snapshots during a complete refresh", async () => {
+    const completeClaude = deferred<ReaderResultWithState>();
+    const cursor = vi
+      .fn()
+      .mockResolvedValueOnce(result([entry("cursor", "old", 1)]))
+      .mockResolvedValueOnce(result([entry("cursor", "new", 3)]));
+    const readers = makeReaders({
+      cursor,
+      claude: vi.fn(() => completeClaude.promise),
+    });
+    const svc = new VaultService({ readers, canForkOpenCodeFn: async () => false });
+
+    const complete = svc.refresh();
+    await vi.waitFor(() => expect(cursor).toHaveBeenCalledTimes(1));
+    const hinted = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/new/meta.json"] } });
+    completeClaude.resolve(result([entry("claude", "complete", 2)]));
+
+    expect((await complete).entries.map((e) => e.id)).toEqual(["claude:complete", "cursor:old"]);
+    expect((await hinted).entries.map((e) => e.id)).toEqual(["cursor:new", "claude:complete"]);
+    expect(cursor).toHaveBeenCalledTimes(2);
+    expect(cursor.mock.calls[1][1]).toEqual({ paths: ["/cursor/new/meta.json"] });
+  });
+
+  it("coalesces duplicate same-agent paths into one follow-up hinted refresh", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const cursor = vi
+      .fn()
+      .mockResolvedValueOnce(result([entry("cursor", "seed", 1)]))
+      .mockImplementationOnce(() => activeRead.promise)
+      .mockResolvedValueOnce(result([entry("cursor", "follow-up", 3)]));
+    const readers = makeReaders({ cursor });
+    const { store } = makeCacheStore(null);
+    const svc = new VaultService({
+      readers,
+      canForkOpenCodeFn: async () => false,
+      cacheStore: store as unknown as VaultCacheStore,
+    });
+    await svc.refresh();
+    for (const reader of Object.values(readers)) {
+      vi.mocked(reader).mockClear();
+    }
+
+    const active = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/a/meta.json"] } });
+    await Promise.resolve();
+    const queuedA = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/b/meta.json"] } });
+    const queuedB = svc.refresh({
+      hint: { agent: "cursor", paths: ["/cursor/b/meta.json", "/cursor/c/meta.json"] },
+    });
+    activeRead.resolve(result([entry("cursor", "active", 2)]));
+
+    const [, followA, followB] = await Promise.all([active, queuedA, queuedB]);
+    expect(cursor).toHaveBeenCalledTimes(2);
+    expect(cursor.mock.calls[1][1]).toEqual({ paths: ["/cursor/b/meta.json", "/cursor/c/meta.json"] });
+    expect(followA.entries[0].id).toBe("cursor:follow-up");
+    expect(followB).toEqual(followA);
+    expect(readers.claude).not.toHaveBeenCalled();
+    expect(readers.codex).not.toHaveBeenCalled();
+    expect(readers.opencode).not.toHaveBeenCalled();
+  });
+
+  it("queues arrivals behind a blocked hinted follow-up without overlapping persistence", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const followUpRead = deferred<ReaderResultWithState>();
+    let activeReaders = 0;
+    let maxActiveReaders = 0;
+    const cursor = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        activeReaders++;
+        maxActiveReaders = Math.max(maxActiveReaders, activeReaders);
+        const value = await activeRead.promise;
+        activeReaders--;
+        return value;
+      })
+      .mockImplementationOnce(async () => {
+        activeReaders++;
+        maxActiveReaders = Math.max(maxActiveReaders, activeReaders);
+        const value = await followUpRead.promise;
+        activeReaders--;
+        return value;
+      })
+      .mockResolvedValueOnce(result([entry("cursor", "complete", 4)]));
+    const readers = makeReaders({
+      cursor,
+      claude: vi.fn(async () => result([entry("claude", "complete", 3)])),
+    });
+    const { store } = makeCacheStore(cacheDoc([]));
+    const svc = new VaultService({
+      readers,
+      canForkOpenCodeFn: async () => false,
+      cacheStore: store as unknown as VaultCacheStore,
+    });
+
+    const active = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/a/meta.json"] } });
+    const queued = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/b/meta.json"] } });
+    activeRead.resolve(result([entry("cursor", "active", 1)]));
+    await vi.waitFor(() => expect(cursor).toHaveBeenCalledTimes(2));
+
+    const lateHint = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/c/meta.json"] } });
+    const complete = svc.refresh();
+    expect(cursor).toHaveBeenCalledTimes(2);
+    followUpRead.resolve(result([entry("cursor", "follow-up", 2)]));
+
+    expect((await active).entries[0].id).toBe("cursor:active");
+    expect((await queued).entries[0].id).toBe("cursor:follow-up");
+    const [lateResult, completeResult] = await Promise.all([lateHint, complete]);
+    expect(lateResult.entries.map((e) => e.id)).toEqual(["cursor:complete", "claude:complete"]);
+    expect(completeResult).toEqual(lateResult);
+    expect(cursor).toHaveBeenCalledTimes(3);
+    expect(cursor.mock.calls[2][1]).toBeUndefined();
+    expect(maxActiveReaders).toBe(1);
+  });
+
+  it("promotes overlapping hints for different agents to one complete refresh", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const cursor = vi
+      .fn()
+      .mockResolvedValueOnce(result([entry("cursor", "seed", 1)]))
+      .mockImplementationOnce(() => activeRead.promise)
+      .mockResolvedValueOnce(result([entry("cursor", "complete", 4)]));
+    const readers = makeReaders({
+      cursor,
+      claude: vi.fn(async () => result([entry("claude", "complete", 3)])),
+    });
+    const svc = new VaultService({ readers, canForkOpenCodeFn: async () => false });
+    await svc.refresh();
+    for (const reader of Object.values(readers)) {
+      vi.mocked(reader).mockClear();
+    }
+
+    const active = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/a/meta.json"] } });
+    await Promise.resolve();
+    const overlapping = svc.refresh({ hint: { agent: "claude", paths: ["/claude/a.jsonl"] } });
+    activeRead.resolve(result([entry("cursor", "active", 2)]));
+
+    await active;
+    const completed = await overlapping;
+    expect(completed.entries.map((e) => e.id)).toEqual(["cursor:complete", "claude:complete"]);
+    expect(readers.claude).toHaveBeenCalledTimes(1);
+    expect(readers.codex).toHaveBeenCalledTimes(1);
+    expect(readers.opencode).toHaveBeenCalledTimes(1);
+    expect(cursor).toHaveBeenCalledTimes(2);
+    expect(cursor.mock.calls[1][1]).toBeUndefined();
+  });
+
+  it("a complete caller drains an in-flight hinted refresh instead of joining it", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const cursor = vi
+      .fn()
+      .mockImplementationOnce(() => activeRead.promise)
+      .mockResolvedValueOnce(result([entry("cursor", "complete", 2)]));
+    const claude = vi.fn(async () => result([entry("claude", "complete", 3)]));
+    const readers = makeReaders({ claude, cursor });
+    const { store } = makeCacheStore(cacheDoc([]));
+    const svc = new VaultService({
+      readers,
+      canForkOpenCodeFn: async () => false,
+      cacheStore: store as unknown as VaultCacheStore,
+    });
+
+    const hinted = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/a/meta.json"] } });
+    await Promise.resolve();
+    const complete = svc.refresh();
+    activeRead.resolve(result([entry("cursor", "hinted", 1)]));
+
+    expect((await hinted).entries.map((e) => e.id)).toEqual(["cursor:hinted"]);
+    expect((await complete).entries.map((e) => e.id)).toEqual(["claude:complete", "cursor:complete"]);
+    expect(claude).toHaveBeenCalledTimes(1);
+    expect(cursor).toHaveBeenCalledTimes(2);
   });
 
   it("single-flight: concurrent refresh calls share one read + one save", async () => {
@@ -444,13 +750,76 @@ describe("VaultService.refresh: force bypasses in-flight (write-vault-rename-to-
     });
     const svc = new VaultService({ readers, canForkOpenCodeFn: async () => false });
 
-    const p1 = svc.refresh(); // run1 → reads "old"
-    const forced = await svc.refresh({ force: true }); // waits for run1, then reads "new"
+    const p1 = svc.refresh({ hint: { agent: "claude", paths: ["/claude/old.jsonl"] } });
+    const forced = await svc.refresh({ force: true }); // waits for hinted run1, then reads "new"
     expect(forced.entries.map((e) => e.sessionId)).toEqual(["new"]);
 
     const first = await p1;
     expect(first.entries.map((e) => e.sessionId)).toEqual(["old"]);
     expect(call).toBe(2);
+  });
+
+  it("force drains an active hinted read and its queued follow-up", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const queuedRead = deferred<ReaderResultWithState>();
+    const claude = vi
+      .fn()
+      .mockImplementationOnce(() => activeRead.promise)
+      .mockImplementationOnce(() => queuedRead.promise)
+      .mockResolvedValueOnce(result([entry("claude", "forced", 3)]));
+    const svc = new VaultService({ readers: makeReaders({ claude }), canForkOpenCodeFn: async () => false });
+
+    const active = svc.refresh({ hint: { agent: "claude", paths: ["/claude/a.jsonl"] } });
+    const queued = svc.refresh({ hint: { agent: "claude", paths: ["/claude/b.jsonl"] } });
+    const forced = svc.refresh({ force: true });
+    activeRead.resolve(result([entry("claude", "active", 1)]));
+    await vi.waitFor(() => expect(claude).toHaveBeenCalledTimes(2));
+    expect(claude).toHaveBeenCalledTimes(2);
+    queuedRead.resolve(result([entry("claude", "queued", 2)]));
+
+    expect((await active).entries[0].sessionId).toBe("active");
+    expect((await queued).entries[0].sessionId).toBe("queued");
+    expect((await forced).entries[0].sessionId).toBe("forced");
+    expect(claude).toHaveBeenCalledTimes(3);
+  });
+
+  it("establishes a force barrier before draining sustained later hints", async () => {
+    const activeRead = deferred<ReaderResultWithState>();
+    const forcedRead = deferred<ReaderResultWithState>();
+    const followUpRead = deferred<ReaderResultWithState>();
+    const cursor = vi
+      .fn()
+      .mockResolvedValueOnce(result([entry("cursor", "seed", 0)]))
+      .mockImplementationOnce(() => activeRead.promise)
+      .mockImplementationOnce(() => forcedRead.promise)
+      .mockImplementationOnce(() => followUpRead.promise);
+    const svc = new VaultService({ readers: makeReaders({ cursor }), canForkOpenCodeFn: async () => false });
+    await svc.refresh();
+    cursor.mockClear();
+
+    const active = svc.refresh({ hint: { agent: "cursor", paths: ["/cursor/active/meta.json"] } });
+    await Promise.resolve();
+    const forced = svc.refresh({ force: true });
+    const earlyHints = Array.from({ length: 6 }, (_, index) =>
+      svc.refresh({ hint: { agent: "cursor", paths: [`/cursor/early-${index}/meta.json`] } }),
+    );
+    activeRead.resolve(result([entry("cursor", "active", 1)]));
+    await vi.waitFor(() => expect(cursor).toHaveBeenCalledTimes(2));
+    const lateHints = Array.from({ length: 6 }, (_, index) =>
+      svc.refresh({ hint: { agent: "cursor", paths: [`/cursor/late-${index}/meta.json`] } }),
+    );
+
+    forcedRead.resolve(result([entry("cursor", "forced", 2)]));
+    expect((await forced).entries[0].sessionId).toBe("forced");
+    await vi.waitFor(() => expect(cursor).toHaveBeenCalledTimes(3));
+    expect(cursor.mock.calls[1][1]).toBeUndefined();
+    expect(cursor.mock.calls[2][1]?.paths).toHaveLength(12);
+    followUpRead.resolve(result([entry("cursor", "follow-up", 3)]));
+
+    await active;
+    const queued = await Promise.all([...earlyHints, ...lateHints]);
+    expect(queued.every((result) => result.entries[0].sessionId === "follow-up")).toBe(true);
+    expect(cursor).toHaveBeenCalledTimes(3);
   });
 
   it("non-force concurrent refresh joins the single in-flight read", async () => {

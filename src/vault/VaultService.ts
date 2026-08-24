@@ -10,6 +10,7 @@ import {
   type ReaderResultWithState,
   VAULT_CACHE_VERSION,
   type VaultListCacheFileV1,
+  type VaultRefreshHint,
 } from "./cacheTypes";
 import { canForkOpenCode } from "./forkSupport";
 import { claudeRoots, resolveClaudeSessionPath } from "./readers/claudePaths";
@@ -22,6 +23,20 @@ import {
   readCodexSessions,
   renameCodexThread,
 } from "./readers/codexReader";
+import { cursorIdeDbPath } from "./readers/cursorIdeReader";
+import { cursorChatsRoot, resolveCursorChatCandidate } from "./readers/cursorPaths";
+import {
+  type CursorCombinedReaderOptions,
+  readCursorDetail,
+  readCursorEntry,
+  readCursorMessageRecord,
+  readCursorSessions,
+} from "./readers/cursorReader";
+import {
+  cursorProjectsRoot,
+  resolveCursorProjectTranscriptSession,
+  resolveCursorTranscriptCandidate,
+} from "./readers/cursorTranscript";
 import { clampDetailLimit } from "./readers/detail";
 import {
   opencodeStoreDirs,
@@ -101,6 +116,8 @@ export interface VaultServiceDeps {
    * tests; defaults to the real reader writers.
    */
   nativeRenamers?: Partial<Record<VaultAgentId, VaultNativeRenamer>>;
+  /** Cursor source roots used by watcher resolution; production uses platform defaults. */
+  cursorReaderOptions?: CursorCombinedReaderOptions;
 }
 
 // Readers stay option-first for back-compat; adapt them to the prev-only ListReader
@@ -109,24 +126,28 @@ const defaultReaders = {
   claude: (prev) => readClaudeSessions({}, prev),
   codex: (prev) => readCodexSessions({}, prev),
   opencode: (prev) => readOpenCodeSessions({}, prev),
+  cursor: (prev, hint) => readCursorSessions(prev, {}, hint),
 } satisfies VaultReaders;
 
 const defaultDetailReaders = {
   claude: (sessionId, limit) => readClaudeDetail(sessionId, {}, limit),
   codex: (sessionId, limit) => readCodexDetail(sessionId, {}, limit),
   opencode: (sessionId, limit) => readOpenCodeDetail(sessionId, {}, limit),
+  cursor: (sessionId, limit) => readCursorDetail(sessionId, limit),
 } satisfies VaultDetailReaders;
 
 const defaultRecordReaders = {
   claude: (sessionId, msgRef) => readClaudeMessageRecord(sessionId, msgRef),
   codex: (sessionId, msgRef) => readCodexMessageRecord(sessionId, msgRef),
   opencode: (sessionId, msgRef) => readOpenCodeMessageRecord(sessionId, msgRef),
+  cursor: (sessionId, msgRef) => readCursorMessageRecord(sessionId, msgRef),
 } satisfies VaultRecordReaders;
 
 const defaultEntryReaders = {
   claude: (sessionId) => readClaudeEntry(sessionId),
   codex: (sessionId) => readCodexEntry(sessionId),
   opencode: (sessionId) => readOpenCodeEntry(sessionId),
+  cursor: (sessionId) => readCursorEntry(sessionId),
 } satisfies VaultEntryReaders;
 
 /** Native title writers — only the SQLite agents (claude has no writable title). */
@@ -135,11 +156,16 @@ const defaultNativeRenamers: Partial<Record<VaultAgentId, VaultNativeRenamer>> =
   opencode: (sessionId, name) => renameOpenCodeSession(sessionId, name),
 };
 
+export const MAX_PENDING_VAULT_REFRESH_PATHS = 128;
+
 /** A directory + glob to hand to `WatcherPool.subscribePattern` (enhance-vault-sessions
  *  D4/D5). Resolved from the reader path helpers so watch targets never drift. */
 export interface VaultWatchTarget {
   baseDir: string;
   glob: string;
+  events?: Array<"create" | "change" | "delete">;
+  /** Present when watcher events can be routed to one incremental reader. */
+  agent?: VaultAgentId;
 }
 
 /** Glob-safe id (filename stems / uuids) — reject anything with path or glob
@@ -157,17 +183,40 @@ export class VaultService {
   private readonly cacheStore?: VaultCacheStore;
   private readonly customNames?: VaultCustomNameRegistry;
   private readonly nativeRenamers: Partial<Record<VaultAgentId, VaultNativeRenamer>>;
+  private readonly cursorReaderOptions: CursorCombinedReaderOptions;
 
   /** In-memory copy of the persisted cache, lazily loaded from `cacheStore`. */
   private mem: VaultListCacheFileV1 | null = null;
   private memLoaded = false;
-  /** Single-flight guard so concurrent opens (sidebar + panel) share one refresh. */
+  /** Active persisted refresh plus its completeness, for safe joining decisions. */
   private inflightRefresh: Promise<VaultListResult> | null = null;
+  private inflightRefreshKind: "complete" | "hinted" | null = null;
+  private inflightHintAgent: VaultAgentId | null = null;
+  private inflightHintPaths: Set<string> | null = null;
+  private inflightHintReadStarted = false;
+  /** One bounded follow-up request: same-agent hints merge; conflicts promote to full. */
+  private pendingHint: { agent: VaultAgentId; paths: Set<string> } | null = null;
+  private pendingCompleteRefresh = false;
+  private pendingRefresh: Promise<VaultListResult> | null = null;
+  private forceBarrier: Promise<VaultListResult> | null = null;
+  private postForceHint: { agent: VaultAgentId; paths: Set<string> } | null = null;
+  private postForceCompleteRefresh = false;
+  private postForceRefresh: Promise<VaultListResult> | null = null;
 
   constructor(deps: VaultServiceDeps = {}) {
-    this.readers = deps.readers ?? defaultReaders;
-    this.detailReaders = deps.detailReaders ?? defaultDetailReaders;
-    this.entryReaders = deps.entryReaders ?? defaultEntryReaders;
+    this.cursorReaderOptions = deps.cursorReaderOptions ?? {};
+    this.readers = deps.readers ?? {
+      ...defaultReaders,
+      cursor: (prev, hint) => readCursorSessions(prev, this.cursorReaderOptions, hint),
+    };
+    this.detailReaders = deps.detailReaders ?? {
+      ...defaultDetailReaders,
+      cursor: (sessionId, limit) => readCursorDetail(sessionId, limit, this.cursorReaderOptions),
+    };
+    this.entryReaders = deps.entryReaders ?? {
+      ...defaultEntryReaders,
+      cursor: (sessionId) => readCursorEntry(sessionId, this.cursorReaderOptions),
+    };
     this.recordReaders = deps.recordReaders ?? defaultRecordReaders;
     this.canForkOpenCodeFn = deps.canForkOpenCodeFn ?? ((min) => canForkOpenCode(min));
     this.cacheStore = deps.cacheStore;
@@ -233,21 +282,41 @@ export class VaultService {
    * unreadable (not dropped); the failed agent contributes no entries and its
    * stale cache is discarded so the next refresh re-reads it from scratch.
    */
-  private async readAll(prev: VaultListCacheFileV1 | null): Promise<{
+  private async readAll(
+    prev: VaultListCacheFileV1 | null,
+    hint?: VaultRefreshHint,
+    onReaderStart?: (id: VaultAgentId) => void,
+  ): Promise<{
     result: VaultListResult;
     doc: VaultListCacheFileV1;
   }> {
     const prevAgents = prev?.agents ?? {};
+    const ids: readonly VaultAgentId[] = hint ? [hint.agent] : VAULT_AGENT_IDS;
+    const targetPrefix = hint ? `${agentLabel(hint.agent)}: ` : null;
+    const removedReasons = targetPrefix
+      ? (prev?.unreadable.reasons.filter((reason) => reason.startsWith(targetPrefix)) ?? [])
+      : [];
+    const entries: VaultSessionEntry[] = hint
+      ? (prev?.entries.filter((entry) => entry.agent !== hint.agent) ?? [])
+      : [];
+    let unreadable = hint
+      ? Math.max(0, (prev?.unreadable.count ?? 0) - removedReasons.reduce(priorUnreadableContribution, 0))
+      : 0;
+    const reasons: string[] = hint
+      ? (prev?.unreadable.reasons.filter((reason) => !reason.startsWith(targetPrefix ?? "")) ?? [])
+      : [];
+    const agents: Partial<Record<VaultAgentId, ReaderListCache>> = hint ? { ...prevAgents } : {};
     const settled = await Promise.allSettled(
-      VAULT_AGENT_IDS.map((id) => invokeReader(() => this.readers[id](prevAgents[id]))),
+      ids.map((id) =>
+        invokeReader(() => {
+          onReaderStart?.(id);
+          return this.readers[id](prevAgents[id], hint ? { paths: hint.paths } : undefined);
+        }),
+      ),
     );
 
-    const entries: VaultSessionEntry[] = [];
-    let unreadable = 0;
-    const reasons: string[] = [];
-    const agents: Partial<Record<VaultAgentId, ReaderListCache>> = {};
     settled.forEach((r, i) => {
-      const id = VAULT_AGENT_IDS[i];
+      const id = ids[i];
       const label = agentLabel(id);
       if (r.status === "fulfilled") {
         entries.push(...r.value.entries);
@@ -282,8 +351,10 @@ export class VaultService {
       }
     });
 
-    // Resolve fork support. Only spawn the opencode probe when it can matter.
-    const hasOpenCode = entries.some((e) => e.agent === "opencode");
+    // A targeted run keeps untouched capability state too; only a refreshed
+    // OpenCode segment needs the external version probe again.
+    const resolvesOpenCode = !hint || hint.agent === "opencode";
+    const hasOpenCode = resolvesOpenCode && entries.some((e) => e.agent === "opencode");
     const opencodeMin = getAgentDefinition("opencode")?.forkMinVersion ?? "1.1.54";
     let opencodeCanFork = false;
     if (hasOpenCode) {
@@ -295,7 +366,9 @@ export class VaultService {
     }
 
     for (const entry of entries) {
-      entry.canFork = resolveCanFork(entry, opencodeCanFork);
+      if (!hint || entry.agent === hint.agent) {
+        entry.canFork = resolveCanFork(entry, opencodeCanFork);
+      }
     }
 
     entries.sort((a, b) => b.modified - a.modified);
@@ -329,27 +402,221 @@ export class VaultService {
 
   /**
    * Re-read the stores incrementally (only changed sources), persist the result,
-   * and return the fresh list (cache-vault-load D1/D2). Single-flight: concurrent
-   * callers share one in-flight read. The cache write is AWAITED before the
-   * promise resolves so a later refresh can never persist ahead of an earlier one
-   * and overwrite it with stale data; a write failure is logged, not thrown.
+   * and return the fresh list (cache-vault-load D1/D2). Complete reads remain
+   * single-flight. Hinted reads replace one cached agent segment; hints arriving
+   * during hinted I/O merge into one bounded follow-up, with cross-agent overlap
+   * promoted to a complete refresh. Writes are awaited before later work starts.
    */
-  async refresh(opts?: { force?: boolean }): Promise<VaultListResult> {
-    if (this.inflightRefresh && !opts?.force) {
-      // Default: concurrent callers share the in-flight read.
+  async refresh(opts?: { force?: boolean; hint?: VaultRefreshHint }): Promise<VaultListResult> {
+    if (opts?.force) {
+      return this.forceRefresh();
+    }
+
+    const hint = opts?.hint;
+    if (this.forceBarrier || this.postForceRefresh) {
+      return this.queueBehindForce(hint);
+    }
+
+    if (!hint) {
+      if (this.pendingRefresh) {
+        this.pendingCompleteRefresh = true;
+        this.pendingHint = null;
+        return this.pendingRefresh;
+      }
+      if (!this.inflightRefresh) {
+        return this.startRefresh();
+      }
+      if (this.inflightRefreshKind === "complete") {
+        return this.inflightRefresh;
+      }
+      this.pendingCompleteRefresh = true;
+      this.pendingHint = null;
+      return this.ensurePendingRefresh();
+    }
+
+    if (this.pendingRefresh) {
+      this.queueHint(hint);
+      return this.pendingRefresh;
+    }
+    if (!this.inflightRefresh) {
+      return this.startRefresh(hint);
+    }
+    if (this.inflightCoversHint(hint)) {
       return this.inflightRefresh;
     }
-    // `force` (used right after a native title write) must NOT join an in-flight
-    // read — it may have started BEFORE the write and would return the pre-write
-    // title. Drain ALL in-flight reads (including one a concurrent force started)
-    // so this read begins strictly after the write, and force refreshes stay
-    // serialized — never two `run`s persisting out of order (D4, review W1).
-    while (this.inflightRefresh) {
-      await this.inflightRefresh.catch(() => {});
+
+    this.queueHint(hint);
+    return this.ensurePendingRefresh();
+  }
+
+  private inflightCoversHint(hint: VaultRefreshHint): boolean {
+    return (
+      !this.inflightHintReadStarted &&
+      this.inflightHintAgent === hint.agent &&
+      this.inflightHintPaths !== null &&
+      hint.paths.every((changedPath) => this.inflightHintPaths?.has(changedPath))
+    );
+  }
+
+  private queueHint(hint: VaultRefreshHint): void {
+    if (this.pendingCompleteRefresh) {
+      return;
     }
+    if (this.inflightRefreshKind === "hinted" && this.inflightHintAgent !== hint.agent) {
+      this.pendingHint = null;
+      this.pendingCompleteRefresh = true;
+      return;
+    }
+    if (!this.pendingHint) {
+      const paths = new Set(hint.paths);
+      if (paths.size > MAX_PENDING_VAULT_REFRESH_PATHS) {
+        this.pendingCompleteRefresh = true;
+        return;
+      }
+      this.pendingHint = { agent: hint.agent, paths };
+      return;
+    }
+    if (this.pendingHint.agent !== hint.agent) {
+      this.pendingHint = null;
+      this.pendingCompleteRefresh = true;
+      return;
+    }
+    for (const changedPath of hint.paths) {
+      this.pendingHint.paths.add(changedPath);
+      if (this.pendingHint.paths.size > MAX_PENDING_VAULT_REFRESH_PATHS) {
+        this.pendingHint = null;
+        this.pendingCompleteRefresh = true;
+        return;
+      }
+    }
+  }
+
+  private forceRefresh(): Promise<VaultListResult> {
+    const previousBarrier = this.forceBarrier;
+    const barrier = (async (): Promise<VaultListResult> => {
+      if (previousBarrier) {
+        await previousBarrier.catch(() => {});
+      }
+      while (this.inflightRefresh || this.pendingRefresh) {
+        const earlier = this.pendingRefresh ?? this.inflightRefresh;
+        await earlier?.catch(() => {});
+      }
+      return this.startRefresh();
+    })();
+    this.forceBarrier = barrier;
+    const clearBarrier = () => {
+      if (this.forceBarrier === barrier) {
+        this.forceBarrier = null;
+      }
+    };
+    void barrier.then(clearBarrier, clearBarrier);
+    return barrier;
+  }
+
+  private queueBehindForce(hint?: VaultRefreshHint): Promise<VaultListResult> {
+    if (!hint) {
+      this.postForceCompleteRefresh = true;
+      this.postForceHint = null;
+    } else if (!this.postForceCompleteRefresh) {
+      if (!this.postForceHint) {
+        const paths = new Set(hint.paths);
+        if (paths.size > MAX_PENDING_VAULT_REFRESH_PATHS) {
+          this.postForceCompleteRefresh = true;
+        } else {
+          this.postForceHint = { agent: hint.agent, paths };
+        }
+      } else if (this.postForceHint.agent !== hint.agent) {
+        this.postForceHint = null;
+        this.postForceCompleteRefresh = true;
+      } else {
+        for (const changedPath of hint.paths) {
+          this.postForceHint.paths.add(changedPath);
+          if (this.postForceHint.paths.size > MAX_PENDING_VAULT_REFRESH_PATHS) {
+            this.postForceHint = null;
+            this.postForceCompleteRefresh = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (this.postForceRefresh) {
+      return this.postForceRefresh;
+    }
+    const pending = (async (): Promise<VaultListResult> => {
+      while (this.forceBarrier) {
+        const barrier = this.forceBarrier;
+        await barrier.catch(() => {});
+      }
+      const complete = this.postForceCompleteRefresh;
+      const queuedHint = this.postForceHint;
+      this.postForceCompleteRefresh = false;
+      this.postForceHint = null;
+      this.postForceRefresh = null;
+      return complete || !queuedHint
+        ? this.startRefresh()
+        : this.startRefresh({ agent: queuedHint.agent, paths: [...queuedHint.paths] });
+    })();
+    this.postForceRefresh = pending;
+    const clearPending = () => {
+      if (this.postForceRefresh === pending) {
+        this.postForceRefresh = null;
+      }
+    };
+    void pending.then(clearPending, clearPending);
+    return pending;
+  }
+
+  private ensurePendingRefresh(): Promise<VaultListResult> {
+    if (this.pendingRefresh) {
+      return this.pendingRefresh;
+    }
+    const active = this.inflightRefresh;
+    const pending = (async (): Promise<VaultListResult> => {
+      if (active) {
+        await active.catch(() => {});
+      }
+      while (this.inflightRefresh) {
+        await this.inflightRefresh.catch(() => {});
+      }
+
+      if (this.pendingCompleteRefresh) {
+        this.pendingHint = null;
+        this.pendingCompleteRefresh = false;
+        this.pendingRefresh = null;
+        return this.startRefresh();
+      }
+      const hint = this.pendingHint;
+      this.pendingHint = null;
+      this.pendingRefresh = null;
+      if (!hint) {
+        return this.startRefresh();
+      }
+      return this.startRefresh({ agent: hint.agent, paths: [...hint.paths] });
+    })();
+    this.pendingRefresh = pending;
+    const clearPending = () => {
+      if (this.pendingRefresh === pending) {
+        this.pendingRefresh = null;
+      }
+    };
+    void pending.then(clearPending, clearPending);
+    return pending;
+  }
+
+  private async startRefresh(hint?: VaultRefreshHint): Promise<VaultListResult> {
+    this.ensureMemLoaded();
+    const effectiveHint = this.mem ? hint : undefined;
+    this.inflightRefreshKind = effectiveHint ? "hinted" : "complete";
+    this.inflightHintAgent = hint?.agent ?? null;
+    this.inflightHintPaths = hint ? new Set(hint.paths) : null;
+    this.inflightHintReadStarted = false;
     const run = (async (): Promise<VaultListResult> => {
-      this.ensureMemLoaded();
-      const { result, doc } = await this.readAll(this.mem);
+      const { result, doc } = await this.readAll(this.mem, effectiveHint, (id) => {
+        if (id === hint?.agent) {
+          this.inflightHintReadStarted = true;
+        }
+      });
       this.mem = doc;
       this.memLoaded = true;
       if (this.cacheStore) {
@@ -366,9 +633,12 @@ export class VaultService {
     try {
       return await run;
     } finally {
-      // Only clear if still ours — a concurrent force-refresh may have replaced it.
       if (this.inflightRefresh === run) {
         this.inflightRefresh = null;
+        this.inflightRefreshKind = null;
+        this.inflightHintAgent = null;
+        this.inflightHintPaths = null;
+        this.inflightHintReadStarted = false;
       }
     }
   }
@@ -443,8 +713,8 @@ export class VaultService {
   }
 
   /**
-   * Store-wide FS-watch targets for auto-refresh (enhance-vault-sessions D4): the
-   * three agents' session roots, scoped to store roots (never all of $HOME). WAL
+   * Store-wide FS-watch targets for auto-refresh (enhance-vault-sessions D4):
+   * agent session roots scoped to their stores (never all of $HOME). WAL
    * DBs are matched with a `<db>*` glob so `-wal`/`-shm` writes are seen too.
    * Change-aware `subscribePattern` (task 1_3) is required — vault sessions grow
    * by APPEND, which the create/delete-only `subscribe` drops.
@@ -453,11 +723,34 @@ export class VaultService {
     const { projectsDir } = claudeRoots({});
     const codex = codexStoreDirs();
     const opencode = opencodeStoreDirs();
+    const cursor = cursorChatsRoot(this.cursorReaderOptions);
+    const cursorProjects = cursorProjectsRoot(this.cursorReaderOptions);
+    const cursorIde = cursorIdeDbPath(this.cursorReaderOptions);
     return [
       { baseDir: projectsDir, glob: "**/*.jsonl" },
       { baseDir: path.dirname(codex.dbPath), glob: `${path.basename(codex.dbPath)}*` },
       { baseDir: codex.sessionsDir, glob: "**/*.jsonl" },
       { baseDir: path.dirname(opencode.dbPath), glob: `${path.basename(opencode.dbPath)}*` },
+      { baseDir: cursor, glob: "**/meta.json", events: ["create", "change", "delete"], agent: "cursor" },
+      { baseDir: cursor, glob: "**/store.db", events: ["create", "delete"], agent: "cursor" },
+      {
+        baseDir: cursorProjects,
+        glob: "**/agent-transcripts/**/*.jsonl",
+        events: ["create", "change", "delete"],
+        agent: "cursor",
+      },
+      {
+        baseDir: path.dirname(cursorIde),
+        glob: path.basename(cursorIde),
+        events: ["create", "change", "delete"],
+        agent: "cursor",
+      },
+      {
+        baseDir: path.dirname(cursorIde),
+        glob: `${path.basename(cursorIde)}-wal`,
+        events: ["create", "change", "delete"],
+        agent: "cursor",
+      },
     ];
   }
 
@@ -470,7 +763,45 @@ export class VaultService {
    */
   async resolveSessionWatchTargets(entryId: string): Promise<VaultWatchTarget[]> {
     const parsed = parseEntryId(entryId);
-    if (!parsed || !isVaultAgentId(parsed.agent) || !isGlobSafeId(parsed.sessionId)) {
+    if (!parsed || !isVaultAgentId(parsed.agent)) {
+      return [];
+    }
+    if (parsed.agent === "cursor") {
+      if (parsed.sessionId.startsWith("ide:")) {
+        const entry = await readCursorEntry(parsed.sessionId, this.cursorReaderOptions);
+        if (entry?.source !== "ide") {
+          return [];
+        }
+        const dbPath = cursorIdeDbPath(this.cursorReaderOptions);
+        return [
+          { baseDir: path.dirname(dbPath), glob: path.basename(dbPath) },
+          { baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}-wal` },
+        ];
+      }
+      if (parsed.sessionId.startsWith("project:")) {
+        const transcript = await resolveCursorProjectTranscriptSession(parsed.sessionId, this.cursorReaderOptions);
+        return transcript
+          ? [{ baseDir: path.dirname(transcript.filePath), glob: path.basename(transcript.filePath) }]
+          : [];
+      }
+      if (!isGlobSafeId(parsed.sessionId)) {
+        return [];
+      }
+      const chat = await resolveCursorChatCandidate(parsed.sessionId, this.cursorReaderOptions);
+      if (!chat) {
+        return [];
+      }
+      const targets: VaultWatchTarget[] = [
+        { baseDir: path.dirname(chat.dbPath), glob: path.basename(chat.dbPath) },
+        { baseDir: path.dirname(chat.dbPath), glob: `${path.basename(chat.dbPath)}-wal` },
+      ];
+      const transcript = await resolveCursorTranscriptCandidate(parsed.sessionId, this.cursorReaderOptions);
+      if (transcript) {
+        targets.push({ baseDir: path.dirname(transcript.filePath), glob: path.basename(transcript.filePath) });
+      }
+      return targets;
+    }
+    if (!isGlobSafeId(parsed.sessionId)) {
       return [];
     }
     switch (parsed.agent) {
@@ -497,6 +828,14 @@ export class VaultService {
 
 function dedupe(items: string[]): string[] {
   return [...new Set(items)];
+}
+
+function priorUnreadableContribution(total: number, reason: string): number {
+  if (reason.includes("reader failed")) {
+    return total + 1;
+  }
+  const count = reason.match(/: (\d+) sessions? couldn't be read$/)?.[1];
+  return total + (count ? Number(count) : 0);
 }
 
 // Defer reader invocation to a microtask so a reader that throws SYNCHRONOUSLY

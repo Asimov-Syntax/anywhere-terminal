@@ -2,7 +2,7 @@
 
 **A real terminal you can put anywhere in VS Code or Cursor — and a home base for your AI coding agents.**
 
-Sidebar, secondary sidebar, bottom panel, or an editor tab. Split it, tab it, theme it. Then resume any **Claude Code · Codex · OpenCode** session from one panel, preview file paths straight from agent output, and keep your shell alive across reloads.
+Sidebar, secondary sidebar, bottom panel, or an editor tab. Split it, tab it, theme it. Then preview and continue **Claude Code · Codex · OpenCode · Cursor Agent CLI · Cursor IDE** history, resume compatible CLI chats, open file paths straight from agent output, and keep your shell alive across reloads.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![VS Code](https://img.shields.io/badge/VS%20Code-1.105%2B-007ACC.svg)
@@ -25,12 +25,12 @@ ext install huybuidac.anywhere-terminal
 1. Click the **AnyWhere Terminal** icon in the Activity Bar — a session starts automatically.
 2. Drag the view to **any** sidebar, panel, or editor group.
 3. Use the title bar to add tabs or split panes. Right-click for context actions.
-4. Open the **AI Vault** from the panel header (or `AnyWhere Terminal: Open AI Vault`) to browse and resume your AI-CLI sessions.
+4. Open the **AI Vault** from the panel header (or `AnyWhere Terminal: Open AI Vault`) to browse and continue your AI-CLI sessions.
 
 ## At a glance
 
 - 🧭 **Put the terminal anywhere** — sidebar, secondary sidebar, bottom panel, or editor tab
-- 🤖 **AI Coding Vault** — resume or fork Claude Code / Codex / OpenCode sessions, with rich session previews
+- 🤖 **AI Coding Vault** — preview Claude Code / Codex / OpenCode / Cursor CLI / Cursor IDE history, with CLI-only Cursor Resume and provider-supported continuation
 - 🔗 **AI-CLI-aware** — clickable paths, file hover previews, and pasted-image previews in agent output
 - 🪟 **Tabs + recursive split panes** with drag-to-resize
 - ♻️ **Survives reloads & restarts** — scrollback, names, cwd, and layout restore
@@ -41,21 +41,21 @@ ext install huybuidac.anywhere-terminal
 
 ## 🤖 AI Coding Vault
 
-Every Claude Code, Codex, and OpenCode session you've run lives in a local store somewhere on disk — easy to lose track of across tools and folders. **AI Vault surfaces them all in one panel and lets you resume or fork any of them in a fresh terminal.**
+Claude Code, Codex, OpenCode, and Cursor Agent all keep local session data in different places — easy to lose track of across tools and folders. **AI Vault surfaces them in one panel, with each tool's supported actions and detail level.**
 
 ![AI Vault panel](images/ai-vault.png)
 
-- **Resume or fork** — pick up a past session in a new terminal, or branch a fresh thread from it (fork offered where the tool supports it, e.g. OpenCode ≥ 1.1.54).
-- **Group your way** — **Recent**, **Agent**, or **Folder** grouping (persisted), with real Claude / Codex / OpenCode brand icons tinted by a per-agent accent.
+- **Preview first, then choose an action** — click, Enter, or Space opens every supported row preview. Resume or fork Claude Code / Codex / OpenCode where supported; Cursor Resume is an explicit action available only for validated CLI chats. Cursor IDE and project-mirror entries are non-resumable, and Cursor fork is unavailable.
+- **Group your way** — **Recent**, **Agent**, or **Folder** grouping (persisted), with Claude / Codex / OpenCode / Cursor identity and per-agent accents.
 - **Find it fast** — client-side search plus a **"This folder only"** filter scoped to the focused terminal's working directory.
-- **Right-click for more** — Resume in New Tab, Open, Reveal in Finder/Explorer, Copy File Path or Resume Command, Open Working Directory.
+- **Right-click for more** — provider-supported actions such as Resume in New Tab, Reveal in Finder/Explorer, Copy File Path or Resume Command, and Open Working Directory.
 - **Cross-platform** — store locations resolve per-OS (honoring `CLAUDE_CONFIG_DIR`, `CODEX_HOME` / `CODEX_SQLITE_HOME`, `XDG_DATA_HOME`); falls back to a built-in SQLite engine when the `sqlite3` CLI is missing (typically Windows). A missing store degrades to an empty list, never an error.
 
-> **Privacy:** the panel reads from each tool's own store and refreshes from that source of truth on every open. For an instant open it keeps a small, **owner-only** metadata cache (bounded session titles + working directories) under VS Code's storage — non-authoritative, never the source of truth. Full session content is read on demand, and **nothing is ever sent off your machine.**
+> **Privacy:** the panel reads each tool's own local store. For instant open it keeps a small, **owner-only metadata cache** (bounded titles, working directories, source labels, and freshness stamps) under VS Code storage — non-authoritative, never the source of truth. Cursor transcript detail is decoded only after an explicit preview request, locally, read-only, and under strict per-record and total bounds. Raw SQLite/protobuf blobs, keys, private database fields, raw hook payloads, account data, and shell output are never sent to the webview, persisted in the Vault cache, or logged. Unsupported or changed schemas fall back to metadata-only detail. **Nothing is sent off your machine.**
 
 ### Session preview
 
-Activate any row to open a movable, content-rich floating preview — without leaving your terminal.
+Activate a supported transcript row to open a movable, content-rich floating preview — without leaving your terminal. Cursor CLI and IDE rows follow the same click / Enter / Space preview contract as Claude Code, Codex, and OpenCode; Resume remains a separate CLI-only action.
 
 ![Session preview](images/session-preview.png)
 
@@ -63,6 +63,18 @@ Activate any row to open a movable, content-rich floating preview — without le
 - **Nested sub-agents** — spawned sub-agents render as highlighted, accent-bordered blocks with an `agent` badge, including Codex sub-agent threads nested under their parent.
 - **Questions & answers** — when a session uses the ask-the-user tool (Claude Code's `AskUserQuestion`, OpenCode's `question`, Codex's `request_user_input`), the preview shows the question, your choice, and a click-to-expand list of every option.
 - **Stays put** — remembers its size, position, and maximized state across reloads and restarts; drag the header to move it; a transient ↑ / ↓ control appears while scrolling.
+- **Cursor source-aware previews** — `CLI` and `IDE` rows are labeled in the list and preview. Compatible CLI `store.db` graphs, project JSONL mirrors/fallbacks, and supported IDE Composer records render normalized bounded timelines; incompatible data falls back to metadata only. Raw-message copying and Cursor fork remain unavailable.
+
+### Cursor history and Agent CLI
+
+AnyWhere Terminal previews local history from both **Cursor Agent CLI** and **Cursor IDE Composer**, and launches only a **user-installed** Cursor Agent CLI. Install the CLI from Cursor's [official installation guide](https://prod.cursor.com/docs/cli/installation); the extension does not bundle, mirror, update, or redistribute Cursor's proprietary executable.
+
+- **Executable resolution** — launch probes `agent` first, then the backward-compatible `cursor-agent` alias. The candidate must expose Cursor's interactive prompt, Resume, plan-mode, and force capabilities; the desktop-app launcher `cursor` is never used as the agent CLI.
+- **Vault sources** — eligible CLI chats come from bounded `~/.cursor/chats/` metadata, with explicit detail decoding from compatible WAL-aware `store.db` snapshots and project JSONL mirrors. Supported Cursor IDE Composer headers and bubbles come from the local `globalStorage/state.vscdb`. List indexing and persisted caches remain metadata-only.
+- **Actions** — row activation opens preview. A validated `CLI` row may explicitly Resume as `<detected-agent> --resume <chat-id>` or Continue in a new Cursor terminal. `IDE` entries never Resume, and project-history data never grants Resume capability; Cursor fork, cross-store Resume, and ACP embedding remain unsupported.
+- **Optional status observation** — set machine-scoped `anywhereTerminal.cursorAgent.hooks.enabled` to `true` to show working, approval-required, and idle tab states. It defaults to `false`. AnyWhere Terminal adds and removes only its owned entries in `~/.cursor/hooks.json`, preserves unrelated hooks, authenticates events to the matching live pane over loopback, and fails open if the observer is unavailable. Recent PTY output remains the fallback when hooks are disabled or stale.
+- **Hook privacy** — observation uses status event names only. Prompt text, shell output, raw hook bodies, account identity, and transcript content are not persisted, logged, cached, or posted to the webview.
+- **Troubleshooting** — run `agent status` (or `cursor-agent status`) to verify authentication and `agent --help` to verify the expected capabilities. If hook setup cannot safely reconcile the user-owned config, or the native Windows wrapper cannot pass its no-op probe, Cursor remains usable and the tab falls back to PTY-output activity.
 
 ## 🔗 Made for AI coding CLIs
 
@@ -115,6 +127,7 @@ Key settings under `anywhereTerminal.*` (see the Settings UI for the full list):
 | `cursorBlink` | `true` | Cursor blink. |
 | `defaultCwd` | `""` | Empty = workspace root or `$HOME`. |
 | `sessionRestore.enabled` | `true` | Restore terminal scrollback and metadata across VS Code restarts. |
+| `cursorAgent.hooks.enabled` | `false` | Machine-scoped, fail-open Cursor Agent activity and approval observation. |
 | `hoverPreview.delay` | `300` | Debounce (ms) before the file hover preview fetches, range 100–2000. |
 | `hoverPreview.blockSensitive` | `true` | Block auto-preview for dotfiles and sensitive folders (`Cmd`/`Ctrl` overrides). |
 | `fileTree.autoReveal` | `true` | Reveal the active editor file in the file tree (`"focusNoScroll"` to skip scrolling). |

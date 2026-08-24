@@ -14,6 +14,7 @@
 //   claude   — warp/app/assets/bundled/svg/claude.svg            (#FF0000 → currentColor)
 //   codex    — opencode/packages/ui/src/assets/icons/provider/openai.svg (already currentColor)
 //   opencode — warp/app/assets/bundled/svg/opencode.svg          (#FF0000 → currentColor)
+//   cursor   — Cursor product mark, normalized to currentColor
 
 import { VAULT_AGENT_IDS, type VaultAgentId } from "../../vault/types";
 
@@ -48,6 +49,11 @@ const OPENCODE_SVG =
   '<path d="M16.4 4.8H6.8V19.2H16.4V4.8ZM21.2 24H2V0H21.2V24Z"/>' +
   "</svg>";
 
+const CURSOR_SVG =
+  '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+  '<path d="M12 1 22 6.5v11L12 23 2 17.5v-11L12 1Zm0 3.1L5 8v8l7 3.9 7-3.9V8l-7-3.9Zm0 2.4 4.8 2.7L12 17.5 7.2 9.2 12 6.5Z"/>' +
+  "</svg>";
+
 /**
  * Closed map: agent id → its real brand icon + accent + label. The only SVG
  * source. `satisfies Record<VaultAgentId, AgentIcon>` makes omitting an agent a
@@ -59,6 +65,7 @@ export const AGENT_ICONS: Record<string, AgentIcon> = {
   claude: { svg: CLAUDE_SVG, accent: "claude", displayName: "Claude Code" },
   codex: { svg: CODEX_SVG, accent: "codex", displayName: "Codex" },
   opencode: { svg: OPENCODE_SVG, accent: "opencode", displayName: "OpenCode" },
+  cursor: { svg: CURSOR_SVG, accent: "cursor", displayName: "Cursor Agent" },
 } satisfies Record<VaultAgentId, AgentIcon>;
 
 export function getAgentIcon(agentId: string): AgentIcon | undefined {

@@ -12,7 +12,15 @@
 import * as path from "node:path";
 import type * as vscode from "vscode";
 import type { FsLike } from "../session/SessionStorage";
-import { VAULT_CACHE_VERSION, type VaultListCacheFileV1 } from "./cacheTypes";
+import {
+  isSafeCursorChatId,
+  isValidCursorLocationIndex,
+  MAX_CURSOR_IDE_CACHE_ENTRIES,
+  MAX_CURSOR_IDE_SOURCE_STAMPS,
+  MAX_CURSOR_PROJECT_CACHE_ENTRIES,
+  VAULT_CACHE_VERSION,
+  type VaultListCacheFileV1,
+} from "./cacheTypes";
 import type { VaultSessionEntry } from "./types";
 
 /** Minimal shape check on a persisted entry so a tampered/garbled cache element
@@ -32,7 +40,14 @@ function isValidCachedEntry(e: unknown): e is VaultSessionEntry {
     typeof v.title === "string" &&
     typeof v.cwd === "string" &&
     typeof v.modified === "number" &&
+    !("timeline" in v) &&
+    !("recentActivity" in v) &&
+    !("contentKind" in v) &&
+    !("limitedReason" in v) &&
+    !("stats" in v) &&
     typeof v.canFork === "boolean" &&
+    (v.canResume === undefined || typeof v.canResume === "boolean") &&
+    (v.source === undefined || v.source === "cli" || v.source === "ide") &&
     typeof v.flags === "object" &&
     v.flags !== null &&
     (v.sessionPath === undefined || typeof v.sessionPath === "string")
@@ -52,6 +67,75 @@ function isValidStamp(s: unknown): boolean {
   }
   const v = s as Record<string, unknown>;
   return isFiniteNumber(v.mtimeMs) && isFiniteNumber(v.size);
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function isValidCursorEntry(
+  value: unknown,
+  sessionId: string,
+  source: "cli" | "ide" | undefined,
+  canResume: boolean,
+): value is VaultSessionEntry {
+  if (!isValidCachedEntry(value)) {
+    return false;
+  }
+  return (
+    value.agent === "cursor" &&
+    value.id === `cursor:${sessionId}` &&
+    value.sessionId === sessionId &&
+    value.source === source &&
+    value.canResume === canResume &&
+    value.canFork === false
+  );
+}
+
+function isValidCursorProjects(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const entries = Object.entries(value);
+  if (entries.length > MAX_CURSOR_PROJECT_CACHE_ENTRIES) {
+    return false;
+  }
+  for (const [filePath, cached] of entries) {
+    if (!path.isAbsolute(filePath) || filePath.length > 16 * 1024 || !isRecord(cached) || !isValidStamp(cached.stamp)) {
+      return false;
+    }
+    const sessionId =
+      isRecord(cached.entry) && typeof cached.entry.sessionId === "string" ? cached.entry.sessionId : "";
+    if (!sessionId.startsWith("project:") || !isValidCursorEntry(cached.entry, sessionId, undefined, false)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isValidCursorIde(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.sources) || !Array.isArray(value.entries)) {
+    return false;
+  }
+  const sources = Object.entries(value.sources);
+  if (sources.length > MAX_CURSOR_IDE_SOURCE_STAMPS) {
+    return false;
+  }
+  for (const [filePath, stamp] of sources) {
+    if (!path.isAbsolute(filePath) || filePath.length > 16 * 1024 || !isValidStamp(stamp)) {
+      return false;
+    }
+  }
+  if (
+    value.entries.length > MAX_CURSOR_IDE_CACHE_ENTRIES ||
+    !value.entries.every((entry) => {
+      const sessionId = isRecord(entry) && typeof entry.sessionId === "string" ? entry.sessionId : "";
+      return sessionId.startsWith("ide:") && isValidCursorEntry(entry, sessionId, "ide", false);
+    })
+  ) {
+    return false;
+  }
+  return Number.isSafeInteger(value.unreadable) && (value.unreadable as number) >= 0;
 }
 
 /**
@@ -92,6 +176,37 @@ function isValidReaderCache(c: unknown): boolean {
       }
     }
     return Array.isArray(v.entries) && v.entries.every(isValidCachedEntry) && isFiniteNumber(v.unreadable);
+  }
+  if (v.kind === "cursor-files") {
+    if (!isRecord(v.chats) || !isValidCursorLocationIndex(v.locations)) {
+      return false;
+    }
+    for (const [chatId, chat] of Object.entries(v.chats)) {
+      if (
+        !isSafeCursorChatId(chatId) ||
+        !isRecord(chat) ||
+        !isValidStamp(chat.metaStamp) ||
+        typeof chat.dbPresent !== "boolean" ||
+        !isValidCursorEntry(chat.entry, chatId, "cli", true)
+      ) {
+        return false;
+      }
+    }
+    if (v.projects !== undefined && !isValidCursorProjects(v.projects)) {
+      return false;
+    }
+    if (v.ide !== undefined && !isValidCursorIde(v.ide)) {
+      return false;
+    }
+    if (v.unreadableById !== undefined) {
+      if (
+        !isRecord(v.unreadableById) ||
+        !Object.values(v.unreadableById).every((count) => isFiniteNumber(count) && count >= 0)
+      ) {
+        return false;
+      }
+    }
+    return v.rejected === undefined || (isFiniteNumber(v.rejected) && v.rejected >= 0);
   }
   return false; // unknown discriminant
 }

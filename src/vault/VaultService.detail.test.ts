@@ -17,12 +17,12 @@ function detail(entryId: string): VaultSessionDetail {
 
 function emptyReaders(over: Partial<VaultReaders> = {}): VaultReaders {
   const empty = async (): Promise<ReaderResultWithState> => readerResult([]);
-  return { claude: empty, codex: empty, opencode: empty, ...over };
+  return { claude: empty, codex: empty, opencode: empty, cursor: empty, ...over };
 }
 
 function makeDetailReaders(over: Partial<VaultDetailReaders> = {}): VaultDetailReaders {
   const none = vi.fn(async () => null);
-  return { claude: none, codex: none, opencode: none, ...over };
+  return { claude: none, codex: none, opencode: none, cursor: none, ...over };
 }
 
 describe("VaultService.getDetail", () => {
@@ -116,7 +116,7 @@ describe("VaultService.list: unreadable.reasons", () => {
 describe("VaultService.readMessageRecord", () => {
   function makeRecordReaders(over: Partial<VaultRecordReaders> = {}): VaultRecordReaders {
     const none = vi.fn(async (): Promise<RecordLineResult> => ({ ok: false, reason: "not-found" }));
-    return { claude: none, codex: none, opencode: none, ...over };
+    return { claude: none, codex: none, opencode: none, cursor: none, ...over };
   }
 
   it("dispatches to the agent's record reader with the bare session id and the locator", async () => {

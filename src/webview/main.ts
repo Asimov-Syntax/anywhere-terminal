@@ -43,6 +43,7 @@ import { SplitTreeRenderer } from "./split/SplitTreeRenderer";
 import { WebviewStateStore } from "./state/WebviewStateStore";
 import { buildTabBarData, handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 import { hideRenameOverlay, repositionRenameOverlay, showRenameOverlay } from "./tabRenameOverlay";
+import { hasCurrentCursorApproval, hasStrictCursorTitle } from "./terminal/CursorApprovalDetector";
 import { formatRestoreDivider } from "./terminal/restoreDivider";
 import { TerminalActivityTracker } from "./terminal/TerminalActivityTracker";
 import { TerminalFactory } from "./terminal/TerminalFactory";
@@ -96,6 +97,13 @@ const activityTracker = new TerminalActivityTracker({
   getTerminal: (sessionId) => store.terminals.get(sessionId),
   onStatusChange: () => updateTabBar(),
 });
+const cursorHookIdentity = new Set<string>();
+
+function clearWaitingOnCursorTitleLoss(tabId: string, title: string): void {
+  if (!cursorHookIdentity.has(tabId) && !hasStrictCursorTitle(title)) {
+    activityTracker.setWaiting(tabId, false);
+  }
+}
 
 const flowControl = new FlowControl((msg) => vscode.postMessage(msg));
 const factory = new TerminalFactory({
@@ -432,6 +440,7 @@ function removeTerminal(id: string): void {
   instance.terminal.dispose();
   instance.container.remove();
   store.terminals.delete(id);
+  cursorHookIdentity.delete(id);
   activityTracker.delete(id);
   flowControl.delete(id);
 
@@ -440,6 +449,7 @@ function removeTerminal(id: string): void {
   // removing the pane container no longer removes its popup — the controller
   // (and its body-level overlay) must be disposed explicitly.
   for (const splitId of splitRenderer.removeTab(id)) {
+    cursorHookIdentity.delete(splitId);
     activityTracker.delete(splitId);
     factory.disposeHoverController(splitId);
   }
@@ -481,7 +491,13 @@ const routeMessage = createMessageRouter({
     const dataLen = msg.data.length;
     const instance = store.terminals.get(msg.tabId);
     if (instance) {
-      instance.terminal.write(msg.data, () => flowControl.ackChars(dataLen, msg.tabId));
+      instance.terminal.write(msg.data, () => {
+        activityTracker.setWaiting(
+          msg.tabId,
+          hasCurrentCursorApproval(instance.terminal, cursorHookIdentity.has(msg.tabId), instance.name),
+        );
+        flowControl.ackChars(dataLen, msg.tabId);
+      });
     } else {
       flowControl.ackChars(dataLen, msg.tabId);
     }
@@ -490,7 +506,18 @@ const routeMessage = createMessageRouter({
     // folder-scoped vault re-filters. Cheap: gated to the active pane + filter on.
     scheduleVaultCwdReprobe(msg.tabId);
   },
+  onAgentActivityStatus(msg) {
+    if (msg.agent === "cursor") {
+      cursorHookIdentity.add(msg.tabId);
+      activityTracker.setAgentStatus(msg.tabId, msg.state);
+      return;
+    }
+    cursorHookIdentity.delete(msg.tabId);
+    activityTracker.setAgentStatus(msg.tabId, null);
+    activityTracker.setWaiting(msg.tabId, false);
+  },
   onExit(msg) {
+    cursorHookIdentity.delete(msg.tabId);
     activityTracker.delete(msg.tabId);
     const instance = store.terminals.get(msg.tabId);
     if (instance) {
@@ -500,7 +527,9 @@ const routeMessage = createMessageRouter({
     }
   },
   onTabCreated(msg) {
-    factory.createTerminal(msg.tabId, msg.name, store.currentConfig, false, msg.customName);
+    const instance = factory.createTerminal(msg.tabId, msg.name, store.currentConfig, false, msg.customName);
+    instance.terminal.onTitleChange((title) => clearWaitingOnCursorTitleLoss(msg.tabId, title));
+    instance.terminal.onResize(() => activityTracker.setWaiting(msg.tabId, false));
     switchTab(msg.tabId);
   },
   onTabRemoved(msg) {
@@ -785,6 +814,8 @@ const routeMessage = createMessageRouter({
         null,
         { deferOpen: true, isSplitPane: msg.isSplitPane === true },
       );
+      instance.terminal.onTitleChange((title) => clearWaitingOnCursorTitleLoss(msg.tabId, title));
+      instance.terminal.onResize(() => activityTracker.setWaiting(msg.tabId, false));
       attachLater = true;
     }
     // Resize only for the deferred path — the open-already path's terminal has
@@ -840,9 +871,11 @@ function handleInit(msg: InitMessage): void {
   // `tabLayouts` leaf, never `activeTabId`) — the root tab's layout already
   // references this pane. See restore-terminal-sessions design.md D12.
   for (const tab of msg.tabs) {
-    factory.createTerminal(tab.id, tab.name, msg.config, tab.isActive, tab.customName, {
+    const instance = factory.createTerminal(tab.id, tab.name, msg.config, tab.isActive, tab.customName, {
       isSplitPane: tab.isSplitPane,
     });
+    instance.terminal.onTitleChange((title) => clearWaitingOnCursorTitleLoss(tab.id, title));
+    instance.terminal.onResize(() => activityTracker.setWaiting(tab.id, false));
   }
   // Build the split-tree DOM for every restored multi-pane tab. Without this,
   // a Cmd+R reload (Phase A) or cross-restart (Phase B) loses the split layout

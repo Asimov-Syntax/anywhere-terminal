@@ -1,7 +1,7 @@
 // src/vault/LaunchBuilder.test.ts — Unit tests for launch argv/env synthesis.
 
 import { describe, expect, it } from "vitest";
-import { build, VaultLaunchError } from "./LaunchBuilder";
+import { build, buildResumeCommandString, VaultLaunchError } from "./LaunchBuilder";
 import type { VaultSessionEntry } from "./types";
 
 function entry(overrides: Partial<VaultSessionEntry> = {}): VaultSessionEntry {
@@ -14,6 +14,7 @@ function entry(overrides: Partial<VaultSessionEntry> = {}): VaultSessionEntry {
     modified: 1,
     flags: {},
     canFork: true,
+    canResume: true,
     ...overrides,
   };
 }
@@ -190,6 +191,90 @@ describe("build: continue", () => {
   it("leaves resume and fork argv untouched", () => {
     expect(build(entry(), "resume", {}).args).toEqual(["--resume", "sess-1"]);
     expect(build(entry(), "fork", {}).args).toEqual(["--resume", "sess-1", "--fork-session"]);
+  });
+});
+
+describe("build: cursor", () => {
+  function cursorEntry(overrides: Partial<VaultSessionEntry> = {}): VaultSessionEntry {
+    return entry({
+      id: "cursor:chat-1",
+      agent: "cursor",
+      sessionId: "chat-1",
+      cwd: "/cursor-project",
+      canFork: false,
+      canResume: false,
+      ...overrides,
+    });
+  }
+
+  it("uses the resolved executable and passes the handoff prompt as one positional argument", () => {
+    const spec = build(cursorEntry(), "continue", {}, "continue this work", undefined, "cursor-agent");
+    expect(spec.file).toBe("cursor-agent");
+    expect(spec.args).toEqual(["continue this work"]);
+    expect(spec.cwd).toBe("/cursor-project");
+  });
+
+  it("applies Cursor's explicitly selected full-access posture ahead of the prompt", () => {
+    const spec = build(
+      cursorEntry(),
+      "continue",
+      {},
+      "continue this work",
+      { permissionChoiceId: "force" },
+      "cursor-agent",
+    );
+    expect(spec.args).toEqual(["--force", "continue this work"]);
+  });
+
+  it("fails rather than launching an unresolved Cursor executable", () => {
+    expect(() => build(cursorEntry(), "continue", {}, "continue this work")).toThrow(
+      expect.objectContaining({ code: "executable-not-found" }),
+    );
+  });
+
+  it("uses the resolved executable for a proven selected resume", () => {
+    const spec = build(
+      cursorEntry({ source: "cli", canResume: true }),
+      "resume",
+      {},
+      undefined,
+      undefined,
+      "cursor-agent",
+    );
+    expect(spec.file).toBe("cursor-agent");
+    expect(spec.args).toEqual(["--resume", "chat-1"]);
+  });
+
+  it("rejects IDE, project, and forged Cursor Resume entries in the builder", () => {
+    for (const unsupported of [
+      cursorEntry({
+        id: "cursor:ide:d29ya3NwYWNlLTE:composer-1",
+        sessionId: "ide:d29ya3NwYWNlLTE:composer-1",
+        source: "ide",
+        canResume: false,
+      }),
+      cursorEntry({
+        id: "cursor:project:cHJvamVjdC0x:chat-1",
+        sessionId: "project:cHJvamVjdC0x:chat-1",
+        canResume: false,
+      }),
+      cursorEntry({ canResume: true }),
+      cursorEntry({ source: "ide", canResume: true }),
+    ]) {
+      expect(() => build(unsupported, "resume", {}, undefined, undefined, "cursor-agent")).toThrow(
+        expect.objectContaining({ code: "resume-unsupported" }),
+      );
+    }
+  });
+});
+
+describe("buildResumeCommandString: complex-token quoting", () => {
+  // 7_4 — the complex-token fallback delegates to the canonical
+  // src/utils/posixShellQuote.ts helper, which must survive an apostrophe
+  // embedded inside the quoted value (not just a wrapping space).
+  it("single-quote wraps and escapes a flag value containing an apostrophe", async () => {
+    const cmd = await buildResumeCommandString(entry({ flags: { model: "it's opus" } }));
+    expect(cmd).toBe("claude --resume sess-1 --model 'it'\\''s opus'");
   });
 });
 

@@ -1,16 +1,20 @@
+import type * as vscode from "vscode";
+import type { VaultRefreshHint } from "../vault/cacheTypes";
 import type { VaultSessionDetail } from "../vault/types";
 import type { VaultService, VaultWatchTarget } from "../vault/VaultService";
 import type { WatcherPool } from "./fsWatcherPool";
 
 const STORE_REFRESH_DEBOUNCE_MS = 300;
+const STORE_REFRESH_MAX_WAIT_MS = 1000;
 const FOLLOW_REFRESH_DEBOUNCE_MS = 400;
+const MAX_TARGETED_REFRESH_PATHS = 128;
 
 type VaultWatchService = Pick<VaultService, "getStoreWatchTargets" | "resolveSessionWatchTargets" | "getDetail">;
 type PatternWatcherPool = Pick<WatcherPool, "subscribePattern">;
 type Disposable = { dispose(): void };
 
 export interface VaultWatchCallbacks {
-  refreshList(): void;
+  refreshList(hint?: VaultRefreshHint): void;
   postFollowDetail(entryId: string, detail: VaultSessionDetail): void;
 }
 
@@ -31,17 +35,18 @@ const NOOP_CLIENT: VaultWatchClient = {
 function subscribeTargets(
   watcherPool: PatternWatcherPool,
   targets: VaultWatchTarget[],
-  onEvent: () => void,
+  onEvent: (target: VaultWatchTarget, uri: vscode.Uri) => void,
   onError: (target: VaultWatchTarget, error: unknown) => void,
 ): Disposable[] {
   const watchers: Disposable[] = [];
   for (const target of targets) {
     try {
+      const events = target.events ?? ["create", "change", "delete"];
       watchers.push(
         watcherPool.subscribePattern(target.baseDir, target.glob, {
-          create: onEvent,
-          change: onEvent,
-          delete: onEvent,
+          ...(events.includes("create") ? { create: (uri: vscode.Uri) => onEvent(target, uri) } : {}),
+          ...(events.includes("change") ? { change: (uri: vscode.Uri) => onEvent(target, uri) } : {}),
+          ...(events.includes("delete") ? { delete: (uri: vscode.Uri) => onEvent(target, uri) } : {}),
         }),
       );
     } catch (error) {
@@ -54,35 +59,73 @@ function subscribeTargets(
 class StoreWatchLifecycle implements Disposable {
   private watchers: Disposable[] = [];
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  private maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
+  private pendingAgent: VaultRefreshHint["agent"] | undefined;
+  private readonly pendingPaths = new Set<string>();
+  private fullRefreshPending = false;
   private disposed = false;
 
   constructor(
     deps: VaultWatchCoordinatorDeps,
-    private readonly refreshList: () => void,
+    private readonly refreshList: VaultWatchCallbacks["refreshList"],
   ) {
     this.watchers = subscribeTargets(
       deps.watcherPool,
       deps.vaultService.getStoreWatchTargets(),
-      () => this.scheduleRefresh(),
+      (target, uri) => this.scheduleRefresh(target, uri),
       (target, error) => {
         console.error("[AnyWhere Terminal] Failed to watch vault store:", target.baseDir, error);
       },
     );
   }
 
-  private scheduleRefresh(): void {
+  private scheduleRefresh(target: VaultWatchTarget, uri: vscode.Uri | undefined): void {
     if (this.disposed) {
       return;
+    }
+    if (!target.agent || !uri?.fsPath || (this.pendingAgent && this.pendingAgent !== target.agent)) {
+      this.fullRefreshPending = true;
+      this.pendingAgent = undefined;
+      this.pendingPaths.clear();
+    } else if (!this.fullRefreshPending) {
+      this.pendingAgent = target.agent;
+      this.pendingPaths.add(uri.fsPath);
+      if (this.pendingPaths.size > MAX_TARGETED_REFRESH_PATHS) {
+        this.fullRefreshPending = true;
+        this.pendingAgent = undefined;
+        this.pendingPaths.clear();
+      }
     }
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
     }
-    this.refreshTimer = setTimeout(() => {
+    this.refreshTimer = setTimeout(() => this.flushRefresh(), STORE_REFRESH_DEBOUNCE_MS);
+    this.maxWaitTimer ??= setTimeout(() => this.flushRefresh(), STORE_REFRESH_MAX_WAIT_MS);
+  }
+
+  private flushRefresh(): void {
+    if (!this.refreshTimer && !this.maxWaitTimer) {
+      return;
+    }
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
       this.refreshTimer = undefined;
-      if (!this.disposed) {
-        this.refreshList();
-      }
-    }, STORE_REFRESH_DEBOUNCE_MS);
+    }
+    if (this.maxWaitTimer) {
+      clearTimeout(this.maxWaitTimer);
+      this.maxWaitTimer = undefined;
+    }
+    if (this.disposed) {
+      return;
+    }
+    const hint =
+      !this.fullRefreshPending && this.pendingAgent
+        ? { agent: this.pendingAgent, paths: [...this.pendingPaths] }
+        : undefined;
+    this.pendingAgent = undefined;
+    this.pendingPaths.clear();
+    this.fullRefreshPending = false;
+    this.refreshList(hint);
   }
 
   dispose(): void {
@@ -90,10 +133,10 @@ class StoreWatchLifecycle implements Disposable {
       return;
     }
     this.disposed = true;
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-      this.refreshTimer = undefined;
-    }
+    this.flushRefresh();
+    this.pendingAgent = undefined;
+    this.pendingPaths.clear();
+    this.fullRefreshPending = false;
     for (const watcher of this.watchers) {
       watcher.dispose();
     }
@@ -105,6 +148,7 @@ class FollowWatchLifecycle implements Disposable {
   private watchers: Disposable[] = [];
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private seq = 0;
+  private refreshSeq = 0;
   private disposed = false;
 
   constructor(
@@ -142,19 +186,20 @@ class FollowWatchLifecycle implements Disposable {
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
     }
+    const refreshSeq = ++this.refreshSeq;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = undefined;
-      void this.pushDetail(entryId, seq);
+      void this.pushDetail(entryId, seq, refreshSeq);
     }, FOLLOW_REFRESH_DEBOUNCE_MS);
   }
 
-  private async pushDetail(entryId: string, seq: number): Promise<void> {
-    if (this.disposed || seq !== this.seq) {
+  private async pushDetail(entryId: string, seq: number, refreshSeq: number): Promise<void> {
+    if (this.disposed || seq !== this.seq || refreshSeq !== this.refreshSeq) {
       return;
     }
     try {
       const detail = await this.deps.vaultService.getDetail(entryId);
-      if (this.disposed || seq !== this.seq) {
+      if (this.disposed || seq !== this.seq || refreshSeq !== this.refreshSeq) {
         return;
       }
       if (detail) {
@@ -166,6 +211,7 @@ class FollowWatchLifecycle implements Disposable {
   }
 
   private disposeWatchers(): void {
+    this.refreshSeq++;
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = undefined;

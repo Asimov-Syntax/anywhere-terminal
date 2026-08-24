@@ -20,6 +20,23 @@ export interface VaultRowCallbacks {
   onResume: (entryId: string) => void;
 }
 
+export function canResumeVaultEntry(entry: VaultSessionEntry): boolean {
+  return entry.agent === "cursor" ? entry.source === "cli" && entry.canResume === true : entry.canResume !== false;
+}
+
+export function cursorSourceLabel(entry: VaultSessionEntry): string | undefined {
+  if (entry.agent !== "cursor") {
+    return undefined;
+  }
+  if (entry.source === "cli") {
+    return "CLI";
+  }
+  if (entry.source === "ide") {
+    return "IDE";
+  }
+  return entry.sessionId.startsWith("project:") ? "Project" : undefined;
+}
+
 /**
  * Single-line CSS-grid row: badge | title | cwd-chip | time, with an icon-only
  * Resume revealed on hover/focus (no fork — D8).
@@ -80,6 +97,14 @@ export function renderRow(
   const shownTitle = entry.customName || entry.title;
   titleEl.textContent = shownTitle || "(untitled session)";
   titleEl.title = shownTitle;
+  const sourceLabel = cursorSourceLabel(entry);
+  if (sourceLabel) {
+    const sourceBadge = document.createElement("span");
+    sourceBadge.className = "vault-row-source";
+    sourceBadge.textContent = sourceLabel;
+    sourceBadge.setAttribute("aria-label", `Cursor ${sourceLabel}`);
+    titleEl.appendChild(sourceBadge);
+  }
   row.appendChild(titleEl);
 
   if (!opts.hideCwd) {
@@ -106,20 +131,24 @@ export function renderRow(
   timeEl.textContent = formatRelativeTime(entry.modified);
   row.appendChild(timeEl);
 
-  const actions = document.createElement("span");
-  actions.className = "vault-row-actions";
-  const resumeBtn = document.createElement("button");
-  resumeBtn.type = "button";
-  resumeBtn.className = "vault-action vault-action--resume";
-  resumeBtn.title = "Resume";
-  resumeBtn.setAttribute("aria-label", "Resume");
-  resumeBtn.innerHTML = ICON_RESUME;
-  resumeBtn.addEventListener("click", (ev) => {
-    ev.stopPropagation(); // don't also open the preview
-    cb.onResume(entry.id);
-  });
-  actions.appendChild(resumeBtn);
-  row.appendChild(actions);
+  // An explicitly unsupported resume identifier must never be offered. Legacy
+  // rows without the capability field retain their established Resume action.
+  if (canResumeVaultEntry(entry)) {
+    const actions = document.createElement("span");
+    actions.className = "vault-row-actions";
+    const resumeBtn = document.createElement("button");
+    resumeBtn.type = "button";
+    resumeBtn.className = "vault-action vault-action--resume";
+    resumeBtn.title = "Resume";
+    resumeBtn.setAttribute("aria-label", "Resume");
+    resumeBtn.innerHTML = ICON_RESUME;
+    resumeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation(); // don't also open the preview
+      cb.onResume(entry.id);
+    });
+    actions.appendChild(resumeBtn);
+    row.appendChild(actions);
+  }
 
   return row;
 }

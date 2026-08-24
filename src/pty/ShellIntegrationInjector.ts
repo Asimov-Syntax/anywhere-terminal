@@ -12,6 +12,7 @@
 //   pwsh → -noexit -command ". '<ext>/shellIntegration.ps1'"
 
 import * as path from "node:path";
+import { posixShellQuote } from "../utils/posixShellQuote";
 
 /** Filesystem contract — narrow on purpose so tests can stub it without `node:fs`. */
 export interface InjectorFs {
@@ -189,7 +190,7 @@ function injectZsh(args: string[], baseEnv: Readonly<Record<string, string>>, ct
 function injectFish(args: string[], baseEnv: Readonly<Record<string, string>>, ctx: InjectionContext): InjectionResult {
   const nonce = ctx.generateId();
   const scriptPath = path.join(ctx.scriptsDir, "shellIntegration.fish");
-  const newArgs = ["--init-command", `source ${shellQuote(scriptPath)}`, ...args];
+  const newArgs = ["--init-command", `source ${posixShellQuote(scriptPath)}`, ...args];
   return {
     args: newArgs,
     env: { ...scrubLeakedEnv(baseEnv), VSCODE_NONCE: nonce },
@@ -219,11 +220,6 @@ function injectPwsh(args: string[], baseEnv: Readonly<Record<string, string>>, c
 
 function hasArg(args: readonly string[], needle: string): boolean {
   return args.includes(needle);
-}
-
-/** POSIX shell single-quote escape: ' → '\'' */
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function makeTempDirCleanup(ctx: InjectionContext, target: string): () => void {

@@ -26,7 +26,7 @@ import { buildPreviewHeader as buildPreviewHeaderDom } from "./previewHeader";
 import { type BoardSelection, type PreviewTimelineBag, renderNestedInto, renderTimelineInto } from "./previewTimeline";
 import { buildPreviewMeta, loadingBody, type MetaCopyTarget } from "./renderAtoms";
 import type { VaultPanelPostMessage } from "./VaultPanel";
-import { beginInlineRename } from "./vaultListView";
+import { beginInlineRename, canResumeVaultEntry, cursorSourceLabel } from "./vaultListView";
 
 /** Timeline items requested on the first open, and the step added per load-more. */
 const PREVIEW_LIMIT_DEFAULT = 400;
@@ -592,6 +592,15 @@ export class PreviewController {
     this.shell.disposeTooltips();
     const label = agentLabel(entry.agent);
     const meta = buildPreviewMeta(entry, detail, (target) => this.copyMeta(entry, target));
+    const sourceLabel = cursorSourceLabel(entry);
+    if (sourceLabel) {
+      const term = document.createElement("dt");
+      term.textContent = "Source";
+      const value = document.createElement("dd");
+      value.className = "vault-preview-meta-text";
+      value.textContent = `Cursor ${sourceLabel}`;
+      meta.element.append(term, value);
+    }
     const { element, disposers } = buildPreviewHeaderDom(
       {
         badge: { icon: getAgentIcon(entry.agent), ariaLabel: label, fallbackText: label.slice(0, 2) },
@@ -601,10 +610,14 @@ export class PreviewController {
       {
         isMaximized: () => this.shell.floatingWindow.isMaximized(),
         onMovePointerDown: (ev) => this.shell.floatingWindow.startMove(ev),
-        onResume: () => {
-          this.deps.postMessage({ type: "vaultResume", entryId: entry.id });
-          this.closePreview();
-        },
+        ...(canResumeVaultEntry(entry)
+          ? {
+              onResume: () => {
+                this.deps.postMessage({ type: "vaultResume", entryId: entry.id });
+                this.closePreview();
+              },
+            }
+          : {}),
         onToggleMaximize: () => this.shell.floatingWindow.toggleMaximize(),
         onClose: () => this.closePreview(),
         onRenameTitle: (titleEl) => this.renameTitle(entry, titleEl),
@@ -728,7 +741,9 @@ export class PreviewController {
     const body = document.createElement("div");
     body.className = "vault-preview-body";
 
-    if (detail.truncated) {
+    const metadataOnly =
+      detail.contentKind === "metadata-only" || (detail.contentKind === undefined && entry.agent === "cursor");
+    if (!metadataOnly && detail.truncated) {
       const loadMore = document.createElement("button");
       loadMore.type = "button";
       loadMore.className = "vault-preview-loadmore";
@@ -745,19 +760,32 @@ export class PreviewController {
       body.appendChild(notice);
     }
 
-    // Full chronological transcript, run-grouped + capped. The same renderer is
-    // reused for nested transcripts so capping + pinned conclusions match (D14).
-    renderTimelineInto(body, detail.timeline ?? [], "root", this.timelineBag);
+    if (metadataOnly) {
+      // Limited metadata has no transcript or message anchor. Continue starts an
+      // independent session, so it deliberately carries no fork point.
+      const continueBtn = document.createElement("button");
+      continueBtn.type = "button";
+      continueBtn.className = "vault-preview-continue";
+      continueBtn.textContent = "Continue in New Session";
+      continueBtn.addEventListener("click", () => this.continueFromMessage(entry.id, {}));
+      body.appendChild(continueBtn);
+    } else {
+      // Full chronological transcript, run-grouped + capped. The same renderer is
+      // reused for nested transcripts so capping + pinned conclusions match (D14).
+      renderTimelineInto(body, detail.timeline ?? [], "root", this.timelineBag);
+    }
 
-    // One action bar for the whole transcript, revealed by delegation (D6). The
-    // body is rebuilt on every render, so the previous mount is dropped with it.
+    // Metadata-only details never expose transcript-derived copy, raw, or
+    // anchored continuation controls.
     this.disposeCurrentMessageActions();
-    this.disposeMessageActions = mountMessageActions(body, {
-      copy: (text) => this.copyText(text),
-      copyRaw: (msgRef) => this.requestMessageRecord(entry.id, msgRef),
-      timeline: () => this.activePreviewDetail?.timeline ?? [],
-      continueFrom: (fork) => this.continueFromMessage(entry.id, fork),
-    });
+    if (!metadataOnly) {
+      this.disposeMessageActions = mountMessageActions(body, {
+        copy: (text) => this.copyText(text),
+        copyRaw: (msgRef) => this.requestMessageRecord(entry.id, msgRef),
+        timeline: () => this.activePreviewDetail?.timeline ?? [],
+        continueFrom: (fork) => this.continueFromMessage(entry.id, fork),
+      });
+    }
 
     // Scroll to the top → load older messages (incremental, while more remain).
     // Scroll back to the bottom → the reader is caught up: dismiss the follow pill.

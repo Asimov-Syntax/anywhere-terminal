@@ -9,6 +9,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
 import { type AgentVaultDefinition, VAULT_AGENT_IDS, type VaultAgentId, type VaultLaunchTarget } from "./types";
 
 // Re-exported for back-compat: the SINGLE source now lives in types.ts (so the
@@ -160,9 +161,38 @@ const opencode: AgentVaultDefinition = {
   cwdPolicy: "preserve",
 };
 
+const cursor: AgentVaultDefinition = {
+  id: "cursor",
+  displayName: "Cursor Agent",
+  detect: {
+    executable: "agent",
+    aliases: ["cursor-agent"],
+    requiredHelpTokens: ["prompt", "--resume", "--mode", "plan", "--force"],
+  },
+  sessionStore: {
+    format: "metadata-json",
+    pathTemplate: "~/.cursor/chats/<workspace-bucket>/<chat-id>/meta.json",
+  },
+  sessionIdSource: "chat-directory-name (compatibility-gated for resume)",
+  resumeCommand: {
+    executable: "{{executable}}",
+    args: ["--resume", "{{sessionId}}"],
+  },
+  continueCommand: {
+    executable: "{{executable}}",
+    args: ["{{prompt}}"],
+  },
+  cwdPolicy: "preserve",
+  permissionChoices: [
+    { id: "default", label: "Ask for permission", args: [] },
+    { id: "plan", label: "Plan only", args: ["--mode", "plan"] },
+    { id: "force", label: "Full access, no approvals", dangerous: true, args: ["--force"] },
+  ],
+};
+
 // `satisfies Record<VaultAgentId, …>` makes omitting an agent a compile error
 // while keeping the public map string-indexable (callers pass `entry.agent`).
-const AGENT_RECORD = { claude, codex, opencode } satisfies Record<VaultAgentId, AgentVaultDefinition>;
+const AGENT_RECORD = { claude, codex, opencode, cursor } satisfies Record<VaultAgentId, AgentVaultDefinition>;
 
 export const AGENT_REGISTRY: Record<string, AgentVaultDefinition> = AGENT_RECORD;
 
@@ -180,9 +210,6 @@ export function getAgentDefinition(id: string): AgentVaultDefinition | undefined
  * plain shells and unknown commands.
  */
 const execFileAsync = promisify(execFile);
-
-/** How long an agent gets to answer `--version` before it counts as absent. */
-const DETECT_TIMEOUT_MS = 2000;
 
 export interface AgentDetectDeps {
   exec(file: string, args: string[], options: { timeout: number }): Promise<{ stdout: string; stderr: string }>;
@@ -207,14 +234,7 @@ export async function detectContinuationTargets(
 ): Promise<VaultLaunchTarget[]> {
   const candidates = AGENT_DEFINITIONS.filter((d) => d.continueCommand);
   const present = await Promise.all(
-    candidates.map(async (d) => {
-      try {
-        await deps.exec(d.detect.executable, ["--version"], { timeout: DETECT_TIMEOUT_MS });
-        return true;
-      } catch {
-        return false;
-      }
-    }),
+    candidates.map(async (definition) => (await resolveAgentExecutable(definition, deps)) !== null),
   );
   return candidates
     .filter((_, i) => present[i])
@@ -234,5 +254,10 @@ export function agentKindForExecutable(executable: string | undefined): VaultAge
   if (!base) {
     return undefined;
   }
-  return AGENT_DEFINITIONS.find((d) => d.id === base || d.detect.executable.toLowerCase() === base)?.id;
+  return AGENT_DEFINITIONS.find(
+    (definition) =>
+      definition.id === base ||
+      definition.detect.executable.toLowerCase() === base ||
+      definition.detect.aliases?.some((alias) => alias.toLowerCase() === base),
+  )?.id;
 }

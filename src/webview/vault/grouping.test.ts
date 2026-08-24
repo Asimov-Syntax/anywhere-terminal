@@ -48,6 +48,11 @@ describe("groupEntries", () => {
     expect(claude?.hideCwd).toBe(false);
   });
 
+  it("Cursor → uses the registered display label and accent", () => {
+    const groups = groupEntries([entry({ id: "cursor:c1", agent: "cursor" })], "agent");
+    expect(groups[0]).toMatchObject({ key: "cursor", label: "Cursor Agent", accent: "cursor" });
+  });
+
   it("Folder → group per cwd, leaf label, cwd chip suppressed", () => {
     const groups = groupEntries(
       [

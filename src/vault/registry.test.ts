@@ -18,13 +18,13 @@ function staticTokens(t: CommandTemplate): string[] {
 }
 
 describe("AGENT_REGISTRY", () => {
-  it("ships records for claude, codex, opencode", () => {
-    expect(Object.keys(AGENT_REGISTRY).sort()).toEqual(["claude", "codex", "opencode"]);
-    expect(AGENT_DEFINITIONS.map((d) => d.id)).toEqual(["claude", "codex", "opencode"]);
+  it("ships records for claude, codex, opencode, and cursor", () => {
+    expect(Object.keys(AGENT_REGISTRY).sort()).toEqual(["claude", "codex", "cursor", "opencode"]);
+    expect(AGENT_DEFINITIONS.map((d) => d.id)).toEqual(["claude", "codex", "opencode", "cursor"]);
   });
 
   it("every VAULT_AGENT_IDS entry has a registry definition (single source, no gap)", () => {
-    expect([...VAULT_AGENT_IDS]).toEqual(["claude", "codex", "opencode"]);
+    expect([...VAULT_AGENT_IDS]).toEqual(["claude", "codex", "opencode", "cursor"]);
     for (const id of VAULT_AGENT_IDS) {
       expect(getAgentDefinition(id)).toBeDefined();
     }
@@ -99,6 +99,18 @@ describe("AGENT_REGISTRY", () => {
     expect(opencode?.resumeCommand.args).toContainEqual({ flag: "--agent", from: "agent" });
   });
 
+  it("cursor keeps provider identity separate from ordered executable candidates", () => {
+    const cursor = getAgentDefinition("cursor");
+    expect(cursor?.detect).toEqual({
+      executable: "agent",
+      aliases: ["cursor-agent"],
+      requiredHelpTokens: ["prompt", "--resume", "--mode", "plan", "--force"],
+    });
+    expect(cursor?.sessionStore.format).toBe("metadata-json");
+    expect(cursor?.resumeCommand).toEqual({ executable: "{{executable}}", args: ["--resume", "{{sessionId}}"] });
+    expect(cursor?.forkCommand).toBeUndefined();
+  });
+
   it("codex has no forkMinVersion (fork supported whenever a command exists)", () => {
     expect(getAgentDefinition("codex")?.forkMinVersion).toBeUndefined();
   });
@@ -109,10 +121,12 @@ describe("AGENT_REGISTRY", () => {
 });
 
 describe("agentKindForExecutable", () => {
-  it("maps bare command names to the agent id", () => {
+  it("maps bare command names and aliases to the agent id", () => {
     expect(agentKindForExecutable("claude")).toBe("claude");
     expect(agentKindForExecutable("codex")).toBe("codex");
     expect(agentKindForExecutable("opencode")).toBe("opencode");
+    expect(agentKindForExecutable("agent")).toBe("cursor");
+    expect(agentKindForExecutable("cursor-agent")).toBe("cursor");
   });
 
   it("strips directories and platform suffixes", () => {
@@ -152,20 +166,49 @@ describe("permissionChoices", () => {
   it("gives opencode none, so the dialog shows no permission control", () => {
     expect(getAgentDefinition("opencode")?.permissionChoices).toBeUndefined();
   });
+
+  it("offers Cursor default, plan-only, and explicit full-access postures", () => {
+    expect(getAgentDefinition("cursor")?.permissionChoices).toEqual([
+      { id: "default", label: "Ask for permission", args: [] },
+      { id: "plan", label: "Plan only", args: ["--mode", "plan"] },
+      { id: "force", label: "Full access, no approvals", dangerous: true, args: ["--force"] },
+    ]);
+  });
 });
 
 describe("detectContinuationTargets", () => {
-  it("lists only agents whose executable answers, with their choices", async () => {
-    const exec = vi.fn(async (file: string) => {
+  it("lists only agents whose executable passes its probe, with their choices", async () => {
+    const exec = vi.fn(async (file: string, args: string[]) => {
       if (file === "opencode") {
         throw new Error("command not found");
+      }
+      if (file === "agent" && args[0] === "--help") {
+        return {
+          stdout: "Cursor Agent\nUsage: agent [prompt]\n--resume <id>\n--mode <mode> plan\n--force",
+          stderr: "",
+        };
       }
       return { stdout: "1.0.0", stderr: "" };
     });
     const targets = await detectContinuationTargets({ exec });
-    expect(targets.map((t) => t.agent)).toEqual(["claude", "codex"]);
+    expect(targets.map((t) => t.agent)).toEqual(["claude", "codex", "cursor"]);
     expect(targets[0]).toMatchObject({ displayName: "Claude Code" });
     expect(targets[0].permissionChoices.length).toBeGreaterThan(0);
+  });
+
+  it("does not list Cursor for branded --prompt-only help", async () => {
+    const exec = vi.fn(async (_file: string, args: string[]) => {
+      if (args[0] === "--help") {
+        return {
+          stdout: "Cursor Agent\nUsage: agent [options]\n--prompt <prompt>\n--resume <id>\n--mode <mode> plan\n--force",
+          stderr: "",
+        };
+      }
+      return { stdout: "1.0.0", stderr: "" };
+    });
+
+    const targets = await detectContinuationTargets({ exec });
+    expect(targets.map((target) => target.agent)).toEqual(["claude", "codex", "opencode"]);
   });
 
   it("reports nothing rather than throwing when no agent is installed", async () => {

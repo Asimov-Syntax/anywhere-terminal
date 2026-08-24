@@ -4,6 +4,13 @@ All notable changes to **AnyWhere Terminal** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Cursor CLI and IDE history join the AI Vault.** Cursor rows now follow the same preview-first click / Enter / Space contract as Claude Code, Codex, and OpenCode, with `CLI` / `IDE` source badges. Explicit detail requests decode compatible CLI `store.db` root graphs, project JSONL mirrors, and Cursor IDE Composer records locally through bounded read-only snapshots; schema drift falls back to metadata-only detail. Only validated CLI rows expose explicit Resume through the detected `agent` / `cursor-agent` executable; IDE history, project mirrors, forged or stale entries, fork, cross-store Resume, and ACP embedding cannot receive CLI Resume capability.
+- **Optional Cursor Agent activity and approval status.** The machine-scoped `anywhereTerminal.cursorAgent.hooks.enabled` setting adds fail-open, exactly owned user hooks that report authenticated pane-local working/idle activity; current-screen command approvals show an action-required tab state, including narrow wrapped menus. Disabling removes the managed entries, clears semantic identity immediately, and returns tabs to bounded PTY-output activity. The hook observer never persists or exposes raw payloads, prompts, shell output, account identity, or transcript content.
+
 ## [0.17.9] — 2026-08-23
 
 ### Added

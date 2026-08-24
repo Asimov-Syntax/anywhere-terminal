@@ -4,7 +4,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type * as vscode from "vscode";
 import type { FsLike } from "../session/SessionStorage";
-import { VAULT_CACHE_VERSION, type VaultListCacheFileV1 } from "./cacheTypes";
+import {
+  MAX_CURSOR_IDE_CACHE_ENTRIES,
+  MAX_CURSOR_IDE_SOURCE_STAMPS,
+  MAX_CURSOR_LOCATION_IDS,
+  MAX_CURSOR_PROJECT_CACHE_ENTRIES,
+  VAULT_CACHE_VERSION,
+  type VaultListCacheFileV1,
+} from "./cacheTypes";
 import { VaultCacheStore } from "./VaultCacheStore";
 
 /** In-memory FsLike: records the temp/rename sequence and the modes used. */
@@ -69,6 +76,21 @@ function makeFakeFs() {
 const globalStorageUri = { fsPath: "/glob" } as vscode.Uri;
 const CACHE_FILE = "/glob/vault-cache/list.json";
 
+function cursorEntry(sessionId: string, source?: "cli" | "ide") {
+  return {
+    id: `cursor:${sessionId}`,
+    agent: "cursor" as const,
+    sessionId,
+    title: "Cursor chat",
+    cwd: "/work",
+    modified: 10,
+    flags: {},
+    canFork: false,
+    canResume: source === "cli",
+    ...(source ? { source } : {}),
+  };
+}
+
 function doc(overrides: Partial<VaultListCacheFileV1> = {}): VaultListCacheFileV1 {
   return {
     version: VAULT_CACHE_VERSION,
@@ -130,6 +152,11 @@ describe("VaultCacheStore", () => {
 
   it("discards an unrecognized version (→ full rebuild)", () => {
     harness.files.set(CACHE_FILE, JSON.stringify({ ...doc(), version: VAULT_CACHE_VERSION + 1 }));
+    expect(store.load()).toBeNull();
+  });
+
+  it("discards stale version 5 caches without source-qualified Cursor metadata", () => {
+    harness.files.set(CACHE_FILE, JSON.stringify({ ...doc(), version: 5 }));
     expect(store.load()).toBeNull();
   });
 
@@ -263,6 +290,187 @@ describe("VaultCacheStore", () => {
       });
       await store.save(good);
       expect(store.load()).toEqual(good);
+    });
+
+    it("round-trips metadata-only CLI, project, and IDE Cursor caches", async () => {
+      const cliEntry = cursorEntry("chat-1", "cli");
+      const projectEntry = cursorEntry("project:YnVja2V0LWE:project-1");
+      const ideEntry = cursorEntry("ide:d29ya3NwYWNlLTE:composer-1", "ide");
+      const good = doc({
+        agents: {
+          cursor: {
+            kind: "cursor-files",
+            chats: {
+              "chat-1": { metaStamp: { mtimeMs: 5, size: 9 }, dbPresent: true, entry: cliEntry },
+            },
+            locations: {
+              byId: { "chat-1": ["bucket-a"], "duplicate-chat": ["bucket-a", "bucket-b"] },
+              overflowed: false,
+            },
+            projects: {
+              "/home/me/.cursor/projects/bucket-a/agent-transcripts/project-1.jsonl": {
+                stamp: { mtimeMs: 6, size: 10 },
+                entry: projectEntry,
+              },
+            },
+            ide: {
+              sources: {
+                "/home/me/.config/Cursor/User/globalStorage/state.vscdb": { mtimeMs: 7, size: 11 },
+                "/home/me/.config/Cursor/User/globalStorage/state.vscdb-wal": { mtimeMs: 8, size: 12 },
+              },
+              entries: [ideEntry],
+              unreadable: 2,
+            },
+            unreadableById: { "duplicate-chat": 2 },
+            rejected: 1,
+          },
+        },
+      });
+      await store.save(good);
+      expect(store.load()).toEqual(good);
+    });
+
+    it("rejects transcript detail fields in persisted Cursor metadata", () => {
+      const badEntry = { ...cursorEntry("chat", "cli"), timeline: [{ kind: "message", text: "private" }] };
+      const bad = doc({
+        agents: {
+          cursor: {
+            kind: "cursor-files",
+            chats: { chat: { metaStamp: { mtimeMs: 1, size: 2 }, dbPresent: true, entry: badEntry } },
+            locations: { byId: { chat: ["bucket-a"] }, overflowed: false },
+          },
+        },
+      });
+      harness.files.set(CACHE_FILE, JSON.stringify(bad));
+      expect(store.load()).toBeNull();
+    });
+
+    it("rejects malformed or oversized project transcript metadata", () => {
+      const projects = Object.fromEntries(
+        Array.from({ length: MAX_CURSOR_PROJECT_CACHE_ENTRIES + 1 }, (_, index) => [
+          `/tmp/project-${index}.jsonl`,
+          { stamp: { mtimeMs: 1, size: 2 }, entry: cursorEntry(`project:YnVja2V0LWE:project-${index}`) },
+        ]),
+      );
+      const bad = doc({
+        agents: {
+          cursor: {
+            kind: "cursor-files",
+            chats: {},
+            locations: { byId: {}, overflowed: false },
+            projects,
+          },
+        },
+      });
+      harness.files.set(CACHE_FILE, JSON.stringify(bad));
+      expect(store.load()).toBeNull();
+    });
+
+    it("rejects malformed or oversized Cursor IDE metadata", () => {
+      const sources = Object.fromEntries(
+        Array.from({ length: MAX_CURSOR_IDE_SOURCE_STAMPS + 1 }, (_, index) => [
+          `/tmp/state.vscdb-${index}`,
+          { mtimeMs: 1, size: 2 },
+        ]),
+      );
+      const entries = Array.from({ length: MAX_CURSOR_IDE_CACHE_ENTRIES + 1 }, (_, index) =>
+        cursorEntry(`ide:d29ya3NwYWNlLTE:composer-${index}`, "ide"),
+      );
+      const bad = doc({
+        agents: {
+          cursor: {
+            kind: "cursor-files",
+            chats: {},
+            locations: { byId: {}, overflowed: false },
+            ide: { sources, entries, unreadable: 0 },
+          },
+        },
+      });
+      harness.files.set(CACHE_FILE, JSON.stringify(bad));
+      expect(store.load()).toBeNull();
+    });
+
+    it("rejects a Cursor cache entry with a non-boolean canResume capability", () => {
+      const badEntry = {
+        ...cursorEntry("chat", "cli"),
+        canResume: "false",
+      };
+      const bad = doc({
+        agents: {
+          cursor: {
+            kind: "cursor-files",
+            chats: { chat: { metaStamp: { mtimeMs: 1, size: 2 }, dbPresent: true, entry: badEntry as never } },
+            locations: { byId: { chat: ["bucket-a"] }, overflowed: false },
+          },
+        },
+      });
+      harness.files.set(CACHE_FILE, JSON.stringify(bad));
+      expect(store.load()).toBeNull();
+    });
+
+    it("rejects an oversized Cursor location index", () => {
+      const byId = Object.fromEntries(
+        Array.from({ length: MAX_CURSOR_LOCATION_IDS + 1 }, (_, index) => [`chat-${index}`, ["bucket-a"]]),
+      );
+      const bad = doc({
+        agents: { cursor: { kind: "cursor-files", chats: {}, locations: { byId, overflowed: false } } },
+      });
+      harness.files.set(CACHE_FILE, JSON.stringify(bad));
+      expect(store.load()).toBeNull();
+    });
+
+    it.each([
+      ["missing chats", { kind: "cursor-files", locations: { byId: {}, overflowed: false }, rejected: 0 }],
+      ["missing locations", { kind: "cursor-files", chats: {}, rejected: 0 }],
+      [
+        "malformed location buckets",
+        { kind: "cursor-files", chats: {}, locations: { byId: { chat: [42] }, overflowed: false } },
+      ],
+      [
+        "non-boolean database presence",
+        {
+          kind: "cursor-files",
+          chats: { chat: { metaStamp: { mtimeMs: 1, size: 2 }, dbPresent: "yes", entry: doc().entries[0] } },
+          locations: { byId: { chat: ["bucket-a"] }, overflowed: false },
+        },
+      ],
+      [
+        "malformed metadata stamp",
+        {
+          kind: "cursor-files",
+          chats: { chat: { metaStamp: { mtimeMs: "x", size: 2 }, dbPresent: true, entry: doc().entries[0] } },
+          locations: { byId: { chat: ["bucket-a"] }, overflowed: false },
+        },
+      ],
+      [
+        "malformed entry",
+        {
+          kind: "cursor-files",
+          chats: {
+            chat: { metaStamp: { mtimeMs: 1, size: 2 }, dbPresent: true, entry: { ...doc().entries[0], title: 42 } },
+          },
+          locations: { byId: { chat: ["bucket-a"] }, overflowed: false },
+        },
+      ],
+      [
+        "negative unreadable count",
+        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, unreadableById: { chat: -1 } },
+      ],
+      [
+        "non-finite unreadable count",
+        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, unreadableById: { chat: "x" } },
+      ],
+      [
+        "negative rejected count",
+        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, rejected: -1 },
+      ],
+      [
+        "non-finite rejected count",
+        { kind: "cursor-files", chats: {}, locations: { byId: {}, overflowed: false }, rejected: "x" },
+      ],
+    ])("rejects a Cursor cache with %s", (_reason, cursorCache) => {
+      harness.files.set(CACHE_FILE, JSON.stringify({ ...doc(), agents: { cursor: cursorCache } }));
+      expect(store.load()).toBeNull();
     });
   });
 

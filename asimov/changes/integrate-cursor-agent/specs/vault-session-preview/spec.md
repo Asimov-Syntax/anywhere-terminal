@@ -1,0 +1,44 @@
+## ADDED Requirements
+
+### Requirement: Cursor row activation opens preview
+
+Activating a Cursor Vault row by pointer, Enter, or Space SHALL open that session's detail preview.
+
+Resume SHALL remain a separate button, preview-header action, or context-menu action and SHALL NOT replace row activation.
+
+#### Scenario: User activates a resumable Cursor CLI row
+
+- **WHEN** the user clicks the row rather than its Resume action
+- **THEN** the existing Vault preview opens and no terminal is launched
+
+### Requirement: Cursor Agent CLI transcript preview
+
+A compatible Cursor Agent CLI detail request SHALL render a bounded chronological timeline from the validated local chat store, including recognized user and assistant messages, tool activity, and available summary archives.
+
+The reader SHALL use the canonical CLI store when compatible and MAY use the matching project transcript JSONL as an incremental mirror or fallback without emitting a duplicate session row.
+
+### Requirement: Cursor IDE Composer transcript preview
+
+A compatible Cursor IDE detail request SHALL render its local Composer conversation through the same bounded Vault timeline used by other providers.
+
+The preview SHALL identify the source as Cursor IDE and SHALL NOT expose Resume, Copy Resume Command, or Fork actions.
+
+### Requirement: Cursor transcript capability fallback
+
+Unsupported schema versions, missing roots, hash mismatches, oversized records, malformed data, unavailable SQLite support, and incomplete source mappings SHALL fail closed to an explicit metadata-only partial detail.
+
+A limited detail SHALL NOT fabricate transcript messages, tool activity, token usage, model state, timestamps, cwd, sub-sessions, or message-level actions.
+
+### Requirement: Cursor transcript privacy
+
+Cursor transcript decoding SHALL remain local to the extension and SHALL be read-only, bounded, containment-checked, and WAL-aware.
+
+Raw SQLite blobs, protobuf envelopes, encryption keys, database secrets, account identity, raw hook payloads, and unrelated database fields MUST NOT be logged, persisted in the Vault cache, copied to the clipboard, or sent over IPC.
+
+Only normalized timeline records and explicitly sanitized recognized message records MAY be returned to the requesting Vault preview.
+
+### Requirement: Cursor preview action parity
+
+Decoded Cursor timeline records SHALL support the existing provider-neutral preview navigation, text copy, sanitized raw-record copy where available, and Continue in New Session flow.
+
+Cursor Agent CLI Resume SHALL target the whole validated chat, never a message anchor; Cursor IDE and unmatched project-transcript entries SHALL remain non-resumable.

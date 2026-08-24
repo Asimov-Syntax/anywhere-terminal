@@ -7,7 +7,13 @@
 // the argv from LaunchBuilder). It does NOT spawn — the provider owns the
 // createSession call + the `tabCreated` post so the terminal becomes visible (D5).
 
-import { build, type ContinuationTarget, type LaunchMode, VaultLaunchError } from "./LaunchBuilder";
+import {
+  build,
+  type ContinuationTarget,
+  type LaunchMode,
+  resolveLaunchExecutable,
+  VaultLaunchError,
+} from "./LaunchBuilder";
 import type { VaultService } from "./VaultService";
 
 export interface CreateSessionOptions {
@@ -44,11 +50,24 @@ export class VaultLauncher {
     if (!entry) {
       throw new VaultLaunchError(`No vault session: ${entryId}`, "unknown-entry");
     }
+    if (
+      mode === "resume" &&
+      (entry.canResume === false ||
+        (entry.agent === "cursor" &&
+          (entry.source !== "cli" ||
+            entry.canResume !== true ||
+            entry.id !== `cursor:${entry.sessionId}` ||
+            !/^[A-Za-z0-9._-]{1,200}$/.test(entry.sessionId) ||
+            entry.sessionId.includes(".."))))
+    ) {
+      throw new VaultLaunchError(`Resume is not supported for ${entryId}`, "resume-unsupported");
+    }
     if (mode === "fork" && !entry.canFork) {
       throw new VaultLaunchError(`Fork is not supported for ${entryId}`, "fork-unsupported");
     }
 
-    const spec = build(entry, mode, this.hostEnv, prompt, target);
+    const executable = await resolveLaunchExecutable(entry, mode, target);
+    const spec = build(entry, mode, this.hostEnv, prompt, target, executable);
     // Spawn the agent CLI directly as the terminal's process (PTY root). This is
     // killed cleanly on window reload; on exit, the session manager respawns a
     // shell in the same tab so the user keeps an input prompt (see

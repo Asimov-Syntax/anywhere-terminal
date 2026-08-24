@@ -89,7 +89,11 @@ export interface WatcherPool {
   subscribePattern(
     baseDir: string,
     glob: string,
-    handlers: { create?: () => void; change?: () => void; delete?: () => void },
+    handlers: {
+      create?: (uri: vscode.Uri) => void;
+      change?: (uri: vscode.Uri) => void;
+      delete?: (uri: vscode.Uri) => void;
+    },
   ): vscode.Disposable;
 
   /**
@@ -294,7 +298,11 @@ export function createWatcherPool(options: WatcherPoolOptions = {}): WatcherPool
   function subscribePattern(
     baseDir: string,
     glob: string,
-    handlers: { create?: () => void; change?: () => void; delete?: () => void },
+    handlers: {
+      create?: (uri: vscode.Uri) => void;
+      change?: (uri: vscode.Uri) => void;
+      delete?: (uri: vscode.Uri) => void;
+    },
   ): vscode.Disposable {
     if (disposed) {
       return { dispose: () => {} };
@@ -315,35 +323,45 @@ export function createWatcherPool(options: WatcherPoolOptions = {}): WatcherPool
       change: null,
       delete: null,
     };
+    const pendingUris: Record<"create" | "change" | "delete", Map<string, vscode.Uri>> = {
+      create: new Map(),
+      change: new Map(),
+      delete: new Map(),
+    };
     const eventSubs: vscode.Disposable[] = [];
     const armed = { value: true };
 
-    function fire(kind: "create" | "change" | "delete", cb: () => void): void {
+    function fire(kind: "create" | "change" | "delete", uri: vscode.Uri, cb: (uri: vscode.Uri) => void): void {
+      pendingUris[kind].set(uri.fsPath, uri);
       if (timers[kind] !== null) {
         clearTimeout(timers[kind] as ReturnType<typeof setTimeout>);
       }
       timers[kind] = setTimeout(() => {
         timers[kind] = null;
+        const uris = [...pendingUris[kind].values()];
+        pendingUris[kind].clear();
         if (!armed.value) {
           return;
         }
-        try {
-          cb();
-        } catch (err) {
-          console.warn(`${LOG_PREFIX} subscribePattern ${kind} handler threw — continuing`, err);
+        for (const pendingUri of uris) {
+          try {
+            cb(pendingUri);
+          } catch (err) {
+            console.warn(`${LOG_PREFIX} subscribePattern ${kind} handler threw — continuing`, err);
+          }
         }
       }, DEBOUNCE_MS);
     }
 
     if (watcher) {
       if (handlers.create) {
-        eventSubs.push(watcher.onDidCreate(() => fire("create", handlers.create as () => void)));
+        eventSubs.push(watcher.onDidCreate((uri) => fire("create", uri, handlers.create as (uri: vscode.Uri) => void)));
       }
       if (handlers.change) {
-        eventSubs.push(watcher.onDidChange(() => fire("change", handlers.change as () => void)));
+        eventSubs.push(watcher.onDidChange((uri) => fire("change", uri, handlers.change as (uri: vscode.Uri) => void)));
       }
       if (handlers.delete) {
-        eventSubs.push(watcher.onDidDelete(() => fire("delete", handlers.delete as () => void)));
+        eventSubs.push(watcher.onDidDelete((uri) => fire("delete", uri, handlers.delete as (uri: vscode.Uri) => void)));
       }
     }
 
@@ -355,6 +373,7 @@ export function createWatcherPool(options: WatcherPoolOptions = {}): WatcherPool
             clearTimeout(timers[k] as ReturnType<typeof setTimeout>);
             timers[k] = null;
           }
+          pendingUris[k].clear();
         }
         for (const sub of eventSubs) {
           try {

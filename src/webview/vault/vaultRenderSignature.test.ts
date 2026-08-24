@@ -35,6 +35,12 @@ describe("entriesSignature", () => {
     expect(entriesSignature([entry({ canFork: false })])).not.toBe(entriesSignature([entry({ canFork: true })]));
   });
 
+  it("changes when selected resume capability is explicitly disabled", () => {
+    const disabled = entriesSignature([entry({ canResume: false })]);
+    expect(entriesSignature([entry()])).not.toBe(disabled);
+    expect(entriesSignature([entry({ canResume: true })])).not.toBe(disabled);
+  });
+
   it("changes when cwd changes (affects the folder filter)", () => {
     expect(entriesSignature([entry({ cwd: "/a" })])).not.toBe(entriesSignature([entry({ cwd: "/b" })]));
   });

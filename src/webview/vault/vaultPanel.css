@@ -35,6 +35,7 @@
   --vault-accent-claude: oklch(0.72 0.12 45);
   --vault-accent-codex: oklch(0.74 0.09 165);
   --vault-accent-opencode: oklch(0.74 0.1 285);
+  --vault-accent-cursor: oklch(0.72 0.11 230);
 }
 
 /* Collapsed — only the header strip shows; the body is hidden and the section
@@ -490,6 +491,9 @@
 .vault-badge--opencode {
   --_accent: var(--vault-accent-opencode);
 }
+.vault-badge--cursor {
+  --_accent: var(--vault-accent-cursor);
+}
 
 /* Agent marker dot — accent-colored, replaces the per-row brand badge. */
 .vault-row-dot {
@@ -509,6 +513,9 @@
 .vault-row-dot--opencode {
   background: var(--vault-accent-opencode);
 }
+.vault-row-dot--cursor {
+  background: var(--vault-accent-cursor);
+}
 
 /* Title — single line, ellipsis. */
 .vault-row-title {
@@ -519,6 +526,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+.vault-row-source {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--vault-accent-cursor) 55%, transparent);
+  border-radius: 999px;
+  color: var(--vault-accent-cursor);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
 }
 
 /* cwd chip — folder icon + leaf segment, mono, dim. Single-line. */
@@ -726,6 +748,9 @@
 }
 .vault-preview--opencode {
   --vault-user-accent: var(--vault-accent-opencode);
+}
+.vault-preview--cursor {
+  --vault-user-accent: var(--vault-accent-cursor);
 }
 .vault-preview.is-open {
   display: flex;
@@ -2008,6 +2033,32 @@ body:has(#tab-bar.visible) .vault-preview--max {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   padding: 4px 0;
+}
+/* Cursor session records are metadata-only: make the supplied limitation visible
+   without implying that a transcript was read from its private database. */
+.vault-preview--cursor .vault-preview-notice {
+  padding: 7px 9px;
+  border-left: 2px solid var(--vault-accent-cursor);
+  background: color-mix(in srgb, var(--vault-accent-cursor) 10%, transparent);
+  border-radius: 0 4px 4px 0;
+}
+.vault-preview-continue {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.vault-preview-continue:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+.vault-preview-continue:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
 }
 /* "Load older messages" — pinned at the top of the transcript when more remain. */
 .vault-preview-loadmore {

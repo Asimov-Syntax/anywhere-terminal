@@ -15,7 +15,7 @@ export interface TabInfo {
   /** Whether the terminal process has exited. */
   exited?: boolean;
   /** Recent PTY output activity for the status indicator. */
-  activityStatus?: "idle" | "running";
+  activityStatus?: "idle" | "running" | "waiting";
 }
 
 /** Minimal store interface for buildTabBarData — avoids importing full WebviewStateStore. */
@@ -41,15 +41,14 @@ export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
       const activePaneId = store.tabActivePaneIds.get(tabId) ?? tabId;
       const activeInstance = store.terminals.get(activePaneId);
       const rootInstance = store.terminals.get(tabId);
-      const anyRunning = getAllSessionIds(layout).some((sid) => {
-        const inst = store.terminals.get(sid);
-        return inst?.activityStatus === "running" && !inst.exited;
-      });
+      const leaves = getAllSessionIds(layout).map((sid) => store.terminals.get(sid));
+      const anyWaiting = leaves.some((inst) => inst?.activityStatus === "waiting" && !inst.exited);
+      const anyRunning = leaves.some((inst) => inst?.activityStatus === "running" && !inst.exited);
       tabTerminals.set(tabId, {
         name: activeInstance?.name ?? rootInstance?.name ?? tabId,
         customName: rootInstance?.customName ?? null,
         exited: (activeInstance ?? rootInstance)?.exited,
-        activityStatus: anyRunning ? "running" : "idle",
+        activityStatus: anyWaiting ? "waiting" : anyRunning ? "running" : "idle",
       });
     } else {
       // Single pane tab
@@ -186,7 +185,14 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
     const statusSpan = tab.querySelector<HTMLElement>(".tab-status")!;
     statusSpan.className = `tab-status tab-status-${status}`;
     statusSpan.title =
-      status === "running" ? "Terminal is producing output" : status === "exited" ? "Terminal exited" : "Terminal idle";
+      status === "waiting"
+        ? "Cursor approval required"
+        : status === "running"
+          ? "Terminal is producing output"
+          : status === "exited"
+            ? "Terminal exited"
+            : "Terminal idle";
+    tab.setAttribute("aria-label", status === "waiting" ? `${renderedName}: Cursor approval required` : renderedName);
     tab.dataset.status = status;
   }
 

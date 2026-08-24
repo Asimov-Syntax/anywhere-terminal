@@ -1189,6 +1189,23 @@ export interface OpenVaultMessage {
 }
 
 /**
+ * Extension → Webview: pane-scoped Cursor Agent semantic activity status,
+ * sourced from renewable per-session hook authority (integrate-cursor-agent
+ * design.md D6/D7). Posted ONLY through the session's own live webview — a
+ * disposed/unknown/non-live session's runtime callback never reaches the
+ * webview (spec: cursor-status-pane-isolation, hook-session-isolation).
+ * `agent`/`state` are both `null` when semantic status is cleared (hook
+ * disable, freshness expiry, or session-boundary `sessionStart`).
+ */
+export interface AgentActivityStatusMessage {
+  type: "agentActivityStatus";
+  /** Target terminal session ID */
+  tabId: string;
+  agent: "cursor" | null;
+  state: "working" | "idle" | null;
+}
+
+/**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
  */
@@ -1233,7 +1250,8 @@ export type ExtensionToWebViewMessage =
   | SubagentPreviewResponseMessage
   | ClipboardImagePreviewMessage
   | OsClipboardPasteMissMessage
-  | OpenVaultMessage;
+  | OpenVaultMessage
+  | AgentActivityStatusMessage;
 
 /**
  * Extension → Webview. Visual feedback for title-bar "export" click — briefly

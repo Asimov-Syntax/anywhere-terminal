@@ -32,9 +32,9 @@ interface FakeWatcher {
   onDidChange: vscode.Event<vscode.Uri>;
   onDidDelete: vscode.Event<vscode.Uri>;
   dispose: ReturnType<typeof vi.fn>;
-  fireCreate: () => void;
-  fireDelete: () => void;
-  fireChange: () => void;
+  fireCreate: (fsPath?: string) => void;
+  fireDelete: (fsPath?: string) => void;
+  fireChange: (fsPath?: string) => void;
 }
 
 function makeFakeWatcher(): FakeWatcher {
@@ -46,9 +46,9 @@ function makeFakeWatcher(): FakeWatcher {
     onDidChange: changeEm.event,
     onDidDelete: deleteEm.event,
     dispose: vi.fn(),
-    fireCreate: () => createEm.fire({ fsPath: "/fake" } as vscode.Uri),
-    fireDelete: () => deleteEm.fire({ fsPath: "/fake" } as vscode.Uri),
-    fireChange: () => changeEm.fire({ fsPath: "/fake" } as vscode.Uri),
+    fireCreate: (fsPath = "/fake") => createEm.fire({ fsPath } as vscode.Uri),
+    fireDelete: (fsPath = "/fake") => deleteEm.fire({ fsPath } as vscode.Uri),
+    fireChange: (fsPath = "/fake") => changeEm.fire({ fsPath } as vscode.Uri),
   };
 }
 
@@ -402,6 +402,34 @@ describe("WatcherPool", () => {
     expect(call.ignoreChange).toBe(true);
     expect(call.ignoreDelete).toBe(false);
 
+    pool.dispose();
+  });
+
+  it("passes the affected URI through debounced pattern handlers", () => {
+    const factory = makeFakeFactory();
+    const focusEm = createEmitter<{ focused: boolean }>();
+    const pool = createWatcherPool({
+      createFileSystemWatcher: factory.fn,
+      onDidChangeWindowState: focusEm.event,
+      initialWindowFocused: true,
+    });
+    const create = vi.fn();
+    const change = vi.fn();
+    const remove = vi.fn();
+    pool.subscribePattern("/cursor", "**/meta.json", { create, change, delete: remove });
+    const watcher = factory.calls[0].watcher;
+
+    watcher.fireCreate("/cursor/a/chat-1/meta.json");
+    watcher.fireChange("/cursor/a/chat-2/meta.json");
+    watcher.fireChange("/cursor/a/chat-4/meta.json");
+    watcher.fireDelete("/cursor/a/chat-3/meta.json");
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ fsPath: "/cursor/a/chat-1/meta.json" }));
+    expect(change).toHaveBeenCalledTimes(2);
+    expect(change).toHaveBeenCalledWith(expect.objectContaining({ fsPath: "/cursor/a/chat-2/meta.json" }));
+    expect(change).toHaveBeenCalledWith(expect.objectContaining({ fsPath: "/cursor/a/chat-4/meta.json" }));
+    expect(remove).toHaveBeenCalledWith(expect.objectContaining({ fsPath: "/cursor/a/chat-3/meta.json" }));
     pool.dispose();
   });
 });

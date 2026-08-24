@@ -30,8 +30,8 @@ export interface TerminalInstance {
   container: HTMLDivElement;
   /** Whether the PTY process has exited (terminal becomes read-only). */
   exited: boolean;
-  /** Recent PTY output activity used by the tab-bar status indicator. */
-  activityStatus: "idle" | "running";
+  /** Current output, semantic, or approval activity used by the tab-bar status indicator. */
+  activityStatus: "idle" | "running" | "waiting";
   /**
    * Decoration-stripped signature of the last title that triggered a tab-bar
    * render. Lets an agent's spinner frames advance without re-rendering the tab

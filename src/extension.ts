@@ -4,6 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
+import { CursorHookController } from "./cursor/CursorHookController";
+import { CursorHookInstaller } from "./cursor/CursorHookInstaller";
+import { createCursorHookRuntime } from "./cursor/CursorHookRuntime";
 import { createWatcherPool } from "./providers/fsWatcherPool";
 import { createGitDecorationProvider } from "./providers/gitDecorationProvider";
 import { resolveRenameTargetTabId } from "./providers/resolveRenameTarget";
@@ -12,6 +15,7 @@ import { TerminalPanelSerializer } from "./providers/TerminalPanelSerializer";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
 import { VaultWatchCoordinator } from "./providers/VaultWatchCoordinator";
 import { loadNodePty } from "./pty/PtyManager";
+import type { MessageSender } from "./session/OutputBuffer";
 import { SessionManager } from "./session/SessionManager";
 import { SessionStorage } from "./session/SessionStorage";
 import {
@@ -28,7 +32,7 @@ import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Validate node-pty availability early — show user-facing error if missing
   try {
     loadNodePty();
@@ -105,6 +109,62 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Allow late deactivate() to find this singleton without re-routing.
   _activeSessionManager = sessionManager;
+
+  // Cursor Agent hook authority is granted only after the machine hook file
+  // reconciles successfully. The controller serializes config ownership and
+  // runtime/contributor state so stale async transitions cannot restore access.
+  const readCursorHooksEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("anywhereTerminal").get<boolean>("cursorAgent.hooks.enabled") ?? false;
+  const cursorHookController = new CursorHookController({
+    initialEnabled: readCursorHooksEnabled(),
+    installer: new CursorHookInstaller({
+      configPath: path.join(os.homedir(), ".cursor", "hooks.json"),
+      storagePath: path.join(context.globalStorageUri.fsPath, "cursor-hooks"),
+    }),
+    createRuntime: () =>
+      createCursorHookRuntime(
+        { enabled: false },
+        {
+          onStatus: (update) => {
+            const session = sessionManager.getSession(update.sessionId);
+            if (session?.state !== "live") {
+              return;
+            }
+            safePostMessage(session.webview, {
+              type: "agentActivityStatus",
+              tabId: update.sessionId,
+              agent: update.agent,
+              state: update.state,
+            });
+          },
+          onReasonCode: (reason, sessionSuffix) => {
+            console.warn(`[AnyWhere Terminal] Cursor hook ${reason}${sessionSuffix ? ` (…${sessionSuffix})` : ""}`);
+          },
+        },
+      ),
+    setContributor: (contributor) => sessionManager.setCursorHookContributor(contributor),
+    onWarning: (operation, reason) => {
+      if (operation === "runtime") {
+        console.warn(
+          `[AnyWhere Terminal] Cursor hook runtime unavailable — continuing without hook observability: ${reason}`,
+        );
+        return;
+      }
+      console.warn(`[AnyWhere Terminal] Cursor hook ${operation} reconciliation failed: ${reason}`);
+    },
+  });
+  _activeCursorHookController = cursorHookController;
+
+  // Register before runtime binding awaits so changes during activation enter
+  // the same serialized controller and the latest desired setting wins.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("anywhereTerminal.cursorAgent.hooks.enabled")) {
+        void cursorHookController.setDesiredEnabled(readCursorHooksEnabled());
+      }
+    }),
+  );
+  await cursorHookController.start();
 
   // Shared GitDecorationProvider — one singleton, threaded through every
   // FileTreeHost so the three webviews (sidebar / panel / editor) see one
@@ -759,7 +819,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 /** Safely post a message to a webview, handling both sync throws and async rejections. */
-function safePostMessage(webview: vscode.Webview, message: unknown): void {
+function safePostMessage(webview: vscode.Webview | MessageSender, message: unknown): void {
   try {
     void (webview.postMessage(message) as Thenable<boolean>).then(undefined, () => {});
   } catch {
@@ -774,8 +834,24 @@ function safePostMessage(webview: vscode.Webview, message: unknown): void {
  */
 let _activeSessionManager: SessionManager | null = null;
 
+/** Singleton Cursor hook lifecycle owner — detached and disposed before PTYs. */
+let _activeCursorHookController: CursorHookController | null = null;
+
 export async function deactivate(): Promise<void> {
   const sm = _activeSessionManager;
+  const cursorHookController = _activeCursorHookController;
+  _activeCursorHookController = null;
+
+  // Controller disposal detaches the contributor before disabling and
+  // disposing the runtime, so SessionManager cannot retain stale authority.
+  if (cursorHookController) {
+    try {
+      cursorHookController.dispose();
+    } catch (err) {
+      console.error("[AnyWhere Terminal] CursorHookController.dispose failed during deactivate:", err);
+    }
+  }
+
   if (!sm) {
     return;
   }

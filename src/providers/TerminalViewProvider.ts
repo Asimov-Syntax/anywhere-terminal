@@ -6,6 +6,7 @@ import type { SessionManager } from "../session/SessionManager";
 import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
 import type { ThemeChangedMessage, VaultContinueSessionMessage, WebViewToExtensionMessage } from "../types/messages";
 import { buildContinuationPrompt } from "../vault/ContinuationPrompt";
+import type { VaultRefreshHint } from "../vault/cacheTypes";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import { buildResumeCommandString, type ContinuationTarget, type LaunchMode } from "../vault/LaunchBuilder";
 import { resolveAssistantMessageRef } from "../vault/messageText";
@@ -229,8 +230,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     // coordinator owns its store/follow subscriptions and timers.
     this._vaultWatchClient?.dispose();
     vaultWatchClient = this.vaultWatchCoordinator?.attach({
-      refreshList: () => {
-        void this.autoRefreshVaultList(webviewView.webview);
+      refreshList: (hint) => {
+        void this.autoRefreshVaultList(webviewView.webview, hint);
       },
       postFollowDetail: (entryId, detail) => {
         this.safePostMessage(webviewView.webview, {
@@ -667,13 +668,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
   /** Refresh the list from disk and push it, dropping the result if a newer
    *  request (manual open / rename) has taken ownership (`_vaultRefreshSeq`). */
-  private async autoRefreshVaultList(webview: vscode.Webview): Promise<void> {
+  private async autoRefreshVaultList(webview: vscode.Webview, hint?: VaultRefreshHint): Promise<void> {
     if (!this.vaultService) {
       return;
     }
     const token = ++this._vaultRefreshSeq;
     try {
-      const result = await this.vaultService.refresh();
+      const result = await this.vaultService.refresh(hint ? { hint } : undefined);
       if (token !== this._vaultRefreshSeq) {
         return;
       }
@@ -791,16 +792,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Resolve a vault entry from its id for a (rare) context-menu action. Uses the
-   * same list-and-find path as `VaultLauncher.resolve` so the host derives every
-   * path/cwd/command itself — the webview never sends a path to act on (D9).
+   * Resolve one vault entry from current source metadata for a context-menu action.
+   * The webview supplies only an id; paths and capabilities are revalidated host-side.
    */
   private async resolveVaultEntry(entryId: string): Promise<VaultSessionEntry | undefined> {
-    if (!this.vaultService) {
-      return undefined;
-    }
-    const { entries } = await this.vaultService.list();
-    return entries.find((e) => e.id === entryId);
+    return (await this.vaultService?.getEntry(entryId)) ?? undefined;
   }
 
   /** Reveal the session's transcript file in the OS file manager. */
@@ -845,7 +841,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     try {
-      await vscode.env.clipboard.writeText(buildResumeCommandString(entry));
+      await vscode.env.clipboard.writeText(await buildResumeCommandString(entry));
     } catch (err) {
       void this.safeSendWithRetry(webview, {
         type: "error",

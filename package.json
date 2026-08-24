@@ -98,6 +98,12 @@
           "default": true,
           "description": "Restore terminal scrollback and metadata across VS Code restarts. NOTE: the persisted scrollback is plaintext on disk — anything echoed in the terminal (passwords typed at prompts, .env file contents, API tokens, kubeconfigs) lands in <storageUri>/snapshots until the per-snapshot caps evict it. Use Cmd+K (clear) before sensitive output, or set this to false to opt out entirely."
         },
+        "anywhereTerminal.cursorAgent.hooks.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Enable observational Cursor Agent hooks on this machine. Hooks are fail-open and only report terminal activity."
+        },
         "anywhereTerminal.fileSearch.maxResults": {
           "type": "number",
           "default": 50,

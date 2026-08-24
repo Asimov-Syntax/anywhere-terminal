@@ -501,6 +501,31 @@ describe("VaultPanel context menu (redesign 5_1)", () => {
     expect(labels).not.toContain("Copy File Path");
   });
 
+  it("hides Cursor resume actions while retaining only applicable local actions", () => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "cursor:a", agent: "cursor", canResume: false })]));
+    const labels = Array.from(openMenu(host)?.querySelectorAll("button") ?? []).map((b) => b.textContent);
+    expect(labels).toEqual(["Rename", "Open Working Directory"]);
+    expect(labels).not.toContain("Resume in New Tab");
+    expect(labels).not.toContain("Copy Resume Command");
+    Array.from(host.querySelectorAll<HTMLButtonElement>(".vault-context-menu button"))
+      .find((b) => b.textContent === "Open Working Directory")
+      ?.click();
+    expect(posted).toContainEqual({ type: "vaultOpenWorkingDir", entryId: "cursor:a" });
+    expect(posted.some((m) => m.type === "vaultResume" || m.type === "vaultCopyResumeCommand")).toBe(false);
+
+    openMenu(host);
+    panel.render(
+      result([entry({ id: "cursor:a", agent: "cursor", canResume: false, sessionPath: "/store/cursor.json" })]),
+    );
+    const row = host.querySelector<HTMLElement>(".vault-row");
+    row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    const fileLabels = Array.from(host.querySelectorAll(".vault-context-menu button")).map((b) => b.textContent);
+    expect(fileLabels).toEqual(["Rename", "Open", "Reveal in Finder", "Copy File Path", "Open Working Directory"]);
+  });
+
   it("each item posts the matching entryId-only message", () => {
     const posted: { type: string; entryId?: string | null }[] = [];
     const host = createHost();
@@ -1428,6 +1453,155 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
       detail: detail({ entryId: "codex:a", firstPrompt: "p", partial: true, limitedReason: "Index only." }),
     });
     expect(host.querySelector(".vault-preview-notice")?.textContent).toBe("Index only.");
+  });
+
+  it("opens a compatible Cursor chat preview while Resume remains explicit", () => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: (message) => posted.push(message),
+      getInitialCollapsed: () => false,
+    });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli", canResume: true })]));
+    expect(host.querySelector(".vault-row-source")?.textContent).toBe("CLI");
+
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    expect(host.querySelector(".vault-preview.is-open")).not.toBeNull();
+    expect(host.querySelector(".vault-preview-meta")?.textContent).toContain("SourceCursor CLI");
+    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: "cursor:chat-1" });
+    expect(posted).not.toContainEqual({ type: "vaultResume", entryId: "cursor:chat-1" });
+
+    host.querySelector<HTMLButtonElement>(".vault-action--resume")?.click();
+    expect(posted).toContainEqual({ type: "vaultResume", entryId: "cursor:chat-1" });
+  });
+
+  it.each(["Enter", " "])("opens a Cursor preview with the %s key", (key) => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null }> = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: (message) => posted.push(message),
+      getInitialCollapsed: () => false,
+    });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli", canResume: true })]));
+
+    host.querySelector<HTMLElement>(".vault-row")?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+
+    expect(host.querySelector(".vault-preview.is-open")).not.toBeNull();
+    expect(host.querySelector(".vault-preview-meta")?.textContent).toContain("SourceCursor CLI");
+    expect(posted).toContainEqual({ type: "requestVaultSessionDetail", entryId: "cursor:chat-1" });
+    expect(posted).not.toContainEqual({ type: "vaultResume", entryId: "cursor:chat-1" });
+  });
+
+  it("renders decoded Cursor detail as a normal timeline", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "cursor:chat-1", agent: "cursor", source: "cli", canResume: true })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        contentKind: "timeline",
+        timeline: [{ kind: "message", role: "assistant", text: "decoded" }],
+      }),
+    });
+
+    expect(host.querySelector(".vault-preview-message-assistant")?.textContent).toContain("decoded");
+    expect(host.querySelector(".vault-preview-continue")).toBeNull();
+  });
+
+  it("renders a non-resumable Cursor chat as a metadata-only preview with Continue", () => {
+    const host = createHost();
+    const posted: Array<{ type: string; entryId?: string | null; name?: string }> = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(
+      result([entry({ id: "cursor:chat-1", agent: "cursor", source: "ide", canResume: false, title: "Cursor chat" })]),
+    );
+
+    expect(host.querySelector(".vault-row-dot")?.classList.contains("vault-row-dot--cursor")).toBe(true);
+    expect(host.querySelector(".vault-row-source")?.textContent).toBe("IDE");
+    expect(host.querySelector(".vault-action--resume")).toBeNull();
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "cursor:chat-1",
+      detail: detail({
+        entryId: "cursor:chat-1",
+        partial: true,
+        limitedReason: "Cursor transcript data is unavailable; showing indexed metadata only.",
+      }),
+    });
+
+    expect(host.querySelector(".vault-preview")?.classList.contains("vault-preview--cursor")).toBe(true);
+    expect(host.querySelector(".vault-preview-meta")?.textContent).toContain("SourceCursor IDE");
+    expect(host.querySelector(".vault-preview-resume")).toBeNull();
+    expect(host.querySelector(".vault-preview-notice")?.textContent).toContain("indexed metadata only");
+    expect(host.querySelector<HTMLButtonElement>(".vault-preview-continue")?.textContent).toBe(
+      "Continue in New Session",
+    );
+    expect(host.querySelector(".vault-msg-actions")).toBeNull();
+    expect(host.querySelector(".vault-preview-loadmore")).toBeNull();
+
+    host
+      .querySelector<HTMLElement>(".vault-preview-title")
+      ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const rename = host.querySelector<HTMLInputElement>(".vault-preview-header .vault-row-rename-input");
+    expect(rename).not.toBeNull();
+    if (rename) {
+      rename.value = "Local Cursor name";
+    }
+    rename?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(posted).toContainEqual({ type: "vaultRenameSession", entryId: "cursor:chat-1", name: "Local Cursor name" });
+
+    host.querySelector<HTMLButtonElement>(".vault-preview-continue")?.click();
+    expect(document.querySelector(".vault-continue")).not.toBeNull();
+  });
+
+  it.each([
+    {
+      label: "IDE",
+      value: entry({
+        id: "cursor:ide:d29ya3NwYWNlLTE:composer-1",
+        agent: "cursor",
+        sessionId: "ide:d29ya3NwYWNlLTE:composer-1",
+        source: "ide",
+        canResume: true,
+      }),
+    },
+    {
+      label: "Project",
+      value: entry({
+        id: "cursor:project:cHJvamVjdC0x:chat-1",
+        agent: "cursor",
+        sessionId: "project:cHJvamVjdC0x:chat-1",
+        canResume: true,
+      }),
+    },
+  ])("hides Resume and command-copy for $label Cursor entries despite forged capability", ({ label, value }) => {
+    const host = createHost();
+    const posted: Array<{ type: string }> = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: (message) => posted.push(message),
+      getInitialCollapsed: () => false,
+    });
+    panel.render(result([value]));
+
+    expect(host.querySelector(".vault-row-source")?.textContent).toBe(label);
+    expect(host.querySelector(".vault-action--resume")).toBeNull();
+    const row = host.querySelector<HTMLElement>(".vault-row");
+    row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    const labels = Array.from(host.querySelectorAll(".vault-context-menu button")).map((button) => button.textContent);
+    expect(labels).not.toContain("Resume in New Tab");
+    expect(labels).not.toContain("Copy Resume Command");
+    expect(posted.some((message) => message.type === "vaultResume" || message.type === "vaultCopyResumeCommand")).toBe(
+      false,
+    );
   });
 
   it("ignores a stale response for a row that is no longer the active preview", () => {

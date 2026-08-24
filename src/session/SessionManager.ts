@@ -13,6 +13,7 @@
 //      asimov/changes/restore-terminal-sessions/design.md (D1-D13).
 
 import * as crypto from "node:crypto";
+import type { SessionEnvironmentContributor } from "../cursor/CursorHookRuntime";
 import * as PtyManager from "../pty/PtyManager";
 import { PtySession } from "../pty/PtySession";
 import { queryProcessCwd } from "../pty/processCwd";
@@ -87,6 +88,17 @@ export interface SessionManagerOptions {
    * See: asimov/changes/export-terminal-session/design.md D3.
    */
   shellIntegrationContext?: InjectionContext;
+  /**
+   * Optional per-session environment contributor for Cursor-hook renewable
+   * authority (design D6, integrate-cursor-agent 2_3). Every live PTY
+   * incarnation (initial spawn + fallback-shell respawn) merges its fresh
+   * `create(sessionId)` env into the spawn env; authority is released on
+   * failed spawn, natural exit, destroy, and manager disposal. May also be
+   * attached/detached post-construction via `setCursorHookContributor` —
+   * `extension.ts` wires it that way because the hook runtime binds its
+   * loopback listener asynchronously, after SessionManager is constructed.
+   */
+  cursorHookContributor?: SessionEnvironmentContributor;
 }
 
 // ─── SessionManager ─────────────────────────────────────────────────
@@ -153,6 +165,13 @@ export class SessionManager {
   private storage: SessionStorage | null;
 
   /**
+   * Optional per-session Cursor-hook environment contributor (design D6).
+   * Not `readonly` — `setCursorHookContributor` may attach/detach it after
+   * construction (extension.ts wiring, and hook-disable teardown).
+   */
+  private cursorHooks: SessionEnvironmentContributor | undefined;
+
+  /**
    * Hook fired internally when a session's shell exits — schedules an
    * immediate snapshot so the exit state survives a sudden window close.
    * Public so tests can observe / override the hook.
@@ -162,6 +181,7 @@ export class SessionManager {
   constructor(customNameStorage: CustomNameStorage = noopCustomNameStorage, options: SessionManagerOptions = {}) {
     this.customNames = new CustomNameRegistry(customNameStorage);
     this.storage = options.storage ?? null;
+    this.cursorHooks = options.cursorHookContributor;
     this.defaultGracePeriodMs = options.gracePeriodMs ?? DEFAULT_GRACE_DESTROY_MS;
     this.shellIntegration = new ShellIntegrationCoordinator({
       ctx: options.shellIntegrationContext,
@@ -217,6 +237,30 @@ export class SessionManager {
     if (!enabled) {
       this.editorPanels.clear();
     }
+  }
+
+  /**
+   * Attach (or detach with `undefined`) the Cursor-hook session-environment
+   * contributor. Called by `extension.ts` once the hook runtime finishes
+   * binding its loopback listener, and again on every enable/disable toggle
+   * — every session created afterward gets fresh renewable hook authority
+   * (design D6). Same-reference calls are a no-op. Swapping to a different
+   * contributor (including `undefined`) first releases EVERY currently
+   * tracked session through the OLD contributor, so a token minted while
+   * attached can never "go live" later just by re-attaching without a fresh
+   * PTY (hook-session-isolation).
+   */
+  setCursorHookContributor(contributor: SessionEnvironmentContributor | undefined): void {
+    if (contributor === this.cursorHooks) {
+      return;
+    }
+    const previous = this.cursorHooks;
+    if (previous) {
+      for (const sessionId of this.sessions.keys()) {
+        this.releaseCursorHookAuthority(sessionId, previous);
+      }
+    }
+    this.cursorHooks = contributor;
   }
 
   // ─── Snapshot pass-through (test + provider compatibility) ──────
@@ -427,7 +471,17 @@ export class SessionManager {
       if (options?.env) {
         spawnEnv = { ...spawnEnv, ...options.env };
       }
-      pty.spawn(nodePty, resolvedShell, [...spawnArgs], { cwd, env: spawnEnv });
+      // Every live PTY incarnation gets fresh renewable Cursor-hook authority
+      // (design D6) — merged last so it can never be shadowed by an override.
+      if (this.cursorHooks) {
+        spawnEnv = { ...spawnEnv, ...this.cursorHooks.create(id) };
+      }
+      try {
+        pty.spawn(nodePty, resolvedShell, [...spawnArgs], { cwd, env: spawnEnv });
+      } catch (err) {
+        this.releaseCursorHookAuthority(id);
+        throw err;
+      }
       // Wire the unified shell-integration sink — receives every parsed event
       // from the passive OSC 7 / OSC 633 parser (cwd + A/B/C/D/E markers).
       // PtySession guarantees byte-identical forwarding to onData regardless.
@@ -611,6 +665,9 @@ export class SessionManager {
     // Reclaim the exited agent's shell-integration cleanup before re-registering
     // the same id; injectAtSpawn would otherwise drop its cleanup callback unrun.
     this.shellIntegration.cleanupSession(id);
+    // Fallback replacement invalidates the old hook token BEFORE a fresh one
+    // is issued for the replacement PTY (design D6 / hook-session-isolation).
+    this.releaseCursorHookAuthority(id);
     const pty = new PtySession(id);
     let spawnArgs: readonly string[] = args;
     let spawnEnv: Record<string, string> = baseEnv;
@@ -620,6 +677,9 @@ export class SessionManager {
       spawnEnv = injection.env;
       pty.setShellIntegrationNonce(injection.nonce);
     }
+    if (this.cursorHooks) {
+      spawnEnv = { ...spawnEnv, ...this.cursorHooks.create(id) };
+    }
     // Do all fallible spawn work BEFORE mutating `session`, so a throw leaves the
     // old PTY/buffer intact for the caller's fall-through exit path. Tear down the
     // half-spawned shell on failure so it isn't orphaned.
@@ -628,6 +688,7 @@ export class SessionManager {
       pty.setShellIntegrationSink(this.shellIntegration.makeSink(id));
       pty.resize(session.cols, session.rows);
     } catch (err) {
+      this.releaseCursorHookAuthority(id);
       pty.dispose();
       throw err;
     }
@@ -1187,6 +1248,7 @@ export class SessionManager {
       } catch {
         /* best-effort */
       }
+      this.releaseCursorHookAuthority(id);
       for (const d of session.disposables) {
         try {
           d.dispose();
@@ -1273,6 +1335,10 @@ export class SessionManager {
         /* best-effort */
       }
     }
+
+    // Release Cursor-hook authority for this session — natural exit and
+    // destroy both funnel through here (design D6; hook-session-isolation).
+    this.releaseCursorHookAuthority(sessionId);
 
     // Reject any in-flight scrollback dumps for this session — the webview
     // is about to disappear and the response will never arrive (D4).
@@ -1364,6 +1430,24 @@ export class SessionManager {
   }
 
   // ─── Private: Safe Message Posting ──────────────────────────────
+
+  /** Release hook authority and immediately revoke its webview identity. */
+  private releaseCursorHookAuthority(sessionId: string, contributor = this.cursorHooks): void {
+    try {
+      contributor?.release(sessionId);
+    } catch {
+      /* best-effort */
+    }
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      this.safePostMessage(session.webview, {
+        type: "agentActivityStatus",
+        tabId: sessionId,
+        agent: null,
+        state: null,
+      });
+    }
+  }
 
   /** Safely post a message to a webview, handling both sync throws and async rejections. */
   private safePostMessage(webview: MessageSender, message: unknown): void {

@@ -51,6 +51,15 @@ export interface SqliteResult {
   error?: string;
 }
 
+export interface SqliteSnapshot {
+  /** Run one static query against the same disposable WAL-aware snapshot. */
+  query(sql: string): Promise<SqliteResult>;
+}
+
+export type SqliteSnapshotResult<T> =
+  | { status: "ok"; value: T }
+  | { status: Exclude<SqliteStatus, "ok">; error?: string };
+
 /** Injectable IO surface — tests stub this to avoid real fs / child_process. */
 export interface SqliteDeps {
   exec(file: string, args: string[], options: { timeout: number }): Promise<{ stdout: string; stderr: string }>;
@@ -268,6 +277,52 @@ export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps =
   }
 
   return readSqliteViaCopy(deps, dbPath, sql, useCli);
+}
+
+/**
+ * Copy a live database and its WAL/SHM sidecars once, then run bounded static
+ * queries against that one disposable snapshot. The callback cannot access the
+ * live path and the snapshot is deleted before this function returns.
+ */
+export async function withSqliteSnapshot<T>(
+  dbPath: string,
+  callback: (snapshot: SqliteSnapshot) => Promise<T>,
+  deps: SqliteDeps = defaultDeps,
+): Promise<SqliteSnapshotResult<T>> {
+  const useNode = await probeNodeSqlite(deps);
+  const useCli = useNode ? false : await probeSqlite(deps);
+  if (!useNode && !useCli) return { status: "no-sqlite3" };
+
+  let exists = false;
+  try {
+    exists = await deps.exists(dbPath);
+  } catch {
+    exists = false;
+  }
+  if (!exists) return { status: "no-db" };
+
+  let tempDir: string | undefined;
+  try {
+    tempDir = await deps.mkdtemp();
+    const dbCopy = path.join(tempDir, "db.sqlite");
+    await deps.copy(dbPath, dbCopy);
+    for (const suffix of ["-wal", "-shm"]) {
+      const sidecar = dbPath + suffix;
+      try {
+        if (await deps.exists(sidecar)) await deps.copy(sidecar, dbCopy + suffix);
+      } catch {
+        // Query the base copy when a sidecar disappears during the snapshot.
+      }
+    }
+    const snapshot: SqliteSnapshot = {
+      query: (sql) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
+    };
+    return { status: "ok", value: await callback(snapshot) };
+  } catch (err) {
+    return { status: "query-error", error: errorMessage(err) };
+  } finally {
+    if (tempDir) await deps.rmrf(tempDir).catch(() => {});
+  }
 }
 
 /**

@@ -7,6 +7,8 @@
 // inert argument and cannot inject a command (D9). The CLI re-reads its own
 // session files; AT never parses the resumed transcript.
 
+import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
+import { posixShellQuote } from "../utils/posixShellQuote";
 import { getAgentDefinition } from "./registry";
 import type { AgentVaultDefinition, CommandTemplate, VaultSessionEntry } from "./types";
 
@@ -27,10 +29,12 @@ export class VaultLaunchError extends Error {
       | "unknown-agent"
       | "no-fork-command"
       | "fork-unsupported"
+      | "resume-unsupported"
       | "unknown-entry"
       | "no-continue-command"
       | "no-prompt"
-      | "unknown-permission-choice",
+      | "unknown-permission-choice"
+      | "executable-not-found",
   ) {
     super(message);
     this.name = "VaultLaunchError";
@@ -45,11 +49,16 @@ function substituteTokens(token: string, entry: VaultSessionEntry, executable: s
     .replace(/\{\{prompt\}\}/g, prompt);
 }
 
-function expandArgs(template: CommandTemplate, entry: VaultSessionEntry, prompt = ""): string[] {
+function expandArgs(
+  template: CommandTemplate,
+  entry: VaultSessionEntry,
+  executable = template.executable,
+  prompt = "",
+): string[] {
   const args: string[] = [];
   for (const part of template.args) {
     if (typeof part === "string") {
-      args.push(substituteTokens(part, entry, template.executable, prompt));
+      args.push(substituteTokens(part, entry, executable, prompt));
       continue;
     }
     // Flag fragment: emit [flag, value] only when the captured value is present.
@@ -63,20 +72,50 @@ function expandArgs(template: CommandTemplate, entry: VaultSessionEntry, prompt 
   return args;
 }
 
+function assertLaunchCapability(entry: VaultSessionEntry, mode: LaunchMode): void {
+  if (mode === "continue") {
+    return;
+  }
+  if (mode === "fork") {
+    if (!entry.canFork) {
+      throw new VaultLaunchError(`Fork is not supported for ${entry.id}`, "fork-unsupported");
+    }
+    return;
+  }
+  if (entry.agent === "cursor") {
+    const validCliId = /^[A-Za-z0-9._-]{1,200}$/.test(entry.sessionId) && !entry.sessionId.includes("..");
+    if (entry.source !== "cli" || entry.canResume !== true || !validCliId || entry.id !== `cursor:${entry.sessionId}`) {
+      throw new VaultLaunchError(`Resume is not supported for ${entry.id}`, "resume-unsupported");
+    }
+    return;
+  }
+  if (entry.canResume === false) {
+    throw new VaultLaunchError(`Resume is not supported for ${entry.id}`, "resume-unsupported");
+  }
+}
+
+function resolveTemplateExecutable(template: CommandTemplate, executable?: string): string {
+  if (!template.executable.includes("{{executable}}")) {
+    return template.executable;
+  }
+  if (!executable) {
+    throw new VaultLaunchError("No executable found for launch", "executable-not-found");
+  }
+  return template.executable.replace(/\{\{executable\}\}/g, executable);
+}
+
 /**
  * Quote one argv token for a readable, paste-safe POSIX command string. Simple
- * tokens (ids, flags, `key=value`) pass through unquoted; anything else is
- * single-quote wrapped (which neutralizes metacharacters). The result is COPIED
- * for the user to inspect/run — never executed by us.
+ * tokens (ids, flags, `key=value`) pass through unquoted; anything else falls
+ * back to the canonical `posixShellQuote` (which neutralizes metacharacters,
+ * including apostrophes). The result is COPIED for the user to inspect/run —
+ * never executed by us.
  */
 function shellQuoteArg(arg: string): string {
-  if (arg === "") {
-    return "''";
-  }
-  if (/^[A-Za-z0-9_./:=@-]+$/.test(arg)) {
+  if (arg !== "" && /^[A-Za-z0-9_./:=@-]+$/.test(arg)) {
     return arg;
   }
-  return `'${arg.replace(/'/g, "'\\''")}'`;
+  return posixShellQuote(arg);
 }
 
 /**
@@ -84,14 +123,17 @@ function shellQuoteArg(arg: string): string {
  * shell command string for "Copy Resume Command" (redesign-vault-panel-ui D9).
  * Reuses the same flag substitution as `build`.
  */
-export function buildResumeCommandString(entry: VaultSessionEntry): string {
+export async function buildResumeCommandString(entry: VaultSessionEntry): Promise<string> {
   const def = getAgentDefinition(entry.agent);
   if (!def) {
     throw new VaultLaunchError(`Unknown agent: ${entry.agent}`, "unknown-agent");
   }
+  assertLaunchCapability(entry, "resume");
   const template = def.resumeCommand;
-  const args = expandArgs(template, entry);
-  return [template.executable, ...args].map(shellQuoteArg).join(" ");
+  const resolvedExecutable = await resolveLaunchExecutable(entry, "resume");
+  const executable = resolveTemplateExecutable(template, resolvedExecutable);
+  const args = expandArgs(template, entry, executable);
+  return [executable, ...args].map(shellQuoteArg).join(" ");
 }
 
 function buildClaudeEnv(
@@ -142,28 +184,53 @@ function permissionArgs(def: AgentVaultDefinition, entry: VaultSessionEntry, cho
   return (choices.find((c) => c.id === captured) ?? choices[0]).args;
 }
 
+export async function resolveLaunchExecutable(
+  entry: VaultSessionEntry,
+  mode: LaunchMode,
+  target?: ContinuationTarget,
+): Promise<string | undefined> {
+  assertLaunchCapability(entry, mode);
+  const agent = mode === "continue" ? (target?.agent ?? entry.agent) : entry.agent;
+  const def = getAgentDefinition(agent);
+  if (!def) {
+    return undefined;
+  }
+  const template = mode === "continue" ? def.continueCommand : mode === "fork" ? def.forkCommand : def.resumeCommand;
+  if (!template?.executable.includes("{{executable}}")) {
+    return undefined;
+  }
+  const executable = await resolveAgentExecutable(def);
+  if (!executable) {
+    throw new VaultLaunchError(`No executable found for ${def.displayName}`, "executable-not-found");
+  }
+  return executable;
+}
+
 function buildContinue(
   entry: VaultSessionEntry,
   hostEnv: Record<string, string | undefined>,
   prompt: string | undefined,
   target: ContinuationTarget | undefined,
+  resolvedExecutable: string | undefined,
 ): LaunchSpec {
   const agent = target?.agent ?? entry.agent;
   const def = getAgentDefinition(agent);
   if (!def?.continueCommand) {
     throw new VaultLaunchError(`Unknown agent: ${agent}`, "unknown-agent");
   }
+  const continueCommand = def.continueCommand;
   if (!prompt?.trim()) {
     throw new VaultLaunchError("Continue needs a prompt", "no-prompt");
   }
   // Captured flags describe the SOURCE agent's run — a claude model id means
   // nothing to codex — so continuing into a different agent starts from none.
   const source: VaultSessionEntry = agent === entry.agent ? entry : { ...entry, flags: {} };
+  const executable = resolveTemplateExecutable(continueCommand, resolvedExecutable);
   return {
-    file: def.continueCommand.executable,
+    file: executable,
     args: [
       ...permissionArgs(def, source, target?.permissionChoiceId),
-      ...expandArgs(def.continueCommand, source, prompt),
+      ...expandArgs(continueCommand, source, executable, prompt),
     ],
     cwd: entry.cwd,
     env: def.id === "claude" ? buildClaudeEnv(def, source, hostEnv) : {},
@@ -182,15 +249,17 @@ export function build(
   hostEnv: Record<string, string | undefined>,
   prompt?: string,
   target?: ContinuationTarget,
+  resolvedExecutable?: string,
 ): LaunchSpec {
   const def = getAgentDefinition(entry.agent);
   if (!def) {
     throw new VaultLaunchError(`Unknown agent: ${entry.agent}`, "unknown-agent");
   }
+  assertLaunchCapability(entry, mode);
   // `continue` is the one mode whose values come from the CALL, not the entry: the
   // host composed the prompt (D7) and the reader chose the agent and posture (D11).
   if (mode === "continue") {
-    return buildContinue(entry, hostEnv, prompt, target);
+    return buildContinue(entry, hostEnv, prompt, target, resolvedExecutable);
   }
   const template = mode === "fork" ? def.forkCommand : def.resumeCommand;
   if (!template) {
@@ -198,10 +267,10 @@ export function build(
   }
 
   const env = def.id === "claude" ? buildClaudeEnv(def, entry, hostEnv) : {};
-
+  const executable = resolveTemplateExecutable(template, resolvedExecutable);
   return {
-    file: template.executable,
-    args: expandArgs(template, entry),
+    file: executable,
+    args: expandArgs(template, entry, executable),
     cwd: entry.cwd,
     env,
   };

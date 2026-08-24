@@ -193,7 +193,12 @@ export class VaultPanel {
     this.rowCallbacks = {
       onActivate: (entry) => this.preview.open(entry),
       onContextMenu: (entry, ev, row) => this.contextMenu.open(entry, ev, row),
-      onResume: (entryId) => this.postMessage({ type: "vaultResume", entryId }),
+      onResume: (entryId) => {
+        if (this.entries.find((entry) => entry.id === entryId)?.canResume === false) {
+          return;
+        }
+        this.postMessage({ type: "vaultResume", entryId });
+      },
     };
     this.preview = new PreviewController({
       postMessage: this.postMessage,

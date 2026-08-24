@@ -162,6 +162,10 @@ export function getTerminalHtml(
       opacity: 1;
       animation: tab-status-pulse 1.2s ease-in-out infinite;
     }
+    .tab-status-waiting {
+      background: var(--vscode-editorWarning-foreground, #cca700);
+      opacity: 1;
+    }
     .tab-status-exited {
       background: var(--vscode-testing-iconFailed, #f14c4c);
       opacity: 0.8;

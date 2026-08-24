@@ -6,6 +6,7 @@
 // See: docs/design/message-protocol.md
 
 import type {
+  AgentActivityStatusMessage,
   ClipboardImagePreviewMessage,
   CloseSplitPaneByIdMessage,
   ConfigUpdateMessage,
@@ -108,6 +109,9 @@ export interface MessageHandlers {
   // ── Pasted-image preview + host-read fallback (macOS Ctrl+V / Windows Ctrl+V) ──
   onClipboardImagePreview?(msg: ClipboardImagePreviewMessage): void;
   onOsClipboardPasteMiss?(msg: OsClipboardPasteMissMessage): void;
+  // ── Cursor Agent semantic status (integrate-cursor-agent) ──
+  // Optional: a webview without a mounted status projection safely ignores it.
+  onAgentActivityStatus?(msg: AgentActivityStatusMessage): void;
 }
 
 // ─── Factory ────────────────────────────────────────────────────────
@@ -244,6 +248,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "osClipboardPasteMiss":
         handlers.onOsClipboardPasteMiss?.(msg);
+        break;
+      case "agentActivityStatus":
+        handlers.onAgentActivityStatus?.(msg);
         break;
       case "init":
         // init is handled directly by main.ts — not routed

@@ -11,6 +11,7 @@ import type { VaultSessionEntry } from "../../vault/types";
 import { collapseSeparators } from "./format";
 import { ICON_COPY, ICON_FOLDER, ICON_OPEN, ICON_RENAME, ICON_RESUME, ICON_REVEAL, ICON_TERMINAL } from "./icons";
 import type { VaultPanelPostMessage } from "./VaultPanel";
+import { canResumeVaultEntry } from "./vaultListView";
 
 export class VaultContextMenu {
   private readonly host: HTMLElement;
@@ -49,13 +50,22 @@ export class VaultContextMenu {
     menu.setAttribute("role", "menu");
 
     const fileBacked = typeof entry.sessionPath === "string" && entry.sessionPath.length > 0;
+    const canResume = canResumeVaultEntry(entry);
     type MenuItem = { label: string; icon: string; fileOnly?: boolean; act: () => void };
     const items: (MenuItem | "sep")[] = [
-      {
-        label: "Resume in New Tab",
-        icon: ICON_RESUME,
-        act: () => this.postMessage({ type: "vaultResume", entryId: entry.id }),
-      },
+      ...(canResume
+        ? [
+            {
+              label: "Resume in New Tab",
+              icon: ICON_RESUME,
+              act: () => {
+                if (canResume) {
+                  this.postMessage({ type: "vaultResume", entryId: entry.id });
+                }
+              },
+            },
+          ]
+        : []),
       {
         label: "Rename",
         icon: ICON_RENAME,
@@ -81,11 +91,19 @@ export class VaultContextMenu {
         fileOnly: true,
         act: () => this.postMessage({ type: "vaultCopyFilePath", entryId: entry.id }),
       },
-      {
-        label: "Copy Resume Command",
-        icon: ICON_TERMINAL,
-        act: () => this.postMessage({ type: "vaultCopyResumeCommand", entryId: entry.id }),
-      },
+      ...(canResume
+        ? [
+            {
+              label: "Copy Resume Command",
+              icon: ICON_TERMINAL,
+              act: () => {
+                if (canResume) {
+                  this.postMessage({ type: "vaultCopyResumeCommand", entryId: entry.id });
+                }
+              },
+            },
+          ]
+        : []),
       {
         label: "Open Working Directory",
         icon: ICON_FOLDER,

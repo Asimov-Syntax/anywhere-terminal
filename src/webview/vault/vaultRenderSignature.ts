@@ -29,6 +29,8 @@ export function entriesSignature(entries: readonly VaultSessionEntry[]): string 
         e.cwd,
         String(e.modified),
         e.canFork ? "1" : "0",
+        // Explicit false hides Resume; undefined preserves legacy resume behavior.
+        e.canResume === false ? "0" : "1",
         e.sessionPath ?? "",
         JSON.stringify(e.flags ?? {}),
       ].join(FIELD_SEP),

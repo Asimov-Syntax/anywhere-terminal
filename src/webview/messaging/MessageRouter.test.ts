@@ -133,4 +133,30 @@ describe("createMessageRouter", () => {
       expect(fn).not.toHaveBeenCalled();
     }
   });
+
+  it("routes agentActivityStatus to the optional handler when present", () => {
+    const onAgentActivityStatus = vi.fn();
+    const handlers: MessageHandlers = { ...createMockHandlers(), onAgentActivityStatus };
+    const dispatch = createMessageRouter(handlers);
+
+    const msg: ExtensionToWebViewMessage = {
+      type: "agentActivityStatus",
+      tabId: "t1",
+      agent: "cursor",
+      state: "working",
+    };
+    dispatch(msg);
+
+    expect(onAgentActivityStatus).toHaveBeenCalledTimes(1);
+    expect(onAgentActivityStatus).toHaveBeenCalledWith(msg);
+  });
+
+  it("silently ignores agentActivityStatus when no handler is mounted", () => {
+    const handlers = createMockHandlers();
+    const dispatch = createMessageRouter(handlers);
+
+    expect(() => {
+      dispatch({ type: "agentActivityStatus", tabId: "t1", agent: null, state: null });
+    }).not.toThrow();
+  });
 });

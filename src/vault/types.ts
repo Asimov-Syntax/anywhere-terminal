@@ -1,7 +1,7 @@
 // src/vault/types.ts — Shared vault types (agent registry + session index).
 // See: asimov/changes/add-ai-coding-vault/design.md Interfaces, D1, D4.
 
-export type SessionStoreFormat = "jsonl" | "sqlite";
+export type SessionStoreFormat = "jsonl" | "sqlite" | "metadata-json";
 
 /**
  * The vault's agent ids, in stable list order. SINGLE source of truth: the
@@ -24,7 +24,7 @@ export type SessionStoreFormat = "jsonl" | "sqlite";
  *      signal), add its id to `CTRL_V_AGENTS` in shared/imagePasteTrigger.ts —
  *      also NOT compile-enforced; omitting it silently sends the wrong trigger.
  */
-export const VAULT_AGENT_IDS = ["claude", "codex", "opencode"] as const;
+export const VAULT_AGENT_IDS = ["claude", "codex", "opencode", "cursor"] as const;
 export type VaultAgentId = (typeof VAULT_AGENT_IDS)[number];
 
 /**
@@ -51,10 +51,14 @@ export function parseEntryId(entryId: string): { agent: string; sessionId: strin
 }
 
 export interface AgentDetectRule {
-  /** Executable basename used to detect / launch the agent. */
+  /** Preferred executable basename used to detect / launch the agent. */
   executable: string;
+  /** Ordered fallback executable basenames. */
+  aliases?: string[];
   /** Optional argv needles that must all be present for a process to match. */
   argvContains?: string[];
+  /** Help-output needles required to accept an executable with collision risk. */
+  requiredHelpTokens?: string[];
 }
 
 export interface SessionStoreDescriptor {
@@ -168,6 +172,10 @@ export interface VaultSessionEntry {
   flags: VaultSessionFlags;
   /** Resolved against `forkMinVersion` at list time. */
   canFork: boolean;
+  /** False only when the reader has not proven this entry's id works with selected Resume. */
+  canResume?: boolean;
+  /** Cursor storage domain; omitted for providers and legacy cached entries without source variants. */
+  source?: "cli" | "ide";
   /**
    * UI hint ONLY (redesign-vault-panel-ui D9): present iff the session is
    * backed by an on-disk file (Claude always; Codex when a rollout jsonl
@@ -361,6 +369,8 @@ export type VaultTimelineItem =
 export interface VaultSessionDetail {
   /** Echoes the requesting entry id (`<agent>:<sessionId>`). */
   entryId: string;
+  /** Explicitly distinguishes decoded timelines from limited metadata detail. */
+  contentKind?: "timeline" | "metadata-only";
   /** First real user prompt, truncated (≤ ~600 chars); independent of the tail. */
   firstPrompt?: string;
   /** Most-recent-last, capped to 12, calls + subagents only. */

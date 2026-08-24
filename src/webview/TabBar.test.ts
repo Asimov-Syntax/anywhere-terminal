@@ -307,10 +307,14 @@ describe("renderTabBar", () => {
   });
 
   it("renders running, idle, and exited status indicators", () => {
-    const terminals = new Map<string, { name: string; activityStatus?: "idle" | "running"; exited?: boolean }>([
+    const terminals = new Map<
+      string,
+      { name: string; activityStatus?: "idle" | "running" | "waiting"; exited?: boolean }
+    >([
       ["tab-1", { name: "Codex", activityStatus: "running" }],
-      ["tab-2", { name: "Grok", activityStatus: "idle" }],
-      ["tab-3", { name: "Shell", activityStatus: "running", exited: true }],
+      ["tab-2", { name: "Cursor", activityStatus: "waiting" }],
+      ["tab-3", { name: "Grok", activityStatus: "idle" }],
+      ["tab-4", { name: "Shell", activityStatus: "running", exited: true }],
     ]);
     const deps = createMockDeps({ terminals: terminals as never, activeTabId: "tab-1" });
 
@@ -319,10 +323,13 @@ describe("renderTabBar", () => {
     const tabs = deps.tabBarEl.querySelectorAll<HTMLElement>(".tab-item");
     expect(tabs[0].dataset.status).toBe("running");
     expect(tabs[0].querySelector(".tab-status-running")).toBeTruthy();
-    expect(tabs[1].dataset.status).toBe("idle");
-    expect(tabs[1].querySelector(".tab-status-idle")).toBeTruthy();
-    expect(tabs[2].dataset.status).toBe("exited");
-    expect(tabs[2].querySelector(".tab-status-exited")).toBeTruthy();
+    expect(tabs[1].dataset.status).toBe("waiting");
+    expect(tabs[1].querySelector(".tab-status-waiting")).toBeTruthy();
+    expect(tabs[1].getAttribute("aria-label")).toBe("Cursor: Cursor approval required");
+    expect(tabs[2].dataset.status).toBe("idle");
+    expect(tabs[2].querySelector(".tab-status-idle")).toBeTruthy();
+    expect(tabs[3].dataset.status).toBe("exited");
+    expect(tabs[3].querySelector(".tab-status-exited")).toBeTruthy();
   });
 });
 
@@ -573,5 +580,18 @@ describe("buildTabBarData", () => {
     });
 
     expect(buildTabBarData(idle).get("tab-1")?.activityStatus).toBe("idle");
+  });
+
+  it("shows action-required when any non-exited split pane is waiting", () => {
+    const store = source({
+      tabLayouts: new Map([["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-b"))]]),
+      tabActivePaneIds: new Map([["tab-1", "tab-1"]]),
+      terminals: new Map([
+        ["tab-1", { name: "Shell", exited: false, activityStatus: "running" }],
+        ["pane-b", { name: "Cursor", exited: false, activityStatus: "waiting" }],
+      ]) as never,
+    });
+
+    expect(buildTabBarData(store).get("tab-1")?.activityStatus).toBe("waiting");
   });
 });
