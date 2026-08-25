@@ -1,388 +1,250 @@
-# AnyWhere Terminal - System Design
+# AnyWhere Terminal — System Design
+
+A VS Code / Cursor extension that runs real terminals in every UI surface, and reads the
+on-disk transcripts of AI coding CLIs so past sessions can be browsed and resumed.
+
+This file is the index and the architecture-level view. Every subsystem has its own design
+doc under `design/`; nothing here restates what those own.
 
 ## 1. Architecture Overview
 
-AnyWhere Terminal follows a **3-layer architecture** with strict separation between the VS Code Extension Host (backend), the IPC Bridge (transport), and the WebView (frontend).
+Three layers with a hard boundary between them. The Extension Host owns processes, the
+filesystem, and all VS Code API access. The WebView owns rendering and input. Nothing
+crosses except serialized messages.
 
 ```mermaid
 graph TB
-    subgraph VSCode["VS Code Window"]
-        subgraph Surfaces["UI Surfaces"]
-            subgraph PS["Primary Sidebar"]
-                WV1["WebviewViewProvider<br/>(xterm.js)"]
-            end
-            subgraph EA["Editor Area"]
-                WV2["WebviewPanel<br/>(xterm.js)"]
-            end
-            subgraph SS["Secondary Sidebar"]
-                WV3["WebviewViewProvider<br/>(xterm.js)"]
-            end
-            subgraph BP["Bottom Panel"]
-                WV4["WebviewViewProvider<br/>(xterm.js)"]
-            end
-        end
-
-        IPC["postMessage IPC Bridge"]
-
-        subgraph EH["Extension Host (Node.js)"]
-            SM["SessionManager"]
-            subgraph Sessions["PTY Sessions"]
-                S1["Session 1<br/>(PTY)"]
-                S2["Session 2<br/>(PTY)"]
-                S3["Session 3<br/>(PTY)"]
-            end
-            subgraph Shells["OS Shell Processes"]
-                SH1["/bin/zsh"]
-                SH2["/bin/bash"]
-                SH3["/bin/zsh"]
-            end
-        end
+    subgraph WV["WebView — browser sandbox, one per surface"]
+        TERM["Terminals<br>xterm.js, tabs, split panes"]
+        TREE["File tree"]
+        VAULTUI["AI Vault panel<br>list + floating preview"]
+        LINKS["Link + hover-preview layer"]
     end
 
-    WV1 <--> IPC
-    WV2 <--> IPC
-    WV3 <--> IPC
-    WV4 <--> IPC
-    IPC <--> SM
-    SM --> S1
-    SM --> S2
-    SM --> S3
-    S1 --- SH1
-    S2 --- SH2
-    S3 --- SH3
+    IPC["postMessage bridge<br>discriminated unions, src/types/messages.ts"]
+
+    subgraph EH["Extension Host — Node.js"]
+        PROV["Providers<br>sidebar · panel · editor"]
+        SM["SessionManager<br>+ OutputBuffer, snapshots, storage"]
+        PTY["PtyManager / PtySession<br>+ shell integration"]
+        FTH["FileTreeHost<br>+ git decorations, watchers"]
+        VAULT["VaultService<br>+ per-agent readers"]
+        HOOKS["Cursor hook runtime"]
+    end
+
+    subgraph OS["Outside the extension"]
+        SHELLS["Shell processes"]
+        STORES["Agent transcript stores<br>~/.claude · ~/.codex · Cursor · OpenCode"]
+    end
+
+    TERM <--> IPC
+    TREE <--> IPC
+    VAULTUI <--> IPC
+    LINKS <--> IPC
+    IPC <--> PROV
+    PROV --> SM
+    PROV --> FTH
+    PROV --> VAULT
+    SM --> PTY
+    PTY --- SHELLS
+    PTY -.OSC 7 / 633.-> SM
+    VAULT --- STORES
+    HOOKS -.session state.-> SM
+    SHELLS -.write.-> STORES
 ```
 
----
+Two facts about this diagram carry most of the design weight:
+
+- **A surface is a WebView, and every surface runs the same bundle.** Sidebar, panel and
+  editor differ only by `data-terminal-location` on `<body>`. This is why a feature added to
+  the shared bundle appears in all three surfaces whether or not its host handler exists —
+  see the editor-surface gaps in `../audit/`.
+- **The vault reads files the extension does not write.** Agent CLIs own those stores; the
+  extension is a reader that must tolerate formats changing underneath it.
 
 ## 2. Component Design
 
-### 2.1 Component Diagram
+### 2.1 File Structure
 
-```mermaid
-graph TB
-    subgraph ExtHost["Extension Host (Node.js)"]
-        EXT["extension.ts<br/>(activate)"]
-        
-        EXT --> TVP["TerminalViewProvider<br/>- resolveView()<br/>- handleMessage()<br/>- sendMessage()"]
-        EXT --> TEP["TerminalEditorProvider<br/>- createPanel()<br/>- handleMessage()<br/>- sendMessage()"]
-        EXT --> SM["SessionManager<br/>- sessions: Map‹id, Session›<br/>- createSession(viewId, opts)<br/>- destroySession(id)<br/>- getSessionsForView(viewId)<br/>- switchActiveSession(viewId, id)"]
-        
-        SM --> PS["PtySession<br/>- id: string<br/>- pty: IPty<br/>- outputBuffer<br/>- scrollbackCache<br/>- spawn() / write(data)<br/>- resize(c,r) / kill()<br/>- flush()"]
-        
-        SM --> PM["PtyManager<br/>- loadNodePty()<br/>- spawnShell()<br/>- detectShell()"]
-        
-        EXT --> CM["ConfigManager<br/>- getConfig()<br/>- onChange()"]
-    end
+First-party source, by line count. Test files sit beside the code they cover (`*.test.ts`)
+and are excluded from these counts.
 
-    subgraph WebView["WebView (Browser Sandbox)"]
-        TM["TerminalManager<br/>- terminals[]<br/>- activeId<br/>- createTerminal<br/>- switchTerminal<br/>- destroyTerm"]
-        TAB["TabManager<br/>- tabs[]<br/>- activeTabId<br/>- createTab() / switchTab()<br/>- closeTab() / renderTabs()"]
-        IH["InputHandler<br/>- keyHandler()<br/>- clipboard()<br/>- imeHandling()"]
-        THM["ThemeManager<br/>- readCssVars()<br/>- applyTheme()<br/>- watchChanges()"]
-        RH["ResizeHandler<br/>- fitAddon<br/>- observer<br/>- debounce()"]
-        MH["MessageHandler<br/>- send() / receive()<br/>- queue[]"]
-        
-        TM --> IH
-        TM --> TAB
-        TM --> RH
-        TM --> MH
-    end
+| Path | Lines | Holds |
+|------|-------|-------|
+| `src/extension.ts` | 881 | activate, command registration, surface wiring |
+| `src/commands/` | 397 | terminal and export commands |
+| `src/providers/` | 8 295 | the three surface providers, panel serializer, `FileTreeHost`, git decorations, fs watcher pool, link and preview resolution |
+| `src/session/` | 4 649 | `SessionManager`, `OutputBuffer`, snapshot pipeline, `SessionStorage`, shell-integration consumer |
+| `src/pty/` | 1 509 | `PtyManager`, `PtySession`, OSC parser, process queries |
+| `src/vault/` | 3 828 | `VaultService`, cache, launch, rename |
+| `src/vault/readers/` | 9 068 | per-agent transcript parsers, shared detail pipeline |
+| `src/cursor/` | 1 171 | hook install, runtime, executable resolution |
+| `src/types/` | 1 486 | `messages.ts` (the IPC contract), `errors.ts` |
+| `src/settings/` | 345 | settings readers |
+| `src/shared/` | 74 | values used by both host and webview |
+| `src/utils/` | 62 | |
+| `src/webview/` | 2 869 | `main.ts`, `InputHandler`, split panes, tab bar, drag-drop |
+| `src/webview/vault/` | 5 978 | vault list, preview, floating window |
+| `src/webview/fileTree/` | 4 776 | tree, search, row actions |
+| `src/webview/links/` | 3 264 | path detection, hover preview |
+| `src/webview/terminal/` | 1 050 | `TerminalFactory`, activity tracking, title gating |
+| `src/webview/messaging/` | 409 | `MessageRouter` |
+| `src/webview/split/` | 396 | split tree renderer |
+| `src/webview/state/` | 382 | persisted webview state |
+| `src/webview/resize/` | 268 | fit and debounce |
+| `src/webview/ui/` | 224 | banners, tab-bar helpers |
+| `src/webview/theme/` | 189 | `ThemeManager` |
+| `src/webview/flow/` | 53 | flow-control acks |
+| `src/vendor/` | 39 827 | vendored VS Code sources (126 files) and Seti icons |
 
-    TVP <-.->|postMessage| MH
-    TEP <-.->|postMessage| MH
-```
+`src/vendor/` is upstream VS Code code pinned to a known SHA, not our design surface — see
+[build-system.md](design/build-system.md) for how it is vendored and gated.
 
-### 2.2 File Structure
+### 2.2 Surfaces
 
-```
-src/
-├── extension.ts                    # Entry point, activate/deactivate
-├── providers/
-│   ├── TerminalViewProvider.ts     # WebviewViewProvider for sidebar/panel
-│   └── TerminalEditorProvider.ts   # WebviewPanel for editor area
-├── session/
-│   ├── SessionManager.ts          # Central session registry
-│   └── PtySession.ts              # Single PTY session wrapper
-├── pty/
-│   └── PtyManager.ts              # node-pty loader and shell detection
-├── config/
-│   └── ConfigManager.ts           # Settings reader
-├── types/
-│   └── messages.ts                # Shared message type definitions
-└── webview/
-    ├── main.ts                    # Webview entry point
-    ├── terminal/
-    │   ├── TerminalManager.ts     # xterm.js instance management
-    │   └── InputHandler.ts        # Keyboard/clipboard handling
-    ├── ui/
-    │   ├── TabManager.ts          # Tab bar UI
-    │   └── ThemeManager.ts        # Theme integration
-    └── utils/
-        ├── ResizeHandler.ts       # FitAddon + debounced resize
-        └── MessageHandler.ts      # postMessage wrapper
-media/
-├── webview.js                     # Bundled webview code
-├── webview.css                    # Additional styles (if needed)
-└── icon.svg                       # Extension icon
-```
+| Surface | API | Registration | Notes |
+|---------|-----|--------------|-------|
+| Primary Sidebar | `WebviewViewProvider` | `viewsContainers.activitybar` | |
+| Bottom Panel | `WebviewViewProvider` | `viewsContainers.panel` | |
+| Editor Area | `WebviewPanel` | `createWebviewPanel()` | Own provider; restored by `TerminalPanelSerializer` |
+| Secondary Sidebar | `WebviewViewProvider` | user "Move View" | Same provider as the primary sidebar |
 
----
+Sidebar and panel share one `TerminalViewProvider` class with one instance each; the editor
+area has a separate `TerminalEditorProvider`. That asymmetry is the source of the
+editor-surface gaps recorded in `../audit/`.
 
-## 3. Data Flow & Sequence Diagrams
+## 3. Data Flows
 
-Detailed data flow diagrams are documented in separate files for maintainability:
+| Flow | Document |
+|------|----------|
+| Terminal initialization | [flow-initialization.md](design/flow-initialization.md) |
+| User input round-trip | [flow-user-input.md](design/flow-user-input.md) |
+| Clipboard and image paste | [flow-clipboard.md](design/flow-clipboard.md) |
+| View collapse / disposal / host restart | [flow-view-lifecycle.md](design/flow-view-lifecycle.md) |
+| Multi-tab and split panes | [flow-multi-tab.md](design/flow-multi-tab.md) |
 
-| Flow | Document | Description |
-|------|----------|-------------|
-| Terminal Initialization | [flow-initialization.md](design/flow-initialization.md) | WebView creation → PTY spawn → first prompt |
-| User Input Round-Trip | [flow-user-input.md](design/flow-user-input.md) | Keystroke → PTY → output with flow control |
-| Clipboard (Copy/Paste) | [flow-clipboard.md](design/flow-clipboard.md) | Cmd+C/V handling, SIGINT vs copy |
-| View Collapse/Expand | [flow-view-lifecycle.md](design/flow-view-lifecycle.md) | retainContextWhenHidden, scrollback cache |
-| Multi-Tab Lifecycle | [flow-multi-tab.md](design/flow-multi-tab.md) | Create, switch, close tabs with operation queue |
+## 4. Subsystem Designs
 
----
+| Subsystem | Document |
+|-----------|----------|
+| Message protocol | [message-protocol.md](design/message-protocol.md) |
+| PTY spawning and shell detection | [pty-manager.md](design/pty-manager.md) |
+| Session lifecycle and snapshots | [session-manager.md](design/session-manager.md) |
+| Output buffering and flow control | [output-buffering.md](design/output-buffering.md) |
+| xterm.js integration and split panes | [xterm-integration.md](design/xterm-integration.md) |
+| Theme integration | [theme-integration.md](design/theme-integration.md) |
+| Resize handling | [resize-handling.md](design/resize-handling.md) |
+| Keyboard and input | [keyboard-input.md](design/keyboard-input.md) |
+| WebView providers and surfaces | [webview-provider.md](design/webview-provider.md) |
+| File tree | [file-tree.md](design/file-tree.md) |
+| Link detection and hover preview | [link-detection.md](design/link-detection.md) |
+| AI Vault | [vault.md](design/vault.md) |
+| Vault transcript readers | [vault-readers.md](design/vault-readers.md) |
+| Agent CLI integration | [agent-cli-integration.md](design/agent-cli-integration.md) |
+| Error handling | [error-handling.md](design/error-handling.md) |
+| Build system | [build-system.md](design/build-system.md) |
 
-## 4. Message Protocol
+Planned, not yet implemented — see § 8:
+[worktree-model.md](design/worktree-model.md) ·
+[worktree-agent-presence.md](design/worktree-agent-presence.md) ·
+[worktree-rpc.md](design/worktree-rpc.md) ·
+[worktree-actions.md](design/worktree-actions.md) ·
+[worktree-panel-ui.md](design/worktree-panel-ui.md) ·
+[agent-hook-server.md](design/agent-hook-server.md)
 
-> Full specification: [design/message-protocol.md](design/message-protocol.md)
+## 5. Performance Design
 
-The extension and webview communicate via `postMessage` using discriminated union types. Core terminal messages cover ready/init, input/output, tabs, splits, resize, restore, config, and errors. File-tree messages share the same bridge and route directory reads, search, watching, reveal, path copy, and confirmed delete actions through the extension host.
-
----
-
-## 5. Component Designs
-
-Detailed component designs are documented in separate files:
-
-| Component | Document | Description |
-|-----------|----------|-------------|
-| PtyManager | [design/pty-manager.md](design/pty-manager.md) | node-pty loading, shell detection, spawn config |
-| SessionManager | [design/session-manager.md](design/session-manager.md) | Session lifecycle, operation queue, kill tracking |
-| Output Buffering | [design/output-buffering.md](design/output-buffering.md) | Two-layer buffering, flow control (100K/5K watermarks) |
-| xterm.js Integration | [design/xterm-integration.md](design/xterm-integration.md) | Terminal setup, addon loading, renderer selection |
-| Theme Integration | [design/theme-integration.md](design/theme-integration.md) | CSS variable mapping, location-aware background |
-| Resize Handling | [design/resize-handling.md](design/resize-handling.md) | Smart resize, debouncing, DPI-aware dimensions |
-| Keyboard & Input | [design/keyboard-input.md](design/keyboard-input.md) | Custom key handler, clipboard, IME, bracketed paste |
-| WebView Provider | [design/webview-provider.md](design/webview-provider.md) | WebviewViewProvider lifecycle, CSP, ready handshake |
-| Error Handling | [design/error-handling.md](design/error-handling.md) | Error categories, fallback chains, user notifications |
-| Build System | [design/build-system.md](design/build-system.md) | Dual-target esbuild, dependencies, packaging |
-| Worktree Model | [design/worktree-model.md](design/worktree-model.md) | Worktree discovery, identity, path normalization, cache + watch |
-| Agent Presence | [design/worktree-agent-presence.md](design/worktree-agent-presence.md) | Which agents run in a worktree, evidence model, external sessions |
-| Worktree Protocol | [design/worktree-rpc.md](design/worktree-rpc.md) | Host↔webview messages for the Worktree view |
-| Worktree Panel UI | [design/worktree-panel-ui.md](design/worktree-panel-ui.md) | The fourth vault segment, tree structure, states, interaction |
-| Worktree Actions | [design/worktree-actions.md](design/worktree-actions.md) | Create, remove, lock, prune, launch — and the safety model |
-| Agent Hook Server | [design/agent-hook-server.md](design/agent-hook-server.md) | Loopback hook endpoint for authoritative agent status |
-
----
-
-## 6. Build System
-
-> Full specification: [design/build-system.md](design/build-system.md)
-
-Dual-target esbuild configuration: Extension Host bundle (Node.js, CJS) and WebView bundle (Browser, IIFE). `node-pty` and `vscode` are externalized from the extension bundle. The webview bundle includes xterm.js and all addons as a self-contained IIFE.
-
----
-
-## 7. Performance Design
-
-### 7.1 Output Buffering Strategy
-
-```mermaid
-flowchart TD
-    A["PTY Output Stream<br/>(pty.onData)"] --> B["Output Buffer (string)"]
-    B --> C{Flush condition?}
-    C -->|"Timer: every 8ms (~120fps)"| D["Flush to WebView"]
-    C -->|"Size: buffer > 64KB"| D
-    C -->|"Exit: pty.onExit"| D
-    D --> E["webview.postMessage(<br/>{ type: 'output', data })"]
-    E --> F["Reset buffer to ''"]
-    F --> B
-```
-
-See [output-buffering.md](design/output-buffering.md) for the complete two-layer buffering and flow control design (100K high watermark / 5K low watermark).
-
-### 7.2 Resize Debouncing
-
-```mermaid
-flowchart TD
-    A["User drags sidebar edge"] -->|"many rapid resize events"| B["ResizeObserver callback"]
-    B --> C["fitAddon.fit()"]
-    C --> D["Get new cols/rows"]
-    D --> E["Debounce 100ms"]
-    E --> F{Stable?}
-    F -->|No, more events| B
-    F -->|Yes| G["postMessage({ type: 'resize', cols, rows })"]
-    G --> H["Extension Host:<br/>pty.resize(cols, rows)"]
-```
-
-### 7.3 Rendering Pipeline
+Two mechanisms carry terminal throughput; both are specified in
+[output-buffering.md](design/output-buffering.md) and
+[resize-handling.md](design/resize-handling.md).
 
 ```mermaid
 flowchart LR
-    A["Extension Host"] -->|"output data<br/>(buffered)"| B["WebView"]
-    B --> C["xterm.write(data)"]
-    C --> D{Rendering Engine}
-    D --> E["DOM Renderer<br/>(default)"]
-    D --> F["WebGL Renderer<br/>(addon-webgl)"]
-    D --> G["Canvas Renderer<br/>(addon-canvas)"]
+    PTY["pty.onData"] --> OB["OutputBuffer<br>coalesce + adapt interval"]
+    OB -->|"flush"| WV["WebView"]
+    WV --> X["xterm.write"]
+    WV -.->|"ack chars"| FC["Flow control"]
+    FC -.->|"pause above high watermark<br>resume below low"| OB
 ```
 
----
+- **Two-layer buffering.** The host coalesces PTY output and flushes on an adaptive timer
+  whose interval moves between a floor and a ceiling with measured throughput.
+- **Credit-based flow control.** The WebView acks consumed characters; the host pauses the
+  PTY above a high watermark and resumes below a low one, so a runaway writer cannot
+  outrun rendering.
+- **Resize is debounced and computed in the WebView**, which measures cell dimensions and
+  sends only settled `cols`/`rows`.
 
-## 8. Theme Integration
+Rendering loads the WebGL addon where available. On context loss or construction failure it
+falls back to xterm's built-in DOM renderer — there is no canvas addon — and a `webglFailed`
+latch makes every later terminal skip WebGL too (`src/webview/terminal/TerminalFactory.ts:117-130`).
 
-```mermaid
-flowchart TD
-    A["VS Code Theme Engine"] -->|"Injects CSS variables<br/>into webview :root"| B[":root CSS Variables<br/>--vscode-terminal-background<br/>--vscode-terminal-foreground<br/>--vscode-terminalCursor-foreground<br/>--vscode-terminal-ansiBlack/Red/Green/...<br/>--vscode-editor-font-family<br/>--vscode-editor-font-size<br/>(16 ANSI colors total)"]
-    B --> C["ThemeManager"]
-    C --> D["1. On init: read all CSS vars<br/>→ build xterm theme object"]
-    C --> E["2. Apply to xterm:<br/>terminal.options.theme = {...}"]
-    C --> F["3. MutationObserver on body class:<br/>'vscode-dark' ↔ 'vscode-light'<br/>→ re-read & re-apply theme"]
-    C --> G["4. Font: read font-family<br/>→ apply to terminal.options.fontFamily"]
-```
+## 6. Security
 
-See [theme-integration.md](design/theme-integration.md) for the complete theme design including location-aware background colors.
+### 6.1 WebView Content Security Policy
 
----
+`default-src 'none'` with per-load nonce-gated scripts; styles, fonts and images limited to
+the webview source, plus `blob:`/`data:` images for pasted-image previews. Exact directives
+and rationale: [webview-provider.md](design/webview-provider.md).
 
-## 9. View Placement Strategy
+### 6.2 Terminal output is attacker-controlled
 
-### 9.1 Supported Locations and APIs
+Anything rendered in a terminal may come from a hostile process. Two consequences are
+designed for rather than assumed away:
 
-| Location | API | Registration | Notes |
-|----------|-----|-------------|-------|
-| **Primary Sidebar** | `WebviewViewProvider` | `viewsContainers.activitybar` | Fully supported |
-| **Bottom Panel** | `WebviewViewProvider` | `viewsContainers.panel` | Fully supported |
-| **Editor Area** | `WebviewPanel` | `createWebviewPanel()` | Opens as editor tab |
-| **Secondary Sidebar** | `WebviewViewProvider` | `viewsContainers.secondarySidebar` (proposed) OR user "Move View" | Proposed API in VS Code 1.104+ |
+- **Links are resolved by the host, never by a webview-supplied path.** Path candidates are
+  re-resolved against the session's cwd and the workspace before anything opens.
+- **Hover preview blocks sensitive paths by default** and caps how much it reads.
 
-### 9.2 Provider Reuse Pattern
+See [link-detection.md](design/link-detection.md).
 
-```mermaid
-graph TD
-    TVP["TerminalViewProvider<br/>(single class, multiple instances)"]
-    TEP["TerminalEditorProvider<br/>(separate class)"]
+### 6.3 PTY and vault
 
-    TVP --> R1["registerWebviewViewProvider<br/>(sidebar)"]
-    TVP --> R2["registerWebviewViewProvider<br/>(panel)"]
-    TVP --> R3["registerWebviewViewProvider<br/>(secondary*)"]
+Shells inherit the user's environment with no elevated privileges, are children of the
+Extension Host, and are killed on deactivation. Vault messages carry an entry id only — the
+host re-resolves every on-disk location itself, and reads agent stores with bounded scans
+and a read-only SQLite snapshot. See [vault.md](design/vault.md).
 
-    R1 --> V1["resolveWebviewView<br/>→ unique viewId<br/>→ own sessions"]
-    R2 --> V2["resolveWebviewView<br/>→ unique viewId<br/>→ own sessions"]
-    R3 --> V3["resolveWebviewView<br/>→ unique viewId<br/>→ own sessions"]
+## 7. Testing Strategy
 
-    TEP --> V4["createWebviewPanel()<br/>→ opens in editor area<br/>→ own session per tab"]
+| Layer | Runner | Scope |
+|-------|--------|-------|
+| Unit | vitest (`pnpm test:unit`) | The bulk of the suite; host and webview modules, jsdom for webview |
+| Integration | vitest | File-tree RPC, git decorations, extension activation |
+| VS Code host | `vscode-test` (`pnpm test`) | See the gap noted in [build-system.md](design/build-system.md) § 14 |
 
-    style R3 stroke-dasharray: 5 5
-    style V3 stroke-dasharray: 5 5
-```
+Build gates run at package time, not in CI: type-check, lint, bundle-size ceiling, vendor
+header check, VSIX contents check. [build-system.md](design/build-system.md) § 14 records
+which gates are wired and which are not.
 
-> *Secondary sidebar uses same provider, different viewId. Dashed = proposed API.
+### 7.1 Manual Test Matrix
 
----
-
-## 10. Error Handling
-
-```mermaid
-flowchart TD
-    subgraph E1["1. PTY Spawn Failure"]
-        E1C["Cause: invalid shell path, permissions"]
-        E1H["Handle: show error in webview, offer retry"]
-        E1F["Fallback: /bin/zsh → /bin/bash → /bin/sh"]
-    end
-
-    subgraph E2["2. node-pty Load Failure"]
-        E2C["Cause: VS Code version incompatible"]
-        E2H["Handle: show error notification"]
-        E2M["Message: 'AnyWhere Terminal requires<br/>VS Code >= 1.109.0'"]
-    end
-
-    subgraph E3["3. PTY Process Crash"]
-        E3C["Cause: shell crashes, OOM, SIGKILL"]
-        E3H["Handle: show '[Process exited]' in terminal"]
-        E3I["Isolate: other terminals unaffected"]
-    end
-
-    subgraph E4["4. WebView Communication Failure"]
-        E4C["Cause: webview disposed during message"]
-        E4H["Handle: try/catch postMessage, log warning"]
-        E4CL["Cleanup: destroy orphaned PTY sessions"]
-    end
-
-    subgraph E5["5. Output Buffer Overflow"]
-        E5C["Cause: extremely rapid output (e.g., yes)"]
-        E5H["Handle: cap buffer, drop oldest chunks"]
-        E5U["UX: terminal stays responsive"]
-    end
-```
-
-See [error-handling.md](design/error-handling.md) for the complete error handling design including error categories, fallback chains, and user notification patterns.
-
----
-
-## 11. Security Considerations
-
-### 11.1 WebView Content Security Policy
-
-```
-Content-Security-Policy:
-  default-src 'none';                    # Block all by default
-  style-src ${webview.cspSource}         # Allow VS Code webview styles
-           'unsafe-inline';              # Allow inline styles for xterm
-  script-src 'nonce-${nonce}';           # Only nonce-tagged scripts
-  font-src ${webview.cspSource};         # Allow VS Code fonts
-  img-src ${webview.cspSource};          # Allow webview images
-```
-
-### 11.2 PTY Security
-
-- Shell spawned with user's environment (`process.env`)
-- Working directory defaults to workspace root
-- No elevated privileges
-- PTY processes are children of the Extension Host process
-- All PTY processes killed on extension deactivation
-
----
-
-## 12. Testing Strategy
-
-### 12.1 Unit Tests
-- `SessionManager`: session CRUD, number recycling, cleanup
-- `PtyManager`: shell detection, node-pty loading
-- `ConfigManager`: setting reads, defaults, changes
-- Message protocol: serialization/deserialization
-
-### 12.2 Integration Tests
-- Extension activation/deactivation
-- WebView creation and message flow
-- PTY spawn and I/O round-trip
-- View lifecycle (create, hide, show, dispose)
-
-### 12.3 Manual Test Matrix
-
-| Test Case | Sidebar | Panel | Editor | Secondary |
+| Test case | Sidebar | Panel | Editor | Secondary |
 |-----------|---------|-------|--------|-----------|
 | Shell prompt appears | [ ] | [ ] | [ ] | [ ] |
-| `ls -la` output correct | [ ] | [ ] | [ ] | [ ] |
-| Resize works | [ ] | [ ] | [ ] | [ ] |
-| Copy/paste works | [ ] | [ ] | [ ] | [ ] |
+| Resize and reflow | [ ] | [ ] | [ ] | [ ] |
+| Copy / paste / image paste | [ ] | [ ] | [ ] | [ ] |
 | Ctrl+C interrupts | [ ] | [ ] | [ ] | [ ] |
-| Multi-tab works | [ ] | [ ] | [ ] | [ ] |
-| vim opens and works | [ ] | [ ] | [ ] | [ ] |
+| Tabs and split panes | [ ] | [ ] | [ ] | [ ] |
+| Full-screen app (vim) | [ ] | [ ] | [ ] | [ ] |
 | Theme matches | [ ] | [ ] | [ ] | [ ] |
-| Collapse/expand recovery | [ ] | [ ] | [ ] | [ ] |
+| Collapse / expand recovery | [ ] | [ ] | [ ] | [ ] |
+| Host restart restores sessions | [ ] | [ ] | [ ] | [ ] |
+| File tree actions | [ ] | [ ] | [ ] | [ ] |
+| Vault list, preview, resume | [ ] | [ ] | [ ] | [ ] |
 | Heavy output (`find /`) | [ ] | [ ] | [ ] | [ ] |
 
----
+The editor column is where this matrix earns its keep — several features are present in the
+editor surface but unhandled by its host provider (`../audit/`).
 
-## 13. Worktree & Agent Presence Subsystem
+## 8. Worktree & Agent Presence Subsystem
 
 A fourth view inside the AI Vault panel: the git worktrees of the workspace's repositories,
 with the agents running inside each one. The view answers a question the session list cannot
 — *where is work happening right now, and what is blocked* — and turns each worktree into a
 place to act (open, create, remove, launch an agent).
 
-### 13.1 Architecture
+### 8.1 Architecture
 
 ```mermaid
 graph TB
@@ -438,7 +300,7 @@ work is required — but the assumption is recorded rather than left implicit. B
 hosts (github.dev) are already unsupported for an unrelated reason: `node-pty` cannot load
 there.
 
-### 13.2 Component responsibilities
+### 8.2 Component responsibilities
 
 | Concern | Owner | Design |
 |---------|-------|--------|
@@ -450,7 +312,7 @@ there.
 | Create / remove / lock / prune / launch | Extension host, extending the vault launcher with a fresh-launch contract | [worktree-actions.md](design/worktree-actions.md) |
 | Authoritative status and live subagent rosters | Extension host, **generalizing the existing Cursor hook runtime** to multiple agents | [agent-hook-server.md](design/agent-hook-server.md) |
 
-### 13.3 Reuse — what this subsystem does not rebuild
+### 8.3 Reuse — what this subsystem does not rebuild
 
 | Existing capability | Location | Used for |
 |---------------------|----------|----------|
@@ -469,7 +331,7 @@ there.
 | Reveal / copy-path / copy-resume handlers | `src/providers/TerminalViewProvider.ts` | Worktree variants of the same actions |
 | Render-signature no-op guard | `src/webview/vault/vaultRenderSignature.ts` | Suppressing spinner-driven re-renders |
 
-### 13.4 Truthfulness invariants
+### 8.4 Truthfulness invariants
 
 These hold across every layer and are testable statements, not aspirations. Each prevents a
 specific false claim the view could otherwise make.
@@ -493,7 +355,7 @@ specific false claim the view could otherwise make.
 | I15 | A failed or timed-out mutation still forces a rebuild; a state git and the filesystem disagree about is reported as indeterminate, never as a clean failure |
 | I16 | Agent-reported identity is a lookup key only; no reported path is opened on the report's authority |
 
-### 13.5 Security posture
+### 8.5 Security posture
 
 | Surface | Control |
 |---------|---------|
@@ -508,7 +370,7 @@ specific false claim the view could otherwise make.
 | Prompt delivery | Native prefill preferred; otherwise an argv token or a pty write, never shell interpolation |
 | Launch environment | **Known pre-existing gap.** `PtyManager.buildEnvironment()` clones the whole host `process.env` and the agent allowlist merges over it rather than filtering, so launched agents inherit host credentials. Affects every vault launch, not just this feature; recorded, not fixed here |
 
-### 13.6 Host / webview boundary and multi-surface fan-out
+### 8.6 Host / webview boundary and multi-surface fan-out
 
 The AI Vault is **not** its own webview. It is a DOM section mounted into the same webview
 document that hosts the terminals (`src/providers/webviewHtml.ts:694-696`), and that document
@@ -528,7 +390,7 @@ shared with the tracker; the *instance* is not.
 
 ---
 
-## 14. Key Design Decisions — Worktree Subsystem
+## 9. Key Design Decisions — Worktree Subsystem
 
 | # | Decision | Alternative rejected | Rationale |
 |---|----------|---------------------|-----------|
@@ -564,7 +426,7 @@ triage on 2026-08-25.
 
 ---
 
-## 15. Cross-Document Consistency Registry
+## 10. Cross-Document Consistency Registry
 
 Contract-critical values and the intentional cross-layer mappings. A value here has exactly
 one definition; every other document references it.
@@ -588,7 +450,8 @@ one definition; every other document references it.
 | Minimum supported git | 2.31 — supplies `locked` / `prunable`. Only `-z` (2.36) has a fallback | [worktree-model.md](design/worktree-model.md) § 3.3 | — |
 | Git command timeout | 10 s for read-only listings; mutations get a longer, cancellable budget | [worktree-model.md](design/worktree-model.md) § 5 | rpc § 5, actions § 3.6 |
 | Action outcome | `ok` / `error` / `indeterminate` | [worktree-rpc.md](design/worktree-rpc.md) § 2.2 | actions § 3.6 |
-| Hook env var | `AT_HOOK_URL` — base, session id, and token in one value so a partial set cannot be inherited. The only channel; no on-disk endpoint artifact | [agent-hook-server.md](design/agent-hook-server.md) § 4.2 | — |
+| Hook env var — **planned** Claude server | `AT_HOOK_URL` — base, session id, and token in one value so a partial set cannot be inherited. Sole channel for that server; no on-disk endpoint artifact | [agent-hook-server.md](design/agent-hook-server.md) § 4.2 | — |
+| Hook env var — **shipped** Cursor runtime | `ANYWHERE_TERMINAL_CURSOR_URL = http://127.0.0.1:<port>/<sessionId>/<token>/`. Unlike the planned server it **does** write on-disk artefacts: an observer wrapper script plus entries in `~/.cursor/hooks.json` | `src/cursor/CursorHookRuntime.ts:188-189`; artefacts at `CursorHookInstaller.ts:280,293` | [agent-cli-integration.md](design/agent-cli-integration.md) |
 | Hook settings keys | `anywhereTerminal.agentHooks.claude.enabled`, `anywhereTerminal.agentHooks.claudeConfigDir`, and the pre-existing `anywhereTerminal.cursorAgent.hooks.enabled` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
 | Hook uninstall command | `anywhereTerminal.agentHooks.uninstall` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
 | Persisted view keys | `vaultView`, `vaultGroupMode`, `worktreeCollapsed`, `worktreeExpandedRows` — per **surface**, not per window | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.1 | — |
@@ -608,3 +471,27 @@ activity describes a terminal. The mapping is total in one direction and partial
 
 `exited` has no turn-state preimage. It is produced only by pty exit and overrides any
 published hook state.
+
+**Status:** this mapping describes the planned Claude hook server. No shipped hook emits
+`waiting` today — the Cursor runtime produces only working/idle transitions, and the sole
+live source of `waiting` is the approval detector. See
+[agent-cli-integration.md](design/agent-cli-integration.md).
+
+### 10.1 Shipped-code values referenced by more than one document
+
+The registry above covers the planned worktree subsystem. These are values in shipped code
+that more than one design doc has to agree on. Each has one canonical definition; every
+other doc references it rather than restating it.
+
+| Value | Canonical form | Defined in | Referenced by |
+|-------|----------------|-----------|---------------|
+| Flow-control ack batch | `ACK_BATCH_SIZE = 5000` | `src/webview/flow/FlowControl.ts:11` | output-buffering, message-protocol. **Hazard:** `src/types/messages.ts:173` restates it in a comment with no shared constant — the two can drift |
+| Output watermarks | 100 000 high / 5 000 low, adaptive flush 4–16 ms | [output-buffering.md](design/output-buffering.md) § 2 | flow-user-input, session-manager |
+| PTY default geometry | 80 cols × 30 rows | `src/pty/PtySession.ts:139-140` | pty-manager, session-manager |
+| Editor-panel grace destroy | 5 000 ms | `src/providers/TerminalEditorProvider.ts:42` | session-manager, webview-provider, flow-view-lifecycle |
+| Default scrollback | 10 000 lines | `src/settings/SettingsReader.ts:22` | xterm-integration, build-system |
+| `TerminalActivityStatus` | `idle` \| `running` \| `waiting`; precedence `waiting > (semanticWorking \|\| outputActive) > idle`, idle delay 1500 ms | `src/webview/terminal/TerminalActivityTracker.ts:1,30,119-123` | agent-cli-integration, xterm-integration, and § 10's activity-vocabulary row above |
+| Max pasted image | 20 MiB | `src/shared/imagePasteTrigger.ts:21` | flow-clipboard, keyboard-input, link-detection |
+| File-tree drag MIME | `application/x-anywhere-terminal-file-tree-path` | `src/webview/fileTree/ReadOnlyFileRenderer.ts:101` | file-tree, flow-clipboard |
+| Hover-preview defaults | `delay: 300 ms` (clamp 100–2000), `blockSensitive: true` | `src/providers/hoverPreviewSettings.ts:17-20,27` | link-detection, theme-integration |
+| Vault entry id | `<agent>:<sessionId>`, split on the **first** colon only | `src/vault/types.ts:53,57` | vault, vault-readers, message-protocol |

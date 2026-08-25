@@ -1,430 +1,349 @@
-# Output Buffering & Flow Control — Detailed Design
+# Output Buffering & Flow Control
 
-## 1. Overview
+> Part of [DESIGN.md](../DESIGN.md)
 
-Terminal output from PTY processes can arrive at extremely high rates (e.g., `find /`, `yes`, `cat large-file`). Without buffering and flow control, the IPC channel (postMessage) gets overwhelmed and xterm.js rendering falls behind, causing lag and potential memory issues.
+## 1. Purpose & Scope
 
-This document describes the **two-layer buffering architecture** and **flow control mechanism** used by AnyWhere Terminal.
+Shell output arrives in bursts that no UI can absorb one event at a time
+(`find /`, `yes`, `cat large-file`). This subsystem sits between the PTY and the
+webview and decides **when** bytes cross the IPC bridge, and **whether the PTY is
+allowed to keep producing them at all**.
 
-### Reference Sources
-- VS Code: `TerminalDataBufferer` (5ms throttle), `FlowControlConstants` (100K/5K watermarks), `AckDataBufferer`
-- Reference project: Extension-side 16ms/50-chunk buffer, webview-side adaptive 4-16ms buffer
+### Goals
+
+- Turn many small PTY data events into few `postMessage` calls, without making an
+  interactive keystroke echo feel late.
+- Keep a slow or hidden webview from becoming unbounded memory in the extension
+  host.
+- Never let a producer outrun a consumer permanently: a paused PTY must always
+  have a path back to flowing.
+
+### Constraints
+
+- **One buffer, on the host side.** The webview writes straight to xterm.js;
+  only its *acks* are batched. A second buffer would add latency without removing
+  work — `Terminal.write()` is already internally queued and renders on an
+  animation frame.
+- **No `vscode` and no node-pty import.** `OutputBuffer` declares the two
+  structural interfaces it needs (`OutputBuffer.ts:7`, `:13`) so it is testable
+  with plain fakes.
+- **Coalescing and flow control are independent.** Pausing *output* (a hidden
+  view) does not pause the *PTY*, and vice versa. Conflating them is the bug this
+  separation exists to prevent.
+- The bridge is ordered but lossy on teardown: a post may throw synchronously or
+  reject asynchronously, and both must be survivable.
+
+### Non-Responsibilities
+
+| Not here | Where |
+|----------|-------|
+| Repainting a re-created webview | `scrollbackCache` — [session-manager.md](session-manager.md) |
+| Surviving a window reload | snapshot pipeline — [session-manager.md](session-manager.md) |
+| The scrollback the user scrolls | xterm's own, sized by `anywhereTerminal.scrollback` (`SettingsReader.ts:22`, applied `TerminalFactory.ts:234`) |
+| Parsing or interpreting the bytes | `oscParser` — [pty-manager.md](pty-manager.md) |
+
+### Module map
+
+| File | Lines | Role |
+|------|-------|------|
+| `src/session/OutputBuffer.ts` | 338 | Coalescing, adaptive interval, watermarks, PTY pause/resume |
+| `src/webview/flow/FlowControl.ts` | 53 | Per-session ack accumulation in the webview |
 
 ---
 
-## 2. Architecture Overview
+## 2. Architecture
 
 ```mermaid
 flowchart LR
-    subgraph PTY["PTY Process"]
-        P["Shell Output"]
+    subgraph PTY["PTY (node-pty)"]
+        P["shell output"]
     end
 
-    subgraph ExtHost["Extension Host"]
-        OB["Output Buffer<br/>(Layer 1)"]
-    end
-
-    subgraph IPC["IPC"]
-        PM["postMessage"]
+    subgraph ExtHost["Extension host"]
+        OB["OutputBuffer<br>OutputBuffer.ts:62"]
     end
 
     subgraph WebView["WebView"]
-        XT["xterm.write()"]
-        ACK["Ack Counter"]
+        XT["xterm.write(data, cb)<br>main.ts:494"]
+        ACK["FlowControl<br>FlowControl.ts:38"]
     end
 
-    P -->|"pty.onData<br/>(rapid, unbounded)"| OB
-    OB -->|"Flush every 4-16ms<br/>(adaptive) or on size limit"| PM
-    PM -->|"{ type: 'output',<br/>tabId, data }"| XT
+    P -->|"onData<br>SessionManager.ts:593"| OB
+    OB -->|"output message<br>OutputBuffer.ts:325"| XT
     XT -->|"write callback"| ACK
-    ACK -->|"Batch ack<br/>every 5K chars"| OB
-    OB -->|"Pause/Resume"| P
+    ACK -->|"ack, batched at 5000 chars"| OB
+    OB -->|"pause / resume"| P
 
     style OB fill:#345,stroke:#6af
     style ACK fill:#543,stroke:#fa6
 ```
 
+Two loops share one object. The **downward** loop is coalescing: accumulate,
+flush on a timer or a size trigger. The **upward** loop is flow control: count
+what has been sent, subtract what has been acknowledged, and pause the source
+when the gap grows too large.
+
 ---
 
-## 3. Layer 1: Extension-Side Output Buffer
+## 3. Coalescing
 
-### Purpose
-Coalesce rapid `pty.onData` events into fewer, larger `postMessage` calls. PTY can fire data events hundreds of times per second; postMessage has overhead per call.
+### 3.1 Tuning constants
 
-### Design
+All defined at the top of `src/session/OutputBuffer.ts` — this table is their
+canonical home; other docs reference rather than restate it.
+
+| Constant | Value | Line | Why |
+|----------|-------|------|-----|
+| `MIN_FLUSH_INTERVAL_MS` | 4 | `:20` | Adaptive floor — latency wins at low throughput |
+| `DEFAULT_FLUSH_INTERVAL_MS` | 8 | `:26` | Start value, between VS Code's 5 ms and the 16 ms reference |
+| `MAX_FLUSH_INTERVAL_MS` | 16 | `:23` | Adaptive ceiling — batching wins at high throughput |
+| `THROUGHPUT_WINDOW_SIZE` | 5 | `:29` | Rolling window of recent flush sizes |
+| `HIGH_THROUGHPUT_THRESHOLD` | 32 768 | `:32` | Average flush size that selects the ceiling |
+| `LOW_THROUGHPUT_THRESHOLD` | 1 024 | `:35` | Average flush size that selects the floor |
+| `MAX_TOTAL_BUFFER_CHARS` | 1 048 576 | `:38` | Hard memory cap; FIFO eviction past it |
+| `MAX_BUFFER_SIZE` | 65 536 | `:41` | Size trigger for an immediate flush |
+| `MAX_CHUNKS` | 100 | `:44` | Array-length trigger; also the paused-coalesce trigger |
+| `HIGH_WATERMARK_CHARS` | 100 000 | `:47` | Unacked chars that pause the PTY |
+| `LOW_WATERMARK_CHARS` | 5 000 | `:50` | Unacked chars that resume it |
+
+### 3.2 Accepting data
+
+`append` (`:121`) decides three things in order: whether the incoming chunk fits
+the memory cap, whether a flush timer should exist, and whether the size triggers
+demand a flush right now.
 
 ```mermaid
 flowchart TD
-    A["pty.onData(chunk)"] --> B["Buffer overflow protection<br/>(1MB cap, FIFO eviction)"]
-    B --> C["buffer.append(chunk)"]
-    C --> D{"Output paused<br/>(view hidden)?"}
-    D -->|"Yes"| E["Accumulate only<br/>(coalesce at MAX_CHUNKS)"]
-    D -->|"No"| F{"Flush<br/>condition?"}
-    
-    F -->|"Timer: adaptive interval elapsed"| G["Flush"]
-    F -->|"Size: buffer > 64KB"| G
-    F -->|"Chunks: >= 100"| G
-    F -->|"None met"| H["Wait"]
-    
-    G --> I["Join buffer chunks"]
-    I --> J["Record flush size for throughput"]
-    J --> K["Adapt interval (4-16ms)"]
-    K --> L["webview.postMessage(<br/>{ type: 'output', data })"]
-    L --> M["Update unacked char count"]
-    M --> N{"unacked > 100K?"}
-    N -->|"Yes"| O["pty.pause()"]
-    N -->|"No"| P["Continue"]
+    A["append(data)"] --> B{"fits under<br>1 MB cap?"}
+    B -->|"chunk alone is larger"| C["keep the TAIL of the chunk,<br>drop everything buffered :128"]
+    B -->|"total would exceed"| D["FIFO evict oldest;<br>slice partially, never over-drop :133"]
+    B -->|"yes"| E["append :152"]
+    C --> E
+    D --> E
+    E --> F{"output paused?"}
+    F -->|yes| G["coalesce to one string past<br>100 chunks; arm no timer :158"]
+    F -->|no| H["arm timer if none :166"]
+    H --> I{"64 KB or<br>100 chunks?"}
+    I -->|yes| J["flush now :174"]
+    I -->|no| K["wait for the timer"]
 ```
 
-### Constants
+Two choices worth naming, because the obvious implementation gets them wrong:
 
-| Constant | Value | Rationale |
-|----------|-------|-----------|
-| `MIN_FLUSH_INTERVAL_MS` | 4 | Minimum adaptive interval for low-throughput scenarios |
-| `DEFAULT_FLUSH_INTERVAL_MS` | 8 | Default interval. Compromise between VS Code (5ms) and reference (16ms) |
-| `MAX_FLUSH_INTERVAL_MS` | 16 | Maximum adaptive interval for high-throughput batching |
-| `MAX_BUFFER_SIZE` | 65536 (64KB) | Triggers immediate flush |
-| `MAX_CHUNKS` | 100 | Safety cap on array length |
-| `MAX_TOTAL_BUFFER_CHARS` | 1,048,576 (1MB) | Hard cap on total buffered characters; FIFO eviction when exceeded |
-| `THROUGHPUT_WINDOW_SIZE` | 5 | Number of recent flush sizes for throughput estimation |
-| `HIGH_THROUGHPUT_THRESHOLD` | 32,768 | Average flush size above which interval increases to MAX |
-| `LOW_THROUGHPUT_THRESHOLD` | 1,024 | Average flush size below which interval decreases to MIN |
+- **Overflow keeps the newest bytes**, not the oldest (`:130`). The user is
+  looking at the tail of the output; discarding it to preserve history the
+  scrollback already owns would be backwards.
+- **Eviction slices** the oldest chunk rather than dropping it whole (`:145`), so
+  the buffer never discards more than the exact excess.
 
-### Adaptive Flush Interval
+### 3.3 Adaptive interval
 
-The flush interval adapts based on a rolling window of recent flush sizes:
-- Low throughput (avg flush < 1KB) → 4ms interval (more responsive)
-- Normal throughput → 8ms interval
-- High throughput (avg flush > 32KB) → 16ms interval (more batching)
+The flush interval is not fixed. Each flush records its own size into a 5-sample
+rolling window (`:305`); once the window is **exactly full** (`:309`) the average
+selects one of three intervals: 16 ms above 32 KB, 4 ms below 1 KB, 8 ms in
+between (`:312`–`:316`).
 
-### Buffer Overflow Protection (1MB)
+```mermaid
+stateDiagram-v2
+    [*] --> Warmup: session created
+    Warmup --> Fast: window full, avg < 1 KB
+    Warmup --> Batched: window full, avg > 32 KB
+    Warmup --> Balanced: window full, otherwise
 
-A hard cap of 1MB prevents unbounded memory growth when the view is hidden:
-- If a single chunk exceeds 1MB, it is truncated (keep tail)
-- If accumulated chunks exceed 1MB, oldest chunks are evicted (FIFO)
+    Fast --> Batched: avg > 32 KB
+    Fast --> Balanced: avg in range
+    Batched --> Fast: avg < 1 KB
+    Batched --> Balanced: avg in range
+    Balanced --> Fast: avg < 1 KB
+    Balanced --> Batched: avg > 32 KB
 
-### Output Pause/Resume for Hidden Views
+    note right of Warmup
+        First four flushes of a session
+        always run at the 8 ms default.
+    end note
+```
 
-When a webview becomes hidden, `OutputBuffer.pauseOutput()` stops the flush timer. Data continues to accumulate but is not sent. When the view becomes visible, `resumeOutput()` flushes all accumulated data immediately. This prevents wasted IPC for hidden views.
+Interactive typing settles on the floor — a keystroke echo is a handful of chars,
+so the average never approaches 1 KB. A sustained dump settles on the ceiling,
+where one 16 ms batch is strictly cheaper than four 4 ms ones for the same bytes.
 
-### Implementation Notes
+The interval is read when a timer is **armed** (`:169`), never applied by
+rescheduling a pending one, so a change takes effect on the following cycle.
+Disposal resets both window and interval (`:280`).
 
-- Buffer is a `string[]` array (push chunks, join on flush) — avoids string concatenation overhead
-- Timer is created on first data event, not on construction (no idle timers)
-- Timer is reset on each flush
-- On `pty.onExit`: flush any remaining data, then fire exit event
+### 3.4 Pausing output
 
-### Comparison with References
+Output pause is a *view* concern, not a producer concern: it stops the flush
+timer while `append` keeps accepting data (`:214`, `:212`). That is exactly why
+the 1 MB cap has to exist — a hidden view running `yes` would otherwise grow
+without bound. While paused, the chunk array is additionally collapsed to a
+single string past 100 entries (`:158`), bounding array length as well as bytes.
 
-| Aspect | VS Code | Reference Project | Our Design |
-|--------|---------|-------------------|------------|
-| Throttle interval | 5ms | 16ms | 8ms |
-| Buffer type | string[] | string[] (50 max) | string[] (100 max) |
-| Size limit | N/A (flow control handles it) | 1000 chars/chunk trigger | 64KB total |
-| Immediate flush | N/A | >1000 char chunk | >64KB total buffer |
+| Caller | Trigger | Lines |
+|--------|---------|-------|
+| `TerminalViewProvider` | view hidden / shown, and webview disposal | `TerminalViewProvider.ts:213`–`:227`, `:262` |
+| `SessionManager` | restored session, so a fresh prompt cannot beat the snapshot replay onto the screen | `SessionManager.ts:572` |
+| `SessionManager` | fallback respawn inspects `isOutputPaused` (`:102`) to decide whether to discard undelivered chunks | `SessionManager.ts:700` |
 
 ---
 
 ## 4. Flow Control
 
-### Problem
-
-Even with buffering, if the PTY produces output faster than xterm.js can render it, memory grows without bound. The buffer accumulates faster than it drains.
-
-### Solution: Watermark-Based Flow Control
-
-Adapted from VS Code's `TerminalProcess` flow control (`terminalProcess.ts:318-335`) and `AckDataBufferer` (`terminalProcessManager.ts:717`).
+Coalescing bounds *message count*. It does nothing about a producer that is
+simply faster than the renderer. Flow control closes that gap by making the PTY
+itself stop.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Flowing: PTY started
-    
-    Flowing --> Paused: unackedChars > HIGH_WATERMARK (100K)
-    Paused --> Flowing: unackedChars < LOW_WATERMARK (5K)
-    
+    [*] --> Flowing: session created
+
+    Flowing --> Paused: unacked > 100 000 (:333)
+    Paused --> Flowing: unacked < 5 000 (:203)
+
     note right of Flowing
-        pty is running normally.
-        Data flows through buffer.
+        Every flush adds its length
+        to the unacked counter (:321).
     end note
-    
+
     note right of Paused
-        pty.pause() called.
-        No more data events.
-        Waiting for acks from webview.
+        node-pty stops emitting (:335).
+        Only an ack can leave this state.
     end note
 ```
 
-### Flow Control Constants
+The gap between the watermarks — 100 000 down to 5 000 — is deliberate
+hysteresis. Resuming at the same threshold that paused would thrash the PTY once
+per flush under sustained load.
 
-| Constant | Value | Source | Description |
-|----------|-------|--------|-------------|
-| `HIGH_WATERMARK_CHARS` | 100,000 | VS Code `FlowControlConstants.HighWatermarkChars` | Pause PTY when this many chars are unacknowledged |
-| `LOW_WATERMARK_CHARS` | 5,000 | VS Code `FlowControlConstants.LowWatermarkChars` | Resume PTY when unacked drops below this |
-| `ACK_BATCH_SIZE` | 5,000 | VS Code `FlowControlConstants.CharCountAckSize` | WebView sends ack after this many chars processed |
+### 4.1 Why acks are batched
 
-### Flow Control Sequence
+The webview acknowledges from xterm's write callback, meaning "parsed", not
+"received" — the only signal that actually reflects consumer progress. Acking
+every write would put a message on the bridge for every message taken off it, so
+`FlowControl` accumulates **per session** (`FlowControl.ts:26`) and posts once the
+count reaches 5 000 (`:11`, `:42`).
+
+Per-session counters matter: a shared counter would let a busy tab's progress
+credit an idle tab's stalled buffer. When a terminal is removed its counter is
+dropped (`:50`, called from `main.ts:445`) so residue cannot leak into a recycled
+id. A single ack carries the whole accumulated count including the overshoot past
+the threshold, so bytes are never double-counted or lost.
+
+### 4.2 Trust boundary
+
+`handleAck` (`:189`) treats the ack count as untrusted input. Non-finite and
+non-positive values are rejected outright (`:195`), and the subtraction floors at
+zero (`:200`). An over-counting webview must not be able to drive the counter
+negative — that would permanently disable the high watermark and remove the only
+backpressure the host has.
+
+Routing is `webview → TerminalViewProvider` (`TerminalViewProvider.ts:969`) →
+`SessionManager.handleAck` (`SessionManager.ts:930`) → the session's buffer.
+
+### 4.3 The two deadlocks, and how each is avoided
+
+| Deadlock | Avoided by |
+|----------|-----------|
+| Output arrives for a tab with no xterm instance (created late, or torn down) — nobody would ever ack it, the counter climbs past 100 000, the PTY stays paused forever | The webview acks anyway when no instance exists (`main.ts:502`) |
+| A final flush during disposal pushes past the high watermark and pauses a PTY that is on its way out | The watermark check is skipped while disposing (`:333`) |
+
+---
+
+## 5. End-to-End
 
 ```mermaid
 sequenceDiagram
-    participant PTY as PTY Process
+    participant PTY as PTY process
     participant Buf as OutputBuffer
-    participant WV as WebView (xterm.js)
+    participant WV as WebView
 
-    Note over PTY,WV: Normal flow
+    Note over PTY,WV: steady state
+    PTY->>Buf: onData(chunk)
+    Buf->>WV: output (on flush; unacked += len :321)
+    WV->>WV: terminal.write(data, cb) — main.ts:494
+    WV->>Buf: ack, once 5 000 chars are parsed
+    Note over Buf: unacked -= count :200
 
-    PTY->>Buf: onData("output chunk 1") [500 chars]
-    Note over Buf: unackedChars += 500 → 500
-    Buf->>WV: postMessage({ output }) [on flush]
-    WV->>WV: xterm.write(data, callback)
-    Note over WV: callback fires after parse
-    WV->>Buf: ack(500)
-    Note over Buf: unackedChars -= 500 → 0
-
-    Note over PTY,WV: Heavy output (e.g., find /)
-
-    loop Rapid data events
-        PTY->>Buf: onData(chunk) [many KB]
-        Note over Buf: unackedChars climbing...
+    Note over PTY,WV: burst
+    loop rapid flushes
+        PTY->>Buf: onData(chunk)
     end
+    Note over Buf: unacked > 100 000
+    Buf->>PTY: pause :335
 
-    Note over Buf: unackedChars > 100,000<br/>HIGH WATERMARK reached!
-    Buf->>PTY: pty.pause()
-    Note over PTY: PTY stops sending data
-
-    loop WebView catches up
-        WV->>WV: xterm.write(data, callback)
-        WV->>Buf: ack(5000)
-        Note over Buf: unackedChars decreasing...
+    loop webview drains
+        WV->>Buf: ack
     end
-
-    Note over Buf: unackedChars < 5,000<br/>LOW WATERMARK reached!
-    Buf->>PTY: pty.resume()
-    Note over PTY: PTY resumes sending data
+    Note over Buf: unacked < 5 000
+    Buf->>PTY: resume :205
 ```
 
-### WebView-Side Ack Batching (FlowControl)
-
-To avoid excessive ack messages, the `FlowControl` class (`src/webview/flow/FlowControl.ts`) batches acknowledgments per session:
-
-```typescript
-class FlowControl {
-  private readonly unsentAckCharsMap = new Map<string, number>();
-
-  ackChars(count: number, tabId: string): void {
-    const current = this.unsentAckCharsMap.get(tabId) ?? 0;
-    const updated = current + count;
-    if (updated >= ACK_BATCH_SIZE) {
-      this.postMessage({ type: 'ack', charCount: updated, tabId });
-      this.unsentAckCharsMap.set(tabId, 0);
-    } else {
-      this.unsentAckCharsMap.set(tabId, updated);
-    }
-  }
-}
-```
-
-Key differences from earlier designs:
-- **Per-session tracking**: Each session has its own unsent ack counter (via `unsentAckCharsMap`), ensuring acks route to the correct `OutputBuffer` on the extension side.
-- **`if` not `while`**: A single ack message is sent with the full accumulated count, rather than looping to send multiple 5K-char batches.
-- **`tabId` included**: The ack message includes `tabId` so the extension can route it to the correct session's `OutputBuffer`.
-
-The xterm.write() callback provides the trigger:
-
-```typescript
-terminal.write(data, () => {
-  flowControl.ackChars(data.length, msg.tabId);
-});
-```
+The same `pty.onData` event that feeds the buffer (`SessionManager.ts:593`) also
+feeds the scrollback cache (`:1421`) and the snapshot recorder
+(`SnapshotPersistence.ts:479`). Those three consumers are siblings, not layers —
+see §1's non-responsibilities table.
 
 ---
 
-## 5. Layer 2: WebView-Side Write Strategy
+## 6. Edge Cases
 
-### Decision: Direct Write (No Second Buffer)
-
-The reference project has a webview-side `PerformanceManager` that buffers writes to xterm.js. However, analysis shows this is **largely bypassed** — routed messages (those with `terminalId`) call `terminal.write(data)` directly.
-
-**Our design**: No webview-side buffer. The extension-side buffer already coalesces data. Adding a second buffer layer increases latency without meaningful benefit.
-
-Exception: If profiling during Phase 2 reveals xterm.write() as a bottleneck, we can add webview-side batching as an optimization.
-
-### xterm.write() is Non-Blocking
-
-xterm.js's `write()` method is already internally buffered and uses `requestAnimationFrame` for rendering. Multiple rapid `write()` calls are efficiently batched by xterm itself.
+| Case | Behaviour |
+|------|-----------|
+| `cat` of a huge file | node-pty delivers chunks well under 1 MB, so the 64 KB trigger (`:173`) fires per chunk and the truncate path never runs; flow control does the real work |
+| Tight `echo` loop | ~2 bytes per write; one interval of coalescing produces one message, and the throughput window pins the interval at its 4 ms floor |
+| PTY exits with data buffered | The buffer is disposed **before** the kill (`SessionManager.ts:1299`, `:1306`) and disposal performs a final flush (`:271`); the exit message is posted after cleanup (`:639`) and ordering holds because the bridge is ordered |
+| WebView disposed mid-flush | Sync throw and async rejection are both swallowed (`:324`–`:330`). Sessions survive — the provider pauses output rather than destroying (`TerminalViewProvider.ts:262`), and a re-resolved view rebinds every buffer (`SessionManager.ts:942` → `:247`) |
+| Buffer swapped under a live session | Fallback respawn disposes the old buffer without flushing when it was output-paused (`SessionManager.ts:701`), discarding chunks the replay had not released, and pauses the replacement to match (`:705`) |
 
 ---
 
-## 6. Scrollback Cache (Separate from Output Buffer)
+## 7. Boundaries & Decisions
 
-### Purpose
+- **The buffer is a `string[]`, joined once per flush** (`:300`) — repeated
+  concatenation would be quadratic in the exact scenario this subsystem exists
+  for.
+- **Timers are created lazily and are one-shot.** None on an idle session
+  (`:165`); `_flush` clears before running (`:291`) so the immediate-flush path
+  cannot strand a duplicate. An empty flush returns early (`:296`), so a forced
+  flush on an idle session posts nothing and does not perturb the throughput
+  window.
+- **Pause-output and pause-PTY stay separate concepts.** One is about a view
+  nobody is watching; the other is about a consumer that cannot keep up. They
+  have different owners, different triggers, and different exit conditions.
+- **Backpressure is measured at parse time, not delivery time.** Acking on
+  arrival would make the watermarks measure the bridge instead of the renderer.
+- **The webview never decides how much to send.** It reports progress; the host
+  decides. That keeps the untrusted side unable to do worse than under-ack, which
+  degrades to a paused PTY rather than to unbounded host memory.
 
-The scrollback cache stores recent terminal output for view restoration when `retainContextWhenHidden` fails or is disabled. It is **separate** from the output buffer.
+### Contracts
 
-### Design
+`OutputBuffer` imports nothing. It depends only on two structural interfaces it
+declares itself, which is what makes it testable with plain fakes.
 
-```mermaid
-flowchart TD
-    A["pty.onData(chunk)"] --> B["OutputBuffer.append(chunk)<br/>(for immediate delivery)"]
-    A --> C["ScrollbackCache.append(chunk)<br/>(for restore)"]
-    
-    C --> D{"totalSize > MAX_SIZE?"}
-    D -->|Yes| E["Evict oldest chunks<br/>(FIFO ring buffer)"]
-    D -->|No| F["Store chunk"]
-```
+| Interface | Member | Type | Satisfied by |
+|-----------|--------|------|--------------|
+| `FlowControllable` (`:7`) | `pause` | `() => void` | `PtySession` (`src/pty/PtySession.ts:207`) |
+| | `resume` | `() => void` | `PtySession` (`:221`) |
+| `MessageSender` (`:13`) | `postMessage` | `(message: unknown) => Thenable<boolean>` | `vscode.Webview` |
 
-### Constants
+### Public surface
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `MAX_SCROLLBACK_CACHE_SIZE` | 524,288 (512KB) | Maximum total cache size per session |
-| `DEFAULT_SCROLLBACK_LINES` | 1,000 | Approximate line count (at ~50 chars/line) |
+Constructed per session from a tab id, a message sender, and the PTY (`:62`,
+`:106`).
 
----
-
-## 7. Complete Data Flow
-
-### Full Pipeline: PTY Output → Screen
-
-```mermaid
-flowchart TD
-    subgraph PTY["PTY (node-pty)"]
-        A["Shell produces output"]
-    end
-
-    subgraph ExtHost["Extension Host"]
-        B["pty.onData(chunk)"]
-        C["OutputBuffer.append(chunk)"]
-        D["ScrollbackCache.append(chunk)"]
-        E{"Flow control:<br/>unacked > 100K?"}
-        F["pty.pause()"]
-        G["Wait for adaptive flush timer (4-16ms)<br/>or size limit (64KB)"]
-        H["OutputBuffer.flush()"]
-    end
-
-    subgraph IPC["postMessage IPC"]
-        I["{ type: 'output',<br/>tabId, data }"]
-    end
-
-    subgraph WV["WebView"]
-        J["onDidReceiveMessage"]
-        K["xterm.write(data, callback)"]
-        L["xterm renders to DOM/WebGL"]
-        M["callback: flowControl.ackChars(len, tabId)"]
-        N{"unsentAck >= 5K?"}
-        O["postMessage({ type: 'ack', tabId })"]
-    end
-
-    subgraph ExtHost2["Extension Host (ack path)"]
-        P["OutputBuffer.handleAck(charCount)"]
-        Q{"unacked < 5K?"}
-        R["pty.resume()"]
-    end
-
-    A --> B --> C
-    B --> D
-    C --> E
-    E -->|Yes| F
-    E -->|No| G
-    G --> H --> I --> J --> K --> L
-    K --> M --> N
-    N -->|Yes| O --> P --> Q
-    Q -->|Yes| R
-    N -->|No| M
-```
-
----
-
-## 8. Edge Cases
-
-### 1. Extremely Large Single Output
-
-Scenario: `cat very-large-file` produces a single multi-MB chunk.
-
-Handling:
-- `pty.onData` may fire with chunks up to ~64KB (node-pty internal buffering)
-- Our 64KB threshold triggers immediate flush per chunk
-- Flow control pauses PTY if webview falls behind
-- xterm.js handles large writes efficiently via internal batching
-
-### 2. Rapid Small Outputs
-
-Scenario: `while true; do echo x; done` — many tiny outputs per second.
-
-Handling:
-- Each `echo x` produces ~2 bytes
-- Buffer accumulates for 8ms, then flushes many chunks as one string
-- Without buffering: thousands of postMessage calls/sec → with buffering: ~125 calls/sec
-
-### 3. PTY Exit During Buffered Output
-
-Handling:
-- `pty.onExit` triggers immediate buffer flush
-- Remaining data is sent to webview before exit message
-- Exit message `{ type: 'exit', tabId, code }` sent after flush
-- Ordering: guaranteed because postMessage is ordered
-
-### 4. WebView Disposed While Buffer Has Data
-
-Handling:
-- `webview.postMessage()` may throw when webview is disposed
-- OutputBuffer wraps postMessage in try/catch (sync throw) and `.then(undefined, () => {})` (async rejection)
-- On failure: the error is silently swallowed (no logging, no cleanup)
-- Sessions are preserved for potential webview re-creation, and output is paused via `pauseOutput()`
-
----
-
-## 9. Interface Definition
-
-```typescript
-class OutputBuffer {
-  /** Append data from PTY to the buffer */
-  append(data: string): void;
-
-  /** Force-flush all buffered data */
-  flush(): void;
-
-  /** Handle acknowledgment from webview (flow control) */
-  handleAck(charCount: number): void;
-
-  /** Pause output flushing (view hidden) */
-  pauseOutput(): void;
-
-  /** Resume output flushing (view shown) */
-  resumeOutput(): void;
-
-  /** Update webview reference (on webview re-creation) */
-  updateWebview(webview: MessageSender): void;
-
-  /** Dispose the buffer (best-effort final flush) */
-  dispose(): void;
-
-  /** Check if PTY is currently paused */
-  readonly isPaused: boolean;
-
-  /** Get current unacknowledged char count */
-  readonly unackedCharCount: number;
-
-  /** Get current buffered char count */
-  readonly bufferSize: number;
-}
-
-/** Flow control constants */
-const HIGH_WATERMARK_CHARS = 100_000;
-const LOW_WATERMARK_CHARS = 5_000;
-const ACK_BATCH_SIZE = 5_000;  // WebView-side (FlowControl class)
-```
-
----
-
-## 10. File Location
-
-```
-src/session/OutputBuffer.ts
-```
-
-### Dependencies
-- `node-pty` `IPty` — for `pause()` / `resume()`
-- `vscode.Webview` — for `postMessage()`
+| Member | Line | Role |
+|--------|------|------|
+| `append` | `:121` | Data in |
+| `flush` | `:181` | Force a flush now |
+| `handleAck` | `:189` | Backpressure credit from the webview |
+| `pauseOutput` / `resumeOutput` | `:214` / `:231` | View visibility |
+| `updateWebview` | `:247` | Rebind after a webview is re-created |
+| `dispose` | `:257` | Teardown; an optional flag discards instead of flushing |
+| `unackedCharCount`, `bufferSize`, `isPaused`, `isOutputPaused` | `:87`–`:102` | Read-only observers |
 
 ### Dependents
-- `SessionManager` — creates one OutputBuffer per session
+
+`SessionManager` owns one buffer per session (`SessionManager.ts:491`) and swaps
+it on fallback respawn (`:703`). `src/webview/main.ts` closes the loop from the
+other side (`:499`, `:502`).

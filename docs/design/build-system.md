@@ -2,816 +2,443 @@
 
 ## 1. Overview
 
-AnyWhere Terminal has a **dual-target build** that produces two separate bundles from a single TypeScript codebase:
+One esbuild invocation produces **two bundles** with incompatible targets, and five gates guard what ships.
 
-1. **Extension bundle** — Node.js code running in the VS Code Extension Host
-2. **WebView bundle** — Browser code running inside a VS Code WebView sandbox
+| Artifact | Entry | Format | Platform | Target | Config |
+|---|---|---|---|---|---|
+| `dist/extension.js` | `src/extension.ts` | `cjs` | `node` | `node18` | `esbuild.js:65-86` |
+| `media/webview.js` | `src/webview/main.ts` | `iife` | `browser` | `es2020` | `esbuild.js:89-121` |
+| `media/xterm.css` | copied from `@xterm/xterm` | — | — | — | `esbuild.js:39-62` |
 
-Both targets are built with **esbuild** for speed and simplicity. TypeScript type checking is performed separately via `tsc --noEmit`.
+Toolchain, as of `package.json`:
+
+| Concern | Tool | Not |
+|---|---|---|
+| Bundling | esbuild `^0.27.3` | webpack, rollup |
+| Types | TypeScript `^5.9.3`, `tsc --noEmit` | tsc-as-bundler |
+| Lint + format | **biome `^2.4.5`** | eslint, prettier |
+| Unit tests | **vitest `^4.0.18`** (157 `*.test.ts` files) | mocha |
+| Integration tests | `@vscode/test-cli` + `@vscode/test-electron` | — |
+| Package manager | pnpm (`pnpm-lock.yaml`) | npm, yarn |
+| Publish | `vsce` + `ovsx` via `scripts/release.sh` | CI |
+
+There is **no `.github/workflows`** directory. Every gate below runs locally, through `pnpm package` or `scripts/release.sh`.
 
 ### Reference
-- Parent design: `docs/DESIGN.md` §6 (Build System Design)
-- File structure: `docs/DESIGN.md` §2.2
+
+- `esbuild.js` (140), `tsconfig.json` (27), `biome.json` (53), `vitest.config.mts` (39)
+- `package.json` (644) — version `0.18.1`, `engines.vscode: ^1.105.0` (`:5`, `:41`)
+- `scripts/` — `check-bundle-size.mjs`, `check-vendor-headers.mjs`, `check-vsix-contents.mjs`, `measure-vendor-delta.mjs`, `vendor-vscode-list.mjs`, `release.sh`
+- `.vscodeignore` — deny-by-default allowlist
 
 ---
 
 ## 2. Build Architecture
 
 ```mermaid
-flowchart TD
-    subgraph Sources["Source Files"]
-        EXT_SRC["src/extension.ts<br/>src/providers/**<br/>src/session/**<br/>src/pty/**<br/>src/config/**<br/>src/types/**"]
-        WV_SRC["src/webview/main.ts<br/>src/webview/terminal/**<br/>src/webview/ui/**<br/>src/webview/utils/**"]
-        SHARED["src/types/messages.ts<br/>(shared type definitions)"]
-    end
-
-    subgraph Build["esbuild (dual-target)"]
-        B1["Extension Build<br/>platform: node<br/>format: cjs"]
-        B2["WebView Build<br/>platform: browser<br/>format: iife"]
-    end
-
-    subgraph Output["Build Output"]
-        O1["dist/extension.js<br/>(CJS, Node.js)"]
-        O2["media/webview.js<br/>(IIFE, browser)"]
-        O3["media/xterm.css<br/>(copied)"]
-    end
-
-    EXT_SRC --> B1
-    SHARED --> B1
-    SHARED --> B2
-    WV_SRC --> B2
-
-    B1 --> O1
-    B2 --> O2
-    B2 -->|"CSS loader"| O3
-
-    style SHARED fill:#345,stroke:#6af
-```
-
----
-
-## 3. Dual-Target esbuild Configuration
-
-### 3.1 Extension Bundle
-
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| Entry point | `src/extension.ts` | Extension activation entry |
-| Output | `dist/extension.js` | Matches `package.json` `"main"` field |
-| Format | `cjs` (CommonJS) | VS Code Extension Host requires CJS |
-| Platform | `node` | Access to Node.js APIs (fs, path, child_process) |
-| Target | `node18` | Minimum Node.js version in supported VS Code |
-| Externals | `vscode`, `node-pty` | `vscode` is provided by VS Code runtime; `node-pty` is loaded dynamically from VS Code internals at runtime |
-| Sourcemap | `true` (dev), `false` (prod) | Debugging support in development |
-| Minify | `false` (dev), `true` (prod) | Smaller VSIX for production |
-
-### 3.2 WebView Bundle
-
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| Entry point | `src/webview/main.ts` | WebView bootstrap entry |
-| Output | `media/webview.js` | Loaded via `<script>` tag in webview HTML |
-| Format | `iife` | Self-contained, no module system in webview |
-| Platform | `browser` | DOM APIs, no Node.js |
-| Target | `es2020` | VS Code's Electron Chromium supports ES2020+ |
-| Externals | *(none)* | All dependencies bundled into the output |
-| Sourcemap | `true` (dev), `false` (prod) | |
-| Minify | `false` (dev), `true` (prod) | |
-
-### 3.3 Bundled vs External Dependencies
-
-```mermaid
-graph LR
-    subgraph Bundled["Bundled into webview.js"]
-        XT["@xterm/xterm"]
-        FIT["@xterm/addon-fit"]
-        WL["@xterm/addon-web-links"]
-    end
-
-    subgraph External["External (not bundled)"]
-        VS["vscode<br/>(provided by runtime)"]
-        PTY["node-pty<br/>(loaded from VS Code internals)"]
-    end
-
-    subgraph Output["Output Files"]
-        WJS["media/webview.js<br/>~350KB (minified)"]
-        EJS["dist/extension.js<br/>~15KB (minified)"]
-    end
-
-    Bundled --> WJS
-    External -.->|"not included"| EJS
-
-    style Bundled fill:#345,stroke:#6af
-    style External fill:#543,stroke:#fa6
-```
-
----
-
-## 4. Watch Mode
-
-Both targets are watched in parallel during development. The `esbuild.context()` API provides incremental rebuilds:
-
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant ES1 as esbuild (extension)
-    participant ES2 as esbuild (webview)
-    participant VSCode as VS Code
-
-    Dev->>ES1: node esbuild.js --watch
-    Dev->>ES2: (started in parallel)
-
-    Note over ES1,ES2: Initial build (both targets)
-
-    ES1->>VSCode: dist/extension.js updated
-    ES2->>VSCode: media/webview.js updated
-
-    Dev->>Dev: Edit src/session/SessionManager.ts
-
-    Note over ES1: File change detected
-    ES1->>ES1: Incremental rebuild (~50ms)
-    ES1->>VSCode: dist/extension.js updated
-    Note over ES2: No change in webview sources
-
-    Dev->>Dev: Edit src/webview/ui/TabManager.ts
-
-    Note over ES2: File change detected
-    ES2->>ES2: Incremental rebuild (~30ms)
-    ES2->>VSCode: media/webview.js updated
-    Note over ES1: No change in extension sources
-```
-
-### npm Scripts
-
-```json
-{
-  "scripts": {
-    "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
-    "watch": "npm-run-all -p watch:*",
-    "watch:esbuild": "node esbuild.js --watch",
-    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
-    "vscode:prepublish": "pnpm run package"
-  }
-}
-```
-
-The `watch` script runs three processes in parallel:
-1. `watch:esbuild` — incremental bundling for both targets
-2. `watch:tsc` — type checking (reports errors without emitting)
-
----
-
-## 5. Dependencies
-
-### 5.1 devDependencies
-
-| Package | Purpose | Bundle Target |
-|---------|---------|---------------|
-| `@xterm/xterm` | Terminal emulator library | WebView (bundled) |
-| `@xterm/addon-fit` | Auto-resize terminal to container | WebView (bundled) |
-| `@xterm/addon-web-links` | Clickable URLs in terminal | WebView (bundled) |
-| `esbuild` | JavaScript/TypeScript bundler | Build tool |
-| `typescript` | Type checking (`tsc --noEmit`) | Build tool |
-| `@types/vscode` | VS Code API type definitions | Type checking |
-| `@types/node` | Node.js API type definitions | Type checking |
-| `npm-run-all` | Parallel script runner | Build tool |
-| `eslint` | Linting | Build tool |
-| `typescript-eslint` | TypeScript ESLint rules | Build tool |
-| `@vscode/test-cli` | Extension test runner | Testing |
-| `@vscode/test-electron` | Extension test environment | Testing |
-
-### 5.2 Runtime Dependencies
-
-**There are no runtime `dependencies`** in `package.json`:
-
-- **node-pty**: Loaded dynamically from VS Code's built-in modules at runtime via `require(path.join(vscode.env.appRoot, 'node_modules.asar', 'node-pty'))`. Not listed as a dependency at all.
-- **xterm.js + addons**: Bundled into `media/webview.js` at build time by esbuild. They are `devDependencies` because they are only needed during the build process.
-- **vscode**: Provided by the VS Code runtime. Listed as an `external` in esbuild config.
-
-### 5.3 Dependency Graph
-
-```mermaid
-graph TD
-    subgraph Runtime["Runtime Dependencies (0)"]
-        NONE["(none — all bundled or provided)"]
-    end
-
-    subgraph DevDeps["devDependencies"]
-        subgraph BundledIntoWebview["Bundled into media/webview.js"]
-            XT["@xterm/xterm"]
-            FIT["@xterm/addon-fit"]
-            WL["@xterm/addon-web-links"]
-        end
-
-        subgraph BuildTools["Build Tools"]
-            ESB["esbuild"]
-            TS["typescript"]
-            NRA["npm-run-all"]
-            ESL["eslint"]
-            TSE["typescript-eslint"]
-        end
-
-        subgraph TypeDefs["Type Definitions"]
-            TVS["@types/vscode"]
-            TN["@types/node"]
-        end
-
-        subgraph Testing["Test Tools"]
-            VTC["@vscode/test-cli"]
-            VTE["@vscode/test-electron"]
-        end
-    end
-
-    subgraph ProvidedByVSCode["Provided by VS Code Runtime"]
-        VSAPI["vscode (API)"]
-        NPTY["node-pty (native module)"]
-    end
-
-    style NONE fill:#363,stroke:#6f6
-    style ProvidedByVSCode fill:#345,stroke:#6af
-```
-
----
-
-## 6. CSS Handling
-
-### 6.1 xterm.css
-
-xterm.js requires its CSS file for proper rendering. The CSS is handled during the build:
-
-```mermaid
 flowchart LR
-    A["node_modules/@xterm/xterm/css/xterm.css"] -->|"Copy during build"| B["media/xterm.css"]
-    B -->|"Loaded via<br/>link href in webview HTML"| C["WebView"]
+  subgraph SRC["src/"]
+    EXT["extension.ts"]
+    WV["webview/main.ts"]
+    VEN["vendor/vscode/ (124 .ts, ~39.6k lines)"]
+    SETI["vendor/seti/ (woff + theme json)"]
+  end
+  subgraph NM["node_modules"]
+    XT["@xterm/* v6"]
+    SH["shiki + @shikijs/*"]
+    MD["markdown-it, mdast"]
+  end
+  EXT --> EB1["esbuild extensionConfig"]
+  WV --> EB2["esbuild webviewConfig"]
+  VEN -->|alias vs → src/vendor/vscode| EB2
+  SETI -->|.woff → dataurl| EB2
+  XT --> EB2
+  SH --> EB2
+  MD --> EB2
+  EB1 --> D1["dist/extension.js (cjs)"]
+  EB2 --> D2["media/webview.js (iife)"]
+  EB2 -.onEnd.-> D3["media/xterm.css"]
+  D1 --> VSIX["anywhere-terminal-X.Y.Z.vsix"]
+  D2 --> VSIX
+  D3 --> VSIX
 ```
 
-The CSS is **copied**, not bundled into JS, because:
-- It must be loaded as a separate `<link>` stylesheet in the webview HTML
-- The webview's Content Security Policy specifies `style-src ${webview.cspSource}`, which requires the CSS to come from a trusted local file
-- `'unsafe-inline'` covers xterm's runtime-injected styles, but the base CSS should be a file
-
-### 6.2 CSS Copy in esbuild.js
-
-The CSS copy is implemented as an esbuild plugin or a post-build step:
-
-```javascript
-const { copyFileSync } = require('fs');
-const path = require('path');
-
-// Post-build: copy xterm.css to media/
-function copyXtermCss() {
-  copyFileSync(
-    path.join(__dirname, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css'),
-    path.join(__dirname, 'media', 'xterm.css')
-  );
-}
-```
+`main()` builds both targets **in parallel** — `Promise.all([build(extensionConfig), build(webviewConfig)])` (`esbuild.js:132`), and in watch mode `Promise.all([extCtx.watch(), wvCtx.watch()])` (`esbuild.js:127-128`). A build failure exits non-zero (`esbuild.js:137-140`).
 
 ---
 
-## 7. TypeScript Configuration
+## 3. Dual-target esbuild configuration
 
-### 7.1 Current Configuration
+### 3.1 Extension bundle (`esbuild.js:65-86`)
 
-The project uses a single `tsconfig.json` with `lib: ["ES2022"]`:
+| Option | Value | Why |
+|---|---|---|
+| `format` / `platform` / `target` | `cjs` / `node` / `node18` | VS Code extension host |
+| `external` | `["vscode", "node-pty"]` | `vscode` is injected at runtime; `node-pty` is loaded from VS Code's own `node_modules(.asar)` at runtime — see `docs/design/error-handling.md` §3.1 |
+| `loader` | `{ ".css": "text" }` | `webviewHtml.ts` imports vendored CSS **as strings** and interpolates them into a `<style>` block |
+| `sourcemap` | `!production` | |
+| `sourcesContent` | `false` | keeps maps small |
+| `minify` | `production` | full minify is safe here — no xterm in this bundle |
+| `logLevel` | `"silent"` | errors are surfaced by the problem-matcher plugin instead |
 
-```jsonc
-{
-  "compilerOptions": {
-    "module": "Node16",
-    "target": "ES2022",
-    "lib": ["ES2022"],
-    "sourceMap": true,
-    "rootDir": "src",
-    "strict": true
-  }
-}
-```
+### 3.2 WebView bundle (`esbuild.js:89-121`)
 
-### 7.2 Required Changes for WebView Support
+| Option | Value | Why |
+|---|---|---|
+| `format` / `platform` / `target` | `iife` / `browser` / `es2020` | webview sandbox, single `<script nonce>` |
+| `alias` | `{ vs: src/vendor/vscode }` | resolves `vs/base/...` imports to the vendored tree (§4) |
+| `loader` | `{ ".woff": "dataurl" }` | the Seti icon font ships inside the JS — no second resource fetch under the CSP (§5) |
+| `external` | *(none)* | xterm + addons + Shiki + markdown-it are all bundled (`esbuild.js:106-107`) |
+| `minifySyntax` | **`false`** | xterm.js v6 breaks under it (`ReferenceError` in the `requestMode`/DECRQM parser) |
+| `minifyIdentifiers` | **`false`** | same |
+| `minifyWhitespace` | `production` | the only minification that is safe |
 
-The webview code uses DOM APIs (`document`, `window`, `ResizeObserver`, `navigator.clipboard`, etc.). The current config lacks `"DOM"` in the `lib` array.
+The two disabled minifiers are the reason the bundle ceiling is as large as it is — TextMate grammars are full of long identifier-like property names an identifier-minifier would otherwise mangle (`scripts/check-bundle-size.mjs:22-27`). The comment cites precedent: VS Code loads xterm as an external AMD module and never minifies it; `vscode-sidebar-terminal` uses webpack `{minimize: false}` (`esbuild.js:110-115`).
 
-**Option A: Single tsconfig with both libs** (recommended for MVP)
+### 3.3 Plugins
 
-```jsonc
-{
-  "compilerOptions": {
-    "module": "Node16",
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
-    "sourceMap": true,
-    "rootDir": "src",
-    "strict": true,
-    "skipLibCheck": true
-  }
-}
-```
-
-Trade-off: Extension code can accidentally use DOM APIs without a compile error. Acceptable for a small codebase with clear directory separation.
-
-**Option B: Separate tsconfig files** (recommended for later phases)
-
-```
-tsconfig.json              ← Base config (shared settings)
-tsconfig.extension.json    ← Extension: lib: ["ES2022"], no DOM
-tsconfig.webview.json      ← WebView: lib: ["ES2022", "DOM"], no Node
-```
-
-```jsonc
-// tsconfig.extension.json
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "lib": ["ES2022"],
-    "types": ["node"]
-  },
-  "include": ["src/**/*"],
-  "exclude": ["src/webview/**/*"]
-}
-```
-
-```jsonc
-// tsconfig.webview.json
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "lib": ["ES2022", "DOM"]
-  },
-  "include": ["src/webview/**/*", "src/types/**/*"]
-}
-```
-
-### 7.3 Shared Types
-
-The `src/types/` directory contains type definitions shared between extension and webview code (notably `messages.ts`). Both tsconfig files include this directory. These files must only use types that exist in both `lib` sets (i.e., pure TypeScript types, no DOM or Node-specific APIs).
+| Plugin | Applies to | Behaviour |
+|---|---|---|
+| `esbuildProblemMatcherPlugin` (`:17-33`) | both | Emits `[watch] build started` / `finished` and prints `✘ [ERROR] …` with `file:line:column` — the shape the VS Code task problem-matcher expects |
+| `copyXtermCssPlugin` (`:39-62`) | webview only | On a zero-error build, `require.resolve("@xterm/xterm/css/xterm.css")` → copy to `media/xterm.css`, creating `media/` if absent. A copy failure is a `console.warn`, **not** a build failure (`:56-58`) |
 
 ---
 
-## 8. package.json Contributions
+## 4. Vendored VS Code source tree
 
-The `contributes` section of `package.json` declares all VS Code integration points:
+`src/vendor/vscode/` holds a transitive closure of upstream VS Code files, entry point `vs/base/browser/ui/list/listWidget.ts` — the list widget that backs the file-tree and vault panels.
 
-### 8.1 View Containers
+| Fact | Value | Source |
+|---|---|---|
+| Files | 124 `.ts` + 4 `.css` | `find src/vendor/vscode` |
+| Size | ~39,614 lines of TS | |
+| Upstream repo | `https://github.com/microsoft/vscode` | `MANIFEST.json:2` |
+| Upstream SHA | `5aefa4caeb76874b77ba5b00075b4f4c37b59cf0` | `MANIFEST.json:3`, `scripts/vendor-vscode-list.mjs:27` |
+| Entry point | `src/vs/base/browser/ui/list/listWidget.ts` | `MANIFEST.json:5-7`, `vendor-vscode-list.mjs:33` |
+| Manifest | `src/vendor/vscode/MANIFEST.json` (748 lines) — per-file `src`, `dest`, `upstreamSha`, `copiedAt` | |
 
-```jsonc
-{
-  "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "anywhereTerminal",
-          "title": "AnyWhere Terminal",
-          "icon": "$(terminal)"
-        }
-      ],
-      "panel": [
-        {
-          "id": "anywhereTerminalPanel",
-          "title": "AnyWhere Terminal"
-        }
-      ]
-    }
-  }
-}
-```
+### 4.1 `scripts/vendor-vscode-list.mjs`
 
-### 8.2 Views
+Re-vendoring tool, **not** part of any build script — run by hand, `--dry-run` first (`:39`). It walks the import graph from the entry point and copies each reached file **byte-for-byte**, deliberately preserving upstream's `.js` import extensions so future re-vendoring diffs stay clean; `moduleResolution: "Bundler"` maps them back to `.ts` (`:14-17`). `nls.ts` is project-owned and never overwritten (`:37`). `UPSTREAM_ROOT` is a **hard-coded absolute path** to a local VS Code checkout (`:26`), so the script only runs on a machine that has one.
 
-```jsonc
-{
-  "contributes": {
-    "views": {
-      "anywhereTerminal": [
-        {
-          "id": "anywhereTerminal.sidebar",
-          "name": "Terminal",
-          "type": "webview"
-        }
-      ],
-      "anywhereTerminalPanel": [
-        {
-          "id": "anywhereTerminal.panel",
-          "name": "Terminal",
-          "type": "webview"
-        }
-      ]
-    }
-  }
-}
-```
+### 4.2 Three build-time consequences
 
-### 8.3 Commands
+| Consequence | Mechanism |
+|---|---|
+| `vs/*` resolves for `tsc` | `compilerOptions.paths: {"vs/*": ["./src/vendor/vscode/*"]}` (`tsconfig.json:10-12`) |
+| `vs/*` resolves for esbuild | `alias.vs` (`esbuild.js:96-99`) |
+| `vs/*` resolves for vitest | `test.alias.vs` (`vitest.config.mts:17`) |
 
-```jsonc
-{
-  "contributes": {
-    "commands": [
-      {
-        "command": "anywhereTerminal.newTerminal",
-        "title": "New Terminal",
-        "icon": "$(plus)",
-        "category": "AnyWhere Terminal"
-      },
-      {
-        "command": "anywhereTerminal.newTerminalInEditor",
-        "title": "New Terminal in Editor",
-        "category": "AnyWhere Terminal"
-      },
-      {
-        "command": "anywhereTerminal.killTerminal",
-        "title": "Kill Terminal",
-        "icon": "$(trash)",
-        "category": "AnyWhere Terminal"
-      },
-      {
-        "command": "anywhereTerminal.clearTerminal",
-        "title": "Clear Terminal",
-        "icon": "$(clear-all)",
-        "category": "AnyWhere Terminal"
-      }
-    ]
-  }
-}
-```
+Two upstream-required compiler flags leak into the whole project: `experimentalDecorators: true` and `useUnknownInCatchVariables: false` (`tsconfig.json:21-22`). The second is documented as type-compatible because app catch handlers are bare `catch (err)` with no `: unknown` annotation (`tsconfig.json:15-20`).
 
-### 8.4 Menus
+`src/vendor/**` is excluded from biome (`biome.json:10`) — vendored code is never reformatted or linted.
 
-```jsonc
-{
-  "contributes": {
-    "menus": {
-      "view/title": [
-        {
-          "command": "anywhereTerminal.newTerminal",
-          "when": "view =~ /anywhereTerminal/",
-          "group": "navigation@1"
-        },
-        {
-          "command": "anywhereTerminal.killTerminal",
-          "when": "view =~ /anywhereTerminal/",
-          "group": "navigation@2"
-        },
-        {
-          "command": "anywhereTerminal.clearTerminal",
-          "when": "view =~ /anywhereTerminal/",
-          "group": "navigation@3"
-        }
-      ]
-    }
-  }
-}
-```
+### 4.3 Vendor smoke tests
 
-### 8.5 Configuration
+Two vitest files pin the closure rather than the widget's behaviour:
 
-```jsonc
-{
-  "contributes": {
-    "configuration": {
-      "title": "AnyWhere Terminal",
-      "properties": {
-        "anywhereTerminal.shell.macOS": {
-          "type": "string",
-          "default": "",
-          "description": "Path to shell executable on macOS (empty = auto-detect)"
-        },
-        "anywhereTerminal.shell.args": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "description": "Arguments to pass to the shell"
-        },
-        "anywhereTerminal.scrollback": {
-          "type": "number",
-          "default": 10000,
-          "minimum": 100,
-          "maximum": 100000,
-          "description": "Maximum number of lines in scrollback buffer"
-        },
-        "anywhereTerminal.fontSize": {
-          "type": "number",
-          "default": 0,
-          "description": "Terminal font size (0 = inherit from VS Code)"
-        },
-        "anywhereTerminal.cursorBlink": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable cursor blinking"
-        },
-        "anywhereTerminal.defaultCwd": {
-          "type": "string",
-          "default": "",
-          "description": "Default working directory (empty = workspace root)"
-        }
-      }
-    }
-  }
-}
-```
+- `src/test/vendor-import.test.ts` — `vs/*` resolves under vitest, `listWidget` imports without a module-not-found, and `new List(...)` stamps `.monaco-list` onto its container. Runs under `// @vitest-environment jsdom` and stubs `ResizeObserver`/`matchMedia`/`requestAnimationFrame` first. A failure points at a missing transitive dep — re-run the vendor script's `--dry-run`.
+- `src/test/vendor-filters.test.ts` — golden cases for `fuzzyScore` / `createMatches`, which the file-tree search depends on.
 
 ---
 
-## 9. Packaging
+## 5. Vendored Seti icon assets
 
-### 9.1 VSIX Packaging
+`src/vendor/seti/` — four files vendored from microsoft/vscode release/1.96 (originally jesseweed/seti-ui, both MIT): `seti.woff` (37 KB), `vs-seti-icon-theme.json` (54 KB, extension/filename → icon-class + colour), `setiIconResolver.ts` (consumed by `ReadOnlyFileRenderer.ts:32`), and `setiFontCss.ts`.
 
-The extension is packaged into a `.vsix` file using `@vscode/vsce`:
+The font never becomes a separate resource. `setiFontCss.ts:14` imports the `.woff`, esbuild's `dataurl` loader turns it into a `data:font/woff;base64,…` string, and `main.ts:57-62` injects the resulting `@font-face` rule into a `<style data-source="seti-icon-font">` element at runtime. That keeps it inside the CSP's `font-src … data:` allowance with no second fetch.
 
-```bash
-# Install vsce
-pnpm add -D @vscode/vsce
-
-# Package
-npx vsce package
-```
-
-### 9.2 Files Included in VSIX
-
-The `.vscodeignore` file controls what is included:
-
-```
-# Include
-dist/extension.js
-media/webview.js
-media/xterm.css
-media/icon.svg
-package.json
-README.md
-CHANGELOG.md
-LICENSE
-
-# Exclude (by .vscodeignore)
-src/**
-node_modules/**
-docs/**
-*.ts
-tsconfig*.json
-esbuild.js
-eslint.config.mjs
-.git/**
-```
-
-### 9.3 Platform-Specific VSIX
-
-**Not needed for MVP**. AnyWhere Terminal does not bundle any native modules — node-pty is loaded from VS Code's built-in modules at runtime. Therefore, a single universal VSIX works on all platforms (macOS, Linux, Windows).
-
-If in the future we need platform-specific builds (e.g., for bundled native addons), we would use `@vscode/vsce package --target <platform>` with targets like `darwin-arm64`, `linux-x64`, etc.
-
-### 9.4 VSIX Size Estimate
-
-| Component | Estimated Size |
-|-----------|---------------|
-| `dist/extension.js` (minified) | ~15 KB |
-| `media/webview.js` (minified, with xterm) | ~350 KB |
-| `media/xterm.css` | ~10 KB |
-| `package.json` + metadata | ~5 KB |
-| **Total VSIX** | **~400 KB** |
+It is **webview-only by construction**: the `dataurl` loader is configured on `webviewConfig` alone, so the ~50 KB base64 payload never reaches `dist/extension.js` (`main.ts:54-56`).
 
 ---
 
-## 10. Complete esbuild.js
+## 6. CSS handling — three distinct paths
 
-```javascript
-// esbuild.js
+| Path | Mechanism | Ends up as |
+|---|---|---|
+| `media/xterm.css` | copied by `copyXtermCssPlugin` | a real `<link href>` in the webview HTML (`webviewHtml.ts:68,81`) |
+| Vendored list CSS + project panel CSS | `.css: "text"` loader on **extensionConfig**, imported by `webviewHtml.ts:11-21` | interpolated into the inline `<style>` block |
+| Seti font | `.woff: "dataurl"` on **webviewConfig** | a `data:` URL inside `media/webview.js` |
 
-const esbuild = require('esbuild');
-const { copyFileSync, mkdirSync, existsSync } = require('fs');
-const path = require('path');
-
-const production = process.argv.includes('--production');
-const watch = process.argv.includes('--watch');
-
-/**
- * esbuild problem matcher plugin for VS Code task integration.
- * Formats errors in a way that VS Code's problem matcher can parse.
- * @type {import('esbuild').Plugin}
- */
-const esbuildProblemMatcherPlugin = {
-  name: 'esbuild-problem-matcher',
-  setup(build) {
-    build.onStart(() => {
-      console.log('[watch] build started');
-    });
-    build.onEnd((result) => {
-      result.errors.forEach(({ text, location }) => {
-        console.error(`✘ [ERROR] ${text}`);
-        if (location) {
-          console.error(`    ${location.file}:${location.line}:${location.column}:`);
-        }
-      });
-      console.log('[watch] build finished');
-    });
-  },
-};
-
-/**
- * Plugin to copy xterm.css to media/ after a successful build.
- * @type {import('esbuild').Plugin}
- */
-const copyXtermCssPlugin = {
-  name: 'copy-xterm-css',
-  setup(build) {
-    build.onEnd((result) => {
-      if (result.errors.length === 0) {
-        const src = path.join(__dirname, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css');
-        const dest = path.join(__dirname, 'media', 'xterm.css');
-
-        // Ensure media/ directory exists
-        const mediaDir = path.join(__dirname, 'media');
-        if (!existsSync(mediaDir)) {
-          mkdirSync(mediaDir, { recursive: true });
-        }
-
-        try {
-          copyFileSync(src, dest);
-          console.log('[copy] xterm.css → media/xterm.css');
-        } catch (err) {
-          console.warn('[copy] Failed to copy xterm.css:', err.message);
-        }
-      }
-    });
-  },
-};
-
-// ─── Extension Host Bundle ──────────────────────────────────────────
-const extensionConfig = {
-  entryPoints: ['./src/extension.ts'],
-  bundle: true,
-  outfile: './dist/extension.js',
-  format: 'cjs',
-  platform: 'node',
-  target: 'node18',
-  external: [
-    'vscode',      // Provided by VS Code runtime
-    'node-pty',    // Loaded dynamically from VS Code internals
-  ],
-  sourcemap: !production,
-  sourcesContent: false,
-  minify: production,
-  logLevel: 'silent',
-  plugins: [
-    esbuildProblemMatcherPlugin,
-  ],
-};
-
-// ─── WebView Bundle ─────────────────────────────────────────────────
-const webviewConfig = {
-  entryPoints: ['./src/webview/main.ts'],
-  bundle: true,
-  outfile: './media/webview.js',
-  format: 'iife',
-  platform: 'browser',
-  target: 'es2020',
-  // No externals — everything is bundled:
-  //   @xterm/xterm, @xterm/addon-fit, @xterm/addon-web-links
-  sourcemap: !production,
-  sourcesContent: false,
-  minify: production,
-  logLevel: 'silent',
-  plugins: [
-    esbuildProblemMatcherPlugin,
-    copyXtermCssPlugin,
-  ],
-};
-
-// ─── Build Entry Point ──────────────────────────────────────────────
-async function main() {
-  if (watch) {
-    // Watch mode: both targets rebuild incrementally in parallel
-    const [extCtx, wvCtx] = await Promise.all([
-      esbuild.context(extensionConfig),
-      esbuild.context(webviewConfig),
-    ]);
-    await Promise.all([extCtx.watch(), wvCtx.watch()]);
-    console.log('Watching for changes...');
-  } else {
-    // Single build: build both targets in parallel
-    await Promise.all([
-      esbuild.build(extensionConfig),
-      esbuild.build(webviewConfig),
-    ]);
-    console.log('Build complete.');
-  }
-}
-
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
-```
+The second path is why the extension bundle needs a CSS loader at all — the strings are consumed on the **host** side, at HTML-generation time.
 
 ---
 
-## 11. Build Pipeline Diagram
+## 7. TypeScript configuration (`tsconfig.json`)
+
+| Option | Value | Why |
+|---|---|---|
+| `module` / `moduleResolution` | `ESNext` / `Bundler` | lets the vendored tree keep upstream's `.js` import extensions |
+| `target` / `lib` | `ES2022` / `ES2022` + `DOM` + `DOM.Iterable` | one program spans host **and** webview code |
+| `rootDir` / `baseUrl` | `src` / `.` | |
+| `paths` | `vs/* → ./src/vendor/vscode/*` | §4 |
+| `strict`, `skipLibCheck` | `true` | |
+| `experimentalDecorators` | `true` | required by the vendored tree |
+| `useUnknownInCatchVariables` | `false` | required by the vendored tree |
+| `exclude` | `vitest.config.mts`, `third_party`, `asimov` | `asimov/` holds repro scripts that import `src` from outside `rootDir` (TS6059) |
+
+`lib` carries **both** `ES2022` and `DOM` because one program covers host and webview code. `asimov/` is excluded because it holds debug-repro scripts that import from `src` while living outside `rootDir` — TS6059 otherwise (`tsconfig.json:24-25`).
+
+`tsc` is never used to emit the shipped bundles: `check-types` is `tsc --noEmit` (`package.json:599`). The only emitting use is `compile-tests` → `tsc -p . --outDir out` for the `vscode-test` integration suite (`package.json:596`).
+
+---
+
+## 8. Lint and format — biome
+
+`biome.json` (53 lines), schema pinned to `2.4.5`.
+
+| Setting | Value |
+|---|---|
+| VCS integration | `git`, `useIgnoreFile: true` (`:3-7`) |
+| Ignored paths | `dist`, `out`, `.vscode`, `.vscode-test`, **`src/vendor/**`** (`:10`) |
+| Formatter | spaces, width 2, **line width 120** (`:12-17`) |
+| Import sorting | `assist.actions.source.organizeImports: "on"` (`:18`) |
+| JS style | double quotes, always semicolons (`:48-53`) |
+
+Rules start from biome's `recommended` set (`biome.json:23-45`). The deviations that matter for reading this codebase: `noExplicitAny`, `noAssignInExpressions`, `noNonNullAssertion`, and `useNamingConvention` are **off**; `noDoubleEquals`, `useBlockStatements`, and `useThrowOnlyError` are **warn**; nine `style/*` rules are promoted to **error**. `useExhaustiveDependencies` is downgraded to `info` — there is no React here.
+
+> The `lint` script is `biome check --write --unsafe src/` (`package.json:600`) — it **mutates sources** as part of `compile`, `package`, and `pretest`. It is a formatter-fixer in the pipeline, not a read-only gate.
+
+---
+
+## 9. Tests — two runners
+
+### 9.1 vitest (unit)
+
+`vitest.config.mts`:
+
+| Setting | Value |
+|---|---|
+| `include` | `src/**/*.test.ts` — colocated, 157 files |
+| `exclude` | `node_modules`, `dist`, `out`, `src/test/extension.test.ts` |
+| `alias.vscode` | `src/test/__mocks__/vscode.ts` — the manual `vscode` API mock |
+| `alias.vs` | `src/vendor/vscode` |
+| Coverage provider | `v8`, reporters `text` + `lcov` |
+| Coverage thresholds | lines / functions / branches all **80** |
+
+Coverage deliberately excludes `src/test/**`, **`src/webview/**`**, `src/types/messages.ts`, `src/extension.ts`, and `src/providers/**` (`vitest.config.mts:23-30`) — the DOM-heavy and VS Code-API-heavy layers are covered by integration tests instead.
+
+Tests needing a DOM opt in per-file with `// @vitest-environment jsdom` (e.g. `src/test/vendor-import.test.ts:16`); `jsdom ^28.1.0` is a devDependency.
+
+### 9.2 `vscode-test` (integration)
+
+`pnpm test` runs `vscode-test` (`package.json:602`), preceded by `pretest` = `compile-tests && compile && lint` (`package.json:598`). The suites live in `src/test/`: `extension.test.ts`, `fileTreeGitDecorations.integration.test.ts`, `fileTreeRpc.integration.test.ts`.
+
+> ⚠️ No `.vscode-test.mjs` / `.js` / `.cjs` config file exists in the repo. See §14.2.
+
+---
+
+## 10. Build gates
+
+Four gate scripts; **three** are wired into `pnpm package`. Each asserts one invariant and exits non-zero.
+
+| Gate | Asserts | Threshold / rule | Wired? |
+|---|---|---|---|
+| `check-vendor-headers.mjs` | Every `.ts`/`.d.ts` under `src/vendor/vscode/` carries the upstream `"Microsoft Corporation"` header in its first 6 lines (`:58-61`). Skips `nls.ts` and `*-stub.d.ts` (`:18-19`) | license attribution | ✅ — runs **before** the production build, so a licensing failure costs no build |
+| `check-bundle-size.mjs` | `media/webview.js` fits the ceiling (`:64-67`) | `CEILING_BYTES = 4.5 MB` (`:16`) | ✅ — after the production build |
+| `check-vsix-contents.mjs` | All 14 `REQUIRED_FILES` appear in `vsce ls --no-dependencies` (`:20-35`, `:55`) | `dist/extension.js`, `media/webview.js`, `media/xterm.css`, seven `resources/shell-integration/*` scripts, `package.json`, `README.md`, `CHANGELOG.md`, `LICENSE` | ✅ — last |
+| `measure-vendor-delta.mjs` | Growth over the pre-vendor baseline stays in budget (`:21-28`) | `DELTA_CEILING_BYTES = 650 KB` (`:41`) | ❌ **orphaned** — §14.1 |
+
+Two of these encode history rather than taste:
+
+- The **size ceiling** climbed 1.6 MB → 3 MB → 3.6 MB (vendored list closure) → 4.5 MB (v0.16.0 AI Vault redesign) (`check-bundle-size.mjs:22-40`). It is production-only by design: dev builds skip minification and run ~10–15 % larger (`:18-20`).
+- The **VSIX gate** exists because of a real 0.14.0 regression — `resources/shell-integration/*` was silently excluded by `.vscodeignore` and shell-integration injection broke in the published extension (`check-vsix-contents.mjs:4-8`). Its failure message names the missing paths and points at the absent `!<path>` un-ignore line (`:57-65`).
+
+---
+
+## 11. npm script pipeline
 
 ```mermaid
 flowchart TD
-    subgraph Input["Source Input"]
-        TS_EXT["src/extension.ts<br/>+ extension modules"]
-        TS_WV["src/webview/main.ts<br/>+ webview modules"]
-        TYPES["src/types/*.ts<br/>(shared)"]
-        CSS["node_modules/@xterm/<br/>xterm/css/xterm.css"]
-    end
-
-    subgraph TypeCheck["Type Checking (tsc)"]
-        TSC["tsc --noEmit<br/>(separate from bundling)"]
-    end
-
-    subgraph Lint["Linting"]
-        ESL["eslint src/"]
-    end
-
-    subgraph Bundle["Bundling (esbuild)"]
-        B1["Extension Build<br/>CJS, node, node18<br/>externals: vscode, node-pty"]
-        B2["WebView Build<br/>IIFE, browser, es2020<br/>bundles: xterm + addons"]
-        COPY["Copy Plugin:<br/>xterm.css → media/"]
-    end
-
-    subgraph Output["Build Output"]
-        O1["dist/extension.js"]
-        O2["media/webview.js"]
-        O3["media/xterm.css"]
-    end
-
-    subgraph Package["Packaging"]
-        VSCE["vsce package"]
-        VSIX["anywhere-terminal-0.0.1.vsix"]
-    end
-
-    TS_EXT --> TSC
-    TS_WV --> TSC
-    TYPES --> TSC
-    TS_EXT --> ESL
-    TS_WV --> ESL
-
-    TS_EXT --> B1
-    TYPES --> B1
-    TYPES --> B2
-    TS_WV --> B2
-    CSS --> COPY
-
-    B1 --> O1
-    B2 --> O2
-    COPY --> O3
-
-    O1 --> VSCE
-    O2 --> VSCE
-    O3 --> VSCE
-    VSCE --> VSIX
-
-    style TSC fill:#345,stroke:#6af
-    style B1 fill:#453,stroke:#af6
-    style B2 fill:#453,stroke:#af6
+  P["pnpm package"] --> CT["check-types (tsc --noEmit)"]
+  CT --> L["lint (biome check --write --unsafe src/)"]
+  L --> V["build:check-vendor (headers)"]
+  V --> B["node esbuild.js --production"]
+  B --> S["build:check-size (≤4.5 MB)"]
+  S --> X["build:check-vsix (vsce ls)"]
+  X --> OK["ready to package"]
+  VP["vscode:prepublish"] --> P
 ```
+
+All scripts live at `package.json:587-608`. Four define the shape; the rest are thin aliases over `esbuild.js`, `tsc`, `biome`, `vitest`, and the gate scripts.
+
+| Script | Chain | Line |
+|---|---|---|
+| `package` | `check-types` → `lint` → `build:check-vendor` → `esbuild --production` → `build:check-size` → `build:check-vsix` | `:592` |
+| `compile` | `check-types` → `lint` → `esbuild` (dev) | `:588` |
+| `pretest` | `compile-tests` → `compile` → `lint`, then `test` runs `vscode-test` | `:598`, `:602` |
+| `watch` | `npm-run-all -p watch:*` — `esbuild --watch` **and** `tsc --noEmit --watch` | `:589-591` |
+
+`watch` runs the esbuild watcher and a `tsc --noEmit --watch` **in parallel** — esbuild never type-checks, so the separate tsc watcher is what surfaces type errors during the inner loop.
 
 ---
 
-## 12. NPM Script Pipeline
+## 12. Packaging
+
+### 12.1 `.vscodeignore` — deny by default
+
+| Rule class | Entries |
+|---|---|
+| Exclude everything | `**` |
+| Re-include shipped assets | `!dist/**`, `!media/**`, `!resources/**`, `!package.json`, `!README.md`, `!CHANGELOG.md`, `!LICENSE` |
+| Re-exclude build inputs | `src/**`, `node_modules/**`, `docs/**`, `*.ts` (but `!*.d.ts`), `tsconfig*.json`, `esbuild.js`, `biome.json` |
+| Re-exclude tooling / agent dirs | `.git/**`, `.vscode/**`, `.vscode-test/**`, `.github/**`, `.agents/**`, `.opencode/**`, `.drafts/**`, `bun.lock`, `pnpm-lock.yaml`, `AGENTS.md` |
+
+The inverted-allowlist shape is exactly what `check-vsix-contents.mjs` exists to police — a new runtime asset that is not un-ignored ships broken. Packaging uses `--no-dependencies` (`package.json:606`) because the single runtime dependency (`strip-ansi`) is already bundled into `dist/extension.js`.
+
+### 12.2 `scripts/release.sh` — atomic release
+
+`bash scripts/release.sh <version> [both|vsce|ovsx]`.
 
 ```mermaid
-flowchart LR
-    subgraph Dev["Development"]
-        W["pnpm watch"]
-        W --> W1["watch:esbuild<br/>(incremental)"]
-        W --> W2["watch:tsc<br/>(type check)"]
-    end
-
-    subgraph CI["CI / Build"]
-        C["pnpm compile"]
-        C --> C1["check-types<br/>(tsc --noEmit)"]
-        C1 --> C2["lint<br/>(eslint src)"]
-        C2 --> C3["node esbuild.js"]
-    end
-
-    subgraph Release["Release"]
-        P["pnpm package"]
-        P --> P1["check-types"]
-        P1 --> P2["lint"]
-        P2 --> P3["node esbuild.js<br/>--production"]
-    end
-
-    subgraph Publish["vscode:prepublish"]
-        PP["pnpm run package"]
-    end
-
-    style Dev fill:#345,stroke:#6af
-    style CI fill:#453,stroke:#af6
-    style Release fill:#543,stroke:#fa6
+flowchart TD
+  A["validate semver X.Y.Z + target"] --> B["refuse dirty working tree"]
+  B --> C["refuse existing tag vX.Y.Z"]
+  C --> D["require '## [X.Y.Z]' in CHANGELOG.md"]
+  D --> E["npm version --no-git-tag-version"]
+  E --> F["pnpm check-types"]
+  F --> G["pnpm test:unit"]
+  G --> H["pnpm package (all gates)"]
+  H --> I["git add package.json CHANGELOG.md → commit (idempotent) → tag"]
+  I --> J["vsce package --no-dependencies"]
+  J --> K{"target"}
+  K -->|vsce/both| L["vsce publish --packagePath"]
+  K -->|ovsx/both| M["ovsx publish"]
+  L --> N["git push + git push origin vX.Y.Z"]
+  M --> N
 ```
+
+`set -euo pipefail` (`:14`). Two details worth keeping: the commit step is **idempotent** — if both files are already staged-clean it tags current HEAD instead of failing (`:76-82`); and the push happens **last**, so a failed publish never leaves a dangling remote tag (`:104-107`).
+
+Note that `release.sh` runs `pnpm test:unit` (vitest) but **not** `pnpm test` (`vscode-test`).
 
 ---
 
-## 13. File Locations
+## 13. `package.json` contributions
 
-| File | Purpose |
-|------|---------|
-| `esbuild.js` | Build script (dual-target configuration) |
-| `tsconfig.json` | TypeScript configuration (type checking) |
-| `package.json` | Dependencies, scripts, VS Code contributions |
-| `eslint.config.mjs` | ESLint configuration |
-| `.vscodeignore` | Files excluded from VSIX package |
-| `dist/extension.js` | Built extension bundle (gitignored) |
-| `media/webview.js` | Built webview bundle (gitignored) |
-| `media/xterm.css` | Copied xterm stylesheet (gitignored) |
+### 13.1 Settings (canonical: `package.json:61-184`)
+
+Sixteen keys. Runtime readers are `src/settings/SettingsReader.ts` and `src/providers/hoverPreviewSettings.ts`; clamps and fallback chains are canonical in `docs/design/theme-integration.md` §4.
+
+| Key | Type | Default | Line |
+|---|---|---|---|
+| `anywhereTerminal.shell.macOS` | string | `""` | `:64` |
+| `anywhereTerminal.shell.linux` | string | `""` | `:70` |
+| `anywhereTerminal.shell.windows` | string | `""` | `:76` |
+| `anywhereTerminal.shell.args` | array | `[]` | `:82` |
+| `anywhereTerminal.scrollback` | number | `10000` | `:91` |
+| `anywhereTerminal.sessionRestore.enabled` | boolean | `true` | `:96` |
+| `anywhereTerminal.cursorAgent.hooks.enabled` | boolean | `false` | `:101` |
+| `anywhereTerminal.fileSearch.maxResults` | number | `50` | `:107` |
+| `anywhereTerminal.fontSize` | number | `0` (0 ⇒ inherit editor) | `:114` |
+| `anywhereTerminal.fontFamily` | string | `""` (⇒ inherit) | `:119` |
+| `anywhereTerminal.cursorBlink` | boolean | `true` | `:124` |
+| `anywhereTerminal.defaultCwd` | string | `""` | `:129` |
+| `anywhereTerminal.hoverPreview.delay` | number | `300` | `:134` |
+| `anywhereTerminal.hoverPreview.blockSensitive` | boolean | `true` | `:141` |
+| `anywhereTerminal.fileTree.autoReveal` | boolean \| string | `true` | `:147` |
+| `anywhereTerminal.fileTree.autoRevealExclude` | object | `{"**/node_modules": true, "**/bower_components": true}` | `:160` |
+
+There is **no** `anywhereTerminal.macOptionIsMeta` and no `anywhereTerminal.macOptionClickForcesSelection` — those xterm options are hardcoded (`TerminalFactory.ts:239-240`). See `docs/design/keyboard-input.md`.
+
+### 13.2 View containers and views
+
+| Contribution | Id | Line |
+|---|---|---|
+| `viewsContainers.activitybar` | `anywhereTerminal`, icon `media/icon.svg` | `:185-200` |
+| `viewsContainers.panel` | `anywhereTerminalPanel`, icon `media/icon.svg` | same |
+| `views.anywhereTerminal` | `anywhereTerminal.sidebar`, `type: "webview"` | `:201-216` |
+| `views.anywhereTerminalPanel` | `anywhereTerminal.panel`, `type: "webview"` | same |
+
+A container registered under `activitybar` can be dragged to the Secondary Sidebar by the user; `anywhereTerminal.moveToSecondary` automates that (`extension.ts:810-814`).
+
+### 13.3 Commands (35, `package.json:217-380`)
+
+| Group | Count | Shape |
+|---|---|---|
+| Global | 10 | `newTerminal`, `killTerminal`, `clearTerminal`, `focusSidebar`/`focusPanel`, `moveToSecondary`, `splitHorizontal`/`splitVertical`, `closeSplitPane`, `newTerminalInEditor` |
+| Location-scoped | 8 | `{newTerminal,killTerminal,splitHorizontal,splitVertical}.{sidebar,panel}` |
+| Webview context menu | 7 | `ctx.*` — clear, new, kill, close pane, split ×2, reveal in file tree |
+| Explorer / file tree | 2 | `insertPath`, `setFileTreePosition` |
+| Export | 5 | `exportBuffer`, `exportLastCommand`, `exportCommand`, `exportPick.{sidebar,panel}` |
+| AI vault | 3 | `openVault`, `openVault.{sidebar,panel}` |
+
+The `.sidebar` / `.panel` duplication exists because `view/title` menu entries need a `when: view == <id>` clause and cannot disambiguate a single command's target view.
+
+### 13.4 Menus (`package.json:381-570`)
+
+Four contribution points: `view/title`, `webview/context`, `explorer/context`, `commandPalette`. The `commandPalette` block is used to **hide** the location-scoped duplicates from the palette.
+
+### 13.5 Keybindings (`package.json:571-584`)
+
+| Command | Key | Mac | `when` |
+|---|---|---|---|
+| `anywhereTerminal.splitVertical` | `ctrl+\` | `cmd+\` | `focusedView == anywhereTerminal.sidebar \|\| focusedView == anywhereTerminal.panel` |
+| `anywhereTerminal.splitHorizontal` | `ctrl+shift+\` | `cmd+shift+\` | same |
+
+> Both `when` clauses name only the sidebar and panel views. Editor-tab terminals (`anywhereTerminal.editor`) get no split keybinding. See §14.5.
+
+### 13.6 Activation
+
+`activationEvents` (`package.json:45-57`) lists both `onView:` ids, six `onCommand:` ids, and `onWebviewPanel:anywhereTerminal.editor` — the last is what lets the panel serializer revive editor terminals after a window reload without any other trigger.
+
+---
+
+## 14. Known Inconsistencies
+
+Recorded, not fixed.
+
+### 14.1 `measure-vendor-delta.mjs` is orphaned
+
+No `package.json` script references it. The 650 KB vendor-growth budget it enforces is documented in the spec it cites but is never executed by `pnpm package` or `release.sh`.
+
+### 14.2 `pnpm test` has no configuration file
+
+`"test": "vscode-test"` (`package.json:602`), but there is no `.vscode-test.mjs`/`.js`/`.cjs` at the repo root. `@vscode/test-cli` requires one to locate the compiled suites under `out/`.
+
+### 14.3 Stale ceiling figures in gate comments
+
+`check-bundle-size.mjs:30` ("3.6 MB for an enhanced terminal is well within the budget") and `measure-vendor-delta.mjs:35` ("The absolute bundle ceiling (3.6 MB)") both still name 3.6 MB, while `CEILING_BYTES` is 4.5 MB. `check-bundle-size.mjs:35-36` also says the vendor delta is gated at "≤ 450 KB" while `DELTA_CEILING_BYTES` is 650 KB.
+
+### 14.4 No CI
+
+There is no `.github/workflows`. `.vscodeignore` excludes `.github/**`, but the directory does not exist. Every gate depends on a developer running `pnpm package` or `scripts/release.sh` locally.
+
+### 14.5 Split keybindings skip the editor location
+
+See §13.5.
+
+### 14.6 `lint` mutates sources inside the release path
+
+Previously recorded drift, restated here because this is where a reader looks for it.
+
+`biome check --write --unsafe src/` runs inside `package`, which `release.sh` invokes at step 5 — *after* the working-tree-clean precondition at `release.sh:39`. Two consequences:
+
+- The step-6 commit stages only `package.json` and `CHANGELOG.md` (`release.sh:76`), so any source file the autofix rewrote stays uncommitted and fails the **next** release's clean-tree check.
+- Less obvious: the VSIX is packaged from that same rewritten tree at step 7, so an unsafe autofix can ship **unreviewed** in a published build.
+
+---
+
+## 15. File Locations
+
+| File | Role |
+|---|---|
+| `esbuild.js` | Dual-target build, two plugins |
+| `tsconfig.json` | One program covering host + webview; `vs/*` path mapping |
+| `biome.json` | Lint + format; excludes `src/vendor/**` |
+| `vitest.config.mts` | Unit runner, `vscode` mock alias, 80 % thresholds |
+| `.vscodeignore` | Deny-by-default packaging allowlist |
+| `package.json` | Scripts, deps, and the whole `contributes` surface |
+| `scripts/check-vendor-headers.mjs` | Attribution gate |
+| `scripts/check-bundle-size.mjs` | 4.5 MB webview ceiling |
+| `scripts/check-vsix-contents.mjs` | 14-file VSIX allowlist gate |
+| `scripts/measure-vendor-delta.mjs` | 650 KB vendor delta budget (unwired) |
+| `scripts/vendor-vscode-list.mjs` | Re-vendoring tool (manual) |
+| `scripts/release.sh` | Bump → verify → commit → tag → publish → push |
+| `src/vendor/vscode/MANIFEST.json` | Per-file upstream SHA record |
+
+### Dependents
+
+- `docs/design/webview-provider.md` §4 — consumes the `.css: "text"` loader and the `?v=` cache-buster
+- `docs/design/xterm-integration.md` — addon versions bundled here
+- `docs/design/error-handling.md` §3.1 — why `node-pty` is `external`

@@ -1,311 +1,388 @@
-# Flow: Multi-Tab Lifecycle
+# Flow: Multi-Tab & Split-Pane Lifecycle
 
-> Part of [DESIGN.md](../DESIGN.md) - Section 3.5
+> Part of [DESIGN.md](../DESIGN.md) — Section 3.5
 
-## Overview
+## 1. Purpose & Scope
 
-Each terminal view (sidebar, panel, editor) can host multiple terminal tabs. Each tab corresponds to an independent PTY session. This document covers the full lifecycle: create, switch, close, and the data routing between tabs.
+Each view (sidebar, panel, editor tab) hosts multiple **tabs**, and each tab may
+be split into multiple **panes**. Every tab *and* every pane is an independent
+`TerminalSession` with its own PTY, `OutputBuffer`, and terminal number.
 
-> **Cross-references**: [session-manager.md](session-manager.md) | [message-protocol.md](message-protocol.md)
+### Goals
 
-## Tab State Machine
+- One uniform session concept: a pane is not a lesser kind of terminal, it just
+  renders inside someone else's tab.
+- Switching tabs must be instant and lossless — no replay, no re-render, no gap
+  in what a background shell printed.
+- Closing anything must leave no orphaned process, and closing the last thing
+  must leave the user with a usable terminal.
+
+### Constraints
+
+- The webview owns layout; the host owns sessions. Neither can see the other's
+  structure, so every message carries an explicit id.
+- A `display: none` container measures 0×0, so any fit performed while hidden
+  produces garbage geometry.
+- Destroy is asynchronous but a race with shutdown is not tolerable, so intent
+  must be recorded before the work is queued.
+
+### Root tab vs split pane
+
+The distinction that drives everything here:
+
+| | Root tab | Split pane |
+|---|---|---|
+| `isSplitPane` | `false` | `true` (`SessionManager.ts:519`) |
+| `rootTabId` | its own id | the owning tab's id (`:522`) |
+| In `getTabsForView` | yes | filtered out (`:784`) |
+| In `getAllSessionsForView` | yes | yes (`:798`) |
+| Deactivates siblings on create | yes (`:544`) | no |
+| Gets a `customName` | yes | never (`:496`) |
+| Renamable | yes | `renameSession` no-ops (`:891`) |
+| Consumes a terminal number | yes | yes (`:431`) |
+
+> **Cross-references**: [session-manager.md](session-manager.md) | [message-protocol.md](message-protocol.md) | [resize-handling.md](resize-handling.md)
+
+---
+
+## 2. Tab State
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: createTab command
+    [*] --> Active: createTab (first tab, or explicit switch)
 
-    Created --> Active: First tab / switchTab
-    Active --> Background: switchTab to another
+    Active --> Background: switchTab elsewhere
     Background --> Active: switchTab back
-    Active --> Closing: closeTab command
-    Background --> Closing: closeTab command
-    Closing --> [*]: PTY killed, DOM removed
+    Active --> Closing: closeTab
+    Background --> Closing: closeTab
+    Closing --> [*]: destroySession → queue → performDestroy
 
     state Active {
         [*] --> Rendering
-        Rendering: xterm.js visible (display: block)
-        Rendering: Receives PTY output in real-time
-        Rendering: Has keyboard focus
-        Rendering: Resize-aware (via ResizeCoordinator)
+        Rendering: container display block (main.ts:408)
+        Rendering: has focus, receives resize
+        Rendering: session.isActive true (SessionManager.ts:756)
     }
 
     state Background {
         [*] --> Hidden
-        Hidden: xterm.js hidden (display: none)
-        Hidden: Still receives PTY output (term.write)
-        Hidden: No keyboard focus
-        Hidden: No resize events
+        Hidden: container display none (main.ts:401)
+        Hidden: STILL receives output — xterm.write works on a
+        Hidden: display:none element, scrollback stays current
     }
 ```
 
-## Create Tab Flow
+Host-side, "active" is just a boolean sweep over the view's sessions:
+`switchActiveSession` sets `isActive` true for the target and false for every
+other session in the same view (`SessionManager.ts:753`), after rejecting ids
+that do not belong to the view (`:750`).
+
+---
+
+## 3. Create Tab
 
 ```mermaid
 sequenceDiagram
     actor User
     participant WV as WebView
-    participant Ext as Extension Host
-    participant SM as SessionManager
-    participant PTY as New PtySession
-
-    User->>WV: Click "+" button in tab bar
-
-    WV->>Ext: postMessage({ type: 'createTab' })
-
-    Ext->>SM: createSession(viewId, webview)
-    SM->>SM: findAvailableNumber() → 2
-    SM->>PTY: spawn('/bin/zsh', { cols, rows, cwd })
-    SM->>SM: sessions.set(id, session)
-    SM->>SM: viewSessions.get(viewId).push(id)
-    SM-->>Ext: sessionId = 'xyz-456'
-
-    Ext->>WV: postMessage({ type: 'tabCreated', tabId: 'xyz-456', name: 'Terminal 2' })
-
-    Note over WV: MessageRouter dispatches to onTabCreated
-    WV->>WV: TerminalFactory.createTerminal('xyz-456', 'Terminal 2', config, false)
-    Note over WV: 1. Create container div
-    Note over WV: 2. new Terminal() + loadAddon(FitAddon, WebLinksAddon, WebGL)
-    Note over WV: 3. terminal.open(container)
-    Note over WV: 4. setTimeout(0) → fitTerminal() → terminal.focus()
-
-    WV->>WV: switchTab('xyz-456')
-    Note over WV: 5. Hide previous tab via SplitTreeRenderer
-    Note over WV: 6. Show new tab container
-    Note over WV: 7. requestAnimationFrame → fitAllAndFocus()
-    Note over WV: 8. Update tab bar
-
-    WV->>Ext: postMessage({ type: 'switchTab', tabId: 'xyz-456' })
-```
-
-### Tab Focus Management
-
-When a new tab is created, focus is managed using `requestAnimationFrame` to ensure the DOM is ready:
-
-```typescript
-requestAnimationFrame(() => {
-  factory.fitAllAndFocus(tabId, instance);
-});
-```
-
-This pattern ensures the terminal container has been laid out before fitting and focusing.
-
-## Switch Tab Flow
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant WV as WebView
-    participant Ext as Extension Host
+    participant VP as TerminalViewProvider
     participant SM as SessionManager
 
-    Note over WV: Currently active: Terminal 2 (xyz-456)
+    User->>WV: "+" in the tab bar
+    WV->>VP: { type:"createTab" } (main.ts:465 also fires this)
+    Note over VP: readTerminalSettings() (:992)
+    VP->>SM: createSession(viewId, webview, {shell, shellArgs, cwd}) (:994)
+    Note over SM: number = findAvailableNumber() (:431)<br>name = `Terminal ${number}` (:432)<br>deactivate sibling root tabs (:544)
+    SM-->>VP: sessionId
+    VP->>WV: safeSendWithRetry({type:"tabCreated", tabId, name, customName}) (:1001)
+    Note over VP: spawn throw → {type:"error"} instead (:1008)
 
-    User->>WV: Click tab "Terminal 1"
-    WV->>WV: switchTab('abc-123')
-
-    Note over WV: 1. SplitTreeRenderer.hideTabContainer(current)
-    Note over WV: 2. SplitTreeRenderer.showTabContainer('abc-123')
-    Note over WV: 3. requestAnimationFrame →<br/>fitAllAndFocus('abc-123')
-    Note over WV: 4. Update tab bar UI
-
-    WV->>Ext: postMessage({ type: 'switchTab', tabId: 'abc-123' })
-    Ext->>SM: switchActiveSession(viewId, 'abc-123')
-    Note over SM: Update activeSessionId for this view
-
-    WV->>Ext: postMessage({ type: 'resize', tabId: 'abc-123', cols, rows })
-    Note over Ext: Resize PTY to match current container size<br/>(may have changed since last active)
+    Note over WV: onTabCreated (main.ts:529)
+    WV->>WV: factory.createTerminal(tabId, name, config, false, customName)
+    WV->>WV: switchTab(tabId) (main.ts:385)
 ```
 
-### Resize-on-Switch Detail
+`tabCreated` is one of the four retried messages (`safeSendWithRetry`,
+`TerminalViewProvider.ts:1471`) — a dropped one would leave a live PTY with no
+xterm to render it.
 
-When switching tabs, the newly active tab may need a resize because the container dimensions could have changed while the tab was hidden (e.g., the user resized the sidebar while a different tab was active). `factory.fitAllAndFocus()` calls `XtermFitService.fitTerminal()` on all leaf terminals in the tab's split tree, recalculating cols/rows and emitting resize messages for any that changed.
+---
 
-### Background Tab Output
+## 4. Switch Tab
+
+`switchTab(newTabId)` — `src/webview/main.ts:385`:
 
 ```mermaid
 flowchart TD
-    A["PTY 1 output<br/>(background tab)"] --> B["SessionManager routes by tabId"]
-    B --> C["postMessage({ type:'output',<br/>tabId: 'abc-123', data })"]
-    C --> D["WebView receives message"]
-    D --> E["terminals.get('abc-123')"]
-    E --> F["terminal.write(data)"]
-    
-    Note1["Note: xterm.js processes writes<br/>even when container is display:none.<br/>Scrollback buffer is maintained.<br/>When tab becomes active,<br/>all output is already rendered."]
-    
-    style Note1 fill:#333,stroke:#666,color:#ccc
+    A["switchTab(newTabId)"] --> B{"store.terminals.has? :386"}
+    B -->|No| Z["return"]
+    B -->|Yes| C["factory.disposeSubagentPopup() :394"]
+    C --> D["hideTabContainer(prev) + display:none :398"]
+    D --> E["store.activeTabId = newTabId :406"]
+    E --> F["showTabContainer(newTabId) + display:block :407"]
+    F --> G["rAF → fitAllAndFocus(newTabId, next) :411"]
+    G --> H["updateActivePaneVisual :418"]
+    H --> I["updateTabBar + syncVaultToActivePane :419"]
+    I --> J["postMessage({type:'switchTab', tabId}) :421"]
+    J --> K["SessionManager.switchActiveSession :1116"]
 ```
 
-## Close Tab Flow
+Two details:
+- The fit is deferred to `requestAnimationFrame` and **re-checks that the tab
+  still exists** (`:412`) — a close racing a switch must not fit a disposed
+  terminal.
+- The body-mounted subagent popup is disposed on every switch (`:394`); a
+  keyboard switch has no outside-click to dismiss it.
+
+### Resize on switch
+
+`fitAllAndFocus` refits every leaf of the tab's split tree
+(`TerminalFactory.ts:609`). Any leaf whose computed cols/rows changed fires
+xterm's `onResize`, which posts `{type:"resize", tabId, cols, rows}`
+(`TerminalFactory.ts:429`) — so a background tab that was hidden while the
+sidebar was resized re-syncs its PTY on reveal.
+
+### Background output
+
+All tabs receive output regardless of visibility: `onOutput` looks the instance
+up by `tabId` and writes (`main.ts:492`). xterm.js parses into its buffer even
+when the container is `display: none`, so switching to a background tab shows
+already-rendered scrollback with no replay.
+
+Only the **focused pane** produces input — `onData` is per-terminal
+(`TerminalFactory.ts:188`) and the document-capture chords resolve
+`tabActivePaneIds.get(tabId) ?? tabId` (`main.ts:1084`).
+
+---
+
+## 5. Close Tab
 
 ```mermaid
 sequenceDiagram
     actor User
     participant WV as WebView
-    participant Ext as Extension Host
+    participant VP as TerminalViewProvider
     participant SM as SessionManager
-    participant PTY as PtySession
 
-    User->>WV: Click "x" on Terminal 1 tab
+    User->>WV: "x" on a tab
+    WV->>VP: { type:"closeTab", tabId }
+    VP->>VP: cancelPreviewToken(tabId) (:1123)
+    VP->>SM: destroySession(tabId) (:1124)
+    Note over SM: transitionState(live|exited-preserved → destroying) SYNC (:1118)<br>then enqueue performDestroy on the operation queue (:1119)
+    VP->>WV: { type:"tabRemoved", tabId } (:1125)
 
-    WV->>Ext: postMessage({ type: 'closeTab', tabId: 'abc-123' })
+    Note over WV: onTabRemoved → removeTerminal(id) (main.ts:424)
+    Note over WV: disposeSubagentPopup :433, disposeHoverController :437
+    Note over WV: terminal.dispose + container.remove :440
+    Note over WV: store.terminals / cursorHookIdentity /<br>activityTracker / flowControl.delete :442-445
+    Note over WV: splitRenderer.removeTab(id) → per-pane cleanup :451
+    Note over WV: store.persist() :456
 
-    Ext->>SM: destroySession('abc-123')
-    Note over SM: Add to _terminalBeingKilled Set<br/>(prevents infinite kill↔onExit loop)
-    SM->>PTY: session.pty.kill()
-    Note over PTY: Send SIGHUP to shell process<br/>Shell and child processes terminate
-    SM->>SM: sessions.delete('abc-123')
-    SM->>SM: usedNumbers.delete(1) → number 1 available again
-    SM->>SM: viewSessions.get(viewId).remove('abc-123')
-    SM->>SM: _terminalBeingKilled.delete('abc-123')
-
-    Ext->>WV: postMessage({ type: 'tabRemoved', tabId: 'abc-123' })
-
-    Note over WV: MessageRouter dispatches to onTabRemoved
-    WV->>WV: removeTerminal('abc-123')
-    Note over WV: 1. Dispose xterm instance (terminal.dispose())
-    Note over WV: 2. Remove container div from DOM
-    Note over WV: 3. Delete from store + flowControl
-    Note over WV: 4. SplitTreeRenderer.removeTab() for cleanup
-
-    alt Was active tab and other tabs exist
-        WV->>WV: switchTab(lastRemainingTabId)
-    end
-    alt Was active tab and no tabs remain
-        WV->>Ext: postMessage({ type: 'createTab' })
-        Note over WV: Auto-request new tab<br/>when last tab is closed
+    alt other tabs remain
+        WV->>WV: switchTab(remaining[last]) :462
+    else none remain
+        WV->>VP: { type:"createTab" } :465
     end
 ```
 
-### Kill Tracking: `_terminalBeingKilled`
+`removeTab` (`SplitTreeRenderer.ts:233`) disposes each split child's terminal and
+posts `{type:"requestCloseSplitPane", sessionId}` per pane (`:247`), so the host
+destroys the pane sessions too — the webview never leaves orphaned PTYs behind.
 
-To prevent an infinite loop between `kill()` and `onExit()`, the SessionManager tracks terminals being killed:
+### Kill tracking
 
-```typescript
-private _terminalBeingKilled = new Set<string>();
+`terminalBeingKilled` (`SessionManager.ts:127`) is a **re-entrancy guard between
+`performDestroy` and `pty.onExit`**, not a lock on `destroySession`. A deliberate
+kill and a shell exiting on its own reach the same cleanup path, so the guard
+marks the id for the window between the kill and the yield that lets `onExit`
+fire (`:1295`–`:1318`); `onExit` sees the mark and returns without cleaning up a
+second time (`:630`).
 
-async destroySession(id: string): Promise<void> {
-  if (this._terminalBeingKilled.has(id)) return;
-  this._terminalBeingKilled.add(id);
-  
-  try {
-    const session = this.sessions.get(id);
-    if (session) {
-      session.pty.kill();
-      // ... cleanup
-    }
-  } finally {
-    this._terminalBeingKilled.delete(id);
-  }
-}
+```mermaid
+flowchart TD
+    A["performDestroy :1288"] --> B["mark id :1295"]
+    B --> C["dispose buffer — final flush :1299"]
+    C --> D["kill the PTY :1306"]
+    D --> E["yield, so onExit can fire :1312"]
+    E --> F["onExit sees the mark,<br>returns early :630"]
+    E --> G["cleanupSession :1315"]
+    G --> H["unmark :1318"]
 ```
 
-Without this guard, `kill()` triggers `onExit()`, which might call `destroySession()` again.
+Serialization comes from the operation queue (`:130`), and destructive **intent**
+is recorded synchronously via `transitionState` before enqueueing, so a
+`dispose()` racing a queued destroy still drops the snapshot rather than
+preserving it. See [session-manager.md](session-manager.md) §5.
 
-### Split Pane Lifecycle
+### Auto-create on last close
 
-Split pane operations (create, close, restructure) are handled by `SplitTreeRenderer`. When a tab has split panes:
-- Closing a split pane removes it from the split tree and restructures the layout
-- The `WebviewStateStore` persists layout state via `vscode.setState()`
-- `ResizeCoordinator.debouncedFitAllLeaves()` refits all remaining panes after restructure
+Closing the active tab promotes the last remaining one, and closing the last tab
+of all asks the host for a fresh one (`main.ts:459`–`:465`) — a view with a tab
+strip and no terminal is not a state the UI has an answer for.
 
-### Auto-Create on Last Tab Close
+The candidate list is enumerated from `tabLayouts`, not `terminals` — the layout
+map is keyed by **root tab**, so a split child can never be promoted into a
+tab-strip slot.
 
-When the last tab is closed, the webview automatically requests a new tab:
+---
 
-```typescript
-if (remaining.length > 0) {
-  switchTab(remaining[remaining.length - 1]);
-} else {
-  store.activeTabId = null;
-  vscode.postMessage({ type: 'createTab' });
-}
+## 6. Split Panes
+
+### Create
+
+```mermaid
+sequenceDiagram
+    participant WV as WebView
+    participant VP as TerminalViewProvider
+    participant SM as SessionManager
+
+    Note over WV: onSplitPane (main.ts:570)
+    Note over WV: sourcePaneId = tabActivePaneIds.get(activeTabId) ?? activeTabId (:574)
+    WV->>VP: { type:"requestSplitSession", direction, sourcePaneId, rootTabId } (:575)
+    VP->>SM: createSession(viewId, webview, {isSplitPane:true, rootTabId, shell, cwd}) (:1157)
+    Note over SM: does NOT deactivate siblings (:544)<br>rootTabId propagated for atomic eviction (:522)
+    VP->>WV: safeSendWithRetry({type:"splitPaneCreated", sourcePaneId,<br>newSessionId, newSessionName, direction}) (:1168)
+
+    Note over WV: SplitTreeRenderer.handleSplitPaneCreated (:349)
+    Note over WV: createTerminal(..., {isSplitPane:true}) :363
+    Note over WV: replaceNode(layout, sourcePaneId,<br>createBranch(direction, source, new)) :373
+    Note over WV: tabActivePaneIds.set(activeTabId, newSessionId) :378
+    Note over WV: renderTabSplitTree + showTabContainer + persist :381
+    Note over WV: rAF → debouncedFitAllLeaves + focus :387
 ```
 
-## Tab Number Recycling
+`isSplitPane: true` in `createTerminal` skips two per-tab side effects: it does
+not create a `tabLayouts` leaf (the parent's tree already references the pane),
+and it skips the `setTimeout(0)` pre-reparent fit that would measure a 0×0
+container and emit a spurious resize (`SplitTreeRenderer.ts:359`).
+
+### Close a pane
+
+`closeSplitPaneById(paneSessionId)` (`SplitTreeRenderer.ts:283`):
+- layout is a single leaf → fall back to a full `closeTab` (`:294`)
+- otherwise `removeLeaf` collapses the branch, the tree re-renders, and the
+  caller destroys the pane session via `requestCloseSplitPane`
+  (`TerminalViewProvider.ts:1188` → `destroySession`, `:1192`)
+
+### Layout persistence
+
+`WebviewStateStore` holds `tabLayouts` (root tab → `SplitNode`) and
+`tabActivePaneIds` (root tab → focused pane), persisted through
+`vscode.setState`. On `init` they are filtered against the tab ids the host sent
+(`main.ts:860`, `:864`), so a layout referencing a session the host no longer
+knows is dropped. See [flow-view-lifecycle.md](flow-view-lifecycle.md) §7.
+
+---
+
+## 7. Terminal Number Recycling
 
 ```mermaid
 flowchart LR
-    subgraph Before["State: 3 terminals"]
-        T1["Terminal 1 ✓"]
-        T2["Terminal 2 ✓"]
-        T3["Terminal 3 ✓"]
-    end
-
-    Before -->|"Close Terminal 2"| After
-
-    subgraph After["State: 2 terminals"]
-        T1b["Terminal 1 ✓"]
-        T3b["Terminal 3 ✓"]
-    end
-
-    After -->|"Create new terminal"| Final
-
-    subgraph Final["State: 3 terminals"]
-        T1c["Terminal 1 ✓"]
-        T2c["Terminal 2 ✓ (recycled!)"]
-        T3c["Terminal 3 ✓"]
-    end
+    A["usedNumbers {1,2,3}"] -->|"close Terminal 2"| B["{1,3}"]
+    B -->|"new terminal"| C["{1,2,3} — 2 recycled"]
 ```
 
-### Number Recycling Algorithm
+Allocation is the lowest free positive integer, scanned without an upper bound —
+there is no maximum tab count (`SessionManager.ts:1392`). Numbers are released in
+`cleanupSession` (`:1375`), so a closed terminal's number is immediately
+available again. Split panes consume numbers too: a tab split three ways occupies
+four.
 
-```typescript
-private findAvailableNumber(): number {
-  // Scan 1..MAX for first unused number
-  for (let i = 1; i <= MAX_TABS; i++) {
-    if (!this.usedNumbers.has(i)) {
-      this.usedNumbers.add(i);
-      return i;
-    }
-  }
-  // Fallback: use size + 1
-  return this.usedNumbers.size + 1;
-}
-```
+The restore path reserves a *preferred* number instead (`:1410`), taking it if
+free and falling back to a scan otherwise, so a restored terminal usually keeps
+the name the user remembers. A non-positive preference means "no preference",
+which is how hydrate's orphan-recovery entries
+(`SnapshotPersistence.ts:893`) fall through to normal allocation.
 
-## Data Routing Architecture
+---
+
+## 8. Data Routing
 
 ```mermaid
 flowchart TB
-    subgraph View["Single WebView (e.g., Sidebar)"]
-        TabBar["Tab Bar: [Term 1] [Term 2*] [Term 3] [+]"]
-        XT1["xterm #1<br/>(hidden)"]
-        XT2["xterm #2<br/>(visible, active)"]
-        XT3["xterm #3<br/>(hidden)"]
+    subgraph View["One WebView"]
+        TB["Tab bar: [Term 1] [Term 2*] [Term 3]"]
+        X1["xterm #1 (hidden)"]
+        subgraph T2["Tab 2 — split"]
+            X2a["pane A (focused)"]
+            X2b["pane B"]
+        end
+        X3["xterm #3 (hidden)"]
     end
 
-    subgraph ExtHost["Extension Host"]
-        SM2["SessionManager"]
-        PTY1["PTY Session 1<br/>tabId: abc"]
-        PTY2["PTY Session 2<br/>tabId: xyz"]
-        PTY3["PTY Session 3<br/>tabId: def"]
+    subgraph Host["Extension Host"]
+        SM["SessionManager<br>viewSessions[viewId] = [s1, s2a, s2b, s3]"]
+        P1["PtySession s1"]
+        P2a["PtySession s2a"]
+        P2b["PtySession s2b"]
+        P3["PtySession s3"]
     end
 
-    PTY1 -->|"{ output, tabId: abc }"| XT1
-    PTY2 -->|"{ output, tabId: xyz }"| XT2
-    PTY3 -->|"{ output, tabId: def }"| XT3
+    P1 -->|"{output, tabId:s1}"| X1
+    P2a -->|"{output, tabId:s2a}"| X2a
+    P2b -->|"{output, tabId:s2b}"| X2b
+    P3 -->|"{output, tabId:s3}"| X3
+    X2a -->|"{input, tabId:s2a}"| P2a
 
-    XT2 -->|"{ input, tabId: xyz }"| PTY2
-
-    Note["Only the active tab (Term 2)<br/>sends input. All tabs receive output."]
-
-    style XT2 fill:#2a5,color:#fff
-    style PTY2 fill:#2a5,color:#fff
-    style TabBar fill:#333,color:#fff
+    style X2a fill:#2a5,color:#fff
+    style P2a fill:#2a5,color:#fff
 ```
 
-**Key principle**: All tabs receive output simultaneously (so scrollback is up-to-date), but only the active tab sends input (keyboard focus).
+Every message in both directions carries `tabId`; the webview routes by
+`store.terminals.get(tabId)` and the host by `sessions.get(sessionId)`. There is
+no per-view broadcast.
 
-## Keyboard Shortcut: Ctrl+Tab
+---
+
+## 9. Keyboard Shortcuts
+
+`handleTabKeyboardShortcut` — `src/webview/TabBarUtils.ts:261`, wired at
+`main.ts:1148`.
 
 ```mermaid
 flowchart TD
-    A["User presses Ctrl+Tab"] --> B["document keydown handler"]
-    B --> C["e.ctrlKey && e.key === 'Tab'"]
-    C --> D["e.preventDefault()"]
-    D --> E["Get current tab index"]
-    E --> F["nextIndex = (current + 1) % tabs.length"]
-    F --> G["switchTab(tabs[nextIndex].id)"]
+    A["keydown"] --> B{"ctrlKey && key === 'Tab'? :265"}
+    B -->|No| C["return false — not handled"]
+    B -->|Yes| D{"tabIds.length <= 1? :270"}
+    D -->|Yes| E["return true — handled, no-op"]
+    D -->|No| F{"activeTabId in list? :274"}
+    F -->|No| E
+    F -->|Yes| G{"shiftKey?"}
+    G -->|Yes| H["(i - 1 + n) % n — backward :282"]
+    G -->|No| I["(i + 1) % n — forward :285"]
+    H --> J["switchTab(tabIds[next]) :288"]
+    I --> J
 ```
 
-Ctrl+Shift+Tab cycles in reverse order.
+Both directions wrap around. The order is `store.terminals` insertion order
+(`:269`), which is creation order, not tab-strip order.
+
+Returning `true` for the single-tab case is deliberate: the caller
+`preventDefault()`s (`main.ts:1150`) so Ctrl+Tab never leaks to VS Code's editor
+tab-switcher from inside a terminal.
+
+---
+
+## 10. Boundaries & Decisions
+
+- **A pane is a session, not a sub-session.** Splitting creates a peer with its
+  own PTY, buffer, and number; the only differences are the six rows in the §1
+  table, all of which exist because a pane has no tab-strip identity.
+- **`rootTabId` is never null.** A root tab points at itself (`:522`), which is
+  what lets eviction, restore, and layout treat a tab and its panes as one group
+  without null checks. See [session-manager.md](session-manager.md).
+- **Background tabs are live, not suspended.** xterm parses into its buffer while
+  its container is `display: none`, so a switch is a CSS change plus a refit —
+  never a replay. That is what makes switching feel free.
+- **Fits are deferred and re-validated.** Every fit runs in a
+  `requestAnimationFrame` and re-checks that its tab still exists (`main.ts:412`)
+  — a close racing a switch must not measure a disposed terminal.
+- **The webview cleans up what it created; the host cleans up what it owns.**
+  Closing a tab disposes each pane's terminal locally and asks the host to destroy
+  each pane session (`SplitTreeRenderer.ts:247`), rather than assuming the host
+  will infer the tree.
+- **Routing is explicit in both directions.** Every message carries an id and is
+  resolved by map lookup on the receiving side; there is no per-view broadcast and
+  no implicit "active terminal" on the wire.
+- **Ctrl+Tab is claimed even when it does nothing** (`TabBarUtils.ts:270`), so the
+  chord never leaks to VS Code's editor tab-switcher from inside a terminal.

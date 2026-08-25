@@ -1,479 +1,500 @@
-# Session Manager — Detailed Design
+# Session Manager — Design
 
-## 1. Overview
+## 1. Purpose & Scope
 
-The **SessionManager** is the central registry for all terminal sessions across all views (sidebar, panel, editor). It owns the lifecycle of each terminal session: creation, input/output routing, resize, and destruction.
+`SessionManager` (`src/session/SessionManager.ts:116`) is the single registry of
+every terminal session across every view — sidebar, panel, and each editor tab.
+It owns session identity and lifecycle; everything else it delegates.
 
-### Responsibilities
-- Create and track terminal sessions (PTY + metadata)
-- Route input from webviews to the correct PTY process
-- Route buffered output from PTY to the correct webview
-- Manage session lifecycle (create, destroy, cleanup)
-- Handle tab numbering with gap-filling recycling
-- Serialize destructive operations via operation queue
-- Maintain scrollback cache for view restore
+### Goals
+- One place that knows which sessions exist, where they live, and their state
+- Sessions outlive their webview — closing a view must never kill a shell
+- Destructive operations serialized and race-free, including at shutdown
+- Terminals survive a window restart with their scrollback intact
+- Stay decomposed — the registry must not absorb persistence, integration, or IPC
+
+### Constraints
+- Shutdown may be cut short, so durability cannot depend on async work
+- A snapshot holds raw terminal bytes — deleting one is a privacy action
+- A root tab and its panes are one user-visible unit, preserved or dropped together
+- Restore must reuse persisted session ids; the webview's saved layout references them
+
+### Collaborators
+
+```mermaid
+graph LR
+    SM["SessionManager<br>:116"]
+    SM --> SP["SnapshotPersistence<br>cross-restart"] --> ST["SessionStorage<br>sidecar + buffers"]
+    SP --> EV["sessionSnapshotEviction"]
+    SM --> SIC["ShellIntegrationCoordinator"] --> CT["CommandTracker<br>TrackedCommand.ts:78"]
+    SM --> SDC["ScrollbackDumpCoordinator"]
+    SM --> EPR["EditorPanelRegistry"]
+    SM --> CNR["CustomNameRegistry"]
+    style SM fill:#345,stroke:#6af
+```
 
 ### Non-Responsibilities
-- PTY module loading / shell detection (→ PtyManager)
-- Output buffering / flow control (→ OutputBuffer, documented in output-buffering.md)
-- WebView HTML generation (→ TerminalViewProvider)
-- xterm.js management (→ webview-side TerminalManager)
+
+| Concern | Owner |
+|---|---|
+| node-pty, shell detection, OSC *parsing* | [pty-manager.md](pty-manager.md) |
+| Output coalescing and flow control | [output-buffering.md](output-buffering.md) |
+| WebView HTML and the `ready` handshake | [webview-provider.md](webview-provider.md) |
+| xterm.js management | [xterm-integration.md](xterm-integration.md) |
 
 ---
 
-## 2. Data Model
+## 2. Lifecycle State
 
-### TerminalSession
-
-```typescript
-interface TerminalSession {
-  /** Unique session identifier (UUID) */
-  id: string;
-
-  /** Which view this session belongs to (e.g., 'anywhereTerminal.sidebar') */
-  viewId: string;
-
-  /** The node-pty IPty process instance */
-  pty: IPty;
-
-  /** Display name: "Terminal 1", "Terminal 2", etc. */
-  name: string;
-
-  /** Whether this is the active tab in its view */
-  isActive: boolean;
-
-  /** Assigned terminal number (for name and recycling) */
-  number: number;
-
-  /** Output buffer instance for this session */
-  outputBuffer: IOutputBuffer;
-
-  /** Cached scrollback lines for view restore */
-  scrollbackCache: string[];
-
-  /** Timestamp of session creation */
-  createdAt: number;
-
-  /** Current terminal dimensions */
-  cols: number;
-  rows: number;
-}
-```
-
-### Session Maps
-
-```typescript
-class SessionManager {
-  /** All sessions indexed by session ID */
-  private sessions = new Map<string, TerminalSession>();
-
-  /** View ID → ordered list of session IDs */
-  private viewSessions = new Map<string, string[]>();
-
-  /** Set of terminal numbers currently in use (for recycling) */
-  private usedNumbers = new Set<number>();
-
-  /** Set of session IDs currently being killed (prevent re-entrant cleanup) */
-  private terminalBeingKilled = new Set<string>();
-
-  /** Serialized operation queue for destructive operations */
-  private operationQueue: Promise<void> = Promise.resolve();
-}
-```
-
----
-
-## 3. Session Lifecycle
-
-### State Machine
+`SessionState` (`TerminalSession.ts:46`) exists so every snapshot-touching
+decision branches on a declared state, not on implicit set membership.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Creating: createSession()
-    Creating --> Active: PTY spawned + events wired
-    Active --> Active: input / output / resize
-    Active --> Killing: destroySession()
-    Killing --> Cleaning: onExit fires
-    Cleaning --> [*]: maps cleared, buffers flushed
+    [*] --> live: createSession (fresh or restored-running)
+    [*] --> exited_preserved: createSession restoring an exited shell
 
-    Active --> Crashed: PTY unexpected exit
-    Crashed --> Cleaning: cleanup triggered
-    
-    note right of Killing
-        Session ID added to
-        terminalBeingKilled Set.
-        Prevents re-entrant cleanup.
-    end note
+    live --> destroying: destroySession / destroyAllForView
+    live --> exited_preserved: pty.onExit, not user-killed
+    exited_preserved --> destroying: user closes an already-exited tab
+
+    destroying --> disposed: cleanupSession → dropSession (snapshot DELETED)
+    exited_preserved --> disposed: cleanupSession → releaseRuntimeOnly (snapshot KEPT)
 ```
 
-### Create Session Flow
+The distinction carries the persistence contract: `destroying` means *the user
+wanted this gone*, so the snapshot is deleted; `exited-preserved` means the shell
+ended on its own, so only the runtime mirror is released and the snapshot stays
+for a read-only restore.
+
+`transitionState` (`:1094`) accepts one expected state or a list (`:1099`), logs
+on mismatch, and **never throws** — shutdown must not derail on a bad transition.
+Both destroy entry points allow `live` or `exited-preserved` (`:1118`, `:1181`),
+and the transition is recorded *synchronously* before the queue runs, so a
+`dispose()` racing a queued destroy still sees the intent.
+
+`TerminalSession` (`TerminalSession.ts:49`) carries seven groups of field:
+identity, runtime handles, layout, cwd, respawn identity, scrollback, and
+snapshot handles. `rootTabId` is the owning tab's id for a pane and **the
+session's own id for a root tab** (`:522`) — removing every null check from group
+eviction. Two constants live here: `SCROLLBACK_MAX_SIZE` 512 KB (`:61`) and
+`DEFAULT_GRACE_DESTROY_MS` 5000 (`:64`).
+
+---
+
+## 3. Session Creation
 
 ```mermaid
 sequenceDiagram
     participant VP as ViewProvider
     participant SM as SessionManager
-    participant PM as PtyManager
-    participant PTY as node-pty
-    participant OB as OutputBuffer
+    participant SIC as ShellIntegrationCoordinator
+    participant PS as PtySession
+    participant SP as SnapshotPersistence
 
-    VP->>SM: createSession(viewId, webview)
-    
-    Note over SM: 1. Generate UUID
-    Note over SM: 2. Allocate terminal number<br/>(gap-filling algorithm)
-    
-    SM->>PM: detectShell()
-    PM-->>SM: { shell: '/bin/zsh', args: ['--login'] }
-    
-    SM->>PM: loadNodePty()
-    PM-->>SM: pty module
-    
-    SM->>PM: buildEnvironment()
-    PM-->>SM: env object
-    
-    SM->>PM: resolveWorkingDirectory()
-    PM-->>SM: cwd path
-    
-    SM->>PTY: pty.spawn(shell, args, { cols, rows, cwd, env })
-    PTY-->>SM: IPty instance
-    
-    Note over SM: 3. Create OutputBuffer<br/>for this session
-    SM->>OB: new OutputBuffer(sessionId, webview)
-    
-    Note over SM: 4. Wire PTY events
-    Note over SM: pty.onData → buffer.append()
-    Note over SM: pty.onExit → cleanup
-    
-    Note over SM: 5. Register in maps
-    Note over SM: sessions.set(id, session)
-    Note over SM: viewSessions.get(viewId).push(id)
-    Note over SM: usedNumbers.add(number)
-    
-    SM-->>VP: sessionId
+    VP->>SM: createSession(viewId, webview, opts) (:390)
+    Note over SM: id = persisted ?? randomUUID (:430)<br>number = reserveNumber ?? findAvailableNumber (:431)
+    alt restoring an EXITED shell
+        Note over SM: skip spawn entirely (:454), state = exited-preserved (:502)
+    else live
+        SM->>SIC: injectAtSpawn (:464) → args/env/nonce
+        SM->>PS: spawn with 4-layer env (:471-480)
+        Note over SM: throw → release hook authority, rethrow (:482)
+        SM->>SIC: setShellIntegrationSink (:488)
+    end
+    Note over SM: new OutputBuffer (:491)<br>deactivate siblings unless split (:544), register (:557)
+    opt restoring
+        Note over SM: pauseOutput (:572) so a prompt cannot beat the replay
+    end
+    SM->>SP: attachSession (:577)
+    SM->>SM: wirePty (:580)
 ```
 
-### Destroy Session Flow
+Every field prefers the persisted snapshot over the caller's options — id
+(`:430`), number (`:431`), shell and *its* args (`:436`–`:448`), cwd (`:450`),
+geometry (`:515`), custom name (`:496`). Preserving the **id** is load-bearing:
+the webview's split layout persists tab ids, so a new id orphans every pane.
 
-```mermaid
-sequenceDiagram
-    participant VP as ViewProvider
-    participant SM as SessionManager
-    participant OQ as OperationQueue
-    participant PTY as node-pty
-    participant OB as OutputBuffer
-
-    VP->>SM: destroySession(sessionId)
-    
-    SM->>OQ: queue operation
-    Note over OQ: Serialize with pending ops<br/>(prevents race conditions)
-    
-    OQ->>SM: execute destroy
-    
-    Note over SM: 1. Validate session exists
-    Note over SM: 2. Add to terminalBeingKilled Set
-    
-    SM->>OB: flush remaining data
-    SM->>OB: dispose()
-    
-    SM->>PTY: pty.kill()
-    
-    PTY-->>SM: onExit({ exitCode })
-    
-    Note over SM: 3. Check terminalBeingKilled<br/>(skip if already cleaning)
-    Note over SM: 4. Remove from all maps
-    Note over SM: sessions.delete(id)
-    Note over SM: viewSessions remove id
-    Note over SM: usedNumbers.delete(number)
-    Note over SM: terminalBeingKilled.delete(id)
-    
-    SM-->>VP: { tabId, exitCode }
-```
+Split panes do not deactivate siblings (`:544`), are excluded from the tab strip
+(`:784`) but present in the full session list (`:813`), never carry a custom name
+(`:496`), and inherit the owning tab's `rootTabId` (`:522`).
 
 ---
 
-## 4. Operation Queue Pattern
+## 4. PTY Wiring & Fallback Respawn
 
-### Problem
-
-Rapid terminal operations (e.g., user clicks kill button multiple times, or closes multiple tabs quickly) can cause race conditions:
-- Double-kill: `pty.kill()` called twice on same process
-- Orphaned session: Session removed from map while PTY still running
-- Number collision: Freed number reused before cleanup completes
-
-### Solution: Promise Chain Serialization
-
-From the reference project `vscode-sidebar-terminal/src/terminals/TerminalManager.ts`:
-
-```typescript
-private operationQueue: Promise<void> = Promise.resolve();
-
-destroySession(sessionId: string): void {
-  this.operationQueue = this.operationQueue.then(async () => {
-    await this._performDestroy(sessionId);
-  }).catch(err => {
-    console.error('Destroy operation failed:', err);
-  });
-}
-```
-
-All destructive operations chain onto the same Promise. This guarantees serial execution without blocking the event loop.
-
-### Queue Scope
-
-Operations that must be serialized:
-- `destroySession()`
-- `destroyAllForView()`
-- `dispose()` (extension deactivation)
-
-Operations that do NOT need serialization (safe for concurrent execution):
-- `createSession()` — only adds to maps, no mutation of existing sessions
-- `writeToSession()` — simple pty.write(), per-session
-- `resizeSession()` — simple pty.resize(), per-session
-- `switchActiveSession()` — only toggles `isActive` flags
-
----
-
-## 5. Kill Tracking
-
-### Problem
-
-When `destroySession()` calls `pty.kill()`, the PTY fires `onExit`. The `onExit` handler also tries to clean up the session. This creates a re-entrant cleanup loop.
-
-### Solution: `terminalBeingKilled` Set
+`wirePty` (`:591`) is extracted so a replacement PTY can be re-wired onto the
+same session; it reads `session.outputBuffer` live rather than capturing it, so a
+buffer swap stays correct (`:594`). Each chunk fans out three ways — output
+buffer (`:594`), scrollback cache (`:595`), snapshot mirror (`:596`).
+Command-output capture is deliberately *not* here: the OSC parser emits ordered
+events and the tracker drives capture from them, so a chunk shaped
+`[output][OSC D]` cannot close a command before its output is recorded (`:597`).
 
 ```mermaid
 flowchart TD
-    A["destroySession(id)"] --> B["terminalBeingKilled.add(id)"]
-    B --> C["pty.kill()"]
-    C --> D["onExit fires"]
-    D --> E{"terminalBeingKilled<br/>.has(id)?"}
-    E -->|Yes| F["Skip cleanup<br/>(destroySession handles it)"]
-    E -->|No| G["Unexpected exit!<br/>Run cleanup<br/>Notify user"]
+    A["pty.onExit :604"] --> B{"fallback armed and<br>not being killed? :611"}
+    B -->|Yes| C["respawnFallbackShell :614 — tab lives on"]
+    B -->|No| F["recordExit + commitExitSnapshot :624"]
+    C -->|throws| F
+    F --> G{"terminalBeingKilled? :630"}
+    G -->|Yes| H["return — performDestroy owns cleanup"]
+    G -->|No| I["live → exited-preserved :637<br>cleanupSession, post exit :638"]
 ```
 
-Two distinct exit paths:
-1. **Intentional kill**: `destroySession()` → adds to Set → `pty.kill()` → `onExit` → checks Set → skips cleanup → `destroySession()` does cleanup → removes from Set
-2. **Unexpected crash**: shell crashes → `onExit` → checks Set → not found → runs cleanup → notifies user with `[Process exited with code N]`
+The exit snapshot is committed **synchronously and before** cleanup (`:622`), so
+the exit state is durable even if the window closes an instant later.
+
+### Shell-fallback respawn
+
+When a vault agent CLI owns a tab and quits on its own, the tab is handed a plain
+shell instead of dying (`respawnFallbackShell`, `:654`). The ordering makes
+failure recoverable: **base env only** so vault variables cannot leak into a
+plain shell (`:664`), old integration cleanup and hook token released before new
+ones are minted (`:667`, `:670`), all fallible work done before the session is
+mutated (`:686`–`:694`), then buffer and PTY swapped atomically (`:700`–`:707`).
+
+It then **flips the persisted identity** — shell, args, cwd, and clearing
+`isAgentLaunch` (`:710`–`:713`) — and persists immediately (`:718`), so a later
+reload restores *this shell* rather than resurrecting the agent the user already
+quit. `shellFallbackArmed` is one-shot, cleared before the respawn (`:612`).
 
 ---
 
-## 6. Terminal Number Recycling
+## 5. Destruction
 
-### Algorithm
+### Serialization
 
-Find the lowest available number starting from 1:
+Destructive operations chain onto one promise (`:130`) — serial execution
+without blocking the event loop. `destroySession` (`:1111`) and
+`destroyAllForView` (`:1170`) are queued; creation, writes, resizes, switches,
+and acks are not, being safe concurrently.
 
-```typescript
-private findAvailableNumber(): number {
-  for (let i = 1; ; i++) {
-    if (!this.usedNumbers.has(i)) {
-      this.usedNumbers.add(i);
-      return i;
-    }
-  }
-}
-```
+`destroyAllForView` captures the doomed ids **synchronously** (`:1177`) so a
+session created between enqueue and execution is not swept, then kills them in
+parallel within one slot (`:1193`). `dispose()` (`:1212`) bypasses the queue and
+walks every session inline (`:1233`) — an async drain would let PTYs outlive the
+host.
 
-### Example
-
-| Action | usedNumbers | Next available |
-|--------|-------------|----------------|
-| Create Terminal 1 | {1} | 2 |
-| Create Terminal 2 | {1, 2} | 3 |
-| Create Terminal 3 | {1, 2, 3} | 4 |
-| Kill Terminal 2 | {1, 3} | 2 |
-| Create Terminal | {1, 2, 3} | 4 (2 was recycled) |
-
-This matches VS Code's behavior — terminal numbers fill gaps rather than always incrementing.
-
----
-
-## 7. View-to-Session Routing
-
-### Architecture
+### Kill tracking
 
 ```mermaid
-graph TD
-    subgraph Views["WebView Instances"]
-        V1["Sidebar View<br/>viewId: anywhereTerminal.sidebar"]
-        V2["Panel View<br/>viewId: anywhereTerminal.panel"]
-        V3["Editor Tab<br/>viewId: editor-{uuid}"]
+sequenceDiagram
+    participant Q as operationQueue
+    participant SM as SessionManager
+    Q->>SM: performDestroy (:1288)
+    Note over SM: add to terminalBeingKilled (:1295)<br>outputBuffer.dispose — flushes (:1299)<br>pty.kill (:1306)
+    Note over SM: await setTimeout(0) — onExit fires and self-skips (:1312)
+    Note over SM: cleanupSession (:1315), delete from set (:1318)
+```
+
+`terminalBeingKilled` (`:127`) is a re-entrancy guard between `performDestroy`
+and `onExit`, not a lock on `destroySession`: an intentional kill makes `onExit`
+return early (`:630`), a natural exit finds the set empty and cleans up itself.
+
+### cleanupSession
+
+The single funnel (`:1324`): dispose disposables (`:1331`), release hook
+authority (`:1341`), abort in-flight dumps (`:1345`), run the integration
+temp-dir cleanup (`:1349`), then **branch on state** (`:1359`) — `destroying`
+drops the snapshot, `exited-preserved` releases only the runtime, anything else
+logs a contract violation and defaults to preserving. The session is tombstoned
+`disposed` (`:1371`) before removal from the maps.
+
+### Grace-period destroy
+
+An editor panel's webview is destroyed and re-created on window reload, so
+`onDidDispose` cannot mean "kill the PTY".
+
+```mermaid
+sequenceDiagram
+    participant EP as EditorProvider
+    participant SM as SessionManager
+    participant SER as PanelSerializer
+    EP->>SM: scheduleDestroyForView(viewId, 5000, onFire) (:328)
+    alt revived in time
+        SER->>SM: cancelScheduledDestroy (:58), consumeSnapshotsForPanel (:64)
+    else grace elapses
+        Note over SM: timer (:1140) → destroyAllForView
+        SM->>EP: onFire → unregisterEditorPanel (:331)
     end
+```
 
-    subgraph SM["SessionManager"]
-        VS["viewSessions Map"]
-        SS["sessions Map"]
+The live-panels entry is removed **only** on the real destroy
+(`TerminalEditorProvider.ts:329`) — that is what lets a revive match its
+snapshots. `getPendingDestroyViewIds` (`:1165`) exists so the serializer can
+sweep orphaned timers when a panel revives without a persisted `panelId`
+(`TerminalPanelSerializer.ts:50`).
+
+---
+
+## 6. Numbering, Routing, Scrollback
+
+**Numbers.** `findAvailableNumber` (`:1392`) scans from 1 for the first free
+number — gap-filling, unbounded, no cap. `reserveNumber` (`:1410`) takes the
+persisted number when free, treating `preferred <= 0` as "no preference", which
+is how orphan recovery (`SnapshotPersistence.ts:893`) enters normal allocation.
+Released in `cleanupSession` (`:1375`). Split panes consume numbers too.
+
+**View routing.** View ids come from the providers (`:1503`,
+`TerminalEditorProvider.ts:171`). The `editor-` prefix is load-bearing — it
+drives `panelId` derivation (`:533`) and snapshot view-location classification
+(`SnapshotPersistence.ts:69`). Two listing methods serve different audiences:
+`getTabsForView` (`:766`) feeds the tab strip, `getAllSessionsForView` (`:798`)
+includes panes and feeds any reload or restore, because the webview must recreate
+every xterm its saved layout references.
+
+**Scrollback cache.** Distinct from both the output buffer and the snapshot
+mirror: it lets a **re-created webview in the same host process** be repainted.
+One entry per chunk, FIFO-evicted past `SCROLLBACK_MAX_SIZE` (`:1426`), read
+joined (`:958`).
+
+`clearScrollback` (`:918`) is a **privacy boundary**, not a visual clear: cache,
+tracked commands, and the persisted snapshot go together, so a restart after
+Cmd+K cannot resurrect the content through the buffer or the export quickpick.
+
+Three distinct histories exist — the output buffer (milliseconds), this cache
+(host process), and the snapshot mirror (across restarts). They are tabulated
+side by side in [output-buffering.md](output-buffering.md) §6.
+
+---
+
+## 7. Shell Integration — Consumer Side
+
+The producer half (injection, OSC parsing) is [pty-manager.md](pty-manager.md) §6.
+
+```mermaid
+flowchart LR
+    A["ShellIntegrationEvent"] --> B["Coordinator.handleEvent<br>ShellIntegrationCoordinator.ts:121"]
+    B -->|cwd| D["setCurrentCwd :841 → schedulePersist"]
+    B -->|A/B/C/D/E/text| E["CommandTracker.handleEvent<br>TrackedCommand.ts:132"]
+    E --> F["TrackedCommand[] → export commands"]
+```
+
+The coordinator (`ShellIntegrationCoordinator.ts:32`) owns the per-session
+cleanup map, resolves the session **lazily per event** so it survives transient
+lookup races (`:77`), and supplies only runtime context — now, cwd, id factory —
+leaving the state vocabulary to the tracker (`:130`).
+
+**Cwd** has three sources, in call order: a live OS query (`getLiveCwd` `:864` —
+works without shell integration, 500 ms cap, no Windows), the shell-integration
+report (`:851`), the spawn-time value (`:836`). `extension.ts:670` uses that chain.
+
+**Tracked commands.** `CommandTracker` (`TrackedCommand.ts:78`) keeps a closed
+list plus one in-flight slot: `promptStart` abandons an unclosed command rather
+than storing it (`:135`), `commandStart` is idempotent because both markers can
+fire (`:138`), `commandLine` is accepted **only when the nonce validates**
+(`:141`), `text` appends, and `commandEnd` closes and evicts (`:146`).
+
+Caps: `MAX_OUTPUT_PER_COMMAND` 100 000 chars (`:50`),
+`MAX_COMMANDS_PER_SESSION` 200 (`:53`), `MAX_TOTAL_OUTPUT_PER_SESSION`
+1 000 000 chars (`:56`).
+
+The per-command cap is enforced **at append time** (`:198`), not at close, so a
+never-closing command cannot grow unbounded; the true count keeps rising past the
+cap so the export UI can report how much was truncated (`:44`). A command with
+neither command line nor output is discarded on close (`:235`) — otherwise every
+prompt repaint would accumulate an empty entry.
+
+Read through `:976` / `:988`, consumed by `src/commands/exportCommands.ts:84`,
+`:94`. Tracked commands persist in the snapshot (`SessionSnapshot.ts:62`) and
+rehydrate into a fresh tracker (`:540`), dropping anything in flight
+(`TrackedCommand.ts:96`).
+
+---
+
+## 8. Scrollback Dump IPC
+
+Exporting the *rendered* buffer needs data only xterm.js has, so the host asks the
+webview; `ScrollbackDumpCoordinator` (`ScrollbackDumpCoordinator.ts:50`) owns the
+request/reply/abort/timeout machine.
+
+```mermaid
+sequenceDiagram
+    participant SM as SessionManager
+    participant SDC as Coordinator
+    participant WV as WebView
+    SM->>SDC: request (:66) — 15s timeout armed (:69)
+    SDC->>WV: requestScrollbackDump{tabId, requestId}
+    alt reply
+        WV->>SDC: payload (:1022), echoed tabId must match (:100)
+        Note over SDC: resolve, else ScrollbackDumpFailedError (:112)
+    else destroyed / 15s
+        Note over SDC: abortForSession (:122) / TimeoutError (:71)
     end
-
-    V1 -->|"viewId"| VS
-    V2 -->|"viewId"| VS
-    V3 -->|"viewId"| VS
-
-    VS -->|"sidebar → [s1, s2]"| SS
-    VS -->|"panel → [s3]"| SS
-    VS -->|"editor-xxx → [s4]"| SS
-
-    SS --> S1["Session s1<br/>Terminal 1<br/>PTY → /bin/zsh"]
-    SS --> S2["Session s2<br/>Terminal 2<br/>PTY → /bin/zsh"]
-    SS --> S3["Session s3<br/>Terminal 3<br/>PTY → /bin/bash"]
-    SS --> S4["Session s4<br/>Terminal 4<br/>PTY → /bin/zsh"]
 ```
 
-### Message Routing
-
-When a webview sends `{ type: 'input', tabId: 's1', data: 'ls\r' }`:
-1. ViewProvider receives message
-2. ViewProvider calls `sessionManager.writeToSession('s1', 'ls\r')`
-3. SessionManager looks up session `s1` in `sessions` map
-4. Writes data to `session.pty.write('ls\r')`
-
-When a PTY produces output:
-1. `pty.onData` fires → data goes to `session.outputBuffer`
-2. OutputBuffer flushes (after throttle) → calls `webview.postMessage({ type: 'output', tabId: 's1', data })`
-3. The webview reference is stored per-session (set during `createSession()`)
+Three safeguards: dispose-time cancellation, the 15 s backstop (`:56`), and
+sender authentication — a mismatched reply is ignored *without* settling the
+promise, so the legitimate reply or the timeout still resolves it.
 
 ---
 
-## 8. Scrollback Cache
+## 9. Cross-Restart Persistence
 
-### Purpose
+Owned by `SnapshotPersistence` (`SnapshotPersistence.ts:96`), gated on
+`sessionRestore.enabled` (default true, `SettingsReader.ts:141`) **and** a
+workspace `storageUri` — a no-folder window disables persistence rather than leak
+snapshots into shared global storage (`extension.ts:51`–`:62`).
 
-When `retainContextWhenHidden` is `false` (or as a safety net), the scrollback cache stores recent terminal output for view restoration.
+### Capture
 
-### Design
-
-```typescript
-interface ScrollbackCache {
-  /** Ring buffer of output chunks */
-  chunks: string[];
-  /** Total character count across all chunks */
-  totalSize: number;
-  /** Maximum total size (configurable, default 512KB) */
-  maxSize: number;
-}
+```mermaid
+flowchart LR
+    A["pty.onData"] --> B["recordData :479"]
+    B --> C["headless.write → writeBarriers chain :511"]
+    B --> D["schedulePersist :619 → 1000ms debounce :630"]
+    D --> E["flushPending :656"]
+    E --> F["await barrier → serialize → commitBufferAsync"]
 ```
 
-### Eviction Strategy
+The **write barrier** (`:118`) exists because xterm's `write` is asynchronous —
+serializing before its callback fires would snapshot a half-parsed buffer. Async
+flushes await it; the sync shutdown flush does not, accepting a bounded loss
+window. The mirror freezes once the shell exits (`:485`).
 
-When `totalSize > maxSize`:
-- Remove oldest chunks from the front until under limit
-- This is a FIFO ring buffer — old output is discarded first
-- Default max: 512KB (~10,000 lines of 50-char average)
+Constants: `SNAPSHOT_PERSIST_DEBOUNCE_MS` 1000 (`:28`),
+`SNAPSHOT_BUFFER_MAX_BYTES` 1 MB (`:25`), `SERIALIZE_OPTIONS.scrollback` and the
+headless mirror both 1000 lines (`:22`, `:40`). Oversize buffers trim from the
+head at an LF boundary (`:56`) — xterm tolerates a truncated escape at the start
+of a write.
 
-### Cache Population
+### Intentful commit API
 
-Every `pty.onData` event:
-1. Data goes to output buffer (for immediate delivery)
-2. Data also appends to scrollback cache
-3. If cache exceeds max size, evict from front
+Every snapshot-touching action names a **user intent**, never a cleanup gesture
+(`:232`). This is what lets `cleanupSession` decide correctly from state alone.
 
-### Cache Consumption
+| Intent | Sync? | Disk effect | Line |
+|---|---|---|---|
+| `commitLiveSnapshot` | async | Serialize + commit; index updated only on a real rename | `:252` |
+| `commitExitSnapshot` | **sync** | Record exit, write buffer + sidecar immediately | `:302` |
+| `commitClearSnapshot` | **sync** | Reset the mirror, write an empty buffer | `:339` |
+| `dropSession` | sync | Dispose mirror, delete buffer + index entry | `:410` |
+| `releaseRuntimeOnly` | sync | Dispose mirror only — never touches disk | `:454` |
 
-On view restore (`resolveWebviewView` called again):
-1. Send `{ type: 'restore', tabId, data: cache.join('') }` for each session
-2. WebView writes restored data to xterm.js
-3. User sees previous terminal output
+### Transactional storage
+
+`SessionStorage` (`SessionStorage.ts:52`) makes concurrent sync and async writers
+safe with per-artifact generation counters.
+
+```mermaid
+sequenceDiagram
+    participant A as async writer
+    participant G as generation
+    participant S as sync writer
+    A->>G: capture gen N (:283), serialize, write temp
+    S->>G: bump to N+1 (:313), temp + renameSync → canonical
+    A->>G: pre-rename check fails (:343)
+    Note over A: unlink OUR temp only → "stale-post-write"
+```
+
+All writes are temp-then-rename. Sync writers and drops bump the generation
+*before* touching disk (`:313`, `:394`, `:376`); async writers check three times
+— pre-write (`:333`), post-write (`:343`), post-rename (`:359`). The last check
+unlinks the canonical file, deliberately surfacing a lost write as *missing*
+rather than *stale*: **the privacy boundary outranks data preservation.**
+
+Buffers (`:224`) and the index sidecar (`:239`) are mode `0o600` in a `0o700`
+directory (`:48`, `:50`) — a persisted buffer holds raw ANSI including whatever
+the shell echoed. **The sidecar is the single source of truth** (`:105`); a
+one-time migration imports a legacy Memento index on activate (`:169`). Load
+outcomes are three-way and the distinction matters: `valid` restores normally,
+`missing` permits orphan recovery, `unsupported` (newer schema) discards the
+whole set **without** it. A sieve buckets unknown keys from a newer build on load
+(`SessionSnapshot.ts:121`) and spreads them back on write (`:145`), so a
+downgrade round-trip does not drop them.
+
+### Eviction
+
+`evictIndex` (`sessionSnapshotEviction.ts:33`) operates on **root-tab groups**,
+never individual entries — partial eviction would orphan leaves in the webview's
+saved layout.
+
+Three caps, each group-scoped: `SNAPSHOT_MAX_AGE_MS` 7 days — newest member
+older than the cap drops the group (`:24`, `:63`); `SNAPSHOT_MAX_BUFFER_BYTES`
+1 MB — any member over drops the group (`:25`, `:59`); `SNAPSHOT_MAX_COUNT` 20 —
+groups admitted whole, newest-first, until the budget is exhausted (`:26`, `:83`).
+
+### Hydrate and consume
+
+`hydrateFromSnapshots` (`:798`) runs from `extension.ts:104`, **before any view
+provider is registered** and after the live-panels record, because its orphan step
+depends on it: classify (`:811`), evict (`:847`), read buffers and drop entries
+whose file vanished (`:853`), recover orphans by mapping them back to an owning
+editor panel (`:868`–`:911`), unlink everything unreferenced plus crash-leftover
+temps (`:917`, `:927`), then stage (`:930`).
+
+Providers drain what was staged on their `ready` handshake (`:328`, `:332`,
+`:336`), feeding each back as a restore — full sequence in
+[flow-view-lifecycle.md](flow-view-lifecycle.md) §5.
+
+### Shutdown
+
+`deactivate` (`extension.ts:840`) runs three ordered steps, and the order *is*
+the design: **synchronous** buffer + sidecar writes first (`:295`) because they
+survive the host being killed mid-shutdown; then the awaited index flush (`:303`),
+which VS Code often cancels — degraded but correct, since step one's sidecar is
+authoritative; then PTY teardown (`:1212`). `CursorHookController.dispose` runs
+before all three (`extension.ts:847`).
 
 ---
 
-## 9. Disposable Pattern
+## 10. Editor Panels, Names, Hook Authority
 
-Following VS Code's pattern, SessionManager extends `Disposable` and uses `this._register()` for automatic cleanup:
+`EditorPanelRegistry` (`EditorPanelRegistry.ts:11`) maps `panelId` to its session
+ids, persisted through an `onChange` that writes only when restore is enabled
+(`:194`). Unregistered only on a *real* destroy, and queried by hydrate's orphan
+fallback (`:78`).
 
-```typescript
-class SessionManager extends Disposable {
-  constructor(private ptyManager: PtyManager) {
-    super();
-    // Register cleanup for extension deactivation
-    this._register(toDisposable(() => this.destroyAll()));
-  }
+`CustomNameRegistry` (`CustomNameRegistry.ts:30`) is keyed by **terminal number,
+not session id**, so `Terminal 2` keeps its label when recreated. Names cap at 80
+chars (`:10`) under `anywhereTerminal.tabCustomNames` (`:13`); empty normalizes
+back to the auto-name (`:63`). The in-memory map is authoritative with a
+fire-and-forget snapshot (`:91`) — load-modify-save would let two concurrent
+renames overwrite each other (`:5`). `renameSession` (`:889`) is the single entry
+point for every rename UX and no-ops on unknown ids **and on split panes**.
 
-  createSession(viewId: string, webview: Webview): string {
-    // ... create session ...
-
-    // Register PTY event listeners for auto-cleanup
-    const onData = pty.onData(data => { /* buffer */ });
-    const onExit = pty.onExit(({ exitCode }) => { /* cleanup */ });
-
-    // Store disposables with session for per-session cleanup
-    session.disposables = [onData, onExit, outputBuffer];
-    return session.id;
-  }
-
-  private cleanupSession(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-
-    // Dispose all session-specific resources
-    session.disposables.forEach(d => d.dispose());
-    session.outputBuffer.dispose();
-
-    // Remove from maps
-    this.sessions.delete(sessionId);
-    this.usedNumbers.delete(session.number);
-    // ... remove from viewSessions ...
-  }
-
-  private destroyAll(): void {
-    for (const session of this.sessions.values()) {
-      session.pty.kill();
-      session.disposables.forEach(d => d.dispose());
-    }
-    this.sessions.clear();
-    this.viewSessions.clear();
-    this.usedNumbers.clear();
-  }
-}
-```
+**Cursor-hook authority** is an optional per-session env contributor merged last
+into every live PTY incarnation (`:477`, `:681`), so each gets fresh renewable
+authority. Release (`:1435`) drops the token *and* revokes the webview's badge.
+Swapping contributors releases every tracked session through the *old* one first
+(`:253`), so a token minted while attached cannot go live later by re-attaching.
 
 ---
 
-## 10. Public Interface
+## 11. Boundaries & Decisions
 
-```typescript
-interface ISessionManager extends Disposable {
-  /** Create a new terminal session for a view */
-  createSession(viewId: string, webview: Webview): string;
+- **Sessions belong to the host, not the webview.** Every recovery path in this
+  document follows from that one choice.
+- **Intent is recorded synchronously; work happens asynchronously.** State
+  transitions land before the queue runs, so a shutdown racing a queued destroy
+  still resolves the snapshot correctly.
+- **Durability is synchronous where it counts.** Exit and clear commits, and the
+  first shutdown step, are sync — anything awaited may simply never run.
+- **Deleting a snapshot is a privacy action.** `clearScrollback` wipes cache,
+  tracked commands, and disk together; a lost async write unlinks the canonical
+  file rather than leaving stale bytes behind.
+- **Groups, not entries.** Eviction, restore, and layout all treat a root tab
+  plus its panes as one unit via `rootTabId`.
+- **The registry stays a registry.** Persistence, shell integration, dumps,
+  panel tracking, and naming each live in their own file. New responsibilities
+  belong in a collaborator, not in `SessionManager`.
 
-  /** Write input data to a session's PTY */
-  writeToSession(sessionId: string, data: string): void;
+### Public surface
 
-  /** Resize a session's PTY */
-  resizeSession(sessionId: string, cols: number, rows: number): void;
+Grouped by concern, all on `SessionManager.ts`: **core** CRUD (`:390`, `:724`,
+`:733`, `:745`, `:889`, `:918`, `:930`); **view** queries (`:766`, `:798`,
+`:942`, `:958`, `:1058`, `:1072`); **cwd** (`:836`–`:864`); **export** (`:976`,
+`:988`, `:1008`); **destroy** (`:1111`, `:1170`, `:1135`, `:1155`, `:1212`);
+**restore** pass-throughs (`:227`–`:347`); **panel and hook** wiring (`:352`–
+`:369`, `:253`). It is deliberately **not** in `context.subscriptions` —
+`deactivate` orchestrates teardown so the flush order holds (`extension.ts:816`).
 
-  /** Destroy a session (queued, serialized) */
-  destroySession(sessionId: string): void;
+### Files
 
-  /** Destroy all sessions for a specific view */
-  destroyAllForView(viewId: string): void;
-
-  /** Switch active session within a view */
-  switchActiveSession(viewId: string, sessionId: string): void;
-
-  /** Get tab info for a view (for init/restore messages) */
-  getTabsForView(viewId: string): Array<{ id: string; name: string; isActive: boolean }>;
-
-  /** Get a session by ID */
-  getSession(sessionId: string): TerminalSession | undefined;
-
-  /** Clear scrollback for a session */
-  clearScrollback(sessionId: string): void;
-}
-```
-
----
-
-## 11. File Location
-
-```
-src/session/SessionManager.ts
-```
-
-### Dependencies
-- `PtyManager` — for spawning PTY processes
-- `OutputBuffer` — for per-session output buffering
-- `vscode.Webview` — for posting messages to views
-
-### Dependents
-- `TerminalViewProvider` — creates/destroys sessions on user actions
-- `TerminalEditorProvider` — same, for editor-area terminals
-- `extension.ts` — creates SessionManager on activation, disposes on deactivation
+`src/session/` is 31 files. Load-bearing by size: `SessionManager.ts` (1462),
+`SnapshotPersistence.ts` (1034), `SessionStorage.ts` (534), `OutputBuffer.ts`
+(338, see [output-buffering.md](output-buffering.md)), `TrackedCommand.ts` (292);
+the rest are small single-purpose collaborators, none over 180 lines. Dependents:
+`TerminalViewProvider`, `TerminalEditorProvider` / `TerminalPanelSerializer`,
+`src/commands/exportCommands.ts`, `src/extension.ts`.

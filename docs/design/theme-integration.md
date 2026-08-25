@@ -2,67 +2,85 @@
 
 ## 1. Overview
 
-AnyWhere Terminal renders xterm.js inside VS Code webviews. VS Code's theme engine automatically injects CSS custom properties (variables) into the webview's `:root` element, reflecting the user's active color theme. Our **ThemeManager** reads these CSS variables at runtime using `getComputedStyle()`, constructs an xterm.js `ITheme` object, and applies it to every terminal instance.
+AnyWhere Terminal renders xterm.js inside VS Code webviews. VS Code's theme engine injects CSS custom properties into the webview's `:root`, reflecting the active color theme. **ThemeManager** reads these variables at runtime with `getComputedStyle()`, builds an xterm.js `ITheme`, and applies it to every terminal instance.
 
-This approach ensures the terminal always matches the user's VS Code theme — including third-party themes — without hardcoding any color values.
+There are two independent theme channels:
+
+| Channel | Mechanism | Consumer | Owner |
+|---|---|---|---|
+| **CSS variables** | `getComputedStyle(document.documentElement)` + `MutationObserver` on `body.class` | xterm terminal colors, panel chrome | `src/webview/theme/ThemeManager.ts` |
+| **`themeChanged` IPC** | Host `onDidChangeActiveColorTheme` → `{type:'themeChanged', kind}` | Shiki syntax highlighting inside the hover-preview popup | `main.ts:79`, `providers/TerminalViewProvider.ts:38` |
+
+The second channel exists because Shiki needs a *named theme kind*, not a set of colors. See §6.
+
+### Goals and constraints
+
+- **Read the live cascade, never a snapshot.** VS Code rewrites the CSS variables in place on a theme switch, so every value is resolved on demand from `getComputedStyle()` rather than cached at construction.
+- **Detect the switch without an IPC round-trip.** VS Code re-stamps `document.body`'s class list; a `MutationObserver` on that attribute is the fastest available signal, so terminal colours update before the host could notify us.
+- **Degrade to a readable terminal, never a blank one.** Every mapped colour has a literal fallback, so a theme that omits a variable still produces a usable `ITheme`.
+- **`ThemeManager` owns no terminals.** `applyToAll()` takes an iterable from the caller, keeping it decoupled from `WebviewStateStore`.
 
 ### Reference Sources
-- VS Code: `src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts` (theme building)
-- VS Code: `src/vs/workbench/contrib/terminal/common/terminalColorRegistry.ts` (CSS variable definitions)
-- VS Code: `src/vs/workbench/contrib/terminal/browser/terminalInstance.ts` (font resolution)
-- xterm.js: `ITheme` interface documentation
+- VS Code: `xtermTerminal.ts` (theme building), `terminalColorRegistry.ts` (CSS variable definitions), `terminalInstance.ts` (font resolution)
+- xterm.js `ITheme` interface
 
 ---
 
 ## 2. CSS Variable Mapping
 
-VS Code registers terminal-specific color contributions in `terminalColorRegistry.ts`. These are injected into webview `:root` as CSS custom properties. The ThemeManager reads all of them and maps them to xterm.js `ITheme` properties.
+Canonical implementation: `ThemeManager.getTheme()` — `src/webview/theme/ThemeManager.ts:47-99`.
 
-### 2.1 ANSI Color Mapping Table
+### 2.1 ANSI Color Mapping
 
-| CSS Variable | xterm.js `ITheme` Property | ANSI Code | Description |
+| CSS Variable | `ITheme` Property | ANSI | Cite |
 |---|---|---|---|
-| `--vscode-terminal-ansiBlack` | `theme.black` | 0 | Black |
-| `--vscode-terminal-ansiRed` | `theme.red` | 1 | Red |
-| `--vscode-terminal-ansiGreen` | `theme.green` | 2 | Green |
-| `--vscode-terminal-ansiYellow` | `theme.yellow` | 3 | Yellow |
-| `--vscode-terminal-ansiBlue` | `theme.blue` | 4 | Blue |
-| `--vscode-terminal-ansiMagenta` | `theme.magenta` | 5 | Magenta |
-| `--vscode-terminal-ansiCyan` | `theme.cyan` | 6 | Cyan |
-| `--vscode-terminal-ansiWhite` | `theme.white` | 7 | White |
-| `--vscode-terminal-ansiBrightBlack` | `theme.brightBlack` | 8 | Bright Black (Gray) |
-| `--vscode-terminal-ansiBrightRed` | `theme.brightRed` | 9 | Bright Red |
-| `--vscode-terminal-ansiBrightGreen` | `theme.brightGreen` | 10 | Bright Green |
-| `--vscode-terminal-ansiBrightYellow` | `theme.brightYellow` | 11 | Bright Yellow |
-| `--vscode-terminal-ansiBrightBlue` | `theme.brightBlue` | 12 | Bright Blue |
-| `--vscode-terminal-ansiBrightMagenta` | `theme.brightMagenta` | 13 | Bright Magenta |
-| `--vscode-terminal-ansiBrightCyan` | `theme.brightCyan` | 14 | Bright Cyan |
-| `--vscode-terminal-ansiBrightWhite` | `theme.brightWhite` | 15 | Bright White |
+| `--vscode-terminal-ansiBlack` | `black` | 0 | `ThemeManager.ts:68` |
+| `--vscode-terminal-ansiRed` | `red` | 1 | `:69` |
+| `--vscode-terminal-ansiGreen` | `green` | 2 | `:70` |
+| `--vscode-terminal-ansiYellow` | `yellow` | 3 | `:71` |
+| `--vscode-terminal-ansiBlue` | `blue` | 4 | `:72` |
+| `--vscode-terminal-ansiMagenta` | `magenta` | 5 | `:73` |
+| `--vscode-terminal-ansiCyan` | `cyan` | 6 | `:74` |
+| `--vscode-terminal-ansiWhite` | `white` | 7 | `:75` |
+| `--vscode-terminal-ansiBrightBlack` | `brightBlack` | 8 | `:78` |
+| `--vscode-terminal-ansiBrightRed` | `brightRed` | 9 | `:79` |
+| `--vscode-terminal-ansiBrightGreen` | `brightGreen` | 10 | `:80` |
+| `--vscode-terminal-ansiBrightYellow` | `brightYellow` | 11 | `:81` |
+| `--vscode-terminal-ansiBrightBlue` | `brightBlue` | 12 | `:82` |
+| `--vscode-terminal-ansiBrightMagenta` | `brightMagenta` | 13 | `:83` |
+| `--vscode-terminal-ansiBrightCyan` | `brightCyan` | 14 | `:84` |
+| `--vscode-terminal-ansiBrightWhite` | `brightWhite` | 15 | `:85` |
 
-### 2.2 Special Color Mapping Table
+### 2.2 Special Colors
 
-| CSS Variable | xterm.js `ITheme` Property | Description |
+| CSS Variable | `ITheme` Property | Cite |
 |---|---|---|
-| `--vscode-terminal-background` | `theme.background` | Terminal default background (fallback, see §3) |
-| `--vscode-terminal-foreground` | `theme.foreground` | Terminal default text color |
-| `--vscode-terminalCursor-foreground` | `theme.cursor` | Cursor color |
-| `--vscode-terminalCursor-background` | `theme.cursorAccent` | Cursor accent (outline) color |
-| `--vscode-terminal-selectionBackground` | `theme.selectionBackground` | Text selection highlight |
-| `--vscode-terminal-selectionForeground` | `theme.selectionForeground` | Selected text color |
-| `--vscode-terminal-inactiveSelectionBackground` | `theme.selectionInactiveBackground` | Selection highlight when terminal is unfocused |
+| location-specific (see §3) → `--vscode-terminal-background` → `#1e1e1e` | `background` | `ThemeManager.ts:54` |
+| `--vscode-terminal-foreground` → `--vscode-editor-foreground` → `#cccccc` | `foreground` | `:56` |
+| `--vscode-terminalCursor-foreground` | `cursor` | `:61` |
+| `--vscode-terminalCursor-background` | `cursorAccent` | `:62` |
+| `--vscode-terminal-selectionBackground` | `selectionBackground` | `:63` |
+| `--vscode-terminal-selectionForeground` | `selectionForeground` | `:64` |
+| `--vscode-terminal-inactiveSelectionBackground` | `selectionInactiveBackground` | `:65` |
 
-#### Scrollbar Properties
+> The cursor variables use `terminalCursor` (no hyphen before "Cursor"), not `terminal-cursor` — a VS Code naming quirk.
 
-The theme also sets scrollbar properties to hide the xterm scrollbar visuals (a 1px overview ruler lane is kept for FitAddon width math):
+### 2.3 Scrollbar and Overview Ruler
 
-| xterm.js `ITheme` Property | Value | Description |
+The scrollbar is **not hidden**. xterm v6 renders a Monaco-style `SmoothScrollableElement` that auto-shows on hover/scroll; the theme feeds it VS Code's real slider colors so it matches the file-tree list scrollbar exactly.
+
+| `ITheme` Property | Value | Cite |
 |---|---|---|
-| `theme.overviewRulerBorder` | `'transparent'` | Hide overview ruler border |
-| `theme.scrollbarSliderBackground` | `'transparent'` | Hide scrollbar slider |
-| `theme.scrollbarSliderHoverBackground` | `'transparent'` | Hide scrollbar hover state |
-| `theme.scrollbarSliderActiveBackground` | `'transparent'` | Hide scrollbar active state |
+| `overviewRulerBorder` | `"transparent"` — hides the decoration-lane border | `ThemeManager.ts:89` |
+| `scrollbarSliderBackground` | `--vscode-scrollbarSlider-background` | `:95` |
+| `scrollbarSliderHoverBackground` | `--vscode-scrollbarSlider-hoverBackground` | `:96` |
+| `scrollbarSliderActiveBackground` | `--vscode-scrollbarSlider-activeBackground` | `:97` |
 
-> **Note:** The cursor foreground variable uses `terminalCursor` (no hyphen before "Cursor"), not `terminal-cursor`. This is a VS Code naming convention difference.
+> These are resolved to **concrete values** via `getComputedStyle` rather than passed as `var(...)`: xterm v6 inlines the slider colours into a runtime `<style>` tag and runs them through `parseColor`, which does not understand `var()` (`ThemeManager.ts:91-94`).
+
+The overview-ruler **lane** (the colored decoration strip on the right edge, distinct from the scrollbar) is hidden in CSS instead: `.xterm .xterm-decoration-overview-ruler { opacity: 0 !important; pointer-events: none !important; }` (`providers/webviewHtml.ts:674-677`).
+
+`overviewRuler.width` is **10**, not 1 — in xterm v6 it also drives the vertical scrollbar width, and 10 px matches Monaco's default (`terminal/TerminalFactory.ts:227-231,247`).
 
 ---
 
@@ -70,52 +88,43 @@ The theme also sets scrollbar properties to hide the xterm scrollbar visuals (a 
 
 ### Problem
 
-VS Code's built-in terminal uses different background colors depending on where the terminal is rendered. This is handled by `TerminalInstanceColorProvider` in VS Code's codebase. When `--vscode-terminal-background` is not explicitly set by the theme (many themes omit it), the terminal should blend into its container rather than showing a mismatched background.
+VS Code's built-in terminal uses a different background depending on where it renders (`TerminalInstanceColorProvider` upstream). Many themes never set `--vscode-terminal-background`, so a terminal that used only that variable would show a mismatched block inside its container.
 
-### Background Color Resolution Chain
-
-The location-specific variable is tried **first**, then `--vscode-terminal-background` as fallback, then a hardcoded default. This ensures the terminal blends into its container.
+### Resolution Chain
 
 ```mermaid
 flowchart TD
-    A["Determine background color"] --> B{"Location-specific\nCSS var set?"}
-    B -->|"Non-empty"| C["Use location-specific var\n(panel/sidebar/editor)"]
-    B -->|"Empty/unset"| D{"terminal-background\nCSS var set?"}
+    A["Determine background"] --> B{"Location-specific CSS var set?"}
+    B -->|"Non-empty"| C["Use it (panel / sidebar / editor)"]
+    B -->|"Empty/unset"| D{"--vscode-terminal-background set?"}
     D -->|"Non-empty"| E["Use --vscode-terminal-background"]
-    D -->|"Empty/unset"| F["Use hardcoded fallback: #1e1e1e"]
-    C --> G["Apply to theme.background"]
+    D -->|"Empty/unset"| F["Hardcoded #1e1e1e"]
+    C --> G["theme.background"]
     E --> G
     F --> G
 ```
 
 ### Location-to-Variable Mapping
 
-| Terminal Location | Fallback CSS Variable | VS Code Component |
-|---|---|---|
-| Bottom Panel | `--vscode-panel-background` | Panel container |
-| Primary Sidebar | `--vscode-sideBar-background` | Sidebar container |
-| Secondary Sidebar | `--vscode-sideBar-background` | Same as primary sidebar |
-| Editor Area | `--vscode-editor-background` | Editor container |
+`LOCATION_BACKGROUND_MAP` — `ThemeManager.ts:18-22`:
 
-### Implementation
+| `TerminalLocation` | CSS Variable |
+|---|---|
+| `panel` | `--vscode-panel-background` |
+| `sidebar` (primary **and** secondary) | `--vscode-sideBar-background` |
+| `editor` | `--vscode-editor-background` |
 
-The location is initially set to `"sidebar"` (the default) and updated dynamically via `inferLocationFromSize()` in `ResizeCoordinator` based on the container's aspect ratio (`width > height * 1.2` → `"panel"`, otherwise `"sidebar"`). The `"editor"` location is set from the `data-terminal-location` body attribute.
+### Where the location comes from
 
-```typescript
-type TerminalLocation = 'panel' | 'sidebar' | 'editor';
+The location is **the extension's decision**, never inferred in the webview:
 
-const LOCATION_BACKGROUND_MAP: Record<TerminalLocation, string> = {
-  panel: '--vscode-panel-background',
-  sidebar: '--vscode-sideBar-background',
-  editor: '--vscode-editor-background',
-};
+1. The host generates the HTML with `<body data-terminal-location="${location}">` — `providers/webviewHtml.ts:680`. `getTerminalHtml()` takes `location: "sidebar" | "panel" | "editor"` as a parameter (`webviewHtml.ts:40-44`).
+2. `bootstrap()` reads that attribute once and calls `themeManager.updateLocation(...)`, then `applyBodyBackground()` (`main.ts:1050-1054`).
+3. `ThemeManager` is constructed with `"sidebar"` as the pre-bootstrap default (`main.ts:94`, `ThemeManager.ts:39`).
 
-// In ThemeManager.getTheme():
-const background =
-  get(LOCATION_BACKGROUND_MAP[this.location]) ??  // Location-specific first
-  get('--vscode-terminal-background') ??            // Then terminal-specific
-  '#1e1e1e';                                        // Then hardcoded fallback
-```
+`ResizeCoordinator` explicitly does **not** re-infer location from container aspect ratio — its class doc says so (`resize/ResizeCoordinator.ts:44-47`). Any earlier `inferLocationFromSize()` heuristic is gone.
+
+`updateLocation()` returns `true` only when the value actually changed, and re-applies the body background as a side effect (`ThemeManager.ts:136-143`).
 
 ---
 
@@ -123,16 +132,16 @@ const background =
 
 ### Mechanism
 
-VS Code signals theme changes by toggling CSS classes on `document.body`. The webview body element always has one of:
+VS Code signals theme changes by toggling a class on `document.body`:
 
-| Body Class | Theme Kind | Description |
-|---|---|---|
-| `vscode-dark` | Dark theme | Dark background, light text |
-| `vscode-light` | Light theme | Light background, dark text |
-| `vscode-high-contrast` | High contrast dark | Accessibility theme |
-| `vscode-high-contrast-light` | High contrast light | Accessibility theme (VS Code 1.74+) |
+| Body Class | Theme Kind |
+|---|---|
+| `vscode-dark` | Dark |
+| `vscode-light` | Light |
+| `vscode-high-contrast` | High contrast dark |
+| `vscode-high-contrast-light` | High contrast light |
 
-When the user switches themes (e.g., via `Ctrl+K Ctrl+T`), VS Code updates the body class and re-injects all CSS variables. Our ThemeManager watches for this class change using a `MutationObserver`.
+When the user switches themes, VS Code updates the body class **and** re-injects all CSS variables on `:root`. `ThemeManager.startWatching()` watches for the class mutation.
 
 ### Detection Flow
 
@@ -143,387 +152,220 @@ sequenceDiagram
     participant Body as document.body
     participant MO as MutationObserver
     participant TM as ThemeManager
-    participant XT as xterm.js Instances
+    participant XT as xterm.js instances
 
     User->>VSCode: Switch theme (Ctrl+K Ctrl+T)
-    VSCode->>Body: Update class: "vscode-dark" → "vscode-light"
-    VSCode->>Body: Re-inject all CSS variables on :root
+    VSCode->>Body: class "vscode-dark" → "vscode-light"
+    VSCode->>Body: re-inject CSS variables on :root
 
     Body->>MO: MutationRecord (attributeName: 'class')
-    MO->>TM: Callback fires
-
-    TM->>TM: getComputedStyle(documentElement)
-    TM->>TM: Build new ITheme object
-
-    loop Each terminal instance
-        TM->>XT: terminal.options.theme = newTheme
-        Note over XT: xterm.js re-renders with<br/>new colors immediately
+    MO->>TM: applyBodyBackground()
+    MO->>TM: onThemeChange() callback
+    TM->>TM: getTheme() + getMinimumContrastRatio()
+    loop each terminal instance
+        TM->>XT: options.theme = newTheme
+        TM->>XT: options.minimumContrastRatio = ratio
     end
 ```
 
 ### MutationObserver Setup
 
-```typescript
-function watchThemeChanges(onThemeChange: () => void): MutationObserver {
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (
-        mutation.type === 'attributes' &&
-        mutation.attributeName === 'class'
-      ) {
-        onThemeChange();
-        break;
-      }
-    }
-  });
+`ThemeManager.startWatching()` — `ThemeManager.ts:150-169`. A `MutationObserver` filtered to `class` attribute changes on `document.body`. It is idempotent (a second call short-circuits on the existing observer), re-applies the body background itself, then invokes the caller's callback once per mutation batch.
 
-  observer.observe(document.body, {
-    attributes: true,
-    attributeFilter: ['class'],
-  });
-
-  return observer;
-}
-```
+`main.ts:1337-1339` wires the callback to `themeManager.applyToAll(store.terminals.values())`.
 
 ### Edge Cases
 
-1. **Rapid theme switching**: If the user rapidly toggles themes, multiple `MutationObserver` callbacks fire. The theme re-read is fast (synchronous `getComputedStyle`), so no debouncing is needed — each application just overwrites the previous.
-
-2. **High contrast themes**: These themes may not define all 16 ANSI colors. When a CSS variable is unset, `getPropertyValue()` returns `''`. We leave those properties undefined in the ITheme object, letting xterm.js fall back to its built-in defaults.
-
-3. **Custom CSS in settings**: Users can override terminal colors via `workbench.colorCustomizations`. These are reflected in the CSS variables and picked up automatically.
+1. **Rapid theme switching** — each callback re-reads synchronously via `getComputedStyle`; no debounce is needed, later applications simply overwrite earlier ones.
+2. **Partial themes** — an unset variable makes `getPropertyValue()` return `""`, which the `get()` helper maps to `undefined` (`ThemeManager.ts:49-52`). xterm falls back to its own defaults for those slots. Only `background` and `foreground` have hardcoded final fallbacks.
+3. **`workbench.colorCustomizations`** — reflected in the CSS variables, so it is picked up automatically.
+4. **`applyBodyBackground()` no-ops on an empty value** — it only assigns when the resolved colour is non-empty (`ThemeManager.ts:127-129`).
 
 ---
 
 ## 5. Font Resolution
 
-### Font Size Resolution Chain
+Font values are resolved on the **extension host**, not from CSS variables, because `terminal.integrated.fontSize` and `editor.fontSize` are not exposed to webviews. Canonical implementation: `src/settings/SettingsReader.ts`.
 
-The terminal font size follows a priority chain, matching VS Code's built-in terminal behavior:
-
-```mermaid
-flowchart TD
-    A["Determine font size"] --> B{"anywhereTerminal.fontSize\nset and > 0?"}
-    B -->|Yes| C["Use anywhereTerminal.fontSize"]
-    B -->|No / 0| D{"terminal.integrated.fontSize\nset and > 0?"}
-    D -->|Yes| E["Use terminal.integrated.fontSize"]
-    D -->|No / 0| F{"editor.fontSize\nset and > 0?"}
-    F -->|Yes| G["Use editor.fontSize"]
-    F -->|No / 0| H["Default: 14"]
-    C --> I["Clamp to range [6, 100]"]
-    E --> I
-    G --> I
-    H --> I
-    I --> J["Apply to terminal.options.fontSize"]
-```
-
-### Font Family Resolution Chain
+### Font Size Chain
 
 ```mermaid
 flowchart TD
-    A["Determine font family"] --> B{"anywhereTerminal.fontFamily\nset?"}
-    B -->|Yes| C["Use configured fontFamily"]
-    B -->|No| D{"terminal.integrated.fontFamily\nset?"}
-    D -->|Yes| E["Use terminal.integrated.fontFamily"]
-    D -->|No| F{"editor.fontFamily\nset?"}
-    F -->|Yes| G["Use editor.fontFamily"]
-    F -->|No| H["Default: 'monospace'"]
-    C --> I["Apply to terminal.options.fontFamily"]
+    A["Determine font size"] --> B{"anywhereTerminal.fontSize > 0?"}
+    B -->|Yes| C["Use it"]
+    B -->|"No / 0 / unset"| D{"terminal.integrated.fontSize > 0?"}
+    D -->|Yes| E["Use it"]
+    D -->|"No / 0"| F{"editor.fontSize > 0?"}
+    F -->|Yes| G["Use it"]
+    F -->|"No / 0"| H["DEFAULT_FONT_SIZE = 14"]
+    C --> I["clamp to [6, 100]"]
     E --> I
     G --> I
     H --> I
 ```
 
-### Font Resolution Implementation
+| Constant | Value | Cite |
+|---|---|---|
+| `FONT_SIZE_MIN` | 6 | `settings/SettingsReader.ts:13` |
+| `FONT_SIZE_MAX` | 100 | `SettingsReader.ts:16` |
+| `DEFAULT_FONT_SIZE` | 14 | `SettingsReader.ts:19` |
+| `DEFAULT_SCROLLBACK` | 10000 | `SettingsReader.ts:22` |
+| `DEFAULT_FONT_FAMILY` | `"monospace"` | `SettingsReader.ts:25` |
 
-Font settings are read from VS Code configuration on the extension host side (not from CSS variables), because `terminal.integrated.fontSize` and `editor.fontSize` are not exposed as CSS variables in webviews.
+`resolveFontSize()` — `SettingsReader.ts:156-172`; `clampFontSize()` — `:259-261`.
 
-```typescript
-function resolveFontSize(): number {
-  const config = vscode.workspace.getConfiguration();
+### Font Family Chain
 
-  const awtFontSize = config.get<number>('anywhereTerminal.fontSize', 0);
-  if (awtFontSize > 0) return clamp(awtFontSize, 6, 100);
+`resolveFontFamily()` — `SettingsReader.ts:178-193`. Each candidate is `.trim()`-tested, so a whitespace-only setting falls through: `anywhereTerminal.fontFamily` → `terminal.integrated.fontFamily` → `editor.fontFamily` → `"monospace"`.
 
-  const terminalFontSize = config.get<number>('terminal.integrated.fontSize', 0);
-  if (terminalFontSize > 0) return clamp(terminalFontSize, 6, 100);
+### Delivery to the webview
 
-  const editorFontSize = config.get<number>('editor.fontSize', 0);
-  if (editorFontSize > 0) return clamp(editorFontSize, 6, 100);
+`readTerminalConfig()` (`SettingsReader.ts:101-120`) produces the `TerminalConfig` embedded in `init` and `configUpdate`. `affectsTerminalConfig()` (`:126-134`) decides when to re-post it — it fires for the whole `anywhereTerminal` section plus the four inherited font keys.
 
-  return 14;
-}
-
-function resolveFontFamily(): string {
-  const config = vscode.workspace.getConfiguration();
-
-  const awtFamily = config.get<string>('anywhereTerminal.fontFamily', '');
-  if (awtFamily) return awtFamily;
-
-  const terminalFamily = config.get<string>('terminal.integrated.fontFamily', '');
-  if (terminalFamily) return terminalFamily;
-
-  const editorFamily = config.get<string>('editor.fontFamily', '');
-  if (editorFamily) return editorFamily;
-
-  return 'monospace';
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-```
-
-The resolved font values are sent to the webview as part of the `init` and `configUpdate` messages.
+`TerminalFactory` applies a second, webview-local fallback: an empty `config.fontFamily` resolves to `--vscode-editor-font-family`, and finally the literal `"monospace"` (`terminal/TerminalFactory.ts:153-157,232`). A `fontSize` of 0 means "inherit" and falls back to 14 (`TerminalFactory.ts:585`).
 
 ---
 
-## 6. Complete Theme Building Function
+## 6. Shiki Theme Kind (`themeChanged`)
 
-### getXtermTheme()
+The hover-preview popup renders code with Shiki, which needs a discrete theme identity rather than a colour set.
 
-This function runs in the webview context and reads all CSS variables to construct the xterm.js theme object.
+| Step | Detail | Cite |
+|---|---|---|
+| Host maps `vscode.ColorThemeKind` → 4-way union | `Light→"light"`, `Dark→"dark"`, `HighContrastLight→"hc-light"`, `HighContrast→"hc-dark"`, default `"dark"` | `providers/TerminalViewProvider.ts:38-53` |
+| Initial post | on `ready`, alongside `hoverPreviewSettings` | `TerminalViewProvider.ts:1301-1313`, `TerminalEditorProvider.ts:768-778` |
+| Live updates | `vscode.window.onDidChangeActiveColorTheme`, gated on `_ready` | `TerminalViewProvider.ts:175-186`, `TerminalEditorProvider.ts:274-284` |
+| Webview store | `themeStore.kind`, defaulting to `"dark"` until the first message | `main.ts:79`, `main.ts:652-654` |
+| Consumer | `TerminalFactory` reads it per render via `getHoverPreviewTheme()` | `TerminalFactory.ts:43,264-265` |
 
-```typescript
-import type { ITheme } from '@xterm/xterm';
+Message shape: `ThemeChangedMessage` — `src/types/messages.ts:929-937`.
 
-/**
- * Build an xterm.js ITheme object from VS Code's CSS variables.
- *
- * VS Code injects CSS custom properties into the webview :root element
- * matching the user's active color theme. We read these at runtime and
- * map them to the corresponding xterm.js theme properties.
- *
- * @param location - Where this terminal is rendered (panel, sidebar, editor).
- *                   Used to select the correct background fallback.
- * @returns Complete ITheme object for xterm.js
- */
-// ThemeManager.getTheme() method — returns Record<string, string | undefined>
-getTheme(): Record<string, string | undefined> {
-  const style = getComputedStyle(document.documentElement);
-  const get = (varName: string): string | undefined => {
-    const value = style.getPropertyValue(varName).trim();
-    return value || undefined;
-  };
+### Adjacent: hover-preview settings
 
-  // Background: location-specific → terminal-specific → hardcoded fallback
-  const background =
-    get(LOCATION_BACKGROUND_MAP[this.location]) ??
-    get('--vscode-terminal-background') ??
-    '#1e1e1e';
+`HoverPreviewSettings { delay, blockSensitive }` (`types/messages.ts:939-945`) travels the same route. Defaults mirror `contributes.configuration`: `delay: 300`, `blockSensitive: true` (`providers/hoverPreviewSettings.ts:17-20`, `package.json:134-146`; webview default at `main.ts:86-88`).
 
-  const foreground =
-    get('--vscode-terminal-foreground') ??
-    get('--vscode-editor-foreground') ??
-    '#cccccc';
-
-  return {
-    background,
-    foreground,
-    cursor: get('--vscode-terminalCursor-foreground'),
-    cursorAccent: get('--vscode-terminalCursor-background'),
-    selectionBackground: get('--vscode-terminal-selectionBackground'),
-    selectionForeground: get('--vscode-terminal-selectionForeground'),
-    selectionInactiveBackground: get('--vscode-terminal-inactiveSelectionBackground'),
-
-    // Standard ANSI colors (0-7)
-    black: get('--vscode-terminal-ansiBlack'),
-    red: get('--vscode-terminal-ansiRed'),
-    green: get('--vscode-terminal-ansiGreen'),
-    yellow: get('--vscode-terminal-ansiYellow'),
-    blue: get('--vscode-terminal-ansiBlue'),
-    magenta: get('--vscode-terminal-ansiMagenta'),
-    cyan: get('--vscode-terminal-ansiCyan'),
-    white: get('--vscode-terminal-ansiWhite'),
-
-    // Bright ANSI colors (8-15)
-    brightBlack: get('--vscode-terminal-ansiBrightBlack'),
-    brightRed: get('--vscode-terminal-ansiBrightRed'),
-    brightGreen: get('--vscode-terminal-ansiBrightGreen'),
-    brightYellow: get('--vscode-terminal-ansiBrightYellow'),
-    brightBlue: get('--vscode-terminal-ansiBrightBlue'),
-    brightMagenta: get('--vscode-terminal-ansiBrightMagenta'),
-    brightCyan: get('--vscode-terminal-ansiBrightCyan'),
-    brightWhite: get('--vscode-terminal-ansiBrightWhite'),
-
-    // Hide scrollbar/overview ruler visuals
-    overviewRulerBorder: 'transparent',
-    scrollbarSliderBackground: 'transparent',
-    scrollbarSliderHoverBackground: 'transparent',
-    scrollbarSliderActiveBackground: 'transparent',
-  };
-}
-```
+`blockSensitive` is read with `cfg.inspect()` and takes **only** `globalValue ?? defaultValue` — a hostile workspace `.vscode/settings.json` must not be able to disable the trust policy (`hoverPreviewSettings.ts:42-50`). `delay` is a benign UX preference and is clamped to `[100, 2000]` (`hoverPreviewSettings.ts:23-28`).
 
 ---
 
 ## 7. Theme Application Pipeline
 
-### Full Pipeline: Theme Engine → xterm.js Rendering
-
 ```mermaid
 flowchart TD
     subgraph VSCode["VS Code Theme Engine"]
-        TE["Active Color Theme<br/>(built-in or extension)"]
-        CC["workbench.colorCustomizations<br/>(user overrides)"]
+        TE["Active color theme"]
+        CC["workbench.colorCustomizations"]
     end
 
-    subgraph Injection["CSS Variable Injection"]
-        TE --> INJ["Inject CSS vars into<br/>webview :root element"]
-        CC --> INJ
+    TE --> INJ["Inject CSS vars into webview :root"]
+    CC --> INJ
+
+    subgraph WV["WebView (ThemeManager)"]
+        INJ --> GCS["getComputedStyle(documentElement)"]
+        GCS --> READ["Read 26 CSS variables"]
+        READ --> BUILD["Build ITheme"]
+        LOC["location from data-terminal-location"] --> BUILD
+        BUILD --> APPLY["terminal.options.theme = theme<br>terminal.options.minimumContrastRatio = ratio"]
     end
 
-    subgraph WebView["WebView (ThemeManager)"]
-        INJ --> GCS["getComputedStyle(<br/>document.documentElement)"]
-        GCS --> READ["Read 20+ CSS variables"]
-        READ --> BUILD["Build ITheme object"]
-        LOC["Terminal location<br/>(panel/sidebar/editor)"] --> BUILD
-        BUILD --> APPLY["terminal.options.theme = theme"]
-    end
+    APPLY --> RENDER["xterm re-renders all cells"]
 
-    subgraph XTerm["xterm.js Rendering"]
-        APPLY --> RENDER["Re-render all cells<br/>with new colors"]
-    end
+    MO["MutationObserver on body.class"] -->|"class changes"| GCS
+    MO --> BG["applyBodyBackground()"]
 
-    subgraph Watch["Theme Change Watch"]
-        MO["MutationObserver<br/>on body.class"] --> |"class changes"| GCS
-    end
-```
-
-### CSS Variable Reading Pipeline
-
-```mermaid
-flowchart LR
-    subgraph Input["CSS :root"]
-        V1["--vscode-terminal-ansiBlack: #000000"]
-        V2["--vscode-terminal-ansiRed: #cd3131"]
-        V3["...16 ANSI + 4 special..."]
-        V4["--vscode-terminal-background: (empty)"]
-    end
-
-    subgraph Read["getComputedStyle"]
-        G["getPropertyValue(varName).trim()"]
-    end
-
-    subgraph Transform["Transform"]
-        T1["Non-empty → use value"]
-        T2["Empty → undefined"]
-        T3["Background empty →<br/>location fallback"]
-    end
-
-    subgraph Output["ITheme Object"]
-        O["{ black: '#000',<br/>  red: '#cd3131',<br/>  ...,<br/>  background: panelBg }"]
-    end
-
-    V1 --> G
-    V2 --> G
-    V3 --> G
-    V4 --> G
-    G --> T1
-    G --> T2
-    G --> T3
-    T1 --> O
-    T2 --> O
-    T3 --> O
+    TE -.->|"onDidChangeActiveColorTheme"| IPC["themeChanged {kind}"]
+    IPC -.-> SHIKI["Shiki theme for hover-preview popup"]
 ```
 
 ---
 
 ## 8. Initialization Sequence
 
-### Theme Application at Startup
-
 ```mermaid
 sequenceDiagram
     participant EXT as Extension Host
-    participant WV as WebView
+    participant WV as WebView (bootstrap)
     participant TM as ThemeManager
     participant XT as xterm.Terminal
 
-    Note over EXT: resolveWebviewView() called
-    EXT->>WV: Set webview.html (CSS vars already injected by VS Code)
+    EXT->>WV: set webview.html (CSS vars already injected by VS Code)
+    Note over WV: DOM loads, IIFE bundle executes
 
-    Note over WV: DOM loads, scripts execute
-
-    WV->>TM: Initialize ThemeManager(location)
-    TM->>TM: getXtermTheme(location)
-    Note over TM: Read all CSS variables<br/>from :root
-
-    TM->>TM: watchThemeChanges(callback)
-    Note over TM: MutationObserver attached<br/>to document.body
+    WV->>TM: new ThemeManager("sidebar")
+    WV->>TM: updateLocation(body[data-terminal-location])
+    WV->>TM: applyBodyBackground()
+    WV->>TM: startWatching(() => applyToAll(terminals))
 
     WV->>EXT: { type: 'ready' }
-    EXT->>WV: { type: 'init', tabs, config }
+    EXT->>WV: { type: 'themeChanged', kind }
+    EXT->>WV: { type: 'hoverPreviewSettings', settings }
+    EXT->>WV: { type: 'init', tabs, config, workspaceRoot, rootGeneration }
 
-    WV->>XT: new Terminal({ theme: currentTheme, ... })
+    WV->>XT: new Terminal({ theme: themeManager.getTheme(), minimumContrastRatio, ... })
     WV->>XT: terminal.open(container)
-    Note over XT: Terminal renders with<br/>theme-matched colors
 
-    Note over WV: Later: user switches theme...
-
-    TM->>TM: MutationObserver fires
-    TM->>TM: getXtermTheme(location)
-    loop Each terminal instance
-        TM->>XT: terminal.options.theme = newTheme
-    end
+    Note over WV: later — user switches theme
+    TM->>TM: MutationObserver fires → applyBodyBackground + applyToAll
 ```
+
+> `bootstrap()` calls `startWatching` **before** posting `ready` (`main.ts:1337-1340`), so no theme change can be missed between mount and init.
 
 ---
 
-## 9. ThemeManager Class
+## 9. ThemeManager API
 
-The `ThemeManager` is a concrete class (not an interface). It does **not** track individual terminals — instead, `applyToAll()` accepts an iterable of terminals from the caller. This keeps the ThemeManager decoupled from the state store.
+`ThemeManager` is a concrete class. It does **not** track terminals — `applyToAll()` takes an iterable from the caller, which keeps it decoupled from `WebviewStateStore`.
 
 ```typescript
+type TerminalLocation = "panel" | "sidebar" | "editor";           // ThemeManager.ts:13
+
 class ThemeManager {
-  private location: TerminalLocation;
-  private observer: MutationObserver | undefined;
-
-  constructor(initialLocation: TerminalLocation = 'sidebar');
-
-  /** Build theme from CSS variables. Returns Record<string, string | undefined>. */
-  getTheme(): Record<string, string | undefined>;
-
-  /** Get contrast ratio: 7 for high-contrast, 4.5 for normal themes. */
-  getMinimumContrastRatio(): number;
-
-  /** Apply theme + contrast ratio to all terminal instances. */
-  applyToAll(terminals: Iterable<{ terminal: Terminal }>): void;
-
-  /** Set body background for current location. */
-  applyBodyBackground(): void;
-
-  /** Update location. Returns true if changed. */
-  updateLocation(location: TerminalLocation): boolean;
-
-  /** Start MutationObserver on body class changes. */
-  startWatching(onThemeChange: () => void): void;
-
-  /** Disconnect MutationObserver. */
-  dispose(): void;
+  constructor(initialLocation: TerminalLocation = "sidebar");     // :39
+  getTheme(): Record<string, string | undefined>;                 // :47
+  getMinimumContrastRatio(): number;                              // :105
+  applyToAll(terminals: Iterable<{ terminal: Terminal }>): void;  // :113
+  applyBodyBackground(): void;                                    // :123
+  updateLocation(location: TerminalLocation): boolean;            // :136
+  startWatching(onThemeChange: () => void): void;                 // :150
+  dispose(): void;                                                // :172
 }
 ```
 
-### High-Contrast Theme Support
+### High-Contrast Support
 
-High-contrast themes are detected by checking for `vscode-high-contrast` or `vscode-high-contrast-light` CSS classes on `document.body`. When active:
-- `getMinimumContrastRatio()` returns 7 (WCAG AAA) instead of 4.5 (WCAG AA)
-- The higher ratio ensures text remains readable in high-contrast themes
+`isHighContrastTheme()` checks for `vscode-high-contrast` or `vscode-high-contrast-light` on `document.body` (`ThemeManager.ts:183-188`).
+
+| Theme kind | `minimumContrastRatio` | Standard |
+|---|---|---|
+| High contrast (either) | **7** | WCAG AAA |
+| Everything else | **4.5** | WCAG AA |
+
+`applyToAll()` re-applies both `theme` and `minimumContrastRatio`, so a switch into or out of a high-contrast theme updates the ratio too (`ThemeManager.ts:113-120`).
 
 ---
 
-## 10. File Location
+## 10. File Locations
 
-```
-src/webview/theme/ThemeManager.ts
-```
+| File | Role |
+|---|---|
+| `src/webview/theme/ThemeManager.ts` | CSS variables → `ITheme`, MutationObserver watching |
+| `src/settings/SettingsReader.ts` | Host-side font / scrollback / shell / cwd resolution |
+| `src/providers/hoverPreviewSettings.ts` | Host-side hover-preview settings snapshot |
+| `src/providers/webviewHtml.ts` | `data-terminal-location`, overview-ruler CSS override |
 
 ### Dependencies
 - `@xterm/xterm` — `Terminal` type
 - Browser APIs — `getComputedStyle`, `MutationObserver`
 
 ### Dependents
-- `main.ts` — creates ThemeManager, calls `applyToAll()`, `applyBodyBackground()`
-- `TerminalFactory` — reads `getTheme()` and `getMinimumContrastRatio()` during terminal creation
-- `ResizeCoordinator` — triggers `updateLocation()` via callback when container aspect ratio changes
+- `main.ts` — constructs `ThemeManager`, calls `updateLocation`, `applyBodyBackground`, `startWatching`, `applyToAll`
+- `TerminalFactory` — reads `getTheme()` and `getMinimumContrastRatio()` at terminal creation
+
+---
+
+## 11. Boundaries
+
+`ThemeManager` maps colours and contrast ratio only. It does **not** own font resolution (host-side `SettingsReader`, mirrored into xterm options by `TerminalFactory`), the Shiki theme kind (a separate IPC channel, §6), or panel chrome styling (plain CSS variables in the inlined stylesheets, `webview-provider.md` §4.3).
+
+Deliberate non-goals: no user-facing terminal colour-override settings, no theme caching, and no per-terminal theme — one theme applies to every instance in the webview.
+

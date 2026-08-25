@@ -2,493 +2,397 @@
 
 ## 1. Overview
 
-In a VS Code webview terminal, every keystroke must pass through a gatekeeper: xterm.js's `attachCustomKeyEventHandler`. This handler decides whether a key event should be:
+Keyboard input reaches the shell through **three** layers, in this order:
 
-1. **Intercepted** by our code (e.g., Cmd+C for copy, Cmd+V for paste) — returns `false` to prevent xterm from processing the event.
-2. **Passed through** to xterm.js — returns `true`, which lets xterm process the key, convert it to terminal data, and fire `onData` with the appropriate escape sequence or character.
+| # | Layer | Registration | Purpose |
+|---|---|---|---|
+| 1 | Document-level **capture** listeners | `document.addEventListener("keydown", fn, true)` | Shortcuts that must win before xterm and before any sibling (file tree, vault) — Shift+Enter, macOS readline motions, the image-paste probe |
+| 2 | xterm's `attachCustomKeyEventHandler` | per terminal, in `TerminalFactory` | Clipboard + terminal-local shortcuts; returns `false` to consume, `true` to let xterm convert the key to terminal data |
+| 3 | Document-level **bubble** listener | `document.addEventListener("keydown", fn)` | Ctrl+Tab / Ctrl+Shift+Tab tab cycling |
 
-Without this handler, standard keyboard shortcuts (copy, paste, clear) would be sent as raw bytes to the shell process instead of performing their expected IDE actions.
+Anything none of them claims falls through to xterm → `onData` → `postMessage({type:'input'})` → `pty.write()`.
+
+Layer 1 exists because xterm's handler only sees events routed to its own textarea. When DOM focus sits on the file tree or the vault, the terminal shortcuts must still work — and because a capture-phase listener runs before xterm's, it also lets us override keys xterm would otherwise bind (`main.ts:1062-1076`).
 
 ### Reference Sources
-- VS Code: `src/vs/workbench/contrib/terminal/browser/terminalInstance.ts` (custom key handler, lines ~800-900)
-- VS Code: `src/vs/workbench/contrib/terminal/browser/terminalInstance.ts:1343` (bracketed paste)
-- Reference project: `webview/InputManager.ts` (IME handling)
-- xterm.js: `attachCustomKeyEventHandler` API docs, `terminal.modes.bracketedPasteMode`
+- VS Code: `terminalInstance.ts` (custom key handler, bracketed paste)
+- xterm.js: `attachCustomKeyEventHandler`, `terminal.modes.bracketedPasteMode`
 
 ---
 
-## 2. Key Event Handler Decision Tree
+## 2. Layer 1 — Document Capture Handler
 
-### Full Decision Flow
+`main.ts:1077-1147`, registered with `capture: true`.
+
+Every branch resolves its target the same way — the active tab's focused pane if it has one, else the tab itself — so a split pane receives the input rather than the root tab. A tab with no resolvable target aborts the handler (`main.ts:1083-1087`).
+
+| Trigger | Modifier guard | Sent | Cite |
+|---|---|---|---|
+| `Enter` | `shiftKey && !meta && !ctrl && !alt` | `\x1b\r` (ESC+CR) — REPLs like Claude Code insert a newline instead of submitting | `main.ts:1090-1095` |
+| `ArrowLeft` (macOS) | `metaKey && !ctrl && !alt && !shift` | `\x01` (Ctrl+A) — readline beginning-of-line | `main.ts:1103-1108` |
+| `ArrowRight` (macOS) | same | `\x05` (Ctrl+E) — readline end-of-line | `main.ts:1109-1114` |
+| `Backspace` (macOS) | same | `\x15` (Ctrl+U) — kill line | `main.ts:1115-1120` |
+| `Backspace` (non-macOS) | `ctrlKey && !meta && !alt && !shift` | `\x15` | `main.ts:1123-1128` |
+| `ArrowLeft` (macOS) | `altKey && !meta && !ctrl && !shift` | `\x1bb` (ESC+b) — backward-word | `main.ts:1132-1137` |
+| `ArrowRight` (macOS) | same | `\x1bf` (ESC+f) — forward-word | `main.ts:1138-1143` |
+
+Every claimed branch calls `preventDefault()` + `stopPropagation()` and returns. The whole handler no-ops while `isComposing` (`main.ts:1080-1082`).
+
+> These are sent as **raw PTY input** via `postMessage`, not `terminal.paste()` — `paste()` would wrap them in bracketed-paste markers and the shell would print `^U` literally rather than acting on it (`InputHandler.ts:115-118` documents the same reasoning for the xterm-level branch).
+
+`macOptionIsMeta: false` (`TerminalFactory.ts:239`) means xterm does not generate ESC-prefixed sequences for Option — which is exactly why the Option+Arrow branches exist here.
+
+---
+
+## 3. Layer 2 — xterm `customKeyEventHandler`
+
+### Decision Flow
 
 ```mermaid
 flowchart TD
-    A["KeyDown event fires"] --> B{"Is this a\nkeydown event?"}
-    B -->|"keyup"| C["return true\n(ignore keyup)"]
-    B -->|"keydown"| D{"IME\ncomposing?"}
-    D -->|"Yes"| E["return true\n(don't interrupt IME)"]
-    D -->|"No"| F{"Cmd/Ctrl\npressed?"}
-    F -->|"No"| G["return true\n(let xterm handle\nnormal keys)"]
-    F -->|"Yes"| H{"Which key?"}
+    A["KeyboardEvent from xterm"] --> B{"event.type === 'keydown'?"}
+    B -->|"no (keyup)"| C["return true"]
+    B -->|yes| D{"getIsComposing()?"}
+    D -->|yes| E["return true — never interrupt IME"]
+    D -->|no| S{"key === 'Escape'?"}
+    S -->|"yes + hasSelection"| T["clearSelection(); return false"]
+    S -->|"yes, no selection"| U["return true → \\x1b to shell"]
+    S -->|no| F{"platform modifier held?<br>(metaKey on macOS, else ctrlKey)"}
+    F -->|no| G["return true — normal typing"]
+    F -->|yes| H{"event.key.toLowerCase()"}
 
-    H -->|"C"| I{"Has text\nselection?"}
-    I -->|"Yes"| J["Copy to clipboard\nClear selection\nreturn false"]
-    I -->|"No"| K["return true\n(xterm sends \\x03\n→ SIGINT)"]
+    H -->|"c"| I{"hasSelection() && selection non-empty?"}
+    I -->|yes| J["clipboard.writeText(sel)<br>clearSelection(); return false"]
+    I -->|no| K["return true → xterm sends \\x03 (SIGINT)"]
 
-    H -->|"V"| L["return false\n(xterm handles paste natively\nvia browser paste event)"]
-
-    H -->|"K"| M["Clear terminal\npostMessage clear notification\nreturn false"]
-
-    H -->|"A"| P["Select all\nreturn false"]
-
-    H -->|"Backspace"| R["Send \\x15 (line kill)\nvia postMessage input\nreturn false"]
-
-    H -->|"Other"| Q["return true\n(let VS Code/xterm handle)"]
-
-    D -->|"No"| S{"Escape key?"}
-    S -->|"Yes + selection"| T["Clear selection\nreturn false"]
-    S -->|"Yes + no selection"| U["return true\n(pass to shell)"]
-    S -->|"No"| SE{"Shift+Enter\n(no other modifier)?"}
-    SE -->|"Yes"| SE1["Send \\x1b\\r (ESC+CR)\nvia postMessage input\nreturn false"]
-    SE -->|"No"| F
-
-    style J fill:#354,stroke:#6a6
-    style K fill:#543,stroke:#a66
-    style L fill:#354,stroke:#6a6
-    style N fill:#354,stroke:#6a6
+    H -->|"v"| L["return false — xterm's native browser<br>paste event still fires"]
+    H -->|"k"| M["terminal.clear()<br>postMessage({type:'clear', tabId})<br>return false"]
+    H -->|"a"| P["selectAll(); return false"]
+    H -->|"backspace"| R["postMessage({type:'input', data:'\\x15'})<br>return false"]
+    H -->|other| Q["return true"]
 ```
 
-### Handler Implementation
+Canonical implementation: `createKeyEventHandler()` — `src/webview/InputHandler.ts:46-126`. It is a factory returning a closure; every dependency is injected so it unit-tests without a browser.
 
-The input handler is a factory function `createKeyEventHandler()` that returns a closure for `attachCustomKeyEventHandler`. All dependencies are injected for testability:
+> **Shift+Enter is not in this handler.** It is intercepted one layer up, at document capture, and `InputHandler.ts:69-71` says so explicitly.
 
-```typescript
-function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEvent) => boolean {
-  const { terminal, clipboard, postMessage, getActiveTabId, getIsComposing, isMac } = deps;
+### Notable details
 
-  return (event: KeyboardEvent): boolean => {
-    if (event.type !== 'keydown') return true;
-    if (getIsComposing()) return true;
-
-    // Escape: clear selection if present, otherwise pass through
-    if (event.key === 'Escape') {
-      if (terminal.hasSelection()) {
-        terminal.clearSelection();
-        return false;
-      }
-      return true;
-    }
-
-    const modifier = isMac ? event.metaKey : event.ctrlKey;
-    if (!modifier) return true;
-
-    switch (event.key.toLowerCase()) {
-      case 'c':
-        if (terminal.hasSelection()) {
-          const selection = terminal.getSelection();
-          if (selection && clipboard) {
-            clipboard.writeText(selection);
-          }
-          terminal.clearSelection();
-          return false;
-        }
-        return true; // No selection → \x03 (SIGINT)
-
-      case 'v':
-        // Let xterm handle paste natively via browser paste event.
-        // Returning false tells xterm to skip its keydown processing,
-        // but the browser's native Cmd+V still fires the paste event.
-        return false;
-
-      case 'k':
-        terminal.clear();
-        postMessage({ type: 'clear', tabId: getActiveTabId() });
-        return false;
-
-      case 'a':
-        terminal.selectAll();
-        return false;
-
-      case 'backspace':
-        // Cmd+Delete (macOS) / Ctrl+Backspace: line kill
-        // Sends \x15 (Ctrl+U) via raw PTY input
-        postMessage({ type: 'input', tabId: getActiveTabId(), data: '\x15' });
-        return false;
-
-      default:
-        return true;
-    }
-  };
-}
-```
+- **Empty selection falls through.** The `c` branch requires both `hasSelection()` and a non-empty `getSelection()`; otherwise it returns `true` and xterm emits `\x03` (`InputHandler.ts:81-95`).
+- **Clipboard write is fire-and-forget.** `writeText(...).catch(err => console.warn(...))` — a rejected write logs and does not block the selection clear (`InputHandler.ts:86-88`).
+- **`clipboard` may be `undefined`.** `getClipboardProvider()` returns `undefined` when `navigator.clipboard` is absent; the copy branch then just clears the selection (`TerminalFactory.ts:160-168`).
+- **`v` returns `false` deliberately.** That skips xterm's *keydown* processing but the browser's native Cmd+V still fires a `paste` event on xterm's textarea, which xterm captures and routes through `onData` (`InputHandler.ts:97-103`).
 
 ---
 
-## 3. Cmd+C Dual Behavior
+## 4. Layer 3 — Tab Cycling
 
-The most important key handling subtlety: **Cmd+C must behave differently depending on whether text is selected**.
+`main.ts:1148-1152` (bubble phase) delegates to `handleTabKeyboardShortcut()` — `TabBarUtils.ts:261-290`.
 
-### Cmd+C with Selection → Copy
+| Key | Behavior | Cite |
+|---|---|---|
+| `Ctrl+Tab` | next tab, wrapping | `TabBarUtils.ts:285-286` |
+| `Ctrl+Shift+Tab` | previous tab, wrapping | `TabBarUtils.ts:281-283` |
+
+It returns `true` (so the caller calls `preventDefault()`) even when there is only one tab or the active tab is unknown — the shortcut is claimed unconditionally once `ctrlKey && key === "Tab"` matches (`TabBarUtils.ts:265-277`).
+
+The cycle order is `Array.from(deps.terminals.keys())` over the **tab-bar data map**, which contains only root tabs (`TabBarUtils.ts:33-66`) — split panes are never cycled to.
+
+---
+
+## 5. Cmd+C Dual Behavior
+
+### With selection → copy
 
 ```mermaid
 sequenceDiagram
     actor User
     participant XT as xterm.js
+    participant H as customKeyEventHandler
     participant CB as navigator.clipboard
-    participant Handler as customKeyEventHandler
 
-    User->>XT: Select text with mouse
-    User->>XT: Press Cmd+C
-
-    XT->>Handler: KeyboardEvent (Cmd+C)
-    Handler->>XT: terminal.hasSelection()
-    XT-->>Handler: true
-
-    Handler->>XT: terminal.getSelection()
-    XT-->>Handler: "selected text"
-
-    Handler->>CB: navigator.clipboard.writeText("selected text")
-    Handler->>XT: terminal.clearSelection()
-    Handler-->>XT: return false (event consumed)
-
-    Note over XT: Key event NOT sent to shell.<br/>Text copied to clipboard.
+    User->>XT: select text, press Cmd+C
+    XT->>H: KeyboardEvent
+    H->>XT: hasSelection() → true
+    H->>XT: getSelection() → "text"
+    H->>CB: writeText("text")  (fire-and-forget)
+    H->>XT: clearSelection()
+    H-->>XT: false (event consumed)
 ```
 
-### Cmd+C without Selection → SIGINT
+### Without selection → SIGINT
 
 ```mermaid
 sequenceDiagram
     actor User
     participant XT as xterm.js
-    participant MH as MessageHandler
     participant EXT as Extension Host
     participant PTY as node-pty
 
-    User->>XT: Press Cmd+C (nothing selected)
-
-    XT->>XT: customKeyEventHandler(Cmd+C)
-    XT->>XT: terminal.hasSelection()
-    Note over XT: false — no selection
-
-    XT->>XT: return true (let xterm handle)
-
-    Note over XT: xterm converts Cmd+C<br/>to \x03 (ETX / SIGINT)
-
-    XT->>MH: onData('\x03')
-    MH->>EXT: postMessage({ type: 'input', data: '\x03' })
+    User->>XT: Cmd+C, nothing selected
+    XT->>XT: handler → hasSelection() false → return true
+    Note over XT: xterm converts to \x03 (ETX)
+    XT->>EXT: onData('\x03') → postMessage({type:'input'})
     EXT->>PTY: pty.write('\x03')
-
-    Note over PTY: Shell receives SIGINT<br/>Foreground process interrupted
+    Note over PTY: SIGINT to the foreground process group
 ```
+
+On macOS the platform modifier is `metaKey`, so plain **Ctrl+C always** reaches xterm and always sends `\x03`, regardless of selection state (`InputHandler.ts:74`).
 
 ---
 
-## 4. Paste Handling
+## 6. Paste Handling
 
-### Native xterm Paste
-
-Paste is handled entirely by xterm.js's native browser paste event. There is no custom `handlePaste()` function — it was removed as dead code in Phase 7.
-
-When Cmd+V is pressed, the custom key event handler returns `false`. This tells xterm to skip its own keydown processing, but the browser's native Cmd+V still fires a paste event on xterm's internal textarea. xterm captures this event, normalizes the pasted text, handles bracketed paste mode internally, and routes the data through `onData`.
+Text paste is xterm's job; image paste is ours. The split is decided inside the `paste` listener (`main.ts:1232-1285`) — full details in `flow-clipboard.md`.
 
 ```mermaid
 flowchart TD
-    A["Cmd+V pressed"] --> B["customKeyEventHandler\nreturns false"]
-    B --> C["Browser fires native paste event\non xterm's internal textarea"]
-    C --> D["xterm.js processes paste event"]
-    D --> E["xterm handles bracketed paste mode\nand line ending normalization internally"]
-    E --> F["onData fires with pasted text"]
-    F --> G["postMessage to extension\n→ pty.write()"]
+    A["Cmd+V / Ctrl+V"] --> B["customKeyEventHandler 'v' → false"]
+    A --> Z["document keydown capture:<br>isPasteShortcut() → debounced clipboard probe"]
+    B --> C["browser fires native paste on xterm's textarea"]
+    C --> D{"clipboardData has image/*?"}
+    D -->|yes| E["preventDefault + cache blob + forwardImagePaste"]
+    D -->|"no, has text/plain"| F["cancel the probe;<br>let xterm paste natively (bracketed paste, EOL normalization)"]
+    D -->|"no image, no text, Windows"| G["preventDefault + postMessage pasteOsClipboardImage"]
+    F --> H["onData → postMessage → pty.write()"]
 ```
 
-This approach matches VS Code's built-in terminal and avoids the complexity of manual clipboard reading, line ending normalization, and bracketed paste wrapping.
+Keeping text on xterm's native path matches VS Code's built-in terminal and avoids re-implementing bracketed paste and line-ending normalization.
 
 ---
 
-## 5. IME Composition Handling
+## 7. IME Composition Handling
 
 ### Problem
 
-Input Method Editors (IME) are used for CJK (Chinese, Japanese, Korean) text input and other complex scripts. During IME composition, the user types multiple keystrokes that compose into a single character or word. If we process keyboard shortcuts during composition, we'll interrupt the IME and break the input.
+IMEs (CJK and other complex scripts) compose one character from several keystrokes. Intercepting shortcuts mid-composition breaks the input.
 
-### Composition State Tracking
+### State Tracking
+
+`isComposing` is a single module-level flag in `main.ts:95`, toggled by document-level `compositionstart` / `compositionend` listeners (`main.ts:1056-1061`).
+
+Both interception layers consult it:
+
+| Consumer | Cite |
+|---|---|
+| Document capture handler — bails out entirely | `main.ts:1080-1082` |
+| xterm key handler — via injected `getIsComposing()` | `InputHandler.ts:55-58`, wired at `TerminalFactory.ts:181` |
 
 ```mermaid
 sequenceDiagram
     actor User
     participant DOM as DOM Events
-    participant IH as InputHandler
+    participant M as main.ts
     participant XT as xterm.js
 
-    User->>DOM: Start typing CJK character
-    DOM->>IH: compositionstart event
-    Note over IH: isComposing = true
-
-    User->>DOM: Type intermediate keystrokes
-    DOM->>IH: compositionupdate events
-    Note over IH: Still composing...<br/>All key events return true<br/>(skip shortcut checking)
-
-    User->>DOM: Select final character
-    DOM->>IH: compositionend event
-    Note over IH: isComposing = false
-
-    DOM->>XT: Input event with composed text
-    XT->>XT: onData fires with CJK character
+    User->>DOM: start typing CJK
+    DOM->>M: compositionstart → isComposing = true
+    Note over M: capture handler returns early;<br>xterm handler returns true for every key
+    User->>DOM: select final character
+    DOM->>M: compositionend → isComposing = false
+    DOM->>XT: input event with composed text → onData
 ```
-
-### Implementation
-
-```typescript
-let isComposing = false;
-
-// Track IME composition state
-document.addEventListener('compositionstart', () => {
-  isComposing = true;
-});
-
-document.addEventListener('compositionend', () => {
-  isComposing = false;
-});
-
-// In the custom key event handler:
-terminal.attachCustomKeyEventHandler((event: KeyboardEvent): boolean => {
-  // CRITICAL: Don't intercept keys during IME composition
-  if (isComposing) return true;
-
-  // ... rest of key handling ...
-});
-```
-
-### Why This Matters
 
 | Without IME tracking | With IME tracking |
 |---|---|
-| User types `ni` (你 in pinyin) | User types `ni` (你 in pinyin) |
-| `n` triggers key handler, checked for shortcuts | `n` passes through (isComposing=true) |
-| `i` triggers key handler | `i` passes through |
-| IME may be interrupted | IME completes normally |
+| `n` in `ni` (你) hits the shortcut switch | `n` passes through untouched |
+| IME can be interrupted | IME completes normally |
 | Garbled or missing input | 你 appears correctly |
+
+Dead-key sequences (Option+e then a → á) go through the same `compositionstart`/`compositionend` pair and are covered by the same guard.
 
 ---
 
-## 6. Key Event Flow (End-to-End)
+## 7b. Tab-Rename Overlay — a temporary fourth consumer
 
-### Normal Keystroke (e.g., typing 'a')
+While the tab-rename input is open (double-click a tab), it becomes an **absolute key sink**: its `keydown` listener calls `stopPropagation()` on *every* key, so nothing reaches the document capture handler, xterm, or the tab-cycling listener (`src/webview/tabRenameOverlay.ts:94-108`).
+
+| Key | Behaviour | Cite |
+|---|---|---|
+| `Enter` | `stopPropagation()` + `preventDefault()`, then `commit()` unless composing | `:95-100` |
+| `Escape` | `stopPropagation()` + `preventDefault()`, then `cancel()` | `:101-104` |
+| anything else | `stopPropagation()` only — the character still lands in the input | `:105-107` |
+| `blur` | `commit()` unless composing | `:110-115` |
+
+The overlay carries its **own** `composing` flag, fed by `compositionstart` / `compositionend` on the input element (`:116-121`) — independent of `main.ts`'s module-level `isComposing`. Enter and blur both check it, so an IME's confirmation Enter does not commit a half-composed name.
+
+`commit()`/`cancel()` are idempotency-guarded via `state.finalized` (`:48`, set at `:178,202,212`), which is why `Enter` (commit) followed by the resulting `blur` (commit) fires only once. The committed value is the **raw** input string; normalization happens host-side (`:25`).
+
+---
+
+## 8. Key Event Flow (End-to-End)
+
+### Normal keystroke
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant DOM as Browser DOM
-    participant XKH as xterm.js Key Handler
+    participant CAP as document capture
     participant CKEH as customKeyEventHandler
     participant XT as xterm.Terminal
-    participant MH as MessageHandler
     participant EXT as Extension Host
     participant PTY as node-pty
 
-    User->>DOM: Press 'a'
-    DOM->>XKH: KeyboardEvent (key: 'a')
-
-    XKH->>CKEH: customKeyEventHandler(event)
-    Note over CKEH: No modifier key → return true
-
-    CKEH-->>XKH: true (let xterm handle)
-
-    XKH->>XT: Process key → convert to data
-    XT->>XT: onData fires with 'a'
-
-    XT->>MH: onData callback
-    MH->>EXT: postMessage({ type: 'input', tabId, data: 'a' })
-
+    User->>CAP: press 'a'
+    Note over CAP: no branch matches → not consumed
+    CAP->>CKEH: event reaches xterm
+    Note over CKEH: no modifier → return true
+    CKEH->>XT: xterm converts key to data
+    XT->>EXT: onData('a') → postMessage({type:'input', tabId, data:'a'})
     EXT->>PTY: pty.write('a')
-    Note over PTY: Shell receives 'a'<br/>Echo: 'a' appears in output
-
-    PTY->>EXT: pty.onData('a') [echo]
-    EXT->>MH: postMessage({ type: 'output', data: 'a' })
-    MH->>XT: terminal.write('a')
-    Note over XT: 'a' rendered on screen
+    PTY->>EXT: echo 'a'
+    EXT->>XT: {type:'output'} → terminal.write('a')
 ```
 
-### Special Key (e.g., Arrow Up → command history)
+`onData` is suppressed once the session has exited — `TerminalFactory.ts:188-196` checks `instance.exited` before posting.
+
+### Special key (Arrow Up → history)
 
 ```mermaid
 sequenceDiagram
     actor User
     participant XT as xterm.Terminal
-    participant MH as MessageHandler
     participant PTY as node-pty
 
-    User->>XT: Press Arrow Up
-    Note over XT: customKeyEventHandler → true<br/>(no modifier)
-
-    Note over XT: xterm converts to<br/>escape sequence: \x1b[A
-
-    XT->>MH: onData('\x1b[A')
-    MH->>PTY: pty.write('\x1b[A')
-
-    Note over PTY: Shell interprets \x1b[A<br/>as "previous history entry"
-    PTY->>MH: output: previous command
-    MH->>XT: terminal.write(previousCommand)
+    User->>XT: Arrow Up (no modifier → handler returns true)
+    Note over XT: xterm emits \x1b[A
+    XT->>PTY: input '\x1b[A'
+    PTY-->>XT: previous command echoed back
 ```
-
-### Pointer Click-to-Cursor
-
-Plain primary click in the live terminal viewport is treated as a shell prompt convenience. The webview maps the click to a terminal cell, compares it with `terminal.buffer.active.cursorX/cursorY`, and sends relative left/right cursor movement data through `terminal.input()`. The resulting data follows the same `terminal.onData` → `postMessage({ type: 'input' })` → PTY path as normal keystrokes.
-
-The handler does not run for modified clicks, non-primary clicks, double-clicks, drag gestures, active text selection, or scrolled-back viewports. It also skips alternate buffer and any `terminal.modes.mouseTrackingMode` other than `none`, preserving mouse handling for fullscreen TUI applications and mouse-aware CLIs such as OpenCode or Claude Code UI states.
-
-This behavior is not arbitrary cursor teleportation inside terminal applications. It sends normal terminal input, so it is expected to work best with shell/readline-style prompts and to stay out of the way when an application owns mouse input.
 
 ---
 
-## 7. VS Code Keybinding Conflicts
+## 9. Keybinding Conflicts with VS Code
 
-### The Problem
+### The problem
 
-VS Code has hundreds of built-in keybindings (e.g., Cmd+P for file picker, Cmd+Shift+P for command palette, Cmd+B for sidebar toggle). When our terminal webview has focus, these keybindings conflict with terminal input.
+VS Code has hundreds of built-in keybindings. When the terminal webview has focus, they compete with terminal input.
 
-### VS Code's Internal Approach
+### Why we cannot copy VS Code's approach
 
-VS Code's built-in terminal uses `softDispatch()` to test whether a keybinding has a registered command before deciding to intercept it. If a keybinding is registered, VS Code handles it; otherwise, the terminal processes the key.
+VS Code's built-in terminal uses `softDispatch()` to ask whether a chord has a registered command. That is an internal API; a webview runs in an isolated context with no access to the keybinding service, and no extension API exposes "is this keybinding registered?".
 
-**We cannot use this approach** because:
-- `softDispatch()` is an internal VS Code API not available to extensions
-- Webviews run in an isolated context without access to the keybinding service
-- There is no extension API to query "is this keybinding registered?"
+### Our approach: an explicit interception list
 
-### Our Approach: Explicit Interception List
-
-We maintain an explicit list of key combinations to intercept. Everything else passes through to xterm.js (which, in turn, passes unrecognized Cmd combos back to VS Code's keybinding system through the webview bridge).
+Everything not in the tables below passes through. xterm does not consume unrecognized Cmd combos, so VS Code's webview bridge forwards them to the host window's keybinding system.
 
 ### Key Routing Summary
 
-| Key Combination | Terminal Focused | Action |
-|---|---|---|
-| Regular keys (a-z, 0-9, etc.) | → xterm.js → shell | Normal typing |
-| Enter | → xterm.js → `\r` → shell | Execute command |
-| Arrow keys | → xterm.js → escape sequences → shell | Navigation |
-| Tab | → xterm.js → `\t` → shell | Completion |
-| Escape (with selection) | **Intercepted** | Clear selection |
-| Escape (no selection) | → xterm.js → `\x1b` → shell | Cancel/escape |
-| Ctrl+C (no selection) | → xterm.js → `\x03` → shell | SIGINT |
-| Cmd+C (with selection) | **Intercepted** | Copy to clipboard |
-| Cmd+V | **Intercepted** (returns false) | xterm handles paste natively |
-| Cmd+K | **Intercepted** (always) | Clear terminal + postMessage clear |
-| Cmd+A | **Intercepted** | Select all |
-| Cmd+Backspace | **Intercepted** | Line kill (`\x15` via postMessage input) |
-| Shift+Enter | **Intercepted** | Send `\x1b\r` (ESC+CR) so REPLs like Claude Code insert a newline instead of submitting |
-| Cmd+Left (macOS) | **Intercepted** | Send `\x01` (Ctrl+A) — readline beginning-of-line |
-| Cmd+Right (macOS) | **Intercepted** | Send `\x05` (Ctrl+E) — readline end-of-line |
-| Option+Left (macOS) | **Intercepted** | Send `\x1bb` (ESC+b) — readline backward-word |
-| Option+Right (macOS) | **Intercepted** | Send `\x1bf` (ESC+f) — readline forward-word |
-| Cmd+P | → VS Code | File picker (not intercepted) |
-| Cmd+Shift+P | → VS Code | Command palette (not intercepted) |
-| Cmd+B | → VS Code | Toggle sidebar (not intercepted) |
-| Cmd+, | → VS Code | Settings (not intercepted) |
-
-### Why Non-Intercepted Cmd Combos Reach VS Code
-
-When `customKeyEventHandler` returns `true` for a Cmd combo that xterm.js doesn't recognize (e.g., Cmd+P), xterm.js doesn't consume the event. The browser's default behavior propagates the event, and VS Code's webview bridge forwards unhandled Cmd combos to the host window's keybinding system.
-
----
-
-## 8. Configuration
-
-### Input-Related Settings
-
-| Setting | Type | Default | Description |
+| Key | Layer | Action | Cite |
 |---|---|---|---|
-| `anywhereTerminal.macOptionIsMeta` | `boolean` | `false` | Treat Option key as Meta (for programs like emacs) |
-| `anywhereTerminal.macOptionClickForcesSelection` | `boolean` | `true` | Option+click forces text selection (vs. sending escape) |
+| Regular keys, Enter, arrows, Tab | — | xterm → shell | — |
+| `Escape` **with** selection | 2 | clear selection | `InputHandler.ts:61-67` |
+| `Escape` no selection | — | `\x1b` to shell | `InputHandler.ts:66` |
+| `Ctrl+C` (macOS) / `Ctrl+C` no selection | — | `\x03` SIGINT | `InputHandler.ts:74,95` |
+| `Cmd/Ctrl+C` **with** selection | 2 | copy + clear selection | `InputHandler.ts:81-95` |
+| `Cmd/Ctrl+V` | 2 | return `false`; xterm pastes natively | `InputHandler.ts:97-103` |
+| `Cmd/Ctrl+K` | 2 | `terminal.clear()` + `{type:'clear', tabId}` | `InputHandler.ts:105-108` |
+| `Cmd/Ctrl+A` | 2 | select all | `InputHandler.ts:110-112` |
+| `Shift+Enter` | 1 | `\x1b\r` | `main.ts:1090-1095` |
+| `Cmd+←` (macOS) | 1 | `\x01` | `main.ts:1103-1108` |
+| `Cmd+→` (macOS) | 1 | `\x05` | `main.ts:1109-1114` |
+| `Cmd+Backspace` (macOS) | 1 | `\x15` | `main.ts:1115-1120` |
+| `Ctrl+Backspace` (non-macOS) | 1 | `\x15` | `main.ts:1123-1128` |
+| `Option+←` (macOS) | 1 | `\x1bb` | `main.ts:1132-1137` |
+| `Option+→` (macOS) | 1 | `\x1bf` | `main.ts:1138-1143` |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | 3 | cycle root tabs | `TabBarUtils.ts:261-290` |
+| `Cmd/Ctrl+P`, `Cmd/Ctrl+Shift+P`, `Cmd/Ctrl+B`, `Cmd/Ctrl+,` | — | VS Code handles | — |
 
-> **Note**: `enableCmdK` was described in earlier designs but was never implemented. Cmd+K always clears the terminal. There is no config to disable it.
+> The `backspace` case inside `createKeyEventHandler` (`InputHandler.ts:114-120`) is **unreachable in practice**: the layer-1 capture handler claims Cmd+Backspace on macOS and Ctrl+Backspace elsewhere and calls `stopPropagation()`, so the event never reaches xterm. It is kept as a defensive fallback.
 
-### macOptionIsMeta Behavior
+### Contributed keybindings (`package.json:571-584`)
 
-When `macOptionIsMeta` is `true`:
-- Option+key sends `\x1b` + key (Meta/Alt sequence)
-- Useful for: emacs keybindings (M-f, M-b for word movement)
-- Side effect: disables special character input (e.g., Option+3 for `#` on UK keyboards)
+| Command | Windows/Linux | macOS | `when` |
+|---|---|---|---|
+| `anywhereTerminal.splitVertical` | `ctrl+\` | `cmd+\` | `focusedView == anywhereTerminal.sidebar \|\| focusedView == anywhereTerminal.panel` |
+| `anywhereTerminal.splitHorizontal` | `ctrl+shift+\` | `cmd+shift+\` | same |
 
-When `macOptionIsMeta` is `false` (default):
-- Option+key types the macOS special character (e.g., Option+e for ´)
-- Standard macOS behavior
-
----
-
-## 9. Edge Cases
-
-### 1. Clipboard Permissions
-
-**Scenario**: `navigator.clipboard.readText()` fails because the webview doesn't have clipboard permissions.
-
-**Handling**: The clipboard API call is wrapped in try/catch. On failure, a warning is logged. In VS Code webviews, clipboard access is generally granted, but may fail if the webview lost focus during the async operation.
-
-### 2. Large Paste
-
-**Scenario**: User pastes 10MB of text from clipboard.
-
-**Handling**: The pasted text passes through `terminal.paste()` which feeds it to `onData()`. This triggers normal output buffering and flow control. The PTY may pause if the input overwhelms the shell. No special handling needed beyond existing flow control.
-
-### 3. Dead Keys
-
-**Scenario**: User types a dead key combination (e.g., Option+e followed by a for á on macOS).
-
-**Handling**: Dead key sequences produce `compositionstart`/`compositionend` events, which are handled by our IME composition tracking. The key handler skips shortcut checking during composition.
-
-### 4. Ctrl+C vs. Cmd+C on macOS
-
-**Scenario**: User presses Ctrl+C on macOS (not Cmd+C).
-
-**Handling**: Our handler checks `event.metaKey` on macOS, not `event.ctrlKey`. Ctrl+C passes through to xterm.js, which converts it to `\x03` (SIGINT) — the standard Unix interrupt. This is correct behavior; Ctrl+C should always send SIGINT regardless of selection state.
+Both `when` clauses name only the sidebar and panel views — an **editor-tab** terminal (`anywhereTerminal.editor`) does not get these keybindings and must use the command palette or the pane context menu.
 
 ---
 
-## 10. Interface Definition
+## 10. Terminal Input Configuration
 
-The input handler uses a factory function pattern, not a class:
+There are **no** `anywhereTerminal.macOption*` settings. Both macOS Option-key behaviors are hardcoded at terminal construction:
+
+| xterm option | Value | Effect | Cite |
+|---|---|---|---|
+| `macOptionIsMeta` | `false` | Option+key types the macOS special character (Option+e → ´) rather than an ESC-prefixed Meta sequence. Word-motion is provided by the layer-1 Option+Arrow branches instead. | `TerminalFactory.ts:239` |
+| `macOptionClickForcesSelection` | `true` | Option+click forces text selection instead of sending a mouse escape sequence | `TerminalFactory.ts:240` |
+| `rightClickSelectsWord` | `false` | Right click opens the VS Code webview context menu (see `webview/context` in `package.json:434`) instead of selecting a word | `TerminalFactory.ts:243` |
+| `fastScrollSensitivity` | `5` | Alt+wheel scroll multiplier | `TerminalFactory.ts:244` |
+| `tabStopWidth` | `8` | — | `TerminalFactory.ts:245` |
+
+`enableCmdK` was described in an earlier design and was never implemented — Cmd+K always clears, with no opt-out.
+
+---
+
+## 11. Edge Cases
+
+### 1. Clipboard unavailable or denied
+`getClipboardProvider()` returns `undefined` when `navigator.clipboard` is missing (`TerminalFactory.ts:160-163`), and a rejected `writeText` is caught and logged (`InputHandler.ts:86-88`). Either way, the selection is still cleared and the event is still consumed.
+
+### 2. Large paste
+Pasted text flows through xterm's native paste → `onData` → `postMessage` → `pty.write()`. It is subject to the normal per-session flow control (see `output-buffering.md`); no special handling is needed. Pasted **images** are capped — see `flow-clipboard.md`.
+
+### 3. Focus is not on the terminal
+Layer 1 is on `document` in capture phase, so Shift+Enter and the readline motions still reach the active pane while the file tree or vault has DOM focus (`main.ts:1097-1101`).
+
+### 4. Split panes and `Cmd+K`
+`createKeyEventHandler` receives `getActiveTabId: () => this.store.activeTabId` (`TerminalFactory.ts:180`) — the **root tab** id, not the active pane id. `terminal.clear()` correctly affects the focused pane's own terminal (the handler is per-instance), but the accompanying `{type:'clear', tabId}` names the root tab, so the host clears the root session's scrollback cache (`TerminalViewProvider.ts:1138-1142`). In a split, this is a mismatch. See §12.
+
+---
+
+## 12. Known Inconsistency
+
+`getActiveTabId` is wired to `store.activeTabId`, while every other input path resolves `store.tabActivePaneIds.get(tabId) ?? tabId`. Consequences inside a split tab:
+
+- **Cmd+K** clears the focused pane's xterm but tells the host to clear the *root* session's scrollback (`TerminalFactory.ts:180`, `InputHandler.ts:105-108`).
+- The `backspace` branch would have the same mismatch, but is unreachable (§9).
+
+Recorded here as an observation; not fixed by this document.
+
+---
+
+## 13. Injected Contracts
+
+`createKeyEventHandler(deps)` (`InputHandler.ts:46`) takes every dependency by injection, which is what makes layer 2 unit-testable without a browser.
 
 ```typescript
-/** Abstraction over the system clipboard for dependency injection. */
-interface ClipboardProvider {
+interface ClipboardProvider {                       // InputHandler.ts:11
   readText(): Promise<string>;
   writeText(text: string): Promise<void>;
 }
 
-/** Minimal terminal surface used by the key handler. */
-interface TerminalLike {
+interface TerminalLike {                            // InputHandler.ts:17
   hasSelection(): boolean;
   getSelection(): string;
   clearSelection(): void;
   clear(): void;
   selectAll(): void;
 }
-
-/** Dependencies injected into the key event handler factory. */
-interface KeyHandlerDeps {
-  terminal: TerminalLike;
-  clipboard: ClipboardProvider | undefined;
-  postMessage: (msg: unknown) => void;
-  getActiveTabId: () => string | null;
-  getIsComposing: () => boolean;
-  isMac: boolean;
-}
-
-/** Factory: returns a function for attachCustomKeyEventHandler. */
-function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEvent) => boolean;
 ```
+
+`KeyHandlerDeps` (`InputHandler.ts:26`) bundles those two with `postMessage`, `getActiveTabId`, `getIsComposing`, and `isMac`. `clipboard` may be `undefined` — see §3.
+
+`ClipboardProvider.readText()` is declared but never called — paste is handled by xterm's native path and by the `imagePasteBridge` probe.
 
 ---
 
-## 11. File Location
+## 14. File Locations
 
-```
-src/webview/InputHandler.ts
-```
+| Location | Role |
+|---|---|
+| `src/webview/InputHandler.ts` | `createKeyEventHandler()` factory — layer 2 |
+| `src/webview/main.ts:1056-1152` | Composition tracking, capture handler (layer 1), tab cycling (layer 3) |
+| `src/webview/main.ts:1183-1230` | Image-paste keydown probe — see `flow-clipboard.md` |
+| `src/webview/TabBarUtils.ts:261-290` | `handleTabKeyboardShortcut()` |
+| `src/webview/tabRenameOverlay.ts:94-121` | Rename-overlay key sink — §7b |
+| `src/webview/imagePasteBridge.ts:47` | `isPasteShortcut()` |
 
 ### Dependencies
-- Browser APIs — `navigator.clipboard` (via injected `ClipboardProvider`)
-- IME state via injected `getIsComposing()` callback
+- Browser APIs — `navigator.clipboard` (via injected `ClipboardProvider`), `navigator.platform`
+- IME state via injected `getIsComposing()`
 
 ### Dependents
-- `TerminalFactory.attachInputHandler()` — creates and attaches the handler to each terminal
+- `TerminalFactory.attachInputHandler()` — builds and attaches the handler per terminal (`TerminalFactory.ts:175-197`)
