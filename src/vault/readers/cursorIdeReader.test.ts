@@ -249,7 +249,19 @@ describe("Cursor IDE Composer detail", () => {
     expect(detail?.timeline).toHaveLength(500);
     expect(detail?.timeline[0]).toMatchObject({ kind: "message", text: "1" });
     expect(detail?.timeline.at(-1)).toMatchObject({ kind: "message", text: "500" });
-    expect(detail?.truncated).toBe(true);
+    // The header cap is fixed — no larger limit recovers bubble-0, so this is
+    // source omission, not something the preview can page in.
+    expect(detail?.partial).toBe(true);
+    expect(detail?.limitedReason?.length).toBeGreaterThan(0);
+    expect(detail?.truncated).not.toBe(true);
+    expect(detail?.contentKind).toBe("timeline");
+
+    // Below the retained count, both signals hold at once.
+    const paged = await readCursorIdeDetail("ide:d29ya3NwYWNlLTE:composer-1", 50, { ideDbPath: dbPath });
+    expect(paged?.timeline).toHaveLength(50);
+    expect(paged?.partial).toBe(true);
+    expect(paged?.truncated).toBe(true);
+    expect(paged?.contentKind).toBe("timeline");
   });
 
   it("bounds normalized transcript text independently of requested item limits", async () => {
@@ -261,7 +273,18 @@ describe("Cursor IDE Composer detail", () => {
     const detail = await readCursorIdeDetail("ide:d29ya3NwYWNlLTE:composer-1", undefined, { ideDbPath: dbPath });
 
     expect(detail?.timeline).toHaveLength(8);
-    expect(detail?.truncated).toBe(true);
+    // The normalized-text ceiling is fixed too: the 9th bubble is unreachable at
+    // any limit, so it is partial — and there is nothing left to page.
+    expect(detail?.partial).toBe(true);
+    expect(detail?.limitedReason?.length).toBeGreaterThan(0);
+    expect(detail?.truncated).not.toBe(true);
+    expect(detail?.contentKind).toBe("timeline");
+
+    const paged = await readCursorIdeDetail("ide:d29ya3NwYWNlLTE:composer-1", 4, { ideDbPath: dbPath });
+    expect(paged?.timeline).toHaveLength(4);
+    expect(paged?.partial).toBe(true);
+    expect(paged?.truncated).toBe(true);
+    expect(paged?.contentKind).toBe("timeline");
   });
 
   it("resolves a safe entry and rejects malformed or cross-workspace ids", async () => {

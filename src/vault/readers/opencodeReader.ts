@@ -10,7 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { readSqlite, writeSqlite } from "../sqlite";
+import { readSqlite, withSqliteSnapshot, writeSqlite } from "../sqlite";
 import { sameStamps, stampStoreFiles } from "../storeStamp";
 import {
   formatEntryId,
@@ -24,6 +24,7 @@ import {
   boundActivity,
   boundTimeline,
   buildQuestionOptions,
+  finalizeDetail,
   MAX_MESSAGE_TEXT,
   normalizeRich,
   type QuestionPair,
@@ -76,6 +77,8 @@ export interface OpenCodeReaderOptions {
   readSqliteFn?: typeof readSqlite;
   /** Injectable for tests; defaults to the real live-DB writer. */
   writeSqliteFn?: typeof writeSqlite;
+  /** Injectable for tests; defaults to the real one-copy snapshot reader. */
+  withSqliteSnapshotFn?: typeof withSqliteSnapshot;
 }
 
 function asString(v: unknown): string | undefined {
@@ -661,19 +664,29 @@ export async function readOpenCodeDetail(
   if (!isSafeOpenCodeId(sessionId)) {
     return null;
   }
-  const { dbPath, readSqliteFn } = resolveOpencodePaths(options);
+  const { dbPath } = resolveOpencodePaths(options);
 
   // `sessionId` is validated to `[A-Za-z0-9_-]+` above, so embedding it in the
   // static query introduces no injectable characters (no quotes/semicolons).
   // Per table a head window (ASC) preserves firstPrompt + early context and a tail
   // window (DESC) preserves the final assistant message + recent timeline; the two
   // are unioned and de-duplicated by row id below (they overlap on short sessions).
-  const msgHeadSql = `SELECT id, time_created, data FROM message WHERE session_id = '${sessionId}' ORDER BY time_created ASC LIMIT ${DETAIL_MESSAGE_HEAD}`;
-  const msgTailSql = `SELECT id, time_created, data FROM message WHERE session_id = '${sessionId}' ORDER BY time_created DESC LIMIT ${DETAIL_MESSAGE_TAIL}`;
-  const partHeadSql = `SELECT id, message_id, time_created, data FROM part WHERE session_id = '${sessionId}' ORDER BY time_created ASC LIMIT ${DETAIL_PART_HEAD}`;
-  const partTailSql = `SELECT id, message_id, time_created, data FROM part WHERE session_id = '${sessionId}' ORDER BY time_created DESC LIMIT ${DETAIL_PART_TAIL}`;
+  // `time_created` alone is not a total order, and tied rows let both windows miss
+  // the same row while overlapping elsewhere — so the tie-break is `id`, reversed
+  // exactly between head and tail to keep the two windows complementary.
+  const msgHeadSql = `SELECT id, time_created, data FROM message WHERE session_id = '${sessionId}' ORDER BY time_created ASC, id ASC LIMIT ${DETAIL_MESSAGE_HEAD}`;
+  const msgTailSql = `SELECT id, time_created, data FROM message WHERE session_id = '${sessionId}' ORDER BY time_created DESC, id DESC LIMIT ${DETAIL_MESSAGE_TAIL}`;
+  const partHeadSql = `SELECT id, message_id, time_created, data FROM part WHERE session_id = '${sessionId}' ORDER BY time_created ASC, id ASC LIMIT ${DETAIL_PART_HEAD}`;
+  const partTailSql = `SELECT id, message_id, time_created, data FROM part WHERE session_id = '${sessionId}' ORDER BY time_created DESC, id DESC LIMIT ${DETAIL_PART_TAIL}`;
   // Direct children (subagents / workflow sub-sessions) of this session, with a
   // first-user-message subquery (reused from the list SQL) for the collapsed stub.
+  // Omission has to be PROVEN, not inferred from the two windows failing to
+  // overlap: at exactly DETAIL_MESSAGE_HEAD + DETAIL_MESSAGE_TAIL rows both
+  // windows are full and disjoint while their union still covers every row.
+  // One row past the retained capacity is that proof, and OFFSET stops there
+  // instead of counting the session's whole history.
+  const msgProbeSql = `SELECT id FROM message WHERE session_id = '${sessionId}' LIMIT 1 OFFSET ${DETAIL_MESSAGE_HEAD + DETAIL_MESSAGE_TAIL}`;
+  const partProbeSql = `SELECT id FROM part WHERE session_id = '${sessionId}' LIMIT 1 OFFSET ${DETAIL_PART_HEAD + DETAIL_PART_TAIL}`;
   const childrenSql = `SELECT s.id, s.title, s.agent, s.time_created, (
       SELECT p.data FROM part p JOIN message m ON p.message_id = m.id
       WHERE p.session_id = s.id AND m.data LIKE '%"role":"user"%'
@@ -682,18 +695,34 @@ export async function readOpenCodeDetail(
     ) AS first_user_part
     FROM session s WHERE s.parent_id = '${sessionId}' ORDER BY s.time_created ASC LIMIT ${CHILD_LIMIT}`;
 
-  const [msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes] = await Promise.all([
-    readSqliteFn(dbPath, msgHeadSql),
-    readSqliteFn(dbPath, msgTailSql),
-    readSqliteFn(dbPath, partHeadSql),
-    readSqliteFn(dbPath, partTailSql),
-    readSqliteFn(dbPath, childrenSql),
-  ]);
+  // One snapshot for every query: `readSqlite` copies the live DB per call, so
+  // independent reads could compare a probe against windows from another version
+  // of the database and prove nothing about either.
+  const read = await (options.withSqliteSnapshotFn ?? withSqliteSnapshot)(dbPath, async (snapshot) => {
+    const [msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes] = await Promise.all([
+      snapshot.query(msgHeadSql),
+      snapshot.query(msgTailSql),
+      snapshot.query(partHeadSql),
+      snapshot.query(partTailSql),
+      snapshot.query(childrenSql),
+      snapshot.query(msgProbeSql),
+      snapshot.query(partProbeSql),
+    ]);
+    return { msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes };
+  });
+  if (read.status !== "ok") {
+    return null;
+  }
+  const { msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes } = read.value;
   if (
     msgHeadRes.status !== "ok" ||
     msgTailRes.status !== "ok" ||
     partHeadRes.status !== "ok" ||
-    partTailRes.status !== "ok"
+    partTailRes.status !== "ok" ||
+    // `partial` means source omission and nothing else, so an unproven read has
+    // no honest value to report and fails like any other failed query here.
+    msgProbeRes.status !== "ok" ||
+    partProbeRes.status !== "ok"
   ) {
     return null;
   }
@@ -706,15 +735,11 @@ export async function readOpenCodeDetail(
   const messages = parseMessageRows(msgRows);
   const parts = parsePartRows(partRows);
   const childStubs = childRes.status === "ok" ? buildChildStubs(childRes.rows) : [];
-  // No window overlap ⇒ the middle of a long transcript was dropped — flag it so
-  // the preview shows the truncation marker (parity with the Claude buffer).
   const messageHeadIds = new Set(msgHeadRes.rows.map((row) => asString(row.id)).filter((id): id is string => !!id));
   const messageTailIds = new Set(msgTailRes.rows.map((row) => asString(row.id)).filter((id): id is string => !!id));
-  const messageWindowTruncated =
-    msgHeadRes.rows.length >= DETAIL_MESSAGE_HEAD &&
-    msgTailRes.rows.length >= DETAIL_MESSAGE_TAIL &&
-    ![...messageTailIds].some((id) => messageHeadIds.has(id));
-  const windowTruncated = messageWindowTruncated || partRows.length >= DETAIL_PART_HEAD + DETAIL_PART_TAIL;
+  // A source row past the retained capacity is the proof of omission.
+  const messageWindowTruncated = msgProbeRes.rows.length > 0;
+  const windowTruncated = messageWindowTruncated || partProbeRes.rows.length > 0;
   const detail: VaultSessionDetail = {
     entryId: formatEntryId("opencode", sessionId),
     ...mapOpencodeRows(messages, parts, limit, childStubs),
@@ -730,10 +755,9 @@ export async function readOpenCodeDetail(
       detail.timeline.splice(firstTail, 0, { kind: "gap" });
     }
   }
-  if (windowTruncated) {
-    detail.truncated = true;
-  }
-  return detail;
+  // The windows are fixed, so what they dropped is unrecoverable at any limit —
+  // that is `partial`. Pageability stays whatever `boundTimeline` decided.
+  return finalizeDetail(detail.entryId, detail, windowTruncated);
 }
 
 /** Map direct-child session rows into timestamped `subagentSession` stubs. */

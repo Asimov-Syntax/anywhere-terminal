@@ -866,7 +866,7 @@ describe("readCursorDetail: bounded CLI transcript", () => {
     ]);
 
     const detail = await readCursorDetail("chat-detail-ok", undefined, opts());
-    expect(detail?.partial).toBe(false);
+    expect(detail?.partial).toBeFalsy(); // omitted, as Claude/Codex omit it
     expect(detail?.contentKind).toBe("timeline");
     expect(detail?.timeline.map((item) => item.kind)).toEqual(["message", "message", "tool"]);
     expect(detail?.timeline.every((item) => !("msgRef" in item))).toBe(true);
@@ -1403,6 +1403,37 @@ describe("readCursorDetail: bounded CLI transcript", () => {
     expect(detail?.recentActivity).toHaveLength(12);
     expect(detail?.recentActivity[0]).toMatchObject({ kind: "tool", tool: "Tool3" });
     expect(detail?.recentActivity[11]).toMatchObject({ kind: "tool", tool: "Tool14" });
+  });
+
+  // Both limits are load-bearing: the above-count half alone would pass equally
+  // for a reader that hard-coded `truncated: false` whenever `partial` is set,
+  // which is this bug's mirror image.
+  it("reports Cursor's own transcript cap as partial, and truncated only while items remain", async () => {
+    const cwd = await writeWorkspace("cap-split");
+    await writeProjectTranscriptForCwd(
+      cwd,
+      "capped-project",
+      Array.from({ length: 501 }, (_v, index) => ({ role: "user", message: { content: `msg ${index}` } })),
+    );
+    const sessionId = projectSessionIdForCwd(cwd, "capped-project");
+
+    // BELOW the retained count: the cap dropped the oldest record AND more of what
+    // survived is still pageable — both signals hold at once.
+    const paged = await readCursorDetail(sessionId, 100, opts());
+    expect(paged?.timeline).toHaveLength(100);
+    expect(paged?.partial).toBe(true);
+    expect(paged?.limitedReason?.length).toBeGreaterThan(0);
+    expect(paged?.truncated).toBe(true);
+    expect(paged?.contentKind).toBe("timeline");
+
+    // ABOVE it: every item the reader can decode is already here, so there is
+    // nothing left to page — `partial` stays, `truncated` must not.
+    const whole = await readCursorDetail(sessionId, 600, opts());
+    expect(whole?.timeline).toHaveLength(500);
+    expect(whole?.partial).toBe(true);
+    expect(whole?.limitedReason?.length).toBeGreaterThan(0);
+    expect(whole?.truncated).not.toBe(true);
+    expect(whole?.contentKind).toBe("timeline");
   });
 
   it("returns a partial detail with an empty timeline and a limited-reason notice", async () => {

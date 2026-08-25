@@ -406,19 +406,29 @@ export interface VaultSessionDetail {
   latestMessage?: { role: "user" | "assistant"; text: string; timestamp: number };
   /**
    * Full chronological conversation: user/assistant messages interleaved with
-   * tool/subagent steps. Bounded to the most-recent {@link MAX_TIMELINE_ITEMS};
-   * `truncated` flags when older items were dropped. Drives the scrollable
-   * preview transcript (redesign-vault-panel-ui — full transcript view).
+   * tool/subagent steps. Bounded to the most-recent {@link MAX_TIMELINE_ITEMS}.
+   * Drives the scrollable preview transcript (redesign-vault-panel-ui — full
+   * transcript view).
    */
   timeline: VaultTimelineItem[];
-  /** True when older timeline items were dropped to stay within the bound. */
+  /**
+   * PAGEABILITY, and nothing else: true when a larger requested detail limit
+   * would return additional timeline items. Drives the preview's load-more
+   * affordance, so a reader that can supply nothing further must leave it unset
+   * — never set it for records a bigger limit cannot recover ({@link partial}
+   * carries those).
+   */
   truncated?: boolean;
   stats: { messageCount: number; toolCount: number; subagentCount: number; tokenCount?: number };
   /**
-   * True when the detail is a limited view, not the full transcript: either an
-   * index-only fallback (Codex without a rollout) OR a transcript too large to
-   * read whole (bounded head+tail read — the middle is omitted). `limitedReason`
-   * carries the specific cause for the preview's notice.
+   * SOURCE OMISSION, and nothing else: true when the read dropped source records
+   * that no larger requested limit can recover — an index-only fallback (Codex
+   * without a rollout), a bounded head+tail read whose middle is gone, or a fixed
+   * source window. `limitedReason` carries the cause for the preview's notice.
+   *
+   * Independent of {@link truncated}: both may hold at once (a head+tail read
+   * whose retained window still exceeds the requested limit), and neither signal
+   * is ever derived from the other.
    */
   partial?: boolean;
   /** Short reason surfaced in the preview when `partial`. */

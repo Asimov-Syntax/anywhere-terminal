@@ -18,7 +18,7 @@ import { type CursorPathFsDeps, isSafeCursorChatId } from "./cursorPaths";
 const READ_CHUNK_BYTES = 256 * 1024;
 const MAX_READ_BYTES = 32 * 1024 * 1024;
 export const MAX_CURSOR_TRANSCRIPT_LINE_BYTES = 2 * 1024 * 1024;
-const MAX_TIMELINE_ITEMS = 500;
+const MAX_CURSOR_TRANSCRIPT_TIMELINE_ITEMS = 500;
 const MAX_PROJECT_BUCKET_CHARS = 512;
 export const MAX_CURSOR_PROJECT_BUCKETS = 1024;
 export const MAX_CURSOR_PROJECT_CANDIDATES = 4096;
@@ -476,8 +476,8 @@ export async function readCursorTranscript(
     }
   }
 
-  if (timeline.length > MAX_TIMELINE_ITEMS) {
-    timeline.splice(0, timeline.length - MAX_TIMELINE_ITEMS);
+  if (timeline.length > MAX_CURSOR_TRANSCRIPT_TIMELINE_ITEMS) {
+    timeline.splice(0, timeline.length - MAX_CURSOR_TRANSCRIPT_TIMELINE_ITEMS);
     truncated = true;
   }
   const windowEnd = start + buffer.length;
@@ -485,7 +485,7 @@ export async function readCursorTranscript(
   const pendingBytes = lastNewline < 0 ? buffer.length : buffer.length - lastNewline - 1;
   // The mirror reuses the normalizer without the store's correlation maps, so it
   // applies the same one-agent-many-invocations pass itself (D1). `activity` is
-  // uncapped, so it still holds a launch the MAX_TIMELINE_ITEMS splice above cut
+  // uncapped, so it still holds a launch the MAX_CURSOR_TRANSCRIPT_TIMELINE_ITEMS splice above cut
   // out of `timeline` — resolve declared types across both before merging either.
   const declaredTypes = collectCursorAgentTypes(activity, timeline);
   const mergedActivity = mergeCursorSubagentInvocations(activity, declaredTypes);

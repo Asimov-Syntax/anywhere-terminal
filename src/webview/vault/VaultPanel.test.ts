@@ -773,6 +773,48 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
     expect(detailReqs()).toBe(2); // loop terminated, no infinite requests
   });
 
+  // Cross-layer proof for the two independent completeness signals: `partial`
+  // means the read dropped source records no larger limit can recover, so a
+  // detail that is partial but NOT truncated has nothing left to page — the
+  // preview must not offer to fetch more. Guards the reader-side fix from a
+  // renderer that gates load-more on anything but `truncated`.
+  it("offers no load-more for a partial detail that is not truncated, and requests nothing further", () => {
+    const host = createHost();
+    const posted: { type: string }[] = [];
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), getInitialCollapsed: () => false });
+    panel.render(result([entry({ id: "claude:a" })]));
+    host.querySelector<HTMLElement>(".vault-row")?.click();
+    const detailReqs = (): number => posted.filter((m) => m.type === "requestVaultSessionDetail").length;
+    expect(detailReqs()).toBe(1); // initial open
+
+    // The source read dropped its middle, but every item it CAN decode is here.
+    panel.handleSessionDetailResponse({
+      type: "vaultSessionDetailResponse",
+      entryId: "claude:a",
+      detail: detail({
+        partial: true,
+        limitedReason: "transcript too large to read whole",
+        timeline: userTimeline(3, "FIRST-OF-SESSION"),
+      }),
+    });
+
+    // No affordance to load older messages — there are none to load.
+    expect(host.querySelector(".vault-preview-loadmore")).toBeNull();
+    // The limited-read notice still renders, so the session doesn't look broken.
+    expect(host.querySelector(".vault-preview-notice")?.textContent).toContain("transcript too large");
+
+    // And the scroll-to-top walk must not try to page past the end either: it
+    // scrolls what is already rendered instead of requesting another window.
+    const body = host.querySelector<HTMLElement>(".vault-preview-body");
+    const scrollTo = vi.fn(); // jsdom implements no scrollTo
+    if (body) {
+      body.scrollTo = scrollTo as unknown as HTMLElement["scrollTo"];
+    }
+    host.querySelector<HTMLElement>(".vault-preview-scroll-top")?.click();
+    expect(detailReqs()).toBe(1);
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }));
+  });
+
   it("clears the scroll-to-top walk when a window errors, so a later reply doesn't auto-jump", () => {
     const host = createHost();
     const posted: { type: string }[] = [];

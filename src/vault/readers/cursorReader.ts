@@ -57,6 +57,7 @@ import {
   resolveCursorProjectCwd,
   resolveCursorProjectTranscriptSession,
 } from "./cursorTranscript";
+import { finalizeDetail } from "./detail";
 import type { RecordLineResult } from "./recordLine";
 
 export type { CursorFsDeps, CursorPathFsDeps, CursorReaderOptions } from "./cursorPaths";
@@ -671,15 +672,17 @@ export async function readCursorDetail(
     const sourceTimeline =
       maxItems === undefined ? transcript.timeline : maxItems === 0 ? [] : transcript.timeline.slice(-maxItems);
     const timeline = await linkCursorChildSessions(sourceTimeline, sessionId, resolved.entry.cwd, options);
-    return {
-      entryId: resolved.entry.id,
-      recentActivity: visibleRecentActivity(transcript.recentActivity).slice(-MAX_RECENT_ACTIVITY),
-      timeline,
-      stats: transcript.stats,
-      partial: false,
-      truncated: transcript.truncated || (maxItems !== undefined && transcript.timeline.length > maxItems),
-      contentKind: "timeline",
-    };
+    return finalizeDetail(
+      resolved.entry.id,
+      {
+        recentActivity: visibleRecentActivity(transcript.recentActivity).slice(-MAX_RECENT_ACTIVITY),
+        timeline,
+        stats: transcript.stats,
+        truncated: maxItems !== undefined && transcript.timeline.length > maxItems,
+        contentKind: "timeline",
+      },
+      transcript.truncated,
+    );
   }
 
   const resolved = await resolveCursorCliSession(sessionId, options);
@@ -726,15 +729,17 @@ export async function readCursorDetail(
   const sourceTimeline =
     maxItems === undefined ? decoded.timeline : maxItems === 0 ? [] : decoded.timeline.slice(-maxItems);
   const timeline = await linkCursorChildSessions(sourceTimeline, sessionId, entry.cwd, options);
-  return {
-    entryId: entry.id,
-    recentActivity: visibleRecentActivity(decoded.recentActivity).slice(-MAX_RECENT_ACTIVITY),
-    timeline,
-    stats: decoded.stats,
-    partial: false,
-    truncated: sourceTruncated || (maxItems !== undefined && decoded.timeline.length > maxItems),
-    contentKind: "timeline",
-  };
+  return finalizeDetail(
+    entry.id,
+    {
+      recentActivity: visibleRecentActivity(decoded.recentActivity).slice(-MAX_RECENT_ACTIVITY),
+      timeline,
+      stats: decoded.stats,
+      truncated: maxItems !== undefined && decoded.timeline.length > maxItems,
+      contentKind: "timeline",
+    },
+    sourceTruncated,
+  );
 }
 
 export async function resolveCursorSessionWatchPaths(

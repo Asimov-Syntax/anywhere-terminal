@@ -11,6 +11,7 @@ import {
   type VaultSessionEntry,
   type VaultTimelineItem,
 } from "../types";
+import { finalizeDetail } from "./detail";
 
 const MAX_COMPOSERS = 4096;
 const MAX_JSON_CHARS = 2 * 1024 * 1024;
@@ -543,15 +544,17 @@ export async function readCursorIdeDetail(
     }
     const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
     const bounded = maxItems === undefined ? timeline : maxItems === 0 ? [] : timeline.slice(-maxItems);
-    return {
-      entryId: formatEntryId("cursor", sessionId),
-      recentActivity: activity.slice(-12),
-      timeline: bounded,
-      stats: { messageCount, toolCount, subagentCount: 0 },
-      partial: false,
-      truncated: sourceTruncated || (maxItems !== undefined && timeline.length > maxItems),
-      contentKind: "timeline",
-    } satisfies VaultSessionDetail;
+    return finalizeDetail(
+      formatEntryId("cursor", sessionId),
+      {
+        recentActivity: activity.slice(-12),
+        timeline: bounded,
+        stats: { messageCount, toolCount, subagentCount: 0 },
+        truncated: maxItems !== undefined && timeline.length > maxItems,
+        contentKind: "timeline",
+      },
+      sourceTruncated,
+    ) satisfies VaultSessionDetail;
   });
   if (result.status !== "ok") {
     return limitedDetail(sessionId);

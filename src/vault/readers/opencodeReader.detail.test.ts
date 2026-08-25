@@ -1,7 +1,7 @@
 // src/vault/readers/opencodeReader.detail.test.ts — OpenCode detail mapping (redesign-vault-panel-ui 2_3).
 
 import { describe, expect, it, vi } from "vitest";
-import type { SqliteResult } from "../sqlite";
+import type { SqliteResult, SqliteSnapshot, withSqliteSnapshot } from "../sqlite";
 import type { VaultTimelineItem } from "../types";
 import {
   mapOpencodeRows,
@@ -12,6 +12,16 @@ import {
   splitOpencodeSubtaskTitle,
 } from "./opencodeReader";
 import { MAX_RECORD_BYTES } from "./recordLine";
+
+/** Wrap a `readSqlite`-shaped mock as the one-copy snapshot seam the detail read
+ *  now uses, so each test keeps its own query mock and the shared-snapshot
+ *  guarantee is what changed rather than every fixture. */
+function snapshotOf(query: (db: string, sql: string) => Promise<SqliteResult>) {
+  return (async (dbPath: string, callback: (snapshot: SqliteSnapshot) => Promise<unknown>) => ({
+    status: "ok" as const,
+    value: await callback({ query: (sql: string) => query(dbPath, sql) }),
+  })) as unknown as typeof withSqliteSnapshot;
+}
 
 function msg(
   id: string,
@@ -48,6 +58,12 @@ function subtaskPart(messageId: string, t: number, agent: string, prompt: string
  *  child session row carrying the given `title`/`agent`/`first_user_part`. */
 function childDetailMock(child: Record<string, unknown>) {
   return vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
+    // Route the omission probe FIRST: this fixture is a complete session, so no
+    // row exists past the retained window. Falling through to the table branches
+    // would answer the probe with a transcript row and fake an omission.
+    if (sql.includes("OFFSET")) {
+      return { status: "ok", rows: [] };
+    }
     if (!sql.includes("parent_id") && sql.includes("FROM message")) {
       return { status: "ok", rows: [{ id: "m1", time_created: 1, data: JSON.stringify({ role: "user" }) }] };
     }
@@ -336,10 +352,15 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       };
     });
 
-    const detail = await readOpenCodeDetail("ses_parent", { dataDir: "/x/oc", readSqliteFn }, undefined);
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     expect(detail).not.toBeNull();
-    // 2 message windows (head ASC + tail DESC) + 2 part windows + 1 children query.
-    expect(readSqliteFn).toHaveBeenCalledTimes(5);
+    // 2 message windows (head ASC + tail DESC) + 2 part windows + 1 children
+    // query + 1 COUNT per table (the omission proof).
+    expect(readSqliteFn).toHaveBeenCalledTimes(7);
     const childSql = readSqliteFn.mock.calls.find((c) => c[1].includes("parent_id"))?.[1] ?? "";
     expect(childSql).toContain("WHERE s.parent_id = 'ses_parent'");
     const stub = detail?.timeline.find((i) => i.kind === "subagentSession");
@@ -364,7 +385,11 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       }
       return { status: "query-error", rows: [] }; // children query fails → degrade
     });
-    const detail = await readOpenCodeDetail("ses_parent", { dataDir: "/x/oc", readSqliteFn }, undefined);
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     expect(detail).not.toBeNull();
     expect(detail?.timeline.some((i) => i.kind === "subagentSession")).toBe(false);
   });
@@ -376,7 +401,11 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       agent: "asm-review-logic",
       first_user_part: JSON.stringify({ type: "text", text: "review the logic" }),
     });
-    const detail = await readOpenCodeDetail("ses_parent", { dataDir: "/x/oc", readSqliteFn }, undefined);
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     const stub = detail?.timeline.find((i) => i.kind === "subagentSession");
     expect(stub?.kind === "subagentSession" && stub.title).toBe("Review logic architecture");
     expect(stub?.kind === "subagentSession" && stub.agent).toBe("asm-review-logic");
@@ -389,7 +418,11 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       agent: "", // OpenCode leaves the column empty for some nested spawns
       first_user_part: JSON.stringify({ type: "text", text: "extract it" }),
     });
-    const detail = await readOpenCodeDetail("ses_parent", { dataDir: "/x/oc", readSqliteFn }, undefined);
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     const stub = detail?.timeline.find((i) => i.kind === "subagentSession");
     expect(stub?.kind === "subagentSession" && stub.title).toBe("Extract change knowledge");
     expect(stub?.kind === "subagentSession" && stub.agent).toBe("asm-knowledge-extract");
@@ -402,7 +435,11 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       agent: "",
       first_user_part: JSON.stringify({ type: "text", text: "do the thing" }),
     });
-    const detail = await readOpenCodeDetail("ses_parent", { dataDir: "/x/oc", readSqliteFn }, undefined);
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     const stub = detail?.timeline.find((i) => i.kind === "subagentSession");
     expect(stub?.kind === "subagentSession" && stub.title).toBe("do the thing");
     expect(stub?.kind === "subagentSession" && stub.agent).toBe("general");
@@ -415,7 +452,11 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       agent: "",
       first_user_part: JSON.stringify({ type: "text", text: "find the code" }),
     });
-    const detail = await readOpenCodeDetail("ses_parent", { dataDir: "/x/oc", readSqliteFn }, undefined);
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     const stub = detail?.timeline.find((i) => i.kind === "subagentSession");
     expect(stub?.kind === "subagentSession" && stub.title).toBe("find the code");
     expect(stub?.kind === "subagentSession" && stub.agent).toBe("asm-finder");
@@ -425,15 +466,22 @@ describe("readOpenCodeDetail child sub-sessions", () => {
 describe("readOpenCodeDetail head+tail windowing", () => {
   const limitOf = (sql: string): number => Number(sql.match(/LIMIT (\d+)/)?.[1] ?? 0);
 
-  it("keeps the final assistant message from a long session (tail) AND the first prompt (head)", async () => {
-    // A head-only ASC read drops the tail of a long transcript. Simulate a long
-    // session whose first user message exists only in the head (ASC) window and
-    // whose final assistant message ("mt_final") exists only in the tail (DESC)
-    // window. Each window returns `LIMIT` rows with disjoint ids → the union
-    // saturates the budget (windowTruncated) and nothing collapses on de-dup.
-    const readSqliteFn = vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
+  // A long session whose first user message exists only in the head (ASC) window
+  // and whose final assistant reply exists only in the tail (DESC) window, with
+  // disjoint ids so nothing collapses on de-dup. `messageTotal`/`partTotal` are
+  // the source's TRUE row counts, independent of what the windows retained —
+  // that independence is what makes omission provable rather than inferred.
+  const longSessionSqlite = (messageTotal: number, partTotal: number) =>
+    vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
       if (sql.includes("parent_id")) {
         return { status: "ok", rows: [] }; // no children
+      }
+      // The omission probe: one row exists past the retained capacity only when
+      // the source's true total exceeds it.
+      const offset = Number(sql.match(/OFFSET (\d+)/)?.[1] ?? Number.NaN);
+      if (Number.isFinite(offset)) {
+        const total = sql.includes("FROM message") ? messageTotal : partTotal;
+        return { status: "ok", rows: total > offset ? [{ id: "probe" }] : [] };
       }
       const n = limitOf(sql);
       if (sql.includes("FROM message")) {
@@ -473,15 +521,103 @@ describe("readOpenCodeDetail head+tail windowing", () => {
       return { status: "ok", rows };
     });
 
-    const detail = await readOpenCodeDetail("ses_long", { dataDir: "/x/oc", readSqliteFn }, undefined);
+  // The retained union at saturation: both message windows full and disjoint
+  // (100 + 2000), both part windows full and disjoint (1000 + 4000).
+  const RETAINED_MESSAGES = 2100;
+  const RETAINED_PARTS = 5000;
+
+  it("keeps the final assistant message from a long session (tail) AND the first prompt (head)", async () => {
+    const readSqliteFn = longSessionSqlite(RETAINED_MESSAGES + 400, RETAINED_PARTS + 400);
+
+    const detail = await readOpenCodeDetail(
+      "ses_long",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     expect(detail).not.toBeNull();
     expect(detail?.firstPrompt).toBe("first user prompt");
     expect(detail?.latestMessage).toMatchObject({ role: "assistant", text: "the final AI reply" });
     const last = detail?.timeline.at(-1);
     expect(last?.kind === "message" && last.role).toBe("assistant");
     expect(last?.kind === "message" && last.text).toContain("the final AI reply");
-    expect(detail?.truncated).toBe(true);
+    // More source rows exist than the windows retained, so the middle is gone and
+    // no larger limit brings it back — `partial`, with nothing left to page.
     expect(detail?.timeline.some((item) => item.kind === "gap")).toBe(true);
+    expect(detail?.partial).toBe(true);
+    expect(detail?.limitedReason?.length).toBeGreaterThan(0);
+    expect(detail?.truncated).not.toBe(true);
+
+    // Same source read, a limit below what it retained: now older retained items
+    // ARE pageable, so both signals hold at once.
+    const paged = await readOpenCodeDetail(
+      "ses_long",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      1,
+    );
+    expect(paged?.timeline).toHaveLength(1);
+    expect(paged?.partial).toBe(true);
+    expect(paged?.truncated).toBe(true);
+  });
+
+  // The boundary the non-overlap heuristic got wrong (review round 1, B1): both
+  // windows full and disjoint, yet their union IS every source row. Saturation is
+  // not omission, so this session must not be marked partial.
+  it("does not report partial when full disjoint windows still cover every source row", async () => {
+    const readSqliteFn = longSessionSqlite(RETAINED_MESSAGES, RETAINED_PARTS);
+
+    const detail = await readOpenCodeDetail(
+      "ses_long",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
+    expect(detail).not.toBeNull();
+    expect(detail?.partial).toBeFalsy();
+    expect(detail?.limitedReason).toBeUndefined();
+    expect(detail?.timeline.some((item) => item.kind === "gap")).toBe(false);
+  });
+
+  it("reports partial when the source exceeds the retained union by a single row", async () => {
+    const readSqliteFn = longSessionSqlite(RETAINED_MESSAGES + 1, RETAINED_PARTS);
+
+    const detail = await readOpenCodeDetail(
+      "ses_long",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
+    expect(detail?.partial).toBe(true);
+    expect(detail?.limitedReason?.length).toBeGreaterThan(0);
+  });
+
+  // `partial` is contracted as source omission and nothing else, so a read that
+  // could not prove either answer has no honest value to return — it fails like
+  // every other failed query in this reader rather than guessing (round 3 B2).
+  it("fails the read rather than guessing when the probe query fails", async () => {
+    const base = longSessionSqlite(RETAINED_MESSAGES, RETAINED_PARTS);
+    const readSqliteFn = vi.fn(
+      async (db: string, sql: string): Promise<SqliteResult> =>
+        sql.includes("OFFSET") ? { status: "query-error", rows: [], error: "no such table" } : base(db, sql),
+    );
+
+    const detail = await readOpenCodeDetail(
+      "ses_long",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
+    expect(detail).toBeNull();
+  });
+
+  // Round 2 S1: message overflow short-circuits the `||`, so the part branch only
+  // proves itself with messages sitting exactly at capacity.
+  it("reports partial when only the part table overflows", async () => {
+    const readSqliteFn = longSessionSqlite(RETAINED_MESSAGES, RETAINED_PARTS + 1);
+
+    const detail = await readOpenCodeDetail(
+      "ses_long",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
+    expect(detail?.partial).toBe(true);
+    expect(detail?.limitedReason?.length).toBeGreaterThan(0);
   });
 
   it("de-duplicates the overlapping head/tail windows on a short session (no double-count)", async () => {
@@ -505,19 +641,71 @@ describe("readOpenCodeDetail head+tail windowing", () => {
       };
     };
     const readSqliteFn = vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
-      if (sql.includes("parent_id")) {
-        return { status: "ok", rows: [] };
+      if (sql.includes("parent_id") || sql.includes("OFFSET")) {
+        return { status: "ok", rows: [] }; // no children, and nothing past the window
       }
       return sameRows(sql);
     });
 
-    const detail = await readOpenCodeDetail("ses_short", { dataDir: "/x/oc", readSqliteFn }, undefined);
+    const detail = await readOpenCodeDetail(
+      "ses_short",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
     expect(detail).not.toBeNull();
     expect(detail?.firstPrompt).toBe("hello");
     expect(detail?.latestMessage).toMatchObject({ role: "assistant", text: "hi there" });
     expect(detail?.stats.messageCount).toBe(2); // not 4 — windows de-duplicated by id
     expect(detail?.timeline.filter((i) => i.kind === "message")).toHaveLength(2);
     expect(detail?.truncated).toBeFalsy();
+    // A complete fixture must PROVE it stays complete — the probe silently
+    // answering with transcript rows is what made this pass while lying (S1).
+    expect(detail?.partial).toBeFalsy();
+  });
+
+  // Round 3 B1: `time_created` is not a total order. With every row sharing one
+  // timestamp the windows must still be complementary, or they overlap while both
+  // miss rows and the capacity probe reports a truncated read as complete.
+  it("keeps head and tail complementary when every row shares a timestamp", async () => {
+    const ids = Array.from({ length: 12 }, (_v, i) => `p${String(i).padStart(2, "0")}`);
+    const readSqliteFn = vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
+      if (sql.includes("parent_id")) {
+        return { status: "ok", rows: [] };
+      }
+      if (sql.includes("OFFSET")) {
+        return { status: "ok", rows: [] }; // exactly at capacity, nothing beyond
+      }
+      if (sql.includes("FROM message")) {
+        return { status: "ok", rows: [{ id: "m1", time_created: 7, data: JSON.stringify({ role: "user" }) }] };
+      }
+      // Every part shares time_created; only the id tie-break orders them, so an
+      // ASC window and a DESC window must select opposite ends and never collide.
+      const asc = sql.includes("ASC");
+      const ordered = asc ? ids : [...ids].reverse();
+      return {
+        status: "ok",
+        rows: ordered.slice(0, 6).map((id) => ({
+          id,
+          message_id: "m1",
+          time_created: 7,
+          data: JSON.stringify({ type: "text", text: id }),
+        })),
+      };
+    });
+
+    const detail = await readOpenCodeDetail(
+      "ses_tied",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) },
+      undefined,
+    );
+    expect(detail).not.toBeNull();
+    const ascSql = readSqliteFn.mock.calls.map((c) => c[1]).find((q) => q.includes("FROM part") && q.includes("ASC"));
+    const descSql = readSqliteFn.mock.calls.map((c) => c[1]).find((q) => q.includes("FROM part") && q.includes("DESC"));
+    expect(ascSql).toContain("ORDER BY time_created ASC, id ASC");
+    expect(descSql).toContain("ORDER BY time_created DESC, id DESC");
+    // Complementary windows: 6 + 6 disjoint ids cover all 12 rows, nothing dropped.
+    expect(detail?.timeline.filter((i) => i.kind === "message")).toHaveLength(1);
+    expect(detail?.partial).toBeFalsy();
   });
 });
 
