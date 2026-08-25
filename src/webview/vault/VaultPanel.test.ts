@@ -573,14 +573,20 @@ describe("VaultPanel context menu (redesign 5_1)", () => {
 });
 
 describe("VaultPanel session preview (redesign 5_2)", () => {
-  function detail(over: Partial<import("../../vault/types").VaultSessionDetail> = {}) {
+  // Typed, not cast: the cast used to hide fields the contract requires, so a
+  // detail missing `contentKind` still compiled here while the renderer had to
+  // guess one from the entry's agent.
+  function detail(
+    over: Partial<import("../../vault/types").VaultSessionDetail> = {},
+  ): import("../../vault/types").VaultSessionDetail {
     return {
       entryId: "claude:a",
+      contentKind: "timeline",
       recentActivity: [],
       timeline: [],
       stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
       ...over,
-    } as import("../../vault/types").VaultSessionDetail;
+    };
   }
 
   it("activating a row opens the preview (loading) and posts requestVaultSessionDetail", () => {
@@ -2222,6 +2228,9 @@ describe("VaultPanel session preview (redesign 5_2)", () => {
       entryId: "cursor:chat-1",
       detail: detail({
         entryId: "cursor:chat-1",
+        // Stated, not inferred: this used to render as metadata-only purely
+        // because the entry's agent was "cursor".
+        contentKind: "metadata-only",
         partial: true,
         limitedReason: "Cursor transcript data is unavailable; showing indexed metadata only.",
       }),

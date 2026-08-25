@@ -18,6 +18,8 @@ import {
   verifyCursorLaunchTarget,
 } from "./cursorReader";
 import { cursorProjectBucketForCwd } from "./cursorTranscript";
+import { limitedDetail } from "./detail";
+import { expectDetailContract, expectLimitGrowth } from "./detailContract.testkit";
 
 let tmpRoot: string;
 let chatsDir: string;
@@ -1436,6 +1438,20 @@ describe("readCursorDetail: bounded CLI transcript", () => {
     expect(whole?.contentKind).toBe("timeline");
   });
 
+  it("satisfies the shared detail contract, and pages to the end", async () => {
+    const cwd = await writeWorkspace("contract-split");
+    await writeProjectTranscriptForCwd(
+      cwd,
+      "contract-project",
+      // ABOVE Cursor's own 500-item transcript cap, so the read is partial AND
+      // pageable — the exact shape that let source omission leak into truncated.
+      Array.from({ length: 501 }, (_v, index) => ({ role: "user", message: { content: `msg ${index}` } })),
+    );
+    const sessionId = projectSessionIdForCwd(cwd, "contract-project");
+    expectDetailContract(await readCursorDetail(sessionId, undefined, opts()), "cursor cli");
+    await expectLimitGrowth((limit) => readCursorDetail(sessionId, limit, opts()), { start: 8, label: "cursor cli" });
+  });
+
   it("returns a partial detail with an empty timeline and a limited-reason notice", async () => {
     await writeChat("bucket-a", "chat-detail", BASE_META);
     const detail = await readCursorDetail("chat-detail", undefined, opts());
@@ -1446,6 +1462,18 @@ describe("readCursorDetail: bounded CLI transcript", () => {
     expect(detail?.timeline).toEqual([]);
     expect(detail?.recentActivity).toEqual([]);
     expect(detail?.stats).toEqual({ messageCount: 0, toolCount: 0, subagentCount: 0 });
+  });
+
+  it("builds that limited view through the shared constructor, field for field", async () => {
+    // Deep equality, so a hand-written literal that drifts from `limitedDetail`
+    // — a stray `truncated`, a missing `contentKind` — fails here rather than
+    // surviving as a second definition of the limited view.
+    await writeChat("bucket-a", "chat-shape", BASE_META);
+    const detail = await readCursorDetail("chat-shape", undefined, opts());
+    expect(detail).toEqual(limitedDetail("cursor:chat-shape", detail?.limitedReason ?? ""));
+    // Deep equality alone cannot catch a drift inside `limitedDetail` itself —
+    // both sides move together — so state the contract independently.
+    expectDetailContract(detail, "cursor cli metadata-only");
   });
 
   it("returns null when the chat cannot be resolved", async () => {

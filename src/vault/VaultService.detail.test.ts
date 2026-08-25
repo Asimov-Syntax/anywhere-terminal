@@ -12,7 +12,13 @@ function readerResult(entries: ReaderResultWithState["entries"], unreadable = 0)
 }
 
 function detail(entryId: string): VaultSessionDetail {
-  return { entryId, recentActivity: [], timeline: [], stats: { messageCount: 0, toolCount: 0, subagentCount: 0 } };
+  return {
+    entryId,
+    contentKind: "timeline",
+    recentActivity: [],
+    timeline: [],
+    stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
+  };
 }
 
 function emptyReaders(over: Partial<VaultReaders> = {}): VaultReaders {

@@ -57,7 +57,7 @@ import {
   resolveCursorProjectCwd,
   resolveCursorProjectTranscriptSession,
 } from "./cursorTranscript";
-import { finalizeDetail } from "./detail";
+import { finalizeDetail, limitedDetail, sourceVerdict } from "./detail";
 import type { RecordLineResult } from "./recordLine";
 
 export type { CursorFsDeps, CursorPathFsDeps, CursorReaderOptions } from "./cursorPaths";
@@ -658,15 +658,7 @@ export async function readCursorDetail(
     }
     const transcript = await readCursorTranscript(resolved.candidate, options);
     if (transcript.status === "limited") {
-      return {
-        entryId: resolved.entry.id,
-        recentActivity: [],
-        timeline: [],
-        stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
-        partial: true,
-        limitedReason: transcript.reason,
-        contentKind: "metadata-only",
-      };
+      return limitedDetail(resolved.entry.id, transcript.reason);
     }
     const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
     const sourceTimeline =
@@ -679,9 +671,8 @@ export async function readCursorDetail(
         timeline,
         stats: transcript.stats,
         truncated: maxItems !== undefined && transcript.timeline.length > maxItems,
-        contentKind: "timeline",
       },
-      transcript.truncated,
+      sourceVerdict(transcript.truncated),
     );
   }
 
@@ -714,15 +705,7 @@ export async function readCursorDetail(
     }
   }
   if (decoded.status === "limited") {
-    return {
-      entryId: entry.id,
-      recentActivity: [],
-      timeline: [],
-      stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
-      partial: true,
-      limitedReason: decoded.reason || PARTIAL_LIMITED_REASON,
-      contentKind: "metadata-only",
-    };
+    return limitedDetail(entry.id, decoded.reason || PARTIAL_LIMITED_REASON);
   }
 
   const maxItems = typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 ? limit : undefined;
@@ -736,9 +719,8 @@ export async function readCursorDetail(
       timeline,
       stats: decoded.stats,
       truncated: maxItems !== undefined && decoded.timeline.length > maxItems,
-      contentKind: "timeline",
     },
-    sourceTruncated,
+    sourceVerdict(sourceTruncated),
   );
 }
 

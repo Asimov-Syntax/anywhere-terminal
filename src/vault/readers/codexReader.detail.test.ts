@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteResult } from "../sqlite";
 import { classifyCodexRolloutEvents, readCodexDetail, readCodexMessageRecord } from "./codexReader";
+import { expectDetailContract, expectLimitGrowth } from "./detailContract.testkit";
 
 let codexDir: string;
 
@@ -284,6 +285,25 @@ describe("readCodexDetail", () => {
   function jsonl(records: Record<string, unknown>[]): string {
     return `${records.map((r) => JSON.stringify(r)).join("\n")}\n`;
   }
+
+  it("satisfies the shared detail contract, and pages to the end", async () => {
+    const sessionId = "019ceab2-21cf-74d1-865a-c17622800002";
+    const dir = path.join(codexDir, "sessions", "2026", "03", "14");
+    await fs.mkdir(dir, { recursive: true });
+    const records = Array.from({ length: 60 }, (_, i) =>
+      i % 2 === 0
+        ? rec("event_msg", { type: "user_message", message: `q${i}` })
+        : rec("event_msg", { type: "agent_message", message: `a${i}` }),
+    );
+    await fs.writeFile(path.join(dir, `rollout-2026-03-14T11-54-28-${sessionId}.jsonl`), jsonl(records));
+    const noSqlite = async (): Promise<SqliteResult> => ({ rows: [], status: "no-sqlite3" });
+
+    expectDetailContract(await readCodexDetail(sessionId, { codexDir, readSqliteFn: noSqlite }), "codex");
+    await expectLimitGrowth((limit) => readCodexDetail(sessionId, { codexDir, readSqliteFn: noSqlite }, limit), {
+      start: 8,
+      label: "codex",
+    });
+  });
 
   it("classifies the rollout jsonl when one exists (located by filename)", async () => {
     const sessionId = "019ceab2-21cf-74d1-865a-c176228a6a20";

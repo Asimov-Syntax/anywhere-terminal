@@ -29,11 +29,13 @@ import {
   boundTimeline,
   buildQuestionOptions,
   createBoundedRecordBuffer,
+  type DetailParts,
   finalizeDetail,
   MAX_MESSAGE_TEXT,
   mergeTimestampedItems,
   normalizeRich,
   type QuestionPair,
+  sourceVerdict,
   truncate,
   truncateRich,
 } from "./detail";
@@ -816,7 +818,7 @@ export function classifyCodexRolloutEvents(
   records: Record<string, unknown>[],
   limit?: number,
   childStubs: CodexChildStub[] = [],
-): Omit<VaultSessionDetail, "entryId"> {
+): DetailParts {
   let firstPrompt: string | undefined;
   let latestMessage: VaultSessionDetail["latestMessage"];
   const activity: VaultActivityStep[] = [];
@@ -1320,7 +1322,7 @@ export async function readCodexDetail(
     const read = await streamCodexRecords(rolloutPath);
     if (read && read.records.length > 0) {
       const detail = classifyCodexRolloutEvents(read.records, limit, childStubs);
-      return finalizeDetail(formatEntryId("codex", sessionId), detail, read.truncated);
+      return finalizeDetail(formatEntryId("codex", sessionId), detail, sourceVerdict(read.truncated));
     }
   }
 
@@ -1335,19 +1337,23 @@ export async function readCodexDetail(
       : undefined;
     const childItems = childStubs.map((stub) => codexChildTimelineItem(stub));
     const timeline = mergeTimestampedItems(promptItem ? [promptItem] : [], childItems);
-    return {
-      entryId: formatEntryId("codex", sessionId),
-      ...(thread?.firstUserMessage ? { firstPrompt: truncate(thread.firstUserMessage) } : {}),
-      recentActivity: [],
-      ...(thread?.firstUserMessage
-        ? { latestMessage: { role: "user" as const, text: truncate(thread.firstUserMessage), timestamp: 0 } }
-        : {}),
-      timeline,
-      // The index-only fallback surfaces exactly the one indexed prompt (s3 — was 0).
-      stats: { messageCount: thread?.firstUserMessage ? 1 : 0, toolCount: 0, subagentCount: childStubs.length },
-      partial: true,
-      limitedReason: PARTIAL_LIMITED_REASON,
-    };
+    // A USEFUL partial: no rollout, but the index still yields the first prompt
+    // and the children, so it goes through the timeline-bearing constructor
+    // rather than the empty metadata-only one.
+    return finalizeDetail(
+      formatEntryId("codex", sessionId),
+      {
+        ...(thread?.firstUserMessage ? { firstPrompt: truncate(thread.firstUserMessage) } : {}),
+        recentActivity: [],
+        ...(thread?.firstUserMessage
+          ? { latestMessage: { role: "user" as const, text: truncate(thread.firstUserMessage), timestamp: 0 } }
+          : {}),
+        timeline,
+        // The index-only fallback surfaces exactly the one indexed prompt (s3 — was 0).
+        stats: { messageCount: thread?.firstUserMessage ? 1 : 0, toolCount: 0, subagentCount: childStubs.length },
+      },
+      { kind: "partial", reason: PARTIAL_LIMITED_REASON },
+    );
   }
 
   return null;

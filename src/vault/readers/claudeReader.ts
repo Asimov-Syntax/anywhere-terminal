@@ -57,6 +57,7 @@ import {
   MAX_TIMELINE_ITEMS,
   mergeTimestampedItems,
   scopeDirectChildren,
+  sourceVerdict,
 } from "./detail";
 import { findRecordLine, type RecordLineResult } from "./recordLine";
 
@@ -255,7 +256,7 @@ export async function readClaudeDetail(
       detail.truncated = true;
     }
   }
-  return finalizeDetail(formatEntryId("claude", sessionId), detail, read.truncated);
+  return finalizeDetail(formatEntryId("claude", sessionId), detail, sourceVerdict(read.truncated));
 }
 
 /**

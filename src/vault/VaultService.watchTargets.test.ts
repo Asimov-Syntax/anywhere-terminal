@@ -31,6 +31,19 @@ describe("VaultService.getStoreWatchTargets", () => {
     expect(opencode?.baseDir.endsWith("opencode")).toBe(true);
   });
 
+  it("declares exactly four non-Cursor targets, by shape and not by path alone", () => {
+    // `find`-by-glob above passes even if a target grew a stray field, lost its
+    // agent scoping, or was silently duplicated. Pin the whole set instead.
+    const other = targets.filter((target) => target.agent === undefined);
+    expect(other).toEqual([
+      { baseDir: expect.stringContaining(path.join(".claude", "projects")), glob: "**/*.jsonl" },
+      { baseDir: expect.any(String), glob: "state_5.sqlite*" },
+      { baseDir: expect.stringContaining("sessions"), glob: "**/*.jsonl" },
+      { baseDir: expect.stringContaining("opencode"), glob: "opencode.db*" },
+    ]);
+    expect(targets).toHaveLength(8);
+  });
+
   it("watches each Cursor source with source-targeted events", () => {
     const cursor = targets.filter((target) => target.agent === "cursor");
 
@@ -137,6 +150,18 @@ describe("VaultService.resolveSessionWatchTargets", () => {
 
   it("returns nothing for an unknown agent", async () => {
     expect(await svc.resolveSessionWatchTargets("bogus:x")).toEqual([]);
+  });
+
+  it("handles an agent that declares neither watch capability", async () => {
+    // Absence, not a stub: an adapter may simply have no watchable store, and
+    // both entry points must fall through rather than call an empty function.
+    const none = new VaultService({
+      adapters: { opencode: { storeWatchTargets: undefined, sessionWatchTargets: undefined } },
+    });
+    expect(await none.resolveSessionWatchTargets("opencode:sess1")).toEqual([]);
+    expect(none.getStoreWatchTargets().some((target) => target.glob === "opencode.db*")).toBe(false);
+    // The other agents are untouched by one adapter's silence.
+    expect(await none.resolveSessionWatchTargets("codex:abc-123")).toHaveLength(2);
   });
 
   it("rejects a glob-unsafe session id (no injection into the watch glob)", async () => {

@@ -782,8 +782,7 @@ export class PreviewController {
     const body = document.createElement("div");
     body.className = "vault-preview-body";
 
-    const metadataOnly =
-      detail.contentKind === "metadata-only" || (detail.contentKind === undefined && entry.agent === "cursor");
+    const metadataOnly = detail.contentKind === "metadata-only";
     if (!metadataOnly && detail.truncated) {
       const loadMore = document.createElement("button");
       loadMore.type = "button";

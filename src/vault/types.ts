@@ -16,16 +16,32 @@ export type SessionStoreFormat = "jsonl" | "sqlite" | "metadata-json";
  * Adding a vault agent (all compile-enforced EXCEPT the CSS step):
  *   1. add the id here;
  *   2. add its `AgentVaultDefinition` to `AGENT_RECORD` (registry.ts);
- *   3. add list + detail readers to VaultService's reader maps (+ a reader module);
+ *   3. add ONE `VaultAgentAdapter` to `defaultAdapters` (VaultService.ts) — list,
+ *      detail, entry and record readers, plus whichever optional capabilities it
+ *      has (native rename, store watch, session watch);
  *   4. add an `AGENT_ICONS` entry — icon + accent + displayName (webview/agentIcons.ts);
- *   5. add `.vault-badge--<id>` / `.vault-row-dot--<id>` / `.vault-preview--<id>`
- *      accent CSS — NOT type-checkable (it's CSS); a manual step.
- *   6. if the CLI reads pasted images off a fixed Ctrl+V (not the OS-native
- *      signal), add its id to `CTRL_V_AGENTS` in shared/imagePasteTrigger.ts —
- *      also NOT compile-enforced; omitting it silently sends the wrong trigger.
+ *   5. declare its image-paste trigger in `AGENT_USES_CTRL_V` below;
+ *   6. add `.vault-badge--<id>` / `.vault-row-dot--<id>` / `.vault-preview--<id>`
+ *      accent CSS — the ONLY step no type can check, because it is CSS.
  */
 export const VAULT_AGENT_IDS = ["claude", "codex", "opencode", "cursor"] as const;
 export type VaultAgentId = (typeof VAULT_AGENT_IDS)[number];
+
+/**
+ * Whether each CLI reads pasted images off a FIXED Ctrl+V rather than the
+ * OS-native signal. Required per agent, so a new agent cannot be forgotten here
+ * — the old `Set` of opt-in ids caught a RENAMED id but not an omitted one, and
+ * an omission silently sent the wrong trigger.
+ *
+ * Lives in types.ts, not registry.ts: `shared/imagePasteTrigger.ts` is reachable
+ * from the webview bundle, and registry.ts imports `node:child_process`.
+ */
+export const AGENT_USES_CTRL_V = {
+  claude: false,
+  codex: true,
+  opencode: true,
+  cursor: false,
+} satisfies Record<VaultAgentId, boolean>;
 
 /**
  * A vault entry's globally-unique handle: `<agent>:<sessionId>`. The agent id
@@ -396,8 +412,14 @@ export type VaultTimelineItem =
 export interface VaultSessionDetail {
   /** Echoes the requesting entry id (`<agent>:<sessionId>`). */
   entryId: string;
-  /** Explicitly distinguishes decoded timelines from limited metadata detail. */
-  contentKind?: "timeline" | "metadata-only";
+  /**
+   * Which view this detail IS: a decoded transcript, or the limited metadata
+   * view. REQUIRED and derived — `finalizeDetail` sets `timeline`, `limitedDetail`
+   * sets `metadata-only`, and no reader chooses it by hand. The preview selects
+   * its view from this field ALONE; before it was required the renderer had to
+   * guess an absent value from the entry's agent name.
+   */
+  contentKind: "timeline" | "metadata-only";
   /** First real user prompt, truncated (≤ ~600 chars); independent of the tail. */
   firstPrompt?: string;
   /** Most-recent-last, capped to 12, calls + subagents only. */

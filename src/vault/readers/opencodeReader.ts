@@ -24,10 +24,12 @@ import {
   boundActivity,
   boundTimeline,
   buildQuestionOptions,
+  type DetailParts,
   finalizeDetail,
   MAX_MESSAGE_TEXT,
   normalizeRich,
   type QuestionPair,
+  sourceVerdict,
   truncate,
   truncateRich,
 } from "./detail";
@@ -420,7 +422,7 @@ export function mapOpencodeRows(
   parts: OcPartRow[],
   limit?: number,
   childStubs: { timestamp: number; item: VaultTimelineItem }[] = [],
-): Omit<VaultSessionDetail, "entryId"> {
+): DetailParts {
   const msgs = [...messages].sort((a, b) => a.timeCreated - b.timeCreated);
   const ordered = [...parts].sort((a, b) => a.timeCreated - b.timeCreated);
 
@@ -740,10 +742,9 @@ export async function readOpenCodeDetail(
   // A source row past the retained capacity is the proof of omission.
   const messageWindowTruncated = msgProbeRes.rows.length > 0;
   const windowTruncated = messageWindowTruncated || partProbeRes.rows.length > 0;
-  const detail: VaultSessionDetail = {
-    entryId: formatEntryId("opencode", sessionId),
-    ...mapOpencodeRows(messages, parts, limit, childStubs),
-  };
+  // Parts, not a detail: the constructor owns `entryId` and the verdict fields,
+  // so nothing here carries one for it to have to override.
+  const detail: DetailParts = mapOpencodeRows(messages, parts, limit, childStubs);
   if (messageWindowTruncated) {
     const firstTail = detail.timeline.findIndex(
       (item) => item.kind === "message" && !!item.msgRef && messageTailIds.has(item.msgRef),
@@ -757,7 +758,7 @@ export async function readOpenCodeDetail(
   }
   // The windows are fixed, so what they dropped is unrecoverable at any limit —
   // that is `partial`. Pageability stays whatever `boundTimeline` decided.
-  return finalizeDetail(detail.entryId, detail, windowTruncated);
+  return finalizeDetail(formatEntryId("opencode", sessionId), detail, sourceVerdict(windowTruncated));
 }
 
 /** Map direct-child session rows into timestamped `subagentSession` stubs. */

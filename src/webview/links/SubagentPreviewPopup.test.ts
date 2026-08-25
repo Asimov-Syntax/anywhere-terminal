@@ -12,6 +12,7 @@ import { SubagentPreviewPopup } from "./SubagentPreviewPopup";
 function makeDetail(entryId = "claude:parent:subagent:agent-x"): VaultSessionDetail {
   return {
     entryId,
+    contentKind: "timeline",
     recentActivity: [],
     timeline: [
       { kind: "message", role: "user", text: "Find the auth middleware" },
@@ -123,6 +124,7 @@ describe("SubagentPreviewPopup: nested drill-down", () => {
   function nestedDetail(): VaultSessionDetail {
     return {
       entryId: "claude:parent:subagent:agent-outer",
+      contentKind: "timeline",
       recentActivity: [],
       timeline: [
         { kind: "message", role: "user", text: "outer prompt" },
@@ -140,6 +142,7 @@ describe("SubagentPreviewPopup: nested drill-down", () => {
   function childDetail(): VaultSessionDetail {
     return {
       entryId: CHILD,
+      contentKind: "timeline",
       recentActivity: [],
       timeline: [{ kind: "message", role: "assistant", text: "GRANDCHILD CONTENT" }],
       stats: { messageCount: 1, toolCount: 0, subagentCount: 0 },

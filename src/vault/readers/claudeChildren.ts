@@ -26,6 +26,7 @@ import {
   createSpawnIdCollector,
   finalizeDetail,
   scopeDirectChildren,
+  sourceVerdict,
   synthesizeGroupDetail,
   truncate,
 } from "./detail";
@@ -60,7 +61,7 @@ export async function readClaudeSubagentDetail(
   }
   const childStubs = scopeDirectChildren(allStubs, spawn.ids);
   const detail = classifyClaudeStyleEvents(read.records, { limit, includeSidechain: true, childStubs });
-  return finalizeDetail(formatEntryId("claude", sessionId), detail, read.truncated);
+  return finalizeDetail(formatEntryId("claude", sessionId), detail, sourceVerdict(read.truncated));
 }
 
 type ManifestObj = Record<string, unknown>;
@@ -308,7 +309,7 @@ export async function readClaudeWorkflowDetail(
         timeline: [board],
         stats: { messageCount: 0, toolCount: 0, subagentCount: board.agents.length },
       },
-      false,
+      { kind: "complete" },
     );
   }
 
@@ -354,7 +355,7 @@ export async function readClaudeWorkflowAgentDetail(
     return null;
   }
   const detail = classifyClaudeStyleEvents(read.records, { limit, includeSidechain: true });
-  return finalizeDetail(formatEntryId("claude", sessionId), detail, read.truncated);
+  return finalizeDetail(formatEntryId("claude", sessionId), detail, sourceVerdict(read.truncated));
 }
 
 /**

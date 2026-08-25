@@ -182,21 +182,59 @@ export const SOURCE_TRUNCATED_REASON =
   "Very large session — showing the start and the most recent messages. Resume to see all of it.";
 
 /**
+ * What the read could and could not see. Independent of `parts.truncated`, which
+ * says only whether a larger `limit` would return more items (contracts P2).
+ */
+export type DetailSource = { kind: "complete" } | { kind: "partial"; reason: string };
+
+/**
+ * Everything a reader decoded and already bounded. The verdict fields are the
+ * constructor's to set, so they are absent here — but the omission only binds
+ * fresh object literals, which is why `finalizeDetail` also wins them at runtime.
+ */
+export type DetailParts = Omit<VaultSessionDetail, "entryId" | "contentKind" | "partial" | "limitedReason">;
+
+/** A record reader's boolean source-truncation flag, as a verdict. */
+export function sourceVerdict(truncated: boolean, reason: string = SOURCE_TRUNCATED_REASON): DetailSource {
+  return truncated ? { kind: "partial", reason } : { kind: "complete" };
+}
+
+/**
  * Assemble a `VaultSessionDetail` from a classifier result. A SOURCE read
  * truncation (the bounded head+tail read dropped the middle — NOT recoverable
  * by raising `limit`) is surfaced via `partial` + `limitedReason`, kept DISTINCT
  * from the classifier's own `truncated`, which means the timeline was bounded to
  * the requested window and IS pageable via load-more (W1 / contracts P2).
  */
-export function finalizeDetail(
-  entryId: string,
-  detail: Omit<VaultSessionDetail, "entryId">,
-  sourceTruncated: boolean,
-): VaultSessionDetail {
-  if (!sourceTruncated) {
-    return { entryId, ...detail };
-  }
-  return { entryId, ...detail, partial: true, limitedReason: detail.limitedReason ?? SOURCE_TRUNCATED_REASON };
+export function finalizeDetail(entryId: string, parts: DetailParts, source: DetailSource): VaultSessionDetail {
+  // Verdict fields are written AFTER the spread. A caller may pass a whole
+  // `VaultSessionDetail` as parts (`readOpenCodeDetail` does) and a variable
+  // stays assignable to the Omit, so precedence — not the type — is what makes
+  // this constructor authoritative over what it owns.
+  const { partial: _partial, limitedReason: _limitedReason, ...carried } = parts as VaultSessionDetail;
+  return {
+    ...carried,
+    entryId,
+    contentKind: "timeline",
+    ...(source.kind === "partial" ? { partial: true, limitedReason: source.reason } : {}),
+  };
+}
+
+/**
+ * The limited view: metadata only, no transcript. Takes no parts, so timeline
+ * content cannot be passed in and silently dropped. `truncated` stays unset —
+ * there is nothing to page through, so the preview must offer no load-more.
+ */
+export function limitedDetail(entryId: string, reason: string): VaultSessionDetail {
+  return {
+    entryId,
+    recentActivity: [],
+    timeline: [],
+    stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
+    partial: true,
+    limitedReason: reason,
+    contentKind: "metadata-only",
+  };
 }
 
 /** Collapse whitespace, trim, cap at `max`, append an ellipsis when cut. */
@@ -949,6 +987,6 @@ export function synthesizeGroupDetail(
       ...(bounded.truncated ? { truncated: true } : {}),
       stats: { messageCount: 0, toolCount: 0, subagentCount: opts.subagentCount },
     },
-    false,
+    { kind: "complete" },
   );
 }

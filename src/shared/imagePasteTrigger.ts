@@ -10,7 +10,7 @@
 // image paste to Alt+V there; Ctrl+V is an ordinary paste and never reads the
 // clipboard image — it just prints "No image found in clipboard. Use alt+v…").
 
-import type { VaultAgentId } from "../vault/types";
+import { AGENT_USES_CTRL_V } from "../vault/types";
 
 /**
  * Upper bound on a single pasted image's decoded byte size. Guards against a
@@ -33,13 +33,18 @@ export const CTRL_V_PASTE = "\x16";
  */
 export const ALT_V_PASTE = "\x1bv";
 
-// CLIs that key image paste off a fixed Ctrl+V regardless of platform. "grok"
-// is pre-wired ahead of its registry record — `agentKindForExecutable` cannot
-// yet produce it, so it is inert until grok becomes a launchable vault agent.
-// `satisfies` type-links the ids to VaultAgentId so a renamed agent id fails to
-// compile here (silent wrong-trigger otherwise), while the Set stays `string`
-// so `.has(agentKind: string)` needs no cast.
-const CTRL_V_AGENTS = new Set<string>(["codex", "opencode", "grok"] satisfies (VaultAgentId | "grok")[]);
+// Derived from the REQUIRED per-agent record, so adding a vault agent without
+// declaring its trigger is a compile error rather than a silent wrong trigger.
+// "grok" is pre-wired ahead of its registry record — `agentKindForExecutable`
+// cannot yet produce it, so it stays an explicit extra outside the record and is
+// inert until grok becomes a launchable vault agent. The Set stays `string` so
+// `.has(agentKind: string)` needs no cast.
+const CTRL_V_AGENTS = new Set<string>([
+  ...Object.entries(AGENT_USES_CTRL_V)
+    .filter(([, usesCtrlV]) => usesCtrlV)
+    .map(([id]) => id),
+  "grok",
+]);
 
 /**
  * PTY bytes that tell the running AI CLI to read an image from the OS clipboard.

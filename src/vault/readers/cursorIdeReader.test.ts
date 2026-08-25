@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteSnapshot, withSqliteSnapshot } from "../sqlite";
 import { cursorIdeDbPath, readCursorIdeDetail, readCursorIdeEntry, readCursorIdeSessions } from "./cursorIdeReader";
 import { readCursorDetail, readCursorSessions } from "./cursorReader";
+import { limitedDetail } from "./detail";
+import { expectDetailContract, expectLimitGrowth } from "./detailContract.testkit";
 
 let root: string;
 let dbPath: string;
@@ -202,6 +204,32 @@ describe("Cursor IDE Composer detail", () => {
       partial: true,
       timeline: [],
     });
+  });
+
+  it("builds the metadata fallback through the shared constructor, field for field", async () => {
+    // Deep equality, so a hand-written literal that drifts from `limitedDetail`
+    // — a stray `truncated`, a missing `contentKind` — fails here rather than
+    // surviving as a second definition of the limited view.
+    await writeIdeStore([{ id: "composer-1", composerData: false }]);
+    const sessionId = "ide:d29ya3NwYWNlLTE:composer-1";
+    const detail = await readCursorIdeDetail(sessionId, undefined, { ideDbPath: dbPath });
+    expect(detail).toEqual(limitedDetail(`cursor:${sessionId}`, detail?.limitedReason ?? ""));
+    // Deep equality alone cannot catch a drift inside `limitedDetail` itself —
+    // both sides move together — so state the contract independently.
+    expectDetailContract(detail, "cursor ide metadata-only");
+  });
+
+  it("satisfies the shared detail contract, and pages to the end", async () => {
+    const headers = Array.from({ length: 60 }, (_v, i) => ({ bubbleId: `b${i}`, type: i % 2 === 0 ? 1 : 2 }));
+    const bubbles = Object.fromEntries(
+      headers.map((h, i) => [h.bubbleId, { bubbleId: h.bubbleId, text: `turn ${i}`, createdAt: 1000 + i }]),
+    );
+    await writeIdeStore([{ id: "composer-1", headers, bubbles }]);
+    const sessionId = "ide:d29ya3NwYWNlLTE:composer-1";
+    const read = (limit?: number) => readCursorIdeDetail(sessionId, limit, { ideDbPath: dbPath });
+
+    expectDetailContract(await read(), "cursor ide");
+    await expectLimitGrowth((limit) => read(limit), { start: 8, label: "cursor ide" });
   });
 
   it("renders headers in order, skips thought bubbles, and normalizes tool activity", async () => {

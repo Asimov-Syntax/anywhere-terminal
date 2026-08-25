@@ -11,7 +11,7 @@ import {
   type VaultSessionEntry,
   type VaultTimelineItem,
 } from "../types";
-import { finalizeDetail } from "./detail";
+import { finalizeDetail, limitedDetail, sourceVerdict } from "./detail";
 
 const MAX_COMPOSERS = 4096;
 const MAX_JSON_CHARS = 2 * 1024 * 1024;
@@ -480,18 +480,6 @@ export async function readCursorIdeEntry(
   return result.status === "ok" ? result.value : null;
 }
 
-function limitedDetail(sessionId: string): VaultSessionDetail {
-  return {
-    entryId: formatEntryId("cursor", sessionId),
-    recentActivity: [],
-    timeline: [],
-    stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
-    partial: true,
-    limitedReason: LIMITED_REASON,
-    contentKind: "metadata-only",
-  };
-}
-
 export async function readCursorIdeDetail(
   sessionId: string,
   limit?: number,
@@ -507,7 +495,7 @@ export async function readCursorIdeDetail(
       return null;
     }
     if (!loaded.supported) {
-      return limitedDetail(sessionId);
+      return limitedDetail(formatEntryId("cursor", sessionId), LIMITED_REASON);
     }
     const timeline: VaultTimelineItem[] = [];
     const activity: VaultActivityStep[] = [];
@@ -551,13 +539,12 @@ export async function readCursorIdeDetail(
         timeline: bounded,
         stats: { messageCount, toolCount, subagentCount: 0 },
         truncated: maxItems !== undefined && timeline.length > maxItems,
-        contentKind: "timeline",
       },
-      sourceTruncated,
+      sourceVerdict(sourceTruncated),
     ) satisfies VaultSessionDetail;
   });
   if (result.status !== "ok") {
-    return limitedDetail(sessionId);
+    return limitedDetail(formatEntryId("cursor", sessionId), LIMITED_REASON);
   }
   return result.value;
 }

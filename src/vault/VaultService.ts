@@ -49,6 +49,7 @@ import {
 import type { RecordLineResult } from "./readers/recordLine";
 import { getAgentDefinition, VAULT_AGENT_IDS, type VaultAgentId } from "./registry";
 import { parseEntryId, type VaultListResult, type VaultSessionDetail, type VaultSessionEntry } from "./types";
+import type { VaultAgentAdapter, VaultWatchTarget } from "./VaultAgentAdapter";
 import type { VaultCacheStore } from "./VaultCacheStore";
 import { normalizeVaultCustomName, type VaultCustomNameRegistry } from "./VaultCustomNameRegistry";
 
@@ -86,12 +87,43 @@ export type VaultEntryReaders = Record<VaultAgentId, (sessionId: string) => Prom
  *  back to its stored record (improve-vault-transcript-messages D5). */
 export type VaultRecordReaders = Record<VaultAgentId, (sessionId: string, msgRef: string) => Promise<RecordLineResult>>;
 
-/** Writes a user-chosen title into an agent's own store; true iff a row was
- *  updated (write-vault-rename-to-store D1). Only the SQLite agents have one —
- *  Claude has no writable title field. */
-export type VaultNativeRenamer = (sessionId: string, name: string) => Promise<boolean>;
+import type { VaultNativeRenamer } from "./VaultAgentAdapter";
+
+export type { VaultAgentAdapter, VaultNativeRenamer, VaultWatchTarget } from "./VaultAgentAdapter";
+
+const REQUIRED_ADAPTER_CAPABILITIES = ["list", "detail", "entry", "record"] as const;
+
+/**
+ * An adapter override with `undefined` stripped from the REQUIRED capabilities.
+ *
+ * The two capability tiers read an absent override in opposite directions: for the
+ * optional three, `undefined` DROPS the capability, which is how an agent that
+ * declares no watch capability is exercised (D6). The required four have no absent
+ * state — dispatch calls them unguarded — so there `undefined` must leave the
+ * default standing. `Partial` alone cannot separate the two: without
+ * `exactOptionalPropertyTypes`, an explicit `undefined` satisfies a required member.
+ */
+function definedRequiredCapabilities(override: Partial<VaultAgentAdapter> | undefined): Partial<VaultAgentAdapter> {
+  if (!override) {
+    return {};
+  }
+  const merged: Partial<VaultAgentAdapter> = { ...override };
+  for (const capability of REQUIRED_ADAPTER_CAPABILITIES) {
+    if (merged[capability] === undefined) {
+      delete merged[capability];
+    }
+  }
+  return merged;
+}
 
 export interface VaultServiceDeps {
+  /**
+   * Per-agent adapter overrides (D6), merged over the defaults after the
+   * per-capability maps below. Passing `undefined` for an optional capability
+   * DROPS it, which is how an agent that declares no watch capability at all is
+   * exercised — absence must be handled, never stubbed.
+   */
+  adapters?: Partial<Record<VaultAgentId, Partial<VaultAgentAdapter>>>;
   readers?: VaultReaders;
   detailReaders?: VaultDetailReaders;
   entryReaders?: VaultEntryReaders;
@@ -148,53 +180,78 @@ export interface VaultLaunchTarget {
   verify: () => Promise<boolean>;
 }
 
-// Readers stay option-first for back-compat; adapt them to the prev-only ListReader
-// shape the service drives (cache-vault-load Interfaces).
-const defaultReaders = {
-  claude: (prev) => readClaudeSessions({}, prev),
-  codex: (prev) => readCodexSessions({}, prev),
-  opencode: (prev) => readOpenCodeSessions({}, prev),
-  cursor: (prev, hint) => readCursorSessions(prev, {}, hint),
-} satisfies VaultReaders;
-
-const defaultDetailReaders = {
-  claude: (sessionId, limit) => readClaudeDetail(sessionId, {}, limit),
-  codex: (sessionId, limit) => readCodexDetail(sessionId, {}, limit),
-  opencode: (sessionId, limit) => readOpenCodeDetail(sessionId, {}, limit),
-  cursor: (sessionId, limit) => readCursorDetail(sessionId, limit),
-} satisfies VaultDetailReaders;
-
-const defaultRecordReaders = {
-  claude: (sessionId, msgRef) => readClaudeMessageRecord(sessionId, msgRef),
-  codex: (sessionId, msgRef) => readCodexMessageRecord(sessionId, msgRef),
-  opencode: (sessionId, msgRef) => readOpenCodeMessageRecord(sessionId, msgRef),
-  cursor: (sessionId, msgRef) => readCursorMessageRecord(sessionId, msgRef),
-} satisfies VaultRecordReaders;
-
-const defaultEntryReaders = {
-  claude: (sessionId) => readClaudeEntry(sessionId),
-  codex: (sessionId) => readCodexEntry(sessionId),
-  opencode: (sessionId) => readOpenCodeEntry(sessionId),
-  cursor: (sessionId) => readCursorEntry(sessionId),
-} satisfies VaultEntryReaders;
-
-/** Native title writers — only the SQLite agents (claude has no writable title). */
-const defaultNativeRenamers: Partial<Record<VaultAgentId, VaultNativeRenamer>> = {
-  codex: (sessionId, name) => renameCodexThread(sessionId, name),
-  opencode: (sessionId, name) => renameOpenCodeSession(sessionId, name),
-};
+// ONE registration per agent (D6). Readers stay option-first for back-compat;
+// adapt them to the prev-only ListReader shape the service drives
+// (cache-vault-load Interfaces). `renameNative` is absent for claude, which has
+// no writable title field — absent, not stubbed.
+const defaultAdapters = {
+  claude: {
+    list: (prev) => readClaudeSessions({}, prev),
+    detail: (sessionId, limit) => readClaudeDetail(sessionId, {}, limit),
+    entry: (sessionId) => readClaudeEntry(sessionId),
+    record: (sessionId, msgRef) => readClaudeMessageRecord(sessionId, msgRef),
+    storeWatchTargets: () => [{ baseDir: claudeRoots({}).projectsDir, glob: "**/*.jsonl" }],
+    sessionWatchTargets: async (sessionId) => {
+      if (!isGlobSafeId(sessionId)) {
+        return [];
+      }
+      const file = await resolveClaudeSessionPath(sessionId);
+      return file ? [{ baseDir: path.dirname(file), glob: path.basename(file) }] : [];
+    },
+  },
+  codex: {
+    list: (prev) => readCodexSessions({}, prev),
+    detail: (sessionId, limit) => readCodexDetail(sessionId, {}, limit),
+    entry: (sessionId) => readCodexEntry(sessionId),
+    record: (sessionId, msgRef) => readCodexMessageRecord(sessionId, msgRef),
+    renameNative: (sessionId, name) => renameCodexThread(sessionId, name),
+    storeWatchTargets: () => {
+      const { dbPath, sessionsDir } = codexStoreDirs();
+      return [
+        { baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}*` },
+        { baseDir: sessionsDir, glob: "**/*.jsonl" },
+      ];
+    },
+    sessionWatchTargets: async (sessionId) => {
+      if (!isGlobSafeId(sessionId)) {
+        return [];
+      }
+      const { dbPath, sessionsDir } = codexStoreDirs();
+      return [
+        { baseDir: sessionsDir, glob: `**/*-${sessionId}.jsonl` },
+        { baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}*` },
+      ];
+    },
+  },
+  opencode: {
+    list: (prev) => readOpenCodeSessions({}, prev),
+    detail: (sessionId, limit) => readOpenCodeDetail(sessionId, {}, limit),
+    entry: (sessionId) => readOpenCodeEntry(sessionId),
+    record: (sessionId, msgRef) => readOpenCodeMessageRecord(sessionId, msgRef),
+    renameNative: (sessionId, name) => renameOpenCodeSession(sessionId, name),
+    storeWatchTargets: () => {
+      const { dbPath } = opencodeStoreDirs();
+      return [{ baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}*` }];
+    },
+    sessionWatchTargets: async (sessionId) => {
+      if (!isGlobSafeId(sessionId)) {
+        return [];
+      }
+      const { dbPath } = opencodeStoreDirs();
+      return [{ baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}*` }];
+    },
+  },
+  cursor: {
+    // The three Cursor-option-bearing capabilities are rebound in the constructor,
+    // which is where `cursorReaderOptions` and the child-locator issuer exist.
+    list: (prev, hint) => readCursorSessions(prev, {}, hint),
+    detail: (sessionId, limit) => readCursorDetail(sessionId, limit),
+    entry: (sessionId) => readCursorEntry(sessionId),
+    record: (sessionId, msgRef) => readCursorMessageRecord(sessionId, msgRef),
+  },
+} satisfies Record<VaultAgentId, VaultAgentAdapter>;
 
 export const MAX_PENDING_VAULT_REFRESH_PATHS = 128;
-
-/** A directory + glob to hand to `WatcherPool.subscribePattern` (enhance-vault-sessions
- *  D4/D5). Resolved from the reader path helpers so watch targets never drift. */
-export interface VaultWatchTarget {
-  baseDir: string;
-  glob: string;
-  events?: Array<"create" | "change" | "delete">;
-  /** Present when watcher events can be routed to one incremental reader. */
-  agent?: VaultAgentId;
-}
 
 /** Cursor child-transcript locator domain (design.md D13) — host-issued, never
  *  a top-level row and never a launch operand. */
@@ -210,14 +267,12 @@ function isGlobSafeId(id: string): boolean {
 }
 
 export class VaultService {
-  private readonly readers: VaultReaders;
-  private readonly detailReaders: VaultDetailReaders;
-  private readonly entryReaders: VaultEntryReaders;
-  private readonly recordReaders: VaultRecordReaders;
+  /** One adapter per agent — the single registration list/detail/entry/record
+   *  and the native renamer all resolve through (D6). */
+  private readonly adapters: Record<VaultAgentId, VaultAgentAdapter>;
   private readonly canForkOpenCodeFn: (minVersion: string) => Promise<boolean>;
   private readonly cacheStore?: VaultCacheStore;
   private readonly customNames?: VaultCustomNameRegistry;
-  private readonly nativeRenamers: Partial<Record<VaultAgentId, VaultNativeRenamer>>;
   private readonly cursorReaderOptions: CursorCombinedReaderOptions;
   private readonly resolveCursorLaunchTargetFn: (
     sessionId: string,
@@ -258,28 +313,58 @@ export class VaultService {
 
   constructor(deps: VaultServiceDeps = {}) {
     this.cursorReaderOptions = deps.cursorReaderOptions ?? {};
-    this.readers = deps.readers ?? {
-      ...defaultReaders,
-      cursor: (prev, hint) => readCursorSessions(prev, this.cursorReaderOptions, hint),
-    };
     const readCursorDetailFn = deps.readCursorDetailFn ?? readCursorDetail;
-    this.detailReaders = deps.detailReaders ?? {
-      ...defaultDetailReaders,
-      cursor: (sessionId, limit) =>
-        readCursorDetailFn(sessionId, limit, {
-          ...this.cursorReaderOptions,
-          issueChildLocator: (child) => this.issueCursorChildLocator(child),
-        }),
+    const base: Record<VaultAgentId, VaultAgentAdapter> = {
+      ...defaultAdapters,
+      cursor: {
+        ...defaultAdapters.cursor,
+        list: (prev, hint) => readCursorSessions(prev, this.cursorReaderOptions, hint),
+        detail: (sessionId, limit) =>
+          readCursorDetailFn(sessionId, limit, {
+            ...this.cursorReaderOptions,
+            issueChildLocator: (child) => this.issueCursorChildLocator(child),
+          }),
+        entry: (sessionId) => readCursorEntry(sessionId, this.cursorReaderOptions),
+        storeWatchTargets: () => {
+          const chats = cursorChatsRoot(this.cursorReaderOptions);
+          const ide = cursorIdeDbPath(this.cursorReaderOptions);
+          const live: Array<"create" | "change" | "delete"> = ["create", "change", "delete"];
+          return [
+            { baseDir: chats, glob: "**/meta.json", events: live, agent: "cursor" },
+            { baseDir: chats, glob: "**/store.db", events: ["create", "delete"], agent: "cursor" },
+            { baseDir: path.dirname(ide), glob: path.basename(ide), events: live, agent: "cursor" },
+            { baseDir: path.dirname(ide), glob: `${path.basename(ide)}-wal`, events: live, agent: "cursor" },
+          ];
+        },
+        // Cursor ids are opaque locators its own reader resolves, never
+        // interpolated into a glob here, so no glob-safety guard applies.
+        sessionWatchTargets: async (sessionId) =>
+          (await resolveCursorSessionWatchPaths(sessionId, this.cursorReaderOptions)).map((sourcePath) => ({
+            baseDir: path.dirname(sourcePath),
+            glob: path.basename(sourcePath),
+          })),
+      },
     };
-    this.entryReaders = deps.entryReaders ?? {
-      ...defaultEntryReaders,
-      cursor: (sessionId) => readCursorEntry(sessionId, this.cursorReaderOptions),
-    };
-    this.recordReaders = deps.recordReaders ?? defaultRecordReaders;
+    // The per-capability deps stay the injection seam they always were: supplying
+    // one REPLACES that capability for every agent, so an absent renamer in an
+    // injected `nativeRenamers` still means "this agent cannot rename".
+    this.adapters = Object.fromEntries(
+      VAULT_AGENT_IDS.map((id) => [
+        id,
+        {
+          ...base[id],
+          ...(deps.readers ? { list: deps.readers[id] } : {}),
+          ...(deps.detailReaders ? { detail: deps.detailReaders[id] } : {}),
+          ...(deps.entryReaders ? { entry: deps.entryReaders[id] } : {}),
+          ...(deps.recordReaders ? { record: deps.recordReaders[id] } : {}),
+          ...(deps.nativeRenamers ? { renameNative: deps.nativeRenamers[id] } : {}),
+          ...definedRequiredCapabilities(deps.adapters?.[id]),
+        },
+      ]),
+    ) as Record<VaultAgentId, VaultAgentAdapter>;
     this.canForkOpenCodeFn = deps.canForkOpenCodeFn ?? ((min) => canForkOpenCode(min));
     this.cacheStore = deps.cacheStore;
     this.customNames = deps.customNames;
-    this.nativeRenamers = deps.nativeRenamers ?? defaultNativeRenamers;
     this.resolveCursorLaunchTargetFn = deps.resolveCursorLaunchTargetFn ?? resolveCursorLaunchTarget;
     this.verifyCursorLaunchTargetFn = deps.verifyCursorLaunchTargetFn ?? verifyCursorLaunchTarget;
   }
@@ -310,7 +395,7 @@ export class VaultService {
     if (!parsed || !isVaultAgentId(parsed.agent)) {
       return false;
     }
-    const renamer = this.nativeRenamers[parsed.agent];
+    const renamer = this.adapters[parsed.agent].renameNative;
     return renamer ? renamer(parsed.sessionId, normalized) : false;
   }
 
@@ -370,7 +455,7 @@ export class VaultService {
       ids.map((id) =>
         invokeReader(() => {
           onReaderStart?.(id);
-          return this.readers[id](prevAgents[id], hint ? { paths: hint.paths } : undefined);
+          return this.adapters[id].list(prevAgents[id], hint ? { paths: hint.paths } : undefined);
         }),
       ),
     );
@@ -728,14 +813,14 @@ export class VaultService {
       if (!source) {
         return null;
       }
-      const detail = await this.detailReaders.cursor(source, clampDetailLimit(limit));
+      const detail = await this.adapters.cursor.detail(source, clampDetailLimit(limit));
       // The child answers under the locator it was asked for; the project id it
       // resolves to stays host-side.
       return detail ? { ...detail, entryId } : null;
     }
     // Clamp the webview-supplied limit so a forged/garbage value can't defeat the
     // reader's timeline bound (W2).
-    return this.detailReaders[parsed.agent](parsed.sessionId, clampDetailLimit(limit));
+    return this.adapters[parsed.agent].detail(parsed.sessionId, clampDetailLimit(limit));
   }
 
   /**
@@ -795,7 +880,7 @@ export class VaultService {
     if (!parsed || !isVaultAgentId(parsed.agent)) {
       return { ok: false, reason: "not-found" };
     }
-    return this.recordReaders[parsed.agent](parsed.sessionId, msgRef);
+    return this.adapters[parsed.agent].record(parsed.sessionId, msgRef);
   }
 
   /**
@@ -814,12 +899,12 @@ export class VaultService {
     let entry: VaultSessionEntry | null;
     if (parsed.agent === "cursor") {
       const source = this.resolveCursorRequest(parsed.sessionId);
-      entry = source ? await this.entryReaders.cursor(source) : null;
+      entry = source ? await this.adapters.cursor.entry(source) : null;
       if (entry && source !== parsed.sessionId) {
         entry = { ...entry, id: entryId, sessionId: parsed.sessionId };
       }
     } else {
-      entry = await this.entryReaders[parsed.agent](parsed.sessionId);
+      entry = await this.adapters[parsed.agent].entry(parsed.sessionId);
     }
     if (!entry) {
       return null;
@@ -873,73 +958,22 @@ export class VaultService {
    * by APPEND, which the create/delete-only `subscribe` drops.
    */
   getStoreWatchTargets(): VaultWatchTarget[] {
-    const { projectsDir } = claudeRoots({});
-    const codex = codexStoreDirs();
-    const opencode = opencodeStoreDirs();
-    const cursor = cursorChatsRoot(this.cursorReaderOptions);
-    const cursorIde = cursorIdeDbPath(this.cursorReaderOptions);
-    return [
-      { baseDir: projectsDir, glob: "**/*.jsonl" },
-      { baseDir: path.dirname(codex.dbPath), glob: `${path.basename(codex.dbPath)}*` },
-      { baseDir: codex.sessionsDir, glob: "**/*.jsonl" },
-      { baseDir: path.dirname(opencode.dbPath), glob: `${path.basename(opencode.dbPath)}*` },
-      { baseDir: cursor, glob: "**/meta.json", events: ["create", "change", "delete"], agent: "cursor" },
-      { baseDir: cursor, glob: "**/store.db", events: ["create", "delete"], agent: "cursor" },
-      {
-        baseDir: path.dirname(cursorIde),
-        glob: path.basename(cursorIde),
-        events: ["create", "change", "delete"],
-        agent: "cursor",
-      },
-      {
-        baseDir: path.dirname(cursorIde),
-        glob: `${path.basename(cursorIde)}-wal`,
-        events: ["create", "change", "delete"],
-        agent: "cursor",
-      },
-    ];
+    return VAULT_AGENT_IDS.flatMap((id) => this.adapters[id].storeWatchTargets?.() ?? []);
   }
 
   /**
    * Per-session FS-watch targets for live-follow (enhance-vault-sessions D5),
    * scoped to the ONE previewed session so unrelated writes don't wake the
-   * follow re-read. Claude/Codex content lives in a JSONL (the Codex SQLite index
-   * updates in lockstep — watch both); OpenCode content lives in the WAL DB.
-   * Returns `[]` for an unknown agent, an unresolved Claude file, or an unsafe id.
+   * follow re-read. Each adapter owns where its own content lives and, when it
+   * builds a glob from the id, whether that id is safe to interpolate.
+   * Returns `[]` for an unknown agent or one that declares no session watch.
    */
   async resolveSessionWatchTargets(entryId: string): Promise<VaultWatchTarget[]> {
     const parsed = parseEntryId(entryId);
     if (!parsed || !isVaultAgentId(parsed.agent)) {
       return [];
     }
-    if (parsed.agent === "cursor") {
-      return (await resolveCursorSessionWatchPaths(parsed.sessionId, this.cursorReaderOptions)).map((sourcePath) => ({
-        baseDir: path.dirname(sourcePath),
-        glob: path.basename(sourcePath),
-      }));
-    }
-    if (!isGlobSafeId(parsed.sessionId)) {
-      return [];
-    }
-    switch (parsed.agent) {
-      case "claude": {
-        const file = await resolveClaudeSessionPath(parsed.sessionId);
-        return file ? [{ baseDir: path.dirname(file), glob: path.basename(file) }] : [];
-      }
-      case "codex": {
-        const { dbPath, sessionsDir } = codexStoreDirs();
-        return [
-          { baseDir: sessionsDir, glob: `**/*-${parsed.sessionId}.jsonl` },
-          { baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}*` },
-        ];
-      }
-      case "opencode": {
-        const { dbPath } = opencodeStoreDirs();
-        return [{ baseDir: path.dirname(dbPath), glob: `${path.basename(dbPath)}*` }];
-      }
-      default:
-        return [];
-    }
+    return (await this.adapters[parsed.agent].sessionWatchTargets?.(parsed.sessionId)) ?? [];
   }
 }
 

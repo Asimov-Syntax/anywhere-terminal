@@ -8,13 +8,16 @@ import {
   cleanPromptText,
   createBoundedRecordBuffer,
   createSpawnIdCollector,
+  type DetailParts,
   finalizeDetail,
+  limitedDetail,
   MAX_ACTIVITY_STEPS,
   MAX_DETAIL_LIMIT,
   MAX_MESSAGE_TEXT,
   normalizeRich,
   SOURCE_TRUNCATED_REASON,
   scopeDirectChildren,
+  sourceVerdict,
   synthesizeGroupDetail,
   toolLabel,
   truncate,
@@ -760,32 +763,93 @@ describe("clampDetailLimit (W2)", () => {
 });
 
 describe("finalizeDetail (contracts P2 — source vs pageable truncation)", () => {
-  const base: Omit<import("../types").VaultSessionDetail, "entryId"> = {
+  const base: DetailParts = {
     recentActivity: [],
     timeline: [{ kind: "message", role: "user", text: "hi" }],
     stats: { messageCount: 1, toolCount: 0, subagentCount: 0 },
   };
 
   it("passes the detail through untouched when the source read was complete", () => {
-    const out = finalizeDetail("claude:a", { ...base, truncated: true }, false);
+    const out = finalizeDetail("claude:a", { ...base, truncated: true }, { kind: "complete" });
     expect(out.partial).toBeUndefined();
     expect(out.limitedReason).toBeUndefined();
     // The classifier's own pageable `truncated` is preserved (drives load-more).
     expect(out.truncated).toBe(true);
+    expect(out.contentKind).toBe("timeline");
   });
 
   it("marks a source-truncated read as partial WITHOUT touching pageable truncated", () => {
-    const out = finalizeDetail("claude:a", { ...base, truncated: true }, true);
+    const out = finalizeDetail(
+      "claude:a",
+      { ...base, truncated: true },
+      { kind: "partial", reason: SOURCE_TRUNCATED_REASON },
+    );
     expect(out.partial).toBe(true);
     expect(out.limitedReason).toBe(SOURCE_TRUNCATED_REASON);
     // Still pageable within the retained window — load-more semantics intact.
     expect(out.truncated).toBe(true);
   });
 
-  it("keeps an existing limitedReason instead of overwriting it", () => {
-    const out = finalizeDetail("codex:a", { ...base, limitedReason: "index only" }, true);
+  it("carries the reason the caller supplied", () => {
+    const out = finalizeDetail("codex:a", base, { kind: "partial", reason: "index only" });
     expect(out.partial).toBe(true);
     expect(out.limitedReason).toBe("index only");
+  });
+
+  it("overrides verdict fields the parts object carries instead of spreading them through", () => {
+    // `readOpenCodeDetail` passes a whole VaultSessionDetail as parts, entryId
+    // included. A variable stays assignable to the Omit, so field precedence —
+    // not the type — is what keeps this constructor authoritative.
+    const stale = {
+      ...base,
+      entryId: "opencode:stale",
+      partial: true,
+      limitedReason: "stale reason",
+      contentKind: "metadata-only",
+    } as DetailParts;
+    const out = finalizeDetail("opencode:real", stale, { kind: "complete" });
+    expect(out.entryId).toBe("opencode:real");
+    expect(out.partial).toBeUndefined();
+    expect(out.limitedReason).toBeUndefined();
+    expect(out.contentKind).toBe("timeline");
+  });
+});
+
+describe("sourceVerdict", () => {
+  it("converts a record reader's boolean flag, defaulting the reason", () => {
+    expect(sourceVerdict(false)).toEqual({ kind: "complete" });
+    expect(sourceVerdict(true)).toEqual({ kind: "partial", reason: SOURCE_TRUNCATED_REASON });
+    expect(sourceVerdict(true, "index only")).toEqual({ kind: "partial", reason: "index only" });
+  });
+});
+
+describe("limitedDetail type-level exclusion", () => {
+  // `check-types` only proves the LEGAL calls compile; it can never prove an
+  // illegal one does not. These lines compile as errors on purpose — if the
+  // metadata-only constructor ever grows a parts parameter, `@ts-expect-error`
+  // becomes unused and the type check fails, which is the alarm.
+  it("cannot be handed timeline content to silently discard", () => {
+    // @ts-expect-error — a third argument would let a caller pass a timeline.
+    expect(limitedDetail("cursor:a", "reason", { timeline: [] })).toBeTruthy();
+    // @ts-expect-error — the reason is required; a limited view with no notice is not a view.
+    expect(limitedDetail("cursor:a")).toBeTruthy();
+  });
+});
+
+describe("limitedDetail", () => {
+  it("builds the metadata-only view with no timeline, no activity and no truncated flag", () => {
+    const out = limitedDetail("cursor:a", "Cursor project transcript is unavailable.");
+    expect(out).toEqual({
+      entryId: "cursor:a",
+      recentActivity: [],
+      timeline: [],
+      stats: { messageCount: 0, toolCount: 0, subagentCount: 0 },
+      partial: true,
+      limitedReason: "Cursor project transcript is unavailable.",
+      contentKind: "metadata-only",
+    });
+    // Nothing to page through, so the preview must not offer load-more.
+    expect(out.truncated).toBeUndefined();
   });
 });
 

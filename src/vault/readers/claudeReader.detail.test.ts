@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { VaultTimelineItem } from "../types";
 import { readClaudeDetail, readClaudeMessageRecord, resolveClaudeSessionPath } from "./claudeReader";
+import { expectDetailContract, expectLimitGrowth, expectResolvableChildren } from "./detailContract.testkit";
 
 const isMessage = (t: VaultTimelineItem): t is Extract<VaultTimelineItem, { kind: "message" }> => t.kind === "message";
 
@@ -296,6 +297,15 @@ describe("readClaudeDetail nested subagents (depth-2)", () => {
     );
   }
 
+  it("resolves every child it advertises", async () => {
+    await writeDepth2Tree();
+    await expectResolvableChildren(
+      await readClaudeDetail("sess-root", { configDir }),
+      (entryId) => readClaudeDetail(entryId.replace(/^claude:/, ""), { configDir }),
+      "claude root",
+    );
+  });
+
   it("embeds only the DIRECT child at the root (the nested grandchild does not flatten up)", async () => {
     await writeDepth2Tree();
     const root = await readClaudeDetail("sess-root", { configDir });
@@ -354,5 +364,35 @@ describe("readClaudeMessageRecord", () => {
     ]);
     expect((await readClaudeMessageRecord("sess-rec", "u-1", { configDir })).ok).toBe(true);
     expect((await readClaudeMessageRecord("sess-rec", "s-1", { configDir })).ok).toBe(false);
+  });
+});
+
+describe("Claude detail contract", () => {
+  it("satisfies the shared detail contract", async () => {
+    await writeSession("-Users-me-proj", "sess-contract", [
+      { type: "user", message: { role: "user", content: "hi" }, timestamp: "2026-05-01T00:00:00.000Z" },
+      {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+        timestamp: "2026-05-01T00:00:01.000Z",
+      },
+    ]);
+    expectDetailContract(await readClaudeDetail("sess-contract", { configDir }), "claude");
+  });
+
+  it("pages to the end: every raised limit yields more, and truncated clears", async () => {
+    const records = Array.from({ length: 60 }, (_, i) => ({
+      type: i % 2 === 0 ? "user" : "assistant",
+      message:
+        i % 2 === 0
+          ? { role: "user", content: `q${i}` }
+          : { role: "assistant", content: [{ type: "text", text: `a${i}` }] },
+      timestamp: new Date(Date.UTC(2026, 4, 1, 0, 0, i)).toISOString(),
+    }));
+    await writeSession("-Users-me-proj", "sess-pages", records);
+    await expectLimitGrowth((limit) => readClaudeDetail("sess-pages", { configDir }, limit), {
+      start: 8,
+      label: "claude",
+    });
   });
 });

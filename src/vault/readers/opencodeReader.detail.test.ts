@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SqliteResult, SqliteSnapshot, withSqliteSnapshot } from "../sqlite";
 import type { VaultTimelineItem } from "../types";
+import { expectDetailContract, expectLimitGrowth } from "./detailContract.testkit";
 import {
   mapOpencodeRows,
   type OcMessageRow,
@@ -535,6 +536,41 @@ describe("readOpenCodeDetail head+tail windowing", () => {
   // (100 + 2000), both part windows full and disjoint (1000 + 4000).
   const RETAINED_MESSAGES = 2100;
   const RETAINED_PARTS = 5000;
+
+  it("satisfies the shared detail contract, and pages to the end within what it retained", async () => {
+    // Every retained message carries text, so the bound actually bites: `partial`
+    // holds at every limit (the dropped middle is unrecoverable) while
+    // `truncated` must still clear once the caller has asked for all 60 retained.
+    const rowsWithText = (n: number, desc: boolean) =>
+      Array.from({ length: n }, (_v, i) => {
+        const ordinal = desc ? n - i : i;
+        return { id: `m${ordinal}`, time_created: ordinal, data: JSON.stringify({ role: "user" }) };
+      });
+    const readSqliteFn = vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
+      if (sql.includes("OFFSET")) {
+        return { status: "ok", rows: [{ id: "probe" }] }; // source omitted a middle
+      }
+      if (sql.includes("parent_id")) {
+        return { status: "ok", rows: [] };
+      }
+      if (sql.includes("FROM message")) {
+        return { status: "ok", rows: rowsWithText(30, sql.includes("DESC")) };
+      }
+      const parts = Array.from({ length: 60 }, (_v, i) => ({
+        id: `p${i}`,
+        message_id: `m${i}`,
+        time_created: i,
+        data: JSON.stringify({ type: "text", text: `turn ${i}` }),
+      }));
+      return { status: "ok", rows: parts };
+    });
+    const read = (limit: number) =>
+      readOpenCodeDetail("ses_long", { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(readSqliteFn) }, limit);
+
+    const first = expectDetailContract(await read(8), "opencode");
+    expect(first.partial).toBe(true);
+    await expectLimitGrowth(read, { start: 8, label: "opencode" });
+  });
 
   it("keeps the final assistant message from a long session (tail) AND the first prompt (head)", async () => {
     const readSqliteFn = longSessionSqlite(RETAINED_MESSAGES + 400, RETAINED_PARTS + 400);
