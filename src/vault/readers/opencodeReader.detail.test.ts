@@ -319,8 +319,13 @@ describe("mapOpencodeRows", () => {
 describe("readOpenCodeDetail child sub-sessions", () => {
   it("queries direct children by parent_id and embeds them as subagentSession stubs", async () => {
     const readSqliteFn = vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
-      // Check children FIRST — its first-user-message subquery also contains
-      // "FROM part", so it must not be misrouted to the parts branch.
+      // Probes FIRST: a complete fixture has nothing past its window, and falling
+      // through would answer the probe with a transcript row and fake an omission.
+      if (sql.includes("OFFSET")) {
+        return { status: "ok", rows: [] };
+      }
+      // Then children — its first-user-message subquery also contains "FROM part",
+      // so it must not be misrouted to the parts branch.
       if (!sql.includes("parent_id") && sql.includes("FROM message")) {
         return { status: "ok", rows: [{ id: "m1", time_created: 1, data: JSON.stringify({ role: "user" }) }] };
       }
@@ -359,8 +364,9 @@ describe("readOpenCodeDetail child sub-sessions", () => {
     );
     expect(detail).not.toBeNull();
     // 2 message windows (head ASC + tail DESC) + 2 part windows + 1 children
-    // query + 1 COUNT per table (the omission proof).
+    // query + 1 omission probe per table.
     expect(readSqliteFn).toHaveBeenCalledTimes(7);
+    expect(detail?.partial).toBeFalsy(); // complete fixture must prove it stays complete
     const childSql = readSqliteFn.mock.calls.find((c) => c[1].includes("parent_id"))?.[1] ?? "";
     expect(childSql).toContain("WHERE s.parent_id = 'ses_parent'");
     const stub = detail?.timeline.find((i) => i.kind === "subagentSession");
@@ -374,6 +380,9 @@ describe("readOpenCodeDetail child sub-sessions", () => {
 
   it("still returns the parent detail when the child query fails", async () => {
     const readSqliteFn = vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
+      if (sql.includes("OFFSET")) {
+        return { status: "ok", rows: [] }; // complete session: nothing past the window
+      }
       if (sql.includes("FROM message")) {
         return { status: "ok", rows: [{ id: "m1", time_created: 1, data: JSON.stringify({ role: "user" }) }] };
       }
@@ -391,6 +400,7 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       undefined,
     );
     expect(detail).not.toBeNull();
+    expect(detail?.partial).toBeFalsy(); // a failed CHILD query is not source omission
     expect(detail?.timeline.some((i) => i.kind === "subagentSession")).toBe(false);
   });
 
