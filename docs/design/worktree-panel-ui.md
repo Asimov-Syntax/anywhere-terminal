@@ -319,7 +319,7 @@ considered and rejected, and the rejection is recorded so it is not silently re-
 
 Exact spacing values, the specific token for each emphasis step, the animated indicator, and
 the empty-state copy. These are settled by building the shell and reviewing it, not by
-specifying them further in prose. PLAN P2-T1 remains gated on user sign-off of the rendered
+specifying them further in prose. PLAN WT-002.1 remains gated on user sign-off of the rendered
 result.
 
 ## 8. Edge Cases
