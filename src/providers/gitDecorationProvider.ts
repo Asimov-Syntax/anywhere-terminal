@@ -22,34 +22,11 @@
 
 import * as vscode from "vscode";
 import type { GitStatus } from "../types/messages";
+import { isPathInside, isWindowsAbsPath, normalizePathForCompare } from "../utils/pathBoundary";
 import type { API, GitExtension, Repository } from "./git";
 import { mapStatus, pickHigherSeverity } from "./gitStatusMapping";
 
 const LOG_PREFIX = "[AnyWhere Terminal][git-decorations]";
-
-/**
- * Heuristic: does this look like a Windows absolute path (drive letter or
- * UNC) vs a POSIX absolute path? Used by the containment filter to pick the
- * correct path separator AND the right normalization (case-insensitive +
- * separator-folding on Windows). Inputs from VS Code (`Uri.fsPath`,
- * `workspaceFolders[].uri.fsPath`) use the host's native separators, so a
- * Windows path always matches one of these shapes on Windows hosts.
- */
-function isWindowsAbsPath(p: string): boolean {
-  return /^[a-z]:[\\/]/i.test(p) || p.startsWith("\\\\");
-}
-
-/**
- * Windows: fold separators to `\` and lowercase (NTFS / VS Code's URI layer
- * both treat the drive letter case-insensitively). POSIX paths pass through
- * unchanged — they're case-sensitive and use only forward slashes.
- */
-function normalizePathForCompare(p: string): string {
-  if (isWindowsAbsPath(p)) {
-    return p.replace(/\//g, "\\").toLowerCase();
-  }
-  return p;
-}
 
 export interface GitStatusDelta {
   revision: number;
@@ -155,14 +132,8 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     options.onDidChangeWorkspaceFolders ?? (vscode.workspace.onDidChangeWorkspaceFolders as vscode.Event<unknown>);
 
   /**
-   * Path-boundary containment that handles three classes of edge cases the
-   * naive `startsWith(root + '/')` form fails on:
-   *
-   *  1. Filesystem-root workspaces (`/` POSIX, `C:\` Windows) — naive concat
-   *     produces `//` / `C:\/` which never matches any real absPath.
-   *  2. Windows path-separator drift — comparing a back-slashed root against
-   *     a forward-slashed `Uri.fsPath` (and vice-versa).
-   *  3. Windows drive-letter casing — `c:` vs `C:`.
+   * Path-boundary containment; the edge cases it survives are documented on
+   * `isPathInside` in ../utils/pathBoundary.
    *
    * When no workspace folder is open we let everything through (the tree
    * can re-root anywhere in terminal-adjacent mode).
@@ -174,23 +145,7 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     if (folders.length === 0) {
       return true;
     }
-    const path = normalizePathForCompare(absPath);
-    for (const rawRoot of folders) {
-      const isWin = isWindowsAbsPath(rawRoot);
-      const root = normalizePathForCompare(rawRoot);
-      if (path === root) {
-        return true;
-      }
-      const sep = isWin ? "\\" : "/";
-      // Filesystem-root case: `/` ends with `/`, `c:\` ends with `\`. Don't
-      // double-append — use root itself as the boundary so every path on the
-      // root volume matches.
-      const boundary = root.endsWith(sep) ? root : root + sep;
-      if (path.startsWith(boundary)) {
-        return true;
-      }
-    }
-    return false;
+    return folders.some((rawRoot) => isPathInside(absPath, rawRoot));
   }
 
   // Per-repository status maps keyed by rootUri.fsPath. The merged view is

@@ -117,9 +117,9 @@ state. There is nothing to provision.
 | **Stage** | 1 |
 | **Size** | M |
 | **Labels** | new-dependency |
-| **Notes** | First direct shelling to `git` from this extension; the git extension API is currently consumed for decorations only |
+| **Notes** | First *structured* git read from this extension (`src/providers/gitIgnoreChecker.ts` already spawns `git check-ignore`); the git extension API was previously consumed for decorations only |
 | **Acceptance** | Every worktree of every workspace repo is enumerated exactly once, with repos deduped by their shared git directory and grouped in workspace-folder order; a worktree's identity survives symlink and drive-letter differences, so one directory named two ways is one worktree; the state git reports — main, bare, detached, locked, prunable, missing — is carried through rather than inferred; ordering is deterministic and independent of filesystem enumeration order; an unusable git, or a listing that fails for one repo, degrades that scope with a reason instead of emptying it or throwing |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-001.2] Freshness, Cache & Host Contract
 

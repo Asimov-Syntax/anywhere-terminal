@@ -27,6 +27,27 @@ import { FileTreeHost } from "./fileTreeHost";
 import type { WatcherPool } from "./fsWatcherPool";
 import type { GitDecorationProvider } from "./gitDecorationProvider";
 
+/**
+ * Wait until `condition` holds. Returns silently on timeout so the assertion
+ * that follows reports the failure, rather than this helper masking it.
+ *
+ * Replaces `await new Promise((r) => setTimeout(r, 0))`: a single macrotask tick
+ * only outruns the host's async work when the suite has a CPU to itself.
+ */
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** Let pending async work run when the assertion is that nothing happened. */
+async function settle(ticks = 10): Promise<void> {
+  for (let i = 0; i < ticks; i++) {
+    await new Promise((r) => setTimeout(r, 1));
+  }
+}
+
 describe("FileTreeHost.handleMessage", () => {
   it("handles `request-file-tree-search` and posts a response back", async () => {
     const host = new FileTreeHost();
@@ -48,7 +69,7 @@ describe("FileTreeHost.handleMessage", () => {
     // the exact response content isn't the point. We're asserting that the
     // message TYPE was claimed by the host (the dispatch wiring is the
     // regression target).
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => posted.length > 0);
     expect(posted.length).toBe(1);
     expect((posted[0] as { type?: string }).type).toBe("file-tree-search-response");
   });
@@ -70,7 +91,7 @@ describe("FileTreeHost.handleMessage", () => {
       const handled = host.handleMessage({ type: "request-open-folder" }, postSpy);
       expect(handled).toBe(true);
       // The dialog is async; let it resolve.
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => dialogSpy.mock.calls.length > 0);
       expect(dialogSpy).toHaveBeenCalledTimes(1);
       expect(dialogSpy).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -100,7 +121,7 @@ describe("FileTreeHost.handleMessage", () => {
     try {
       const handled = host.handleMessage({ type: "request-open-folder" }, vi.fn());
       expect(handled).toBe(true);
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => attachPostSpy.mock.calls.length > 0);
       expect(attachPostSpy).toHaveBeenCalledTimes(1);
       expect(attachPostSpy).toHaveBeenCalledWith({
         type: "reveal-in-file-tree",
@@ -124,7 +145,7 @@ describe("FileTreeHost.handleMessage", () => {
     try {
       const handled = host.handleMessage({ type: "request-open-folder" }, vi.fn());
       expect(handled).toBe(true);
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => warningSpy.mock.calls.length > 0);
       expect(attachPostSpy).not.toHaveBeenCalled();
       expect(warningSpy).toHaveBeenCalledWith(
         "AnyWhere Terminal file tree is no longer available. Reopen it and try again.",
@@ -143,7 +164,7 @@ describe("FileTreeHost.handleMessage", () => {
     try {
       const handled = host.handleMessage({ type: "request-open-folder" }, vi.fn());
       expect(handled).toBe(true);
-      await new Promise((r) => setTimeout(r, 0));
+      await waitFor(() => errorSpy.mock.calls.length > 0);
       expect(errorSpy).toHaveBeenCalledWith("AnyWhere Terminal could not open the folder picker.");
     } finally {
       dialogSpy.mockRestore();
@@ -215,12 +236,12 @@ describe("FileTreeHost — file-tree path actions", () => {
   });
 
   it("updates the host-owned active root from Open Folder before copy-relative", async () => {
-    const { host, sub } = attachActionHost();
+    const { host, posted, sub } = attachActionHost();
     const writeText = installClipboard();
     vi.spyOn(vscode.window, "showOpenDialog").mockResolvedValue([{ fsPath: "/external/root" } as vscode.Uri]);
 
     expect(host.handleMessage({ type: "request-open-folder" }, vi.fn())).toBe(true);
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => posted.some((m) => m.type === "reveal-in-file-tree"));
 
     expect(
       host.handleMessage(
@@ -237,10 +258,13 @@ describe("FileTreeHost — file-tree path actions", () => {
   it("does not adopt an Open Folder root when the reveal cannot be delivered", async () => {
     const { host, sub } = attachActionHost(new FileTreeHost(), false);
     const writeText = installClipboard();
-    vi.spyOn(vscode.window, "showOpenDialog").mockResolvedValue([{ fsPath: "/external/root" } as vscode.Uri]);
+    const dialogSpy = vi
+      .spyOn(vscode.window, "showOpenDialog")
+      .mockResolvedValue([{ fsPath: "/external/root" } as vscode.Uri]);
 
     expect(host.handleMessage({ type: "request-open-folder" }, vi.fn())).toBe(true);
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => dialogSpy.mock.calls.length > 0);
+    await settle();
 
     expect(
       host.handleMessage(
@@ -265,7 +289,7 @@ describe("FileTreeHost — file-tree path actions", () => {
     vi.spyOn(vscode.window, "showOpenDialog").mockResolvedValue([{ fsPath: "/external/root" } as vscode.Uri]);
 
     expect(host.handleMessage({ type: "request-open-folder" }, vi.fn())).toBe(true);
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => first.posted.some((m) => m.type === "reveal-in-file-tree"));
     first.sub.dispose();
 
     const second = attachActionHost(host);
@@ -326,7 +350,7 @@ describe("FileTreeHost — file-tree path actions", () => {
         vi.fn(),
       ),
     ).toBe(true);
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => errorSpy.mock.calls.length >= 2);
 
     expect(errorSpy).toHaveBeenCalledWith("AnyWhere Terminal could not reveal the selected item.");
     expect(errorSpy).toHaveBeenCalledWith("AnyWhere Terminal could not copy the selected path.");
@@ -370,12 +394,13 @@ describe("FileTreeHost — file-tree path actions", () => {
     const { host, sub } = attachActionHost();
     const deleteSpy = vi.fn(async () => undefined);
     (vscode.workspace.fs as unknown as { delete: typeof deleteSpy }).delete = deleteSpy;
-    vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue(undefined);
+    const warningSpy = vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue(undefined);
 
     expect(host.handleMessage({ type: "file-tree-delete", rootGeneration: 0, path: "/workspace/a.ts" }, vi.fn())).toBe(
       true,
     );
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => warningSpy.mock.calls.length > 0);
+    await settle();
 
     expect(deleteSpy).not.toHaveBeenCalled();
     sub.dispose();
@@ -389,7 +414,7 @@ describe("FileTreeHost — file-tree path actions", () => {
 
     const msg: FileTreeDeleteMessage = { type: "file-tree-delete", rootGeneration: 0, path: "/workspace/src/a.ts" };
     expect(host.handleMessage(msg, vi.fn())).toBe(true);
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => deleteSpy.mock.calls.length > 0);
 
     expect(deleteSpy).toHaveBeenCalledWith(expect.objectContaining({ fsPath: "/workspace/src/a.ts" }), {
       recursive: false,
@@ -414,7 +439,7 @@ describe("FileTreeHost — file-tree path actions", () => {
     expect(host.handleMessage({ type: "file-tree-delete", rootGeneration: 0, path: "/workspace/src" }, vi.fn())).toBe(
       true,
     );
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => deleteSpy.mock.calls.length > 0);
 
     expect(warningSpy).toHaveBeenCalledWith(
       'Delete folder "src"?',
@@ -435,7 +460,7 @@ describe("FileTreeHost — file-tree path actions", () => {
     const { host, sub } = attachActionHost();
     const deleteSpy = vi.fn(async () => undefined);
     (vscode.workspace.fs as unknown as { delete: typeof deleteSpy }).delete = deleteSpy;
-    vi.spyOn(vscode.window, "showWarningMessage").mockImplementation(async () => {
+    const warningSpy = vi.spyOn(vscode.window, "showWarningMessage").mockImplementation(async () => {
       host.rootGeneration = 1;
       return "Delete" as never;
     });
@@ -444,7 +469,8 @@ describe("FileTreeHost — file-tree path actions", () => {
     expect(host.handleMessage({ type: "file-tree-delete", rootGeneration: 0, path: "/workspace/a.ts" }, vi.fn())).toBe(
       true,
     );
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => warningSpy.mock.calls.length > 0);
+    await settle();
 
     expect(deleteSpy).not.toHaveBeenCalled();
     sub.dispose();
@@ -465,7 +491,7 @@ describe("FileTreeHost — file-tree path actions", () => {
     const warningSpy = vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("Delete" as never);
 
     expect(host.handleMessage({ type: "file-tree-delete", rootGeneration: 0, path: "c:\\root" }, vi.fn())).toBe(true);
-    await new Promise((r) => setTimeout(r, 0));
+    await settle();
 
     expect(statSpy).not.toHaveBeenCalled();
     expect(warningSpy).not.toHaveBeenCalled();
@@ -483,7 +509,7 @@ describe("FileTreeHost — file-tree path actions", () => {
     expect(host.handleMessage({ type: "file-tree-delete", rootGeneration: 0, path: "/workspace/a.ts" }, vi.fn())).toBe(
       true,
     );
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => errorSpy.mock.calls.length > 0);
     expect(errorSpy).toHaveBeenCalledWith("AnyWhere Terminal could not delete the selected item.");
 
     errorSpy.mockClear();
@@ -501,7 +527,7 @@ describe("FileTreeHost — file-tree path actions", () => {
     expect(host.handleMessage({ type: "file-tree-delete", rootGeneration: 0, path: "/workspace/a.ts" }, vi.fn())).toBe(
       true,
     );
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => errorSpy.mock.calls.length > 0);
     expect(errorSpy).toHaveBeenCalledWith("AnyWhere Terminal could not delete the selected item.");
     sub.dispose();
   });
@@ -565,12 +591,9 @@ describe("FileTreeHost — git decoration stamping on read-directory", () => {
     const host = new FileTreeHost(provider);
     const posted: ReadDirectoryResponseMessage[] = [];
     host.handleMessage(makeRpc(), (m) => posted.push(m as ReadDirectoryResponseMessage));
-    // The handler is async; allow time for fs.readDirectory + git check-ignore
-    // (which spawns a process — on a non-git directory it exits with code 128
-    // typically within a few ms, but give it generous headroom on slow CI).
-    for (let i = 0; i < 50 && posted.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    // The handler is async and spawns `git check-ignore`, so the wait has to
+    // outlast a process spawn on a loaded machine, not just a tick.
+    await waitFor(() => posted.length > 0);
     expect(posted.length).toBe(1);
     return posted[0];
   }

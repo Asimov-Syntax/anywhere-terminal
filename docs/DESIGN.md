@@ -317,6 +317,7 @@ there.
 | Existing capability | Location | Used for |
 |---------------------|----------|----------|
 | `vscode.git` API types + repository state events | `src/providers/git.ts` | Repo roots without re-implementing repo detection; branch changes for repos VS Code already has open |
+| Root-aware path containment | `src/utils/pathBoundary.ts` | "Is this folder inside that worktree / repo root?" — extracted from `gitDecorationProvider.ts`, which had the only correct implementation of filesystem-root, separator-drift and drive-case handling |
 | Watcher pool with per-event-kind debounce | `src/providers/fsWatcherPool.ts` | Watching `.git/worktrees` and `HEAD` — via `subscribePattern` only, since `subscribe()` ignores change events. The pool does **not** pause on window blur, and it currently cannot report a watcher-creation failure to its caller |
 | Loopback hook runtime with per-session tokens | `src/cursor/CursorHookRuntime.ts` | **The** agent hook endpoint, widened from one agent to several. Already does constant-time token compare and liveness re-check at use time |
 | Hook config installer with cross-process lock + atomic rename | `src/cursor/CursorHookInstaller.ts` | Writing managed entries into an agent's settings file without losing a concurrent edit |
