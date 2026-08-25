@@ -13,6 +13,7 @@ import {
   buildResumeCommandString,
   type ContinuationTarget,
   type LaunchMode,
+  resolveContextTag,
   resolveLaunchExecutable,
   VaultLaunchError,
 } from "./LaunchBuilder";
@@ -52,7 +53,12 @@ export class VaultLauncher {
     }
 
     const executable = await resolveLaunchExecutable(entry, mode, target);
-    const spec = build(entry, mode, this.hostEnv, prompt, target, executable);
+    const contextTag = await resolveContextTag(
+      entry,
+      this.hostEnv,
+      mode === "continue" ? (target?.agent ?? entry.agent) : undefined,
+    );
+    const spec = build(entry, mode, this.hostEnv, prompt, target, executable, contextTag);
     // Spawn the agent CLI directly as the terminal's process (PTY root). This is
     // killed cleanly on window reload; on exit, the session manager respawns a
     // shell in the same tab so the user keeps an input prompt (see
@@ -71,7 +77,7 @@ export class VaultLauncher {
    *  would refuse to run (spec: Cursor explicit Resume identity proof). */
   async buildResumeCommand(entryId: string): Promise<string> {
     const entry = await this.resolveLaunchable(entryId, "resume");
-    return buildResumeCommandString(entry);
+    return buildResumeCommandString(entry, this.hostEnv);
   }
 
   /** Resolve an entry and settle every host-side gate that must precede an

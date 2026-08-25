@@ -9,6 +9,7 @@
 
 import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
 import { posixShellQuote } from "../utils/posixShellQuote";
+import { applyContextTag, readClaudeContextTag } from "./claudeContextTag";
 import { isCursorCliResumableEntry } from "./cursorCapabilities";
 import { getAgentDefinition } from "./registry";
 import type { AgentVaultDefinition, CommandTemplate, VaultSessionEntry } from "./types";
@@ -55,6 +56,7 @@ function expandArgs(
   entry: VaultSessionEntry,
   executable = template.executable,
   prompt = "",
+  contextTag?: string,
 ): string[] {
   const args: string[] = [];
   for (const part of template.args) {
@@ -68,7 +70,11 @@ function expandArgs(
       continue;
     }
     args.push(part.flag);
-    args.push(part.valueTemplate ? part.valueTemplate.replace(/\{\{value\}\}/g, value) : value);
+    // The captured model is canonical — the transcript never records the window
+    // the session ran under — so the reader's configured tag is restated here or
+    // the resume silently drops to the narrow context.
+    const tagged = part.from === "model" ? applyContextTag(value, contextTag) : value;
+    args.push(part.valueTemplate ? part.valueTemplate.replace(/\{\{value\}\}/g, tagged) : tagged);
   }
   return args;
 }
@@ -123,7 +129,10 @@ function shellQuoteArg(arg: string): string {
  * shell command string for "Copy Resume Command" (redesign-vault-panel-ui D9).
  * Reuses the same flag substitution as `build`.
  */
-export async function buildResumeCommandString(entry: VaultSessionEntry): Promise<string> {
+export async function buildResumeCommandString(
+  entry: VaultSessionEntry,
+  hostEnv: Record<string, string | undefined> = {},
+): Promise<string> {
   const def = getAgentDefinition(entry.agent);
   if (!def) {
     throw new VaultLaunchError(`Unknown agent: ${entry.agent}`, "unknown-agent");
@@ -132,8 +141,31 @@ export async function buildResumeCommandString(entry: VaultSessionEntry): Promis
   const template = def.resumeCommand;
   const resolvedExecutable = await resolveLaunchExecutable(entry, "resume");
   const executable = resolveTemplateExecutable(template, resolvedExecutable);
-  const args = expandArgs(template, entry, executable);
+  const args = expandArgs(template, entry, executable, "", await resolveContextTag(entry, hostEnv));
   return [executable, ...args].map(shellQuoteArg).join(" ");
+}
+
+/**
+ * The context-window tag a Claude launch must restate (see claudeContextTag).
+ * Every root comes from the captured entry or the INJECTED host env — never from
+ * `process.env` or the real home — so the launcher reads no config nobody handed
+ * it, and a test cannot pick up the developer's own settings. Other agents encode
+ * no such tag in their model ids, so they get none.
+ */
+export async function resolveContextTag(
+  entry: VaultSessionEntry,
+  hostEnv: Record<string, string | undefined>,
+  agent = entry.agent,
+): Promise<string | undefined> {
+  if (agent !== "claude") {
+    return undefined;
+  }
+  return readClaudeContextTag({
+    configDir: entry.flags.configDir ?? hostEnv.CLAUDE_CONFIG_DIR,
+    home: hostEnv.HOME ?? hostEnv.USERPROFILE,
+    cwd: entry.cwd,
+    envModel: hostEnv.ANTHROPIC_MODEL,
+  });
 }
 
 function buildClaudeEnv(
@@ -212,6 +244,7 @@ function buildContinue(
   prompt: string | undefined,
   target: ContinuationTarget | undefined,
   resolvedExecutable: string | undefined,
+  contextTag: string | undefined,
 ): LaunchSpec {
   const agent = target?.agent ?? entry.agent;
   const def = getAgentDefinition(agent);
@@ -230,7 +263,7 @@ function buildContinue(
     file: executable,
     args: [
       ...permissionArgs(def, source, target?.permissionChoiceId),
-      ...expandArgs(continueCommand, source, executable, prompt),
+      ...expandArgs(continueCommand, source, executable, prompt, agent === "claude" ? contextTag : undefined),
     ],
     cwd: entry.cwd,
     env: def.id === "claude" ? buildClaudeEnv(def, source, hostEnv) : {},
@@ -250,6 +283,7 @@ export function build(
   prompt?: string,
   target?: ContinuationTarget,
   resolvedExecutable?: string,
+  contextTag?: string,
 ): LaunchSpec {
   const def = getAgentDefinition(entry.agent);
   if (!def) {
@@ -259,7 +293,7 @@ export function build(
   // `continue` is the one mode whose values come from the CALL, not the entry: the
   // host composed the prompt (D7) and the reader chose the agent and posture (D11).
   if (mode === "continue") {
-    return buildContinue(entry, hostEnv, prompt, target, resolvedExecutable);
+    return buildContinue(entry, hostEnv, prompt, target, resolvedExecutable, contextTag);
   }
   const template = mode === "fork" ? def.forkCommand : def.resumeCommand;
   if (!template) {
@@ -270,7 +304,7 @@ export function build(
   const executable = resolveTemplateExecutable(template, resolvedExecutable);
   return {
     file: executable,
-    args: expandArgs(template, entry, executable),
+    args: expandArgs(template, entry, executable, "", def.id === "claude" ? contextTag : undefined),
     cwd: entry.cwd,
     env,
   };
