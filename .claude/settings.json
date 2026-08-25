@@ -85,6 +85,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/run.sh\" analytics-collect.ts",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -95,6 +104,28 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/compact-resume.sh\"",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/run.sh\" analytics-collect.ts",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/run.sh\" analytics-collect.ts",
+            "timeout": 15
           }
         ]
       }
