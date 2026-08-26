@@ -68,3 +68,4 @@ asimov/debug/*/state.json*
 .claude/commands/asimov-debug.md
 .opencode/command/asimov-debug.md
 .opencode/plugins/asimov-debug.ts
+asimov/changes/active
