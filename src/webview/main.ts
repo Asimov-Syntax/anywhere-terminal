@@ -40,6 +40,7 @@ import { createMessageRouter } from "./messaging/MessageRouter";
 import { createScrollbackDumpHandler } from "./messaging/scrollbackDumpHandler";
 import { ResizeCoordinator } from "./resize/ResizeCoordinator";
 import { SplitTreeRenderer } from "./split/SplitTreeRenderer";
+import { resolveTabDisplayPane } from "./split/tabDisplay";
 import { WebviewStateStore } from "./state/WebviewStateStore";
 import { buildTabBarData, handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 import { hideRenameOverlay, repositionRenameOverlay, showRenameOverlay } from "./tabRenameOverlay";
@@ -51,6 +52,7 @@ import { TerminalFactory } from "./terminal/TerminalFactory";
 import { ThemeManager } from "./theme/ThemeManager";
 import { showBanner } from "./ui/BannerService";
 import { VaultPanel } from "./vault/VaultPanel";
+import { activatePane } from "./worktree/activatePane";
 import { resolveInitialView, WorktreeController } from "./worktree/WorktreeController";
 
 // Inject the vendored Seti icon-font @font-face rule (with the woff embedded
@@ -402,10 +404,18 @@ function startInlineRename(tabId: string, tabEl: HTMLElement, tabBarEl: HTMLElem
 }
 
 function switchTab(newTabId: string): void {
-  const next = store.terminals.get(newTabId);
-  if (!next) {
+  // Not `terminals.get(newTabId)`: a tab is keyed by the pane it was created
+  // from, and closing that particular pane leaves the tab alive with its other
+  // leaves. Gating on the original pane made such a tab unreachable from the tab
+  // bar and from a worktree row alike (round-2 B2).
+  const displayPaneId = resolveTabDisplayPane(newTabId, {
+    tabLayouts: store.tabLayouts,
+    hasTerminal: (sessionId) => store.terminals.has(sessionId),
+  });
+  if (displayPaneId === null) {
     return;
   }
+  const next = store.terminals.get(newTabId);
 
   // A keyboard-driven tab switch would otherwise leave the body-mounted subagent
   // popup overlaying the newly active tab (mouse switches dismiss it via the
@@ -424,20 +434,40 @@ function switchTab(newTabId: string): void {
   // Show new tab
   store.activeTabId = newTabId;
   splitRenderer.showTabContainer(newTabId);
-  next.container.style.display = "block";
+  if (next) {
+    next.container.style.display = "block";
+  }
 
   // Fit after display change
   requestAnimationFrame(() => {
-    if (!store.terminals.has(newTabId)) {
+    const instance = store.terminals.get(displayPaneId);
+    if (!instance) {
       return;
     }
-    factory.fitAllAndFocus(newTabId, next);
+    factory.fitAllAndFocus(newTabId, instance);
   });
 
   splitRenderer.updateActivePaneVisual(newTabId);
   updateTabBar();
   syncVaultToActivePane();
   vscode.postMessage({ type: "switchTab", tabId: newTabId });
+}
+
+/** Bring a pane forward; the resolution itself lives in worktree/activatePane.ts. */
+function activatePaneById(paneId: string): boolean {
+  return activatePane(paneId, {
+    tabLayouts: store.tabLayouts,
+    canDisplayTab: (tabId) =>
+      resolveTabDisplayPane(tabId, {
+        tabLayouts: store.tabLayouts,
+        hasTerminal: (sessionId) => store.terminals.has(sessionId),
+      }) !== null,
+    setActivePane: (tabId, id) => store.tabActivePaneIds.set(tabId, id),
+    persist: () => store.persist(),
+    showTab: (tabId) => switchTab(tabId),
+    updateActivePaneVisual: (tabId) => splitRenderer.updateActivePaneVisual(tabId),
+    focusPane: (id) => store.terminals.get(id)?.terminal.focus(),
+  });
 }
 
 function removeTerminal(id: string): void {
@@ -762,6 +792,15 @@ const routeMessage = createMessageRouter({
   onWorktreeTreeResponse(msg) {
     worktreeController?.handleTreeResponse(msg);
   },
+  onWorktreeRowActivation(msg) {
+    worktreeController?.setRowActivation(msg.activation);
+  },
+  onWorktreeShowPreview(msg) {
+    worktreeController?.showPreview(msg.entryId);
+  },
+  onWorktreeActivatePane(msg) {
+    worktreeController?.activatePane(msg.paneId);
+  },
   onVaultContextCwd(msg) {
     // Drop a reply for a pane that is no longer active (stale-guard): the user
     // switched panes before this resolved, and a later request owns the scope.
@@ -987,10 +1026,15 @@ function handleInit(msg: InitMessage): void {
       host: vaultHost,
       postMessage: (m) => vscode.postMessage(m),
       store,
-      init: { workspaceRoot: msg.workspaceRoot },
+      init: { workspaceRoot: msg.workspaceRoot, rowActivation: msg.worktreeRowActivation },
+      // The overlay and the panes belong to the surfaces that hold them; the
+      // controller only forwards, so neither is rebuilt here (D2).
+      showPreview: (entryId) => vaultPanel?.openPreviewById(entryId) ?? false,
+      activatePane: (paneId) => activatePaneById(paneId),
     });
     vaultPanel = new VaultPanel({
       host: vaultHost,
+      actionsAvailable: msg.vaultActionsAvailable,
       worktreeBody: worktreeController.element,
       onWorktreeQuery: (query) => worktreeController?.setQuery(query),
       onWorktreeRefresh: () => worktreeController?.requestRefresh(),

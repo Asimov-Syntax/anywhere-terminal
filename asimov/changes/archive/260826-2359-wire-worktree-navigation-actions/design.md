@@ -54,13 +54,30 @@ export interface WorktreeActions {
   openFolder(path: string, mode: "newWindow" | "addToWorkspace"): Promise<void>;
   revealInOS(path: string): Promise<void>;
   copyText(text: string): Promise<void>;
-  openTerminal(surface: WorktreeSurface, cwd: string): Promise<void>;
   focusPane(paneId: string, viewId: string): Promise<void>;
   copyResumeCommand(entryId: string): Promise<void>;
   revealSessionCwd(entryId: string): Promise<void>;
   copySessionCwd(entryId: string): Promise<void>;
 }
 ```
+
+**Opening a terminal is the eighth capability and it is NOT one of these.** An earlier form of
+this decision had `openTerminal(surface, cwd)` among them, implemented in `extension.ts`. Build
+evidence refuted it: creating a pane is `sessionManager.createSession(viewId, webview, {cwd})`,
+which the extension reaches only through a `TerminalViewProvider` (`doNewTerminal`,
+`extension.ts:427`), and `WorktreeSurface` is constructed privately inside each provider's
+`resolveWebviewView` — the extension holds no mapping from one to the other and cannot be given
+one without inventing a registry that exists for this single call.
+
+So it goes where the capability already lives: `WorktreeSurface` gains an optional
+`openTerminal(cwd)`. This is the same shape as `post` — the surface IS the provider's own handle,
+and every provider already builds one knowing its own `viewId` and webview. It changes nothing
+about ownership: the host still resolves `worktreeId` against its cached tree and hands over the
+path IT looked up. Only the party that performs moves, from a component that cannot to the one
+that already does.
+
+Optional for the same reason every other capability is: a surface that does not implement it
+simply does not offer terminals, exactly as it behaved before actions existed.
 
 **Two of the seven do not end in the extension at all**, and an earlier form of this decision
 had them wrong. The preview overlay is entirely webview-owned: `PreviewController.open()` builds

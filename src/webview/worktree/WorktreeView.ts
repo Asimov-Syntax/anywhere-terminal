@@ -42,6 +42,7 @@ import type {
   WorktreeInfo,
   WorktreePresence,
   WorktreeRepo,
+  WorktreeRowActivation,
   WorktreeSubagentRow,
   WorktreeTree,
 } from "./worktreeViewTypes";
@@ -72,8 +73,13 @@ export interface WorktreeViewDeps {
    * an action the view cannot perform is absent rather than present and inert.
    */
   actions?: WorktreeMenuActions;
+  /**
+   * What activating a window-scope row should do. A getter, because the setting
+   * is live; absent → `focus`, the manifest default.
+   */
+  rowActivation?: () => WorktreeRowActivation;
   /** Activating an agent row — focus its pane, or open its preview (§ 6). */
-  onActivateAgent?: (row: WorktreeAgentRow) => void;
+  onActivateAgent?: (row: WorktreeAgentRow, activation: WorktreeRowActivation) => void;
   /** Activating a subagent row targets the PARENT's pane; it has none of its own. */
   onActivateSubagent?: (subagent: WorktreeSubagentRow, parent: WorktreeAgentRow) => void;
   /** Rebuild this repo's listing after a degraded result. */
@@ -269,6 +275,23 @@ export class WorktreeView {
     }
     this.deps.persistCollapsed?.([...this.collapsed]);
     this.render();
+  }
+
+  /**
+   * What this row's activation does. The setting is consulted for window rows
+   * only: an external row has no pane in this window to focus, so `preview` is
+   * not the setting being overridden — the setting is never read (design.md D5).
+   */
+  private activationFor(row: WorktreeAgentRow): WorktreeRowActivation {
+    if (row.scope === "external") {
+      return "preview";
+    }
+    // A window row with no vault entry has no preview to open, so `preview`
+    // would be a dead click; its pane is the one thing it always has (B3).
+    if (row.entryId === undefined) {
+      return "focus";
+    }
+    return this.deps.rowActivation?.() ?? "focus";
   }
 
   /** At most one request per row per session, whoever expanded it. */
@@ -566,7 +589,11 @@ export class WorktreeView {
             }
           },
           onContextMenu: this.menu ? (i, ev, row) => this.menu?.openForWorktree(i, ev, row) : undefined,
-          onOpenFolder: this.deps.actions ? (i) => this.deps.actions?.openFolderInNewWindow(i) : undefined,
+          // Same rule as the menu's: an affordance whose capability was not
+          // supplied is absent, not present and inert (design.md D10).
+          onOpenFolder: this.deps.actions?.openFolderInNewWindow
+            ? (i) => this.deps.actions?.openFolderInNewWindow?.(i)
+            : undefined,
         },
       ),
     );
@@ -593,7 +620,7 @@ export class WorktreeView {
           row,
           { expanded: rowExpanded, now: this.now() },
           {
-            onActivate: (r) => this.deps.onActivateAgent?.(r),
+            onActivate: (r) => this.deps.onActivateAgent?.(r, this.activationFor(r)),
             onContextMenu: this.menu ? (r, ev, el) => this.menu?.openForAgent(r, ev, el) : undefined,
             onToggleSubagents: (r) => this.toggleRow(r.rowId),
           },

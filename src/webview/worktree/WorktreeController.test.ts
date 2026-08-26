@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { WebViewToExtensionMessage, WorktreeTreeResponseMessage } from "../../types/messages";
 import { WorktreeController } from "./WorktreeController";
 import { singleRepoPresence, singleRepoTree } from "./worktreeFixtures";
+import type { WorktreeAgentRow, WorktreeRowActivation } from "./worktreeViewTypes";
 
 interface Harness {
   controller: WorktreeController;
@@ -10,9 +11,18 @@ interface Harness {
   state: Record<string, unknown>;
 }
 
-function mount(over: { workspaceRoot?: string | null } = {}): Harness {
+function mount(
+  over: {
+    workspaceRoot?: string | null;
+    rowActivation?: WorktreeRowActivation;
+    showPreview?: (entryId: string) => boolean;
+    activatePane?: (paneId: string) => boolean;
+    /** Persisted before mount — the view reads it once, at construction. */
+    expandedRows?: string[];
+  } = {},
+): Harness {
   const posts: WebViewToExtensionMessage[] = [];
-  const state: Record<string, unknown> = {};
+  const state: Record<string, unknown> = over.expandedRows ? { worktreeExpandedRows: over.expandedRows } : {};
   const controller = WorktreeController.mount({
     host: document.body,
     postMessage: (msg) => posts.push(msg),
@@ -20,7 +30,12 @@ function mount(over: { workspaceRoot?: string | null } = {}): Harness {
       getState: () => state as never,
       updateState: (patch) => Object.assign(state, patch),
     },
-    init: { workspaceRoot: over.workspaceRoot === undefined ? "/repo" : over.workspaceRoot },
+    init: {
+      workspaceRoot: over.workspaceRoot === undefined ? "/repo" : over.workspaceRoot,
+      rowActivation: over.rowActivation ?? "focus",
+    },
+    showPreview: over.showPreview,
+    activatePane: over.activatePane,
     now: () => 1_000_000,
   });
   document.body.appendChild(controller.element);
@@ -129,17 +144,16 @@ describe("refresh", () => {
 });
 
 describe("actions it cannot perform", () => {
-  it("offers no context menu over a real worktree", () => {
+  it("opens the worktree context menu, now that its actions post something", () => {
+    // This replaces the case that asserted NO menu: it encoded the state before
+    // the controller had any action path, which task 3_2 is what ends.
     const { controller } = mount();
     controller.setVisible(true);
     controller.handleTreeResponse(response());
     const row = document.querySelector<HTMLElement>(".wt-row");
-    const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
-    row?.dispatchEvent(ev);
-    expect(document.querySelector(".vault-context-menu")).toBeNull();
-    // Nothing swallowed the event either — a listener that only preventDefaults
-    // leaves the user with no menu at all, ours or the host's.
-    expect(ev.defaultPrevented).toBe(false);
+    row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    const items = Array.from(document.querySelectorAll(".vault-context-menu button")).map((b) => b.textContent);
+    expect(items).toContain("Copy Path");
   });
 
   it("opens no create form, because nothing would run it", () => {
@@ -170,7 +184,7 @@ describe("persisted disclosure state", () => {
       host: document.body,
       postMessage: (msg) => posts.push(msg),
       store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
-      init: { workspaceRoot: "/repo" },
+      init: { workspaceRoot: "/repo", rowActivation: "focus" },
       now: () => 1_000_000,
     });
     document.body.appendChild(controller.element);
@@ -178,5 +192,117 @@ describe("persisted disclosure state", () => {
     controller.handleTreeResponse(response());
     const row = document.querySelector<HTMLElement>(`.wt-row[data-worktree-id="${first?.id}"]`);
     expect(row?.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("row activation is posted as a request the host resolves", () => {
+  /** The fixture's own rows, so paneId/entryId are the shapes the host really sends. */
+  function activateFirstAgent(rowId: string): void {
+    document.querySelector<HTMLButtonElement>(".wt-presence")?.click();
+    document.querySelector<HTMLElement>(`.wt-arow[data-row-id="${rowId}"]`)?.click();
+  }
+
+  function firstWindowRow(): WorktreeAgentRow {
+    const row = Object.values(singleRepoPresence(1_000_000).rowsByWorktreeId)
+      .flat()
+      .find((r) => r.scope === "window" && r.paneId !== undefined && r.entryId !== undefined);
+    if (!row) {
+      throw new Error("fixture lost its window row");
+    }
+    return row;
+  }
+
+  it("posts a focus request under the focus setting, and a preview request under preview", () => {
+    const row = firstWindowRow();
+    for (const [setting, expected] of [
+      ["focus", { type: "worktreeFocusPane", rowId: row.rowId, paneId: row.paneId }],
+      ["preview", { type: "worktreeOpenPreview", rowId: row.rowId, entryId: row.entryId }],
+    ] as const) {
+      document.body.replaceChildren();
+      const { controller, posts } = mount({ rowActivation: setting });
+      controller.setVisible(true);
+      controller.handleTreeResponse(response());
+      posts.length = 0;
+      activateFirstAgent(row.rowId);
+      expect(posts).toEqual([expected]);
+    }
+  });
+
+  it("follows an update that arrives after init", () => {
+    // The setting is live host-side, so a view already painted must obey the new
+    // value without being reopened.
+    const row = firstWindowRow();
+    const { controller, posts } = mount({ rowActivation: "focus" });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    controller.setRowActivation("preview");
+    posts.length = 0;
+    activateFirstAgent(row.rowId);
+    expect(posts).toEqual([{ type: "worktreeOpenPreview", rowId: row.rowId, entryId: row.entryId }]);
+  });
+});
+
+describe("the halves only a surface can perform", () => {
+  it("hands a preview to the thing that owns the overlay, and a pane to the thing that owns panes", () => {
+    const previews: string[] = [];
+    const panes: string[] = [];
+    const { controller } = mount({
+      showPreview: (entryId) => {
+        previews.push(entryId);
+        return true;
+      },
+      activatePane: (paneId) => {
+        panes.push(paneId);
+        return true;
+      },
+    });
+    controller.showPreview("claude:s1");
+    controller.activatePane("pane-1");
+    expect(previews).toEqual(["claude:s1"]);
+    expect(panes).toEqual(["pane-1"]);
+  });
+
+  it("does nothing when this surface holds neither the entry nor the pane", () => {
+    // The host sends to the surface that HOLDS the target; a surface that does
+    // not must stay silent rather than post an error the user cannot act on.
+    const { controller, posts } = mount({
+      showPreview: () => false,
+      activatePane: () => false,
+    });
+    controller.setVisible(true);
+    posts.length = 0;
+    controller.showPreview("claude:missing");
+    controller.activatePane("pane-missing");
+    expect(posts).toEqual([]);
+    expect(document.querySelector(".vault-context-menu")).toBeNull();
+  });
+
+  it("survives a surface that supplied neither capability", () => {
+    // A webview with no vault panel mounted still receives these messages.
+    const { controller } = mount();
+    expect(() => {
+      controller.showPreview("claude:s1");
+      controller.activatePane("pane-1");
+    }).not.toThrow();
+  });
+});
+
+describe("a subagent row's activation is its parent's", () => {
+  it("focuses the PARENT's pane — a subagent has none of its own", () => {
+    // Anywhere else is a dead click, and the row is presented as actionable
+    // (design.md D9).
+    const parent = Object.values(singleRepoPresence(1_000_000).rowsByWorktreeId)
+      .flat()
+      .find((r) => r.scope === "window" && r.paneId !== undefined && r.delegations?.kind === "ok");
+    if (!parent) {
+      throw new Error("fixture lost a window row carrying delegations");
+    }
+    const { controller, posts } = mount({ expandedRows: [parent.rowId] });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    document.querySelector<HTMLButtonElement>(".wt-presence")?.click();
+    posts.length = 0;
+    document.querySelector<HTMLElement>(".wt-srow")?.click();
+    expect(posts).toEqual([{ type: "worktreeFocusPane", rowId: parent.rowId, paneId: parent.paneId }]);
   });
 });

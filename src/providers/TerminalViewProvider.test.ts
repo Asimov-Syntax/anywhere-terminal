@@ -939,6 +939,11 @@ describe("TerminalViewProvider: safeSendWithRetry via createTab", () => {
       handler({ type: "ready" });
     }
 
+    // Let the ready path finish first. Its init is awaited before the row-activation
+    // post, so that post would otherwise land AFTER the reset below and be counted
+    // as a createTab attempt.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
     // Reset spy and make it always fail
     postMessageSpy.mockReset();
     postMessageSpy.mockImplementation(() => Promise.resolve(false));

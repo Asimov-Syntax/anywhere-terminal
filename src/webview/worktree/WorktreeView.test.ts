@@ -28,6 +28,7 @@ import type {
   WorktreeAgentRow,
   WorktreeInfo,
   WorktreePresence,
+  WorktreeRowActivation,
   WorktreeTree,
 } from "./worktreeViewTypes";
 
@@ -919,5 +920,99 @@ describe("dialogs", () => {
     });
     view.element.querySelector<HTMLButtonElement>(".wt-notice--error .wt-link")?.click();
     expect(host.querySelector(".wt-dialog")?.getAttribute("aria-label")).toBe("Remove worktree");
+  });
+});
+
+// ── § 6: row activation ───────────────────────────────────────────────────
+
+describe("row activation", () => {
+  /** A worktree holding exactly the rows a case needs, so ids stay legible. */
+  function withRows(rows: WorktreeAgentRow[]): { tree: WorktreeTree; presence: WorktreePresence } {
+    return {
+      tree: singleRepoTree(),
+      presence: { scannedAt: NOW, degradedSources: [], rowsByWorktreeId: { [PANEL_WT]: rows } },
+    };
+  }
+
+  /** Open the presence pill, then activate one agent row by its id. */
+  function activate(view: WorktreeView, rowId: string): void {
+    view.element.querySelector<HTMLButtonElement>(".wt-presence")?.click();
+    view.element.querySelector<HTMLElement>(`.wt-arow[data-row-id="${rowId}"]`)?.click();
+  }
+
+  it("gives a window row whatever the setting says", () => {
+    for (const setting of ["focus", "preview"] as const) {
+      const seen: Array<[string, string]> = [];
+      const { view } = mount({
+        rowActivation: () => setting,
+        onActivateAgent: (row, activation) => seen.push([row.rowId, activation]),
+      });
+      view.setData(
+        withRows([
+          agentRow({ rowId: "w1", scope: "window", entryId: "claude:s1", agent: "claude", activity: "running" }),
+        ]),
+      );
+      activate(view, "w1");
+      expect(seen).toEqual([["w1", setting]]);
+    }
+  });
+
+  it("opens the preview for an external row under either setting", () => {
+    // No pane of that row exists in this window, so `focus` has nothing to name.
+    for (const setting of ["focus", "preview"] as const) {
+      const seen: string[] = [];
+      const { view } = mount({
+        rowActivation: () => setting,
+        onActivateAgent: (_row, activation) => seen.push(activation),
+      });
+      view.setData(withRows([agentRow({ rowId: "x1", scope: "external", agent: "claude", activity: "running" })]));
+      activate(view, "x1");
+      expect(seen, `setting: ${setting}`).toEqual(["preview"]);
+    }
+  });
+
+  it("focuses when the host supplied no setting at all", () => {
+    const seen: string[] = [];
+    const { view } = mount({ onActivateAgent: (_row, activation) => seen.push(activation) });
+    view.setData(
+      withRows([
+        agentRow({ rowId: "w1", scope: "window", entryId: "claude:s1", agent: "claude", activity: "running" }),
+      ]),
+    );
+    activate(view, "w1");
+    expect(seen).toEqual(["focus"]);
+  });
+
+  it("focuses a window row with no session, whatever the setting says", () => {
+    // `preview` would be a dead click: there is no vault entry to open, and the
+    // row's pane is the one thing it always has (round-1 B3).
+    const seen: string[] = [];
+    const { view } = mount({
+      rowActivation: () => "preview",
+      onActivateAgent: (_row, activation) => seen.push(activation),
+    });
+    view.setData(withRows([agentRow({ rowId: "w1", scope: "window", agent: "claude", activity: "running" })]));
+    activate(view, "w1");
+    expect(seen).toEqual(["focus"]);
+  });
+
+  it("follows a setting that changes while the view is open", () => {
+    // Read at the click, not captured at construction — a view already painted
+    // must not need a reopen to obey the new value (design.md D5).
+    let setting: WorktreeRowActivation = "focus";
+    const seen: string[] = [];
+    const { view } = mount({
+      rowActivation: () => setting,
+      onActivateAgent: (_row, activation) => seen.push(activation),
+    });
+    view.setData(
+      withRows([
+        agentRow({ rowId: "w1", scope: "window", entryId: "claude:s1", agent: "claude", activity: "running" }),
+      ]),
+    );
+    activate(view, "w1");
+    setting = "preview";
+    activate(view, "w1");
+    expect(seen).toEqual(["focus", "preview"]);
   });
 });

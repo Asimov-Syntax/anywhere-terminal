@@ -17,7 +17,7 @@ function mount(state: WebviewState) {
     host: document.body,
     postMessage: (msg) => posts.push(msg),
     store: { getState: () => state, updateState: (patch) => Object.assign(state, patch) },
-    init: { workspaceRoot: "/repo" },
+    init: { workspaceRoot: "/repo", rowActivation: "focus" },
     now: () => 1_000_000,
   });
   document.body.replaceChildren(controller.element);

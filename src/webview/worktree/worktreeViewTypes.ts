@@ -14,6 +14,7 @@
 //   WorktreeCreateDefaults / WorktreeCreateDraft
 //     → docs/design/worktree-actions.md § 3.2
 
+export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 export type {
   DelegationRoster,
   PresenceDegradation,

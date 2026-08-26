@@ -14,7 +14,7 @@ import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalPanelSerializer } from "./providers/TerminalPanelSerializer";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
 import { VaultWatchCoordinator } from "./providers/VaultWatchCoordinator";
-import { createWorktreeHost } from "./providers/WorktreeHost";
+import { createWorktreeHost, type WorktreeActions } from "./providers/WorktreeHost";
 import { loadNodePty } from "./pty/PtyManager";
 import type { MessageSender } from "./session/OutputBuffer";
 import { createPaneEvidenceStore } from "./session/PaneEvidenceStore";
@@ -28,6 +28,7 @@ import {
   readTerminalSettings,
 } from "./settings/SettingsReader";
 import { PtyLoadError } from "./types/errors";
+import type { ExtensionToWebViewMessage } from "./types/messages";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
@@ -39,6 +40,99 @@ import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
+
+/**
+ * What the worktree panel's read-only actions need from the world, injected so
+ * the resolution above them can be tested without a window.
+ *
+ * Every path and id here has ALREADY been resolved by the host against its own
+ * tree and presence — nothing in this seam looks anything up, and nothing here
+ * may be handed a value the webview supplied.
+ *
+ * See: asimov/changes/wire-worktree-navigation-actions/design.md D2, D4.
+ */
+export interface WorktreeActionDeps {
+  executeCommand(command: string, ...args: unknown[]): Thenable<unknown>;
+  writeClipboard(text: string): Thenable<void>;
+  fileUri(path: string): unknown;
+  workspaceFolderCount(): number;
+  addWorkspaceFolder(at: number, uri: unknown): void;
+  /** The editor panel with this view id, if the id names one at all. */
+  editorForView(viewId: string): { reveal(): void; post(msg: ExtensionToWebViewMessage): void } | undefined;
+  /** Post to the sidebar or bottom-panel view with this id. */
+  postToView(viewId: string, msg: ExtensionToWebViewMessage): void;
+  resumeCommand(entryId: string): Promise<string>;
+  /** The working directory the vault recorded for a session, if it has one. */
+  sessionCwd(entryId: string): Promise<string | undefined>;
+}
+
+/**
+ * The panel's read-only capabilities.
+ *
+ * Opening a terminal is deliberately absent: creating a pane needs a view id and
+ * a webview, which only the provider owning the surface holds, so that one
+ * capability lives on `WorktreeSurface` instead (D2).
+ */
+export function createWorktreeActions(deps: WorktreeActionDeps): WorktreeActions {
+  /** Reveal the surface that HOLDS a pane, then activate the pane inside it. */
+  async function focusPane(paneId: string, viewId: string): Promise<void> {
+    const activate: ExtensionToWebViewMessage = { type: "worktreeActivatePane", paneId };
+    // An editor panel is revealed through its own panel object; a view is
+    // revealed by its focus command. Revealing the surface that ASKED would
+    // focus a pane the user cannot see whenever the panel is open twice (D4).
+    const editor = deps.editorForView(viewId);
+    if (editor) {
+      editor.reveal();
+      editor.post(activate);
+      return;
+    }
+    if (viewId.startsWith("editor-")) {
+      // An editor view id whose panel is gone: there is nothing to reveal, and
+      // the sidebar is not a substitute for it.
+      return;
+    }
+    await deps.executeCommand(
+      viewId === TerminalViewProvider.panelViewType ? "anywhereTerminal.panel.focus" : "anywhereTerminal.sidebar.focus",
+    );
+    deps.postToView(viewId, activate);
+  }
+
+  return {
+    openFolder: async (path, mode) => {
+      if (mode === "newWindow") {
+        await deps.executeCommand("vscode.openFolder", deps.fileUri(path), { forceNewWindow: true });
+        return;
+      }
+      // Appended, never replacing: adding a worktree to the workspace must not
+      // remove the folders the user already had open.
+      deps.addWorkspaceFolder(deps.workspaceFolderCount(), deps.fileUri(path));
+    },
+    revealInOS: async (path) => {
+      await deps.executeCommand("revealFileInOS", deps.fileUri(path));
+    },
+    copyText: async (text) => {
+      await deps.writeClipboard(text);
+    },
+    focusPane,
+    copyResumeCommand: async (entryId) => {
+      // Built through the launcher, so a copy cannot hand out a command the
+      // launcher itself would refuse to run.
+      await deps.writeClipboard(await deps.resumeCommand(entryId));
+    },
+    revealSessionCwd: async (entryId) => {
+      const cwd = await deps.sessionCwd(entryId);
+      if (cwd !== undefined) {
+        await deps.executeCommand("revealFileInOS", deps.fileUri(cwd));
+      }
+    },
+    copySessionCwd: async (entryId) => {
+      const cwd = await deps.sessionCwd(entryId);
+      if (cwd !== undefined) {
+        await deps.writeClipboard(cwd);
+      }
+    },
+  };
+}
 
 /**
  * The worktree host's delegation reader, backed by the vault.
@@ -241,6 +335,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Worktree tree — one host per window, shared by the sidebar / panel / editor
   // surfaces so freshness costs one set of git calls and watchers regardless of
   // how many surfaces show it. See: cache-and-broadcast-worktree-tree design.md D1.
+  // Constructed before the host, which needs it for the resume-command capability.
+  const vaultLauncher = new VaultLauncher(vaultService);
+
   const worktreeHost = createWorktreeHost({
     deps: createWorktreeTreeDeps(),
     workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
@@ -258,10 +355,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     // What an expanded row's session delegated, read from the vault on demand.
     readDelegations: createDelegationReader(vaultService),
+    // The panel's read-only actions. Every one receives a value the host looked
+    // up; none of them takes an id (worktree-navigation design.md D2).
+    actions: createWorktreeActions({
+      executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
+      writeClipboard: (text) => vscode.env.clipboard.writeText(text),
+      fileUri: (path) => vscode.Uri.file(path),
+      workspaceFolderCount: () => (vscode.workspace.workspaceFolders ?? []).length,
+      addWorkspaceFolder: (at, uri) => vscode.workspace.updateWorkspaceFolders(at, null, { uri: uri as vscode.Uri }),
+      editorForView: (viewId) => {
+        const provider = TerminalEditorProvider.findByViewId(viewId);
+        if (!provider) {
+          return undefined;
+        }
+        return {
+          reveal: () => provider.panel.reveal(provider.panel.viewColumn, false),
+          post: (msg) => void provider.panel.webview.postMessage(msg),
+        };
+      },
+      postToView: (viewId, msg) => {
+        const provider = viewId === TerminalViewProvider.panelViewType ? panelProvider : sidebarProvider;
+        const view = provider?.view;
+        if (view) {
+          void view.webview.postMessage(msg);
+        }
+      },
+      resumeCommand: (entryId) => vaultLauncher.buildResumeCommand(entryId),
+      sessionCwd: async (entryId) => (await vaultService.getEntry(entryId))?.cwd,
+    }),
   });
   context.subscriptions.push(worktreeHost);
 
-  const vaultLauncher = new VaultLauncher(vaultService);
   const vaultWatchCoordinator = new VaultWatchCoordinator({ watcherPool: fsWatcherPool, vaultService });
   context.subscriptions.push(vaultWatchCoordinator);
 
@@ -315,6 +439,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         fsWatcherPool,
         worktreeHost,
         paneEvidence,
+        vaultService,
       );
       context.subscriptions.push(panelDisposable);
     }),
@@ -333,6 +458,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         fsWatcherPool,
         worktreeHost,
         paneEvidence,
+        vaultService,
       ),
     ),
   );

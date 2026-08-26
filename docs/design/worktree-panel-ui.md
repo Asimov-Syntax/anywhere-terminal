@@ -258,9 +258,9 @@ These are not stylistic preferences; each one prevents a specific false claim.
 | Input | Target | Result |
 |-------|--------|--------|
 | Click / Enter | Worktree row | Toggle expand (when it has agents), else no-op |
-| Click / Enter | Agent row, window scope | Per `anywhereTerminal.worktree.rowActivation`: focus that pane (default) or open its preview |
+| Click / Enter | Agent row, window scope | Per `anywhereTerminal.worktree.rowActivation`: focus that pane (default) or open its preview. A row with no session falls back to focus, whatever the setting says — there is no preview to open |
 | Click / Enter | Agent row, external | Open the session preview — never focus, whatever the setting says |
-| Double click | Worktree row | Open folder — the mode comes from `anywhereTerminal.worktree.rowActivation`'s companion default in [DESIGN.md](../DESIGN.md) § 15 |
+| Double click | Worktree row | Open folder in a new window. No setting governs the mode: DESIGN.md § 15 registers `rowActivation` with no companion key, and one is not invented here — the other mode stays a context-menu item |
 | Right click | Any row | Context menu, per [worktree-actions.md](worktree-actions.md) § 3 |
 | `ArrowUp` / `ArrowDown` | Tree | Move through visible rows |
 | `ArrowRight` / `ArrowLeft` | Tree | Expand / collapse, then descend / ascend |
@@ -269,6 +269,17 @@ These are not stylistic preferences; each one prevents a specific false claim.
 
 Keyboard model, roles, and focus handling follow the existing file-tree panel rather than
 inventing a second tree idiom in the same webview.
+
+The setting's value is delivered in the init payload and **re-sent whenever it changes**, so a
+view already open picks it up without being reopened. It is read by the providers rather than the
+worktree host, because it is VS Code configuration and the host deliberately holds no window API.
+
+Focusing a pane resolves the tab that owns it and makes the pane that tab's active one *before*
+showing the tab — otherwise the tab comes forward on whichever pane was last active in it, which
+is not the row the user clicked. A tab is reachable through any live pane it still holds, not only
+through the pane it was named after: closing a split's original root pane deletes that terminal
+while the tab keeps its layout and its remaining leaves, and keying the tab switch on the original
+pane made such a tab unreachable from the tab bar as well.
 
 ### 6.1 Re-render discipline
 

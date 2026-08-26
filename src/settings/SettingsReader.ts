@@ -146,6 +146,28 @@ export function affectsSessionRestoreEnabled(e: vscode.ConfigurationChangeEvent)
   return e.affectsConfiguration("anywhereTerminal.sessionRestore.enabled");
 }
 
+/** What activating an agent row in the worktree panel does. */
+export type WorktreeRowActivation = "focus" | "preview";
+
+/**
+ * Read the worktree row-activation setting. Default `"focus"`.
+ *
+ * Read host-side because the webview has no `workspace.getConfiguration`, and
+ * defaulted rather than trusted: a stored value that is neither of the two
+ * (hand-edited settings.json, a downgrade) falls back rather than travelling to
+ * the view as a mode it cannot render.
+ */
+export function readWorktreeRowActivation(): WorktreeRowActivation {
+  const config = vscode.workspace.getConfiguration("anywhereTerminal");
+  const value = config.get<string>("worktree.rowActivation");
+  return value === "preview" || value === "focus" ? value : "focus";
+}
+
+/** Check whether a configuration change event affects row activation. */
+export function affectsWorktreeRowActivation(e: vscode.ConfigurationChangeEvent): boolean {
+  return e.affectsConfiguration("anywhereTerminal.worktree.rowActivation");
+}
+
 // ─── Private: Resolution Chains ─────────────────────────────────────
 
 /**

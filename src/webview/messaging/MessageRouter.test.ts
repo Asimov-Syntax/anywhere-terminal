@@ -114,6 +114,8 @@ describe("createMessageRouter", () => {
       rootGeneration: 0,
       workspaceRoot: null,
       worktreeHasRepo: false,
+      worktreeRowActivation: "focus" as const,
+      vaultActionsAvailable: true,
     });
 
     // None of the handlers should be called
@@ -159,5 +161,32 @@ describe("createMessageRouter", () => {
     expect(() => {
       dispatch({ type: "agentActivityStatus", tabId: "t1", agent: null, state: null });
     }).not.toThrow();
+  });
+});
+
+describe("the worktree panel's inbound messages", () => {
+  // A message in the union with no case is silently dropped — the seam that
+  // already lost `requestWorktreeSubagents` once (design.md D7).
+  const WORKTREE_MESSAGES: ExtensionToWebViewMessage[] = [
+    { type: "worktreeRowActivation", activation: "preview" },
+    { type: "worktreeShowPreview", entryId: "claude:s1" },
+    { type: "worktreeActivatePane", paneId: "pane-1" },
+  ];
+
+  for (const message of WORKTREE_MESSAGES) {
+    it(`routes ${message.type} to its handler, with the message intact`, () => {
+      const handler = vi.fn();
+      const key = `on${message.type.charAt(0).toUpperCase()}${message.type.slice(1)}` as keyof MessageHandlers;
+      const dispatch = createMessageRouter({ ...createMockHandlers(), [key]: handler });
+      dispatch(message);
+      expect(handler).toHaveBeenCalledWith(message);
+    });
+  }
+
+  it("ignores each of them when no handler is mounted", () => {
+    const dispatch = createMessageRouter(createMockHandlers());
+    for (const message of WORKTREE_MESSAGES) {
+      expect(() => dispatch(message)).not.toThrow();
+    }
   });
 });

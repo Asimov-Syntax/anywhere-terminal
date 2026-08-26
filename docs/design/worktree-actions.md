@@ -54,6 +54,27 @@ path, and copy resume command already have host implementations
 (`src/providers/TerminalViewProvider.ts:808`, `:843`, `:861`). The worktree variants re-resolve
 the path from a `worktreeId` and then call the same code.
 
+**An offered action must be performable on the surface offering it.** Absent, never present and
+inert — the same rule the panel applies to a row that cannot act. Two consequences fall out of it,
+both of which cost a review round to find:
+
+- **Some rows cannot perform some actions.** Preview, resume, copy-resume, and the two
+  agent-cwd items all need a session; a window row without one falls back to focusing its pane
+  rather than offering an item that resolves to nothing.
+- **Some surfaces cannot perform any of them.** The panel renders identically in the sidebar, the
+  panel, and an editor tab, but an editor surface answers only the two vault READS a preview
+  needs, and none of the vault action messages. It therefore declares that in the init payload
+  (`vaultActionsAvailable`) and every control that would post an action is absent there — the row
+  Resume button, the whole row context menu, the rename editor, and the preview overlay's own
+  Resume, Continue, and Raw controls. The overlay itself still opens, because opening it is a read.
+
+  `vaultWatchSession` is deliberately exempt: it is automatic preview lifecycle traffic rather
+  than an offered control, so a surface that does not answer it drops it and loses live-follow,
+  with nothing on screen claiming otherwise.
+
+The declaration is one boolean rather than a capability set, because the split is all-or-nothing
+per surface today. A surface that gains a subset of the actions is when that becomes an enum.
+
 ## 3. Mutating actions
 
 ### 3.1 Shared rules

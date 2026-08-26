@@ -283,7 +283,7 @@ state. There is nothing to provision.
 | **Labels** | user-visible-ui |
 | **Notes** | Reuse pressure: reveal, copy-path, and copy-resume-command already have host implementations — these are id-resolving wrappers, not new handlers. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. Both context menus exist with their item sets and omissions; every item currently reaches nothing. Second reuse signal: this view's menu duplicates the vault menu's whole lifecycle — construction, placement, dismissal, focus — and the two have already drifted; extracting the shared shell belongs here rather than growing a third copy |
 | **Acceptance** | Each row's activation does the one thing that row can do, with external rows never offered focus; actions resolve their target host-side from an id, so nothing runs against a path the webview supplied or an id that has gone stale; opening a worktree as a folder leaves the tree with one group, not two; row activation is configurable rather than hard-coded |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-005.2] Mutating Actions & Safety Model
 

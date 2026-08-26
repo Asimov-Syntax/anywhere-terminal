@@ -7,7 +7,7 @@
 // the same tree is free.
 
 import type * as vscode from "vscode";
-import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "../types/messages";
+import type { ExtensionToWebViewMessage, WebViewToExtensionMessage, WorktreeActionMessage } from "../types/messages";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
@@ -17,6 +17,7 @@ import type {
   WorktreePresence,
 } from "../worktree/presenceTypes";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
+import type { WorktreeInfo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
 import { buildWorktreeTreeDetailed, listRepoWorktrees, type WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import { type WorktreeWatch, watchRepoStructure } from "../worktree/worktreeWatchTargets";
@@ -47,6 +48,18 @@ export const WHOLE_TREE_SCOPE = "*";
 export interface WorktreeSurface {
   isReady(): boolean;
   post(message: ExtensionToWebViewMessage): void;
+  /**
+   * Open a terminal in THIS surface's view, at a path the host resolved.
+   *
+   * Here rather than in {@link WorktreeActions} because creating a pane is
+   * `createSession(viewId, webview, {cwd})`, and only the provider that built
+   * this surface holds both. The host still resolves which path — this receives
+   * the value it looked up, never an id (design.md D2).
+   *
+   * Optional like every other capability: a surface that does not implement it
+   * offers no terminals, exactly as it behaved before actions existed.
+   */
+  openTerminal?(cwd: string): Promise<void>;
 }
 
 export interface WorktreeHostOptions {
@@ -76,6 +89,34 @@ export interface WorktreeHostOptions {
    * reader's to name, and a throw is turned into `failed` here.
    */
   readDelegations?(entryId: string): Promise<DelegationRoster>;
+  /**
+   * What the host cannot do itself. Absent — every surface but the real
+   * extension entry point — and every action request is ignored, exactly as it
+   * was before actions existed.
+   *
+   * The host resolves; these perform. Nothing here takes an id: each receives
+   * the value the host looked up, so a capability cannot be handed a target the
+   * host never validated (design.md D2).
+   */
+  actions?: WorktreeActions;
+}
+
+/**
+ * The panel's read-only capabilities, injected because none of them belong to a
+ * component that holds a tree.
+ *
+ * Opening a terminal is deliberately NOT here — see `WorktreeSurface`.
+ * `focusPane` takes the view the pane lives in, not the view that asked — revealing the asking surface would focus a pane the user
+ * cannot see whenever the panel is open in two places (D4).
+ */
+export interface WorktreeActions {
+  openFolder(path: string, mode: "newWindow" | "addToWorkspace"): Promise<void>;
+  revealInOS(path: string): Promise<void>;
+  copyText(text: string): Promise<void>;
+  focusPane(paneId: string, viewId: string): Promise<void>;
+  copyResumeCommand(entryId: string): Promise<void>;
+  revealSessionCwd(entryId: string): Promise<void>;
+  copySessionCwd(entryId: string): Promise<void>;
 }
 
 /**
@@ -338,6 +379,153 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
     }
     return undefined;
+  }
+
+  /** The worktree `worktreeId` names in the tree this host currently holds. */
+  function cachedWorktree(worktreeId: string): WorktreeInfo | undefined {
+    for (const repo of cache.read().repos) {
+      const found = repo.worktrees.find((wt) => wt.id === worktreeId);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * The path to act on for a worktree request, or undefined to do nothing.
+   *
+   * A `missing` worktree resolves for a copy and for nothing else: copying the
+   * path is how a user goes and looks at what happened to a directory that is
+   * gone, but opening, revealing or spawning a terminal in one would act on a
+   * path that is not there (design.md D3).
+   */
+  function actionPath(worktreeId: string, allowMissing: boolean): string | undefined {
+    const wt = cachedWorktree(worktreeId);
+    if (!wt || (wt.missing && !allowMissing)) {
+      return undefined;
+    }
+    return wt.displayPath;
+  }
+
+  /**
+   * The published row this request names, only if the value it carried still
+   * matches the host's own.
+   *
+   * The carried id is an expected-version token, never an argument: a surface
+   * whose last envelope was skipped still shows the previous session under a
+   * stable row id, and acting on the id it sent would act on the wrong session
+   * (D3). Returning the row rather than a boolean is what makes it impossible to
+   * check one value and then act on another.
+   */
+  function matchedRow(rowId: string, field: "paneId" | "entryId", carried: string): WorktreeAgentRow | undefined {
+    const row = publishedRow(rowId);
+    const own = row?.[field];
+    return own !== undefined && own === carried ? row : undefined;
+  }
+
+  /** Run one capability, keeping a rejection out of the message loop. */
+  function perform(run: () => Promise<void>): void {
+    void run().catch((err) => {
+      console.warn(`${LOG_PREFIX} worktree action failed`, err);
+    });
+  }
+
+  /**
+   * Perform one read-only action, or nothing at all.
+   *
+   * Every branch resolves against what the host currently holds and hands the
+   * capability the host's OWN value. A request naming something the host does
+   * not hold falls through to nothing — never to a nearest match, a first
+   * repository, or the workspace root: an action that did something against an
+   * unintended target is worse than one that did nothing (D3).
+   */
+  function handleAction(surface: WorktreeSurface, msg: WorktreeActionMessage): void {
+    const actions = options.actions;
+    if (!actions || disposed) {
+      return;
+    }
+    switch (msg.type) {
+      case "worktreeOpenFolder": {
+        // Validated, not trusted: the capability treats anything that is not
+        // `newWindow` as `addToWorkspace`, so a malformed payload would mutate
+        // the workspace instead of failing closed (round-1 W1).
+        if (msg.mode !== "newWindow" && msg.mode !== "addToWorkspace") {
+          return;
+        }
+        const path = actionPath(msg.worktreeId, false);
+        if (path !== undefined) {
+          perform(() => actions.openFolder(path, msg.mode));
+        }
+        return;
+      }
+      case "worktreeRevealInOS": {
+        const path = actionPath(msg.worktreeId, false);
+        if (path !== undefined) {
+          perform(() => actions.revealInOS(path));
+        }
+        return;
+      }
+      case "worktreeCopyPath": {
+        const path = actionPath(msg.worktreeId, true);
+        if (path !== undefined) {
+          perform(() => actions.copyText(path));
+        }
+        return;
+      }
+      case "worktreeOpenTerminal": {
+        // Asked of the surface that raised it: a new tab belongs where the user
+        // was, and only a surface can create one at all.
+        const path = actionPath(msg.worktreeId, false);
+        const open = surface.openTerminal;
+        if (path !== undefined && open) {
+          perform(() => open.call(surface, path));
+        }
+        return;
+      }
+      case "worktreeFocusPane": {
+        // An external row carries no `paneId` at all, so this cannot resolve for
+        // one however it is asked — the innermost of three barriers (D4).
+        const row = matchedRow(msg.rowId, "paneId", msg.paneId);
+        if (row?.paneId !== undefined && row.viewId !== undefined) {
+          perform(() => actions.focusPane(row.paneId as string, row.viewId as string));
+        }
+        return;
+      }
+      case "worktreeOpenPreview": {
+        const row = matchedRow(msg.rowId, "entryId", msg.entryId);
+        if (row?.entryId !== undefined) {
+          // Answered back to the asking surface: the overlay is webview-owned,
+          // and the entry id it gets is the host's, not the one it asked with.
+          surface.post({ type: "worktreeShowPreview", entryId: row.entryId });
+        }
+        return;
+      }
+      case "worktreeCopyResumeCommand": {
+        const row = matchedRow(msg.rowId, "entryId", msg.entryId);
+        if (row?.entryId !== undefined) {
+          const entryId = row.entryId;
+          perform(() => actions.copyResumeCommand(entryId));
+        }
+        return;
+      }
+      case "worktreeRevealAgentCwd": {
+        const row = matchedRow(msg.rowId, "entryId", msg.entryId);
+        if (row?.entryId !== undefined) {
+          const entryId = row.entryId;
+          perform(() => actions.revealSessionCwd(entryId));
+        }
+        return;
+      }
+      case "worktreeCopyAgentPath": {
+        const row = matchedRow(msg.rowId, "entryId", msg.entryId);
+        if (row?.entryId !== undefined) {
+          const entryId = row.entryId;
+          perform(() => actions.copySessionCwd(entryId));
+        }
+        return;
+      }
+    }
   }
 
   /**
@@ -803,6 +991,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         return;
       case "requestWorktreeSubagents":
         requestDelegations(msg.rowId, msg.entryId);
+        return;
+      case "worktreeOpenFolder":
+      case "worktreeRevealInOS":
+      case "worktreeCopyPath":
+      case "worktreeOpenTerminal":
+      case "worktreeFocusPane":
+      case "worktreeOpenPreview":
+      case "worktreeCopyResumeCommand":
+      case "worktreeRevealAgentCwd":
+      case "worktreeCopyAgentPath":
+        handleAction(surface, msg);
         return;
       case "requestWorktreeTree":
         // Nothing to serve before the first build, whatever the caller asked for.

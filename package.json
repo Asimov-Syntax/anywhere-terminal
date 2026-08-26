@@ -98,6 +98,16 @@
           "default": true,
           "description": "Restore terminal scrollback and metadata across VS Code restarts. NOTE: the persisted scrollback is plaintext on disk — anything echoed in the terminal (passwords typed at prompts, .env file contents, API tokens, kubeconfigs) lands in <storageUri>/snapshots until the per-snapshot caps evict it. Use Cmd+K (clear) before sensitive output, or set this to false to opt out entirely."
         },
+        "anywhereTerminal.worktree.rowActivation": {
+          "type": "string",
+          "enum": ["focus", "preview"],
+          "enumDescriptions": [
+            "Reveal the agent's terminal pane and make it active.",
+            "Open the agent's session preview overlay."
+          ],
+          "default": "focus",
+          "description": "What activating an agent row in the Worktree panel does. External agent rows always open their session preview, because they have no pane in this window to focus."
+        },
         "anywhereTerminal.cursorAgent.hooks.enabled": {
           "type": "boolean",
           "default": false,

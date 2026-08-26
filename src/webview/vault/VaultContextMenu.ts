@@ -1,57 +1,61 @@
 // src/webview/vault/VaultContextMenu.ts — Right-click context menu for a vault
-// row (redesign 5_1). Self-contained controller: owns the menu element, its
-// anchor row, and the document-level dismiss listeners — so the menu's lifecycle
-// (open / close / outside-click / Esc) lives in one place.
+// row (redesign 5_1). Item set only: the lifecycle lives in
+// ../shared/contextMenuShell.ts, shared with the worktree menu (design.md D6),
+// which is where this menu picks up first-item focus, arrow navigation, focus
+// restore on Escape, and dismissal before the item acts.
 //
 // Every item posts an `entryId`-only message — the webview sends no path (D9).
 // The file-targeting items (Open / Reveal / Copy File Path) appear only when the
-// session is file-backed (`sessionPath`).
+// session is file-backed (`sessionPath`), and the menu as a whole appears only on
+// a surface that can perform the messages it posts (round-2 B4).
 
 import type { VaultSessionEntry } from "../../vault/types";
+import { type ContextMenuItem, ContextMenuShell } from "../shared/contextMenuShell";
 import { collapseSeparators } from "./format";
 import { ICON_COPY, ICON_FOLDER, ICON_OPEN, ICON_RENAME, ICON_RESUME, ICON_REVEAL, ICON_TERMINAL } from "./icons";
 import type { VaultPanelPostMessage } from "./VaultPanel";
 import { canResumeVaultEntry } from "./vaultListView";
 
 export class VaultContextMenu {
-  private readonly host: HTMLElement;
+  private readonly shell: ContextMenuShell;
   private readonly postMessage: VaultPanelPostMessage;
   /** Start an inline rename on the anchor row (owner supplies the editor). */
   private readonly beginRename: (entry: VaultSessionEntry, row: HTMLElement) => void;
-  private menuEl: HTMLElement | null = null;
-  private menuRow: HTMLElement | null = null;
-  private onDocPointerDown?: (ev: MouseEvent) => void;
-  private onDocKeyDown?: (ev: KeyboardEvent) => void;
+
+  /** False on a surface that handles none of the messages these items post. */
+  private readonly actionsAvailable: boolean;
 
   constructor(deps: {
     host: HTMLElement;
     postMessage: VaultPanelPostMessage;
+    actionsAvailable?: boolean;
     beginRename: (entry: VaultSessionEntry, row: HTMLElement) => void;
   }) {
-    this.host = deps.host;
+    this.shell = new ContextMenuShell(deps.host);
     this.postMessage = deps.postMessage;
+    this.actionsAvailable = deps.actionsAvailable ?? true;
     this.beginRename = deps.beginRename;
   }
 
   /** Whether the menu is currently open — lets the preview's Esc handler dismiss
    *  only this layer first when both are open (W5). */
   isOpen(): boolean {
-    return this.menuEl !== null;
+    return this.shell.isOpen();
   }
 
   /**
    * Open the menu for a row, anchored at the cursor and clamped within the panel.
    */
   open(entry: VaultSessionEntry, ev: MouseEvent, row: HTMLElement): void {
-    this.close();
-
-    const menu = document.createElement("div");
-    menu.className = "vault-context-menu";
-    menu.setAttribute("role", "menu");
-
+    // Every item here posts an action message. On a surface that handles none of
+    // them the whole menu is absent rather than a list of controls that look
+    // operational and do nothing (.reviews/round-2.md B4).
+    if (!this.actionsAvailable) {
+      return;
+    }
     const fileBacked = typeof entry.sessionPath === "string" && entry.sessionPath.length > 0;
     const canResume = canResumeVaultEntry(entry);
-    type MenuItem = { label: string; icon: string; fileOnly?: boolean; act: () => void };
+    type MenuItem = ContextMenuItem & { fileOnly?: boolean };
     const items: (MenuItem | "sep")[] = [
       ...(canResume
         ? [
@@ -110,77 +114,10 @@ export class VaultContextMenu {
         act: () => this.postMessage({ type: "vaultOpenWorkingDir", entryId: entry.id }),
       },
     ];
-    const visible = collapseSeparators(items.filter((it) => it === "sep" || !it.fileOnly || fileBacked));
-    for (const it of visible) {
-      if (it === "sep") {
-        menu.appendChild(document.createElement("hr"));
-        continue;
-      }
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.setAttribute("role", "menuitem");
-      const iconSpan = document.createElement("span");
-      iconSpan.innerHTML = it.icon;
-      iconSpan.setAttribute("aria-hidden", "true");
-      const labelSpan = document.createElement("span");
-      labelSpan.textContent = it.label;
-      btn.append(iconSpan, labelSpan);
-      btn.addEventListener("click", () => {
-        it.act();
-        this.close();
-      });
-      menu.appendChild(btn);
-    }
-
-    this.host.appendChild(menu);
-
-    // Position relative to the panel (it is `position: relative`), clamped in.
-    const rect = this.host.getBoundingClientRect();
-    let left = ev.clientX - rect.left;
-    let top = ev.clientY - rect.top;
-    const maxLeft = this.host.clientWidth - menu.offsetWidth - 4;
-    const maxTop = this.host.clientHeight - menu.offsetHeight - 4;
-    if (maxLeft > 0 && left > maxLeft) {
-      left = maxLeft;
-    }
-    if (maxTop > 0 && top > maxTop) {
-      top = maxTop;
-    }
-    menu.style.left = `${Math.max(4, left)}px`;
-    menu.style.top = `${Math.max(4, top)}px`;
-
-    this.menuEl = menu;
-    this.menuRow = row;
-    row.classList.add("is-context-open");
-
-    // The opening event is a `contextmenu`, so attaching mousedown/keydown now
-    // won't self-close. Close on Esc or any pointer-down outside the menu.
-    this.onDocPointerDown = (e) => {
-      if (this.menuEl && !this.menuEl.contains(e.target as Node)) {
-        this.close();
-      }
-    };
-    this.onDocKeyDown = (e) => {
-      if (e.key === "Escape") {
-        this.close();
-      }
-    };
-    document.addEventListener("mousedown", this.onDocPointerDown);
-    document.addEventListener("keydown", this.onDocKeyDown);
+    this.shell.open(collapseSeparators(items.filter((it) => it === "sep" || !it.fileOnly || fileBacked)), ev, row);
   }
 
   close(): void {
-    if (this.onDocPointerDown) {
-      document.removeEventListener("mousedown", this.onDocPointerDown);
-      this.onDocPointerDown = undefined;
-    }
-    if (this.onDocKeyDown) {
-      document.removeEventListener("keydown", this.onDocKeyDown);
-      this.onDocKeyDown = undefined;
-    }
-    this.menuRow?.classList.remove("is-context-open");
-    this.menuRow = null;
-    this.menuEl?.remove();
-    this.menuEl = null;
+    this.shell.close();
   }
 }

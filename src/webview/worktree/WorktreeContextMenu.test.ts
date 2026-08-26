@@ -5,7 +5,9 @@
 // because a disabled item claims the action exists here and merely isn't available.
 
 import { afterEach, describe, expect, it } from "vitest";
+import type { WebViewToExtensionMessage } from "../../types/messages";
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
+import { worktreeMenuActions } from "./WorktreeController";
 import { agentRow, worktree } from "./worktreeFixtures";
 
 afterEach(() => {
@@ -209,5 +211,143 @@ describe("agent row menu", () => {
     menu.openForAgent(agentRow({ rowId: "a" }), EVENT, document.createElement("div"));
     document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(menu.isOpen()).toBe(false);
+  });
+});
+
+// ── Each read-only item posts the request its label names (task 3_2) ──────
+
+describe("the controller's callbacks post what each item claims", () => {
+  /** The real menu over the real callbacks — the item wiring is what is under test. */
+  function wired(): { menu: WorktreeContextMenu; host: HTMLElement; posts: WebViewToExtensionMessage[] } {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const posts: WebViewToExtensionMessage[] = [];
+    const menu = new WorktreeContextMenu({ host, actions: worktreeMenuActions((m) => posts.push(m)) });
+    return { menu, host, posts };
+  }
+
+  function anchor(): HTMLElement {
+    return document.createElement("div");
+  }
+
+  function itemLabels(host: HTMLElement): string[] {
+    return Array.from(host.querySelectorAll(".vault-context-menu button")).map((b) => b.textContent ?? "");
+  }
+
+  function clickItem(host: HTMLElement, label: string): void {
+    const button = Array.from(host.querySelectorAll<HTMLButtonElement>(".vault-context-menu button")).find(
+      (b) => b.textContent === label,
+    );
+    if (!button) {
+      throw new Error(`no menu item labelled ${label}`);
+    }
+    button.click();
+  }
+
+  const WT = worktree({ id: "/repo-wt/feat", kind: "linked", branch: "feat", head: "b".repeat(40) });
+  const ROW = agentRow({
+    rowId: "window:a",
+    scope: "window",
+    paneId: "pane-1",
+    entryId: "claude:s1",
+    agent: "claude",
+    activity: "running",
+  });
+
+  const WORKTREE_ITEMS: Array<[string, WebViewToExtensionMessage]> = [
+    ["Open Folder in New Window", { type: "worktreeOpenFolder", worktreeId: WT.id, mode: "newWindow" }],
+    ["Add Folder to Workspace", { type: "worktreeOpenFolder", worktreeId: WT.id, mode: "addToWorkspace" }],
+    ["Open Terminal Here", { type: "worktreeOpenTerminal", worktreeId: WT.id }],
+    ["Reveal in Finder", { type: "worktreeRevealInOS", worktreeId: WT.id }],
+    ["Copy Path", { type: "worktreeCopyPath", worktreeId: WT.id }],
+  ];
+
+  const AGENT_ITEMS: Array<[string, WebViewToExtensionMessage]> = [
+    ["Focus Pane", { type: "worktreeFocusPane", rowId: ROW.rowId, paneId: "pane-1" }],
+    ["Open Session Preview", { type: "worktreeOpenPreview", rowId: ROW.rowId, entryId: "claude:s1" }],
+    ["Copy Resume Command", { type: "worktreeCopyResumeCommand", rowId: ROW.rowId, entryId: "claude:s1" }],
+    ["Reveal in Finder", { type: "worktreeRevealAgentCwd", rowId: ROW.rowId, entryId: "claude:s1" }],
+    ["Copy Path", { type: "worktreeCopyAgentPath", rowId: ROW.rowId, entryId: "claude:s1" }],
+  ];
+
+  for (const [label, expected] of WORKTREE_ITEMS) {
+    it(`posts ${expected.type} for the worktree item "${label}"`, () => {
+      const { menu, host, posts } = wired();
+      menu.openForWorktree(WT, EVENT, document.createElement("div"));
+      clickItem(host, label);
+      expect(posts).toEqual([expected]);
+    });
+  }
+
+  for (const [label, expected] of AGENT_ITEMS) {
+    it(`posts ${expected.type} for the agent item "${label}"`, () => {
+      const { menu, host, posts } = wired();
+      menu.openForAgent(ROW, EVENT, document.createElement("div"));
+      clickItem(host, label);
+      expect(posts).toEqual([expected]);
+    });
+  }
+
+  it("carries ids only — never a path the view resolved for itself", () => {
+    // The host re-resolves every id against its own tree, so a path leaving here
+    // would be a second, unchecked source of truth for what an action runs on.
+    const { menu, host, posts } = wired();
+    menu.openForWorktree(WT, EVENT, document.createElement("div"));
+    clickItem(host, "Copy Path");
+    menu.openForAgent(ROW, EVENT, document.createElement("div"));
+    clickItem(host, "Copy Path");
+    for (const post of posts) {
+      expect(Object.keys(post).sort()).not.toContain("path");
+      expect(JSON.stringify(post)).not.toContain("/repo-wt/feat/");
+    }
+  });
+
+  it("offers a session-less row nothing but its pane", () => {
+    // Preview, resume, and the two working-directory items all act ON a vault
+    // entry (design.md D8, round-1 B3). Without one they are absent, not inert;
+    // the pane is the only thing such a row actually has.
+    const { menu, host } = wired();
+    menu.openForAgent(agentRow({ rowId: "window:b", scope: "window", paneId: "pane-2" }), EVENT, anchor());
+    expect(itemLabels(host)).toEqual(["Focus Pane"]);
+  });
+
+  it("offers an external row with no session nothing at all", () => {
+    const { menu, host } = wired();
+    menu.openForAgent(agentRow({ rowId: "external:b", scope: "external" }), EVENT, anchor());
+    expect(itemLabels(host)).toEqual([]);
+  });
+
+  it("omits the mutating and launch items, whose capabilities nothing supplies yet", () => {
+    // Absent, not present-and-inert: WT-005.2 and WT-005.3 light them by
+    // supplying their own capabilities (design.md D10).
+    const { menu, host } = wired();
+    menu.openForWorktree(WT, EVENT, anchor());
+    expect(itemLabels(host)).toEqual([
+      "Open Folder in New Window",
+      "Add Folder to Workspace",
+      "Open Terminal Here",
+      "Reveal in Finder",
+      "Copy Path",
+    ]);
+    menu.openForAgent(ROW, EVENT, anchor());
+    expect(itemLabels(host)).not.toContain("Resume Session Here");
+  });
+
+  it("never renders an item disabled — the absent ones simply are not built", () => {
+    const { menu, host } = wired();
+    menu.openForWorktree(WT, EVENT, anchor());
+    const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>(".vault-context-menu button"));
+    expect(buttons.some((b) => b.disabled || b.getAttribute("aria-disabled") === "true")).toBe(false);
+  });
+});
+
+describe("the capabilities the controller does not supply", () => {
+  it("supplies no mutating or launch capability at all", () => {
+    // WT-005.2 and WT-005.3 light these by supplying their own; until then the
+    // items must not be built (design.md D10).
+    const actions = worktreeMenuActions(() => {});
+    for (const key of ["toggleLock", "removeWorktree", "resumeHere", "createWorktree"] as const) {
+      expect(actions[key], key).toBeUndefined();
+    }
   });
 });

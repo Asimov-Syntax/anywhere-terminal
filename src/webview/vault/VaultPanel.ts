@@ -77,6 +77,14 @@ export interface VaultPanelDeps {
   /** DOM host element (`#vault-panel`). */
   host: HTMLElement;
   postMessage: VaultPanelPostMessage;
+  /**
+   * Whether this surface can perform vault actions. False on an editor surface,
+   * which answers the preview's two reads and none of the action messages — so
+   * every control that would post one is absent rather than present and inert
+   * (.reviews/round-2.md B4). Defaults to true: the sidebar and panel surfaces
+   * are action-capable and predate the flag.
+   */
+  actionsAvailable?: boolean;
   /** Reserved for future active-session highlighting; mirrors FileTreePanel (D10). */
   getActiveSessionId?: () => string | null;
   /** Initial collapsed state (default true). Read once on construction. */
@@ -176,6 +184,9 @@ export class VaultPanel {
   private readonly animateCollapse?: (apply: () => void) => void;
 
   private entries: VaultSessionEntry[] = [];
+  /** A host-resolved preview waiting for the list that holds its entry (B1). */
+  private pendingPreviewId: string | null = null;
+  private readonly actionsAvailable: boolean;
   /** Signature of the entries last painted to the DOM. A response whose signature
    *  matches skips the re-render (cache-vault-load D6) so the cache→fresh refresh
    *  is invisible when nothing changed, preserving an open preview + scroll. */
@@ -228,23 +239,28 @@ export class VaultPanel {
   constructor(deps: VaultPanelDeps) {
     this.host = deps.host;
     this.postMessage = deps.postMessage;
+    this.actionsAvailable = deps.actionsAvailable ?? true;
     this.contextMenu = new VaultContextMenu({
       host: this.host,
       postMessage: this.postMessage,
+      actionsAvailable: this.actionsAvailable,
       beginRename: (entry, row) => this.beginRename(entry, row),
     });
     this.rowCallbacks = {
       onActivate: (entry) => this.preview.open(entry),
       onContextMenu: (entry, ev, row) => this.contextMenu.open(entry, ev, row),
-      onResume: (entryId) => {
-        if (this.entries.find((entry) => entry.id === entryId)?.canResume === false) {
-          return;
-        }
-        this.postMessage({ type: "vaultResume", entryId });
-      },
+      onResume: this.actionsAvailable
+        ? (entryId) => {
+            if (this.entries.find((entry) => entry.id === entryId)?.canResume === false) {
+              return;
+            }
+            this.postMessage({ type: "vaultResume", entryId });
+          }
+        : undefined,
     };
     this.preview = new PreviewController({
       postMessage: this.postMessage,
+      actionsAvailable: this.actionsAvailable,
       isContextMenuOpen: () => this.contextMenu.isOpen(),
       closeContextMenu: () => this.contextMenu.close(),
       // VaultPanel owns the list DOM: it resolves the active row live (anchoring)
@@ -746,6 +762,7 @@ export class VaultPanel {
       this.setRefreshing(false);
     }
     this.entries = result.entries;
+    this.openPendingPreview();
     // Keep the open preview's entry reference live even when the DOM re-render is
     // skipped below — preview re-render paths (e.g. "show more steps") read
     // `activePreviewEntry` directly, so a skipped render must not leave it stale.
@@ -961,6 +978,11 @@ export class VaultPanel {
    *  a concurrent list rebuild while editing, then commits by posting the rename —
    *  the host round-trips an overlaid list that repaints the row (D1). */
   private beginRename(entry: VaultSessionEntry, row: HTMLElement): void {
+    // No rename editor on a surface that cannot commit it — an inline field that
+    // silently discards the new name is worse than no field (B4).
+    if (!this.actionsAvailable) {
+      return;
+    }
     const titleEl = row.querySelector<HTMLElement>(".vault-row-title");
     if (!titleEl) {
       return;
@@ -979,6 +1001,42 @@ export class VaultPanel {
         }
       },
     });
+  }
+
+  /**
+   * Open the preview for an entry named by id — the worktree panel's route into
+   * the overlay it does not own. False when this list holds no such entry, which
+   * is what a session outside the current filter or scope looks like from here.
+   */
+  openPreviewById(entryId: string): boolean {
+    this.expand();
+    const entry = this.entries.find((e) => e.id === entryId);
+    if (!entry) {
+      // The vault list is fetched independently of the worktree tree, so a
+      // preview raised before it lands would otherwise be discarded even though
+      // the host resolved it (round-1 B1). One slot, not a queue: a second
+      // request supersedes the first, exactly as opening two previews would.
+      this.pendingPreviewId = entryId;
+      this.requestRefresh();
+      return false;
+    }
+    this.pendingPreviewId = null;
+    this.preview.open(entry);
+    return true;
+  }
+
+  /** Open a preview that was waiting on this list. */
+  private openPendingPreview(): void {
+    const pending = this.pendingPreviewId;
+    if (pending === null) {
+      return;
+    }
+    const entry = this.entries.find((e) => e.id === pending);
+    if (!entry) {
+      return;
+    }
+    this.pendingPreviewId = null;
+    this.preview.open(entry);
   }
 
   /** Host → webview session-detail reply — forwarded to the preview controller. */
