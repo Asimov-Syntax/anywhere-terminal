@@ -36,40 +36,44 @@ function fakePool(failures: Record<string, string> = {}) {
 const REPO = "/repo/.git";
 
 describe("worktreeWatchTargets", () => {
-  it("describes exactly the three documented patterns, all based at the common dir", () => {
-    // design.md D3 — a repo with no linked worktrees has no `worktrees/`
-    // directory yet, and a watcher based on a missing directory never sees it
-    // appear, so every base is the common dir itself.
+  it("describes exactly the four documented patterns", () => {
     expect(worktreeWatchTargets(REPO)).toEqual([
-      { baseDir: REPO, glob: "worktrees/*", events: ["create", "delete"] },
-      { baseDir: REPO, glob: "worktrees/*/HEAD", events: ["change"] },
       { baseDir: REPO, glob: "HEAD", events: ["change"] },
+      { baseDir: REPO, glob: "worktrees", events: ["create", "delete"] },
+      { baseDir: `${REPO}/worktrees`, glob: "*", events: ["create", "delete"] },
+      { baseDir: `${REPO}/worktrees`, glob: "*/HEAD", events: ["change"] },
     ]);
   });
 
-  it("matches one path segment only, so an agent's continuous writes stay out of the stream", () => {
-    const globs = worktreeWatchTargets(REPO).map((t) => t.glob);
+  it("uses at most one recursive watcher, scoped to linked-worktree metadata", () => {
+    const recursiveTargets = worktreeWatchTargets(REPO).filter(({ glob }) => glob.includes("**") || glob.includes("/"));
 
-    // `worktrees/<name>/index`, `logs/`, `refs/` and `COMMIT_EDITMSG` must
-    // match nothing; a `**` anywhere would sweep all of them in.
-    expect(globs.some((glob) => glob.includes("**"))).toBe(false);
+    // VS Code recursively watches patterns with `**` or path segments.
+    expect(recursiveTargets).toHaveLength(1);
+    expect(recursiveTargets[0]).toEqual({
+      baseDir: `${REPO}/worktrees`,
+      glob: "*/HEAD",
+      events: ["change"],
+    });
   });
 });
 
 describe("watchRepoStructure", () => {
-  it("subscribes all three patterns with the events each one declares", () => {
+  it("subscribes all four patterns with the events each one declares", () => {
     const pool = fakePool();
 
     watchRepoStructure(REPO, pool, () => {});
 
     expect(pool.calls.map((c) => [c.baseDir, c.glob])).toEqual([
-      [REPO, "worktrees/*"],
-      [REPO, "worktrees/*/HEAD"],
       [REPO, "HEAD"],
+      [REPO, "worktrees"],
+      [`${REPO}/worktrees`, "*"],
+      [`${REPO}/worktrees`, "*/HEAD"],
     ]);
-    expect(Object.keys(pool.calls[0].handlers).sort()).toEqual(["create", "delete"]);
-    expect(Object.keys(pool.calls[1].handlers)).toEqual(["change"]);
-    expect(Object.keys(pool.calls[2].handlers)).toEqual(["change"]);
+    expect(Object.keys(pool.calls[0].handlers)).toEqual(["change"]);
+    expect(Object.keys(pool.calls[1].handlers).sort()).toEqual(["create", "delete"]);
+    expect(Object.keys(pool.calls[2].handlers).sort()).toEqual(["create", "delete"]);
+    expect(Object.keys(pool.calls[3].handlers)).toEqual(["change"]);
   });
 
   it("reports a linked worktree added or removed", () => {
@@ -77,8 +81,8 @@ describe("watchRepoStructure", () => {
     const onChanged = vi.fn();
 
     watchRepoStructure(REPO, pool, onChanged);
-    pool.calls[0].handlers.create?.({});
-    pool.calls[0].handlers.delete?.({});
+    pool.calls[1].handlers.create?.({});
+    pool.calls[1].handlers.delete?.({});
 
     expect(onChanged).toHaveBeenCalledTimes(2);
   });
@@ -90,13 +94,13 @@ describe("watchRepoStructure", () => {
     watchRepoStructure(REPO, pool, onChanged);
     // `subscribe()` creates its watcher with `ignoreChange` and would never see
     // either of these — a branch switch rewrites HEAD in place.
-    pool.calls[1].handlers.change?.({});
-    pool.calls[2].handlers.change?.({});
+    pool.calls[3].handlers.change?.({});
+    pool.calls[0].handlers.change?.({});
 
     expect(onChanged).toHaveBeenCalledTimes(2);
   });
 
-  it("is watched with no reason when all three subscriptions are live", () => {
+  it("is watched with no reason when all four subscriptions are live", () => {
     const watch = watchRepoStructure(REPO, fakePool(), () => {});
 
     expect(watch.failureReason).toBeUndefined();
@@ -104,7 +108,7 @@ describe("watchRepoStructure", () => {
 
   it("reports a reason naming every pattern that was never established", () => {
     const pool = fakePool({
-      "worktrees/*": "ENOSPC: could not watch /repo/.git/worktrees/*",
+      worktrees: "ENOSPC: could not watch /repo/.git/worktrees",
       HEAD: "EMFILE: could not watch /repo/.git/HEAD",
     });
 
@@ -114,8 +118,8 @@ describe("watchRepoStructure", () => {
     expect(watch.failureReason).toContain("EMFILE");
   });
 
-  it("stays degraded when only one of the three fails", () => {
-    const pool = fakePool({ "worktrees/*/HEAD": "ENOSPC: could not watch /repo/.git/worktrees/*/HEAD" });
+  it("stays degraded when only one of the four fails", () => {
+    const pool = fakePool({ "*/HEAD": "ENOSPC: could not watch /repo/.git/worktrees/*/HEAD" });
 
     const watch = watchRepoStructure(REPO, pool, () => {});
 
@@ -124,12 +128,12 @@ describe("watchRepoStructure", () => {
     expect(watch.failureReason).toContain("ENOSPC");
   });
 
-  it("releases all three subscriptions on one disposal", () => {
+  it("releases all four subscriptions on one disposal", () => {
     const pool = fakePool();
 
     watchRepoStructure(REPO, pool, () => {}).dispose();
 
-    expect(pool.disposed).toEqual(["worktrees/*", "worktrees/*/HEAD", "HEAD"]);
+    expect(pool.disposed).toEqual(["HEAD", "worktrees", "*", "*/HEAD"]);
   });
 
   it("stops reporting changes once disposed", () => {
@@ -139,9 +143,9 @@ describe("watchRepoStructure", () => {
     const watch = watchRepoStructure(REPO, pool, onChanged);
     watch.dispose();
     watch.dispose();
-    pool.calls[0].handlers.create?.({});
+    pool.calls[1].handlers.create?.({});
 
     expect(onChanged).not.toHaveBeenCalled();
-    expect(pool.disposed).toHaveLength(3);
+    expect(pool.disposed).toHaveLength(4);
   });
 });

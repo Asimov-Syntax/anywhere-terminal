@@ -8,7 +8,7 @@
 
 import type { VaultAgentId } from "../vault/types";
 
-/** One evidence source that failed, kept until it succeeds again. */
+/** One evidence source that failed, named on the scope it affects. Never a silent staleness. */
 export interface PresenceDegradation {
   source: "panes" | "registry" | "vault" | "hook";
   /** Shown verbatim in the stale affordance. */
@@ -18,8 +18,9 @@ export interface PresenceDegradation {
 }
 
 /**
- * A child agent invoked by a row's agent. `live` is always false until the hook
- * phase lands — see worktree-agent-presence.md § 3.6.
+ * Delegated work, derived post-hoc from a transcript — history, not a live roster.
+ * `live` stays `false` until the hook phase lands (worktree-agent-presence.md § 3.6),
+ * and consumers must not draw these with the live-dot vocabulary while it is.
  */
 export interface WorktreeSubagentRow {
   /** Agent type, or the invoking tool when the type is undeclared. */
@@ -84,6 +85,6 @@ export interface WorktreePresence {
   rowsByWorktreeId: Record<string, WorktreeAgentRow[]>;
   /** Epoch ms of the scan that produced these rows. */
   scannedAt: number;
-  /** Empty when every source succeeded. */
+  /** Empty when every source succeeded — an honest empty is NOT a degradation. */
   degradedSources: PresenceDegradation[];
 }

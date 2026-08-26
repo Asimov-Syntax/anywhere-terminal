@@ -48,7 +48,17 @@ export function createGitCommandRunner(options: GitCommandRunnerOptions = {}): G
   return {
     run(args, cwd) {
       return new Promise<GitCommandResult>((resolve) => {
-        execFile(executable, [...args], { cwd, timeout, maxBuffer, encoding: "buffer" }, (error, stdout, stderr) => {
+        const options = {
+          cwd,
+          timeout,
+          maxBuffer,
+          encoding: "buffer" as const,
+          // `repoRoots` tells a missing repository from a git that declined to
+          // answer by matching git's own stderr, so the language it arrives in
+          // cannot be the user's. PATH and the rest of the environment stay.
+          env: { ...process.env, LC_ALL: "C", LANG: "C" },
+        };
+        execFile(executable, [...args], options, (error, stdout, stderr) => {
           const out = Buffer.isBuffer(stdout) ? stdout : Buffer.alloc(0);
           const errText = (Buffer.isBuffer(stderr) ? stderr : Buffer.alloc(0)).toString();
           if (!error) {

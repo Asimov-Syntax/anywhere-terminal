@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ResolvedRepo } from "./repoRoots";
+import type { FolderResolution, ResolvedRepo } from "./repoRoots";
 import type { WorktreeInfo } from "./types";
 import { createWorktreeCache } from "./WorktreeCache";
 import type { RepoListing, WorktreeTreeBuild } from "./WorktreeDiscovery";
@@ -28,7 +28,11 @@ function root(repoId: string): ResolvedRepo {
 }
 
 /** A whole-tree build for `roots`, each with the listing given for its repoId. */
-function build(roots: ResolvedRepo[], listings: Record<string, RepoListing>): WorktreeTreeBuild {
+function build(
+  roots: ResolvedRepo[],
+  listings: Record<string, RepoListing>,
+  folderOutcomes?: FolderResolution[],
+): WorktreeTreeBuild {
   const map = new Map(Object.entries(listings));
   let skipped = 0;
   const reasons = new Set<string>();
@@ -56,6 +60,8 @@ function build(roots: ResolvedRepo[], listings: Record<string, RepoListing>): Wo
     roots,
     listings: map,
     normalizedFolders: roots.map((r) => r.rootPath),
+    folderOutcomes:
+      folderOutcomes ?? roots.map((r) => ({ folder: r.rootPath, outcome: { kind: "resolved" as const, repo: r } })),
   };
 }
 
@@ -206,17 +212,37 @@ describe("WorktreeCache", () => {
     expect(cache.read().unreadable).toEqual({ count: 2, reasons: ["bad"] });
   });
 
-  it("reports git as unavailable with its reason and no repos", () => {
-    const cache = createWorktreeCache();
-    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
-
-    cache.applyBuild({
-      tree: { repos: [], unreadable: { count: 1, reasons: ["git 2.20 is below 2.31"] }, gitAvailable: false },
+  /** What `buildWorktreeTreeDetailed` produces once git stops being usable. */
+  function gitGone(reason: string, folders: string[]): WorktreeTreeBuild {
+    return {
+      tree: { repos: [], unreadable: { count: 1, reasons: [reason] }, gitAvailable: false },
       roots: [],
       listings: new Map(),
       normalizedFolders: [],
-      gitUnavailableReason: "git 2.20 is below 2.31",
-    });
+      gitUnavailableReason: reason,
+      folderOutcomes: folders.map((folder) => ({ folder, outcome: { kind: "failed" as const, reason } })),
+    };
+  }
+
+  it("keeps the retained repositories when git becomes unavailable", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" }), worktree("/a/wt")]) }));
+
+    cache.applyBuild(gitGone("git 2.20 is below 2.31", ["/a"]));
+
+    const tree = cache.read();
+    // Audit A2: dropping to zero here read as "the user deleted their worktrees",
+    // and the capability probe is memoised for 30 min so a refresh could not undo it.
+    expect(tree.gitAvailable).toBe(false);
+    expect(tree.repos).toHaveLength(1);
+    expect(tree.repos[0].worktrees).toHaveLength(2);
+    expect(tree.repos[0].degraded).toContain("2.31");
+    expect(tree.unreadable).toEqual({ count: 1, reasons: ["git 2.20 is below 2.31"] });
+  });
+
+  it("reports no repositories when git is unavailable and none was ever listed", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(gitGone("git 2.20 is below 2.31", ["/a"]));
 
     const tree = cache.read();
     expect(tree.gitAvailable).toBe(false);
@@ -241,5 +267,157 @@ describe("WorktreeCache", () => {
     first.repos.pop();
 
     expect(cache.read().repos).toHaveLength(1);
+  });
+
+  it("isolates the repo objects and worktree arrays, not only the outer list", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" }), worktree("/a/wt")]) }));
+
+    const first = cache.read();
+    first.repos[0].worktrees.pop();
+    first.repos[0].label = "clobbered";
+
+    const second = cache.read();
+    expect(second.repos[0].worktrees).toHaveLength(2);
+    expect(second.repos[0].label).toBe("/a");
+  });
+});
+
+// Audit A1 / spec: never present a stale listing as current. A folder that is
+// still open but could not be resolved is a failure, not a deletion.
+describe("WorktreeCache — a repository that could not be resolved", () => {
+  const failed = (folder: string, reason: string): FolderResolution[] => [
+    { folder, outcome: { kind: "failed", reason } },
+  ];
+
+  it("retains its worktrees, marked degraded, when its folder is still open", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A], {
+        "/a/.git": listing([worktree("/a", { kind: "main" }), worktree("/a/wt-1"), worktree("/a/wt-2")]),
+      }),
+    );
+
+    cache.applyBuild(build([], {}, failed("/a", "`git rev-parse --show-toplevel` timed out.")));
+
+    const tree = cache.read();
+    expect(tree.repos).toHaveLength(1);
+    expect(tree.repos[0].worktrees).toHaveLength(3);
+    expect(tree.repos[0].degraded).toContain("timed out");
+  });
+
+  it("drops it when the workspace folder itself is gone", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+
+    cache.applyBuild(build([], {}, []));
+
+    expect(cache.read().repos).toHaveLength(0);
+  });
+
+  it("drops it when the folder is genuinely not a repository", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+
+    cache.applyBuild(build([], {}, [{ folder: "/a", outcome: { kind: "absent" } }]));
+
+    expect(cache.read().repos).toHaveLength(0);
+  });
+
+  it("keeps folder order when a middle folder fails to resolve", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A, REPO_B], {
+        "/a/.git": listing([worktree("/a", { kind: "main" })]),
+        "/b/.git": listing([worktree("/b", { kind: "main" })]),
+      }),
+    );
+
+    cache.applyBuild(
+      build([REPO_B], { "/b/.git": listing([worktree("/b", { kind: "main" })]) }, [
+        { folder: "/a", outcome: { kind: "failed", reason: "boom" } },
+        { folder: "/b", outcome: { kind: "resolved", repo: REPO_B } },
+      ]),
+    );
+
+    expect(cache.read().repos.map((r) => r.repoId)).toEqual(["/a/.git", "/b/.git"]);
+  });
+});
+
+// Review round 1, B1. Two workspace folders can name one repository — a repo and
+// a folder inside it. The folder that fails still has to carry the memory, or
+// the day its sibling closes the group goes with it.
+describe("WorktreeCache — two folders sharing one repository", () => {
+  const both = (a: FolderResolution["outcome"], b: FolderResolution["outcome"]): FolderResolution[] => [
+    { folder: "/a", outcome: a },
+    { folder: "/a/sub", outcome: b },
+  ];
+  const resolved = { kind: "resolved" as const, repo: REPO_A };
+  const shared = { "/a/.git": listing([worktree("/a", { kind: "main" }), worktree("/a/wt")]) };
+
+  it("retains the group once the sibling that still resolved is closed", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], shared, both(resolved, resolved)));
+
+    // /a/sub stops resolving while /a still does. The fresh listing wins, but
+    // dropping /a/sub's mapping here is what loses the group below.
+    cache.applyBuild(build([REPO_A], shared, both(resolved, { kind: "failed", reason: "boom" })));
+    // Now /a is closed and only the still-failing /a/sub is open.
+    cache.applyBuild(build([], {}, [{ folder: "/a/sub", outcome: { kind: "failed", reason: "boom" } }]));
+
+    const tree = cache.read();
+    expect(tree.repos).toHaveLength(1);
+    expect(tree.repos[0].worktrees).toHaveLength(2);
+    expect(tree.repos[0].degraded).toBe("boom");
+  });
+
+  it("does not let the failed folder's degraded listing displace its sibling's fresh one", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], shared, both(resolved, resolved)));
+
+    cache.applyBuild(build([REPO_A], shared, both(resolved, { kind: "failed", reason: "boom" })));
+
+    expect(cache.read().repos[0].degraded).toBeUndefined();
+  });
+});
+
+// Review round 1, W2. design.md D3 says `read()` returns the retained
+// repositories each marked degraded — so the mark cannot depend on which write
+// last touched the group.
+describe("WorktreeCache — degraded cause while git is unavailable", () => {
+  function gitGone(reason: string, folders: string[]): WorktreeTreeBuild {
+    return {
+      tree: { repos: [], unreadable: { count: 1, reasons: [reason] }, gitAvailable: false },
+      roots: [],
+      listings: new Map(),
+      normalizedFolders: [],
+      gitUnavailableReason: reason,
+      folderOutcomes: folders.map((folder) => ({ folder, outcome: { kind: "failed" as const, reason } })),
+    };
+  }
+
+  it("keeps the group degraded after a repo-local rebuild succeeds", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    cache.applyBuild(gitGone("git 2.20 is below 2.31", ["/a"]));
+
+    // Retention keeps the root, so the watches survive and a per-repo rebuild
+    // can still land. It must not leave the group looking fresh while the tree
+    // still reports git unavailable.
+    cache.applyRepo("/a/.git", listing([worktree("/a", { kind: "main" }), worktree("/a/wt")]));
+
+    const tree = cache.read();
+    expect(tree.gitAvailable).toBe(false);
+    expect(tree.repos[0].degraded).toContain("2.31");
+  });
+
+  it("leaves a more specific degraded cause in place", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    cache.applyBuild(gitGone("git 2.20 is below 2.31", ["/a"]));
+
+    cache.applyRepo("/a/.git", listing([], { degraded: "This repository is not being watched." }));
+
+    expect(cache.read().repos[0].degraded).toBe("This repository is not being watched.");
   });
 });

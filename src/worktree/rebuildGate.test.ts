@@ -97,8 +97,8 @@ describe("rebuildGate", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it("coalesces requests arriving while a rebuild for that scope is in flight", async () => {
-    const clock = makeClock();
+  /** A blocking run whose completion the test controls. */
+  function heldRun() {
     let release: (() => void) | undefined;
     const run = vi.fn(
       () =>
@@ -106,17 +106,67 @@ describe("rebuildGate", () => {
           release = resolve;
         }),
     );
+    return { run, release: () => release?.() };
+  }
+
+  it("coalesces plain requests arriving while a rebuild for that scope is in flight", async () => {
+    const clock = makeClock();
+    const { run, release } = heldRun();
     const gate = createRebuildGate(run, clock);
 
     const first = gate.request("repo-a");
     const second = gate.request("repo-a");
-    const third = gate.request("repo-a", { force: true });
     await flush();
 
     expect(run).toHaveBeenCalledTimes(1);
-    release?.();
-    await Promise.all([first, second, third]);
+    release();
+    await Promise.all([first, second]);
+    // worktree-tree-protocol: concurrent requests without force produce one rebuild.
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuilds again for a forced request that arrived mid-rebuild", async () => {
+    const clock = makeClock();
+    const { run, release } = heldRun();
+    const gate = createRebuildGate(run, clock);
+
+    const first = gate.request("repo-a");
+    await flush();
+    const forced = gate.request("repo-a", { force: true });
+    await flush();
+    // The running rebuild may already have read git, so it cannot answer a force.
+    expect(run).toHaveBeenCalledTimes(1);
+
+    release();
+    await flush();
+    expect(run).toHaveBeenCalledTimes(2);
+    release();
+    await Promise.all([first, forced]);
+  });
+
+  it("rebuilds again for a signal that arrived mid-rebuild, once the floor allows", async () => {
+    const clock = makeClock();
+    const { run, release } = heldRun();
+    const gate = createRebuildGate(run, clock);
+
+    const first = gate.request("repo-a", { signal: true });
+    await flush();
+    void gate.request("repo-a", { signal: true });
+    void gate.request("repo-a", { signal: true });
+    await flush();
+    expect(run).toHaveBeenCalledTimes(1);
+
+    release();
+    await flush();
+    // Still floored — the follow-up is scheduled, not run.
+    expect(run).toHaveBeenCalledTimes(1);
+
+    clock.advance(REBUILD_FLOOR_MS);
+    await flush();
+    // Two signals during one rebuild collapse into exactly one further rebuild.
+    expect(run).toHaveBeenCalledTimes(2);
+    release();
+    await first;
   });
 
   it("keeps scopes independent — a signal for one repo does not rebuild another", async () => {

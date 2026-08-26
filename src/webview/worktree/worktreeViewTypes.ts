@@ -1,23 +1,25 @@
 // src/webview/worktree/worktreeViewTypes.ts — The data the Worktree view renders.
 //
-// `WorktreeTree` / `WorktreeRepo` / `WorktreeInfo` are already host-owned
-// (src/worktree/types.ts) and imported verbatim. Everything else here is
-// transcribed from the design docs so the view can be built and tested before the
-// host side exists:
+// `WorktreeTree` / `WorktreeRepo` / `WorktreeInfo` (src/worktree/types.ts) and
+// `WorktreePresence` / `WorktreeAgentRow` / `WorktreeSubagentRow` /
+// `PresenceDegradation` (src/worktree/presenceTypes.ts) are host-owned and
+// re-exported below rather than declared here — the host module is the only
+// declaration, so a field added there cannot silently render nowhere. The rest
+// of this file — the view-local `WorktreeActivity` / `WorktreeAgentSource` /
+// `WorktreeActivitySource` aliases and the RPC/action/create-form types — has no
+// host counterpart and is transcribed from the design docs:
 //
-//   WorktreePresence / WorktreeAgentRow / WorktreeSubagentRow / PresenceDegradation
-//     → docs/design/worktree-agent-presence.md § 2
 //   WorktreeActionResult / WorktreeRemoveBlocker
 //     → docs/design/worktree-rpc.md § 2, § 3.1
 //   WorktreeCreateDefaults / WorktreeCreateDraft
 //     → docs/design/worktree-actions.md § 3.2
-//
-// When the host modules land these move to src/worktree/ and this file re-exports
-// them; the view code does not change, which is the point of transcribing the
-// field names exactly rather than inventing view-local ones.
 
-import type { VaultAgentId } from "../../vault/types";
-
+export type {
+  PresenceDegradation,
+  WorktreeAgentRow,
+  WorktreePresence,
+  WorktreeSubagentRow,
+} from "../../worktree/presenceTypes";
 export type { WorktreeInfo, WorktreeRepo, WorktreeTree } from "../../worktree/types";
 
 /** Live activity of one agent row. Mirrors the webview terminal tracker, plus `exited`. */
@@ -28,66 +30,6 @@ export type WorktreeAgentSource = "launch" | "process" | "registry" | "title" | 
 
 /** Where the row's ACTIVITY came from. `output` / `title` / `none` are fallbacks. */
 export type WorktreeActivitySource = "hook" | "output" | "title" | "registry" | "none";
-
-/** A source that failed, named on the scope it affects. Never a silent staleness. */
-export interface PresenceDegradation {
-  source: "panes" | "registry" | "vault" | "hook";
-  /** Shown verbatim in the stale affordance. */
-  reason: string;
-  /** Epoch ms of the first consecutive failure. */
-  since: number;
-}
-
-/**
- * Delegated work, derived post-hoc from a transcript — history, not a live roster.
- * `live` stays `false` until the hook phase lands, and the view must not draw these
- * with the live dot vocabulary while it is.
- */
-export interface WorktreeSubagentRow {
-  /** Agent type, or the invoking tool when undeclared. */
-  name: string;
-  title?: string;
-  status: "running" | "completed" | "failed" | "unknown";
-  live: false;
-  entryId?: string;
-}
-
-export interface WorktreeAgentRow {
-  /** Stable across rebuilds. */
-  rowId: string;
-  scope: "window" | "external";
-  /** AT session id; present iff `scope === "window"`. */
-  paneId?: string;
-  viewId?: string;
-  /** Pane title, already decoration-stripped by the host. */
-  title?: string;
-  /** Last meaningful line; rendered after the title. */
-  preview?: string;
-  model?: string;
-  /** Omitted when identity is unproven — the view never guesses an icon. */
-  agent?: VaultAgentId;
-  agentSource: WorktreeAgentSource;
-  activity: WorktreeActivity;
-  activitySource: WorktreeActivitySource;
-  entryId?: string;
-  startedAt?: number;
-  /** When the current `activity` began — the age clock for a working row. */
-  stateStartedAt?: number;
-  /** When the last turn ended — the age clock for a finished row. */
-  finishedAt?: number;
-  lastActivityAt?: number;
-  /** External rows only. */
-  pid?: number;
-  subagents?: WorktreeSubagentRow[];
-}
-
-export interface WorktreePresence {
-  /** Key = `WorktreeInfo.id`. */
-  rowsByWorktreeId: Record<string, WorktreeAgentRow[]>;
-  scannedAt: number;
-  /** Empty when every source succeeded — an honest empty is NOT a degradation. */
-  degradedSources: PresenceDegradation[];
-}
 
 /** Every non-zero field is named in the remove confirmation. */
 export interface WorktreeRemoveBlocker {

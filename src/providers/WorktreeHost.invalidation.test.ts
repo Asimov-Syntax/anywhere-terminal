@@ -168,16 +168,18 @@ async function builtHost(options: { folders?: string[]; failWatchFor?: string } 
 }
 
 describe("WorktreeHost — watch targets", () => {
-  it("watches each repository with exactly the three documented patterns", async () => {
+  it("watches each repository with exactly the four documented patterns", async () => {
     const { pool } = await builtHost();
 
     expect(pool.subs.map((s) => `${s.baseDir} ${s.glob}`)).toEqual([
-      "/a/.git worktrees/*",
-      "/a/.git worktrees/*/HEAD",
       "/a/.git HEAD",
-      "/b/.git worktrees/*",
-      "/b/.git worktrees/*/HEAD",
+      "/a/.git worktrees",
+      "/a/.git/worktrees *",
+      "/a/.git/worktrees */HEAD",
       "/b/.git HEAD",
+      "/b/.git worktrees",
+      "/b/.git/worktrees *",
+      "/b/.git/worktrees */HEAD",
     ]);
   });
 
@@ -211,7 +213,7 @@ describe("WorktreeHost — confining a rebuild", () => {
     const { pool, run, view } = await builtHost();
     run.mockClear();
 
-    pool.fire("/a/.git", "worktrees/*", "create");
+    pool.fire("/a/.git/worktrees", "*", "create");
     await settle();
 
     expect(listedRepos(run)).toEqual(["/a"]);
@@ -222,7 +224,7 @@ describe("WorktreeHost — confining a rebuild", () => {
     const { pool, run } = await builtHost();
     run.mockClear();
 
-    pool.fire("/a/.git", "worktrees/*/HEAD", "change");
+    pool.fire("/a/.git/worktrees", "*/HEAD", "change");
     await settle();
 
     expect(listedRepos(run)).toEqual(["/a"]);
@@ -242,7 +244,7 @@ describe("WorktreeHost — confining a rebuild", () => {
     const { pool, run } = await builtHost();
     run.mockClear();
 
-    pool.fire("/a/.git", "worktrees/*", "delete");
+    pool.fire("/a/.git/worktrees", "*", "delete");
     await settle();
 
     // No root re-resolution and no version probe: one `worktree list`.
@@ -255,11 +257,11 @@ describe("WorktreeHost — bounding the rebuild rate", () => {
     const { pool, run, advance } = await builtHost();
     run.mockClear();
 
-    pool.fire("/a/.git", "worktrees/*", "create");
+    pool.fire("/a/.git/worktrees", "*", "create");
     await settle();
     for (let i = 0; i < 5; i += 1) {
       advance(100);
-      pool.fire("/a/.git", "worktrees/*/HEAD", "change");
+      pool.fire("/a/.git/worktrees", "*/HEAD", "change");
       await settle();
     }
 
@@ -274,7 +276,7 @@ describe("WorktreeHost — bounding the rebuild rate", () => {
   it("runs a forced refresh immediately inside the floor", async () => {
     const { host, view, pool, run } = await builtHost();
     run.mockClear();
-    pool.fire("/a/.git", "worktrees/*", "create");
+    pool.fire("/a/.git/worktrees", "*", "create");
     await settle();
 
     host.handleMessage(view, { type: "requestWorktreeTree", force: true });
@@ -288,12 +290,12 @@ describe("WorktreeHost — bounding the rebuild rate", () => {
 describe("WorktreeHost — workspace changes", () => {
   it("watches a repository added to the workspace and drops one removed from it", async () => {
     const { pool, setFolders } = await builtHost({ folders: ["/a"] });
-    expect(pool.subs.map((s) => s.baseDir)).toEqual(["/a/.git", "/a/.git", "/a/.git"]);
+    expect(pool.subs.map((s) => s.baseDir)).toEqual(["/a/.git", "/a/.git", "/a/.git/worktrees", "/a/.git/worktrees"]);
 
     await setFolders(["/b"]);
 
-    expect(pool.subs.filter((s) => s.baseDir === "/b/.git")).toHaveLength(3);
-    expect(pool.liveCount()).toBe(3);
+    expect(pool.subs.filter((s) => s.baseDir.startsWith("/b/.git"))).toHaveLength(4);
+    expect(pool.liveCount()).toBe(4);
   });
 
   it("rebuilds the whole tree when the workspace folders change", async () => {

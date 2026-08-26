@@ -14,29 +14,30 @@ export interface WorktreeWatchTarget {
 }
 
 /**
- * The three patterns that answer "did this repository's worktree set or any of
+ * The four patterns that answer "did this repository's worktree set or any of
  * its heads move" — and nothing else.
  *
- * Every base is the common dir itself, not `<repoId>/worktrees`: a repository
- * with no linked worktrees has no `worktrees/` directory yet, and a watcher
- * based on a directory that does not exist never sees it appear.
+ * Watchers based on missing paths begin monitoring once those paths are
+ * created, so the linked-worktree metadata directory can be its own base.
  *
- * Each glob matches a single path segment, so `worktrees/<name>/index`,
- * `logs/`, `refs/` and `COMMIT_EDITMSG` — everything an agent writes
- * continuously — match nothing.
+ * The patterns narrow reported events, but a glob with path segments is still
+ * recursive at the watcher layer. Only the linked-worktree HEAD pattern is
+ * recursive, scoped to the linked-worktree metadata directory.
  */
 export function worktreeWatchTargets(repoId: string): WorktreeWatchTarget[] {
+  const worktreesDir = `${repoId}/worktrees`;
   return [
-    { baseDir: repoId, glob: "worktrees/*", events: ["create", "delete"] },
-    { baseDir: repoId, glob: "worktrees/*/HEAD", events: ["change"] },
     { baseDir: repoId, glob: "HEAD", events: ["change"] },
+    { baseDir: repoId, glob: "worktrees", events: ["create", "delete"] },
+    { baseDir: worktreesDir, glob: "*", events: ["create", "delete"] },
+    { baseDir: worktreesDir, glob: "*/HEAD", events: ["change"] },
   ];
 }
 
 export interface WorktreeWatch extends vscode.Disposable {
   /**
-   * Present exactly when at least one of the three could not be established,
-   * naming each. Two live watchers still leave part of the repository blind,
+   * Present exactly when at least one of the four could not be established,
+   * naming each. Remaining live watchers still leave part of the repository blind,
    * so the caller must not present it as watched.
    */
   readonly failureReason?: string;
@@ -44,7 +45,7 @@ export interface WorktreeWatch extends vscode.Disposable {
 
 /**
  * Watch one repository through the shared pool, reporting every structural
- * change on one callback. Disposal releases all three subscriptions and
+ * change on one callback. Disposal releases all four subscriptions and
  * silences any event that arrives afterwards.
  */
 export function watchRepoStructure(
@@ -67,7 +68,7 @@ export function watchRepoStructure(
     for (const event of target.events) {
       handlers[event] = fire;
     }
-    // W2 and W3 need `change`, which `subscribe()` cannot deliver: it creates
+    // W1 and W4 need `change`, which `subscribe()` cannot deliver: it creates
     // its watcher with `ignoreChange` (fsWatcherPool.ts:205) and a branch
     // switch rewrites HEAD in place.
     const subscription = pool.subscribePattern(target.baseDir, target.glob, handlers);

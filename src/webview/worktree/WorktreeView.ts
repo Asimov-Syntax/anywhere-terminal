@@ -359,7 +359,10 @@ export class WorktreeView {
       this.element.appendChild(worktreeEmptyState("noFolder"));
       return;
     }
-    if (tree && !tree.gitAvailable) {
+    // Only when nothing was retained: an unusable git with a last good listing
+    // is a stale tree, not an empty one, and hiding it behind this state was
+    // what made the cache's retention invisible.
+    if (tree && !tree.gitAvailable && tree.repos.length === 0) {
       this.element.appendChild(worktreeEmptyState("gitMissing"));
       return;
     }
@@ -371,6 +374,20 @@ export class WorktreeView {
     // A refresh that already holds a tree keeps it and marks itself quietly (§ 5).
     if (refreshing) {
       this.element.appendChild(renderRefreshingMarker());
+    }
+
+    // Staleness the user did not cause is a status, not an alert: nothing here
+    // needs acting on, and the tree below it is still worth reading.
+    if (!tree.gitAvailable) {
+      this.element.appendChild(
+        renderNotice({
+          tone: "warn",
+          live: "status",
+          title: "Git is unavailable.",
+          body: "Showing the last known worktrees.",
+          reason: tree.unreadable.reasons.join("\n"),
+        }),
+      );
     }
 
     // Presence sources that failed are named on the whole tree — they are not
@@ -385,7 +402,9 @@ export class WorktreeView {
         }),
       );
     }
-    if (tree.unreadable.count > 0) {
+    // Suppressed while git is unavailable: the notice above already carries
+    // every reason, and saying it twice reads as two separate problems.
+    if (tree.gitAvailable && tree.unreadable.count > 0) {
       this.element.appendChild(
         renderNotice({
           tone: "warn",

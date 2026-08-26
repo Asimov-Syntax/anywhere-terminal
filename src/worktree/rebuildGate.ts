@@ -36,6 +36,12 @@ export interface RebuildRequestOptions {
    * the rebuild that follows a mutation — both are expected to be immediate.
    */
   force?: boolean;
+  /**
+   * This came from a filesystem watcher, not from a caller asking for a tree.
+   * A signal reports that git state moved, so a rebuild already running cannot
+   * answer it — it may have read git before the move (design.md D4).
+   */
+  signal?: boolean;
 }
 
 export interface RebuildGate {
@@ -72,6 +78,13 @@ interface ScopeState {
   timer?: unknown;
   /** Every request waiting on that deferred rebuild. */
   waiting?: Deferred;
+  /**
+   * Set when a force or a signal arrived while `inFlight` was running. One slot,
+   * so any number of them collapse into exactly one further rebuild.
+   */
+  pending?: Deferred;
+  /** Whether that follow-up skips the floor, i.e. at least one force set it. */
+  pendingForced?: boolean;
 }
 
 /**
@@ -100,10 +113,31 @@ export function createRebuildGate(
     const started = (async () => run(scope))().finally(() => {
       if (state.inFlight === started) {
         state.inFlight = undefined;
+        drainPending(scope, state);
       }
     });
     state.inFlight = started;
     return started;
+  }
+
+  /**
+   * Hand whatever arrived mid-rebuild its own rebuild. The follow-up adopts the
+   * pending deferred, so a rejection always has a waiter.
+   */
+  function drainPending(scope: string, state: ScopeState): void {
+    const pending = state.pending;
+    if (!pending) {
+      return;
+    }
+    state.pending = undefined;
+    const forced = state.pendingForced === true;
+    state.pendingForced = false;
+    if (disposed) {
+      // A disposed window is a shutdown, not a rebuild failure — same as dispose().
+      pending.resolve();
+      return;
+    }
+    schedule(scope, state, forced).then(pending.resolve, pending.reject);
   }
 
   /** Fire the rebuild the floor deferred, handing its result to every joiner. */
@@ -114,27 +148,17 @@ export function createRebuildGate(
     if (!waiting || disposed) {
       return;
     }
-    // A rebuild that started while we were waiting satisfies these requests:
-    // they asked for a fresh listing, and one is being produced right now.
+    // A rebuild that started while we were waiting satisfies these requests: it
+    // began after they arrived, so it reads git after them. That is the whole
+    // test — a rebuild already running when a request arrives does not.
     const work = state.inFlight ?? start(scope, state);
     work.then(waiting.resolve, waiting.reject);
   }
 
-  function request(scope: string, options: RebuildRequestOptions = {}): Promise<void> {
-    if (disposed) {
-      return Promise.resolve();
-    }
-    const state = stateFor(scope);
-
-    // One rebuild at a time per scope. A request arriving mid-rebuild — forced
-    // or not — is answered by the rebuild already running: it reads the same
-    // git state this request wants.
-    if (state.inFlight) {
-      return state.inFlight;
-    }
-
+  /** Run now, or defer to the remainder of the floor. Never called mid-rebuild. */
+  function schedule(scope: string, state: ScopeState, force: boolean): Promise<void> {
     const sinceLast = state.lastRunAt === undefined ? Number.POSITIVE_INFINITY : clock.now() - state.lastRunAt;
-    if (options.force || sinceLast >= REBUILD_FLOOR_MS) {
+    if (force || sinceLast >= REBUILD_FLOOR_MS) {
       if (state.timer !== undefined) {
         // A forced rebuild satisfies whatever the floor was holding back.
         clock.clearTimeout(state.timer);
@@ -158,6 +182,27 @@ export function createRebuildGate(
     return state.waiting.promise;
   }
 
+  function request(scope: string, options: RebuildRequestOptions = {}): Promise<void> {
+    if (disposed) {
+      return Promise.resolve();
+    }
+    const state = stateFor(scope);
+
+    if (state.inFlight) {
+      // A plain request is answered by the rebuild already running. A force and a
+      // signal are not: the running rebuild may have read git before either
+      // arrived, so each earns one further rebuild (design.md D4).
+      if (options.force !== true && options.signal !== true) {
+        return state.inFlight;
+      }
+      state.pending ??= createDeferred();
+      state.pendingForced = state.pendingForced === true || options.force === true;
+      return state.pending.promise;
+    }
+
+    return schedule(scope, state, options.force === true);
+  }
+
   function dispose(): void {
     if (disposed) {
       return;
@@ -172,6 +217,8 @@ export function createRebuildGate(
       // not a rebuild failure, and nothing is left to report it to.
       state.waiting?.resolve();
       state.waiting = undefined;
+      state.pending?.resolve();
+      state.pending = undefined;
     }
     scopes.clear();
   }

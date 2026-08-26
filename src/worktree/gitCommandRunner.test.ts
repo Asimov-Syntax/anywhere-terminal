@@ -56,3 +56,23 @@ describe("createGitCommandRunner", () => {
     expect(typeof result.code).toBe("number");
   });
 });
+
+// Review round 1, W1: repoRoots classifies absence from git's own message, so
+// the message has to arrive in the language that classifier was written for.
+describe("createGitCommandRunner — locale", () => {
+  it("pins the child's locale to C", async () => {
+    const result = await createGitCommandRunner({ executable: process.execPath }).run(
+      ["-e", "process.stdout.write(process.env.LC_ALL + '/' + process.env.LANG)"],
+      cwd,
+    );
+    expect(result.stdout.toString()).toBe("C/C");
+  });
+
+  it("keeps the rest of the environment, so git stays findable on PATH", async () => {
+    const result = await createGitCommandRunner({ executable: process.execPath }).run(
+      ["-e", "process.stdout.write(String(process.env.PATH === undefined))"],
+      cwd,
+    );
+    expect(result.stdout.toString()).toBe("false");
+  });
+});

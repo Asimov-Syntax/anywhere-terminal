@@ -144,7 +144,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         watches.set(
           repoId,
           watchRepoStructure(repoId, options.pool, () => {
-            void gate.request(repoId);
+            // `signal`: git state moved, so a rebuild already running cannot
+            // answer this one — it may have read git before the move.
+            void gate.request(repoId, { signal: true });
           }),
         );
       }

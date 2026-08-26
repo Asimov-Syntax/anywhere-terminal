@@ -4,10 +4,17 @@
 
 import * as path from "node:path";
 import { isPathInside } from "../utils/pathBoundary";
+import { describeGitFailure } from "./describeGitFailure";
 import { type GitCapabilities, isUnsupportedZResult } from "./gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
 import { parseWorktreeList } from "./porcelainParser";
-import { type GitApiAccessor, type ResolvedRepo, resolveRepoRoots } from "./repoRoots";
+import {
+  dedupeResolvedRepos,
+  type FolderResolution,
+  type GitApiAccessor,
+  type ResolvedRepo,
+  resolveRepoOutcomes,
+} from "./repoRoots";
 import type { WorktreeInfo, WorktreeRepo, WorktreeTree } from "./types";
 import { orderWorktrees, type WorktreeActivityRank } from "./worktreeOrder";
 
@@ -64,14 +71,7 @@ export interface RepoListing {
 }
 
 function describeFailure(result: GitCommandResult): string {
-  if (result.timedOut) {
-    return "`git worktree list` timed out.";
-  }
-  if (result.failedToSpawn) {
-    return "No usable `git` executable was found.";
-  }
-  const detail = result.stderr.trim().split("\n")[0];
-  return detail.length > 0 ? detail : `\`git worktree list\` exited with code ${result.code}.`;
+  return describeGitFailure(result, "git worktree list");
 }
 
 /** Run `worktree list`, preferring `-z` until this git rejects it. */
@@ -228,6 +228,12 @@ export interface WorktreeTreeBuild {
   normalizedFolders: string[];
   /** Set when git itself is unusable; the tree is then empty. */
   gitUnavailableReason?: string;
+  /**
+   * One entry per workspace folder, in folder order. The cache needs to tell a
+   * folder that is not a repository from one whose resolution failed, which the
+   * `roots` list alone cannot say (design.md D1, D2).
+   */
+  folderOutcomes: FolderResolution[];
 }
 
 /**
@@ -241,7 +247,11 @@ export async function buildWorktreeTreeDetailed(
 ): Promise<WorktreeTreeBuild> {
   const empty = { roots: [], listings: new Map<string, RepoListing>(), normalizedFolders: [] };
   if (workspaceFolders.length === 0) {
-    return { ...empty, tree: { repos: [], unreadable: { count: 0, reasons: [] }, gitAvailable: true } };
+    return {
+      ...empty,
+      tree: { repos: [], unreadable: { count: 0, reasons: [] }, gitAvailable: true },
+      folderOutcomes: [],
+    };
   }
 
   const version = await deps.capabilities.probeVersion();
@@ -250,11 +260,18 @@ export async function buildWorktreeTreeDetailed(
       ...empty,
       tree: { repos: [], unreadable: { count: 1, reasons: [version.reason] }, gitAvailable: false },
       gitUnavailableReason: version.reason,
+      // An unusable git is every folder failing to resolve at once, so retention
+      // needs no second mechanism — the cache keeps each last good listing.
+      folderOutcomes: workspaceFolders.map((folder) => ({
+        folder,
+        outcome: { kind: "failed" as const, reason: version.reason },
+      })),
     };
   }
 
   const normalizedFolders = await normalizeFolders(workspaceFolders, deps);
-  const roots = await resolveRepoRoots(workspaceFolders, deps);
+  const folderOutcomes = await resolveRepoOutcomes(workspaceFolders, deps);
+  const roots = dedupeResolvedRepos(folderOutcomes);
   const repos: WorktreeRepo[] = [];
   const reasons = new Set<string>();
   const listings = new Map<string, RepoListing>();
@@ -279,6 +296,7 @@ export async function buildWorktreeTreeDetailed(
     roots,
     listings,
     normalizedFolders,
+    folderOutcomes,
   };
 }
 

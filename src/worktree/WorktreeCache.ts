@@ -33,6 +33,13 @@ export interface WorktreeCache {
 
 export function createWorktreeCache(): WorktreeCache {
   const repos = new Map<string, CachedRepo>();
+  /**
+   * Which repository each workspace folder resolved to, last time it did. A
+   * failed resolution never learns the `repoId` — the `repoId` IS the common dir
+   * it failed to read — so the folder path is the only key available to tell a
+   * transient failure from the user removing the folder (design.md D2).
+   */
+  let repoByFolder = new Map<string, ResolvedRepo>();
   let order: ResolvedRepo[] = [];
   let folders: string[] = [];
   let gitAvailable = true;
@@ -60,13 +67,56 @@ export function createWorktreeCache(): WorktreeCache {
       const listing = build.listings.get(repo.repoId);
       next.set(repo.repoId, listing ? merge(repo.repoId, repo, listing) : { repo, reasons: [], skipped: 0 });
     }
+
+    // Walk the folders rather than the roots: only a folder can say whether a
+    // missing repository was removed by the user or merely failed to resolve.
+    // The memory is rebuilt from this walk, so a folder no longer open drops out.
+    const nextOrder: ResolvedRepo[] = [];
+    const nextRepoIds = new Set<string>();
+    const nextRepoByFolder = new Map<string, ResolvedRepo>();
+    for (const { folder, outcome } of build.folderOutcomes) {
+      let resolved: ResolvedRepo | undefined;
+      if (outcome.kind === "resolved") {
+        resolved = outcome.repo;
+      } else if (outcome.kind === "failed") {
+        // `absent` is an answer — that folder is not a repository, so anything
+        // remembered for it is genuinely gone. `failed` is the absence of one.
+        const remembered = repoByFolder.get(folder);
+        const stored = remembered && repos.get(remembered.repoId);
+        if (remembered && next.has(remembered.repoId)) {
+          // A sibling folder names this same repository and did resolve, so its
+          // fresh listing stands. This folder still keeps the mapping: the day
+          // that sibling closes, it is the only memory the group has left.
+          resolved = remembered;
+        } else if (remembered && stored) {
+          next.set(remembered.repoId, {
+            repo: { ...stored.repo, degraded: outcome.reason },
+            reasons: stored.reasons,
+            skipped: stored.skipped,
+          });
+          resolved = remembered;
+        }
+      }
+      if (resolved === undefined) {
+        continue;
+      }
+      nextRepoByFolder.set(folder, resolved);
+      if (!nextRepoIds.has(resolved.repoId)) {
+        nextRepoIds.add(resolved.repoId);
+        nextOrder.push(resolved);
+      }
+    }
+
     // Entries absent from the new root set are gone, not stale: a workspace
     // folder that was removed must not leave its group behind.
     repos.clear();
     for (const [repoId, cached] of next) {
-      repos.set(repoId, cached);
+      if (nextRepoIds.has(repoId)) {
+        repos.set(repoId, cached);
+      }
     }
-    order = [...build.roots];
+    repoByFolder = nextRepoByFolder;
+    order = nextOrder;
     folders = [...build.normalizedFolders];
     gitAvailable = build.tree.gitAvailable;
     gitUnavailableReason = build.gitUnavailableReason;
@@ -81,17 +131,6 @@ export function createWorktreeCache(): WorktreeCache {
   }
 
   function read(): WorktreeTree {
-    if (!gitAvailable) {
-      return {
-        repos: [],
-        unreadable: {
-          count: gitUnavailableReason === undefined ? 0 : 1,
-          reasons: gitUnavailableReason === undefined ? [] : [gitUnavailableReason],
-        },
-        gitAvailable: false,
-      };
-    }
-
     const out: WorktreeRepo[] = [];
     const reasons = new Set<string>();
     let count = 0;
@@ -100,12 +139,36 @@ export function createWorktreeCache(): WorktreeCache {
       if (!cached) {
         continue;
       }
-      out.push(cached.repo);
+      // A copy of the group and of its worktree list: `read()` runs on every
+      // broadcast, and a consumer that mutates what it was handed must not be
+      // able to edit the cache. The `WorktreeInfo` records inside stay shared —
+      // copying each one per read costs with worktree count for no caller.
+      out.push({ ...cached.repo, worktrees: [...cached.repo.worktrees] });
       count += cached.skipped;
       for (const reason of cached.reasons) {
         reasons.add(reason);
       }
     }
+    if (!gitAvailable) {
+      // An unusable git is a failure to read, not a deletion: the retained
+      // listings are what the window keeps showing until git answers again, and
+      // only a window that never listed anything has nothing to show. The
+      // capability probe is memoised for 30 min, so emptying here could not be
+      // undone by a refresh either (design.md D3).
+      const reason = gitUnavailableReason;
+      if (reason !== undefined) {
+        reasons.add(reason);
+        count += 1;
+      }
+      // Marking here rather than at write time is what keeps the mark true of
+      // every retained group: a per-repo rebuild that landed after git went
+      // away would otherwise read as fresh under a tree calling git unusable.
+      // A group that already names a more specific cause keeps it.
+      const marked =
+        reason === undefined ? out : out.map((r) => (r.degraded === undefined ? { ...r, degraded: reason } : r));
+      return { repos: marked, unreadable: { count, reasons: [...reasons] }, gitAvailable: false };
+    }
+
     return { repos: out, unreadable: { count, reasons: [...reasons] }, gitAvailable: true };
   }
 

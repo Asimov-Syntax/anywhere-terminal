@@ -55,6 +55,30 @@ function oneRepo(...records: string[][]) {
   });
 }
 
+/** One repo at `/repo` whose `worktree list` result can change between calls. */
+function growingRepo(...initial: string[][]) {
+  let records = initial;
+  const run = vi.fn(async (args: readonly string[], cwd: string): Promise<GitCommandResult> => {
+    if (args[0] === "--version") {
+      return res({ stdout: Buffer.from("git version 2.50.1\n") });
+    }
+    if (cwd !== "/repo") {
+      return res({ code: 128, stderr: "fatal: not a git repository" });
+    }
+    if (args[0] === "worktree") {
+      return res({ stdout: nul(...records) });
+    }
+    return res({ stdout: Buffer.from("/repo/.git\n") });
+  });
+  return {
+    runner: { run } as unknown as GitCommandRunner,
+    run,
+    setRecords: (...next: string[][]) => {
+      records = next;
+    },
+  };
+}
+
 function surface(ready = true): WorktreeSurface & { posts: ExtensionToWebViewMessage[] } {
   const posts: ExtensionToWebViewMessage[] = [];
   return { posts, isReady: () => ready, post: (m) => posts.push(m) };
@@ -67,10 +91,52 @@ async function settle(): Promise<void> {
   }
 }
 
-const pool = { subscribePattern: () => ({ active: true, dispose: () => {} }) };
+interface Subscription {
+  baseDir: string;
+  glob: string;
+  handlers: { create?: () => void; change?: () => void; delete?: () => void };
+}
 
-function host(runner: GitCommandRunner, folders = ["/repo"]) {
-  return createWorktreeHost({ deps: deps(runner, folders), workspaceFolders: () => folders, pool, now: () => 1000 });
+/**
+ * Records every pattern subscription and can fail chosen `<baseDir> <glob>`
+ * targets individually. Two of the four watch targets share each base, so
+ * failing a whole base (as `WorktreeHost.invalidation.test.ts`'s fakePool
+ * does) cannot construct a partial failure — this one keys on the target.
+ */
+function fakePool(failFor: readonly string[] = []) {
+  const subs: Subscription[] = [];
+  return {
+    subs,
+    /** Fire one event on `<baseDir>`'s subscription for `glob`. */
+    fire(baseDir: string, glob: string, event: "create" | "change" | "delete"): void {
+      const sub = subs.find((one) => one.baseDir === baseDir && one.glob === glob);
+      if (!sub) {
+        throw new Error(`no subscription for ${baseDir} ${glob}`);
+      }
+      sub.handlers[event]?.();
+    },
+    subscribePattern(baseDir: string, glob: string, handlers: Subscription["handlers"]) {
+      subs.push({ baseDir, glob, handlers });
+      const key = `${baseDir} ${glob}`;
+      const active = !failFor.includes(key);
+      return {
+        active,
+        ...(active ? {} : { failureReason: `ENOSPC: could not watch ${key}` }),
+        dispose: () => {},
+      };
+    },
+  };
+}
+
+const pool = fakePool();
+
+function host(runner: GitCommandRunner, folders = ["/repo"], usePool = pool) {
+  return createWorktreeHost({
+    deps: deps(runner, folders),
+    workspaceFolders: () => folders,
+    pool: usePool,
+    now: () => 1000,
+  });
 }
 
 describe("WorktreeHost — init payload", () => {
@@ -309,6 +375,71 @@ describe("WorktreeHost — answering a request", () => {
 
     expect(view.posts).toHaveLength(0);
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorktreeHost — watch targets", () => {
+  it("rebuilds a repository with no linked worktrees when it gains its first one", async () => {
+    const { runner, setRecords } = growingRepo(MAIN);
+    const watchPool = fakePool();
+    const worktrees = createWorktreeHost({
+      deps: deps(runner, ["/repo"]),
+      workspaceFolders: () => ["/repo"],
+      pool: watchPool,
+      now: () => 1000,
+    });
+    const view = surface();
+    worktrees.attach(view);
+    worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(view, { type: "requestWorktreeTree" });
+    await settle();
+
+    const first = view.posts[0];
+    if (first.type !== "worktreeTreeResponse") {
+      throw new Error("expected a worktreeTreeResponse");
+    }
+    expect(first.tree.repos[0].worktrees).toHaveLength(1);
+
+    // The linked-worktree metadata directory does not exist yet — driven
+    // through W2 (base `<commonDir>`, glob `worktrees`, event `create`),
+    // the target that reports it appearing without depending on a watcher
+    // rooted at a not-yet-existing directory (W3/W4's base).
+    setRecords(MAIN, FEAT);
+    watchPool.fire("/repo/.git", "worktrees", "create");
+    await settle();
+
+    const second = view.posts[1];
+    if (second.type !== "worktreeTreeResponse") {
+      throw new Error("expected a worktreeTreeResponse");
+    }
+    expect(second.tree.repos[0].worktrees).toHaveLength(2);
+  });
+
+  it("marks the repository degraded when only some of its four targets fail", async () => {
+    const { runner } = oneRepo(MAIN, FEAT);
+    // Only W2 (`worktrees`, create/delete) fails; W1, W3, W4 stay live.
+    const watchPool = fakePool(["/repo/.git worktrees"]);
+    const worktrees = createWorktreeHost({
+      deps: deps(runner, ["/repo"]),
+      workspaceFolders: () => ["/repo"],
+      pool: watchPool,
+      now: () => 1000,
+    });
+    const view = surface();
+    worktrees.attach(view);
+    worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(view, { type: "requestWorktreeTree" });
+    await settle();
+
+    const message = view.posts[0];
+    if (message.type !== "worktreeTreeResponse") {
+      throw new Error("expected a worktreeTreeResponse");
+    }
+    const degraded = message.tree.repos[0].degraded;
+    expect(degraded).toContain("not being watched");
+    expect(degraded).toContain("ENOSPC");
+    // Partial, not total: exactly one of the four targets contributed a failure.
+    expect(degraded?.split("ENOSPC").length).toBe(2);
   });
 });
 

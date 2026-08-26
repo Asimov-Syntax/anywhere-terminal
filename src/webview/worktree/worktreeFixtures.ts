@@ -123,6 +123,21 @@ export function gitMissingTree(): WorktreeTree {
   return { gitAvailable: false, unreadable: { count: 0, reasons: [] }, repos: [] };
 }
 
+/**
+ * Git went away after a good listing, so the worktrees are retained and stale
+ * rather than gone (spec: a retained listing is shown rather than replaced by an
+ * empty state). Distinct from `gitMissingTree`, which never listed anything.
+ */
+export function gitGoneWithRetainedTree(): WorktreeTree {
+  const reason = "git 2.20 is below 2.31";
+  const retained = singleRepoTree();
+  return {
+    gitAvailable: false,
+    unreadable: { count: 1, reasons: [reason] },
+    repos: retained.repos.map((repo) => ({ ...repo, degraded: reason })),
+  };
+}
+
 /** Mockup § 7, second frame: folders are open, none of them is a repository. */
 export function noRepoTree(): WorktreeTree {
   return { gitAvailable: true, unreadable: { count: 0, reasons: [] }, repos: [] };

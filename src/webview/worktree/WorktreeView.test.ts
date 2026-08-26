@@ -12,6 +12,7 @@ import {
   agentRow,
   confirmableBlocker,
   createDefaults,
+  gitGoneWithRetainedTree,
   gitMissingTree,
   noRepoTree,
   refusedBlocker,
@@ -111,6 +112,39 @@ describe("loading and empty states", () => {
       expect(view.element.querySelector(".vault-empty-title")?.textContent).toBe(title);
       expect(view.element.querySelector(".wt-notice")).toBeNull();
     }
+  });
+
+  // Audit A2: the cache retains the last good listing when git goes away, and
+  // the view used to hide it behind the "Git not found" empty state.
+  it("shows a retained listing under a staleness notice instead of an empty state", () => {
+    const { view } = mount();
+    view.setData({ tree: gitGoneWithRetainedTree(), presence: null });
+
+    expect(view.element.querySelector(".vault-empty-title")).toBeNull();
+    expect(view.element.querySelectorAll(".wt-row").length).toBeGreaterThan(0);
+
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.textContent).toContain("Git is unavailable");
+    expect(notice?.getAttribute("role")).toBe("status");
+    expect(notice?.textContent).toContain("2.31");
+  });
+
+  it("still shows the git-not-found empty state when nothing was retained", () => {
+    const { view } = mount();
+    view.setData({ tree: gitMissingTree(), presence: null });
+    expect(view.element.querySelector(".vault-empty-title")?.textContent).toBe("Git not found");
+  });
+
+  it("names git once at tree scope, and leaves each repo its own degraded affordance", () => {
+    const { view } = mount();
+    view.setData({ tree: gitGoneWithRetainedTree(), presence: null });
+
+    const notices = [...view.element.querySelectorAll(".wt-notice")];
+    // Tree scope and repo scope are different claims and the spec requires both:
+    // "git is gone" is not the same statement as "this repository is stale".
+    const gitNotices = notices.filter((n) => n.textContent?.includes("Git is unavailable"));
+    expect(gitNotices).toHaveLength(1);
+    expect(notices.length).toBeGreaterThan(gitNotices.length);
   });
 });
 
