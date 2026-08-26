@@ -33,6 +33,8 @@ import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
+import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
+import { createPresenceProjector } from "./worktree/presenceProjector";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -82,10 +84,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   // Pane evidence — one store per window, written by the session lifecycle, the
-  // output flush, the Cursor hook, and the three webview surfaces. WT-004.1
-  // reads it to project agent rows; nothing reads it yet.
+  // output flush, the Cursor hook, and the three webview surfaces, and read by
+  // the presence projection below.
+  //
+  // The forwarder exists because the store is built before the host that
+  // subscribes to it: sessions must be able to record evidence from the moment
+  // they exist, and the host needs a built tree to attribute panes to.
   // See: asimov/changes/add-host-pane-evidence/design.md D1.
-  const paneEvidence = createPaneEvidenceStore();
+  let onPaneEvidenceChange: (() => void) | undefined;
+  const paneEvidence = createPaneEvidenceStore({ onChange: () => onPaneEvidenceChange?.() });
 
   // Create shared SessionManager (singleton). workspaceState backs the per-workspace
   // custom-tab-name persistence (anywhereTerminal.tabCustomNames); see design.md D3 of add-tab-rename.
@@ -201,6 +208,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
     pool: fsWatcherPool,
     onDidChangeWorkspaceFolders: (listener) => vscode.workspace.onDidChangeWorkspaceFolders(listener),
+    // This window's panes, as agent rows under the worktree each one is inside.
+    projector: createPresenceProjector(createPresenceProjectorDeps({ store: paneEvidence })),
+    onPaneChange: (listener) => {
+      onPaneEvidenceChange = listener;
+      return {
+        dispose: () => {
+          onPaneEvidenceChange = undefined;
+        },
+      };
+    },
   });
   context.subscriptions.push(worktreeHost);
 

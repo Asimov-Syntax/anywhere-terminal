@@ -1,4 +1,12 @@
-import { type LiveActivity, OUTPUT_IDLE_WINDOW_MS, projectLiveActivity } from "../../shared/paneEvidence";
+import {
+  classifyTitle,
+  type LiveActivity,
+  MAX_REPORTED_TITLE_CHARS,
+  OUTPUT_IDLE_WINDOW_MS,
+  projectLiveActivity,
+  type TitleClass,
+} from "../../shared/paneEvidence";
+import { boundedTitleSignature } from "./titleSignature";
 
 /**
  * Alias of the shared three-state activity, kept as its own name because
@@ -28,10 +36,13 @@ export interface TerminalActivityTrackerDeps {
   idleDelayMs?: number;
 }
 
+/** Mirrors the host store's classification so both sides agree on one title. */
 interface ActivityEvidence {
   outputActive: boolean;
   semanticWorking: boolean;
   waiting: boolean;
+  /** What the pane's last title claimed — the same rule the host applies. */
+  titleClass: TitleClass;
 }
 
 /**
@@ -75,6 +86,23 @@ export class TerminalActivityTracker {
     }
 
     this.getEvidence(sessionId).semanticWorking = state === "working";
+    this.project(sessionId);
+  }
+
+  /**
+   * Record what this pane's title claims.
+   *
+   * Normalized with the SAME function the host reporter uses, so the tab and the
+   * worktree row classify one title identically — the whole reason the rule
+   * lives in `shared/paneEvidence.ts` rather than in each of them.
+   */
+  setTitle(sessionId: string, rawTitle: string): void {
+    const evidence = this.getEvidence(sessionId);
+    const next = classifyTitle(boundedTitleSignature(rawTitle, MAX_REPORTED_TITLE_CHARS));
+    if (evidence.titleClass === next) {
+      return;
+    }
+    evidence.titleClass = next;
     this.project(sessionId);
   }
 
@@ -135,7 +163,7 @@ export class TerminalActivityTracker {
   private getEvidence(sessionId: string): ActivityEvidence {
     let evidence = this.evidence.get(sessionId);
     if (!evidence) {
-      evidence = { outputActive: false, semanticWorking: false, waiting: false };
+      evidence = { outputActive: false, semanticWorking: false, waiting: false, titleClass: "unknown" };
       this.evidence.set(sessionId, evidence);
     }
     return evidence;
@@ -153,6 +181,8 @@ export class TerminalActivityTracker {
       return;
     }
 
+    // `titleClass` is supplied for real in WT-004.1 task 1_4, which feeds the
+    // tab the same classification the host uses; `unknown` is today's behaviour.
     const status = projectLiveActivity(evidence);
     if (terminal.activityStatus !== status) {
       terminal.activityStatus = status;

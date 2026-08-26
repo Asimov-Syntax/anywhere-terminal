@@ -9,6 +9,7 @@
 import type * as vscode from "vscode";
 import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "../types/messages";
 import { hasGitRepo } from "../worktree/hasGitRepo";
+import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreePresence } from "../worktree/presenceTypes";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
@@ -17,6 +18,15 @@ import { type WorktreeWatch, watchRepoStructure } from "../worktree/worktreeWatc
 import type { WatcherPool } from "./fsWatcherPool";
 
 const LOG_PREFIX = "[worktree-host]";
+
+/**
+ * How long presence may lag the evidence behind it.
+ *
+ * A max-latency cap, NOT a resettable debounce: an agent producing output for a
+ * minute would push a debounce out for that whole minute and the row would
+ * never move. The first change arms this; later ones ride it (design.md D3.1).
+ */
+export const PRESENCE_MAX_LATENCY_MS = 150;
 
 /** The gate scope that rebuilds every repository; any other scope is a repoId. */
 export const WHOLE_TREE_SCOPE = "*";
@@ -34,6 +44,13 @@ export interface WorktreeHostOptions {
   /** `vscode.workspace.onDidChangeWorkspaceFolders`, injected for testability. */
   onDidChangeWorkspaceFolders?(listener: () => void): vscode.Disposable;
   clock?: RebuildGateClock;
+  /**
+   * The window projection. Absent — every surface but the real extension entry
+   * point — and the host behaves exactly as it did before presence existed.
+   */
+  projector?: PresenceProjector;
+  /** Pane evidence moved. Injected as a subscription so the host owns no store. */
+  onPaneChange?(listener: () => void): vscode.Disposable;
   now?(): number;
   /** Path-existence probe behind `initPayload`, injected in tests. */
   exists?(p: string): boolean;
@@ -91,16 +108,214 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   const cache = createWorktreeCache();
   const surfaces = new Map<WorktreeSurface, SurfaceState>();
   const watches = new Map<string, WorktreeWatch>();
+  const projector = options.projector;
   let built = false;
   let disposed = false;
+  /** Last projection produced, and the tree version it describes. */
+  let projected: WorktreePresence | undefined;
+  let projectedVersion = -1;
+  /**
+   * The only thing any surface is ever shown.
+   *
+   * Committing the two halves together is what makes the envelope contract
+   * true: `rebuild()` mutates the cache before it can project, and a cached
+   * tree request, a surface becoming displayed, or a watch-failure write inside
+   * that window would otherwise deliver the new tree beside the previous
+   * presence (.reviews/round-2.md B1).
+   */
+  let published: { tree: ReturnType<typeof cache.read>; presence: WorktreePresence } | undefined;
+  /**
+   * Bumped by every write to the cached tree — never by a delivery attempt.
+   *
+   * A projection describes the tree it read, so what invalidates it is that
+   * tree moving. Versioning delivery instead made a broadcast that posted to
+   * nobody supersede real work, and made two broadcasts of the same tree look
+   * like two different trees (.reviews/round-1.md B1).
+   */
+  let treeVersion = 0;
+  /** The projection currently in flight. One at a time: the projector is stateful. */
+  let projectionRun: Promise<void> | undefined;
+  let projectionDirty = false;
+  let capHandle: unknown;
 
-  /** WT-004.0 supplies the projection; until then the envelope is final but empty. */
+  function armCap(fn: () => void): unknown {
+    return options.clock
+      ? options.clock.setTimeout(fn, PRESENCE_MAX_LATENCY_MS)
+      : setTimeout(fn, PRESENCE_MAX_LATENCY_MS);
+  }
+
+  function cancelCap(handle: unknown): void {
+    if (options.clock) {
+      options.clock.clearTimeout(handle);
+    } else {
+      clearTimeout(handle as ReturnType<typeof setTimeout>);
+    }
+  }
+
+  /**
+   * The ordering key the listing sorts by. Read through the projector on every
+   * assembly rather than snapshotted, so a rebuild orders by the presence that
+   * is current when it runs (design.md D12).
+   */
+  const discoveryDeps: WorktreeTreeDeps = projector
+    ? { ...options.deps, rank: (id: string) => projector.rank(id) }
+    : options.deps;
+
+  /** Presence with no projector is the empty envelope this host always sent. */
   function presence(): WorktreePresence {
-    return { rowsByWorktreeId: {}, scannedAt: now(), degradedSources: [] };
+    return projected ?? { rowsByWorktreeId: {}, scannedAt: now(), degradedSources: [] };
+  }
+
+  /**
+   * Freeze the current tree beside the presence that describes it.
+   *
+   * Refuses when the projection is behind the cache: half an envelope is worse
+   * than a late one, and the coordinator is about to produce the other half.
+   */
+  function commit(): boolean {
+    if (projector && projectedVersion !== treeVersion) {
+      return false;
+    }
+    published = { tree: cache.read(), presence: presence() };
+    return true;
+  }
+
+  function worktreeIds(): string[] {
+    return cache.read().repos.flatMap((repo) => repo.worktrees.map((worktree) => worktree.id));
+  }
+
+  /**
+   * Project once, committing only if the tree it read is still the tree we hold.
+   *
+   * A projection that raced a rebuild is not discarded — it is marked for a
+   * re-run. Dropping it is how a pane transition disappears until some later,
+   * unrelated evidence event happens to trigger another projection.
+   */
+  async function projectOnce(): Promise<void> {
+    if (!projector || disposed) {
+      return;
+    }
+    const at = treeVersion;
+    const next = await projector.project(worktreeIds());
+    if (disposed) {
+      return;
+    }
+    if (treeVersion !== at) {
+      projectionDirty = true;
+      return;
+    }
+    projected = next;
+    projectedVersion = at;
+  }
+
+  /**
+   * The single entry into the projector, for the pane path and the rebuild path
+   * alike.
+   *
+   * The projector holds per-pane resolution slots and per-row timestamps, so
+   * two concurrent `project()` calls interleave writes to the same maps and the
+   * older result can commit last. Everything funnels through here, and a caller
+   * arriving mid-flight joins the run in progress rather than starting a second
+   * (.reviews/round-1.md B1).
+   */
+  function requestProjection(): Promise<void> {
+    if (disposed) {
+      return Promise.resolve();
+    }
+    if (!projector) {
+      // No projection to wait for; the tree is the whole envelope.
+      commitAndBroadcast();
+      return Promise.resolve();
+    }
+    if (projectionRun) {
+      projectionDirty = true;
+      return projectionRun;
+    }
+    const run = (async () => {
+      let clean = true;
+      try {
+        do {
+          projectionDirty = false;
+          await projectOnce();
+        } while (projectionDirty && !disposed);
+      } catch (err) {
+        clean = false;
+        console.warn(`${LOG_PREFIX} presence projection threw — nothing published`, err);
+      }
+      // Cleared and published with no await between, so a caller arriving now
+      // either joined this cycle already or starts the next one — it cannot
+      // mark a cycle dirty that has stopped looking.
+      projectionRun = undefined;
+      if (disposed) {
+        return;
+      }
+      if (clean) {
+        commitAndBroadcast();
+      } else if (projectionDirty) {
+        // Someone joined the run that failed. Their work is not done just
+        // because this promise resolved, so it is re-run rather than dropped
+        // (.reviews/round-3.md W5).
+        void requestProjection();
+      }
+    })();
+    projectionRun = run;
+    return run;
+  }
+
+  /**
+   * The one publication point.
+   *
+   * Callers request work; they never attach a broadcast to it. Two of them
+   * joining one cycle used to publish its single result twice — single-flight
+   * projection is not single-flight publication (.reviews/round-2.md W3).
+   */
+  /**
+   * Make sure an envelope will exist, without asking for fresh work.
+   *
+   * A caller that only wants to be served is not a caller with new evidence:
+   * routing it through `requestProjection` would dirty the run already in
+   * flight and buy a second projection to answer a cached request.
+   */
+  function ensureProjection(): void {
+    if (!projectionRun) {
+      void requestProjection();
+    }
+  }
+
+  function commitAndBroadcast(): void {
+    if (commit()) {
+      broadcast();
+    }
+  }
+
+  function onPaneChange(): void {
+    // Nothing to attribute a pane to yet; the first build projects for itself.
+    if (disposed || !projector || !built || capHandle !== undefined) {
+      return;
+    }
+    capHandle = armCap(() => {
+      capHandle = undefined;
+      void requestProjection();
+    });
+  }
+
+  /**
+   * Is there anything honest to send?
+   *
+   * `built` turns true when the first rebuild writes the cache, which is before
+   * its projection can have committed. Delivering in that window paired the
+   * live tree with a synthetic empty presence — every agent row missing, then
+   * appearing a moment later (.reviews/round-3.md B1). A host with no projector
+   * has no second half to wait for, so it is deliverable from its first build.
+   */
+  function deliverable(): boolean {
+    return published !== undefined || !projector;
   }
 
   function currentMessage(): ExtensionToWebViewMessage {
-    return { type: "worktreeTreeResponse", tree: cache.read(), presence: presence() };
+    // Never the live cache: an uncommitted tree has no presence to pair with.
+    const envelope = published ?? { tree: cache.read(), presence: presence() };
+    return { type: "worktreeTreeResponse", tree: envelope.tree, presence: envelope.presence };
   }
 
   /**
@@ -122,7 +337,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   function broadcast(): void {
-    if (disposed) {
+    if (disposed || !deliverable()) {
       return;
     }
     const message = currentMessage();
@@ -161,6 +376,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       void gate.request(WHOLE_TREE_SCOPE, {});
       return;
     }
+    if (!deliverable()) {
+      // Built, but the first projection has not committed. The commit
+      // broadcasts to every showing surface, and this one now is.
+      state.showing = true;
+      return;
+    }
     // Recorded only once it actually reached the surface. A post that was
     // skipped as not-ready, or that threw, must not consume the edge — the next
     // report would find nothing to do and the surface would stay stale.
@@ -177,16 +398,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return;
     }
     if (scope === WHOLE_TREE_SCOPE) {
-      cache.applyBuild(await buildWorktreeTreeDetailed(options.workspaceFolders(), options.deps));
+      cache.applyBuild(await buildWorktreeTreeDetailed(options.workspaceFolders(), discoveryDeps));
       built = true;
+      treeVersion += 1;
       reconcileWatches();
     } else {
       const root = cache.rootFor(scope);
       if (root) {
-        cache.applyRepo(scope, await listRepoWorktrees(root.rootPath, options.deps), options.deps.rank);
+        cache.applyRepo(scope, await listRepoWorktrees(root.rootPath, discoveryDeps), discoveryDeps.rank);
+        treeVersion += 1;
       }
     }
-    broadcast();
+    // The coordinator commits the envelope and publishes it — once.
+    await requestProjection();
   }
 
   const gate = createRebuildGate(rebuild, options.clock);
@@ -227,9 +451,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           skipped: 0,
           degraded: `This repository is not being watched, so its worktrees may be out of date: ${watch.failureReason}`,
         });
+        // A cache write is a tree move, wherever it comes from. Delivery waits
+        // for the projection that describes it.
+        treeVersion += 1;
       }
     }
   }
+
+  const paneSub = options.onPaneChange?.(onPaneChange);
 
   const folderSub = options.onDidChangeWorkspaceFolders?.(() => {
     // Forced: the folder set moved, so the cached tree is known wrong. The
@@ -267,6 +496,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           void gate.request(WHOLE_TREE_SCOPE, { force: msg.force === true });
           return;
         }
+        if (!deliverable()) {
+          // Built but never committed — wait for the missing half rather than
+          // answering with a tree whose presence does not exist yet.
+          ensureProjection();
+          return;
+        }
         broadcast();
         return;
       default:
@@ -285,7 +520,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         return;
       }
       disposed = true;
+      if (capHandle !== undefined) {
+        cancelCap(capHandle);
+        capHandle = undefined;
+      }
       gate.dispose();
+      paneSub?.dispose();
       folderSub?.dispose();
       for (const watch of watches.values()) {
         watch.dispose();

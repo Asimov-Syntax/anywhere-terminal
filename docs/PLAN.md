@@ -235,7 +235,7 @@ state. There is nothing to provision.
 | **Labels** | cross-boundary |
 | **Notes** | Risk: the evidence model is the feature's credibility. Reads session state, activity state, and vault resolution together. Four tasks depend directly on this one |
 | **Acceptance** | Each pane attributes to exactly one worktree, correctly for nested and same-prefix siblings; identity is claimed only when proven, by the documented precedence, and never from a spinner or a substring match; identity and activity are qualified independently, so a row can be certain of one and uncertain of the other; a pane's lifecycle is reflected without a closed pane leaving a row behind; a failed source degrades the scope with a reason and never rewrites a live row to idle; presence and tree arrive together, and a rebuild costs one process-table read regardless of pane count |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-004.2] External Agent Rows
 

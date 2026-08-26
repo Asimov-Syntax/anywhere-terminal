@@ -594,7 +594,19 @@ export class SessionManager {
     // `restoringExited` rather than defaulted live: a read-only tab restored
     // from a snapshot has no running process, and claiming otherwise would be
     // the presence view's first lie about it.
-    this.paneEvidence?.create(id, { exited: restoringExited, viewId });
+    this.paneEvidence?.create(id, {
+      exited: restoringExited,
+      viewId,
+      // The pane facts a presence projection needs, seeded here because this is
+      // the only place that knows them at birth. The store outlives the session
+      // map, so these must live beside the evidence rather than be read back
+      // from `sessions` — which drops a naturally-exited pane while its tab is
+      // still on screen (project-worktree-agent-presence design.md D2).
+      cwd,
+      ptyPid: pty.pid,
+      shell: resolvedShell,
+      isAgentLaunch,
+    });
 
     // Wire PTY events (extracted so respawnFallbackShell can re-wire a fresh PTY).
     this.wirePty(session, pty, webview);
@@ -740,6 +752,10 @@ export class SessionManager {
     session.shellArgs = args;
     session.initialCwd = cwd;
     session.isAgentLaunch = undefined;
+    // Identity rank 1 reads these, so a shell that reclaimed the pane must stop
+    // it claiming the agent that used to be here (D4).
+    this.paneEvidence?.markProcess(id, { ptyPid: pty.pid, shell, isAgentLaunch: false });
+    this.paneEvidence?.markCwd(id, cwd);
     this.wirePty(session, pty, webview);
     // Persist the flip now so a crash/quit before the next debounced flush can't
     // resurrect the agent identity (clean reload is covered by the deactivate
@@ -873,6 +889,9 @@ export class SessionManager {
       return;
     }
     session.currentCwd = cwd;
+    // The store's copy has exactly one writer — this class — at the same sites
+    // that set the session's own fields, so the two cannot diverge (D2).
+    this.paneEvidence?.markCwd(sessionId, cwd);
     this.snapshots.schedulePersist(sessionId);
   }
 

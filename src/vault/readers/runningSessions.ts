@@ -161,3 +161,71 @@ export async function listRunningClaudeSessions(
   }
   return [...bySession.values()];
 }
+
+/**
+ * The live registry, keyed for the two questions resolution actually asks.
+ *
+ * `~/.claude/sessions` is user-wide: every live Claude session on the machine,
+ * unrelated to this window or this workspace. Filtering that array per pane
+ * makes a presence rebuild O(panes x sessions) with no bound on either side —
+ * "there are only a few" is a habit, not a limit (.reviews/round-2.md W1).
+ *
+ * Headless runs are dropped once, at build time, rather than re-filtered by
+ * every caller: a hook-spawned `claude -p` is a descendant of the pane's pty
+ * AND shares its cwd, so it can hijack both lookups alike.
+ */
+export interface RunningSessionIndex {
+  /** Live sessions whose pid is in `pids`. */
+  byPid(pids: ReadonlySet<number>): readonly RunningClaudeSession[];
+  /** Live sessions launched in exactly `cwd`. */
+  byCwd(cwd: string): readonly RunningClaudeSession[];
+}
+
+const NONE: readonly RunningClaudeSession[] = [];
+
+export function indexRunningSessions(sessions: readonly RunningClaudeSession[]): RunningSessionIndex {
+  const byPid = new Map<number, RunningClaudeSession[]>();
+  const byCwd = new Map<string, RunningClaudeSession[]>();
+
+  function push(
+    index: Map<string | number, RunningClaudeSession[]>,
+    key: string | number,
+    session: RunningClaudeSession,
+  ) {
+    const sharing = index.get(key);
+    if (sharing) {
+      sharing.push(session);
+    } else {
+      index.set(key, [session]);
+    }
+  }
+
+  for (const session of sessions) {
+    if (isHeadlessSession(session)) {
+      continue;
+    }
+    // A pid maps to a LIST, not to one session. The registry dedupes by
+    // sessionId and never checks that a `<pid>.json` payload agrees with its
+    // own filename, so two records can claim one pid — and a map that keeps the
+    // last writer decides pane identity by enumeration order, where the filter
+    // this replaced handed both to the mtime tie-break (.reviews/round-3.md W4).
+    push(byPid as Map<string | number, RunningClaudeSession[]>, session.pid, session);
+    push(byCwd as Map<string | number, RunningClaudeSession[]>, session.cwd, session);
+  }
+
+  return {
+    byPid(pids) {
+      // Driven by the (small) descendant set, never by the registry: this is
+      // the lookup that would otherwise scan every session on the machine.
+      const found: RunningClaudeSession[] = [];
+      for (const pid of pids) {
+        const sharing = byPid.get(pid);
+        if (sharing) {
+          found.push(...sharing);
+        }
+      }
+      return found;
+    },
+    byCwd: (cwd) => byCwd.get(cwd) ?? NONE,
+  };
+}

@@ -11,6 +11,7 @@
 // See: asimov/changes/add-host-pane-evidence/design.md D7.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPaneEvidenceStore } from "../../session/PaneEvidenceStore";
 import type { PaneEvidenceMessage } from "../../types/messages";
 import { createPaneEvidenceReporter } from "../terminal/paneEvidenceReporter";
 import { TerminalActivityTracker } from "../terminal/TerminalActivityTracker";
@@ -100,7 +101,10 @@ function wireSurface() {
     getIsComposing: () => false,
     getHoverPreviewTheme: () => "dark",
     getHoverPreviewSettings: () => ({ delay: 300, blockSensitive: true }),
-    onTitleEvidence: (sessionId, rawTitle) => reporter.reportTitle(sessionId, rawTitle),
+    onTitleEvidence: (sessionId, rawTitle) => {
+      reporter.reportTitle(sessionId, rawTitle);
+      tracker.setTitle(sessionId, rawTitle);
+    },
   });
 
   function emitTitle(instance: { terminal: unknown }, title: string): void {
@@ -243,5 +247,62 @@ describe("forget drops local dedup state only", () => {
     reporter.forget("pane-1");
 
     expect(posted).toEqual([]);
+  });
+});
+
+// ─── WT-004.1 — one title, one activity on both sides ───────────────
+
+describe("the tab and the worktree row cannot disagree about a pane", () => {
+  /**
+   * The host's own store, fed exactly what the surface reported. If these two
+   * ever answer differently for one title, the tab bar and the worktree row are
+   * showing the user contradictory states for the same pane.
+   */
+  function hostStore() {
+    const store = createPaneEvidenceStore({ now: () => 5_000 });
+    store.create("t1");
+    return store;
+  }
+
+  it.each([
+    ["a shell title", "zsh", "idle"],
+    ["an agent title", "claude", "running"],
+    ["a decoration-only title", "⠋", "running"],
+    ["a neutral title", "Terminal", "running"],
+  ])("agrees on %s", (_label, title, expected) => {
+    const { posted, factory, terminals, tracker, emitTitle } = wireSurface();
+    const instance = factory.createTerminal("t1", "Terminal 1", CONFIG as any, false, null);
+    terminals.set("t1", { exited: false, activityStatus: "idle" });
+
+    // Both sides see the same output, then the same title.
+    tracker.markOutput("t1");
+    const host = hostStore();
+    host.markOutput("t1", 5_000);
+
+    emitTitle(instance, title);
+    for (const msg of posted) {
+      host.report(msg);
+    }
+
+    expect(terminals.get("t1")?.activityStatus).toBe(expected);
+    expect(host.activityFor("t1")).toBe(expected);
+    expect(terminals.get("t1")?.activityStatus).toBe(host.activityFor("t1"));
+  });
+
+  it("agrees that a shell title does not hide a waiting pane", () => {
+    const { posted, factory, terminals, tracker, emitTitle } = wireSurface();
+    const instance = factory.createTerminal("t1", "Terminal 1", CONFIG as any, false, null);
+    terminals.set("t1", { exited: false, activityStatus: "idle" });
+
+    tracker.setWaiting("t1", true);
+    emitTitle(instance, "zsh");
+
+    const host = hostStore();
+    for (const msg of posted) {
+      host.report(msg);
+    }
+
+    expect(terminals.get("t1")?.activityStatus).toBe("waiting");
+    expect(host.activityFor("t1")).toBe("waiting");
   });
 });

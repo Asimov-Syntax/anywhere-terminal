@@ -63,6 +63,9 @@ vi.mock("./OutputBuffer", () => ({ OutputBuffer: output.MockOutputBuffer }));
 import { createPaneEvidenceStore, type PaneEvidenceStore } from "./PaneEvidenceStore";
 import { SessionManager } from "./SessionManager";
 
+/** The pid every mocked PtySession reports. */
+const MOCK_PTY_PID = 99000;
+
 let clock = 1_000_000;
 
 function makeStore(): PaneEvidenceStore {
@@ -318,5 +321,69 @@ describe("without a store", () => {
       sm.destroySession(id);
       sm.dispose();
     }).not.toThrow();
+  });
+});
+
+// ─── WT-004.1 — the pane facts a projection reads ───────────────────
+
+describe("pane facts", () => {
+  it("seeds the directory and process facts a projection needs", () => {
+    const paneEvidence = makeStore();
+    const sm = new SessionManager(undefined, { paneEvidence });
+    const id = sm.createSession("sidebar", mockWebview(), { isAgentLaunch: true, shell: "claude" });
+
+    expect(paneEvidence.read(id)).toMatchObject({ shell: "claude", isAgentLaunch: true });
+    expect(paneEvidence.read(id)?.cwd).toBeTruthy();
+    expect(paneEvidence.read(id)?.ptyPid).toBe(MOCK_PTY_PID);
+    sm.dispose();
+  });
+
+  it("tracks the pane's directory as OSC 7 moves it", () => {
+    const paneEvidence = makeStore();
+    const sm = new SessionManager(undefined, { paneEvidence });
+    const id = sm.createSession("sidebar", mockWebview());
+
+    sm.setCurrentCwd(id, "/repo/worktrees/feature-x");
+
+    expect(paneEvidence.read(id)?.cwd).toBe("/repo/worktrees/feature-x");
+    sm.dispose();
+  });
+
+  it("stops claiming the agent once a fallback shell reclaims the pane", () => {
+    // Identity rank 1 reads these two fields, so leaving them behind would keep
+    // a plain shell rendering as the agent that used to be here.
+    const paneEvidence = makeStore();
+    const sm = new SessionManager(undefined, { paneEvidence });
+    const id = sm.createSession("sidebar", mockWebview(), { isAgentLaunch: true, shell: "claude" });
+
+    mockPtySessions[0].onExit?.(0);
+
+    expect(sm.getSession(id)).toBeDefined();
+    expect(paneEvidence.read(id)?.isAgentLaunch).toBe(false);
+    expect(paneEvidence.read(id)?.shell).not.toBe("claude");
+    sm.dispose();
+  });
+
+  it("keeps an exited pane enumerable after its session has left the map", () => {
+    // The row must keep reading `exited` until the tab closes, so the pane set
+    // cannot come from `sessions`.
+    const paneEvidence = makeStore();
+    const sm = new SessionManager(undefined, { paneEvidence });
+    const id = sm.createSession("sidebar", mockWebview());
+
+    mockPtySessions[0].onExit?.(0);
+
+    expect(sm.getSession(id)).toBeUndefined();
+    expect(paneEvidence.panes().map((p) => p.paneId)).toContain(id);
+    expect(paneEvidence.activityFor(id)).toBe("exited");
+    sm.dispose();
+  });
+
+  it("ignores a directory update for a pane that does not exist", () => {
+    const paneEvidence = makeStore();
+    const sm = new SessionManager(undefined, { paneEvidence });
+    sm.setCurrentCwd("ghost", "/repo");
+    expect(paneEvidence.read("ghost")).toBeUndefined();
+    sm.dispose();
   });
 });

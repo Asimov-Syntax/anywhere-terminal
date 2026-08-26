@@ -4,7 +4,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isHeadlessSession, listRunningClaudeSessions, type RunningSessionsDeps } from "./runningSessions";
+import {
+  indexRunningSessions,
+  isHeadlessSession,
+  listRunningClaudeSessions,
+  type RunningClaudeSession,
+  type RunningSessionsDeps,
+} from "./runningSessions";
 
 let tmpRoot: string;
 let sessionsDir: string;
@@ -180,5 +186,57 @@ describe("dedupe tie-break", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].pid).toBe(200);
+  });
+});
+
+describe("indexRunningSessions", () => {
+  const live = (sessionId: string, pid: number, cwd: string, entrypoint?: string): RunningClaudeSession => ({
+    sessionId,
+    pid,
+    cwd,
+    ...(entrypoint === undefined ? {} : { entrypoint }),
+  });
+
+  it("looks up by pid without touching the sessions it was not asked about", () => {
+    const index = indexRunningSessions([live("a", 10, "/x"), live("b", 20, "/y"), live("c", 30, "/z")]);
+    expect(index.byPid(new Set([20, 999])).map((s) => s.sessionId)).toEqual(["b"]);
+  });
+
+  it("groups every session sharing a directory", () => {
+    const index = indexRunningSessions([live("a", 10, "/x"), live("b", 20, "/x"), live("c", 30, "/y")]);
+    expect(index.byCwd("/x").map((s) => s.sessionId)).toEqual(["a", "b"]);
+    expect(index.byCwd("/nowhere")).toEqual([]);
+  });
+
+  it("drops headless runs once, so neither lookup can return one", () => {
+    // A hook-spawned `claude -p` is a descendant of the pane's pty AND shares
+    // its cwd, so it can hijack both lookups.
+    const index = indexRunningSessions([live("one-shot", 10, "/x", "sdk-cli"), live("real", 20, "/x", "cli")]);
+    expect(index.byPid(new Set([10, 20])).map((s) => s.sessionId)).toEqual(["real"]);
+    expect(index.byCwd("/x").map((s) => s.sessionId)).toEqual(["real"]);
+  });
+
+  it("keeps an entrypoint it does not recognise, rather than assuming headless", () => {
+    const index = indexRunningSessions([live("future", 10, "/x", "some-new-launcher")]);
+    expect(index.byPid(new Set([10])).map((s) => s.sessionId)).toEqual(["future"]);
+  });
+
+  it("answers an empty registry without inventing anything", () => {
+    const index = indexRunningSessions([]);
+    expect(index.byPid(new Set([1]))).toEqual([]);
+    expect(index.byCwd("/x")).toEqual([]);
+  });
+});
+
+describe("indexRunningSessions — duplicate pids", () => {
+  it("keeps every record claiming one pid, so the tie-break still sees them", () => {
+    // The registry dedupes by sessionId and never checks that a `<pid>.json`
+    // payload agrees with its filename, so two records can claim one pid. A map
+    // keeping the last writer would decide pane identity by enumeration order.
+    const index = indexRunningSessions([
+      { sessionId: "a", pid: 10, cwd: "/x" },
+      { sessionId: "b", pid: 10, cwd: "/y" },
+    ]);
+    expect(index.byPid(new Set([10])).map((s) => s.sessionId)).toEqual(["a", "b"]);
   });
 });

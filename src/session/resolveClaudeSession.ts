@@ -10,15 +10,21 @@
 // unit-tested without the host. The host (TerminalViewProvider) wires the real
 // implementations; on Windows `descendantPids` is `[]` so only the cwd fallbacks run.
 
-import { isHeadlessSession, type RunningClaudeSession } from "../vault/readers/runningSessions";
+import type { RunningClaudeSession, RunningSessionIndex } from "../vault/readers/runningSessions";
 
 export interface ResolveClaudeSessionDeps {
   /** The pane's pty pid (subtree root), or undefined when the session is unknown. */
   getPtyPid(terminalId: string): number | undefined;
   /** The pane's best-available cwd (live → tracked → initial), or undefined. */
   getCwd(terminalId: string): Promise<string | undefined>;
-  /** Live, liveness-probed PID registry entries (runningSessions.ts). */
-  listRunning(): Promise<RunningClaudeSession[]>;
+  /**
+   * Live, liveness-probed PID registry, keyed for lookup (runningSessions.ts).
+   *
+   * An index rather than a list because the registry is user-wide: scanning it
+   * per pane made a presence rebuild grow with every Claude session on the
+   * machine (.reviews/round-2.md W1).
+   */
+  runningIndex(): Promise<RunningSessionIndex>;
   /** Descendant pids of a root pid (processTree.ts); [] on Windows / error. */
   descendantPids(rootPid: number): Promise<number[]>;
   /** mtime (epoch ms) of `<sessionId>.jsonl`, or undefined when unresolved. */
@@ -30,7 +36,7 @@ export interface ResolveClaudeSessionDeps {
 /** Among candidates, the one with the newest `<sessionId>.jsonl` mtime (current
  *  activity beats launch order); first candidate wins when all mtimes are equal. */
 async function pickNewest(
-  candidates: RunningClaudeSession[],
+  candidates: readonly RunningClaudeSession[],
   sessionMtime: ResolveClaudeSessionDeps["sessionMtime"],
 ): Promise<RunningClaudeSession> {
   let best = candidates[0];
@@ -51,17 +57,17 @@ export async function resolveClaudeSession(
   terminalId: string,
   deps: ResolveClaudeSessionDeps,
 ): Promise<{ sessionId: string; cwd: string } | null> {
-  // Filtered up front, not per step: a hook-spawned `claude -p` is a descendant
-  // of this pty AND shares its cwd, so it can hijack steps 1 and 2 alike, and
-  // its just-written transcript wins the mtime tie-break. Step 3 reads from
-  // disk where no entrypoint exists — see design.md D3.
-  const running = (await deps.listRunning()).filter((session) => !isHeadlessSession(session));
+  // Headless runs are filtered at index build, not per step: a hook-spawned
+  // `claude -p` is a descendant of this pty AND shares its cwd, so it can
+  // hijack steps 1 and 2 alike, and its just-written transcript wins the mtime
+  // tie-break. Step 3 reads from disk where no entrypoint exists — design.md D3.
+  const running = await deps.runningIndex();
 
   // Step 1 — exact: the claude node pid is a descendant of the pane's pty shell.
   const ptyPid = deps.getPtyPid(terminalId);
   if (ptyPid !== undefined) {
     const subtree = new Set(await deps.descendantPids(ptyPid));
-    const inTree = running.filter((r) => subtree.has(r.pid));
+    const inTree = running.byPid(subtree);
     if (inTree.length === 1) {
       return { sessionId: inTree[0].sessionId, cwd: inTree[0].cwd };
     }
@@ -77,7 +83,7 @@ export async function resolveClaudeSession(
   if (cwd === undefined) {
     return null;
   }
-  const byCwd = running.filter((r) => r.cwd === cwd);
+  const byCwd = running.byCwd(cwd);
   if (byCwd.length > 0) {
     const best = await pickNewest(byCwd, deps.sessionMtime);
     return { sessionId: best.sessionId, cwd: best.cwd };

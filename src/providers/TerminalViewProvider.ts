@@ -1,4 +1,3 @@
-import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import { descendantPids } from "../pty/processTree";
 import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
@@ -11,8 +10,8 @@ import type { VaultRefreshHint } from "../vault/cacheTypes";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { ContinuationTarget, LaunchMode } from "../vault/LaunchBuilder";
 import { resolveAssistantMessageRef } from "../vault/messageText";
-import { readClaudeSessions, resolveClaudeSessionPath } from "../vault/readers/claudeReader";
-import { listRunningClaudeSessions } from "../vault/readers/runningSessions";
+import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
+import { indexRunningSessions, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
 import { agentKindForExecutable, detectContinuationTargets } from "../vault/registry";
 import { parseEntryId, type VaultSessionEntry } from "../vault/types";
@@ -798,19 +797,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         (await this.sessionManager.getLiveCwd(id)) ??
         this.sessionManager.getCurrentCwd(id) ??
         this.sessionManager.getInitialCwd(id),
-      listRunning: () => listRunningClaudeSessions(),
+      runningIndex: async () => indexRunningSessions(await listRunningClaudeSessions()),
       descendantPids: (pid) => descendantPids(pid),
-      sessionMtime: async (sessionId) => {
-        const filePath = await resolveClaudeSessionPath(sessionId);
-        if (!filePath) {
-          return undefined;
-        }
-        try {
-          return (await fs.stat(filePath)).mtimeMs;
-        } catch {
-          return undefined;
-        }
-      },
+      sessionMtime: (sessionId) => claudeSessionMtime(sessionId),
       newestSessionUnderCwd: async (cwd) => {
         const { entries } = await readClaudeSessions({});
         let best: { sessionId: string; cwd: string } | null = null;

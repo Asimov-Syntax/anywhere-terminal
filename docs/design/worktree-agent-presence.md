@@ -152,7 +152,13 @@ by title or not at all. That is stated as a limitation in the UI, not papered ov
 | `exited` | The pty exited **while the pane is still open** | `output` |
 | `waiting` | Waiting evidence is set for the pane | `output` |
 | `running` | Output seen within the idle window, or semantic working evidence | `output` |
+| `idle` | A shell name in the title overruled live work | `title` |
 | `idle` | None of the above | `output` |
+
+`activitySource` names the rule that **decided**, not the state it landed in. `idle` is reached
+three ways, so an idle pane that merely happens to carry a shell title is `output` — crediting the
+title there reports a cause that was not one. The projection therefore returns the winning rule
+alongside the activity rather than letting each consumer re-derive it.
 
 These are the same rules `TerminalActivityTracker` applies — literally the same, since both
 sides now call the projection extracted into `src/shared/paneEvidence.ts` — but **presence
@@ -380,7 +386,7 @@ graph LR
 | Registry entry with a dead pid | Filtered by the existing liveness probe |
 | `claude -p` hook subprocess | Excluded by `isHeadlessSession` |
 | Title flips to `zsh` / `bash` / `pwsh` | Strong evidence the agent ended: force `idle`. A *neutral* title (`Terminal`) is not such proof |
-| Spinner-only title | Feeds `activity`, never `agent` |
+| Spinner-only title | Never `agent`, and never `activity` either. Decoration is stripped before a title reaches the host, so the host sees one report and cannot tell a spinner still animating from one frozen at the moment its process hung — deriving `running` from it would make a hung agent read as working forever. The evidence an agent is working is the **output** a live spinner produces, not the title it left behind |
 | Hundreds of panes | Mapping is O(panes × worktrees) with a small worktree count; bounded by § 7 |
 
 ## 7. Scale & Performance

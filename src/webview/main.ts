@@ -123,7 +123,12 @@ const factory = new TerminalFactory({
   store,
   postMessage: (msg) => vscode.postMessage(msg),
   onTabBarUpdate: () => updateTabBar(),
-  onTitleEvidence: (sessionId, rawTitle) => paneEvidenceReporter.reportTitle(sessionId, rawTitle),
+  onTitleEvidence: (sessionId, rawTitle) => {
+    paneEvidenceReporter.reportTitle(sessionId, rawTitle);
+    // The tab classifies the same title the host does, from the same site, so
+    // the two can never come to different answers about one pane.
+    activityTracker.setTitle(sessionId, rawTitle);
+  },
   getIsComposing: () => isComposing,
   getHoverPreviewTheme: () => themeStore.kind,
   getHoverPreviewSettings: () => hoverPreviewSettingsStore.settings,

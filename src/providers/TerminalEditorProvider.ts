@@ -1,5 +1,4 @@
 import * as crypto from "node:crypto";
-import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import { descendantPids } from "../pty/processTree";
 import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
@@ -8,8 +7,8 @@ import type { SessionManager } from "../session/SessionManager";
 import type { PendingSnapshot } from "../session/SessionSnapshot";
 import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
 import type { SetPanelIdMessage, ThemeChangedMessage, WebViewToExtensionMessage } from "../types/messages";
-import { readClaudeSessions, resolveClaudeSessionPath } from "../vault/readers/claudeReader";
-import { listRunningClaudeSessions } from "../vault/readers/runningSessions";
+import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
+import { indexRunningSessions, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
 import { agentKindForExecutable } from "../vault/registry";
 import { handlePasteClipboardImage, handlePasteOsClipboardImage, readImageFromOsClipboard } from "./clipboardImageSync";
@@ -769,19 +768,9 @@ export class TerminalEditorProvider {
         (await this.sessionManager.getLiveCwd(id)) ??
         this.sessionManager.getCurrentCwd(id) ??
         this.sessionManager.getInitialCwd(id),
-      listRunning: () => listRunningClaudeSessions(),
+      runningIndex: async () => indexRunningSessions(await listRunningClaudeSessions()),
       descendantPids: (pid) => descendantPids(pid),
-      sessionMtime: async (sessionId) => {
-        const filePath = await resolveClaudeSessionPath(sessionId);
-        if (!filePath) {
-          return undefined;
-        }
-        try {
-          return (await fs.stat(filePath)).mtimeMs;
-        } catch {
-          return undefined;
-        }
-      },
+      sessionMtime: (sessionId) => claudeSessionMtime(sessionId),
       newestSessionUnderCwd: async (cwd) => {
         const { entries } = await readClaudeSessions({});
         let best: { sessionId: string; cwd: string } | null = null;

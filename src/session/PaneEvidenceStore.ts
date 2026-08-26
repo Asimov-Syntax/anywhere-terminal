@@ -7,17 +7,24 @@
 // and everything is keyed by pane so the surface a fact arrived from stops
 // mattering the moment it lands.
 //
-// Nothing reads this yet — WT-004.1 projects the rows. The seam is built and
-// verified first, on purpose (docs/PLAN.md WT-004.0).
+// It is also THE pane registry. `SessionManager` drops a naturally-exited
+// session from its maps while the tab is still on screen showing
+// `[Process exited]`, so a projection enumerating panes from there would delete
+// the row that must keep reading `exited` until the pane closes. This store's
+// lifetime is the pane's, which is the lifetime the projection needs, so the
+// pane's own facts live here beside the evidence about it.
 //
 // See: docs/design/worktree-agent-presence.md § 3.3 "The host evidence seam";
-//      asimov/changes/add-host-pane-evidence/design.md D1, D2, D3, D10.
+//      asimov/changes/add-host-pane-evidence/design.md D1, D2, D3, D10;
+//      asimov/changes/project-worktree-agent-presence/design.md D2, D3.
 
 import {
+  type ActivityRule,
+  classifyTitle,
+  explainPaneActivity,
   MAX_REPORTED_TITLE_CHARS,
   OUTPUT_IDLE_WINDOW_MS,
   type PaneActivity,
-  projectPaneActivity,
 } from "../shared/paneEvidence";
 import type { PaneEvidenceMessage } from "../types/messages";
 
@@ -44,23 +51,61 @@ export interface PaneEvidence {
   exited: boolean;
   /** Last agent-reported semantic state; `null` cleared, `undefined` never set. */
   semantic?: "working" | "idle" | null;
+  /** Best-known working directory — spawn directory, then every OSC 7 update. */
+  cwd?: string;
+  /** The pane's pty pid, re-written when a fallback shell replaces the process. */
+  ptyPid?: number;
+  /** The pane's root executable. */
+  shell?: string;
+  /** True while an agent CLI is the root process; cleared on fallback respawn. */
+  isAgentLaunch?: boolean;
+  /** Which view holds the pane. */
+  viewId?: string;
+}
+
+/** Timer seam, so idle expiry is testable without waiting. */
+export interface PaneEvidenceTimers {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
 }
 
 export interface PaneEvidenceStoreOptions {
   now?: () => number;
   /**
-   * Fired on any mutation. Nothing subscribes in WT-004.0: the presence rebuild
-   * this eventually drives is coalesced into the tree's 150 ms debounce, which
-   * `worktree-agent-presence.md` § 3.7 owns. Output *going* idle is a clock
-   * event, not a mutation, so it fires nothing — a store running its own idle
-   * timer would be a second debounce competing with that one.
+   * Fired when something a presence projection would render has moved.
+   *
+   * Output is the exception that shapes this: it arrives per flush, so
+   * announcing every timestamp would drive a rebuild at flush rate for a pane
+   * that has simply been `running` the whole time. `markOutput` therefore
+   * announces only when the pane's PROJECTED activity moved.
+   *
+   * The cost of that is an edge nothing else would ever report: output going
+   * idle is a clock event, and `activityFor` only discovers it when read. So
+   * the store arms its own per-pane deadline and announces that transition
+   * too — without it a worktree row reads `running` forever while the terminal
+   * tab, which runs its own idle timer, reads `idle` (design.md D3).
    */
   onChange?: (paneId: string) => void;
+  timers?: PaneEvidenceTimers;
 }
 
 export interface PaneEvidenceStore {
   /** The only entry-creating call. */
-  create(paneId: string, init?: { exited?: boolean; viewId?: string }): void;
+  create(
+    paneId: string,
+    init?: {
+      exited?: boolean;
+      viewId?: string;
+      cwd?: string;
+      ptyPid?: number;
+      shell?: string;
+      isAgentLaunch?: boolean;
+    },
+  ): void;
+  /** Every open pane, in creation order. The projection's pane set. */
+  panes(): readonly (PaneEvidence & { paneId: string })[];
+  markCwd(paneId: string, cwd: string): void;
+  markProcess(paneId: string, facts: { ptyPid?: number; shell?: string; isAgentLaunch?: boolean }): void;
   /** Assigns only the fields the message carries. No-op for an unknown pane. */
   report(msg: PaneEvidenceMessage): void;
   markOutput(paneId: string, at: number): void;
@@ -72,6 +117,14 @@ export interface PaneEvidenceStore {
   clear(): void;
   read(paneId: string): PaneEvidence | undefined;
   activityFor(paneId: string, now?: number): PaneActivity | undefined;
+  /**
+   * The same answer, plus the rule that produced it.
+   *
+   * A caller that has to name its evidence source cannot recover the rule from
+   * the activity — `idle` is reached three different ways — and re-deriving it
+   * outside would be a second copy of the projection (.reviews/round-1.md W2).
+   */
+  explainActivityFor(paneId: string, now?: number): { activity: PaneActivity; rule: ActivityRule } | undefined;
 }
 
 /** What survives validation: the fields a report may assign. */
@@ -131,6 +184,14 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
   const paneView = new Map<string, string>();
   /** The reverse index, so closing a view never scans a pane it does not hold. */
   const viewPanes = new Map<string, Set<string>>();
+  /** Pending idle deadline per pane. */
+  const idleTimers = new Map<string, unknown>();
+  /** The activity each pane was last announced as, so a no-op stays silent. */
+  const announced = new Map<string, PaneActivity>();
+  const timers = options.timers ?? {
+    setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+    clearTimeout: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  };
 
   /** Drop a pane from whichever view currently holds it. */
   function unindex(paneId: string): void {
@@ -145,8 +206,69 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
     }
   }
 
+  function explainOf(evidence: PaneEvidence, stamp: number): { activity: PaneActivity; rule: ActivityRule } {
+    return explainPaneActivity({
+      exited: evidence.exited,
+      // Unknown waiting projects as not-waiting; the distinction is preserved
+      // in the evidence itself, for the caller that has to qualify the source.
+      waiting: evidence.waiting === true,
+      semanticWorking: evidence.semantic === "working",
+      outputActive: evidence.lastOutputAt !== undefined && stamp - evidence.lastOutputAt < OUTPUT_IDLE_WINDOW_MS,
+      titleClass: classifyTitle(evidence.title),
+    });
+  }
+
+  function activityOf(evidence: PaneEvidence, stamp: number): PaneActivity {
+    return explainOf(evidence, stamp).activity;
+  }
+
+  function cancelIdleTimer(paneId: string): void {
+    const handle = idleTimers.get(paneId);
+    if (handle !== undefined) {
+      timers.clearTimeout(handle);
+      idleTimers.delete(paneId);
+    }
+  }
+
   function changed(paneId: string): void {
+    const evidence = panes.get(paneId);
+    if (evidence) {
+      announced.set(paneId, activityOf(evidence, now()));
+    }
     options.onChange?.(paneId);
+  }
+
+  /** Announce only if the pane's projected activity actually moved. */
+  function announceIfActivityMoved(paneId: string): void {
+    const evidence = panes.get(paneId);
+    if (!evidence) {
+      return;
+    }
+    if (activityOf(evidence, now()) !== announced.get(paneId)) {
+      changed(paneId);
+    }
+  }
+
+  /**
+   * Schedule the moment this pane's output stops counting as recent. Re-armed on
+   * every flush, so the deadline always follows the LAST one.
+   */
+  function armIdleDeadline(paneId: string, evidence: PaneEvidence): void {
+    cancelIdleTimer(paneId);
+    if (evidence.lastOutputAt === undefined) {
+      return;
+    }
+    const remaining = evidence.lastOutputAt + OUTPUT_IDLE_WINDOW_MS - now();
+    idleTimers.set(
+      paneId,
+      timers.setTimeout(
+        () => {
+          idleTimers.delete(paneId);
+          announceIfActivityMoved(paneId);
+        },
+        Math.max(0, remaining),
+      ),
+    );
   }
 
   /** Mutate an existing pane, announcing only a write that actually happened. */
@@ -164,7 +286,15 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
     create(paneId, init) {
       // Replaces rather than merges: the id belongs to a pane that has just come
       // into existence, so anything held under it is from a previous life.
-      panes.set(paneId, { exited: init?.exited === true });
+      cancelIdleTimer(paneId);
+      panes.set(paneId, {
+        exited: init?.exited === true,
+        ...(init?.cwd !== undefined ? { cwd: init.cwd } : {}),
+        ...(init?.ptyPid !== undefined ? { ptyPid: init.ptyPid } : {}),
+        ...(init?.shell !== undefined ? { shell: init.shell } : {}),
+        ...(init?.isAgentLaunch !== undefined ? { isAgentLaunch: init.isAgentLaunch } : {}),
+        ...(init?.viewId !== undefined ? { viewId: init.viewId } : {}),
+      });
       unindex(paneId);
       if (init?.viewId !== undefined) {
         paneView.set(paneId, init.viewId);
@@ -208,18 +338,57 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
     },
 
     markOutput(paneId, at) {
+      const evidence = panes.get(paneId);
+      if (!evidence) {
+        return;
+      }
+      // Monotonic, because flush confirmations are not ordered: each flush
+      // carries the time it was produced and lands when its own postMessage
+      // resolves, so an older one confirming last would otherwise age the
+      // pane and let it read idle while output had just been delivered
+      // (.reviews/round-3.md W4).
+      if (evidence.lastOutputAt !== undefined && at <= evidence.lastOutputAt) {
+        return;
+      }
+      evidence.lastOutputAt = at;
+      armIdleDeadline(paneId, evidence);
+      // Only the TRANSITION is worth announcing. A pane that was already
+      // running stays running, and saying so per flush is what would drive a
+      // rebuild at animation rate (design.md D3.2).
+      announceIfActivityMoved(paneId);
+    },
+
+    markCwd(paneId, cwd) {
       mutate(paneId, (evidence) => {
-        // Monotonic, because flush confirmations are not ordered: each flush
-        // carries the time it was produced and lands when its own postMessage
-        // resolves, so an older one confirming last would otherwise age the
-        // pane and let it read idle while output had just been delivered
-        // (.reviews/round-3.md W4).
-        if (evidence.lastOutputAt !== undefined && at <= evidence.lastOutputAt) {
+        if (evidence.cwd === cwd) {
           return false;
         }
-        evidence.lastOutputAt = at;
+        evidence.cwd = cwd;
         return true;
       });
+    },
+
+    markProcess(paneId, facts) {
+      mutate(paneId, (evidence) => {
+        let wrote = false;
+        if (facts.ptyPid !== undefined && evidence.ptyPid !== facts.ptyPid) {
+          evidence.ptyPid = facts.ptyPid;
+          wrote = true;
+        }
+        if (facts.shell !== undefined && evidence.shell !== facts.shell) {
+          evidence.shell = facts.shell;
+          wrote = true;
+        }
+        if (facts.isAgentLaunch !== undefined && evidence.isAgentLaunch !== facts.isAgentLaunch) {
+          evidence.isAgentLaunch = facts.isAgentLaunch;
+          wrote = true;
+        }
+        return wrote;
+      });
+    },
+
+    panes() {
+      return [...panes].map(([paneId, evidence]) => ({ paneId, ...evidence }));
     },
 
     markExited(paneId, exited) {
@@ -244,6 +413,8 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
 
     delete(paneId) {
       unindex(paneId);
+      cancelIdleTimer(paneId);
+      announced.delete(paneId);
       if (panes.delete(paneId)) {
         changed(paneId);
       }
@@ -257,6 +428,8 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
       viewPanes.delete(viewId);
       for (const paneId of held) {
         paneView.delete(paneId);
+        cancelIdleTimer(paneId);
+        announced.delete(paneId);
         if (panes.delete(paneId)) {
           changed(paneId);
         }
@@ -264,9 +437,13 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
     },
 
     clear() {
+      for (const paneId of [...idleTimers.keys()]) {
+        cancelIdleTimer(paneId);
+      }
       panes.clear();
       paneView.clear();
       viewPanes.clear();
+      announced.clear();
     },
 
     read(paneId) {
@@ -278,15 +455,15 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
       if (!evidence) {
         return undefined;
       }
-      const stamp = at ?? now();
-      return projectPaneActivity({
-        exited: evidence.exited,
-        // Unknown waiting projects as not-waiting; the distinction is preserved
-        // in the evidence itself, for the caller that has to qualify the source.
-        waiting: evidence.waiting === true,
-        semanticWorking: evidence.semantic === "working",
-        outputActive: evidence.lastOutputAt !== undefined && stamp - evidence.lastOutputAt < OUTPUT_IDLE_WINDOW_MS,
-      });
+      return activityOf(evidence, at ?? now());
+    },
+
+    explainActivityFor(paneId, at) {
+      const evidence = panes.get(paneId);
+      if (!evidence) {
+        return undefined;
+      }
+      return explainOf(evidence, at ?? now());
     },
   };
 }

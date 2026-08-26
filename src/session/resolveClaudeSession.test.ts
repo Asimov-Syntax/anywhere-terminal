@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { RunningClaudeSession } from "../vault/readers/runningSessions";
+import { indexRunningSessions } from "../vault/readers/runningSessions";
 import { type ResolveClaudeSessionDeps, resolveClaudeSession } from "./resolveClaudeSession";
 
 const TID = "term-1";
@@ -14,7 +15,7 @@ function makeDeps(overrides: Partial<ResolveClaudeSessionDeps> = {}): ResolveCla
   return {
     getPtyPid: vi.fn(() => 1000),
     getCwd: vi.fn(async () => "/work/proj"),
-    listRunning: vi.fn(async () => []),
+    runningIndex: vi.fn(async () => indexRunningSessions([])),
     descendantPids: vi.fn(async () => []),
     sessionMtime: vi.fn(async () => 0),
     newestSessionUnderCwd: vi.fn(async () => null),
@@ -26,7 +27,9 @@ describe("resolveClaudeSession — step 1 (process subtree ∩ registry)", () =>
   it("returns the exact session when one running pid is in the pty subtree", async () => {
     const deps = makeDeps({
       descendantPids: vi.fn(async () => [1001, 1002]),
-      listRunning: vi.fn(async () => [run("sess-x", 1002, "/launch/cwd"), run("sess-y", 5000, "/other")]),
+      runningIndex: vi.fn(async () =>
+        indexRunningSessions([run("sess-x", 1002, "/launch/cwd"), run("sess-y", 5000, "/other")]),
+      ),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "sess-x", cwd: "/launch/cwd" });
     // An exact subtree hit must NOT consult the cwd fallbacks.
@@ -36,7 +39,7 @@ describe("resolveClaudeSession — step 1 (process subtree ∩ registry)", () =>
   it("tie-breaks >1 subtree matches by newest <sessionId>.jsonl mtime", async () => {
     const deps = makeDeps({
       descendantPids: vi.fn(async () => [1001, 1002]),
-      listRunning: vi.fn(async () => [run("old", 1001, "/a"), run("new", 1002, "/b")]),
+      runningIndex: vi.fn(async () => indexRunningSessions([run("old", 1001, "/a"), run("new", 1002, "/b")])),
       sessionMtime: vi.fn(async (id: string) => (id === "new" ? 200 : 100)),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "new", cwd: "/b" });
@@ -49,7 +52,9 @@ describe("resolveClaudeSession — step 2 (running by cwd)", () => {
       getPtyPid: vi.fn(() => 1000),
       descendantPids: vi.fn(async () => [9999]), // no registry pid in subtree
       getCwd: vi.fn(async () => "/work/proj"),
-      listRunning: vi.fn(async () => [run("sess-here", 4242, "/work/proj"), run("elsewhere", 4243, "/other")]),
+      runningIndex: vi.fn(async () =>
+        indexRunningSessions([run("sess-here", 4242, "/work/proj"), run("elsewhere", 4243, "/other")]),
+      ),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "sess-here", cwd: "/work/proj" });
   });
@@ -58,7 +63,7 @@ describe("resolveClaudeSession — step 2 (running by cwd)", () => {
     const deps = makeDeps({
       descendantPids: vi.fn(async () => []),
       getCwd: vi.fn(async () => "/work/proj"),
-      listRunning: vi.fn(async () => [run("a", 1, "/work/proj"), run("b", 2, "/work/proj")]),
+      runningIndex: vi.fn(async () => indexRunningSessions([run("a", 1, "/work/proj"), run("b", 2, "/work/proj")])),
       sessionMtime: vi.fn(async (id: string) => (id === "b" ? 9 : 1)),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "b", cwd: "/work/proj" });
@@ -70,7 +75,7 @@ describe("resolveClaudeSession — step 3 (newest under cwd) + null", () => {
     const deps = makeDeps({
       descendantPids: vi.fn(async () => []),
       getCwd: vi.fn(async () => "/work/proj"),
-      listRunning: vi.fn(async () => [run("running-elsewhere", 1, "/elsewhere")]),
+      runningIndex: vi.fn(async () => indexRunningSessions([run("running-elsewhere", 1, "/elsewhere")])),
       newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "exited", cwd: "/work/proj" })),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "exited", cwd: "/work/proj" });
@@ -101,7 +106,7 @@ describe("resolveClaudeSession — Windows / no pty pid", () => {
       getPtyPid: vi.fn(() => 1000),
       descendantPids: vi.fn(async () => []), // Windows: empty subtree
       getCwd: vi.fn(async () => "/work/proj"),
-      listRunning: vi.fn(async () => [run("by-cwd", 7, "/work/proj")]),
+      runningIndex: vi.fn(async () => indexRunningSessions([run("by-cwd", 7, "/work/proj")])),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "by-cwd", cwd: "/work/proj" });
   });
@@ -118,10 +123,12 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
     // wins pickNewest unless it is filtered out first.
     const deps = makeDeps({
       descendantPids: vi.fn(async () => [1001, 1002]),
-      listRunning: vi.fn(async () => [
-        { ...run("interactive", 1001, "/work/proj"), entrypoint: "cli" },
-        headless("one-shot", 1002, "/work/proj"),
-      ]),
+      runningIndex: vi.fn(async () =>
+        indexRunningSessions([
+          { ...run("interactive", 1001, "/work/proj"), entrypoint: "cli" },
+          headless("one-shot", 1002, "/work/proj"),
+        ]),
+      ),
       sessionMtime: vi.fn(async (id: string) => (id === "one-shot" ? 999 : 100)),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "interactive", cwd: "/work/proj" });
@@ -130,7 +137,7 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
   it("falls through to the cwd fallbacks when the subtree holds only a headless run", async () => {
     const deps = makeDeps({
       descendantPids: vi.fn(async () => [1002]),
-      listRunning: vi.fn(async () => [headless("one-shot", 1002, "/work/proj")]),
+      runningIndex: vi.fn(async () => indexRunningSessions([headless("one-shot", 1002, "/work/proj")])),
       newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "on-disk", cwd: "/work/proj" })),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj" });
@@ -141,7 +148,7 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
     // hijack it just as easily as the subtree intersection.
     const deps = makeDeps({
       descendantPids: vi.fn(async () => []),
-      listRunning: vi.fn(async () => [headless("one-shot", 7777, "/work/proj")]),
+      runningIndex: vi.fn(async () => indexRunningSessions([headless("one-shot", 7777, "/work/proj")])),
       newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "on-disk", cwd: "/work/proj" })),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj" });
@@ -150,7 +157,9 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
   it("keeps a session whose entrypoint is unknown", async () => {
     const deps = makeDeps({
       descendantPids: vi.fn(async () => [1002]),
-      listRunning: vi.fn(async () => [{ ...run("future", 1002, "/work/proj"), entrypoint: "some-new-value" }]),
+      runningIndex: vi.fn(async () =>
+        indexRunningSessions([{ ...run("future", 1002, "/work/proj"), entrypoint: "some-new-value" }]),
+      ),
     });
     expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "future", cwd: "/work/proj" });
   });

@@ -162,3 +162,27 @@ export async function resolveClaudeWorkflowAgentPath(
     return null;
   }
 }
+
+/**
+ * mtime (epoch ms) of `<sessionId>.jsonl`, or `undefined` when it cannot be read.
+ *
+ * The tie-break among several live sessions claiming one pane, and previously a
+ * copy per caller — the two terminal providers and the presence projection all
+ * needed the same resolve-then-stat, and drift between them would make the same
+ * pane resolve differently depending on which flow asked
+ * (.reviews/round-1.md S2).
+ */
+export async function claudeSessionMtime(
+  sessionId: string,
+  options: ClaudeReaderOptions = {},
+): Promise<number | undefined> {
+  const filePath = await resolveClaudeSessionPath(sessionId, options);
+  if (!filePath) {
+    return undefined;
+  }
+  try {
+    return (await fs.stat(filePath)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}

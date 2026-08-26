@@ -67,7 +67,7 @@ export { listClaudeWorkflowStubs } from "./claudeChildren";
 // Re-export the public reader surface so existing importers (VaultService, the
 // Codex reader's `ReaderResult` type, and the reader tests) keep their paths.
 export type { ClaudeReaderOptions } from "./claudePaths";
-export { resolveClaudeSessionPath, resolveClaudeSubagentPath } from "./claudePaths";
+export { claudeSessionMtime, resolveClaudeSessionPath, resolveClaudeSubagentPath } from "./claudePaths";
 
 export interface ReaderResult {
   entries: VaultSessionEntry[];
