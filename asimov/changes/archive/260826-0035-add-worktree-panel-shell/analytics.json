@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "add-worktree-panel-shell"
+  },
+  "sessions": [
+    {
+      "sessionId": "859b6e50-94a3-4531-903d-483b022b9046",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787704087786,
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787704087786
+        }
+      ],
+      "firstAt": 1787704087786,
+      "lastAt": 1787704538145,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 22,
+          "inputTokens": 44,
+          "outputTokens": 29642,
+          "reasoningTokens": 12537,
+          "cacheWriteTokens": 49523,
+          "cacheReadTokens": 6907591,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 49523,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

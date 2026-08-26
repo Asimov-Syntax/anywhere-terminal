@@ -50,6 +50,8 @@ import { TerminalFactory } from "./terminal/TerminalFactory";
 import { ThemeManager } from "./theme/ThemeManager";
 import { showBanner } from "./ui/BannerService";
 import { VaultPanel } from "./vault/VaultPanel";
+import type { WorktreeView } from "./worktree/WorktreeView";
+import { createWorktreePreview } from "./worktree/worktreePreview";
 
 // Inject the vendored Seti icon-font @font-face rule (with the woff embedded
 // as a data URL) into the document. Lives in the webview bundle because
@@ -328,6 +330,7 @@ let fileTreeController: FileTreeController | null = null;
 // stacked directly above the file tree inside `#aux-region`. Fed by
 // `vaultSessionsResponse`. See: webview/vault/VaultPanel.ts.
 let vaultPanel: VaultPanel | null = null;
+let worktreeView: WorktreeView | null = null;
 
 // ─── Orchestration ──────────────────────────────────────────────────
 
@@ -954,8 +957,25 @@ function handleInit(msg: InitMessage): void {
   // persists across reloads. See: add-ai-coding-vault/design.md D11.
   const vaultHost = document.getElementById("vault-panel");
   if (vaultHost) {
+    // Worktree segment. Fixture-backed until the host protocol lands, so the
+    // segment renders the real view rather than a placeholder.
+    worktreeView = createWorktreePreview({
+      host: vaultHost,
+      onHostAction: (action, target) => console.debug("[worktree] not wired yet:", action, target),
+      getInitialCollapsed: () => store.getState().worktreeCollapsed,
+      persistCollapsed: (ids) => store.updateState({ worktreeCollapsed: ids }),
+      getInitialExpandedRows: () => store.getState().worktreeExpandedRows ?? [],
+      persistExpandedRows: (ids) => store.updateState({ worktreeExpandedRows: ids }),
+    });
     vaultPanel = new VaultPanel({
       host: vaultHost,
+      worktreeBody: worktreeView.element,
+      onCreateWorktree: () => worktreeView?.openCreateDialog(),
+      onWorktreeQuery: (query) => worktreeView?.setQuery(query),
+      // Defaults to the sessions body: the worktree tree is fixture data, so
+      // nothing may claim the panel from a user who never asked for it.
+      getInitialView: () => store.getState().vaultView ?? "sessions",
+      persistView: (view) => store.updateState({ vaultView: view }),
       postMessage: (m) => vscode.postMessage(m),
       getActiveSessionId: () => {
         const tabId = store.activeTabId;

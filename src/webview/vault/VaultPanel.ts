@@ -28,6 +28,7 @@ import type {
 import type { VaultListResult, VaultSessionEntry } from "../../vault/types";
 import type { VaultPreviewGeometry } from "../state/WebviewState";
 import { attachTooltip } from "../ui/Tooltip";
+import { ICON_BRANCH, ICON_PLUS } from "../worktree/worktreeIcons";
 import { agentLabel, isWithin } from "./format";
 import { type GroupMode, groupEntries } from "./grouping";
 import { ICON_AGENT, ICON_CLOSE, ICON_FOLDER, ICON_RECENT, ICON_REFRESH, ICON_SEARCH } from "./icons";
@@ -64,6 +65,14 @@ export type VaultPanelPostMessage = (
 /** Rows shown per group before a "Show more" affordance keeps the list scannable. */
 const MAX_VISIBLE_PER_GROUP = 10;
 
+/**
+ * Which BODY the panel shows. Deliberately a sibling of `GroupMode` rather than a
+ * fourth value in it: `groupEntries()` buckets already-loaded sessions, so a
+ * worktree with zero agents would vanish from a grouping mode. It is a different
+ * entity, so it gets a different body (docs/design/worktree-panel-ui.md § 2).
+ */
+export type VaultView = "sessions" | "worktree";
+
 export interface VaultPanelDeps {
   /** DOM host element (`#vault-panel`). */
   host: HTMLElement;
@@ -82,6 +91,27 @@ export interface VaultPanelDeps {
   getInitialGroupMode?: () => GroupMode;
   /** Persist the grouping mode whenever it changes. */
   persistGroupMode?: (mode: GroupMode) => void;
+  /**
+   * The Worktree segment's body (a `WorktreeView.element`). Absent → the fourth
+   * segment is not rendered at all, which is what keeps the panel honest before
+   * the host can supply a tree.
+   */
+  worktreeBody?: HTMLElement;
+  /** Toolbar "+" while the Worktree view is active. Absent → no create affordance. */
+  onCreateWorktree?: () => void;
+  /** The search box filters the worktree tree too — branch, path, agent title. */
+  onWorktreeQuery?: (query: string) => void;
+  /**
+   * Rebuild the worktree tree. The refresh button posts `requestVaultSessions`,
+   * which is the SESSIONS protocol — firing it from the Worktree view would run a
+   * real host operation against data the user cannot see. Absent → the button is
+   * hidden there rather than left doing the wrong thing.
+   */
+  onWorktreeRefresh?: () => void;
+  /** Initial body (default "sessions"). Read once on construction. */
+  getInitialView?: () => VaultView;
+  /** Persist the active body whenever it changes. */
+  persistView?: (view: VaultView) => void;
   /**
    * Initial floating geometry of the session-preview overlay (size + position +
    * maximized). Read once on construction to restore the user's last layout
@@ -162,6 +192,13 @@ export class VaultPanel {
   private folderOnly = false;
   /** Grouping mode for the list (client-side, persisted). */
   private groupMode: GroupMode = "recent";
+  /** Which body is shown. Independent of `groupMode`, which keeps its meaning. */
+  private view: VaultView = "sessions";
+  private readonly worktreeBodyEl: HTMLElement | null;
+  private readonly createWorktreeBtn: HTMLButtonElement | null;
+  private readonly onWorktreeQuery?: (query: string) => void;
+  private readonly onWorktreeRefresh?: () => void;
+  private readonly persistView?: (view: VaultView) => void;
   /** Collapsed group keys (`<mode>:<key>`) — Agent and Folder groups both
    *  collapse; mode-prefixed so an agent id can't clash with a folder cwd. */
   private readonly collapsedGroups = new Set<string>();
@@ -279,6 +316,7 @@ export class VaultPanel {
     this.searchInput.setAttribute("aria-label", "Search sessions");
     this.searchInput.addEventListener("input", () => {
       this.query = this.searchInput.value.trim().toLowerCase();
+      this.onWorktreeQuery?.(this.query);
       this.renderList();
     });
     this.searchInput.addEventListener("keydown", (ev) => {
@@ -313,6 +351,10 @@ export class VaultPanel {
     refreshBtn.setAttribute("aria-label", "Refresh sessions");
     refreshBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
+      if (this.view === "worktree") {
+        this.onWorktreeRefresh?.();
+        return;
+      }
       this.setRefreshing(true);
       this.requestRefresh();
     });
@@ -340,14 +382,9 @@ export class VaultPanel {
     this.segmentedEl.className = "vault-segmented";
     this.segmentedEl.setAttribute("role", "tablist");
     this.segmentedEl.setAttribute("aria-label", "Group by");
-    for (const [mode, label, icon, hint] of [
-      ["recent", "Recent", ICON_RECENT, "Group by most recently used"],
-      ["agent", "Agent", ICON_AGENT, "Group by agent (Claude / Codex / OpenCode)"],
-      ["folder", "Folder", ICON_FOLDER, "Group by working folder"],
-    ] as const) {
+    const segment = (label: string, icon: string, hint: string, onClick: () => void): HTMLButtonElement => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.dataset.mode = mode;
       btn.title = hint;
       btn.setAttribute("role", "tab");
       const iconSpan = document.createElement("span");
@@ -355,12 +392,44 @@ export class VaultPanel {
       iconSpan.innerHTML = icon;
       iconSpan.setAttribute("aria-hidden", "true");
       const labelSpan = document.createElement("span");
+      // Four segments no longer fit at sidebar width, so CSS drops the label on
+      // unselected ones; the class is what it hooks onto.
+      labelSpan.className = "vault-segmented-label";
       labelSpan.textContent = label;
       btn.append(iconSpan, labelSpan);
-      btn.addEventListener("click", () => this.setGroupMode(mode));
+      btn.addEventListener("click", onClick);
       this.segmentedEl.appendChild(btn);
+      return btn;
+    };
+    for (const [mode, label, icon, hint] of [
+      ["recent", "Recent", ICON_RECENT, "Group by most recently used"],
+      ["agent", "Agent", ICON_AGENT, "Group by agent (Claude / Codex / OpenCode)"],
+      ["folder", "Folder", ICON_FOLDER, "Group by working folder"],
+    ] as const) {
+      const btn = segment(label, icon, hint, () => this.setGroupMode(mode));
+      btn.dataset.mode = mode;
+    }
+    this.worktreeBodyEl = deps.worktreeBody ?? null;
+    if (this.worktreeBodyEl) {
+      const btn = segment("Worktree", ICON_BRANCH, "Worktrees", () => this.setView("worktree"));
+      btn.dataset.view = "worktree";
     }
     toolbar.appendChild(this.segmentedEl);
+
+    // Create lives next to the segmented control and only while the Worktree view
+    // is up — a "+" in the sessions toolbar would have nothing to create.
+    if (this.worktreeBodyEl && deps.onCreateWorktree) {
+      this.createWorktreeBtn = document.createElement("button");
+      this.createWorktreeBtn.type = "button";
+      this.createWorktreeBtn.className = "vault-header__search-btn";
+      this.createWorktreeBtn.innerHTML = ICON_PLUS;
+      this.createWorktreeBtn.title = "Create worktree";
+      this.createWorktreeBtn.setAttribute("aria-label", "Create worktree");
+      this.createWorktreeBtn.addEventListener("click", () => deps.onCreateWorktree?.());
+      toolbar.appendChild(this.createWorktreeBtn);
+    } else {
+      this.createWorktreeBtn = null;
+    }
 
     // "This folder only" — a checkbox; when checked, scope the list to the
     // active terminal pane's cwd.
@@ -385,6 +454,9 @@ export class VaultPanel {
     this.listEl.setAttribute("role", "listbox");
     this.listEl.setAttribute("aria-label", "Sessions");
     this.bodyEl.appendChild(this.listEl);
+    if (this.worktreeBodyEl) {
+      this.bodyEl.appendChild(this.worktreeBodyEl);
+    }
 
     this.host.append(header, toolbar, this.statusEl, this.bodyEl, this.preview.element);
 
@@ -392,12 +464,66 @@ export class VaultPanel {
     // `vault-collapsed` default with any persisted preference.
     this.setCollapsed(deps.getInitialCollapsed?.() ?? true, { persist: false });
     this.setFolderOnly(deps.getInitialFolderOnly?.() ?? false, { persist: false });
+    this.onWorktreeQuery = deps.onWorktreeQuery;
+    this.onWorktreeRefresh = deps.onWorktreeRefresh;
+    this.persistView = deps.persistView;
+    this.view = this.worktreeBodyEl ? (deps.getInitialView?.() ?? "sessions") : "sessions";
+    this.syncView();
     this.syncSegmented();
+  }
+
+  /** Which body is active. */
+  getView(): VaultView {
+    return this.view;
+  }
+
+  /**
+   * Swap the panel body. Grouping is unaffected: `groupMode` keeps its meaning
+   * within the sessions body, so returning to it restores the same grouping.
+   */
+  setView(view: VaultView, opts: { persist?: boolean } = {}): void {
+    const next = this.worktreeBodyEl ? view : "sessions";
+    if (next === this.view) {
+      return;
+    }
+    this.view = next;
+    this.syncView();
+    this.syncSegmented();
+    if (opts.persist !== false) {
+      this.persistView?.(next);
+    }
+  }
+
+  private syncView(): void {
+    const worktree = this.view === "worktree";
+    this.listEl.style.display = worktree ? "none" : "";
+    if (this.worktreeBodyEl) {
+      this.worktreeBodyEl.style.display = worktree ? "" : "none";
+    }
+    // The worktree tree is already folder-scoped, so "This folder only" has
+    // nothing to scope and is hidden rather than shown doing nothing.
+    this.folderToggleEl.hidden = worktree;
+    this.statusEl.hidden = worktree;
+    if (this.createWorktreeBtn) {
+      this.createWorktreeBtn.hidden = !worktree;
+    }
+    this.refreshBtnEl.hidden = worktree && !this.onWorktreeRefresh;
+    this.refreshBtnEl.setAttribute("aria-label", worktree ? "Refresh worktrees" : "Refresh sessions");
+    this.searchInput.placeholder = worktree ? "Search worktrees…" : "Search sessions…";
   }
 
   /** Set the grouping mode (segmented control). Persists unless seeding. */
   setGroupMode(mode: GroupMode, opts: { persist?: boolean } = {}): void {
+    // Picking a grouping is also how the user leaves the Worktree body — the three
+    // grouping segments and the Worktree segment share one `role="tablist"`.
+    const leavingWorktree = this.view === "worktree";
+    if (leavingWorktree) {
+      this.setView("sessions", opts);
+    }
     if (mode === this.groupMode) {
+      if (leavingWorktree) {
+        this.renderList();
+      }
       return;
     }
     this.groupMode = mode;
@@ -411,7 +537,10 @@ export class VaultPanel {
   private syncSegmented(): void {
     // role="tab" → active state is communicated via aria-selected, not aria-pressed (W7).
     for (const btn of Array.from(this.segmentedEl.querySelectorAll<HTMLButtonElement>("button"))) {
-      btn.setAttribute("aria-selected", btn.dataset.mode === this.groupMode ? "true" : "false");
+      const selected = btn.dataset.view
+        ? this.view === btn.dataset.view
+        : this.view === "sessions" && btn.dataset.mode === this.groupMode;
+      btn.setAttribute("aria-selected", selected ? "true" : "false");
     }
   }
 
@@ -514,6 +643,7 @@ export class VaultPanel {
     this.searchInput.value = "";
     if (this.query) {
       this.query = "";
+      this.onWorktreeQuery?.("");
       this.renderList();
     }
     if (opts.focusButton) {

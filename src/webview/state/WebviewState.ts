@@ -100,6 +100,18 @@ export interface WebviewState {
    * the preview auto-anchors next to the activated row at its default size.
    */
   vaultPreviewGeometry?: VaultPreviewGeometry;
+  /**
+   * Which BODY the vault panel shows. A sibling of `vaultGroupMode` rather than a
+   * fourth value in it: that union feeds `groupEntries()`, and a *view* value
+   * flowing in there would bucket sessions by a mode that does not exist. A state
+   * written by an older build simply has no value here and falls back to
+   * "sessions". See: docs/design/worktree-panel-ui.md § 2.1.
+   */
+  vaultView?: "sessions" | "worktree";
+  /** Collapsed repoIds + worktreeIds in the Worktree view (first disclosure level). */
+  worktreeCollapsed?: string[];
+  /** Expanded agent rowIds (second disclosure level) — persisted independently. */
+  worktreeExpandedRows?: string[];
 }
 
 /**

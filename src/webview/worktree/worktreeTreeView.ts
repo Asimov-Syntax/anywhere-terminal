@@ -1,0 +1,601 @@
+// src/webview/worktree/worktreeTreeView.ts — Pure DOM builders for the Worktree
+// view: repo group headers, worktree rows, the collapsed presence pill, agent
+// rows, subagent history, notices, skeletons, and the empty states. None read
+// panel state — interactivity arrives as callbacks, so each builder is
+// independently testable. Mirrors src/webview/vault/vaultListView.ts.
+//
+// Branch names, pane titles, previews, model labels, and git's stderr are all
+// UNTRUSTED. Every one of them is written via `textContent`; the only innerHTML
+// is a static icon constant or the closed agent-icon map (D1).
+
+import { getAgentAccent, getAgentIcon } from "../vault/agentIcons";
+import { ICON_CHEVRON_DOWN, ICON_FOLDER, ICON_TERMINAL } from "../vault/icons";
+import { emptyState } from "../vault/renderAtoms";
+import {
+  agentCountLabel,
+  agentRowTitle,
+  ageTimestamp,
+  branchLabel,
+  compactAge,
+  hasProvenIdentity,
+  isFallbackActivity,
+  type PresenceGroup,
+  worktreeBadges,
+  worktreePills,
+  worktreeTooltip,
+} from "./worktreeFormat";
+import { ICON_BRANCH, ICON_LOCK, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
+import type {
+  WorktreeActivity,
+  WorktreeAgentRow,
+  WorktreeInfo,
+  WorktreeRepo,
+  WorktreeSubagentRow,
+} from "./worktreeViewTypes";
+
+/** Interaction handlers for a worktree row — supplied so the builder stays pure. */
+export interface WorktreeRowCallbacks {
+  onActivate: (info: WorktreeInfo, row: HTMLElement) => void;
+  onContextMenu: (info: WorktreeInfo, ev: MouseEvent, row: HTMLElement) => void;
+  /** Double click opens the folder (§ 6). */
+  onOpenFolder?: (info: WorktreeInfo) => void;
+}
+
+export interface AgentRowCallbacks {
+  onActivate: (row: WorktreeAgentRow, el: HTMLElement) => void;
+  onContextMenu: (row: WorktreeAgentRow, ev: MouseEvent, el: HTMLElement) => void;
+  /** Toggle this row's subagent disclosure — the SECOND, independent level (§ 3.5). */
+  onToggleSubagents?: (row: WorktreeAgentRow) => void;
+}
+
+/** Attach click + Enter/Space to an element that behaves as a row. */
+function bindActivation(el: HTMLElement, activate: () => void): void {
+  el.addEventListener("click", activate);
+  el.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      activate();
+    }
+  });
+}
+
+/** A leading-slot glyph carrying one of the four state shapes (§ 7.2). */
+export function stateShape(activity: WorktreeActivity, label?: string): HTMLElement {
+  const dot = document.createElement("span");
+  dot.className = `wt-state wt-state--${activity}`;
+  if (label) {
+    dot.setAttribute("role", "img");
+    dot.setAttribute("aria-label", label);
+  } else {
+    dot.setAttribute("aria-hidden", "true");
+  }
+  return dot;
+}
+
+/**
+ * Repo group header — rendered ONLY when the tree holds more than one repo
+ * (§ 3.1). Strongest emphasis, no leading glyph slot, so it reads as a separator
+ * rather than another tree row.
+ */
+export function renderRepoHeader(
+  repo: WorktreeRepo,
+  count: number,
+  collapsed: boolean,
+  onToggle: () => void,
+): HTMLElement {
+  const header = document.createElement("div");
+  header.className = collapsed ? "wt-repo is-collapsed" : "wt-repo";
+  header.setAttribute("role", "treeitem");
+  header.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  header.tabIndex = -1;
+  header.dataset.repoId = repo.repoId;
+
+  const name = document.createElement("span");
+  name.className = "wt-repo-name";
+  name.textContent = repo.label;
+  name.title = repo.mainPath;
+
+  const countEl = document.createElement("span");
+  countEl.className = "wt-repo-count";
+  countEl.textContent = String(count);
+
+  const spacer = document.createElement("span");
+
+  const chev = document.createElement("span");
+  chev.className = "wt-chev";
+  chev.innerHTML = ICON_CHEVRON_DOWN;
+  chev.setAttribute("aria-hidden", "true");
+
+  header.append(name, countEl, spacer, chev);
+  header.title = collapsed ? `Expand ${repo.label}` : `Collapse ${repo.label}`;
+  bindActivation(header, onToggle);
+  return header;
+}
+
+export interface WorktreeRowOptions {
+  /** The strongest state among this worktree's agents; undefined → the branch glyph. */
+  activity?: WorktreeActivity;
+  /** Whether the row owns an expandable agent block. */
+  hasAgents?: boolean;
+  expanded?: boolean;
+  /** "3 agents" — announced on the row, since the pill and header are not. */
+  agentSummary?: string;
+}
+
+/**
+ * One worktree row: state-aware leading glyph, branch, pills, badges. **No path
+ * anywhere** (§ 3.2) — it lives in the tooltip and the copy action.
+ */
+export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, cb: WorktreeRowCallbacks): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "wt-row";
+  if (info.missing) {
+    row.classList.add("is-missing");
+  }
+  row.setAttribute("role", "treeitem");
+  row.tabIndex = -1;
+  row.dataset.worktreeId = info.id;
+  row.title = worktreeTooltip(info);
+  if (opts.hasAgents) {
+    row.setAttribute("aria-expanded", opts.expanded ? "true" : "false");
+    // The presence pill and the "N agents" header are hidden from assistive tech
+    // (a button is not valid inside `role="tree"`), so the summary they carry
+    // visually has to reach a screen reader from the row itself.
+    if (opts.agentSummary) {
+      row.setAttribute("aria-label", `${branchLabel(info).text}, ${opts.agentSummary}`);
+    }
+  }
+
+  // One glyph slot, never two: the branch mark at rest, the state shape when any
+  // agent inside is active.
+  const glyph = document.createElement("span");
+  glyph.className = "wt-glyph";
+  if (opts.activity) {
+    glyph.appendChild(stateShape(opts.activity, `An agent is ${opts.activity}`));
+  } else {
+    glyph.innerHTML = ICON_BRANCH;
+  }
+  row.appendChild(glyph);
+
+  const label = branchLabel(info);
+  const branch = document.createElement("span");
+  branch.className = label.variant === "branch" ? "wt-branch" : `wt-branch wt-branch--${label.variant}`;
+  branch.textContent = label.text;
+  row.appendChild(branch);
+
+  const marks = document.createElement("span");
+  marks.className = "wt-marks";
+  for (const pill of worktreePills(info)) {
+    const el = document.createElement("span");
+    el.className = pill.kind === "here" ? "wt-pill wt-pill--here" : "wt-pill";
+    el.textContent = pill.text;
+    if (pill.kind === "here") {
+      el.title = "This worktree is a workspace folder";
+    }
+    marks.appendChild(el);
+  }
+  for (const badge of worktreeBadges(info)) {
+    const el = document.createElement("span");
+    el.className = `wt-badge wt-badge--${badge.kind}`;
+    if (badge.title) {
+      el.title = badge.title;
+    }
+    if (badge.kind === "locked") {
+      const icon = document.createElement("span");
+      icon.innerHTML = ICON_LOCK;
+      icon.setAttribute("aria-hidden", "true");
+      el.appendChild(icon);
+    }
+    el.append(document.createTextNode(badge.kind));
+    marks.appendChild(el);
+  }
+  row.appendChild(marks);
+
+  bindActivation(row, () => cb.onActivate(info, row));
+  row.addEventListener("contextmenu", (ev) => {
+    ev.preventDefault();
+    cb.onContextMenu(info, ev, row);
+  });
+  if (cb.onOpenFolder) {
+    row.addEventListener("dblclick", () => cb.onOpenFolder?.(info));
+  }
+  return row;
+}
+
+/**
+ * The collapsed presence pill: state dots grouped by state, up to three agent
+ * icons each, then a `+N` count. Height is constant regardless of agent count.
+ */
+export function renderPresencePill(groups: readonly PresenceGroup[], onExpand: () => void): HTMLElement {
+  const pill = document.createElement("button");
+  pill.type = "button";
+  pill.className = "wt-presence";
+  pill.tabIndex = -1;
+  pill.setAttribute("aria-hidden", "true");
+  pill.title = "Show agents";
+
+  const wrap = document.createElement("span");
+  wrap.className = "wt-presence-groups";
+  for (const group of groups) {
+    const g = document.createElement("span");
+    g.className = "wt-pgroup";
+    g.appendChild(stateShape(group.activity));
+    const icons = document.createElement("span");
+    icons.className = "wt-pgroup-icons";
+    for (const agentId of group.agents) {
+      const badge = document.createElement("span");
+      badge.className = "vault-badge";
+      const icon = getAgentIcon(agentId);
+      if (icon) {
+        // SVG comes ONLY from the closed agent-icon map, never from presence data.
+        badge.classList.add(`vault-badge--${icon.accent}`);
+        badge.innerHTML = icon.svg;
+        badge.title = icon.displayName;
+      }
+      icons.appendChild(badge);
+    }
+    g.appendChild(icons);
+    if (group.overflow > 0) {
+      const more = document.createElement("span");
+      more.className = "wt-pgroup-more";
+      more.textContent = `+${group.overflow}`;
+      g.appendChild(more);
+    }
+    wrap.appendChild(g);
+  }
+
+  const chev = document.createElement("span");
+  chev.className = "wt-chev";
+  chev.innerHTML = ICON_CHEVRON_DOWN;
+  chev.setAttribute("aria-hidden", "true");
+
+  pill.append(wrap, chev);
+  pill.addEventListener("click", onExpand);
+  return pill;
+}
+
+/**
+ * The expanded presence header — a real row, not a label: it is the collapse
+ * control and it carries the count the pill would otherwise have to keep showing.
+ */
+export function renderAgentsHeader(count: number, onCollapse: () => void): HTMLElement {
+  const header = document.createElement("div");
+  header.className = "wt-agents";
+  header.tabIndex = -1;
+  header.setAttribute("aria-hidden", "true");
+  header.title = "Collapse agents";
+
+  const label = document.createElement("span");
+  label.textContent = agentCountLabel(count);
+
+  const chev = document.createElement("span");
+  chev.className = "wt-chev";
+  chev.innerHTML = ICON_CHEVRON_DOWN;
+  chev.setAttribute("aria-hidden", "true");
+
+  header.append(label, chev);
+  bindActivation(header, onCollapse);
+  return header;
+}
+
+export interface AgentRowOptions {
+  /** Subagent disclosure state — independent of the worktree's own collapse (§ 3.5). */
+  expanded?: boolean;
+  selected?: boolean;
+  now?: number;
+}
+
+/**
+ * One agent row. Grid: gutter | state | icon | title | preview | model | +N | age.
+ * The gutter always occupies space even with no children, which is what keeps the
+ * state dots aligned down a mixed list.
+ */
+export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb: AgentRowCallbacks): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "wt-arow";
+  const subagents = row.subagents ?? [];
+  const hasChildren = subagents.length > 0;
+  if (hasChildren && opts.expanded) {
+    el.classList.add("is-open");
+  }
+  if (opts.selected) {
+    el.classList.add("is-selected");
+  }
+  el.setAttribute("role", "treeitem");
+  el.tabIndex = -1;
+  el.dataset.rowId = row.rowId;
+  if (hasChildren) {
+    el.setAttribute("aria-expanded", opts.expanded ? "true" : "false");
+  }
+
+  // 1 — disclosure gutter. Empty but present when the row has no children.
+  const gutter = document.createElement("span");
+  gutter.className = "wt-gutter";
+  gutter.setAttribute("aria-hidden", "true");
+  if (hasChildren) {
+    gutter.innerHTML = ICON_CHEVRON_DOWN;
+    gutter.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      cb.onToggleSubagents?.(row);
+    });
+  }
+  el.appendChild(gutter);
+
+  // 2 — state dot. Colour from the state, never from the agent.
+  el.appendChild(stateShape(row.activity, row.activity));
+
+  // 3 — agent icon. Absent without a proven identity: `agentSource: "none"` is a
+  // plain terminal row, and a guessed glyph would be a claim we cannot support.
+  const icon = document.createElement("span");
+  icon.className = "wt-aicon";
+  if (hasProvenIdentity(row) && row.agent) {
+    const brand = getAgentIcon(row.agent);
+    const accent = getAgentAccent(row.agent);
+    if (brand) {
+      icon.innerHTML = brand.svg;
+      icon.title = brand.displayName;
+    }
+    // Only a known, closed accent may reach the style attribute (W6).
+    if (accent) {
+      icon.style.color = `var(--vault-accent-${accent})`;
+    }
+  } else {
+    icon.innerHTML = ICON_TERMINAL;
+  }
+  el.appendChild(icon);
+
+  // 4 — title, plus the confidence marker when ACTIVITY came from a fallback
+  // source. Identity confidence is expressed by the icon above, separately.
+  const title = document.createElement("span");
+  title.className = "wt-atitle";
+  const titleText = agentRowTitle(row);
+  title.append(document.createTextNode(titleText));
+  title.title = titleText;
+  if (isFallbackActivity(row.activitySource)) {
+    const marker = document.createElement("span");
+    marker.className = "wt-confidence";
+    marker.textContent = "~";
+    marker.title =
+      row.activitySource === "output"
+        ? "Activity inferred from terminal output — the terminal is busy, which is not proof of an agent turn"
+        : `Activity inferred from ${row.activitySource} — not a published agent state`;
+    title.append(document.createTextNode(" "), marker);
+  }
+  el.appendChild(title);
+
+  // 5 — preview. Truncates first under width pressure; hidden entirely below 380px.
+  const preview = document.createElement("span");
+  preview.className = "wt-apreview";
+  preview.textContent = row.preview ?? "";
+  if (row.preview) {
+    preview.title = row.preview;
+  }
+  el.appendChild(preview);
+
+  // 6 — model chip, or the external-scope chip. Never a placeholder for an
+  // unknown model; an external row is labelled instead, since it offers no focus.
+  const sixth = document.createElement("span");
+  if (row.scope === "external") {
+    sixth.className = "wt-scope";
+    sixth.title = "Running in another VS Code window";
+    const winIcon = document.createElement("span");
+    winIcon.innerHTML = ICON_WINDOW;
+    winIcon.setAttribute("aria-hidden", "true");
+    sixth.append(winIcon, document.createTextNode("other window"));
+  } else if (row.model) {
+    sixth.className = "wt-model";
+    sixth.textContent = row.model;
+    sixth.title = row.model;
+  }
+  el.appendChild(sixth);
+
+  // 7 — collapsed child count. Disappears when expanded; the children show instead.
+  const count = document.createElement("span");
+  if (hasChildren && !opts.expanded) {
+    count.className = "wt-count";
+    count.textContent = `+${subagents.length}`;
+  }
+  el.appendChild(count);
+
+  // 8 — age, right-aligned against a fixed edge that never truncates.
+  const age = document.createElement("span");
+  age.className = "wt-age";
+  age.textContent = compactAge(ageTimestamp(row), opts.now);
+  el.appendChild(age);
+
+  bindActivation(el, () => cb.onActivate(row, el));
+  el.addEventListener("contextmenu", (ev) => {
+    ev.preventDefault();
+    cb.onContextMenu(row, ev, el);
+  });
+  return el;
+}
+
+/**
+ * Subagent history — deliberately NOT the live dot vocabulary. These are
+ * transcript-derived (`live: false`), so they get a rail, a "Past delegations"
+ * label, and outcome glyphs. Activating one focuses the PARENT's pane; a subagent
+ * has no pane of its own.
+ */
+export function renderSubagentSection(
+  subagents: readonly WorktreeSubagentRow[],
+  parent: WorktreeAgentRow,
+  onActivate: (subagent: WorktreeSubagentRow, parent: WorktreeAgentRow) => void,
+  now?: number,
+): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "wt-hist";
+  wrap.setAttribute("role", "group");
+  wrap.dataset.parentRowId = parent.rowId;
+
+  const label = document.createElement("div");
+  label.className = "wt-hist-label";
+  label.setAttribute("role", "presentation");
+  label.textContent = "Past delegations";
+  wrap.appendChild(label);
+
+  for (const [i, sub] of subagents.entries()) {
+    const row = document.createElement("div");
+    row.className = "wt-srow";
+    row.setAttribute("role", "treeitem");
+    row.tabIndex = -1;
+    // A subagent has no id of its own, so its key is derived from the parent and
+    // its position. Without one, every subagent row keys as "" and the roving
+    // tabindex cannot tell them apart.
+    row.dataset.subKey = `${parent.rowId}\u0000${i}`;
+    row.title = "Focuses the parent pane — a subagent has no pane of its own";
+
+    const outcome = document.createElement("span");
+    const failed = sub.status === "failed";
+    outcome.className = failed ? "wt-outcome wt-outcome--failed" : "wt-outcome wt-outcome--done";
+    outcome.setAttribute("aria-hidden", "true");
+    outcome.textContent = failed ? "✕" : sub.status === "running" ? "…" : "✓";
+
+    const text = document.createElement("span");
+    text.className = "wt-stext";
+    const shown = sub.title ? `${sub.name} — ${sub.title}` : sub.name;
+    text.textContent = shown;
+    text.title = shown;
+
+    const age = document.createElement("span");
+    age.className = "wt-age";
+    // Children inherit the parent's freshness: a stale parent cannot have
+    // provably-working children (§ 3.4).
+    age.textContent = compactAge(ageTimestamp(parent), now);
+
+    row.append(outcome, text, age);
+    bindActivation(row, () => onActivate(sub, parent));
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+export interface NoticeSpec {
+  tone: "warn" | "error" | "neutral";
+  /** Bolded lead sentence. */
+  title: string;
+  /** Optional plain continuation after the lead. */
+  body?: string;
+  /** Verbatim source + reason, rendered monospace. */
+  reason?: string;
+  /** `alert` for an action result the user just caused; `status` for staleness. */
+  live?: "alert" | "status";
+  actions?: { label: string; onClick: () => void }[];
+  onDismiss?: () => void;
+}
+
+/**
+ * A notice attached to the scope it concerns: a degraded repo, an action error, or
+ * an indeterminate outcome. `reason` is git's own words, shown rather than summarized.
+ */
+export function renderNotice(spec: NoticeSpec): HTMLElement {
+  const el = document.createElement("div");
+  el.className = spec.tone === "neutral" ? "wt-notice" : `wt-notice wt-notice--${spec.tone}`;
+  el.setAttribute("role", spec.live ?? "status");
+
+  const icon = document.createElement("span");
+  icon.innerHTML = ICON_WARNING;
+  icon.setAttribute("aria-hidden", "true");
+  el.appendChild(icon);
+
+  const text = document.createElement("span");
+  const strong = document.createElement("b");
+  strong.textContent = spec.title;
+  text.appendChild(strong);
+  if (spec.body) {
+    text.append(document.createTextNode(` ${spec.body}`));
+  }
+  if (spec.reason) {
+    const reason = document.createElement("span");
+    reason.className = "wt-reason";
+    reason.textContent = spec.reason;
+    text.appendChild(reason);
+  }
+  el.appendChild(text);
+
+  const actions = document.createElement("span");
+  actions.className = "wt-notice-actions";
+  for (const action of spec.actions ?? []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wt-link";
+    btn.textContent = action.label;
+    btn.addEventListener("click", action.onClick);
+    actions.appendChild(btn);
+  }
+  if (spec.onDismiss) {
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "wt-dismiss";
+    dismiss.setAttribute("aria-label", "Dismiss");
+    dismiss.textContent = "✕";
+    dismiss.addEventListener("click", spec.onDismiss);
+    actions.appendChild(dismiss);
+  }
+  el.appendChild(actions);
+  return el;
+}
+
+/** Widths that read as a tree rather than a progress bar. Fixed, so the skeleton
+ *  does not shimmer at a different shape on every render. */
+const SKELETON_ROWS: readonly { agent: boolean; width: number }[] = [
+  { agent: false, width: 52 },
+  { agent: true, width: 74 },
+  { agent: true, width: 61 },
+  { agent: false, width: 40 },
+  { agent: false, width: 66 },
+];
+
+/** First load only — skeleton rows, never a spinner in a void (§ 5). */
+export function renderSkeleton(): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  for (const spec of SKELETON_ROWS) {
+    const row = document.createElement("div");
+    row.className = spec.agent ? "wt-skel wt-skel--agent" : "wt-skel";
+    const glyph = document.createElement("span");
+    const bar = document.createElement("span");
+    bar.style.width = `${spec.width}%`;
+    row.append(glyph, bar);
+    frag.appendChild(row);
+  }
+  return frag;
+}
+
+/** A refresh that already holds a tree keeps it and shows this quiet marker (§ 5). */
+export function renderRefreshingMarker(): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "wt-refreshing";
+  el.setAttribute("role", "status");
+  el.textContent = "Rebuilding the worktree tree…";
+  return el;
+}
+
+/** Cap with an affordance rather than truncating silently (§ 8). */
+export function renderShowAll(total: number, onShowAll: () => void): HTMLElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "wt-showall";
+  btn.textContent = `Show all ${total} worktrees`;
+  btn.addEventListener("click", onShowAll);
+  return btn;
+}
+
+/** The distinct causes of an empty tree. Each gets its own copy — none is an error. */
+export type WorktreeEmptyKind = "noFolder" | "noRepo" | "gitMissing" | "noMatch";
+
+export function worktreeEmptyState(kind: WorktreeEmptyKind): HTMLElement {
+  switch (kind) {
+    case "noFolder":
+      return emptyState(ICON_FOLDER, "No folder open", "Open a folder to see its worktrees.");
+    case "noRepo":
+      return emptyState(
+        ICON_BRANCH,
+        "No git repository",
+        "This view lists git worktrees. None of the open folders is a repository.",
+      );
+    case "gitMissing":
+      return emptyState(ICON_TERMINAL, "Git not found", "The Worktree view needs git on your PATH.");
+    default:
+      return emptyState(ICON_BRANCH, "No matching worktrees", "Try a shorter query.");
+  }
+}
