@@ -818,6 +818,7 @@ export class TerminalEditorProvider {
           tabs: existingSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
         });
         if (!initDelivered) {
           console.error("[AnyWhere Terminal] init delivery failed during editor reload — skipping scrollback restore.");
@@ -853,6 +854,7 @@ export class TerminalEditorProvider {
           tabs: restoredSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
         });
         if (!initDelivered) {
           console.error(
@@ -892,6 +894,7 @@ export class TerminalEditorProvider {
           tabs,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
         });
       }
     } catch (err) {

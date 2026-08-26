@@ -73,6 +73,48 @@ function host(runner: GitCommandRunner, folders = ["/repo"]) {
   return createWorktreeHost({ deps: deps(runner, folders), workspaceFolders: () => folders, pool, now: () => 1000 });
 }
 
+describe("WorktreeHost — init payload", () => {
+  it("reports a repository without running a single git command", () => {
+    const { runner, run } = oneRepo(MAIN);
+    const worktrees = createWorktreeHost({
+      deps: deps(runner, ["/repo"]),
+      workspaceFolders: () => ["/repo"],
+      pool,
+      exists: (p) => p === "/repo/.git",
+    });
+    expect(worktrees.initPayload()).toEqual({ worktreeHasRepo: true });
+    expect(run).not.toHaveBeenCalled();
+    worktrees.dispose();
+  });
+
+  it("reports no repository for a workspace that holds none", () => {
+    const { runner } = oneRepo(MAIN);
+    const worktrees = createWorktreeHost({
+      deps: deps(runner, ["/plain"]),
+      workspaceFolders: () => ["/plain"],
+      pool,
+      exists: () => false,
+    });
+    expect(worktrees.initPayload()).toEqual({ worktreeHasRepo: false });
+    worktrees.dispose();
+  });
+
+  it("reads the folder set at call time, so a folder added later counts", () => {
+    const { runner } = oneRepo(MAIN);
+    let folders: string[] = [];
+    const worktrees = createWorktreeHost({
+      deps: deps(runner, ["/repo"]),
+      workspaceFolders: () => folders,
+      pool,
+      exists: (p) => p === "/repo/.git",
+    });
+    expect(worktrees.initPayload().worktreeHasRepo).toBe(false);
+    folders = ["/repo"];
+    expect(worktrees.initPayload().worktreeHasRepo).toBe(true);
+    worktrees.dispose();
+  });
+});
+
 describe("WorktreeHost — attachment", () => {
   it("costs no git command to attach a surface", async () => {
     const { runner, run } = oneRepo(MAIN);

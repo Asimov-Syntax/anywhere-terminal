@@ -50,8 +50,7 @@ import { TerminalFactory } from "./terminal/TerminalFactory";
 import { ThemeManager } from "./theme/ThemeManager";
 import { showBanner } from "./ui/BannerService";
 import { VaultPanel } from "./vault/VaultPanel";
-import type { WorktreeView } from "./worktree/WorktreeView";
-import { createWorktreePreview } from "./worktree/worktreePreview";
+import { resolveInitialView, WorktreeController } from "./worktree/WorktreeController";
 
 // Inject the vendored Seti icon-font @font-face rule (with the woff embedded
 // as a data URL) into the document. Lives in the webview bundle because
@@ -330,7 +329,7 @@ let fileTreeController: FileTreeController | null = null;
 // stacked directly above the file tree inside `#aux-region`. Fed by
 // `vaultSessionsResponse`. See: webview/vault/VaultPanel.ts.
 let vaultPanel: VaultPanel | null = null;
-let worktreeView: WorktreeView | null = null;
+let worktreeController: WorktreeController | null = null;
 
 // ─── Orchestration ──────────────────────────────────────────────────
 
@@ -738,6 +737,9 @@ const routeMessage = createMessageRouter({
     // Empty-paste host probe found no image. Text paste never reaches here
     // (it stays on the native paste path); nothing to restore.
   },
+  onWorktreeTreeResponse(msg) {
+    worktreeController?.handleTreeResponse(msg);
+  },
   onVaultContextCwd(msg) {
     // Drop a reply for a pane that is no longer active (stale-guard): the user
     // switched panes before this resolved, and a later request owns the scope.
@@ -957,24 +959,21 @@ function handleInit(msg: InitMessage): void {
   // persists across reloads. See: add-ai-coding-vault/design.md D11.
   const vaultHost = document.getElementById("vault-panel");
   if (vaultHost) {
-    // Worktree segment. Fixture-backed until the host protocol lands, so the
-    // segment renders the real view rather than a placeholder.
-    worktreeView = createWorktreePreview({
+    // Worktree segment — the window's own tree, pushed by the host and gated on
+    // this surface declaring the view visible. See: worktree/WorktreeController.ts.
+    worktreeController = WorktreeController.mount({
       host: vaultHost,
-      onHostAction: (action, target) => console.debug("[worktree] not wired yet:", action, target),
-      getInitialCollapsed: () => store.getState().worktreeCollapsed,
-      persistCollapsed: (ids) => store.updateState({ worktreeCollapsed: ids }),
-      getInitialExpandedRows: () => store.getState().worktreeExpandedRows ?? [],
-      persistExpandedRows: (ids) => store.updateState({ worktreeExpandedRows: ids }),
+      postMessage: (m) => vscode.postMessage(m),
+      store,
+      init: { workspaceRoot: msg.workspaceRoot },
     });
     vaultPanel = new VaultPanel({
       host: vaultHost,
-      worktreeBody: worktreeView.element,
-      onCreateWorktree: () => worktreeView?.openCreateDialog(),
-      onWorktreeQuery: (query) => worktreeView?.setQuery(query),
-      // Defaults to the sessions body: the worktree tree is fixture data, so
-      // nothing may claim the panel from a user who never asked for it.
-      getInitialView: () => store.getState().vaultView ?? "sessions",
+      worktreeBody: worktreeController.element,
+      onWorktreeQuery: (query) => worktreeController?.setQuery(query),
+      onWorktreeRefresh: () => worktreeController?.requestRefresh(),
+      onWorktreeVisibility: (visible) => worktreeController?.setVisible(visible),
+      getInitialView: () => resolveInitialView(store.getState().vaultView, msg.worktreeHasRepo),
       persistView: (view) => store.updateState({ vaultView: view }),
       postMessage: (m) => vscode.postMessage(m),
       getActiveSessionId: () => {

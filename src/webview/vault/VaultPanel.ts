@@ -109,6 +109,11 @@ export interface VaultPanelDeps {
    */
   onWorktreeRefresh?: () => void;
   /** Initial body (default "sessions"). Read once on construction. */
+  /**
+   * Whether the Worktree body is being shown — this panel owns both halves of
+   * that (`view` and `collapsed`), and the host gates every push on it.
+   */
+  onWorktreeVisibility?: (visible: boolean) => void;
   getInitialView?: () => VaultView;
   /** Persist the active body whenever it changes. */
   persistView?: (view: VaultView) => void;
@@ -199,6 +204,7 @@ export class VaultPanel {
   private readonly onWorktreeQuery?: (query: string) => void;
   private readonly onWorktreeRefresh?: () => void;
   private readonly persistView?: (view: VaultView) => void;
+  private readonly onWorktreeVisibility?: (visible: boolean) => void;
   /** Collapsed group keys (`<mode>:<key>`) — Agent and Folder groups both
    *  collapse; mode-prefixed so an agent id can't clash with a folder cwd. */
   private readonly collapsedGroups = new Set<string>();
@@ -410,6 +416,7 @@ export class VaultPanel {
       btn.dataset.mode = mode;
     }
     this.worktreeBodyEl = deps.worktreeBody ?? null;
+    this.onWorktreeVisibility = deps.onWorktreeVisibility;
     if (this.worktreeBodyEl) {
       const btn = segment("Worktree", ICON_BRANCH, "Worktrees", () => this.setView("worktree"));
       btn.dataset.view = "worktree";
@@ -510,6 +517,12 @@ export class VaultPanel {
     this.refreshBtnEl.hidden = worktree && !this.onWorktreeRefresh;
     this.refreshBtnEl.setAttribute("aria-label", worktree ? "Refresh worktrees" : "Refresh sessions");
     this.searchInput.placeholder = worktree ? "Search worktrees…" : "Search sessions…";
+    this.syncWorktreeVisibility();
+  }
+
+  /** A collapsed section shows the body no more than another segment does. */
+  private syncWorktreeVisibility(): void {
+    this.onWorktreeVisibility?.(this.worktreeBodyEl !== null && this.view === "worktree" && !this.collapsed);
   }
 
   /** Set the grouping mode (segmented control). Persists unless seeding. */
@@ -578,6 +591,7 @@ export class VaultPanel {
     // are the source of truth, D2; matches the "refresh on open" spec). Only
     // on the collapsed→expanded transition so re-collapsing doesn't fetch and
     // an already-open panel isn't re-fetched on a no-op.
+    this.syncWorktreeVisibility();
     if (!collapsed && wasCollapsed) {
       // Drop the render-guard key so the first response after re-expand always
       // paints, rather than being skipped as "unchanged" against a pre-collapse

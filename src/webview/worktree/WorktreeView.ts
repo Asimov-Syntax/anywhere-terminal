@@ -67,9 +67,13 @@ export interface WorktreeViewData {
 export interface WorktreeViewDeps {
   /** Panel element the dialogs and context menu are positioned within. */
   host: HTMLElement;
-  actions: WorktreeMenuActions;
+  /**
+   * The row context menu. Absent → no menu is built and no row listens for one:
+   * an action the view cannot perform is absent rather than present and inert.
+   */
+  actions?: WorktreeMenuActions;
   /** Activating an agent row — focus its pane, or open its preview (§ 6). */
-  onActivateAgent: (row: WorktreeAgentRow) => void;
+  onActivateAgent?: (row: WorktreeAgentRow) => void;
   /** Activating a subagent row targets the PARENT's pane; it has none of its own. */
   onActivateSubagent?: (subagent: WorktreeSubagentRow, parent: WorktreeAgentRow) => void;
   /** Rebuild this repo's listing after a degraded result. */
@@ -102,7 +106,7 @@ export class WorktreeView {
   readonly element: HTMLElement;
 
   private readonly deps: WorktreeViewDeps;
-  private readonly menu: WorktreeContextMenu;
+  private readonly menu: WorktreeContextMenu | null;
 
   private data: WorktreeViewData = { tree: null, presence: null, loading: true };
   private query = "";
@@ -136,7 +140,7 @@ export class WorktreeView {
     this.element.setAttribute("role", "tree");
     this.element.setAttribute("aria-label", "Worktrees");
     this.element.addEventListener("keydown", (ev) => this.onKeyDown(ev));
-    this.menu = new WorktreeContextMenu({ host: deps.host, actions: deps.actions });
+    this.menu = deps.actions ? new WorktreeContextMenu({ host: deps.host, actions: deps.actions }) : null;
   }
 
   private now(): number {
@@ -223,7 +227,7 @@ export class WorktreeView {
   dispose(): void {
     this.closeDialog?.();
     this.closeDialog = null;
-    this.menu.close();
+    this.menu?.close();
   }
 
   // -- State ---------------------------------------------------------------
@@ -492,8 +496,8 @@ export class WorktreeView {
               this.toggleCollapsed(info.id);
             }
           },
-          onContextMenu: (i, ev, row) => this.menu.openForWorktree(i, ev, row),
-          onOpenFolder: (i) => this.deps.actions.openFolderInNewWindow(i),
+          onContextMenu: this.menu ? (i, ev, row) => this.menu?.openForWorktree(i, ev, row) : undefined,
+          onOpenFolder: this.deps.actions ? (i) => this.deps.actions?.openFolderInNewWindow(i) : undefined,
         },
       ),
     );
@@ -514,8 +518,8 @@ export class WorktreeView {
           row,
           { expanded: rowExpanded, now: this.now() },
           {
-            onActivate: (r) => this.deps.onActivateAgent(r),
-            onContextMenu: (r, ev, el) => this.menu.openForAgent(r, ev, el),
+            onActivate: (r) => this.deps.onActivateAgent?.(r),
+            onContextMenu: this.menu ? (r, ev, el) => this.menu?.openForAgent(r, ev, el) : undefined,
             onToggleSubagents: (r) => this.toggleRow(r.rowId),
           },
         ),

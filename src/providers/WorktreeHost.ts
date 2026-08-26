@@ -8,6 +8,7 @@
 
 import type * as vscode from "vscode";
 import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "../types/messages";
+import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { WorktreePresence } from "../worktree/presenceTypes";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
@@ -34,9 +35,24 @@ export interface WorktreeHostOptions {
   onDidChangeWorkspaceFolders?(listener: () => void): vscode.Disposable;
   clock?: RebuildGateClock;
   now?(): number;
+  /** Path-existence probe behind `initPayload`, injected in tests. */
+  exists?(p: string): boolean;
+}
+
+/**
+ * Init-message fields the worktree host contributes. Providers spread this into
+ * their `init` payload so the panel can pick its opening view before it paints —
+ * the host pushes nothing to a surface that has not declared the view visible,
+ * so a webview that opened on the wrong body could never learn it had.
+ */
+export interface WorktreeInitPayload {
+  /** At least one workspace folder is inside a git repository. */
+  worktreeHasRepo: boolean;
 }
 
 export interface WorktreeHost extends vscode.Disposable {
+  /** Fields this host contributes to a surface's `init` message. */
+  initPayload(): WorktreeInitPayload;
   /** Register one surface. Disposing detaches only that surface. */
   attach(surface: WorktreeSurface): vscode.Disposable;
   /** Route an inbound worktree message from `surface`. Unknown types ignored. */
@@ -182,6 +198,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   return {
+    // Folders are read here, not captured: a window that gained one since the
+    // last init answers for the folder set the surface is booting against.
+    initPayload: () => ({ worktreeHasRepo: hasGitRepo(options.workspaceFolders(), options.exists) }),
     attach,
     handleMessage,
     dispose: () => {

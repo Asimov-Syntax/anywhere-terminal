@@ -187,7 +187,7 @@ state. There is nothing to provision.
 | **Labels** | user-visible-ui |
 | **Notes** | The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The shell already persists the three keys and prunes ids that vanished; what it deliberately does not do is choose the opening view from repo presence, because it has no repo knowledge — that rule (§ 2.2) lands here |
 | **Acceptance** | The shell renders the live tree, and view, collapse, and expansion state survive a reload; an absent persisted view opens on the worktree body when the workspace has a git repo and on sessions when it has none, while any persisted choice wins over both; state written by an older build stays valid, and a persisted set that is empty means everything is expanded rather than nothing was ever saved; worktrees that disappear drop out of persisted state rather than resurfacing |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-003.2] Re-render Discipline
 

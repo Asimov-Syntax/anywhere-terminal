@@ -46,6 +46,7 @@ import type {
   VaultSessionDetailResponseMessage,
   VaultSessionsResponseMessage,
   WorkspaceRootChangedMessage,
+  WorktreeTreeResponseMessage,
 } from "../../types/messages";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -103,6 +104,10 @@ export interface MessageHandlers {
   onVaultLaunchTargets?(msg: VaultLaunchTargetsMessage): void;
   onVaultContextCwd?(msg: VaultContextCwdMessage): void;
   onOpenVault?(msg: OpenVaultMessage): void;
+
+  // ── Worktree tree (wire-live-worktree-tree) ──
+  // Optional: a webview without a mounted worktree view safely ignores this.
+  onWorktreeTreeResponse?(msg: WorktreeTreeResponseMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
   // Optional: a webview with no terminal factory mounted safely ignores it.
   onSubagentPreviewResponse?(msg: SubagentPreviewResponseMessage): void;
@@ -239,6 +244,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "openVault":
         handlers.onOpenVault?.(msg);
+        break;
+      case "worktreeTreeResponse":
+        handlers.onWorktreeTreeResponse?.(msg);
         break;
       case "subagentPreviewResponse":
         handlers.onSubagentPreviewResponse?.(msg);

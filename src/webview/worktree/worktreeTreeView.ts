@@ -36,14 +36,17 @@ import type {
 /** Interaction handlers for a worktree row — supplied so the builder stays pure. */
 export interface WorktreeRowCallbacks {
   onActivate: (info: WorktreeInfo, row: HTMLElement) => void;
-  onContextMenu: (info: WorktreeInfo, ev: MouseEvent, row: HTMLElement) => void;
+  /** Absent → no listener at all: one that only preventDefaults would leave the
+   *  user with no menu, ours or the host's. */
+  onContextMenu?: (info: WorktreeInfo, ev: MouseEvent, row: HTMLElement) => void;
   /** Double click opens the folder (§ 6). */
   onOpenFolder?: (info: WorktreeInfo) => void;
 }
 
 export interface AgentRowCallbacks {
   onActivate: (row: WorktreeAgentRow, el: HTMLElement) => void;
-  onContextMenu: (row: WorktreeAgentRow, ev: MouseEvent, el: HTMLElement) => void;
+  /** Absent → no listener, for the same reason as the worktree row's. */
+  onContextMenu?: (row: WorktreeAgentRow, ev: MouseEvent, el: HTMLElement) => void;
   /** Toggle this row's subagent disclosure — the SECOND, independent level (§ 3.5). */
   onToggleSubagents?: (row: WorktreeAgentRow) => void;
 }
@@ -192,10 +195,12 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   row.appendChild(marks);
 
   bindActivation(row, () => cb.onActivate(info, row));
-  row.addEventListener("contextmenu", (ev) => {
-    ev.preventDefault();
-    cb.onContextMenu(info, ev, row);
-  });
+  if (cb.onContextMenu) {
+    row.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      cb.onContextMenu?.(info, ev, row);
+    });
+  }
   if (cb.onOpenFolder) {
     row.addEventListener("dblclick", () => cb.onOpenFolder?.(info));
   }
@@ -404,10 +409,12 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   el.appendChild(age);
 
   bindActivation(el, () => cb.onActivate(row, el));
-  el.addEventListener("contextmenu", (ev) => {
-    ev.preventDefault();
-    cb.onContextMenu(row, ev, el);
-  });
+  if (cb.onContextMenu) {
+    el.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      cb.onContextMenu?.(row, ev, el);
+    });
+  }
   return el;
 }
 

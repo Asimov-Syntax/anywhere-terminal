@@ -1370,6 +1370,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           tabs: existingSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
         });
         if (!initDelivered) {
           console.error("[AnyWhere Terminal] init delivery failed during reload — skipping restore posts.");
@@ -1416,6 +1417,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           tabs: restoredSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
         });
         if (!initDelivered) {
           // All retries failed — the webview channel is unhealthy. Posting
@@ -1465,6 +1467,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           tabs,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
         });
       }
     } catch (err) {

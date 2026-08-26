@@ -731,6 +731,16 @@ export interface InitMessage {
   rootGeneration: number;
   /** Absolute path of the first workspace folder, or null if no workspace open. */
   workspaceRoot: string | null;
+  /**
+   * At least one workspace folder is inside a git repository. Decides which body
+   * the vault panel opens on when the user has recorded no choice — a decision
+   * that has to be made before the first paint, and cannot wait for a tree the
+   * host only pushes once a surface says it is showing the view.
+   *
+   * See: docs/design/worktree-panel-ui.md § 2.2;
+   *      asimov/changes/wire-live-worktree-tree/design.md D1.
+   */
+  worktreeHasRepo: boolean;
 }
 
 /**
