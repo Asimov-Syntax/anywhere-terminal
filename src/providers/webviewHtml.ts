@@ -19,11 +19,15 @@ import fileTreePanelCss from "../webview/fileTree/fileTreePanel.css";
 import tooltipCss from "../webview/ui/tooltip.css";
 // AI-vault panel styles (flat list + badges + hidden state). See add-ai-coding-vault D10/D11.
 import vaultPanelCss from "../webview/vault/vaultPanel.css";
+// Worktree view styles. Loaded AFTER vaultPanel.css because the view is a fourth
+// segment that swaps the vault panel's body and extends its shell classes.
+import worktreePanelCss from "../webview/worktree/worktreePanel.css";
 
 const VENDORED_LIST_CSS = [vendoredAriaCss, vendoredDndCss, vendoredListCss, vendoredScrollbarsCss].join("\n\n");
 const FILE_TREE_CSS = fileTreePanelCss;
 const TOOLTIP_CSS = tooltipCss;
 const VAULT_CSS = vaultPanelCss;
+const WORKTREE_CSS = worktreePanelCss;
 
 /**
  * Generate secure HTML for a terminal webview with CSP and nonce.
@@ -95,6 +99,10 @@ export function getTerminalHtml(
     /* === AI-vault panel styles === */
     ${VAULT_CSS}
     /* === End AI-vault panel styles === */
+
+    /* === Worktree view styles === */
+    ${WORKTREE_CSS}
+    /* === End Worktree view styles === */
 
     :root {
       --awt-tab-bar-height: 30px;

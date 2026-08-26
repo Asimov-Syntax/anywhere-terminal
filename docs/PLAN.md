@@ -151,23 +151,23 @@ state. There is nothing to provision.
 | **Stage** | 1 |
 | **Size** | S |
 | **Labels** | user-visible-ui |
-| **Notes** | Iterating a mockup is far cheaper than rebuilding the webview; § 7.6 lists the values still open. The mockup is disposable — it produces a spec, not code to reuse. Runs in parallel with Phase 1 |
-| **Acceptance** | The mockup covers every row kind and every state the design names, at sidebar width; the values § 7.6 leaves open are settled and recorded in the design doc; the user signs off before WT-002.1 begins |
-| **Status** | todo |
+| **Notes** | Iterating a mockup is far cheaper than rebuilding the webview. The mockup is disposable — it produces a spec, not code to reuse. Runs in parallel with Phase 1. Delivered as [docs/ui/worktree.html](ui/worktree.html), a standalone reviewable page authored with Claude Design; WT-002.1 reads it as the visual reference, and [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.7 records where the two disagreed |
+| **Acceptance** | The mockup covers every row kind and every state the design names, at sidebar width; where the mockup and the design doc disagree the disagreement is reported rather than silently resolved, and the resolution is recorded; the values § 7.6 assigns to the shell task are deliberately left open here, not guessed in prose |
+| **Status** | done |
 
 ### [WT-002.1] Fourth Segment & Static Tree Shell
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Add the Worktree segment to the vault's segmented control and render the full tree — repo groups, worktree rows, agent rows, subagent rows, and every empty/degraded state — from fixture data |
-| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2, § 3, § 5, § 7 |
-| **Depends On** | WT-001.2 |
+| **Goal** | Add the Worktree segment to the vault's segmented control and render every surface the view owns — repo groups, worktree rows, agent rows, subagent rows, each empty and degraded state, the row context menus, and the create and remove dialogs — from fixture data, with no host protocol behind any of it |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2, § 3, § 5, § 6, § 7; [worktree-actions.md](design/worktree-actions.md) § 3, § 5 |
+| **Depends On** | WT-001.1 |
 | **Stage** | 1 |
-| **Size** | L |
+| **Size** | XL |
 | **Labels** | user-visible-ui |
-| **Notes** | This is the design gate; acceptance includes user sign-off on the rendered result. The visual reference has been reviewed and its conclusions are recorded in the design doc § 7; this task settles the remaining spacing, tokens, and copy by building and reviewing |
-| **Acceptance** | The Worktree segment swaps the panel body without disturbing the existing session views or their persisted state; every row kind and state in the approved design renders from fixtures, including each distinct empty state; the vocabulary holds at sidebar width — state is legible by shape alone, presence collapses to a fixed height regardless of agent count, and no row exposes a filesystem path; keyboard traversal, focus visibility, and reduced motion work throughout; the rendered shell matches the WT-002.0 spec and is signed off by the user before Phase 3 begins |
-| **Status** | todo |
+| **Notes** | Irreducible despite the size: the visual vocabulary has to be settled in one pass, because spacing, emphasis steps, and state shapes are only judgeable against each other. Depends on the tree model's shape, not on its transport — fixtures typed against the real model make WT-003.1 a change of producer rather than a rewrite. This is the design gate; acceptance includes user sign-off on the rendered result. This task settles the spacing, tokens, indicator, and empty-state copy that § 7.6 leaves to it. Every action surface here is inert by construction — a dialog that renders is not an action that runs, and no menu item may reach a host operation |
+| **Acceptance** | The Worktree segment swaps the panel body without disturbing the existing session views or their persisted state; every row kind and state in the approved design renders from fixtures, including each distinct empty state, both dialogs, and the refusal that offers no confirmation at all; the vocabulary holds at sidebar width — state is legible by shape alone, presence collapses to a fixed height regardless of agent count, and no row exposes a filesystem path; keyboard traversal follows the declared tree hierarchy and focus survives every disclosure toggle, with focus visibility and reduced motion working throughout; no control in the view reaches a host operation, and one that cannot yet act is absent rather than present and inert; the rendered shell matches the WT-002.0 spec and is signed off by the user before Phase 3 begins |
+| **Status** | done |
 
 ---
 
@@ -185,7 +185,8 @@ state. There is nothing to provision.
 | **Stage** | 1 |
 | **Size** | S |
 | **Labels** | user-visible-ui |
-| **Acceptance** | The shell renders the live tree, and view, collapse, and expansion state survive a reload; state written by an older build stays valid; worktrees that disappear drop out of persisted state rather than resurfacing |
+| **Notes** | The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The shell already persists the three keys and prunes ids that vanished; what it deliberately does not do is choose the opening view from repo presence, because it has no repo knowledge — that rule (§ 2.2) lands here |
+| **Acceptance** | The shell renders the live tree, and view, collapse, and expansion state survive a reload; an absent persisted view opens on the worktree body when the workspace has a git repo and on sessions when it has none, while any persisted choice wins over both; state written by an older build stays valid, and a persisted set that is empty means everything is expanded rather than nothing was ever saved; worktrees that disappear drop out of persisted state rather than resurfacing |
 | **Status** | todo |
 
 ### [WT-003.2] Re-render Discipline
@@ -198,7 +199,7 @@ state. There is nothing to provision.
 | **Stage** | 1 |
 | **Size** | XS |
 | **Labels** | None |
-| **Notes** | Risk: this is the difference between a usable panel and one that fights the user. A spinner at animation rate repaints the tree many times per second otherwise |
+| **Notes** | Risk: this is the difference between a usable panel and one that fights the user. A spinner at animation rate repaints the tree many times per second otherwise. The shell already carries a render signature over the fixture shapes; this task's work is proving it covers every input the live data can move, since a field omitted from the key renders stale forever |
 | **Acceptance** | A push that changed nothing meaningful performs no DOM work, so scroll, focus, and expansion survive it; animated titles cannot drive re-renders, and a continuously working agent produces no steady-state render load |
 | **Status** | todo |
 
@@ -246,7 +247,7 @@ state. There is nothing to provision.
 | **Stage** | 2 |
 | **Size** | M |
 | **Labels** | user-visible-ui |
-| **Notes** | Introduces a row class with deliberately reduced affordances. The registry reader must gain a typed outcome: it currently maps an unreadable registry to an empty list, which would silently clear every external row |
+| **Notes** | Introduces a row class with deliberately reduced affordances. The registry reader must gain a typed outcome: it currently maps an unreadable registry to an empty list, which would silently clear every external row. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The external row's label and its missing focus affordance are already drawn |
 | **Acceptance** | Agents running in a worktree from outside this window appear, labelled, and are never offered focus; a session owned by a window pane is never duplicated as an external row, and headless runs produce none; the scan runs only while the view is visible; an unreadable registry is distinguishable from an empty one and never silently clears the rows |
 | **Status** | todo |
 
@@ -260,7 +261,7 @@ state. There is nothing to provision.
 | **Stage** | 3 |
 | **Size** | S |
 | **Labels** | None |
-| **Notes** | Risk: the most tempting place in the feature to overstate what is known |
+| **Notes** | Risk: the most tempting place in the feature to overstate what is known. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The historical treatment and its section label exist; the lazy read on expansion does not |
 | **Acceptance** | Subagents are read lazily on expansion, never on a tree push; they render as history, visibly distinct from live agents, exactly one level deep; a subagent has no pane of its own, and its freshness is its parent's; a row with nothing to show, or a read that fails, stays confined to that row |
 | **Status** | todo |
 
@@ -280,7 +281,7 @@ state. There is nothing to provision.
 | **Stage** | 1 |
 | **Size** | M |
 | **Labels** | user-visible-ui |
-| **Notes** | Reuse pressure: reveal, copy-path, and copy-resume-command already have host implementations — these are id-resolving wrappers, not new handlers |
+| **Notes** | Reuse pressure: reveal, copy-path, and copy-resume-command already have host implementations — these are id-resolving wrappers, not new handlers. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. Both context menus exist with their item sets and omissions; every item currently reaches nothing. Second reuse signal: this view's menu duplicates the vault menu's whole lifecycle — construction, placement, dismissal, focus — and the two have already drifted; extracting the shared shell belongs here rather than growing a third copy |
 | **Acceptance** | Each row's activation does the one thing that row can do, with external rows never offered focus; actions resolve their target host-side from an id, so nothing runs against a path the webview supplied or an id that has gone stale; opening a worktree as a folder leaves the tree with one group, not two; row activation is configurable rather than hard-coded |
 | **Status** | todo |
 
@@ -294,7 +295,7 @@ state. There is nothing to provision.
 | **Stage** | 2 |
 | **Size** | L |
 | **Labels** | security-privacy |
-| **Notes** | User-supplied refs and paths reach git; destructive operations. Risk: highest in the feature |
+| **Notes** | User-supplied refs and paths reach git; destructive operations. Risk: highest in the feature. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. Both dialogs render — the blocker list, the fingerprint the confirmation carries, and the refusal that has no confirm button in it — but every blocker they show is fixture-derived, so nothing here has been evaluated by anything. The safety semantics are reviewed in THIS task, not in the one that drew them. The create form also states a resolved destination only when given one, so the host must supply the free path it will actually take. Reuse signal: the dialog shell duplicates the vault continuation dialog's focus trap and disposal |
 | **Acceptance** | No user-supplied ref or path reaches git as anything but a literal token, and a create path is revalidated immediately before use; a destructive action names every applicable blocker before running, and a confirmation authorizes exactly the blocker set the user saw and no more; the main worktree, and any worktree holding a working agent, are refused outright with no confirmation path; what removal destroys and what it leaves alone is stated before it runs and true afterwards; every attempt leaves the tree reflecting reality, reporting indeterminate rather than clean failure when git and the filesystem disagree, and nothing partially applied is retried |
 | **Status** | todo |
 
@@ -308,7 +309,7 @@ state. There is nothing to provision.
 | **Stage** | 2 |
 | **Size** | M |
 | **Labels** | new-api-contract |
-| **Notes** | The registry has resume, fork, and continue — all of which start from an existing session — so a fresh-launch contract must be added, not merely reused. `continue` also requires a prompt where this view allows none |
+| **Notes** | The registry has resume, fork, and continue — all of which start from an existing session — so a fresh-launch contract must be added, not merely reused. `continue` also requires a prompt where this view allows none. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The create form's agent picker, permission postures, and seed-prompt field are drawn, with the dangerous posture offered but never preselected; which agents the list may contain is a host answer this task supplies |
 | **Acceptance** | Starting a fresh session is a declared registry capability, so an agent that cannot start one is simply not offered; a launch runs in the chosen worktree, with a permission posture the user picked and a dangerous one never preselected; a seeded prompt arrives submitted, never left editable and never through a shell string; create-then-launch is the same path as a standalone launch, and a failed launch leaves the created worktree in place |
 | **Status** | todo |
 

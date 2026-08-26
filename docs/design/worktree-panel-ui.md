@@ -62,6 +62,18 @@ worktreeExpandedRows?: string[]                // expanded agent rowIds
 Existing persisted `vaultGroupMode` values stay valid and keep their meaning; a state written
 by an older build simply has no `vaultView` and falls through to the default below.
 
+**An absent array and an empty one mean different things, and conflating them loses user
+state.** `worktreeCollapsed` absent means nothing was ever saved, so the view seeds its
+defaults — collapsed unless the worktree is a workspace folder. `worktreeCollapsed: []` means
+the user expanded everything, and seeding defaults over it would silently re-collapse what
+they opened. The set records expansion by omission, so the distinction cannot be recovered
+from its contents; only its presence carries it. Seeding is therefore one-shot, on the first
+tree a session sees, and never re-applied to a worktree already decided.
+
+A collapsed **repoId** is honoured only while a repo group header is rendered (§ 3.1 draws
+none for a single repo). Otherwise a set persisted during a two-repo session would hide the
+only repo's rows with no control left on screen to reopen them.
+
 ### 2.2 Default view
 
 The user asked for Worktree to be the default. Applied as:
@@ -315,12 +327,24 @@ considered and rejected, and the rejection is recorded so it is not silently re-
 | Group-by / sort-by / filter popover | Ordering is deterministic (worktree-model § 3.4) and the counts here are tens. Recorded as deferred in PLAN.md |
 | Path shown anywhere in the list | Crowds out the branch at sidebar width — see § 3.2 |
 
-### 7.6 What the shell task still owns
+### 7.6 What the shell task settles
 
 Exact spacing values, the specific token for each emphasis step, the animated indicator, and
 the empty-state copy. These are settled by building the shell and reviewing it, not by
-specifying them further in prose. PLAN WT-002.1 remains gated on user sign-off of the rendered
-result.
+specifying them further in prose, so the built shell — not this section — is their record.
+PLAN WT-002.1 remains gated on user sign-off of the rendered result.
+
+### 7.7 Where the mockup and this document disagreed
+
+The WT-002.0 mockup is a disposable artifact and this document outranks it on behaviour. Three
+disagreements surfaced while building the shell. All three resolved in favour of this document,
+and are recorded so the mockup cannot re-introduce them.
+
+| Mockup showed | Resolution |
+|---------------|------------|
+| A count of dirty tracked files in the remove confirmation | The model carries dirty as **presence**, not a count ([worktree-actions.md](worktree-actions.md) § 5) — only untracked entries are counted. The confirmation names the condition; inventing a number it cannot know is the failure this whole view exists to avoid |
+| The external scope marker occupying the model column | § 3.3 keeps them as separate elements. Sharing a slot would silently drop the model from any external row that has one |
+| No refresh affordance during a rebuild | § 5 requires a quiet activity marker while a tree is already held. The mockup simply omitted it; the shell draws one |
 
 ## 8. Edge Cases
 
