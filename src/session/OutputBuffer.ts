@@ -14,6 +14,9 @@ export interface MessageSender {
   postMessage(message: unknown): Thenable<boolean>;
 }
 
+/** Notified when a flush delivers output to the webview. `at` is epoch ms. */
+export type OnFlush = (tabId: string, at: number) => void;
+
 // ─── Constants ──────────────────────────────────────────────────────
 
 /** Minimum adaptive flush interval (high-frequency, low-throughput). */
@@ -110,6 +113,18 @@ export class OutputBuffer {
     private _webview: MessageSender,
     /** PTY process for pause/resume flow control. */
     private readonly _pty: FlowControllable,
+    /**
+     * Called once per flush that actually posts output, with the moment the
+     * webview was handed it.
+     *
+     * The delivery instant, not the arrival of the bytes from the pty, is what
+     * an out-of-band observer of pane activity has to use: `pauseOutput()` can
+     * hold a buffer for the whole of a snapshot-restore replay, and a clock
+     * started when the pty produced the data would call a pane idle while the
+     * surface has not been shown a byte of it. See:
+     * asimov/changes/add-host-pane-evidence/design.md D6.
+     */
+    private readonly _onFlush?: OnFlush,
   ) {}
 
   // ─── Public API ─────────────────────────────────────────────────
@@ -320,9 +335,30 @@ export class OutputBuffer {
     // Track unacked chars for flow control
     this._unackedCharCount += data.length;
 
+    // The observer is told when the webview TOOK this output, not when we tried
+    // to hand it over: VS Code resolves `false` for a message dropped as
+    // undeliverable, and output the surface never received must not read as
+    // activity on it (.reviews/round-2.md W1). The stamp is taken here, so a
+    // slow confirmation still dates the output to the moment it was produced.
+    //
+    // No generation token guards a late resolution: the store mutates existing
+    // entries and never creates one, so a stamp arriving for a pane that has
+    // since been deleted is already a no-op (design.md D2).
+    const producedAt = Date.now();
+    const notify = (delivered: boolean): void => {
+      if (!delivered || !this._onFlush) {
+        return;
+      }
+      try {
+        this._onFlush(this._tabId, producedAt);
+      } catch {
+        /* best-effort — an observer must never break the output path */
+      }
+    };
+
     // Send to webview (best-effort — may fail if webview disposed)
     try {
-      void this._webview.postMessage({ type: "output", tabId: this._tabId, data }).then(undefined, () => {
+      void this._webview.postMessage({ type: "output", tabId: this._tabId, data }).then(notify, () => {
         // Async rejection — webview may be disposed
       });
     } catch {

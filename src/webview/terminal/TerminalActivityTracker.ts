@@ -1,4 +1,12 @@
-export type TerminalActivityStatus = "idle" | "running" | "waiting";
+import { type LiveActivity, OUTPUT_IDLE_WINDOW_MS, projectLiveActivity } from "../../shared/paneEvidence";
+
+/**
+ * Alias of the shared three-state activity, kept as its own name because
+ * `WebviewState` and `TabBarUtils` spell the tab's status this way throughout.
+ * Declaring it as the alias is what stops the tab's vocabulary and the shared
+ * rules drifting apart (add-host-pane-evidence design.md D5).
+ */
+export type TerminalActivityStatus = LiveActivity;
 
 export interface ActivityTerminal {
   exited: boolean;
@@ -8,6 +16,15 @@ export interface ActivityTerminal {
 export interface TerminalActivityTrackerDeps {
   getTerminal: (sessionId: string) => ActivityTerminal | undefined;
   onStatusChange: (sessionId: string) => void;
+  /**
+   * Called when a pane's waiting evidence FLIPS — never on the repeated
+   * `setWaiting(id, false)` the output path issues on every write.
+   *
+   * The gate is the point: a pane that has never waited must report nothing, so
+   * the host can tell "no waiting evidence yet" from "proven not waiting"
+   * (add-host-pane-evidence design.md D3, D7).
+   */
+  onWaitingChange?: (sessionId: string, waiting: boolean) => void;
   idleDelayMs?: number;
 }
 
@@ -27,7 +44,7 @@ export class TerminalActivityTracker {
   private readonly idleDelayMs: number;
 
   constructor(private readonly deps: TerminalActivityTrackerDeps) {
-    this.idleDelayMs = deps.idleDelayMs ?? 1500;
+    this.idleDelayMs = deps.idleDelayMs ?? OUTPUT_IDLE_WINDOW_MS;
   }
 
   markOutput(sessionId: string): void {
@@ -66,12 +83,18 @@ export class TerminalActivityTracker {
       return;
     }
 
-    this.getEvidence(sessionId).waiting = waiting;
+    const evidence = this.getEvidence(sessionId);
+    if (evidence.waiting === waiting) {
+      return;
+    }
+    evidence.waiting = waiting;
     this.project(sessionId);
+    this.deps.onWaitingChange?.(sessionId, waiting);
   }
 
   delete(sessionId: string): void {
     this.clearTimer(sessionId);
+    this.retractWaiting(sessionId);
     this.evidence.delete(sessionId);
     const terminal = this.deps.getTerminal(sessionId);
     if (terminal && terminal.activityStatus !== "idle") {
@@ -86,6 +109,7 @@ export class TerminalActivityTracker {
     }
     this.timers.clear();
     for (const sessionId of this.evidence.keys()) {
+      this.retractWaiting(sessionId);
       const terminal = this.deps.getTerminal(sessionId);
       if (terminal && terminal.activityStatus !== "idle") {
         terminal.activityStatus = "idle";
@@ -93,6 +117,19 @@ export class TerminalActivityTracker {
       }
     }
     this.evidence.clear();
+  }
+
+  /**
+   * A pane going away stops waiting; a pane that was not waiting reports
+   * nothing, so teardown cannot manufacture proven-absent evidence for a pane
+   * nothing was ever known about.
+   */
+  private retractWaiting(sessionId: string): void {
+    const evidence = this.evidence.get(sessionId);
+    if (evidence?.waiting) {
+      evidence.waiting = false;
+      this.deps.onWaitingChange?.(sessionId, false);
+    }
   }
 
   private getEvidence(sessionId: string): ActivityEvidence {
@@ -116,11 +153,7 @@ export class TerminalActivityTracker {
       return;
     }
 
-    const status: TerminalActivityStatus = evidence.waiting
-      ? "waiting"
-      : evidence.semanticWorking || evidence.outputActive
-        ? "running"
-        : "idle";
+    const status = projectLiveActivity(evidence);
     if (terminal.activityStatus !== status) {
       terminal.activityStatus = status;
       this.deps.onStatusChange(sessionId);

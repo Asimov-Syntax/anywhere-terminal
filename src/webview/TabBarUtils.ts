@@ -30,6 +30,20 @@ export interface TabBarDataSource {
  * Only includes "root" tabs (those with a tabLayout entry).
  * For split tabs, uses the active pane's name.
  */
+/**
+ * A pane's auto-derived label, falling back to the `Terminal N` it started with
+ * when the program cleared its title. Resolved here rather than at each render
+ * site so root tabs and split tabs cannot disagree about it, and so nothing
+ * downstream has to know that an empty `name` is a real state
+ * (process-title-tracking § "OSC Title Change Handling").
+ */
+function labelFor(instance: TerminalInstance | undefined): string | undefined {
+  if (!instance) {
+    return undefined;
+  }
+  return instance.name === "" ? instance.defaultName : instance.name;
+}
+
 export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
   const tabTerminals = new Map<string, TabInfo>();
   for (const [tabId, layout] of store.tabLayouts) {
@@ -45,7 +59,7 @@ export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
       const anyWaiting = leaves.some((inst) => inst?.activityStatus === "waiting" && !inst.exited);
       const anyRunning = leaves.some((inst) => inst?.activityStatus === "running" && !inst.exited);
       tabTerminals.set(tabId, {
-        name: activeInstance?.name ?? rootInstance?.name ?? tabId,
+        name: labelFor(activeInstance) ?? labelFor(rootInstance) ?? tabId,
         customName: rootInstance?.customName ?? null,
         exited: (activeInstance ?? rootInstance)?.exited,
         activityStatus: anyWaiting ? "waiting" : anyRunning ? "running" : "idle",
@@ -55,7 +69,7 @@ export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
       const instance = store.terminals.get(tabId);
       if (instance) {
         tabTerminals.set(tabId, {
-          name: instance.name,
+          name: labelFor(instance) ?? tabId,
           customName: instance.customName,
           exited: instance.exited,
           activityStatus: instance.activityStatus,

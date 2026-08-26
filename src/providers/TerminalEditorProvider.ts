@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import { descendantPids } from "../pty/processTree";
+import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { type ResolveClaudeSessionDeps, resolveClaudeSession } from "../session/resolveClaudeSession";
 import type { SessionManager } from "../session/SessionManager";
 import type { PendingSnapshot } from "../session/SessionSnapshot";
@@ -170,6 +171,11 @@ export class TerminalEditorProvider {
     panelId: string = crypto.randomUUID(),
     restoreSnapshots: PendingSnapshot[] = [],
     private readonly worktreeHost: WorktreeHost | null = null,
+    /**
+     * Window-scoped pane evidence — null in contexts where it is not wired
+     * (tests). Reports flow here whatever body this surface is showing.
+     */
+    private readonly paneEvidence: PaneEvidenceStore | null = null,
   ) {
     this._panel = panel;
     this._panelId = panelId;
@@ -191,6 +197,7 @@ export class TerminalEditorProvider {
     gitDecorationProvider: GitDecorationProvider | null = null,
     watcherPool: WatcherPool | null = null,
     worktreeHost: WorktreeHost | null = null,
+    paneEvidence: PaneEvidenceStore | null = null,
   ): vscode.Disposable {
     const panel = vscode.window.createWebviewPanel(
       TerminalEditorProvider.viewType,
@@ -212,6 +219,7 @@ export class TerminalEditorProvider {
       crypto.randomUUID(),
       [],
       worktreeHost,
+      paneEvidence,
     );
 
     // Track this panel for config updates + the provider instance for host-side
@@ -244,6 +252,7 @@ export class TerminalEditorProvider {
     gitDecorationProvider: GitDecorationProvider | null = null,
     watcherPool: WatcherPool | null = null,
     worktreeHost: WorktreeHost | null = null,
+    paneEvidence: PaneEvidenceStore | null = null,
   ): TerminalEditorProvider {
     const provider = new TerminalEditorProvider(
       context.extensionUri,
@@ -254,6 +263,7 @@ export class TerminalEditorProvider {
       panelId,
       restoreSnapshots,
       worktreeHost,
+      paneEvidence,
     );
     TerminalEditorProvider._activePanels.add(panel);
     TerminalEditorProvider._instances.set(panel, provider);
@@ -634,6 +644,14 @@ export class TerminalEditorProvider {
           if (this.worktreeSurface) {
             this.worktreeHost?.handleMessage(this.worktreeSurface, message);
           }
+          break;
+
+        case "paneEvidence":
+          // Ungated by worktree-view visibility on purpose: presence is window
+          // state, so a surface showing the sessions body still owns the only
+          // view of its panes' titles. The store validates and drops unknown
+          // ids, so no surface identity is needed here.
+          this.paneEvidence?.report(message);
           break;
 
         case "openLink":

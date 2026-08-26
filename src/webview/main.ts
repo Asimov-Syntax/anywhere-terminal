@@ -44,6 +44,7 @@ import { WebviewStateStore } from "./state/WebviewStateStore";
 import { buildTabBarData, handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 import { hideRenameOverlay, repositionRenameOverlay, showRenameOverlay } from "./tabRenameOverlay";
 import { hasCurrentCursorApproval, hasStrictCursorTitle } from "./terminal/CursorApprovalDetector";
+import { createPaneEvidenceReporter } from "./terminal/paneEvidenceReporter";
 import { formatRestoreDivider } from "./terminal/restoreDivider";
 import { TerminalActivityTracker } from "./terminal/TerminalActivityTracker";
 import { TerminalFactory } from "./terminal/TerminalFactory";
@@ -94,9 +95,19 @@ const vscode = acquireVsCodeApi();
 const store = new WebviewStateStore(vscode);
 const themeManager = new ThemeManager("sidebar");
 let isComposing = false;
+/**
+ * Pane title + waiting evidence for the extension host's window-wide presence
+ * view. Ungated by which body this surface is showing: presence is window
+ * state, and a surface that only reported while the Worktree view was open
+ * would blind the host to exactly the panes it alone renders.
+ *
+ * See: asimov/changes/add-host-pane-evidence/design.md D7, D8.
+ */
+const paneEvidenceReporter = createPaneEvidenceReporter((msg) => vscode.postMessage(msg));
 const activityTracker = new TerminalActivityTracker({
   getTerminal: (sessionId) => store.terminals.get(sessionId),
   onStatusChange: () => updateTabBar(),
+  onWaitingChange: (sessionId, waiting) => paneEvidenceReporter.reportWaiting(sessionId, waiting),
 });
 const cursorHookIdentity = new Set<string>();
 
@@ -112,6 +123,7 @@ const factory = new TerminalFactory({
   store,
   postMessage: (msg) => vscode.postMessage(msg),
   onTabBarUpdate: () => updateTabBar(),
+  onTitleEvidence: (sessionId, rawTitle) => paneEvidenceReporter.reportTitle(sessionId, rawTitle),
   getIsComposing: () => isComposing,
   getHoverPreviewTheme: () => themeStore.kind,
   getHoverPreviewSettings: () => hoverPreviewSettingsStore.settings,
@@ -444,6 +456,7 @@ function removeTerminal(id: string): void {
   store.terminals.delete(id);
   cursorHookIdentity.delete(id);
   activityTracker.delete(id);
+  paneEvidenceReporter.forget(id);
   flowControl.delete(id);
 
   // Delegate split cleanup to renderer; dispose the hover-preview controller of
@@ -453,6 +466,7 @@ function removeTerminal(id: string): void {
   for (const splitId of splitRenderer.removeTab(id)) {
     cursorHookIdentity.delete(splitId);
     activityTracker.delete(splitId);
+    paneEvidenceReporter.forget(splitId);
     factory.disposeHoverController(splitId);
   }
   store.persist();
@@ -521,6 +535,7 @@ const routeMessage = createMessageRouter({
   onExit(msg) {
     cursorHookIdentity.delete(msg.tabId);
     activityTracker.delete(msg.tabId);
+    paneEvidenceReporter.forget(msg.tabId);
     const instance = store.terminals.get(msg.tabId);
     if (instance) {
       instance.exited = true;
@@ -591,6 +606,7 @@ const routeMessage = createMessageRouter({
     const closed = splitRenderer.closeSplitPaneById(store.tabActivePaneIds.get(store.activeTabId) ?? store.activeTabId);
     if (closed) {
       activityTracker.delete(closed);
+      paneEvidenceReporter.forget(closed);
       factory.disposeHoverController(closed);
     }
     factory.disposeSubagentPopup(); // closing any pane dismisses the singleton popup (D7)
@@ -600,6 +616,7 @@ const routeMessage = createMessageRouter({
       const closed = splitRenderer.closeSplitPaneById(msg.sessionId);
       if (closed) {
         activityTracker.delete(closed);
+        paneEvidenceReporter.forget(closed);
         factory.disposeHoverController(closed);
       }
       factory.disposeSubagentPopup(); // closing any pane dismisses the singleton popup (D7)

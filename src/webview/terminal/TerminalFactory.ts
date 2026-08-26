@@ -46,6 +46,17 @@ export interface TerminalFactoryDeps {
    * Driven by the host's `hoverPreviewSettings` IPC.
    */
   getHoverPreviewSettings: () => HoverPreviewSettings;
+  /**
+   * Every raw OSC title, for the pane-evidence report to the host. Wired here
+   * rather than in main.ts because this is the single site that sees titles for
+   * root tabs, split children, restored sessions, and editor panels alike.
+   *
+   * Raw, not normalized: the reporter owns stripping, so the tab bar's gate and
+   * the host's gate cannot drift into stripping differently.
+   *
+   * See: asimov/changes/add-host-pane-evidence/design.md D7.
+   */
+  onTitleEvidence?: (sessionId: string, rawTitle: string) => void;
 }
 
 /**
@@ -81,6 +92,7 @@ export class TerminalFactory {
   private readonly getIsComposing: () => boolean;
   private readonly getHoverPreviewTheme: () => HoverPreviewThemeKind;
   private readonly getHoverPreviewSettings: () => HoverPreviewSettings;
+  private readonly onTitleEvidence?: (sessionId: string, rawTitle: string) => void;
 
   /**
    * Active hover-preview controllers indexed by session id. main.ts routes
@@ -104,6 +116,7 @@ export class TerminalFactory {
     this.getIsComposing = deps.getIsComposing;
     this.getHoverPreviewTheme = deps.getHoverPreviewTheme;
     this.getHoverPreviewSettings = deps.getHoverPreviewSettings;
+    this.onTitleEvidence = deps.onTitleEvidence;
   }
 
   /**
@@ -436,6 +449,7 @@ export class TerminalFactory {
     const instance: TerminalInstance = {
       id,
       name,
+      defaultName: name,
       customName,
       terminal,
       container,
@@ -450,6 +464,10 @@ export class TerminalFactory {
     // once per frame — see terminal/titleSignature.ts.
     terminal.onTitleChange((newTitle: string) => {
       applyTitleChange(instance, newTitle, this.onTabBarUpdate);
+      // Independent of the tab-bar gate above: the host's evidence report has
+      // its own change test, and a title the tab bar suppresses can still be the
+      // one that tells the host a spinner stopped.
+      this.onTitleEvidence?.(id, newTitle);
     });
 
     // OSC 7 — shell-emitted current working directory updates. Modern shells

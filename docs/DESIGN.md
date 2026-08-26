@@ -305,7 +305,7 @@ there.
 | Concern | Owner | Design |
 |---------|-------|--------|
 | Repo roots, worktree enumeration, identity, cache, watch | Extension host, new worktree module | [worktree-model.md](design/worktree-model.md) |
-| Per-pane title and waiting evidence reaching the host | Each webview surface reports; the host aggregates by pane id | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.3 + § 13.6 below |
+| Per-pane title and waiting evidence reaching the host | Each webview surface reports; the host aggregates by pane id | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.3 + § 8.6 below |
 | Pane→worktree mapping, agent identity, activity, external rows, subagents | Extension host, new presence module | [worktree-agent-presence.md](design/worktree-agent-presence.md) |
 | Message contract and validation | `src/types/messages.ts` + the view provider | [worktree-rpc.md](design/worktree-rpc.md) |
 | The fourth segment, tree rendering, states, keyboard | WebView, alongside `VaultPanel` | [worktree-panel-ui.md](design/worktree-panel-ui.md) |
@@ -324,7 +324,7 @@ there.
 | Hook enable/disable controller | `src/cursor/CursorHookController.ts` | Settings-driven lifecycle; one controller for all agents, never two |
 | Pty env contributor seam | `SessionEnvironmentContributor`, `SessionManager.ts:101` | Reaching the agent at spawn — **currently a singular slot that must widen** |
 | Shared watch coordinator with attached clients | `src/providers/VaultWatchCoordinator.ts` | The pattern for owning discovery once per window rather than once per webview surface |
-| Per-pane activity projection **rules** | `src/webview/terminal/TerminalActivityTracker.ts` | The projection logic only. The tracker instance itself is webview-side and sees just its own surface's panes, so presence cannot consume it — see § 13.6 |
+| Per-pane activity projection **rules** | `src/webview/terminal/TerminalActivityTracker.ts` | The projection logic only. The tracker instance itself is webview-side and sees just its own surface's panes, so presence cannot consume it — see § 8.6 |
 | Live Claude session registry | `src/vault/readers/runningSessions.ts` | External rows, with headless runs excluded |
 | Pane→session resolution | `src/session/resolveClaudeSession.ts` | Linking a pane to a vault entry |
 | Agent registry, argv builder, launcher | `src/vault/registry.ts`, `LaunchBuilder.ts`, `VaultLauncher.ts` | Launching an agent into a worktree |

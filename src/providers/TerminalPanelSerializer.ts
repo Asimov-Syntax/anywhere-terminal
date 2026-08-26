@@ -10,6 +10,7 @@
 
 import * as crypto from "node:crypto";
 import type * as vscode from "vscode";
+import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import type { SessionManager } from "../session/SessionManager";
 import type { WatcherPool } from "./fsWatcherPool";
 import type { GitDecorationProvider } from "./gitDecorationProvider";
@@ -23,6 +24,12 @@ export class TerminalPanelSerializer implements vscode.WebviewPanelSerializer<{ 
     private readonly gitDecorationProvider: GitDecorationProvider | null,
     private readonly watcherPool: WatcherPool | null,
     private readonly worktreeHost: WorktreeHost | null = null,
+    /**
+     * Threaded through for the same reason `worktreeHost` is: a panel revived
+     * here never passes through `createPanel`, so a store wired only there
+     * would leave every restored editor reporting into nothing.
+     */
+    private readonly paneEvidence: PaneEvidenceStore | null = null,
   ) {}
 
   async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: { panelId?: string } | null): Promise<void> {
@@ -74,6 +81,7 @@ export class TerminalPanelSerializer implements vscode.WebviewPanelSerializer<{ 
       this.gitDecorationProvider,
       this.watcherPool,
       this.worktreeHost,
+      this.paneEvidence,
     );
   }
 }

@@ -17,6 +17,7 @@ import { VaultWatchCoordinator } from "./providers/VaultWatchCoordinator";
 import { createWorktreeHost } from "./providers/WorktreeHost";
 import { loadNodePty } from "./pty/PtyManager";
 import type { MessageSender } from "./session/OutputBuffer";
+import { createPaneEvidenceStore } from "./session/PaneEvidenceStore";
 import { SessionManager } from "./session/SessionManager";
 import { SessionStorage } from "./session/SessionStorage";
 import {
@@ -80,12 +81,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   };
 
+  // Pane evidence — one store per window, written by the session lifecycle, the
+  // output flush, the Cursor hook, and the three webview surfaces. WT-004.1
+  // reads it to project agent rows; nothing reads it yet.
+  // See: asimov/changes/add-host-pane-evidence/design.md D1.
+  const paneEvidence = createPaneEvidenceStore();
+
   // Create shared SessionManager (singleton). workspaceState backs the per-workspace
   // custom-tab-name persistence (anywhereTerminal.tabCustomNames); see design.md D3 of add-tab-rename.
   const sessionManager = new SessionManager(context.workspaceState, {
     restoreEnabled,
     storage: sessionStorage,
     shellIntegrationContext,
+    paneEvidence,
   });
 
   // Hydrate restore state BEFORE registering any view provider so the
@@ -132,6 +140,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (session?.state !== "live") {
               return;
             }
+            // Read at the source rather than round-tripping through the
+            // webview: the host already has this, and the surface that would
+            // echo it back sees only its own panes.
+            paneEvidence.setSemantic(update.sessionId, update.state);
             safePostMessage(session.webview, {
               type: "agentActivityStatus",
               tabId: update.sessionId,
@@ -219,6 +231,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultLauncher,
     vaultWatchCoordinator,
     worktreeHost,
+    paneEvidence,
   );
 
   context.subscriptions.push(
@@ -238,6 +251,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultLauncher,
     vaultWatchCoordinator,
     worktreeHost,
+    paneEvidence,
   );
 
   context.subscriptions.push(
@@ -255,6 +269,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         gitDecorationProvider,
         fsWatcherPool,
         worktreeHost,
+        paneEvidence,
       );
       context.subscriptions.push(panelDisposable);
     }),
@@ -266,7 +281,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.window.registerWebviewPanelSerializer(
       TerminalEditorProvider.viewType,
-      new TerminalPanelSerializer(context, sessionManager, gitDecorationProvider, fsWatcherPool, worktreeHost),
+      new TerminalPanelSerializer(
+        context,
+        sessionManager,
+        gitDecorationProvider,
+        fsWatcherPool,
+        worktreeHost,
+        paneEvidence,
+      ),
     ),
   );
 

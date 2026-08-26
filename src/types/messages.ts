@@ -627,6 +627,43 @@ export interface WorktreeViewVisibilityMessage {
 }
 
 /**
+ * WebView → Extension: evidence about one pane that only the surface rendering
+ * it can see — its title, and whether it is waiting on the user.
+ *
+ * **Partial by contract.** Title evidence and waiting evidence change at
+ * different moments and come from different sources, so a message carries only
+ * what changed. An absent field means *unchanged*, never `false`: a pane no
+ * surface has reported yet has UNKNOWN waiting evidence, which falls through to
+ * the next identity rank rather than resolving to "not waiting". A message that
+ * required both would make the first title report invent `waiting: false` and
+ * collapse that distinction on the one field the seam exists to keep honest.
+ *
+ * `title` is the decoration-stripped signature, never the raw title — an
+ * unstripped title turns every spinner frame into a message. `decorated` is
+ * carried if and only if `title` is, because stripping destroys it and the host
+ * cannot recover it.
+ *
+ * Sent whenever the evidence changes, regardless of which body the surface is
+ * showing: presence is window state, not per-surface state, so gating this on
+ * worktree-view visibility would blind the host to exactly the panes one
+ * surface alone renders.
+ *
+ * See: docs/design/worktree-agent-presence.md § 3.3 "The host evidence seam";
+ *      asimov/changes/add-host-pane-evidence/design.md D3, D8.
+ */
+export interface PaneEvidenceMessage {
+  type: "paneEvidence";
+  /** The AT session id of the pane this evidence describes. */
+  paneId: string;
+  /** Decorative signature of the pane's title. Absent = unchanged. */
+  title?: string;
+  /** Whether the raw title carried a decorative frame. Present iff `title` is. */
+  decorated?: boolean;
+  /** Whether the pane is waiting on the user. Absent = unchanged. */
+  waiting?: boolean;
+}
+
+/**
  * All messages that can be sent from the WebView to the Extension Host.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
  */
@@ -679,7 +716,8 @@ export type WebViewToExtensionMessage =
   | RequestClipboardImagePreviewMessage
   | PasteOsClipboardImageMessage
   | RequestWorktreeTreeMessage
-  | WorktreeViewVisibilityMessage;
+  | WorktreeViewVisibilityMessage
+  | PaneEvidenceMessage;
 
 /**
  * Webview → Extension. Sent by the editor webview after it has merged the

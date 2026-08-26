@@ -31,6 +31,18 @@ function createMockPty(): FlowControllable & { pauseCalls: number; resumeCalls: 
   };
 }
 
+/**
+ * The flush observer fires from the `postMessage` resolution, so a test has to
+ * let the microtask queue settle before asserting on it. Fake timers do not
+ * advance microtasks, and `vi.waitFor` is absent under the bun runner the
+ * task's Verify uses — plain turns work under both.
+ */
+async function drainMicrotasks(): Promise<void> {
+  for (let i = 0; i < 4; i++) {
+    await Promise.resolve();
+  }
+}
+
 // ─── Test Setup ─────────────────────────────────────────────────────
 
 beforeEach(() => {
@@ -789,6 +801,188 @@ describe("OutputBuffer bufferSize accessor", () => {
     buffer.append("cc"); // 2 chars
     expect(buffer.bufferSize).toBe(10);
 
+    buffer.dispose();
+  });
+});
+
+// ─── Flush Notification ─────────────────────────────────────────────
+
+describe("OutputBuffer flush notification", () => {
+  it("reports each flush the webview took delivery of, with the tab id", async () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const flushes: Array<{ tabId: string; at: number }> = [];
+    const buffer = new OutputBuffer("fn-1", sender, pty, (tabId, at) => flushes.push({ tabId, at }));
+
+    buffer.append("hello");
+    vi.advanceTimersByTime(10);
+    await drainMicrotasks();
+
+    expect(sender.messages).toHaveLength(1);
+    expect(flushes).toHaveLength(1);
+    expect(flushes[0].tabId).toBe("fn-1");
+    expect(typeof flushes[0].at).toBe("number");
+
+    buffer.dispose();
+  });
+
+  it("does not report a flush that had nothing to post", async () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const flushes: string[] = [];
+    const buffer = new OutputBuffer("fn-2", sender, pty, (tabId) => flushes.push(tabId));
+
+    buffer.flush();
+    vi.advanceTimersByTime(50);
+    await drainMicrotasks();
+
+    expect(sender.messages).toHaveLength(0);
+    expect(flushes).toHaveLength(0);
+
+    buffer.dispose();
+  });
+
+  it("reports the flush a paused buffer releases on resume, not the appends it held", async () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const flushes: string[] = [];
+    const buffer = new OutputBuffer("fn-3", sender, pty, (tabId) => flushes.push(tabId));
+
+    buffer.pauseOutput();
+    buffer.append("held");
+    vi.advanceTimersByTime(50);
+    await drainMicrotasks();
+    expect(flushes).toHaveLength(0);
+
+    buffer.resumeOutput();
+    vi.advanceTimersByTime(50);
+    await drainMicrotasks();
+    expect(flushes).toEqual(["fn-3"]);
+
+    buffer.dispose();
+  });
+
+  it("does not report a post that threw synchronously", async () => {
+    const pty = createMockPty();
+    const flushes: string[] = [];
+    // A synchronous throw is a disposed webview: nothing was handed over, so
+    // there is no delivery to announce. See .reviews/round-1.md W1.
+    const sender: MessageSender = {
+      postMessage() {
+        throw new Error("webview disposed");
+      },
+    };
+    const buffer = new OutputBuffer("fn-5", sender, pty, (tabId) => flushes.push(tabId));
+
+    buffer.append("hello");
+    vi.advanceTimersByTime(10);
+    await drainMicrotasks();
+
+    expect(flushes).toEqual([]);
+
+    buffer.dispose();
+  });
+
+  it("does not report a post the webview rejected", async () => {
+    const pty = createMockPty();
+    const flushes: string[] = [];
+    const sender: MessageSender = {
+      postMessage: () => Promise.reject(new Error("not deliverable")),
+    };
+    const buffer = new OutputBuffer("fn-6", sender, pty, (tabId) => flushes.push(tabId));
+
+    buffer.append("hello");
+    vi.advanceTimersByTime(10);
+    await drainMicrotasks();
+
+    expect(flushes).toEqual([]);
+
+    buffer.dispose();
+  });
+
+  it("does not report a post the webview declined to deliver", async () => {
+    const pty = createMockPty();
+    const flushes: string[] = [];
+    // VS Code resolves `false` when the message was dropped because the
+    // webview could not receive it. Output the surface never got must not
+    // read as activity on it. See .reviews/round-2.md W1.
+    const sender: MessageSender = {
+      postMessage: () => Promise.resolve(false),
+    };
+    const buffer = new OutputBuffer("fn-7", sender, pty, (tabId) => flushes.push(tabId));
+
+    buffer.append("hello");
+    vi.advanceTimersByTime(10);
+    await drainMicrotasks();
+
+    expect(flushes).toEqual([]);
+
+    buffer.dispose();
+  });
+
+  it("stamps the flush time, not the time delivery was confirmed", async () => {
+    const pty = createMockPty();
+    const stamps: number[] = [];
+    let settle: (delivered: boolean) => void = () => {};
+    const sender: MessageSender = {
+      postMessage: () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    };
+    const buffer = new OutputBuffer("fn-8", sender, pty, (_tabId, at) => stamps.push(at));
+
+    const before = Date.now();
+    buffer.append("hello");
+    vi.advanceTimersByTime(10);
+    // Confirmation arrives long after the pane actually produced the output.
+    vi.advanceTimersByTime(60_000);
+    settle(true);
+    await drainMicrotasks();
+    expect(stamps).toHaveLength(1);
+
+    expect(stamps[0]).toBeLessThanOrEqual(before + 1000);
+
+    buffer.dispose();
+  });
+
+  it("hands each flush its own timestamp, so a reordered confirmation is detectable", async () => {
+    const pty = createMockPty();
+    const stamps: number[] = [];
+    const settlers: Array<(delivered: boolean) => void> = [];
+    const sender: MessageSender = {
+      postMessage: () => new Promise<boolean>((resolve) => settlers.push(resolve)),
+    };
+    const buffer = new OutputBuffer("fn-9", sender, pty, (_tabId, at) => stamps.push(at));
+
+    buffer.append("first");
+    vi.advanceTimersByTime(10);
+    buffer.append("second");
+    vi.advanceTimersByTime(10);
+    expect(settlers).toHaveLength(2);
+
+    // The second flush confirms first. The store is what refuses the older
+    // stamp that follows — see PaneEvidenceStore. Here we only prove the two
+    // stamps are distinct and each belongs to its own flush.
+    settlers[1](true);
+    settlers[0](true);
+    await drainMicrotasks();
+
+    expect(stamps).toHaveLength(2);
+    expect(stamps[0]).toBeGreaterThanOrEqual(stamps[1]);
+
+    buffer.dispose();
+  });
+
+  it("works without a callback", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("fn-4", sender, pty);
+
+    buffer.append("x");
+    vi.advanceTimersByTime(10);
+
+    expect(sender.messages).toHaveLength(1);
     buffer.dispose();
   });
 });

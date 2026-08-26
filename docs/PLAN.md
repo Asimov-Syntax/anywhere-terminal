@@ -221,7 +221,7 @@ state. There is nothing to provision.
 | **Labels** | new-api-contract, cross-boundary |
 | **Notes** | Adds a webview→host direction that does not exist today. Risk: every later presence task consumes this, so an incomplete seam blocks the whole phase. Build and verify it before any row is projected |
 | **Acceptance** | The host holds a complete, window-wide view of pane title and waiting evidence, updated on change rather than polled; evidence is keyed by pane, so surfaces reporting the same pane agree and a surface closing retracts nothing; unreported evidence is distinguishable from evidence proving absence; the worktree row and the terminal tab derive running from the same rules and cannot disagree |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-004.1] Window Panes → Worktree Rows
 

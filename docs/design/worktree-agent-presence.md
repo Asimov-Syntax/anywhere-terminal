@@ -154,9 +154,9 @@ by title or not at all. That is stated as a limitation in the UI, not papered ov
 | `running` | Output seen within the idle window, or semantic working evidence | `output` |
 | `idle` | None of the above | `output` |
 
-These are the same rules `TerminalActivityTracker` applies
-(`src/webview/terminal/TerminalActivityTracker.ts:112-127`), but **presence cannot consume
-that tracker**, and assuming it can is a mistake worth stating plainly:
+These are the same rules `TerminalActivityTracker` applies — literally the same, since both
+sides now call the projection extracted into `src/shared/paneEvidence.ts` — but **presence
+cannot consume that tracker**, and assuming it can is a mistake worth stating plainly:
 
 - The tracker is **webview-side**. It is constructed in the webview entry point and reads
   that webview's own terminal store (`src/webview/main.ts:96`). Presence is projected in the
@@ -166,8 +166,10 @@ that tracker**, and assuming it can is a mistake worth stating plainly:
   in the editor. Since this view's scope is *the window*, a per-surface tracker is
   structurally the wrong source.
 
-So the host projects activity itself. The projection **rules** are shared with the tracker —
-extracted as pure logic used by both — so the two cannot drift into disagreeing about what
+So the host projects activity itself, from evidence held per pane in a window-scoped registry
+(`src/session/PaneEvidenceStore.ts`) that surfaces report into and the host writes directly.
+The projection **rules** are shared with the tracker — extracted as pure logic used by both
+(`src/shared/paneEvidence.ts`) — so the two cannot drift into disagreeing about what
 `running` means. Duplicating the rules instead of sharing them is how the tab bar and the
 worktree row end up showing different states for the same pane.
 
@@ -181,10 +183,10 @@ detail to be discovered during the task.
 |--------|----------------------|----------------------|
 | Pane exists / destroyed / cwd | Yes — `SessionManager` is the registry | Direct read, plus lifecycle events it must now emit |
 | Pty exit | Yes | Existing exit path |
-| Output seen | Yes — the host buffers and flushes every pane's output | Tap the same flush point; a timestamp per pane, not the bytes |
+| Output seen | Yes — the host buffers and flushes every pane's output | Tap the same flush point; a timestamp per pane, not the bytes — recorded when the surface takes delivery, so host and tab count the same output |
 | Semantic agent status | Yes — the host **sends** these to the webview (`SessionManager.ts:1444`) | Read at the source instead of round-tripping |
 | Pane title | **No** — the title is xterm state, known only inside the webview | Each surface reports its panes' decoration-stripped titles to the host |
-| Waiting evidence | **No** — derived in the webview tracker today | Either report it alongside the title, or move its derivation host-side with the shared rules |
+| Waiting evidence | **No** — derived in the webview tracker today | Reported by the surface, on its own message — the derivation stays where the xterm state it reads lives |
 
 Two of those six flow the wrong way today, so the seam needs a webview→host direction that
 does not currently exist. Its contract:
@@ -196,8 +198,18 @@ does not currently exist. Its contract:
 - **The host deduplicates by pane id, not by surface.** The same pane can be reported by more
   than one surface; last write wins, and they agree because the value is normalized.
 - **A surface's disposal retracts nothing.** Panes outlive the surfaces that render them, so
-  a closed sidebar must not blank the titles it was reporting. Only `SessionManager` removing
-  a session removes its evidence.
+  a closed sidebar must not blank the titles it was reporting.
+- **Evidence lives as long as the pane, which is not as long as its session.** A pty exiting
+  naturally removes the session from `SessionManager` while the tab is still on screen showing
+  `[Process exited]`, and that tab must keep reading `exited`. Evidence is therefore discarded
+  by pane closure — one pane closing, or a whole view closing and taking its panes with it —
+  never by the session leaving the map. Closing a pane and closing a view are two distinct
+  paths in `SessionManager`, and both must discard.
+- **Title and waiting evidence travel independently.** A message carries the fields that
+  changed and no others, so reporting a title never restates a waiting value the call did not
+  observe. An empty title is a reported value, not the absence of one: a program that clears
+  its title has stopped claiming to be anything, which is different from a pane no surface has
+  reported yet.
 - **Absence is not `none`.** A pane no surface has reported yet has *unknown* title evidence,
   which falls through to the next identity rank — it does not resolve to "no agent".
 

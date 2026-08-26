@@ -1,8 +1,4 @@
-# process-title-tracking Specification
-
-## Purpose
-TBD
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: OSC Title Change Handling
 
@@ -59,20 +55,3 @@ last wrote.
 - **WHEN** an instance whose title is `Fix tests` emits an empty title, and the user has not
   renamed the tab
 - **THEN** the tab MUST display its default `Terminal N` name.
-
-### Requirement: Tab Bar Process Name Display
-
-The tab bar SHALL display the current process name (from OSC title) for each terminal tab. When a terminal is part of a split layout and is the active pane, the tab bar SHALL show the active pane's process name.
-
-#### Scenario: Tab bar shows updated process name
-
-- Given a terminal with name updated to "node index.js" via OSC title
-- When the tab bar renders
-- Then the tab SHALL display "node index.js" as the tab label
-
-#### Scenario: Split pane active name
-
-- Given a split tab with two panes, the active pane has name "python"
-- When the tab bar renders
-- Then the tab SHALL display "python" as the tab label
-

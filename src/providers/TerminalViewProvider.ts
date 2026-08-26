@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import { descendantPids } from "../pty/processTree";
+import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { type ResolveClaudeSessionDeps, resolveClaudeSession } from "../session/resolveClaudeSession";
 import type { SessionManager } from "../session/SessionManager";
 import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
@@ -141,6 +142,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     private readonly vaultWatchCoordinator: VaultWatchCoordinator | null = null,
     /** Window-scoped worktree tree — null in contexts where it is not wired (tests). */
     private readonly worktreeHost: WorktreeHost | null = null,
+    /**
+     * Window-scoped pane evidence — null in contexts where it is not wired
+     * (tests). Reports flow here whatever body this surface is showing.
+     */
+    private readonly paneEvidence: PaneEvidenceStore | null = null,
   ) {
     this.fileTreeHost = new FileTreeHost(gitDecorationProvider, watcherPool);
   }
@@ -1291,6 +1297,15 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           if (worktreeSurface) {
             this.worktreeHost?.handleMessage(worktreeSurface, message);
           }
+          break;
+
+        case "paneEvidence":
+          // Deliberately NOT gated on worktree-view visibility: presence is
+          // window state, and evidence about a pane is just as true while the
+          // user is looking at the sessions body. The store validates the
+          // payload and ignores ids it holds no pane for, so the surface it
+          // arrived from stops mattering here.
+          this.paneEvidence?.report(message);
           break;
 
         case "updateHoverPreviewSetting":
