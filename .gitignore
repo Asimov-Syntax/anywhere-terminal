@@ -51,12 +51,13 @@ asimov/worktrees/
 
 # asimov
 .opencode/plugins/asimov.ts
+.opencode/package.json
 
 .claude/worktrees
 .claude/scheduled_tasks.lock
 
 # Vendored third-party clones used for local research only — not built or shipped.
-third_party/
+third_party
 
 # asimov
 .claude/commands/asimov-review-start.md
