@@ -15,11 +15,14 @@ vi.mock("../pty/PtySession", () => ({ PtySession: class {} }));
 vi.mock("../session/OutputBuffer", () => ({ OutputBuffer: class {} }));
 
 import type * as vscode from "vscode";
+import * as vscodeApi from "vscode";
 import { SessionManager } from "../session/SessionManager";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
+import { TerminalEditorProvider } from "./TerminalEditorProvider";
+import { TerminalPanelSerializer } from "./TerminalPanelSerializer";
 import { TerminalViewProvider } from "./TerminalViewProvider";
 import { createWorktreeHost, type WorktreeHost } from "./WorktreeHost";
 
@@ -279,4 +282,114 @@ describe("TerminalViewProvider — a view the window has hidden", () => {
     expect(view.trees()).toHaveLength(served + 1);
     view.dispose();
   });
+});
+
+// ─── Expansion requests ─────────────────────────────────────────────
+//
+// Both provider switches enumerate the worktree message types by hand, so a new
+// type compiles, ships, and is silently dropped at the surface — which is what
+// happened to `requestWorktreeSubagents` (round-1 B1). The claim under test is
+// delivery: the message reaches the host, named with the surface it came from.
+
+/** A host that records what reached it, standing in for the window's real one. */
+function recordingHost(): { host: WorktreeHost; routed: ReturnType<typeof vi.fn> } {
+  const routed = vi.fn();
+  const host: WorktreeHost = {
+    initPayload: () => ({ worktreeHasRepo: false }),
+    attach: () => ({ setDisplayed: () => {}, dispose: () => {} }),
+    handleMessage: routed,
+    dispose: () => {},
+  };
+  return { host, routed };
+}
+
+function panelSeam(): { panel: vscode.WebviewPanel; handlers: Array<(msg: unknown) => void> } {
+  const handlers: Array<(msg: unknown) => void> = [];
+  const panel = {
+    visible: true,
+    active: true,
+    viewColumn: 1,
+    title: "Terminal",
+    webview: {
+      html: "",
+      options: {},
+      cspSource: "https://mock.csp.source",
+      asWebviewUri: (uri: { fsPath: string }) => uri.fsPath,
+      onDidReceiveMessage: (h: (msg: unknown) => void) => {
+        handlers.push(h);
+        return { dispose: () => {} };
+      },
+      postMessage: vi.fn(() => Promise.resolve(true)),
+    },
+    onDidDispose: () => ({ dispose: () => {} }),
+    onDidChangeViewState: () => ({ dispose: () => {} }),
+    reveal: vi.fn(),
+    dispose: vi.fn(),
+  } as unknown as vscode.WebviewPanel;
+  return { panel, handlers };
+}
+
+function mockContext(): vscode.ExtensionContext {
+  return { extensionUri: { fsPath: "/mock/extension" }, subscriptions: [] } as unknown as vscode.ExtensionContext;
+}
+
+function surfaceOf(handlers: Array<(msg: unknown) => void>, sessions: SessionManager) {
+  return {
+    send: (msg: unknown) => {
+      for (const h of handlers) {
+        h(msg);
+      }
+    },
+    dispose: () => sessions.dispose(),
+  };
+}
+
+/** An editor panel VS Code created directly. */
+function mountEditorSurface(host: WorktreeHost) {
+  const sessions = new SessionManager();
+  const { panel, handlers } = panelSeam();
+  vi.spyOn(vscodeApi.window, "createWebviewPanel").mockReturnValue(panel);
+  TerminalEditorProvider.createPanel(mockContext(), sessions, null, null, host, null);
+  return surfaceOf(handlers, sessions);
+}
+
+/**
+ * An editor panel VS Code revived after a window reload. A distinct construction
+ * path — `TerminalPanelSerializer` never touches `createPanel` — so a host
+ * threaded only through the direct path would leave every restored editor's
+ * expansion inert (round 2 W2).
+ */
+async function mountRevivedEditorSurface(host: WorktreeHost) {
+  const sessions = new SessionManager();
+  const { panel, handlers } = panelSeam();
+  const serializer = new TerminalPanelSerializer(mockContext(), sessions, null, null, host, null);
+  await serializer.deserializeWebviewPanel(panel, { panelId: "panel-1" });
+  return surfaceOf(handlers, sessions);
+}
+
+const EXPANSION = { type: "requestWorktreeSubagents", rowId: "window:a", entryId: "claude:s1" };
+
+describe("an expansion request reaches the host from every surface", () => {
+  type Surface = { send: (msg: unknown) => void; dispose: () => void };
+  const cases: Array<[string, (host: WorktreeHost) => Surface | Promise<Surface>]> = [
+    ["sidebar", (host) => mountSurface(host, "sidebar")],
+    ["bottom panel", (host) => mountSurface(host, "panel")],
+    ["editor panel", (host) => mountEditorSurface(host)],
+    ["revived editor panel", (host) => mountRevivedEditorSurface(host)],
+  ];
+
+  for (const [name, mount] of cases) {
+    it(`forwards it from the ${name}`, async () => {
+      const { host, routed } = recordingHost();
+      const surface = await mount(host);
+
+      surface.send(EXPANSION);
+
+      expect(routed).toHaveBeenCalledTimes(1);
+      expect(routed.mock.calls[0][1]).toEqual(EXPANSION);
+      // Named with its own surface, so the host answers this one, not the window.
+      expect(routed.mock.calls[0][0]).toBeDefined();
+      surface.dispose();
+    });
+  }
 });

@@ -33,6 +33,19 @@ export interface WorktreeSubagentRow {
 }
 
 /**
+ * The outcome of one delegation read, never an array that means three things.
+ *
+ * An optional array cannot separate "not asked yet" from "asked, none found"
+ * from "could not be read", and collapsing the last into the second states
+ * something the view does not know (design.md D4). `incomplete` is the reader's
+ * own admission that records were dropped: nothing here ever proves the roster
+ * is the whole of what the session delegated (D5).
+ */
+export type DelegationRoster =
+  | { kind: "ok"; rows: WorktreeSubagentRow[]; incomplete?: boolean }
+  | { kind: "failed"; reason: string };
+
+/**
  * One agent working inside a worktree.
  *
  * `agentSource` and `activitySource` travel intact rather than collapsing into
@@ -71,7 +84,12 @@ export interface WorktreeAgentRow {
   lastActivityAt?: number;
   /** External rows only. */
   pid?: number;
-  subagents?: WorktreeSubagentRow[];
+  /**
+   * What this row's session delegated — read on expansion, never on a routine
+   * presence update. Absent means never read; `ok` with no rows means read and
+   * none found; `failed` says why.
+   */
+  delegations?: DelegationRoster;
 }
 
 /**

@@ -263,7 +263,7 @@ state. There is nothing to provision.
 | **Labels** | None |
 | **Notes** | Risk: the most tempting place in the feature to overstate what is known. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The historical treatment and its section label exist; the lazy read on expansion does not |
 | **Acceptance** | Subagents are read lazily on expansion, never on a tree push; they render as history, visibly distinct from live agents, exactly one level deep; a subagent has no pane of its own, and its freshness is its parent's; a row with nothing to show, or a read that fails, stays confined to that row |
-| **Status** | todo |
+| **Status** | done |
 
 ---
 

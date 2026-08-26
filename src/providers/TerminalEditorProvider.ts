@@ -637,6 +637,7 @@ export class TerminalEditorProvider {
           break;
 
         case "requestWorktreeTree":
+        case "requestWorktreeSubagents":
         case "worktreeViewVisibility":
           // Window-scoped: the host answers and broadcasts; this panel only
           // names which surface the message came from.

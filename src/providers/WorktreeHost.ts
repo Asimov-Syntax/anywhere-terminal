@@ -10,7 +10,12 @@ import type * as vscode from "vscode";
 import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "../types/messages";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { PresenceProjector } from "../worktree/presenceProjector";
-import type { WorktreePresence } from "../worktree/presenceTypes";
+import type {
+  DelegationRoster,
+  PresenceDegradation,
+  WorktreeAgentRow,
+  WorktreePresence,
+} from "../worktree/presenceTypes";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
 import { buildWorktreeTreeDetailed, listRepoWorktrees, type WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
@@ -62,6 +67,15 @@ export interface WorktreeHostOptions {
   now?(): number;
   /** Path-existence probe behind `initPayload`, injected in tests. */
   exists?(p: string): boolean;
+  /**
+   * Read one session's delegation roster. Absent — every surface but the real
+   * extension entry point — and an expansion request is ignored, exactly as it
+   * was before delegations existed.
+   *
+   * Returns the outcome rather than a transcript: what a null read means is the
+   * reader's to name, and a throw is turned into `failed` here.
+   */
+  readDelegations?(entryId: string): Promise<DelegationRoster>;
 }
 
 /**
@@ -183,6 +197,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * establishes the ranking it captured (design.md D12).
    */
   let appliedRankRevision = projector?.rankRevision() ?? 0;
+  /**
+   * Rosters read, and the reads still in flight, both under `(rowId, entryId)`.
+   *
+   * Composite, not `rowId` alone: a slow read for session A completing after a
+   * fast read for session B would evict B's result under the shared key, and a
+   * pane that ended one session and started another would keep the first
+   * session's delegations under the second (design.md D3).
+   */
+  const rosters = new Map<string, DelegationRoster>();
+  const rosterReads = new Map<string, Promise<void>>();
 
   function armCap(fn: () => void): unknown {
     return arm(fn, PRESENCE_MAX_LATENCY_MS);
@@ -214,6 +238,148 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return projected ?? { rowsByWorktreeId: {}, scannedAt: now(), degradedSources: [] };
   }
 
+  /** `\0` cannot occur in a row id or an entry id, so the join is unambiguous. */
+  function rosterKey(rowId: string, entryId: string): string {
+    return `${rowId}\u0000${entryId}`;
+  }
+
+  /**
+   * Which failed source would undermine this row's own activity claim.
+   *
+   * Per-row rather than "is anything degraded": a failed registry scan says
+   * nothing about a pane whose activity came from its hook, and decaying on it
+   * would throw away the one case D11 exists to preserve.
+   */
+  const ACTIVITY_EVIDENCE = {
+    hook: "hook",
+    output: "panes",
+    title: "panes",
+    registry: "registry",
+    none: undefined,
+  } as const satisfies Record<WorktreeAgentRow["activitySource"], PresenceDegradation["source"] | undefined>;
+
+  function parentIsLive(row: WorktreeAgentRow, degraded: ReadonlySet<PresenceDegradation["source"]>): boolean {
+    if (row.activity !== "running" && row.activity !== "waiting") {
+      return false;
+    }
+    const evidence = ACTIVITY_EVIDENCE[row.activitySource];
+    // `none` proves nothing, so the parent's own liveness is unevidenced too.
+    return evidence !== undefined && !degraded.has(evidence);
+  }
+
+  /**
+   * A child's `running` does not outlive its parent's freshness (design.md D11).
+   *
+   * The transcript's recorded status is what the mapper hands over; whether it
+   * may still be PUBLISHED is decided here, in the same pass that publishes the
+   * parent — which is what makes the two incapable of disagreeing.
+   */
+  function decay(
+    roster: DelegationRoster,
+    parent: WorktreeAgentRow,
+    degraded: ReadonlySet<PresenceDegradation["source"]>,
+  ): DelegationRoster {
+    if (roster.kind !== "ok" || parentIsLive(parent, degraded)) {
+      return roster;
+    }
+    if (!roster.rows.some((child) => child.status === "running")) {
+      return roster;
+    }
+    return {
+      ...roster,
+      rows: roster.rows.map((child) => (child.status === "running" ? { ...child, status: "unknown" as const } : child)),
+    };
+  }
+
+  /**
+   * Attach every roster to the row it was read for, and drop the rest.
+   *
+   * The rows here are the projector's own retained objects — a replay hands
+   * them straight back — so each is COPIED rather than written through, or the
+   * roster would end up inside the projector's replay state (design.md D3).
+   * Eviction runs against the rows actually published, so a closed pane, or a
+   * pane that started a new session, takes its roster with it.
+   */
+  function withDelegations(source: WorktreePresence): WorktreePresence {
+    if (rosters.size === 0) {
+      return source;
+    }
+    const degraded = new Set(source.degradedSources.map((entry) => entry.source));
+    const kept = new Set<string>();
+    const rowsByWorktreeId: Record<string, WorktreeAgentRow[]> = {};
+    for (const [worktreeId, rows] of Object.entries(source.rowsByWorktreeId)) {
+      rowsByWorktreeId[worktreeId] = rows.map((row) => {
+        const key = row.entryId === undefined ? undefined : rosterKey(row.rowId, row.entryId);
+        const roster = key === undefined ? undefined : rosters.get(key);
+        if (key === undefined || roster === undefined) {
+          return row;
+        }
+        kept.add(key);
+        return { ...row, delegations: decay(roster, row, degraded) };
+      });
+    }
+    for (const key of rosters.keys()) {
+      if (!kept.has(key)) {
+        rosters.delete(key);
+      }
+    }
+    return { ...source, rowsByWorktreeId };
+  }
+
+  /** The row `rowId` names in the envelope this host last published, if any. */
+  function publishedRow(rowId: string): WorktreeAgentRow | undefined {
+    if (!published) {
+      return undefined;
+    }
+    for (const rows of Object.values(published.presence.rowsByWorktreeId)) {
+      const found = rows.find((row) => row.rowId === rowId);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Read what one row's session delegated — at most once per row per session.
+   *
+   * The request's entry id is an expected-version token, never an argument: the
+   * read uses the published row's OWN id, so a stale or forged one reads
+   * nothing rather than the wrong transcript (design.md D1). A second request
+   * while the first is in flight joins it; one already answered re-reads
+   * nothing (D8).
+   */
+  function requestDelegations(rowId: string, entryId: string): void {
+    const reader = options.readDelegations;
+    if (!reader || disposed) {
+      return;
+    }
+    const row = publishedRow(rowId);
+    const session = row?.entryId;
+    if (session === undefined || session !== entryId) {
+      return;
+    }
+    const key = rosterKey(rowId, session);
+    if (rosters.has(key) || rosterReads.has(key)) {
+      return;
+    }
+    const read = (async () => {
+      let roster: DelegationRoster;
+      try {
+        roster = await reader(session);
+      } catch (err) {
+        roster = { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
+      }
+      if (disposed) {
+        return;
+      }
+      rosterReads.delete(key);
+      rosters.set(key, roster);
+      commitAndBroadcast();
+    })();
+    rosterReads.set(key, read);
+  }
+
   /**
    * Freeze the current tree beside the presence that describes it.
    *
@@ -235,7 +401,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       cache.reorder(discoveryDeps.rank);
       appliedRankRevision = revision;
     }
-    published = { tree: cache.read(), presence: presence() };
+    published = { tree: cache.read(), presence: withDelegations(presence()) };
     return true;
   }
 
@@ -635,6 +801,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         reconcileShowing(surface, state, false);
         reconcileScan();
         return;
+      case "requestWorktreeSubagents":
+        requestDelegations(msg.rowId, msg.entryId);
+        return;
       case "requestWorktreeTree":
         // Nothing to serve before the first build, whatever the caller asked for.
         if (msg.force === true || !built) {
@@ -681,6 +850,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
       watches.clear();
       surfaces.clear();
+      // A read still in flight resolves into a disposed host; clearing here is
+      // what makes that completion a no-op rather than a late publication.
+      rosters.clear();
+      rosterReads.clear();
     },
   };
 }

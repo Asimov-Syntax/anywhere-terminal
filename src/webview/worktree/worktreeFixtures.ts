@@ -178,10 +178,13 @@ export function singleRepoPresence(now: number): WorktreePresence {
           entryId: "claude:abc",
           paneId: "pane-1",
           stateStartedAt: now - 5 * MINUTE,
-          subagents: [
-            { name: "reviewer", title: "Review the worktree row anatomy", status: "completed", live: false },
-            { name: "librarian", title: "locate the presence spec", status: "failed", live: false },
-          ],
+          delegations: {
+            kind: "ok",
+            rows: [
+              { name: "reviewer", title: "Review the worktree row anatomy", status: "completed", live: false },
+              { name: "librarian", title: "locate the presence spec", status: "failed", live: false },
+            ],
+          },
         }),
         agentRow({
           rowId: "main-codex",

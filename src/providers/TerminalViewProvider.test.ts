@@ -841,11 +841,30 @@ describe("TerminalViewProvider: session-detail requestId echo", () => {
     expect(responses.find((m) => m.requestId === "nested-7")).toMatchObject({ entryId: "claude:ok" });
     expect(responses.find((m) => m.requestId === "nested-8")).toMatchObject({
       entryId: "claude:missing",
-      error: "Session not found.",
+      // Not "Session not found.": a reader returns nothing both for a session
+      // the store does not hold and for one whose read could not be completed,
+      // and this branch never established which (round 3 W3).
+      error: "Session not found or could not be read.",
     });
     const untagged = responses.filter((m) => m.requestId === undefined);
     expect(untagged).toHaveLength(1);
     expect("requestId" in untagged[0]).toBe(false);
+    dispose();
+  });
+
+  it("does not claim a session is absent when the read merely produced nothing", async () => {
+    // `readOpenCodeDetail` returns null for a session it read but could not
+    // prove complete — an existing session. Copy asserting absence sends the
+    // user looking for a missing session instead of retrying.
+    const { messageHandlers, postMessageSpy, dispose } = providerWith({ getDetail: async () => null });
+    for (const handler of messageHandlers) {
+      handler({ type: "requestVaultSessionDetail", entryId: "opencode:exists" });
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const error = String(detailResponses(postMessageSpy)[0]?.error ?? "");
+    expect(error).toMatch(/could not be read/);
+    expect(error).not.toBe("Session not found.");
     dispose();
   });
 

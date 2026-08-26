@@ -26,6 +26,7 @@ import {
 } from "./worktreeFormat";
 import { ICON_BRANCH, ICON_LOCK, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
 import type {
+  DelegationRoster,
   WorktreeActivity,
   WorktreeAgentRow,
   WorktreeInfo,
@@ -298,9 +299,15 @@ export interface AgentRowOptions {
 export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb: AgentRowCallbacks): HTMLElement {
   const el = document.createElement("div");
   el.className = "wt-arow";
-  const subagents = row.subagents ?? [];
-  const hasChildren = subagents.length > 0;
-  if (hasChildren && opts.expanded) {
+  const delegated = row.delegations?.kind === "ok" ? row.delegations.rows : [];
+  // The disclosure is offered by the presence of a SESSION, not by children
+  // already held: the children are read on expansion, so gating on them would
+  // leave nothing to click to cause the read (design.md D9). A row with no
+  // resolved session offers nothing, which is also the honest state — there is
+  // no roster to ask for, and no claim about whether it delegated.
+  const hasSession = row.entryId !== undefined;
+  const hasChildren = delegated.length > 0;
+  if (hasSession && opts.expanded) {
     el.classList.add("is-open");
   }
   if (opts.selected) {
@@ -309,7 +316,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   el.setAttribute("role", "treeitem");
   el.tabIndex = -1;
   el.dataset.rowId = row.rowId;
-  if (hasChildren) {
+  if (hasSession) {
     el.setAttribute("aria-expanded", opts.expanded ? "true" : "false");
   }
 
@@ -317,7 +324,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   const gutter = document.createElement("span");
   gutter.className = "wt-gutter";
   gutter.setAttribute("aria-hidden", "true");
-  if (hasChildren) {
+  if (hasSession) {
     gutter.innerHTML = ICON_CHEVRON_DOWN;
     gutter.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -398,7 +405,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   const count = document.createElement("span");
   if (hasChildren && !opts.expanded) {
     count.className = "wt-count";
-    count.textContent = `+${subagents.length}`;
+    count.textContent = `+${delegated.length}`;
   }
   el.appendChild(count);
 
@@ -425,7 +432,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
  * has no pane of its own.
  */
 export function renderSubagentSection(
-  subagents: readonly WorktreeSubagentRow[],
+  roster: DelegationRoster | undefined,
   parent: WorktreeAgentRow,
   onActivate: (subagent: WorktreeSubagentRow, parent: WorktreeAgentRow) => void,
   now?: number,
@@ -441,6 +448,27 @@ export function renderSubagentSection(
   label.textContent = "Past delegations";
   wrap.appendChild(label);
 
+  // Four states, one per roster state (design.md D10). An expanded row always
+  // renders one of them: silence would read as "this session delegated
+  // nothing", which is the one claim an unfinished or failed read cannot make.
+  if (roster === undefined) {
+    wrap.appendChild(note("Reading…"));
+    return wrap;
+  }
+  if (roster.kind === "failed") {
+    wrap.appendChild(note(`Could not be read — ${roster.reason}`));
+    return wrap;
+  }
+  if (roster.rows.length === 0) {
+    // Emptiness is a claim, and an incomplete read is not entitled to it: the
+    // reader said it dropped records, so "none" would state the one thing it
+    // could not observe (design.md D13). Order matters — deciding by row count
+    // first is exactly the bug this ordering fixes.
+    wrap.appendChild(note(roster.incomplete === true ? "Delegations could not be read" : "No delegations found"));
+    return wrap;
+  }
+
+  const subagents = roster.rows;
   for (const [i, sub] of subagents.entries()) {
     const row = document.createElement("div");
     row.className = "wt-srow";
@@ -460,9 +488,10 @@ export function renderSubagentSection(
 
     const text = document.createElement("span");
     text.className = "wt-stext";
-    const shown = sub.title ? `${sub.name} — ${sub.title}` : sub.name;
-    text.textContent = shown;
-    text.title = shown;
+    // The delegated task description is the primary text; the role name is the
+    // fallback, not the lead (worktree-panel-ui.md § 3.4).
+    text.textContent = sub.title ?? sub.name;
+    text.title = sub.title ? `${sub.title} — ${sub.name}` : sub.name;
 
     const age = document.createElement("span");
     age.className = "wt-age";
@@ -474,7 +503,20 @@ export function renderSubagentSection(
     bindActivation(row, () => onActivate(sub, parent));
     wrap.appendChild(row);
   }
+  // The reader's own admission that records were dropped. Nothing here ever
+  // proves the other direction, so the section never says "this is everything".
+  if (roster.incomplete === true) {
+    wrap.appendChild(note("Older delegations could not be read"));
+  }
   return wrap;
+}
+
+/** One line of section state — never a row, so it is not mistaken for a delegation. */
+function note(text: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "wt-hist-note";
+  el.textContent = text;
+  return el;
 }
 
 export interface NoticeSpec {

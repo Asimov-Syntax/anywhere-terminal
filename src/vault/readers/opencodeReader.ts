@@ -512,7 +512,8 @@ export function mapOpencodeRows(
 
   const activity: VaultActivityStep[] = [];
   let toolCount = 0;
-  let subagentCount = 0;
+  /** Subtask parts held until every child stub is known — see the correlation below. */
+  const subtasks: { ts: number; name: string; description: string | undefined; step: VaultActivityStep }[] = [];
   for (const p of ordered) {
     const type = p.data.type;
     if (type === "tool") {
@@ -543,12 +544,16 @@ export function mapOpencodeRows(
       activity.push(step);
       tl.push({ ts: p.timeCreated, item: step });
     } else if (type === "subtask") {
-      subagentCount++;
       const name = strField(p.data.agent) ?? "subagent";
-      const prompt = strField(p.data.prompt) ?? strField(p.data.description);
+      const description = strField(p.data.description);
+      const prompt = strField(p.data.prompt) ?? description;
       const step: VaultActivityStep = { kind: "subagent", name, prompt: prompt ? truncate(prompt) : undefined };
       activity.push(step);
-      tl.push({ ts: p.timeCreated, item: step });
+      // Held, not emitted. A subtask part and the child session it started are two
+      // records of ONE delegation, and the timeline owes one item per delegation
+      // (design.md D6) — which of the two survives is decided below, once every
+      // child stub is known.
+      subtasks.push({ ts: p.timeCreated, name, description, step });
     } else if (type === "reasoning") {
       const t = strField(p.data.text);
       if (t) {
@@ -561,6 +566,43 @@ export function mapOpencodeRows(
   // interleave at their spawn time alongside messages + tool/subtask steps.
   for (const c of childStubs) {
     tl.push({ ts: c.timestamp, item: c.item });
+  }
+
+  // One delegation, one item. A subtask part whose child session is present is
+  // already represented by that session's stub — and the stub is the better of
+  // the two, because it can be opened. Only a subtask no stub accounts for is
+  // emitted as a plain step, which is the unmatched-delegation case the roster
+  // must still report (design.md D6).
+  //
+  // Consumed one-for-one and in order: two delegations to the same agent with
+  // the same description are ordinary, and a matcher that did not consume its
+  // stub would fold them into one.
+  //
+  // Two passes, and the order between them is the whole point. An exact title is
+  // evidence; the agent is a guess, and a guess must never take a stub some
+  // other subtask can prove is its own. Interleaving them lets an earlier
+  // same-agent subtask with no child of its own consume a later subtask's exact
+  // child — the later one is then emitted as a plain step and the earlier one
+  // vanishes into a session that was never its (round 2 B6).
+  const unclaimed = childStubs.filter((c) => c.item.kind === "subagentSession").map((c) => c.item);
+  let delegations = unclaimed.length;
+  const unmatched: typeof subtasks = [];
+  for (const sub of subtasks) {
+    const at = matchExactTitle(unclaimed, sub.description);
+    if (at >= 0) {
+      unclaimed.splice(at, 1);
+    } else {
+      unmatched.push(sub);
+    }
+  }
+  for (const sub of unmatched) {
+    const at = matchAgent(unclaimed, sub.name);
+    if (at >= 0) {
+      unclaimed.splice(at, 1);
+      continue;
+    }
+    delegations++;
+    tl.push({ ts: sub.ts, item: sub.step });
   }
 
   // Merge messages + tool/subtask steps into one chronological stream (stable
@@ -580,8 +622,13 @@ export function mapOpencodeRows(
     stats: {
       messageCount,
       toolCount,
-      // Prefer the count of real child sub-sessions; fall back to subtask parts.
-      subagentCount: childStubs.length > 0 ? childStubs.length : subagentCount,
+      // What the correlation actually accounted for: one per child session plus
+      // one per subtask no child session explained. Preferring either window's
+      // own counter states a total neither window can see — a capped child list
+      // undercounts, and a windowed part list undercounts the other way
+      // (design.md D5). Counted before the timeline bound, so a consumer
+      // comparing this against the items it received still detects that bound.
+      subagentCount: delegations,
       ...(sawTokens && tokenCount > 0 ? { tokenCount } : {}),
     },
   };
@@ -689,6 +736,11 @@ export async function readOpenCodeDetail(
   // instead of counting the session's whole history.
   const msgProbeSql = `SELECT id FROM message WHERE session_id = '${sessionId}' LIMIT 1 OFFSET ${DETAIL_MESSAGE_HEAD + DETAIL_MESSAGE_TAIL}`;
   const partProbeSql = `SELECT id FROM part WHERE session_id = '${sessionId}' LIMIT 1 OFFSET ${DETAIL_PART_HEAD + DETAIL_PART_TAIL}`;
+  // The child list is bounded like the message and part windows, so it owes the
+  // same proof. Without this, a session with more than CHILD_LIMIT delegations
+  // hands over a silently short list and reports it as whole — and the roster
+  // built from it claims to be everything the session delegated (design.md D5).
+  const childProbeSql = `SELECT id FROM session WHERE parent_id = '${sessionId}' LIMIT 1 OFFSET ${CHILD_LIMIT}`;
   const childrenSql = `SELECT s.id, s.title, s.agent, s.time_created, (
       SELECT p.data FROM part p JOIN message m ON p.message_id = m.id
       WHERE p.session_id = s.id AND m.data LIKE '%"role":"user"%'
@@ -701,21 +753,24 @@ export async function readOpenCodeDetail(
   // independent reads could compare a probe against windows from another version
   // of the database and prove nothing about either.
   const read = await (options.withSqliteSnapshotFn ?? withSqliteSnapshot)(dbPath, async (snapshot) => {
-    const [msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes] = await Promise.all([
-      snapshot.query(msgHeadSql),
-      snapshot.query(msgTailSql),
-      snapshot.query(partHeadSql),
-      snapshot.query(partTailSql),
-      snapshot.query(childrenSql),
-      snapshot.query(msgProbeSql),
-      snapshot.query(partProbeSql),
-    ]);
-    return { msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes };
+    const [msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes, childProbeRes] =
+      await Promise.all([
+        snapshot.query(msgHeadSql),
+        snapshot.query(msgTailSql),
+        snapshot.query(partHeadSql),
+        snapshot.query(partTailSql),
+        snapshot.query(childrenSql),
+        snapshot.query(msgProbeSql),
+        snapshot.query(partProbeSql),
+        snapshot.query(childProbeSql),
+      ]);
+    return { msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes, childProbeRes };
   });
   if (read.status !== "ok") {
     return null;
   }
-  const { msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes } = read.value;
+  const { msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes, childProbeRes } =
+    read.value;
   if (
     msgHeadRes.status !== "ok" ||
     msgTailRes.status !== "ok" ||
@@ -736,7 +791,28 @@ export async function readOpenCodeDetail(
 
   const messages = parseMessageRows(msgRows);
   const parts = parsePartRows(partRows);
-  const childStubs = childRes.status === "ok" ? buildChildStubs(childRes.rows) : [];
+  // A failed child query is NOT a session with no children. Every other failed
+  // query in this read returns null; this one substituted an empty list, and a
+  // caller reading the timeline for delegations would report "delegated
+  // nothing" — a claim the source never made. It does not fail the whole read
+  // (the transcript is readable), it reports the omission it is
+  // (surface-subagent-history-rows/design.md D5).
+  const childrenUnread = childRes.status !== "ok";
+  // A list shorter than its own bound proves it was never truncated, whatever
+  // the probe did — so the probe is not consulted at all there. Consulting it
+  // anyway turns a transient probe failure into confirmed source omission, and
+  // `partial` means records were actually dropped and nothing else
+  // (vault/types.ts). The nested preview discards every partial detail, so a
+  // false one costs a whole readable child transcript (round 2 B7).
+  const childrenSaturated = !childrenUnread && childRes.rows.length >= CHILD_LIMIT;
+  const childrenTruncated = childrenSaturated && childProbeRes.status === "ok" && childProbeRes.rows.length > 0;
+  if (childrenSaturated && childProbeRes.status !== "ok") {
+    // Saturated and unproven: the one case where the probe's answer mattered and
+    // is missing. Fails the read exactly as the message and part probes do —
+    // encoding the uncertainty as either verdict would state something unproven.
+    return null;
+  }
+  const childStubs = childrenUnread ? [] : buildChildStubs(childRes.rows);
   const messageHeadIds = new Set(msgHeadRes.rows.map((row) => asString(row.id)).filter((id): id is string => !!id));
   const messageTailIds = new Set(msgTailRes.rows.map((row) => asString(row.id)).filter((id): id is string => !!id));
   // A source row past the retained capacity is the proof of omission.
@@ -745,6 +821,14 @@ export async function readOpenCodeDetail(
   // Parts, not a detail: the constructor owns `entryId` and the verdict fields,
   // so nothing here carries one for it to have to override.
   const detail: DetailParts = mapOpencodeRows(messages, parts, limit, childStubs);
+  if (childrenTruncated) {
+    // The probe row is proof of a child the bound dropped, so the source
+    // supports at least one more than the bound retained. Declaring only what
+    // survived states less than this read proved, and leaves a consumer
+    // comparing the count against the items it received unable to see the drop
+    // (specs/vault-session-preview/spec.md, round 2 B8).
+    detail.stats.subagentCount = Math.max(detail.stats.subagentCount, CHILD_LIMIT + 1);
+  }
   if (messageWindowTruncated) {
     const firstTail = detail.timeline.findIndex(
       (item) => item.kind === "message" && !!item.msgRef && messageTailIds.has(item.msgRef),
@@ -758,7 +842,43 @@ export async function readOpenCodeDetail(
   }
   // The windows are fixed, so what they dropped is unrecoverable at any limit —
   // that is `partial`. Pageability stays whatever `boundTimeline` decided.
-  return finalizeDetail(formatEntryId("opencode", sessionId), detail, sourceVerdict(windowTruncated));
+  return finalizeDetail(
+    formatEntryId("opencode", sessionId),
+    detail,
+    childrenUnread
+      ? { kind: "partial", reason: "delegated sessions could not be read" }
+      : childrenTruncated
+        ? { kind: "partial", reason: "not every delegated session was read" }
+        : sourceVerdict(windowTruncated),
+  );
+}
+
+/**
+ * Which held child stub this subtask part names exactly, or -1.
+ *
+ * OpenCode writes a child's title as `<description> (@<agent> subagent)` and
+ * `splitOpencodeSubtaskTitle` strips the suffix, so the cleaned title IS the
+ * subtask's description — an exact key, not a resemblance. This runs to
+ * exhaustion across every subtask before {@link matchAgent} is consulted at all.
+ */
+function matchExactTitle(stubs: VaultTimelineItem[], description: string | undefined): number {
+  const want = description?.trim();
+  if (!want) {
+    return -1;
+  }
+  return stubs.findIndex((s) => s.kind === "subagentSession" && s.title.trim() === want);
+}
+
+/**
+ * Which held child stub this subtask's AGENT could account for, or -1.
+ *
+ * The weaker key, for a child whose title the source rewrote. It mirrors the
+ * description-then-agent shape `matchStub` (readers/detail.ts) uses for the same
+ * problem in the Claude reader, and like it, only ever sees stubs no exact title
+ * claimed.
+ */
+function matchAgent(stubs: VaultTimelineItem[], agent: string): number {
+  return stubs.findIndex((s) => s.kind === "subagentSession" && s.agent !== undefined && s.agent === agent);
 }
 
 /** Map direct-child session rows into timestamped `subagentSession` stubs. */

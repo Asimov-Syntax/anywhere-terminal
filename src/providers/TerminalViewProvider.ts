@@ -577,7 +577,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         webview,
         detail
           ? { type: "vaultSessionDetailResponse", entryId, detail, ...echo }
-          : { type: "vaultSessionDetailResponse", entryId, error: "Session not found.", ...echo },
+          : // Two outcomes the reader cannot tell apart here: a session that is
+            // not in the store, and one whose read could not be completed (a
+            // bounded query whose proof failed returns nothing rather than
+            // guessing). Asserting the first states what this branch never
+            // established, and the preview shows the words verbatim.
+            {
+              type: "vaultSessionDetailResponse",
+              entryId,
+              error: "Session not found or could not be read.",
+              ...echo,
+            },
       );
     } catch (err) {
       void this.safeSendWithRetry(webview, {
@@ -1280,6 +1290,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case "requestWorktreeTree":
+        case "requestWorktreeSubagents":
         case "worktreeViewVisibility":
           // Window-scoped, so the host answers and broadcasts; this provider
           // only names which surface the message came from.

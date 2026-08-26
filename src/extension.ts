@@ -29,13 +29,38 @@ import {
 } from "./settings/SettingsReader";
 import { PtyLoadError } from "./types/errors";
 import { escapePathForShell } from "./utils/shellEscape";
+import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
+import { rosterFromDetail } from "./worktree/delegations";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
+import type { DelegationRoster } from "./worktree/presenceTypes";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
+
+/**
+ * The worktree host's delegation reader, backed by the vault.
+ *
+ * Asks for `MAX_DETAIL_LIMIT` rather than a page: the roster's incompleteness
+ * claim rests on there being no larger limit left to ask for, so a smaller
+ * bound here would make a truncated read report omission that a second, wider
+ * read could have recovered (design.md D5, D6).
+ *
+ * A null detail is a read that did not produce a transcript, which is a failure
+ * to report — never a session that delegated nothing.
+ */
+export function createDelegationReader(
+  vault: Pick<VaultService, "getDetail">,
+): (entryId: string) => Promise<DelegationRoster> {
+  return async (entryId: string) => {
+    const detail = await vault.getDetail(entryId, MAX_DETAIL_LIMIT);
+    return detail === null
+      ? { kind: "failed", reason: "this session's transcript could not be read" }
+      : rosterFromDetail(detail);
+  };
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Validate node-pty availability early — show user-facing error if missing
@@ -200,6 +225,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const fsWatcherPool = createWatcherPool();
   context.subscriptions.push(fsWatcherPool);
 
+  // AI coding vault — reads the user's existing CLI-agent session stores and
+  // resumes/forks them. Backed by a persistent list cache under globalStorageUri
+  // so the panel displays instantly on open, then refreshes only changed sources
+  // (cache-vault-load D1/D2). The cache is machine-global (agent stores are not
+  // workspace-scoped), so it uses `globalStorageUri`, not the workspace storageUri.
+  // Shared across the sidebar + panel providers.
+  const vaultCacheStore = new VaultCacheStore(context.globalStorageUri, fs);
+  vaultCacheStore.cleanupOrphanTemps(); // reap temp files orphaned by a prior crash
+  // User custom names for vault sessions (enhance-vault-sessions D1). Machine-global,
+  // like the cache, and applied as a serve-time overlay — it NEVER writes agent files.
+  const vaultCustomNames = new VaultCustomNameRegistry(context.globalState);
+  const vaultService = new VaultService({ cacheStore: vaultCacheStore, customNames: vaultCustomNames });
+
   // Worktree tree — one host per window, shared by the sidebar / panel / editor
   // surfaces so freshness costs one set of git calls and watchers regardless of
   // how many surfaces show it. See: cache-and-broadcast-worktree-tree design.md D1.
@@ -218,21 +256,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         },
       };
     },
+    // What an expanded row's session delegated, read from the vault on demand.
+    readDelegations: createDelegationReader(vaultService),
   });
   context.subscriptions.push(worktreeHost);
 
-  // AI coding vault — reads the user's existing CLI-agent session stores and
-  // resumes/forks them. Backed by a persistent list cache under globalStorageUri
-  // so the panel displays instantly on open, then refreshes only changed sources
-  // (cache-vault-load D1/D2). The cache is machine-global (agent stores are not
-  // workspace-scoped), so it uses `globalStorageUri`, not the workspace storageUri.
-  // Shared across the sidebar + panel providers.
-  const vaultCacheStore = new VaultCacheStore(context.globalStorageUri, fs);
-  vaultCacheStore.cleanupOrphanTemps(); // reap temp files orphaned by a prior crash
-  // User custom names for vault sessions (enhance-vault-sessions D1). Machine-global,
-  // like the cache, and applied as a serve-time overlay — it NEVER writes agent files.
-  const vaultCustomNames = new VaultCustomNameRegistry(context.globalState);
-  const vaultService = new VaultService({ cacheStore: vaultCacheStore, customNames: vaultCustomNames });
   const vaultLauncher = new VaultLauncher(vaultService);
   const vaultWatchCoordinator = new VaultWatchCoordinator({ watcherPool: fsWatcherPool, vaultService });
   context.subscriptions.push(vaultWatchCoordinator);

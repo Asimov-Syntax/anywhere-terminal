@@ -15,6 +15,7 @@
 //     → docs/design/worktree-actions.md § 3.2
 
 export type {
+  DelegationRoster,
   PresenceDegradation,
   WorktreeAgentRow,
   WorktreePresence,

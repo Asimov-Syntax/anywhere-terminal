@@ -97,7 +97,6 @@ Two invariants carried over from the vault protocol:
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `worktreeTreeResponse` | `{ tree: WorktreeTree, presence: WorktreePresence }` | The whole view state, always both halves together |
-| `worktreeSubagentsResponse` | `{ rowId, subagents: WorktreeSubagentRow[], error?: string }` | Reply to a lazy expansion |
 | `worktreeActionResult` | `{ action, worktreeId?, repoId?, outcome: "ok" \| "error" \| "indeterminate", error?: string, observed?: string, needsConfirm?: WorktreeRemoveBlocker }` | Outcome of any mutating action |
 | `worktreeCreateDefaultsResponse` | `{ repoId, branchName, path, pathIsWritable: boolean }` | Prefill for the create form |
 
@@ -111,10 +110,17 @@ a field to ignore. The launch runs **after** the create succeeds and reuses the 
 `worktreeLaunchAgent`; a launch failure is reported without rolling back the create
 (see [worktree-actions.md](worktree-actions.md) § 3.2).
 
-`WorktreeTree`, `WorktreePresence`, `WorktreeAgentRow`, `WorktreeSubagentRow` are defined in
+`WorktreeTree`, `WorktreePresence`, `WorktreeAgentRow`, `DelegationRoster`, `WorktreeSubagentRow` are defined in
 [worktree-model.md](worktree-model.md) § 2 and
 [worktree-agent-presence.md](worktree-agent-presence.md) § 2. This document does not restate
 their fields.
+
+**A delegation roster has no message of its own.** `requestWorktreeSubagents` is answered by
+the next `worktreeTreeResponse`, whose presence half carries the roster on the row it belongs
+to (`WorktreeAgentRow.delegations`). A separate reply would reintroduce exactly the split this
+section's next paragraph forbids — a roster arriving for a row the webview's current presence
+no longer holds, or holds under a different session. It also gives the host one publish path
+instead of two, so a roster and the row it decorates cannot disagree.
 
 **Tree and presence always ship together.** Two separate messages would let the webview
 render an agent row whose `worktreeId` is not in the tree it currently holds. One message
@@ -235,8 +241,9 @@ thing we can show, and hiding them would make the failure unactionable.
 | `worktreeRemove` on a `missing` worktree | Runs `git worktree remove`; git prunes the registration |
 | `worktreePrune` with nothing to prune | Succeeds, no-op |
 | `worktreeLaunchAgent` for an agent not installed | Fails with the launcher's existing not-found error |
-| `requestWorktreeSubagents` for a row with no `entryId` | Reply with an empty list, no error |
-| Duplicate `requestWorktreeSubagents` for one `rowId` | Last reply wins; the webview keys on `rowId` |
+| `requestWorktreeSubagents` for a row with no `entryId` | Ignored. An empty list would say the session delegated nothing, which is not what a row with no session to read means |
+| `requestWorktreeSubagents` naming a session the row no longer has | Ignored — the host matches the request against the published row's own `entryId` |
+| Duplicate `requestWorktreeSubagents` for one `(rowId, entryId)` | Ignored while a read is in flight and after one has landed; the roster is held under that pair, not under `rowId` |
 
 ## 7. Testing
 

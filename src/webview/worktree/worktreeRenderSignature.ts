@@ -11,7 +11,7 @@
 // order-sensitive: the tree renders in array order, so a reorder is a change.
 
 import { stripDecorations } from "./worktreeFormat";
-import type { WorktreePresence, WorktreeTree } from "./worktreeViewTypes";
+import type { DelegationRoster, WorktreePresence, WorktreeTree } from "./worktreeViewTypes";
 
 // Low control chars that cannot appear in branches, paths, ids, or titles, so
 // distinct field layouts can't collide into one signature.
@@ -98,9 +98,7 @@ export function worktreeSignature(tree: WorktreeTree | null, presence: WorktreeP
               String(r.finishedAt ?? ""),
               String(r.lastActivityAt ?? ""),
               String(r.startedAt ?? ""),
-              (r.subagents ?? [])
-                .map((s) => [s.name, s.title ?? "", s.status, s.entryId ?? ""].join(FIELD_SEP))
-                .join(","),
+              delegationSignature(r.delegations),
             ].join(FIELD_SEP),
           )
           .join(ROW_SEP),
@@ -113,4 +111,25 @@ export function worktreeSignature(tree: WorktreeTree | null, presence: WorktreeP
     .join(ROW_SEP);
 
   return [treePart, rows, degraded].join(SECTION_SEP);
+}
+
+/**
+ * A roster's contribution to the signature.
+ *
+ * Every state gets a distinct prefix, so an unread row and one read-and-empty
+ * are not the same string — rendering them alike would leave "Reading…" on
+ * screen after the answer arrived (design.md D4).
+ */
+function delegationSignature(roster: DelegationRoster | undefined): string {
+  if (roster === undefined) {
+    return "unread";
+  }
+  // The discriminant goes in verbatim rather than being inferred by elimination:
+  // it is a rendered field, and a key that reconstructs it cannot move when it
+  // changes.
+  if (roster.kind === "failed") {
+    return `${roster.kind}:${roster.reason}`;
+  }
+  const rows = roster.rows.map((s) => [s.name, s.title ?? "", s.status, s.entryId ?? ""].join(FIELD_SEP)).join(",");
+  return `${roster.kind}:${roster.incomplete === true ? "part" : "whole"}:${rows}`;
 }

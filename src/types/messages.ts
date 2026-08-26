@@ -614,6 +614,30 @@ export interface RequestWorktreeTreeMessage {
 }
 
 /**
+ * WebView → Extension: this row was expanded — read what its session delegated.
+ *
+ * `entryId` is an expected-version token, never an argument: the host looks
+ * `rowId` up in the projection it last published and reads only when THAT row's
+ * own entry id matches, using its own value. A surface whose last envelope was
+ * skipped or threw still shows the previous session under the same stable
+ * `rowId`, and a row-id-only request would resolve the click against the new
+ * session and open the wrong transcript.
+ *
+ * There is no paired response: the roster rides the `worktreeTreeResponse`
+ * envelope that already carries presence, so a recipient can never hold a
+ * roster for a row its current presence does not contain.
+ *
+ * See: docs/design/worktree-rpc.md § 2.1;
+ *      asimov/changes/surface-subagent-history-rows/design.md D1, D2.
+ */
+export interface RequestWorktreeSubagentsMessage {
+  type: "requestWorktreeSubagents";
+  rowId: string;
+  /** The session the view believed the row had when it was expanded. */
+  entryId: string;
+}
+
+/**
  * WebView → Extension: this surface declares whether its Worktree view is being
  * shown. A surface starts NOT visible and receives no push until it says
  * otherwise — all three surfaces retain their DOM while hidden, so pushing to
@@ -716,6 +740,7 @@ export type WebViewToExtensionMessage =
   | RequestClipboardImagePreviewMessage
   | PasteOsClipboardImageMessage
   | RequestWorktreeTreeMessage
+  | RequestWorktreeSubagentsMessage
   | WorktreeViewVisibilityMessage
   | PaneEvidenceMessage;
 

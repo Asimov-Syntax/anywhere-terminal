@@ -94,11 +94,27 @@ export interface WorktreeViewDeps {
    */
   getInitialCollapsed?: () => string[] | undefined;
   persistCollapsed?: (ids: string[]) => void;
+  /**
+   * Ask the host what this row's session delegated. Called on the first
+   * expansion of each row+session and never again — the roster arrives on the
+   * row itself, through the envelope that already carries presence.
+   */
+  onRequestSubagents?: (row: WorktreeAgentRow) => void;
   /** Expanded agent rowIds — the SECOND disclosure level, persisted separately. */
   getInitialExpandedRows?: () => string[];
   persistExpandedRows?: (ids: string[]) => void;
   /** Injected in tests so ages are deterministic. */
   now?: () => number;
+}
+
+/** The rows a roster actually delivered — nothing for unread, empty or failed. */
+function delegatedRows(row: WorktreeAgentRow): readonly WorktreeSubagentRow[] {
+  return row.delegations?.kind === "ok" ? row.delegations.rows : [];
+}
+
+/** One row's session, as the host keys its roster. Absent → nothing to ask for. */
+function rosterKey(row: WorktreeAgentRow): string | undefined {
+  return row.entryId === undefined ? undefined : `${row.rowId}\u0000${row.entryId}`;
 }
 
 export class WorktreeView {
@@ -124,6 +140,11 @@ export class WorktreeView {
   private closeDialog: (() => void) | null = null;
   /** Roving tabindex target — the row keyboard navigation last landed on. */
   private focusedKey: string | null = null;
+  /**
+   * Row+session pairs already asked for. Keyed by both, so re-expanding asks
+   * nothing while a pane that started a NEW session asks again.
+   */
+  private readonly requestedRosters = new Set<string>();
 
   constructor(deps: WorktreeViewDeps) {
     this.deps = deps;
@@ -250,6 +271,16 @@ export class WorktreeView {
     this.render();
   }
 
+  /** At most one request per row per session, whoever expanded it. */
+  private requestSubagents(row: WorktreeAgentRow): void {
+    const key = rosterKey(row);
+    if (key === undefined || this.requestedRosters.has(key)) {
+      return;
+    }
+    this.requestedRosters.add(key);
+    this.deps.onRequestSubagents?.(row);
+  }
+
   private toggleRow(rowId: string): void {
     if (this.expandedRows.has(rowId)) {
       this.expandedRows.delete(rowId);
@@ -282,6 +313,8 @@ export class WorktreeView {
     }
     const liveIds = new Set<string>();
     const liveRowIds = new Set<string>();
+    const liveRosterKeys = new Set<string>();
+    const sessionRowIds = new Set<string>();
     const collapsed = new Set<string>();
     const before = [...this.collapsed].join(" ");
     for (const repo of data.tree.repos) {
@@ -298,6 +331,11 @@ export class WorktreeView {
         }
         for (const row of data.presence?.rowsByWorktreeId[wt.id] ?? []) {
           liveRowIds.add(row.rowId);
+          const key = rosterKey(row);
+          if (key !== undefined) {
+            liveRosterKeys.add(key);
+            sessionRowIds.add(row.rowId);
+          }
         }
       }
     }
@@ -311,10 +349,22 @@ export class WorktreeView {
     if ([...collapsed].join(" ") !== before) {
       this.deps.persistCollapsed?.([...collapsed]);
     }
-    const expanded = [...this.expandedRows].filter((id) => liveRowIds.has(id));
+    // Reconciled against the identities presence actually carries, never
+    // accumulated — the same rule the host applies at the other end (D3, D14).
+    // A row that lost its session keeps no expansion: the disclosure that would
+    // collapse it is offered by the session, so the state would be unreachable.
+    const expanded = [...this.expandedRows].filter((id) => liveRowIds.has(id) && sessionRowIds.has(id));
     if (expanded.length !== this.expandedRows.size) {
       this.expandedRows = new Set(expanded);
       this.deps.persistExpandedRows?.(expanded);
+    }
+    // Dropping the asked-key is what lets a row that left and returned under the
+    // same identity ask again — the host evicted its roster, so a view that
+    // remembers asking leaves the row on "Reading…" with nothing coming.
+    for (const key of this.requestedRosters) {
+      if (!liveRosterKeys.has(key)) {
+        this.requestedRosters.delete(key);
+      }
     }
   }
 
@@ -333,7 +383,7 @@ export class WorktreeView {
       (row) =>
         agentRowTitle(row).toLowerCase().includes(q) ||
         (row.preview ?? "").toLowerCase().includes(q) ||
-        (row.subagents ?? []).some((s) => `${s.name} ${s.title ?? ""}`.toLowerCase().includes(q)),
+        delegatedRows(row).some((s) => `${s.name} ${s.title ?? ""}`.toLowerCase().includes(q)),
     );
   }
 
@@ -532,6 +582,12 @@ export class WorktreeView {
     container.appendChild(renderAgentsHeader(rows.length, () => this.toggleCollapsed(info.id)));
     for (const row of rows) {
       const rowExpanded = this.expandedRows.has(row.rowId);
+      if (rowExpanded) {
+        // Asked from the render rather than the click, so a row restored into
+        // the expanded set on open asks too — otherwise it would sit on
+        // "Reading…" forever, having never been toggled.
+        this.requestSubagents(row);
+      }
       container.appendChild(
         renderAgentRow(
           row,
@@ -543,11 +599,13 @@ export class WorktreeView {
           },
         ),
       );
-      const subagents = row.subagents ?? [];
-      if (rowExpanded && subagents.length > 0) {
+      // Always a section while the row is expanded: rendering nothing until
+      // rows exist is the same picture as a session that delegated nothing
+      // (design.md D10).
+      if (rowExpanded) {
         container.appendChild(
           renderSubagentSection(
-            subagents,
+            row.delegations,
             row,
             (sub, parent) => this.deps.onActivateSubagent?.(sub, parent),
             this.now(),

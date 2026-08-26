@@ -129,13 +129,13 @@ model" is the follow-up.
 
 | Element | Content | Rule |
 |---------|---------|------|
-| Disclosure gutter | A chevron when the row has subagents, otherwise an empty slot of the same width | **Always occupies space.** Reserving the gutter is what keeps state dots aligned down a mixed list of rows with and without children |
+| Disclosure gutter | A chevron when the row has a **session to read**, otherwise an empty slot of the same width | **Always occupies space.** Reserving the gutter is what keeps state dots aligned down a mixed list of rows with and without children. Offered by the session, never by children already held: the roster is read lazily on expansion, so gating the chevron on children would leave nothing to click to cause the read, and the row could never get any |
 | State dot | `running` / `waiting` / `idle` / `exited` | Colour from the state, not from the agent. Fixed width, so a column of rows scans vertically |
 | Agent icon | From the existing `AGENT_ICONS` map (`src/webview/vault/agentIcons.ts`) | Absent when `agent` is unset — never a guessed icon. Also absent on subagent rows (§ 3.4) |
 | Title | Decoration-stripped pane title, else the session title | Spinner frames stripped before display |
 | Preview | The session's latest message or current tool, one line, after the title | Secondary emphasis; it is context, not identity. Truncates first when width is scarce |
 | Model | The model id, when known | Optional and monospace, bounded width. Omitted entirely when unknown — never a placeholder |
-| Child count | `+N` when the row has collapsed subagents | Disappears when expanded; the children are then visible |
+| Child count | `+N` when the row has collapsed subagents | Disappears when expanded; the children are then visible. Absent until the roster has actually been read — an unread row has no count to state, and `+0` would claim one |
 | Age | Relative time, right-aligned | Fixed-width column so titles truncate against a stable edge. Compact form (`now`, `5m`, `1h`, `3d`) |
 | Scope marker | Only on `scope: "external"` | See § 4 |
 | Confidence marker | Derived from `activitySource`, shown when that source is a fallback one | A quiet marker, not an error. Identity confidence is derived from `agentSource` separately and expressed by the icon's presence or absence, not by this marker — a row can be uncertain about one and sure of the other |
@@ -161,6 +161,19 @@ Rendered indented exactly one level under its agent row, on expansion only.
 | Activation | Focuses the **parent's** pane. A subagent has no pane of its own; sending the user to a pane that does not exist would be a dead click |
 | Freshness | Children inherit the parent's freshness. When the parent's evidence goes stale, every child decays with it, together — a stale parent cannot have provably-working children |
 
+An expanded row always renders **one of four section states**, never silence:
+
+| Roster | Section shows |
+|--------|---------------|
+| Not read yet | that it is reading |
+| Read, rows found | those rows, plus an admission if the reader dropped others |
+| Read, nothing found, reader claims it is whole | that the session delegated nothing |
+| Read, nothing found, reader admits omission — or the read failed | that it could not be read, with the reason |
+
+The last row is the one that matters. Emptiness is a claim, and the strongest one this section
+can make; a read that admits it dropped records has not earned it. Silence is the same claim
+made implicitly, which is why an expanded row is never blank.
+
 Because in this phase these are transcript-derived history and not a live roster
 (`worktree-agent-presence.md` § 3.6), they must **not** reuse the live state dot vocabulary.
 Use a distinct, visibly historical treatment and a section label that says so. A completed
@@ -177,10 +190,12 @@ that cannot express "show me this worktree's agents but not every agent's childr
 | Level | Control | Collapsed shows | Expands to |
 |-------|---------|-----------------|------------|
 | Worktree → agents | The `N agents` header row, or the collapsed pill | Grouped state dots, up to 3 icons per state, `+N` overflow | One § 3.3 row per agent |
-| Agent → subagents | A chevron in that row's own disclosure gutter | `+N` on the agent row | One § 3.4 row per subagent |
+| Agent → subagents | A chevron in that row's own disclosure gutter, on any row with a session | `+N` on the agent row, once read | The § 3.4 section — its rows, or the state that explains why there are none |
 
 Both states are persisted independently (§ 2.1): `worktreeCollapsed` for the first,
-`worktreeExpandedRows` for the second.
+`worktreeExpandedRows` for the second. Persisted expansion is reconciled against the rows
+presence actually carries, not accumulated: a row that lost its session keeps no expansion,
+because the chevron that would collapse it is offered by the session.
 
 The rest of this section describes the first level — two presentations of the same rows, both
 attached under the worktree row.

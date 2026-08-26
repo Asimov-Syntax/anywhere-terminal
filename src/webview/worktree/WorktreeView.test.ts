@@ -23,7 +23,13 @@ import {
   twoRepoTree,
   worktree,
 } from "./worktreeFixtures";
-import type { WorktreeInfo, WorktreePresence, WorktreeTree } from "./worktreeViewTypes";
+import type {
+  DelegationRoster,
+  WorktreeAgentRow,
+  WorktreeInfo,
+  WorktreePresence,
+  WorktreeTree,
+} from "./worktreeViewTypes";
 
 const NOW = 1_700_000_000_000;
 const MAIN_PATH = "/Users/dev/Projects/ai-oss/anywhere-terminal";
@@ -420,6 +426,199 @@ describe("subagent rows", () => {
     view.setData(populated());
     view.element.querySelector<HTMLElement>(".wt-srow")?.click();
     expect(activated).toEqual(["main-claude"]);
+  });
+
+  it("leads with the delegated task, falling back to the role name", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(
+      withRoster({
+        kind: "ok",
+        rows: [
+          { name: "reviewer", title: "Review the row anatomy", status: "completed", live: false },
+          { name: "librarian", status: "completed", live: false },
+        ],
+      }),
+    );
+    expect(subagentTexts(view)).toEqual(["Review the row anatomy", "librarian"]);
+  });
+});
+
+// ── § 3.4: the four states a lazily-read roster can be in ─────────────────
+
+/** The one presence fixture these need: a single row whose roster the test sets. */
+function withRoster(delegations: DelegationRoster | undefined, over: Partial<WorktreeAgentRow> = {}) {
+  return {
+    tree: singleRepoTree(),
+    presence: {
+      scannedAt: NOW,
+      degradedSources: [],
+      rowsByWorktreeId: {
+        [MAIN_PATH]: [
+          agentRow({
+            rowId: "main-claude",
+            agent: "claude",
+            activity: "waiting",
+            activitySource: "hook",
+            title: "INTEGRATE-WORKTREE",
+            entryId: "claude:abc",
+            paneId: "pane-1",
+            ...(delegations === undefined ? {} : { delegations }),
+            ...over,
+          }),
+        ],
+      },
+    } satisfies WorktreePresence,
+  };
+}
+
+function sectionText(view: WorktreeView): string {
+  return view.element.querySelector(".wt-hist")?.textContent ?? "";
+}
+
+function subagentTexts(view: WorktreeView): string[] {
+  return Array.from(view.element.querySelectorAll(".wt-stext")).map((e) => e.textContent ?? "");
+}
+
+describe("the delegation section states", () => {
+  it("says it is reading while the answer is still coming", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster(undefined));
+    expect(sectionText(view)).toContain("Reading");
+    expect(view.element.querySelectorAll(".wt-srow")).toHaveLength(0);
+  });
+
+  it("says a read found nothing only once a read actually found nothing", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster({ kind: "ok", rows: [] }));
+    expect(sectionText(view)).toContain("No delegations found");
+  });
+
+  it("says a failed read failed, and why — never that the session delegated nothing", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster({ kind: "failed", reason: "EACCES /vault" }));
+    const text = sectionText(view);
+    expect(text).toContain("Could not be read");
+    expect(text).toContain("EACCES /vault");
+    expect(text).not.toContain("No delegations found");
+  });
+
+  it("shows an incomplete roster's rows and admits the rest are unreadable", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(
+      withRoster({
+        kind: "ok",
+        rows: [{ name: "librarian", status: "completed", live: false }],
+        incomplete: true,
+      }),
+    );
+    expect(view.element.querySelectorAll(".wt-srow")).toHaveLength(1);
+    expect(sectionText(view)).toContain("Older delegations could not be read");
+  });
+
+  it("does not call an incomplete read empty — that is the one claim it cannot make", () => {
+    // The reader said it dropped records, so "No delegations found" would state
+    // the one thing it could not observe (design.md D13).
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster({ kind: "ok", rows: [], incomplete: true }));
+    const text = sectionText(view);
+    expect(text).not.toContain("No delegations found");
+    expect(text).toContain("could not be read");
+  });
+
+  it("makes no such admission for a roster with no evidence of omission", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster({ kind: "ok", rows: [{ name: "librarian", status: "completed", live: false }] }));
+    expect(sectionText(view)).not.toContain("could not be read");
+  });
+});
+
+// ── § 3.3: the disclosure, and the request behind it ──────────────────────
+
+describe("asking the host what a row delegated", () => {
+  function arow(view: WorktreeView): HTMLElement | null {
+    return view.element.querySelector<HTMLElement>(".wt-arow");
+  }
+
+  it("offers the disclosure on a row with a session it has never read", () => {
+    // Gating on children already held would leave nothing to click to cause the
+    // read, so the row could never get any.
+    const { view } = mount();
+    view.setData(withRoster(undefined));
+    expect(arow(view)?.querySelector(".wt-gutter")?.innerHTML).not.toBe("");
+    expect(arow(view)?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("offers no disclosure on a row with no session", () => {
+    const { view } = mount();
+    view.setData(withRoster(undefined, { entryId: undefined }));
+    expect(arow(view)?.querySelector(".wt-gutter")?.innerHTML).toBe("");
+    expect(arow(view)?.hasAttribute("aria-expanded")).toBe(false);
+  });
+
+  it("asks once when the row is expanded, and nothing more when it is re-expanded", () => {
+    const asked: string[] = [];
+    const { view } = mount({ onRequestSubagents: (row) => asked.push(row.entryId ?? "") });
+    view.setData(withRoster(undefined));
+    expect(asked).toEqual([]);
+
+    view.element.querySelector<HTMLElement>(".wt-arow .wt-gutter")?.click();
+    expect(asked).toEqual(["claude:abc"]);
+
+    view.element.querySelector<HTMLElement>(".wt-arow .wt-gutter")?.click();
+    view.element.querySelector<HTMLElement>(".wt-arow .wt-gutter")?.click();
+    expect(asked).toEqual(["claude:abc"]);
+  });
+
+  it("asks for a row restored into the expanded set, which was never toggled", () => {
+    const asked: string[] = [];
+    const { view } = mount({
+      getInitialExpandedRows: () => ["main-claude"],
+      onRequestSubagents: (row) => asked.push(row.entryId ?? ""),
+    });
+    view.setData(withRoster(undefined));
+    expect(asked).toEqual(["claude:abc"]);
+  });
+
+  it("asks again for a row that left and returned under the same session", () => {
+    // The host evicts its rosters against the rows it publishes, so a view that
+    // remembers having asked leaves the returning row on "Reading…" forever (D14).
+    const asked: string[] = [];
+    const { view } = mount({
+      getInitialExpandedRows: () => ["main-claude"],
+      onRequestSubagents: (row) => asked.push(row.entryId ?? ""),
+    });
+    view.setData(withRoster({ kind: "ok", rows: [] }));
+    expect(asked).toEqual(["claude:abc"]);
+
+    // Gone, so the host drops its roster and the view drops the expansion.
+    view.setData({ tree: singleRepoTree(), presence: { scannedAt: NOW, degradedSources: [], rowsByWorktreeId: {} } });
+    // Back under the same identity, and the user expands it again. A permanent
+    // asked-set posts nothing here and the row sits on "Reading…" with nothing
+    // coming, because the host no longer holds the roster it once sent.
+    view.setData(withRoster(undefined));
+    view.element.querySelector<HTMLElement>(".wt-arow .wt-gutter")?.click();
+    expect(asked).toEqual(["claude:abc", "claude:abc"]);
+  });
+
+  it("drops the expansion of a row that lost its session, which has no disclosure to collapse it", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster({ kind: "ok", rows: [{ name: "librarian", status: "completed", live: false }] }));
+    expect(view.element.querySelector(".wt-hist")).not.toBeNull();
+
+    view.setData(withRoster(undefined, { entryId: undefined }));
+    expect(view.element.querySelector(".wt-hist")).toBeNull();
+    expect(view.element.querySelector(".wt-arow")?.hasAttribute("aria-expanded")).toBe(false);
+  });
+
+  it("asks again when the same row starts a different session", () => {
+    const asked: string[] = [];
+    const { view } = mount({
+      getInitialExpandedRows: () => ["main-claude"],
+      onRequestSubagents: (row) => asked.push(row.entryId ?? ""),
+    });
+    view.setData(withRoster({ kind: "ok", rows: [] }));
+    view.setData(withRoster({ kind: "ok", rows: [] }, { entryId: "claude:second" }));
+    expect(asked).toEqual(["claude:abc", "claude:second"]);
   });
 });
 

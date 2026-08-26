@@ -65,8 +65,12 @@ WorktreeAgentRow {
   finishedAt?:     number        // when the last turn ended; set only while `idle` after work
   lastActivityAt?: number        // newest evidence timestamp — the worktree ordering key
   pid?:         number           // external rows only
-  subagents?:   WorktreeSubagentRow[]
+  delegations?: DelegationRoster  // absent = never read — see § 3.6
 }
+
+DelegationRoster =
+  | { kind: "ok", rows: WorktreeSubagentRow[], incomplete?: boolean }
+  | { kind: "failed", reason: string }
 
 WorktreeSubagentRow {
   name:     string               // agent type, or the invoking tool when undeclared
@@ -300,6 +304,18 @@ Therefore:
   watcher event.
 - The UI must render them as history, not as live workers (see
   [worktree-panel-ui.md](worktree-panel-ui.md) § 4).
+- **A roster that could not be read is not an empty one.** The outcome is typed
+  (`DelegationRoster`), because an optional array collapses three different answers — not
+  asked yet, asked and none found, could not be read — into one shape, and the last two are
+  the pair a view must never confuse. `incomplete` is the reader's own admission that it
+  dropped records; nothing at this seam ever proves a roster is the whole of what the session
+  delegated, so completeness is only ever the absence of evidence of omission.
+- **A delegation is one row, whatever the source recorded.** A transcript may hold a
+  delegation twice — once as the invocation step, once as the child session it produced — and
+  the reader owes one timeline item per invocation, the openable one where both exist. This is
+  the vault reader's job, not presence's: only the reader knows which of its own bounded
+  windows dropped what, and de-duplicating downstream by name would fold genuinely repeated
+  delegations into one.
 
 Two structural rules hold in both this phase and the hook phase, because they follow from what
 a subagent *is* rather than from where the data came from:

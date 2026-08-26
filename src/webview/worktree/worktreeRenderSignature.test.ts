@@ -17,6 +17,15 @@ import type {
 
 const NOW = 1_700_000_000_000;
 
+/** One row's signature, for comparing two roster states of the same row. */
+function signatureFor(rows: WorktreeAgentRow[]): string {
+  return worktreeSignature(singleRepoTree(), {
+    scannedAt: NOW,
+    degradedSources: [],
+    rowsByWorktreeId: { "/repo": rows },
+  });
+}
+
 function presenceWithTitle(title: string): WorktreePresence {
   return {
     scannedAt: NOW,
@@ -115,7 +124,7 @@ const FULL_ROW: Required<WorktreeAgentRow> = {
   finishedAt: 30,
   lastActivityAt: 40,
   pid: 4321,
-  subagents: [FULL_SUBAGENT],
+  delegations: { kind: "ok", rows: [FULL_SUBAGENT], incomplete: true },
 };
 
 const FULL_DEGRADATION: Required<PresenceDegradation> = {
@@ -224,7 +233,8 @@ const COVERAGE: Array<{ type: string; full: Record<string, unknown>; sign: (patc
   {
     type: "WorktreeSubagentRow",
     full: FULL_SUBAGENT,
-    sign: (s) => sign(FULL_TREE, withRow({ ...FULL_ROW, subagents: [s as WorktreeSubagentRow] })),
+    sign: (s) =>
+      sign(FULL_TREE, withRow({ ...FULL_ROW, delegations: { kind: "ok", rows: [s as WorktreeSubagentRow] } })),
   },
   {
     type: "PresenceDegradation",
@@ -247,4 +257,31 @@ describe("worktreeSignature — every rendered field is keyed", () => {
       }
     });
   }
+});
+
+describe("roster states are distinguishable in the signature", () => {
+  it("separates a row whose roster was never read from one read and empty", () => {
+    // Both render nothing under the row, and a signature that cannot tell them
+    // apart leaves the "reading…" state on screen after the answer arrived.
+    const unread = signatureFor([agentRow({ rowId: "window:a", delegations: undefined })]);
+    const empty = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "ok", rows: [] } })]);
+    expect(unread).not.toBe(empty);
+  });
+
+  it("separates an incomplete roster from a complete one with the same rows", () => {
+    const rows = [{ name: "librarian", status: "completed" as const, live: false as const }];
+    const complete = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "ok", rows } })]);
+    const incomplete = signatureFor([
+      agentRow({ rowId: "window:a", delegations: { kind: "ok", rows, incomplete: true } }),
+    ]);
+    expect(complete).not.toBe(incomplete);
+  });
+
+  it("separates a failed roster from an empty one, and by its reason", () => {
+    const empty = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "ok", rows: [] } })]);
+    const failed = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "failed", reason: "EACCES" } })]);
+    const other = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "failed", reason: "ENOENT" } })]);
+    expect(failed).not.toBe(empty);
+    expect(failed).not.toBe(other);
+  });
 });

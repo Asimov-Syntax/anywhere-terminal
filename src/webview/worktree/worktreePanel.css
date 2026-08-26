@@ -480,6 +480,15 @@
   padding-left: 8px;
   border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
 }
+/* Section state — reading, empty, unreadable, or "not all of it". Muted and
+   un-rowed, so it is never read as a delegation that happened. */
+.wt-hist-note {
+  padding: 2px 0 3px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+}
 .wt-hist-label {
   padding: 2px 0 1px;
   font-size: 9px;
