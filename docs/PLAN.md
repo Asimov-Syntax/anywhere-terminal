@@ -249,7 +249,7 @@ state. There is nothing to provision.
 | **Labels** | user-visible-ui |
 | **Notes** | Introduces a row class with deliberately reduced affordances. The registry reader must gain a typed outcome: it currently maps an unreadable registry to an empty list, which would silently clear every external row. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The external row's label and its missing focus affordance are already drawn |
 | **Acceptance** | Agents running in a worktree from outside this window appear, labelled, and are never offered focus; a session owned by a window pane is never duplicated as an external row, and headless runs produce none; the scan runs only while the view is visible; an unreadable registry is distinguishable from an empty one and never silently clears the rows |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-004.3] Subagent Rows
 

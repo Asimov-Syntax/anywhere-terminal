@@ -8,7 +8,7 @@ import type { PendingSnapshot } from "../session/SessionSnapshot";
 import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
 import type { SetPanelIdMessage, ThemeChangedMessage, WebViewToExtensionMessage } from "../types/messages";
 import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
-import { indexRunningSessions, listRunningClaudeSessions } from "../vault/readers/runningSessions";
+import { indexRunningSessionsOrEmpty, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
 import { agentKindForExecutable } from "../vault/registry";
 import { handlePasteClipboardImage, handlePasteOsClipboardImage, readImageFromOsClipboard } from "./clipboardImageSync";
@@ -768,7 +768,7 @@ export class TerminalEditorProvider {
         (await this.sessionManager.getLiveCwd(id)) ??
         this.sessionManager.getCurrentCwd(id) ??
         this.sessionManager.getInitialCwd(id),
-      runningIndex: async () => indexRunningSessions(await listRunningClaudeSessions()),
+      runningIndex: () => indexRunningSessionsOrEmpty(listRunningClaudeSessions()),
       descendantPids: (pid) => descendantPids(pid),
       sessionMtime: (sessionId) => claudeSessionMtime(sessionId),
       newestSessionUnderCwd: async (cwd) => {

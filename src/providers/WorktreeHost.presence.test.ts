@@ -16,7 +16,12 @@ import type { WorktreePresence } from "../worktree/presenceTypes";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
-import { createWorktreeHost, PRESENCE_MAX_LATENCY_MS, type WorktreeSurface } from "./WorktreeHost";
+import {
+  createWorktreeHost,
+  EXTERNAL_SCAN_INTERVAL_MS,
+  PRESENCE_MAX_LATENCY_MS,
+  type WorktreeSurface,
+} from "./WorktreeHost";
 
 function res(over: Partial<GitCommandResult> = {}): GitCommandResult {
   return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
@@ -41,6 +46,29 @@ function oneRepo(...records: string[][]): GitCommandRunner {
     return args[0] === "worktree" ? res({ stdout: nul(...records) }) : res({ stdout: Buffer.from("/repo/.git\n") });
   });
   return { run } as unknown as GitCommandRunner;
+}
+
+/** One repo at `/repo` whose `worktree list` the test can break, degrading it. */
+function breakableRepo(...records: string[][]) {
+  let broken = false;
+  const run = vi.fn(async (args: readonly string[], cwd: string): Promise<GitCommandResult> => {
+    if (args[0] === "--version") {
+      return res({ stdout: Buffer.from("git version 2.50.1\n") });
+    }
+    if (cwd !== "/repo") {
+      return res({ code: 128, stderr: "fatal: not a git repository" });
+    }
+    if (args[0] !== "worktree") {
+      return res({ stdout: Buffer.from("/repo/.git\n") });
+    }
+    return broken ? res({ code: 128, stderr: "fatal: could not read worktrees" }) : res({ stdout: nul(...records) });
+  });
+  return {
+    runner: { run } as unknown as GitCommandRunner,
+    break: () => {
+      broken = true;
+    },
+  };
 }
 
 /** One repo at `/repo` whose `worktree list` result the test can change. */
@@ -97,6 +125,11 @@ function fakeClock() {
     advance(ms: number): void {
       millis += ms;
       for (const [id, timer] of [...timers]) {
+        // Re-checked: a timer cleared from inside an earlier callback in this
+        // same tick must not still fire, which is what real clearTimeout does.
+        if (!timers.has(id)) {
+          continue;
+        }
         if (timer.at <= millis) {
           timers.delete(id);
           timer.fn();
@@ -133,17 +166,30 @@ function fakeProjector() {
   let ranks: Record<string, number> = {};
   const seen: string[][] = [];
 
+  const modes: Array<boolean> = [];
+  let rankLookups = 0;
+  let revision = 0;
+
   const projector: PresenceProjector = {
-    project: async (worktreeIds) => {
+    project: async (worktreeIds, options) => {
       seen.push([...worktreeIds]);
+      modes.push(options?.external === true);
       return next;
     },
-    rank: (id) => ranks[id],
+    rank: (id) => {
+      rankLookups += 1;
+      return ranks[id];
+    },
+    rankRevision: () => revision,
   };
 
   return {
     projector,
     seen,
+    /** How many times the ordering key has been asked for. */
+    rankLookups: () => rankLookups,
+    /** Whether each projection, in order, was the external-only pass. */
+    modes,
     calls: () => seen.length,
     setPresence(presence: WorktreePresence) {
       next = presence;
@@ -151,20 +197,29 @@ function fakeProjector() {
     setRanks(values: Record<string, number>) {
       ranks = values;
     },
+    /** Move the ranking the projector publishes, as a projection would. */
+    bumpRevision() {
+      revision += 1;
+    },
   };
 }
 
 /** A projector that parks each projection until the test releases or fails it. */
 function blockingProjector() {
   const parked: Array<{ release: (presence: WorktreePresence) => void; fail: (err: Error) => void }> = [];
+  /** Whether each projection, in order, was the external-only pass. */
+  const modes: Array<boolean> = [];
   const projector: PresenceProjector = {
-    project: async () =>
-      new Promise<WorktreePresence>((resolve, reject) => {
+    project: async (_worktreeIds, options) => {
+      modes.push(options?.external === true);
+      return new Promise<WorktreePresence>((resolve, reject) => {
         parked.push({ release: resolve, fail: reject });
-      }),
+      });
+    },
     rank: () => undefined,
+    rankRevision: () => 0,
   };
-  return { projector, parked };
+  return { projector, parked, modes };
 }
 
 interface HostOptions {
@@ -196,15 +251,28 @@ async function builtHost(options: HostOptions = {}) {
   });
 
   const view = surface();
-  host.attach(view).setDisplayed(true);
+  const attachment = host.attach(view);
+  attachment.setDisplayed(true);
   host.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
   host.handleMessage(view, { type: "requestWorktreeTree" });
   await settle();
   view.posts.length = 0;
 
+  /** Attach a second surface, already showing the view. */
+  function showAnother() {
+    const other = surface();
+    const otherAttachment = host.attach(other);
+    otherAttachment.setDisplayed(true);
+    host.handleMessage(other, { type: "worktreeViewVisibility", visible: true });
+    return { other, attachment: otherAttachment };
+  }
+
   return {
     host,
     view,
+    attachment,
+    showAnother,
+    hide: () => host.handleMessage(view, { type: "worktreeViewVisibility", visible: false }),
     advance,
     pending,
     paneChanged: () => notifyPaneChange?.(),
@@ -734,5 +802,365 @@ describe("disposal", () => {
     await settle();
 
     expect(h.view.posts).toHaveLength(0);
+  });
+});
+
+describe("a committed projection reorders the tree it is published with", () => {
+  /** The worktree ids of the last tree posted to `view`, in published order. */
+  function orderIn(view: { posts: ExtensionToWebViewMessage[] }): string[] {
+    const posts = view.posts.filter(
+      (m): m is Extract<ExtensionToWebViewMessage, { type: "worktreeTreeResponse" }> =>
+        m.type === "worktreeTreeResponse",
+    );
+    const last = posts[posts.length - 1];
+    return last ? last.tree.repos.flatMap((repo) => repo.worktrees.map((w) => w.id)) : [];
+  }
+
+  it("moves a worktree that gained activity, with no git rebuild behind it", async () => {
+    // Order is baked into the cache at assemble time. A presence-only projection
+    // never re-reads git, so without the re-rank the newly active worktree stays
+    // where the last git listing put it (design.md D8).
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+    expect(orderIn(h.view)).toEqual([]);
+
+    fake.setRanks({ "/repo-wt/b": 900 });
+    fake.bumpRevision();
+    h.paneChanged();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    await settle();
+
+    expect(orderIn(h.view)).toEqual(["/repo", "/repo-wt/b", "/repo-wt/a"]);
+    h.host.dispose();
+  });
+
+  it("leaves the order alone when the projection reports the ranking unchanged", async () => {
+    // The poll runs every 5 s and almost never moves anything. Re-sorting every
+    // group per poll prices the copy and the comparator on a tree that is
+    // already in order; the projector knows for free whether it moved
+    // (.reviews/round-2.md W2).
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+    const before = fake.rankLookups();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(fake.rankLookups()).toBe(before);
+    h.host.dispose();
+  });
+
+  it("does not acknowledge a rank change on a cache write that did not apply it", async () => {
+    // Only `reorder` orders the whole cache. `merge` deliberately RETAINS the
+    // stored worktree array for a degraded listing, so a rebuild can write the
+    // cache without establishing the captured ranking — and a marker advanced
+    // there leaves the old order with no mismatch left to notice
+    // (.reviews/round-3.md B3, design.md D12).
+    const repo = breakableRepo(MAIN, A, B);
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector, runner: repo.runner });
+
+    fake.setRanks({ "/repo-wt/b": 900 });
+    fake.bumpRevision();
+    repo.break();
+    h.host.handleMessage(h.view, { type: "requestWorktreeTree", force: true });
+    await settle();
+
+    expect(orderIn(h.view)).toEqual(["/repo", "/repo-wt/b", "/repo-wt/a"]);
+    h.host.dispose();
+  });
+
+  it("moves it back when the activity goes away", async () => {
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+
+    fake.setRanks({ "/repo-wt/b": 900 });
+    fake.bumpRevision();
+    h.paneChanged();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    await settle();
+    expect(orderIn(h.view)).toEqual(["/repo", "/repo-wt/b", "/repo-wt/a"]);
+
+    fake.setRanks({});
+    fake.bumpRevision();
+    h.paneChanged();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    await settle();
+
+    expect(orderIn(h.view)).toEqual(["/repo", "/repo-wt/a", "/repo-wt/b"]);
+    h.host.dispose();
+  });
+});
+
+describe("the external scan is paced, and only while the view is shown", () => {
+  it("polls on the interval, and asks for the external-only pass", async () => {
+    // A full projection every 5 s would re-resolve every pane with no proven
+    // identity — negatives are deliberately not cached — and shell out to `ps`
+    // forever (design.md D6).
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+    const before = fake.calls();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(fake.calls()).toBe(before + 1);
+    expect(fake.modes[fake.modes.length - 1]).toBe(true);
+    h.host.dispose();
+  });
+
+  it("keeps polling — one fire does not end the schedule", async () => {
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+    const before = fake.calls();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(fake.calls()).toBe(before + 2);
+    h.host.dispose();
+  });
+
+  it("stops when the only surface stops showing the view", async () => {
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+
+    h.hide();
+    const before = fake.calls();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS * 4);
+    await settle();
+
+    expect(fake.calls()).toBe(before);
+    h.host.dispose();
+  });
+
+  it("keeps polling while a second surface still shows it", async () => {
+    // "Showing on at least one surface" is a window-level fact; three surfaces
+    // render this view independently.
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+    h.showAnother();
+
+    h.hide();
+    const before = fake.calls();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(fake.calls()).toBe(before + 1);
+    h.host.dispose();
+  });
+
+  it("stops when the last showing surface DETACHES rather than hides", async () => {
+    // Reconciling only on the visibility and displayed edges leaves the timer
+    // armed forever when the surface is disposed out from under it.
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+
+    h.attachment.dispose();
+    const before = fake.calls();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS * 4);
+    await settle();
+
+    expect(fake.calls()).toBe(before);
+    h.host.dispose();
+  });
+
+  it("leaves no timer behind when the host is disposed", async () => {
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+
+    h.host.dispose();
+
+    expect(h.pending()).toBe(0);
+  });
+
+  it("does not poll at all in a host with no projector", async () => {
+    const h = await builtHost();
+    h.view.posts.length = 0;
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS * 3);
+    await settle();
+
+    expect(h.view.posts).toHaveLength(0);
+    h.host.dispose();
+  });
+
+  it("absorbs a pane cap the poll already covers, rather than projecting twice", async () => {
+    // The cap and the poll landing together used to serialize into two
+    // back-to-back projections and two publications.
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+    const before = fake.calls();
+
+    h.paneChanged();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    await settle();
+
+    expect(fake.calls()).toBe(before + 1);
+    h.host.dispose();
+  });
+
+  it("projects the PANES it absorbed, not just something", async () => {
+    // Absorbing the cap into an external-only pass drops the pane evidence that
+    // armed it — the pane pass is exactly what that mode skips. Counting
+    // projections cannot see this; only the mode can (.reviews/round-1.md B1).
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+
+    h.paneChanged();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(fake.modes[fake.modes.length - 1]).toBe(false);
+    h.host.dispose();
+  });
+
+  it("re-runs a full pass when pane evidence lands during an external-only projection", async () => {
+    // Joining without dirtying is right for a poll and wrong for pane evidence:
+    // the run in flight is skipping the very panes that just changed.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector });
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+    const before = blocking.parked.length;
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    expect(blocking.parked).toHaveLength(before + 1);
+
+    h.paneChanged();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    await settle();
+    blocking.parked[before].release(emptyPresence(2));
+    await settle();
+
+    expect(blocking.parked).toHaveLength(before + 2);
+    h.host.dispose();
+  });
+
+  it("leaves the next scan in full mode when the absorbed projection rejects", async () => {
+    // The cap is cancelled the moment the scan absorbs it, so a projection that
+    // then rejects strands the pane evidence that armed it: the next scan reads
+    // a cleared cap and polls external-only forever. The evidence has to outlive
+    // the cap, and only a full projection that COMPLETED may clear it
+    // (.reviews/round-2.md B1).
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector });
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+
+    h.paneChanged();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    expect(blocking.modes[blocking.modes.length - 1]).toBe(false);
+    blocking.parked[blocking.parked.length - 1].fail(new Error("projector blew up"));
+    await settle();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(blocking.modes[blocking.modes.length - 1]).toBe(false);
+    h.host.dispose();
+  });
+
+  it("keeps the evidence outstanding when it arrives after the pass in flight read the panes", async () => {
+    // A boolean says evidence EXISTS; the question is whether THIS pass saw it.
+    // A pane event landing while a full projection is already running is
+    // indistinguishable from one that landed before it, so the pass clears a
+    // flag it never honoured and the next scan polls external-only
+    // (.reviews/round-3.md B1, design.md D11).
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector });
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+
+    h.paneChanged();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    await settle();
+    expect(blocking.modes[blocking.modes.length - 1]).toBe(false);
+
+    h.paneChanged();
+    blocking.parked[blocking.parked.length - 1].release(emptyPresence(2));
+    await settle();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(blocking.modes[blocking.modes.length - 1]).toBe(false);
+    h.host.dispose();
+  });
+
+  it("returns to the external-only pass once a full projection has consumed the evidence", async () => {
+    // The other half of the same rule: a flag that is never cleared turns every
+    // poll into the full pass D6 exists to avoid.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector });
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+
+    h.paneChanged();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    blocking.parked[blocking.parked.length - 1].release(emptyPresence(2));
+    await settle();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(blocking.modes[blocking.modes.length - 1]).toBe(true);
+    h.host.dispose();
+  });
+
+  it("joins a projection already in flight instead of dirtying it", async () => {
+    // A poll carries no new pane evidence. Marking the run in flight dirty would
+    // make it loop once more on release — a second projection bought to answer a
+    // scan the first one was already performing.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector });
+    expect(blocking.parked).toHaveLength(1);
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    blocking.parked[0].release(emptyPresence(9));
+    await settle();
+
+    expect(blocking.parked).toHaveLength(1);
+    h.host.dispose();
+  });
+});
+
+describe("what counts as showing, for the scan", () => {
+  it("keeps polling for a surface whose first post could not be delivered", async () => {
+    // `state.showing` records whether a post actually landed — it stays false
+    // after one that was skipped as not-ready or that threw. Pacing the scan off
+    // it would silently stop scanning for a surface that is showing the view.
+    const fake = fakeProjector();
+    const h = await builtHost({ projector: fake.projector });
+
+    const late: WorktreeSurface & { posts: ExtensionToWebViewMessage[] } = {
+      posts: [],
+      isReady: () => false,
+      post(m) {
+        this.posts.push(m);
+      },
+    };
+    const lateAttachment = h.host.attach(late);
+    h.host.handleMessage(late, { type: "worktreeViewVisibility", visible: true });
+    lateAttachment.setDisplayed(true);
+    expect(late.posts).toHaveLength(0);
+
+    // The surface that DID take a post goes away; only the undeliverable one is
+    // left, and it is showing the view.
+    h.attachment.dispose();
+    const before = fake.calls();
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(fake.calls()).toBe(before + 1);
+    h.host.dispose();
   });
 });

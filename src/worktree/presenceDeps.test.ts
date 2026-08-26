@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DescendantsOutcome, ProcessTableSnapshot } from "../pty/processTableSnapshot";
 import { createProcessTableSnapshot } from "../pty/processTableSnapshot";
 import { createPaneEvidenceStore } from "../session/PaneEvidenceStore";
-import type { RunningClaudeSession } from "../vault/readers/runningSessions";
+import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import { createPresenceProjectorDeps, type PresenceDepsOptions } from "./presenceDeps";
 import { createPresenceProjector } from "./presenceProjector";
 
@@ -31,10 +31,15 @@ function table(outcome: DescendantsOutcome = { kind: "ok", pids: [] }) {
   return { descendantsOf, open } as ProcessTableSnapshot & { descendantsOf: typeof descendantsOf; open: typeof open };
 }
 
+/** A readable registry holding exactly these sessions. */
+function ok(...sessions: RunningClaudeSession[]): RunningSessionsOutcome {
+  return { kind: "ok", sessions };
+}
+
 function wire(over: Partial<PresenceDepsOptions> = {}) {
   const store = createPaneEvidenceStore({ now: () => NOW });
   const processTable = table();
-  const listRunning = vi.fn(async () => [] as RunningClaudeSession[]);
+  const listRunning = vi.fn(async (): Promise<RunningSessionsOutcome> => ok());
   const deps = createPresenceProjectorDeps({
     store,
     table: processTable,
@@ -108,7 +113,7 @@ describe("one read of each shared source per rebuild", () => {
     const base = createPresenceProjectorDeps({
       store,
       table: createProcessTableSnapshot({ exec, platform: "darwin", ttlMs: 1_000, now: () => millis }),
-      listRunning: async () => [],
+      listRunning: async () => ok(),
       sessionMtime: async () => 1,
       now: () => NOW,
     });
@@ -132,7 +137,7 @@ describe("one read of each shared source per rebuild", () => {
   it("indexes the registry once, however many panes resolve against it", async () => {
     // `~/.claude/sessions` is user-wide, so a per-pane filter grows with every
     // live Claude session on the machine, not with this window.
-    const listRunning = vi.fn(async () => [running(), running({ pid: 4343, sessionId: "s2", cwd: "/repo/app" })]);
+    const listRunning = vi.fn(async () => ok(running(), running({ pid: 4343, sessionId: "s2", cwd: "/repo/app" })));
     const { store, projector } = wire({ table: table({ kind: "ok", pids: [] }), listRunning });
     for (const id of ["a", "b", "c", "d", "e"]) {
       store.create(id, { cwd: "/repo", ptyPid: 100 + id.charCodeAt(0) });
@@ -158,7 +163,7 @@ describe("one read of each shared source per rebuild", () => {
     const sessionMtime = vi.fn(async (_sessionId: string) => 1);
     const { store, projector } = wire({
       table: table({ kind: "ok", pids: [4242, 4343] }),
-      listRunning: async () => [running(), running({ pid: 4343, sessionId: "s2" })],
+      listRunning: async () => ok(running(), running({ pid: 4343, sessionId: "s2" })),
       sessionMtime,
     });
     for (const id of ["a", "b", "c", "d"]) {
@@ -176,7 +181,7 @@ describe("resolution", () => {
   it("proves the pane's agent from a live session inside its process subtree", async () => {
     const { store, projector } = wire({
       table: table({ kind: "ok", pids: [4242] }),
-      listRunning: async () => [running()],
+      listRunning: async () => ok(running()),
     });
     store.create("a", { cwd: "/repo", ptyPid: 10 });
 
@@ -206,7 +211,7 @@ describe("resolution", () => {
   it("refuses to claim an agent from a transcript left behind under the directory", async () => {
     // The newest session recorded under a cwd proves an agent ran there once,
     // never that one is in this pane now — a plain shell would inherit it.
-    const { store, projector } = wire({ listRunning: async () => [] });
+    const { store, projector } = wire({ listRunning: async () => ok() });
     store.create("a", { cwd: "/repo", ptyPid: 10 });
 
     const [row] = (await projector.project(["/repo"])).rowsByWorktreeId["/repo"];
@@ -215,7 +220,7 @@ describe("resolution", () => {
   });
 
   it("still resolves by cwd when the subtree lookup finds nothing", async () => {
-    const { store, projector } = wire({ listRunning: async () => [running({ pid: 999, cwd: "/repo/app" })] });
+    const { store, projector } = wire({ listRunning: async () => ok(running({ pid: 999, cwd: "/repo/app" })) });
     store.create("a", { cwd: "/repo/app", ptyPid: 10 });
 
     const [row] = (await projector.project(["/repo"])).rowsByWorktreeId["/repo"];
@@ -225,11 +230,74 @@ describe("resolution", () => {
   it("lets the launch record beat the registry, keeping the session handle", async () => {
     const { store, projector } = wire({
       table: table({ kind: "ok", pids: [4242] }),
-      listRunning: async () => [running()],
+      listRunning: async () => ok(running()),
     });
     store.create("a", { cwd: "/repo", ptyPid: 10, shell: "claude", isAgentLaunch: true });
 
     const [row] = (await projector.project(["/repo"])).rowsByWorktreeId["/repo"];
     expect(row).toMatchObject({ agentSource: "launch", entryId: "claude:s1" });
+  });
+});
+
+describe("the rebuild's registry read, exposed intact", () => {
+  it("hands the external pass the headless-filtered set, not the reader's array", async () => {
+    // The headless drop lives in `indexRunningSessions`. Exposing the reader's
+    // array here would put every hook-spawned `claude -p` on screen as an agent.
+    const listRunning = vi.fn(async () =>
+      ok(
+        running({ sessionId: "real", pid: 10, entrypoint: "cli" }),
+        running({ sessionId: "one-shot", pid: 11, entrypoint: "sdk-cli" }),
+      ),
+    );
+    const { deps } = wire({ listRunning });
+
+    const snapshot = await deps.openSnapshot();
+    const outcome = await snapshot.sessions();
+
+    expect(outcome.kind).toBe("ok");
+    if (outcome.kind === "ok") {
+      expect(outcome.sessions.map((s) => s.sessionId)).toEqual(["real"]);
+    }
+    expect(listRunning).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves the external pass and pane resolution from one read", async () => {
+    const listRunning = vi.fn(async () => ok(running({ pid: 4242, sessionId: "s1", cwd: "/repo" })));
+    const { store, deps } = wire({ listRunning });
+    store.create("a", { cwd: "/repo", ptyPid: 10 });
+
+    const snapshot = await deps.openSnapshot();
+    await snapshot.sessions();
+    await snapshot.resolve({ paneId: "a", ptyPid: 10, cwd: "/repo" });
+    await snapshot.sessions();
+
+    expect(listRunning).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a registry it could not read rather than an empty one", async () => {
+    const { deps } = wire({ listRunning: async () => ({ kind: "failed", reason: "EACCES on the registry" }) });
+
+    const outcome = await (await deps.openSnapshot()).sessions();
+
+    expect(outcome).toEqual({ kind: "failed", reason: "EACCES on the registry" });
+  });
+
+  it("makes pane identity inconclusive when that read failed, naming the registry", async () => {
+    // Without this the failure degrades to an empty index, resolution finds
+    // nothing, and the projector reads that as a CONCLUSIVE absence — clearing
+    // the identity of every pane it had proven (design.md D7).
+    const { deps } = wire({ listRunning: async () => ({ kind: "failed", reason: "EACCES on the registry" }) });
+
+    const lookup = await (await deps.openSnapshot()).resolve({ paneId: "a", ptyPid: 10, cwd: "/repo" });
+
+    expect(lookup).toEqual({ kind: "failed", source: "registry", reason: "EACCES on the registry" });
+  });
+
+  it("still reports the process table when that is the half that failed", async () => {
+    const { deps } = wire({ table: table({ kind: "failed", reason: "`ps` timed out" }) });
+
+    const lookup = await (await deps.openSnapshot()).resolve({ paneId: "a", ptyPid: 10, cwd: "/repo" });
+
+    expect(lookup).toEqual({ kind: "failed", source: "panes", reason: "`ps` timed out" });
   });
 });

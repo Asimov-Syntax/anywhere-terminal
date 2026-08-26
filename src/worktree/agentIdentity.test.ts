@@ -112,7 +112,7 @@ describe("an inconclusive read is not an absence", () => {
     // Falling to `title` here would be the silent downgrade the spec forbids:
     // the caller must be able to retain the identity it last proved.
     const outcome = resolveAgentIdentity(
-      input({ title: "codex", session: { kind: "failed", reason: "`ps` failed: timed out" } }),
+      input({ title: "codex", session: { kind: "failed", source: "panes", reason: "`ps` failed: timed out" } }),
     );
     expect(outcome.kind).toBe("failed");
     if (outcome.kind === "failed") {
@@ -124,9 +124,24 @@ describe("an inconclusive read is not an absence", () => {
   it("does not report failure when a stronger rank already proved identity", () => {
     expect(
       resolveAgentIdentity(
-        input({ isAgentLaunch: true, shell: "claude", session: { kind: "failed", reason: "unreadable" } }),
+        input({
+          isAgentLaunch: true,
+          shell: "claude",
+          session: { kind: "failed", source: "registry", reason: "unreadable" },
+        }),
       ),
     ).toEqual({ kind: "proven", agent: "claude", source: "launch" });
+  });
+
+  it("names the source that failed rather than blaming the pane for all of them", () => {
+    // An unreadable session registry is not a failed process-table read. Folding
+    // both into `panes` would make the stale affordance name the wrong source,
+    // and would hide that the registry — which also feeds the external rows —
+    // is the half that is out.
+    const outcome = resolveAgentIdentity(
+      input({ session: { kind: "failed", source: "registry", reason: "registry unreadable (EACCES)" } }),
+    );
+    expect(outcome).toEqual({ kind: "failed", source: "registry", reason: "registry unreadable (EACCES)" });
   });
 
   it("reports a conclusive empty read as absent, so a real exit clears the row", () => {

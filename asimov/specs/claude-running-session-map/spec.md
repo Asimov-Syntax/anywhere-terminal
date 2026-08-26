@@ -9,6 +9,12 @@ SHALL treat a session as running only when `process.kill(pid, 0)` confirms the p
 alive (an `ESRCH` error marks it stale and SHALL be ignored). Malformed registry files
 SHALL be skipped without failing the scan. The result SHALL be keyed by `sessionId`.
 
+The enumeration SHALL report whether it could read the registry at all, so that a caller can
+distinguish a registry that holds no sessions from one it was unable to read, and SHALL carry
+a reason with the latter. A registry directory that does not exist SHALL be reported as
+holding no sessions rather than as unreadable, since a machine where the agent has never run
+has genuinely none.
+
 `entrypoint` SHALL be carried through verbatim as a string when present and left
 `undefined` otherwise. It MUST NOT be defaulted, because "absent" and "some value we do not
 recognise" both have to stay distinguishable from a known headless value.
@@ -23,6 +29,11 @@ its own pid file carrying a live session's `sessionId` and a newer `startedAt`. 
 dedupe, the interactive entry — whose pid is the one actually inside the pane's process
 subtree — would be discarded before any caller could filter it, and the caller's headless
 filter would then remove the survivor, erasing the session entirely.
+
+#### Scenario: The registry directory cannot be opened
+
+- **WHEN** the registry directory exists but cannot be read
+- **THEN** the enumeration reports that it was unreadable, with a reason, rather than reporting no sessions
 
 ### Requirement: Map a terminal to its Claude session
 

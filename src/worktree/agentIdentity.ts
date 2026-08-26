@@ -20,7 +20,16 @@ import type { PresenceDegradation, WorktreeAgentRow } from "./presenceTypes";
 export type SessionLookup =
   | { kind: "resolved"; agent: VaultAgentId; sessionId: string }
   | { kind: "absent" }
-  | { kind: "failed"; reason: string };
+  | {
+      kind: "failed";
+      /**
+       * Which source could not answer. An unreadable session registry is not a
+       * failed process-table read, and the stale affordance names what is
+       * actually out — the registry also feeds the external rows.
+       */
+      source: PresenceDegradation["source"];
+      reason: string;
+    };
 
 export interface IdentityInput {
   /** Set while an agent CLI is this pane's root process; cleared on fallback respawn. */
@@ -70,7 +79,7 @@ export function resolveAgentIdentity(input: IdentityInput): IdentityOutcome {
     return { kind: "proven", agent: session.agent, source: "registry", ...entryId };
   }
   if (session.kind === "failed") {
-    return { kind: "failed", source: "panes", reason: session.reason };
+    return { kind: "failed", source: session.source, reason: session.reason };
   }
 
   // Rank 4 — the title commits to an agent. Weakest rank, so it is reached only

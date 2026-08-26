@@ -17,7 +17,8 @@
 import type { PaneEvidence } from "../session/PaneEvidenceStore";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import { isPathInside } from "../utils/pathBoundary";
-import type { VaultAgentId } from "../vault/types";
+import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
+import { formatEntryId, type VaultAgentId } from "../vault/types";
 import { resolveAgentIdentity, type SessionLookup } from "./agentIdentity";
 import type { PresenceDegradation, WorktreeAgentRow, WorktreePresence } from "./presenceTypes";
 
@@ -33,6 +34,13 @@ export type Pane = PaneEvidence & { paneId: string };
  */
 export interface ResolutionSnapshot {
   resolve(pane: { paneId: string; ptyPid?: number; cwd?: string }): Promise<SessionLookup>;
+  /**
+   * This rebuild's registry read, outcome intact and headless already dropped.
+   *
+   * The external pass consumes the same read pane resolution took, so external
+   * rows cost no additional scan (design.md D2).
+   */
+  sessions(): Promise<RunningSessionsOutcome>;
 }
 
 /** A pane's activity together with the rule that produced it. */
@@ -52,10 +60,39 @@ export interface PresenceProjectorDeps {
   now?(): number;
 }
 
+/** How much of the projection to run. */
+export interface ProjectOptions {
+  /**
+   * Skip the pane pass and replay what the last full pass produced, running only
+   * the registry read and the external pass.
+   *
+   * This is what the 5-second poll uses. A full pass re-resolves every pane with
+   * no proven identity — negatives are deliberately not cached — so polling one
+   * would shell out to `ps` every five seconds for the life of the window (D6).
+   */
+  external?: boolean;
+}
+
 export interface PresenceProjector {
-  project(worktreeIds: readonly string[]): Promise<WorktreePresence>;
+  project(worktreeIds: readonly string[], options?: ProjectOptions): Promise<WorktreePresence>;
   /** Newest `lastActivityAt` under this worktree; absent before any projection. */
   rank(worktreeId: string): number | undefined;
+  /**
+   * A monotonic count of how many times the ranking published through `rank`
+   * has changed.
+   *
+   * The 5-second poll makes re-sorting every group a standing cost, and the
+   * poll that changes nothing is the common case. The projector already builds
+   * the new ranking beside the retained one, so it can price this for free
+   * where the caller could only guess (.reviews/round-2.md W2).
+   *
+   * A revision rather than a "did it move" flag, because the consumer is not
+   * the only thing that consumes projections: a pass the host DISCARDS still
+   * advances the projector, and a flag read after the identical rerun would say
+   * the ranking never moved while the cache still holds the older order
+   * (.reviews/round-3.md B3, design.md D12).
+   */
+  rankRevision(): number;
 }
 
 /** A proven identity, kept so a failed re-read cannot demote the row (D10). */
@@ -87,6 +124,17 @@ interface PaneState {
   stateStartedAt?: number;
   finishedAt?: number;
   lastActivityAt?: number;
+}
+
+/**
+ * The only agent the PID registry describes. Presence never invents an agent id,
+ * and no other CLI publishes a registry to read.
+ */
+const REGISTRY_AGENT: VaultAgentId = "claude";
+
+/** The one owner of an external row's identity: row creation and eviction share it. */
+function externalRowId(sessionId: string): string {
+  return `external:${REGISTRY_AGENT}:${sessionId}`;
 }
 
 /** The webview re-renders on any change to this field, so it moves once a second (D11). */
@@ -141,6 +189,42 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   const states = new Map<string, PaneState>();
   const failingSince = new Map<PresenceDegradation["source"], number>();
   const ranks = new Map<string, number>();
+  /** Bumped whenever the ranking `ranks` holds differs from the one it replaced. */
+  let rankRevision = 0;
+  /**
+   * When each external row was first seen, for a session whose registry file
+   * carries no launch time. Evicted against the sessions of a SUCCESSFUL read
+   * only — a failed read's empty set would clear exactly the state the
+   * retention rule exists to keep (D4).
+   */
+  const externalSeen = new Map<string, number>();
+  /**
+   * The last registry read that concluded, replaced on each success — never
+   * accumulated.
+   *
+   * The INPUTS are retained, not the rows. The worktree set moves independently
+   * of the registry, and cached rows would keep naming a worktree the tree no
+   * longer holds — the one thing the envelope contract forbids. Replaying the
+   * list re-attributes it against the tree the projection is published with (D4).
+   */
+  let lastSessions: readonly RunningClaudeSession[] = [];
+  /**
+   * What the last full pass concluded about this window's own panes, kept so an
+   * external-only pass can publish a whole envelope without re-running it.
+   *
+   * `worktreeIds` is part of it: a replay attributed against a different tree
+   * could name a worktree the tree no longer holds, so a moved set falls back to
+   * a full pass rather than replaying into it.
+   */
+  let lastWindowPass:
+    | {
+        worktreeIds: readonly string[];
+        rows: ReadonlyArray<{ worktreeId: string; row: WorktreeAgentRow }>;
+        ranks: ReadonlyMap<string, number>;
+        failures: ReadonlyMap<PresenceDegradation["source"], string>;
+        claimed: ReadonlySet<string>;
+      }
+    | undefined;
 
   function clock(): number {
     return deps.now?.() ?? Date.now();
@@ -243,65 +327,228 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     state.lastActivityAt = Math.max(state.lastActivityAt ?? 0, quantizeToSecond(evidenceAt));
   }
 
+  /**
+   * The live registry sessions this window does not already account for, as
+   * rows under the worktree holding each session's directory.
+   *
+   * Sorted by `rowId` before they are grouped: the reader's own order follows
+   * `readdir` and `Map` insertion, and the render signature is row-order
+   * sensitive, so an unsorted append re-renders on a poll that found nothing
+   * new (D5).
+   */
+  function externalRows(
+    sessions: readonly RunningClaudeSession[],
+    worktreeIds: readonly string[],
+    claimed: ReadonlySet<string>,
+    now: number,
+  ): Array<{ worktreeId: string; row: WorktreeAgentRow }> {
+    const out: Array<{ worktreeId: string; row: WorktreeAgentRow }> = [];
+    for (const session of sessions) {
+      const entryId = formatEntryId(REGISTRY_AGENT, session.sessionId);
+      // A session a pane already proved is that pane's row, never a second one
+      // telling the user it is running somewhere else.
+      if (claimed.has(entryId)) {
+        continue;
+      }
+      const worktreeId = attribute(deps.normalize(session.cwd), worktreeIds);
+      if (worktreeId === undefined) {
+        continue;
+      }
+      const rowId = externalRowId(session.sessionId);
+      // The scan time is never the answer: it would move the ordering key every
+      // poll and claim activity the registry never gave. A registry file with
+      // no launch time gets the moment this projection first saw it instead.
+      const startedAt = session.startedAt ?? externalSeen.get(rowId) ?? now;
+      externalSeen.set(rowId, startedAt);
+      out.push({
+        worktreeId,
+        row: {
+          rowId,
+          scope: "external",
+          agent: REGISTRY_AGENT,
+          agentSource: "registry",
+          activity: "running",
+          activitySource: "registry",
+          entryId,
+          pid: session.pid,
+          startedAt,
+          stateStartedAt: startedAt,
+          lastActivityAt: startedAt,
+        },
+      });
+    }
+    out.sort((a, b) => (a.row.rowId < b.row.rowId ? -1 : a.row.rowId > b.row.rowId ? 1 : 0));
+    return out;
+  }
+
+  /**
+   * This window's panes, as rows — and the sessions they claim.
+   *
+   * Lifted out of `project` so an external-only pass can skip it whole rather
+   * than run it and throw the result away (D6). The returned set is every
+   * session this window proved, whatever became of the pane's row.
+   */
+  async function projectPanes(
+    worktreeIds: readonly string[],
+    snapshot: ResolutionSnapshot,
+    now: number,
+    failures: Map<PresenceDegradation["source"], string>,
+    rowsByWorktreeId: Record<string, WorktreeAgentRow[]>,
+    nextRanks: Map<string, number>,
+  ): Promise<ReadonlySet<string>> {
+    const panes = deps.panes();
+
+    const live = new Set(panes.map((pane) => pane.paneId));
+    for (const paneId of states.keys()) {
+      if (!live.has(paneId)) {
+        states.delete(paneId);
+      }
+    }
+
+    // The external pass drops these: a session claimed by a pane is that pane's
+    // row, never a second one labelled "other window" (D3).
+    const claimed = new Set<string>();
+
+    for (const pane of panes) {
+      let state = states.get(pane.paneId);
+      if (!state) {
+        state = {};
+        states.set(pane.paneId, state);
+      }
+
+      // Resolved BEFORE attribution decides anything. A pane whose directory
+      // is unknown, or which no worktree contains, produces no row — but it is
+      // still a pane in this window, and the session it holds must not be free
+      // for the external pass to claim.
+      const identity = await identify(pane, state, snapshot, failures);
+      if (identity?.entryId !== undefined) {
+        claimed.add(identity.entryId);
+      }
+
+      // Guessing a worktree for an unknown directory would put a row under a
+      // tree the pane may not be in at all.
+      const worktreeId = pane.cwd === undefined ? undefined : attribute(deps.normalize(pane.cwd), worktreeIds);
+      if (worktreeId === undefined) {
+        continue;
+      }
+
+      const reading = deps.activityFor(pane.paneId, now) ?? { activity: "idle" as const, rule: "quiet" as const };
+      const activity = reading.activity;
+      stamp(state, identity, activity, pane, now);
+
+      const row: WorktreeAgentRow = {
+        rowId: `window:${pane.paneId}`,
+        scope: "window",
+        paneId: pane.paneId,
+        viewId: pane.viewId,
+        title: pane.title,
+        agent: identity?.agent,
+        agentSource: identity?.source ?? "none",
+        activity,
+        activitySource: activitySourceFor(reading.rule),
+        entryId: identity?.entryId,
+        startedAt: state.startedAt,
+        stateStartedAt: state.stateStartedAt,
+        finishedAt: state.finishedAt,
+        lastActivityAt: state.lastActivityAt,
+      };
+
+      (rowsByWorktreeId[worktreeId] ??= []).push(row);
+      const at = state.lastActivityAt;
+      if (at !== undefined) {
+        nextRanks.set(worktreeId, Math.max(nextRanks.get(worktreeId) ?? 0, at));
+      }
+    }
+
+    lastWindowPass = {
+      worktreeIds: [...worktreeIds],
+      rows: Object.entries(rowsByWorktreeId).flatMap(([worktreeId, rows]) => rows.map((row) => ({ worktreeId, row }))),
+      ranks: new Map(nextRanks),
+      failures: new Map(failures),
+      claimed,
+    };
+    return claimed;
+  }
+
+  /** Same worktree ids, same order — the tree the replay was attributed against. */
+  /**
+   * Does the replay describe the same worktrees — in any order?
+   *
+   * Membership, never position. The host supplies these in CACHE order, and D12's
+   * reorder changes that order without changing membership, so a positional
+   * comparison would make the first poll after every ranking change reject its
+   * own replay and resolve panes (.reviews/round-4.md W3).
+   */
+  function sameTree(a: readonly string[], b: readonly string[]): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+    const held = new Set(a);
+    return b.every((id) => held.has(id));
+  }
+
   return {
-    async project(worktreeIds) {
+    async project(worktreeIds, options) {
       const now = clock();
       const snapshot = await deps.openSnapshot();
-      const panes = deps.panes();
-
-      const live = new Set(panes.map((pane) => pane.paneId));
-      for (const paneId of states.keys()) {
-        if (!live.has(paneId)) {
-          states.delete(paneId);
-        }
-      }
 
       const failures = new Map<PresenceDegradation["source"], string>();
       const rowsByWorktreeId: Record<string, WorktreeAgentRow[]> = {};
       const nextRanks = new Map<string, number>();
+      let claimed: ReadonlySet<string>;
 
-      for (const pane of panes) {
-        // A pane whose directory is unknown cannot be attributed to anything;
-        // guessing a worktree for it would put a row under a tree the pane may
-        // not be in at all.
-        if (pane.cwd === undefined) {
-          continue;
+      const replay =
+        options?.external === true && lastWindowPass !== undefined && sameTree(lastWindowPass.worktreeIds, worktreeIds)
+          ? lastWindowPass
+          : undefined;
+
+      if (replay) {
+        for (const { worktreeId, row } of replay.rows) {
+          (rowsByWorktreeId[worktreeId] ??= []).push(row);
         }
-        const worktreeId = attribute(deps.normalize(pane.cwd), worktreeIds);
-        if (worktreeId === undefined) {
-          continue;
+        for (const [worktreeId, at] of replay.ranks) {
+          nextRanks.set(worktreeId, at);
         }
-
-        let state = states.get(pane.paneId);
-        if (!state) {
-          state = {};
-          states.set(pane.paneId, state);
+        // A source this pass never re-checked has not healed. Dropping it here
+        // would report the process table healthy on the strength of not looking.
+        //
+        // The registry is the one exception, and it is not an exception at all:
+        // this pass DOES re-read it, so its own outcome owns that entry. Copying
+        // the replayed one forward would leave the registry marked degraded for
+        // the life of the window after it recovered (.reviews/round-1.md B2).
+        for (const [source, reason] of replay.failures) {
+          if (source !== "registry") {
+            failures.set(source, reason);
+          }
         }
+        claimed = replay.claimed;
+      } else {
+        claimed = await projectPanes(worktreeIds, snapshot, now, failures, rowsByWorktreeId, nextRanks);
+      }
 
-        const identity = await identify(pane, state, snapshot, failures);
-        const reading = deps.activityFor(pane.paneId, now) ?? { activity: "idle" as const, rule: "quiet" as const };
-        const activity = reading.activity;
-        stamp(state, identity, activity, pane, now);
-
-        const row: WorktreeAgentRow = {
-          rowId: `window:${pane.paneId}`,
-          scope: "window",
-          paneId: pane.paneId,
-          viewId: pane.viewId,
-          title: pane.title,
-          agent: identity?.agent,
-          agentSource: identity?.source ?? "none",
-          activity,
-          activitySource: activitySourceFor(reading.rule),
-          entryId: identity?.entryId,
-          startedAt: state.startedAt,
-          stateStartedAt: state.stateStartedAt,
-          finishedAt: state.finishedAt,
-          lastActivityAt: state.lastActivityAt,
-        };
-
+      const read = await snapshot.sessions();
+      if (read.kind === "failed") {
+        // Retention, not staleness by accident: the rows stay and the source is
+        // named, so the user sees what was last true AND that it is not fresh.
+        if (!failures.has("registry")) {
+          failures.set("registry", read.reason);
+        }
+      }
+      const sessions = read.kind === "ok" ? read.sessions : lastSessions;
+      if (read.kind === "ok") {
+        lastSessions = read.sessions;
+        // Eviction rides a successful read, and only a successful read: it is
+        // the one answer that proves a session is gone rather than unknown.
+        const alive = new Set(sessions.map((s) => externalRowId(s.sessionId)));
+        for (const rowId of externalSeen.keys()) {
+          if (!alive.has(rowId)) {
+            externalSeen.delete(rowId);
+          }
+        }
+      }
+      for (const { worktreeId, row } of externalRows(sessions, worktreeIds, claimed, now)) {
         (rowsByWorktreeId[worktreeId] ??= []).push(row);
-        const at = state.lastActivityAt;
+        const at = row.lastActivityAt;
         if (at !== undefined) {
           nextRanks.set(worktreeId, Math.max(nextRanks.get(worktreeId) ?? 0, at));
         }
@@ -322,6 +569,9 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         degradedSources.push({ source, reason, since });
       }
 
+      if (!sameRanking(ranks, nextRanks)) {
+        rankRevision += 1;
+      }
       ranks.clear();
       for (const [worktreeId, at] of nextRanks) {
         ranks.set(worktreeId, at);
@@ -333,5 +583,22 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     rank(worktreeId) {
       return ranks.get(worktreeId);
     },
+
+    rankRevision() {
+      return rankRevision;
+    },
   };
+}
+
+/** Do two rankings order every worktree the same way, by the same timestamps? */
+function sameRanking(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const [worktreeId, at] of a) {
+    if (b.get(worktreeId) !== at) {
+      return false;
+    }
+  }
+  return true;
 }

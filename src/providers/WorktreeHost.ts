@@ -28,6 +28,14 @@ const LOG_PREFIX = "[worktree-host]";
  */
 export const PRESENCE_MAX_LATENCY_MS = 150;
 
+/**
+ * How often the running-session registry is scanned for agents outside this
+ * window. Flat, because the registry emits no events and the scan is a readdir,
+ * a JSON parse per entry and a liveness probe — tiered cadences would be more
+ * machinery than the thing being paced.
+ */
+export const EXTERNAL_SCAN_INTERVAL_MS = 5_000;
+
 /** The gate scope that rebuilds every repository; any other scope is a repoId. */
 export const WHOLE_TREE_SCOPE = "*";
 
@@ -86,6 +94,17 @@ export interface WorktreeHost extends vscode.Disposable {
   handleMessage(surface: WorktreeSurface, msg: WebViewToExtensionMessage): void;
 }
 
+/** What one projection request wants. */
+interface ProjectionRequest {
+  /** Skip the pane pass — the poll's mode (design.md D6). */
+  external?: boolean;
+  /**
+   * Join a run already in flight rather than marking it dirty. A caller with no
+   * new pane evidence wants an envelope, not a second projection.
+   */
+  join?: boolean;
+}
+
 interface SurfaceState {
   /**
    * False until the surface says otherwise. All three surfaces retain their DOM
@@ -137,11 +156,40 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   let projectionRun: Promise<void> | undefined;
   let projectionDirty = false;
   let capHandle: unknown;
+  /** The external-scan timer, armed only while some surface is showing the view. */
+  let scanHandle: unknown;
+  /** Whether the next projection iteration may skip the pane pass. */
+  let nextExternalOnly = false;
+  /**
+   * Pane events counted, and the count the last full projection actually
+   * applied. Work is outstanding while they differ (design.md D11).
+   *
+   * Not a boolean, and not "is a cap armed". A boolean answers "is there
+   * evidence" where the question is "has THIS pass seen it", so a pane event
+   * landing while a projection is already reading panes is indistinguishable
+   * from one that landed before it, and the pass clears a flag it never
+   * honoured (.reviews/round-3.md B1). The cap is a latency device only: the
+   * scan cancels it, which must not destroy evidence (.reviews/round-2.md B1).
+   */
+  let paneEvidence = 0;
+  let paneEvidenceApplied = 0;
+  /**
+   * The rank revision the cached ORDER was built from.
+   *
+   * Advanced at exactly one site — after `cache.reorder`, the only cache-wide
+   * ordering operation. A rebuild's write must not acknowledge it: `applyRepo`
+   * orders one repository and rebuilds are serialized per scope, and `merge`
+   * retains the stored worktree array for a degraded listing, so neither write
+   * establishes the ranking it captured (design.md D12).
+   */
+  let appliedRankRevision = projector?.rankRevision() ?? 0;
 
   function armCap(fn: () => void): unknown {
-    return options.clock
-      ? options.clock.setTimeout(fn, PRESENCE_MAX_LATENCY_MS)
-      : setTimeout(fn, PRESENCE_MAX_LATENCY_MS);
+    return arm(fn, PRESENCE_MAX_LATENCY_MS);
+  }
+
+  function arm(fn: () => void, ms: number): unknown {
+    return options.clock ? options.clock.setTimeout(fn, ms) : setTimeout(fn, ms);
   }
 
   function cancelCap(handle: unknown): void {
@@ -176,6 +224,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (projector && projectedVersion !== treeVersion) {
       return false;
     }
+    // Ordering is baked into the cache at `assembleRepo` time, from the rank the
+    // projector held then. A presence-only projection never re-reads git, so
+    // re-applying the rank here is the only thing that moves a worktree which
+    // just gained — or just lost — an agent (design.md D8). Asked of the
+    // projector rather than assumed: the 5-second poll is the caller, and the
+    // poll that moved nothing is the common case (.reviews/round-2.md W2).
+    const revision = projector?.rankRevision();
+    if (revision !== undefined && revision !== appliedRankRevision) {
+      cache.reorder(discoveryDeps.rank);
+      appliedRankRevision = revision;
+    }
     published = { tree: cache.read(), presence: presence() };
     return true;
   }
@@ -191,12 +250,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * re-run. Dropping it is how a pane transition disappears until some later,
    * unrelated evidence event happens to trigger another projection.
    */
-  async function projectOnce(): Promise<void> {
+  async function projectOnce(externalOnly: boolean): Promise<void> {
     if (!projector || disposed) {
       return;
     }
     const at = treeVersion;
-    const next = await projector.project(worktreeIds());
+    const next = await projector.project(worktreeIds(), externalOnly ? { external: true } : undefined);
     if (disposed) {
       return;
     }
@@ -218,7 +277,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * arriving mid-flight joins the run in progress rather than starting a second
    * (.reviews/round-1.md B1).
    */
-  function requestProjection(): Promise<void> {
+  function requestProjection(request: ProjectionRequest = {}): Promise<void> {
     if (disposed) {
       return Promise.resolve();
     }
@@ -228,15 +287,42 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return Promise.resolve();
     }
     if (projectionRun) {
+      if (request.join === true) {
+        // The poll wants an envelope, not fresh pane work. Dirtying the run in
+        // flight would buy a second projection to answer a scan the first one
+        // is already performing.
+        return projectionRun;
+      }
+      // Everything else carries pane evidence, and the run in flight may be an
+      // external-only pass that is skipping exactly those panes.
       projectionDirty = true;
+      // New pane evidence: the re-run has to look at the panes.
+      nextExternalOnly = false;
       return projectionRun;
     }
+    nextExternalOnly = request.external === true;
     const run = (async () => {
       let clean = true;
+      let applied = paneEvidenceApplied;
       try {
         do {
           projectionDirty = false;
-          await projectOnce();
+          const externalOnly = nextExternalOnly;
+          nextExternalOnly = false;
+          // Captured BEFORE the pass reads the panes, so an event arriving
+          // during it stays outstanding. The failure this chooses is one
+          // redundant full pass; the other choice loses the transition (D11).
+          const evidenceAt = paneEvidence;
+          await projectOnce(externalOnly);
+          // Dirty means this pass was invalidated — by a tree that moved under
+          // it, or by pane evidence that arrived after it read the panes. Either
+          // way it applied nothing. Defence in depth today: a dirty iteration
+          // always forces a FULL rerun, whose own capture is at least this one,
+          // so no test can reach it. It is what keeps D11 true if that ever
+          // stops holding.
+          if (!externalOnly && !projectionDirty) {
+            applied = Math.max(applied, evidenceAt);
+          }
         } while (projectionDirty && !disposed);
       } catch (err) {
         clean = false;
@@ -246,6 +332,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       // either joined this cycle already or starts the next one — it cannot
       // mark a cycle dirty that has stopped looking.
       projectionRun = undefined;
+      if (clean) {
+        paneEvidenceApplied = Math.max(paneEvidenceApplied, applied);
+      }
       if (disposed) {
         return;
       }
@@ -288,9 +377,58 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     }
   }
 
+  /**
+   * Arm or clear the scan against one window-level fact: is any attached surface
+   * showing the view right now?
+   *
+   * Read live rather than from `state.showing`, which stays false after a post
+   * that was skipped or threw and so is not a safe predicate for this.
+   */
+  function reconcileScan(): void {
+    const wanted = !disposed && projector !== undefined && anyShowing();
+    if (wanted === (scanHandle !== undefined)) {
+      return;
+    }
+    if (!wanted) {
+      cancelCap(scanHandle);
+      scanHandle = undefined;
+      return;
+    }
+    armScan();
+  }
+
+  function anyShowing(): boolean {
+    for (const state of surfaces.values()) {
+      if (state.visible && state.displayed) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function armScan(): void {
+    scanHandle = arm(() => {
+      scanHandle = undefined;
+      // A pending cap means pane evidence is waiting to be projected. Absorbing
+      // it is only honest if this projection actually looks at the panes — the
+      // external-only pass is precisely the one that does not, so absorbing into
+      // it would drop that evidence for good (.reviews/round-1.md B1).
+      if (capHandle !== undefined) {
+        cancelCap(capHandle);
+        capHandle = undefined;
+      }
+      void requestProjection(paneEvidence !== paneEvidenceApplied ? {} : { external: true, join: true });
+      reconcileScan();
+    }, EXTERNAL_SCAN_INTERVAL_MS);
+  }
+
   function onPaneChange(): void {
     // Nothing to attribute a pane to yet; the first build projects for itself.
-    if (disposed || !projector || !built || capHandle !== undefined) {
+    if (disposed || !projector || !built) {
+      return;
+    }
+    paneEvidence += 1;
+    if (capHandle !== undefined) {
       return;
     }
     capHandle = armCap(() => {
@@ -469,12 +607,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   function attach(surface: WorktreeSurface): WorktreeAttachment {
     surfaces.set(surface, { visible: false, displayed: false, showing: false });
     return {
-      dispose: () => surfaces.delete(surface),
+      dispose: () => {
+        surfaces.delete(surface);
+        // Detaching is a falling edge too: the last showing surface going away
+        // this way would otherwise leave the scan armed for the window's life.
+        reconcileScan();
+      },
       setDisplayed: (displayed: boolean) => {
         const state = surfaces.get(surface);
         if (state) {
           state.displayed = displayed;
           reconcileShowing(surface, state, true);
+          reconcileScan();
         }
       },
     };
@@ -489,6 +633,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeViewVisibility":
         state.visible = msg.visible;
         reconcileShowing(surface, state, false);
+        reconcileScan();
         return;
       case "requestWorktreeTree":
         // Nothing to serve before the first build, whatever the caller asked for.
@@ -523,6 +668,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       if (capHandle !== undefined) {
         cancelCap(capHandle);
         capHandle = undefined;
+      }
+      if (scanHandle !== undefined) {
+        cancelCap(scanHandle);
+        scanHandle = undefined;
       }
       gate.dispose();
       paneSub?.dispose();

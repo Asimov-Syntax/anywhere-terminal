@@ -6,6 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
+import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import type { SessionLookup } from "./agentIdentity";
 import { createPresenceProjector, type Pane, type PresenceProjectorDeps } from "./presenceProjector";
 
@@ -22,6 +23,7 @@ function makeProjector(initial: Pane[] = []) {
   const panes = [...initial];
   const activity = new Map<string, { activity: PaneActivity; rule: ActivityRule }>();
   let lookup: (paneId: string) => SessionLookup = () => ({ kind: "absent" });
+  let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
   let snapshots = 0;
   let resolves = 0;
 
@@ -35,6 +37,7 @@ function makeProjector(initial: Pane[] = []) {
           resolves += 1;
           return lookup(p.paneId);
         },
+        sessions: async () => registry,
       };
     },
     normalize: (p) => p,
@@ -51,6 +54,9 @@ function makeProjector(initial: Pane[] = []) {
     },
     setLookup(next: (paneId: string) => SessionLookup) {
       lookup = next;
+    },
+    setRegistry(next: RunningSessionsOutcome) {
+      registry = next;
     },
     counts: () => ({ snapshots, resolves }),
   };
@@ -88,7 +94,10 @@ describe("attribution", () => {
     const projector = createPresenceProjector({
       panes: () => panes,
       activityFor: () => ({ activity: "idle", rule: "quiet" }),
-      openSnapshot: async () => ({ resolve: async () => ({ kind: "absent" }) }),
+      openSnapshot: async () => ({
+        resolve: async () => ({ kind: "absent" }),
+        sessions: async () => ({ kind: "ok", sessions: [] }),
+      }),
       normalize: (p) => p.toLowerCase(),
       now: () => clock,
     });
@@ -215,7 +224,7 @@ describe("an inconclusive read retains identity", () => {
     await h.projector.project([WT]);
 
     h.panes[0] = pane({ paneId: "a", ptyPid: 43 });
-    h.setLookup(() => ({ kind: "failed", reason: "`ps` timed out" }));
+    h.setLookup(() => ({ kind: "failed", source: "panes", reason: "`ps` timed out" }));
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
     expect(row).toMatchObject({ agent: "claude", agentSource: "registry", entryId: "claude:s1" });
   });
@@ -227,7 +236,7 @@ describe("an inconclusive read retains identity", () => {
     await h.projector.project([WT]);
 
     h.panes[0] = pane({ paneId: "a", ptyPid: 43 });
-    h.setLookup(() => ({ kind: "failed", reason: "unreadable" }));
+    h.setLookup(() => ({ kind: "failed", source: "panes", reason: "unreadable" }));
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
     expect(row.activity).toBe("running");
   });
@@ -248,7 +257,7 @@ describe("an inconclusive read retains identity", () => {
 describe("a failed source degrades its scope", () => {
   it("names the source, the reason, and when it first failed", async () => {
     const h = makeProjector([pane({ paneId: "a" })]);
-    h.setLookup(() => ({ kind: "failed", reason: "`ps` timed out" }));
+    h.setLookup(() => ({ kind: "failed", source: "panes", reason: "`ps` timed out" }));
     const first = await h.projector.project([WT]);
     expect(first.degradedSources).toEqual([{ source: "panes", reason: "`ps` timed out", since: clock }]);
 
@@ -265,7 +274,7 @@ describe("a failed source degrades its scope", () => {
 
   it("clears the entry once the source answers again", async () => {
     const h = makeProjector([pane({ paneId: "a" })]);
-    h.setLookup(() => ({ kind: "failed", reason: "unreadable" }));
+    h.setLookup(() => ({ kind: "failed", source: "panes", reason: "unreadable" }));
     await h.projector.project([WT]);
     h.setLookup(() => ({ kind: "absent" }));
     expect((await h.projector.project([WT])).degradedSources).toEqual([]);
@@ -273,7 +282,7 @@ describe("a failed source degrades its scope", () => {
 
   it("names a source once however many panes it failed for", async () => {
     const h = makeProjector([pane({ paneId: "a" }), pane({ paneId: "b" })]);
-    h.setLookup(() => ({ kind: "failed", reason: "unreadable" }));
+    h.setLookup(() => ({ kind: "failed", source: "panes", reason: "unreadable" }));
     expect((await h.projector.project([WT])).degradedSources).toHaveLength(1);
   });
 });
@@ -416,6 +425,7 @@ describe("one read per rebuild", () => {
             clock += 60_000;
             return { kind: "absent" };
           },
+          sessions: async () => ({ kind: "ok", sessions: [] }),
         };
       },
       normalize: (p) => p,
@@ -431,12 +441,513 @@ describe("one read per rebuild", () => {
     const projector = createPresenceProjector({
       panes: () => panes,
       activityFor: () => ({ activity: "idle", rule: "quiet" }),
-      openSnapshot: async () => ({ resolve: async () => ({ kind: "absent" }) }),
+      openSnapshot: async () => ({
+        resolve: async () => ({ kind: "absent" }),
+        sessions: async () => ({ kind: "ok", sessions: [] }),
+      }),
       normalize: (p) => p,
       now,
     });
     const presence = await projector.project([WT]);
     expect(now).toHaveBeenCalledTimes(1);
     expect(presence.scannedAt).toBe(clock);
+  });
+});
+
+describe("every pane claims its session, whether or not it produces a row", () => {
+  it("resolves a pane whose directory is inside no worktree", async () => {
+    // Resolution ordered after attribution would leave this pane unresolved, and
+    // the session it is running would then be free to surface as an external row
+    // labelled "other window" — in the very window that owns it (design.md D3).
+    const h = makeProjector([pane({ paneId: "elsewhere", cwd: "/somewhere/else" })]);
+
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.rowsByWorktreeId).toEqual({});
+    expect(h.counts().resolves).toBe(1);
+  });
+
+  it("resolves a pane whose directory is not known yet", async () => {
+    const h = makeProjector([pane({ paneId: "nocwd", cwd: undefined })]);
+
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.rowsByWorktreeId).toEqual({});
+    expect(h.counts().resolves).toBe(1);
+  });
+
+  it("keeps the identity it proved for an unattributed pane, so a later rebuild reuses it", async () => {
+    const h = makeProjector([pane({ paneId: "elsewhere", cwd: "/somewhere/else" })]);
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s9" }));
+
+    await h.projector.project([WT]);
+    await h.projector.project([WT]);
+
+    expect(h.counts().resolves).toBe(1);
+  });
+});
+
+describe("external rows — agents running outside this window", () => {
+  function session(over: Partial<RunningClaudeSession> = {}): RunningClaudeSession {
+    return { sessionId: "s1", cwd: WT, pid: 4242, startedAt: 1_600_000_000_000, ...over };
+  }
+
+  function withRegistry(...sessions: RunningClaudeSession[]) {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions });
+    return h;
+  }
+
+  it("renders a live registry session under the worktree holding its directory", async () => {
+    const h = withRegistry(session({ cwd: `${WT}/src` }));
+
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.rowsByWorktreeId[WT]).toEqual([
+      {
+        rowId: "external:claude:s1",
+        scope: "external",
+        agent: "claude",
+        agentSource: "registry",
+        activity: "running",
+        activitySource: "registry",
+        entryId: "claude:s1",
+        pid: 4242,
+        startedAt: 1_600_000_000_000,
+        stateStartedAt: 1_600_000_000_000,
+        lastActivityAt: 1_600_000_000_000,
+      },
+    ]);
+  });
+
+  it("carries no pane and no view, which is what makes the scope trustworthy", async () => {
+    const h = withRegistry(session());
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+    expect(row.paneId).toBeUndefined();
+    expect(row.viewId).toBeUndefined();
+    expect(row.finishedAt).toBeUndefined();
+  });
+
+  it("yields to the pane that already claims the session", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1" })] });
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.map((r) => r.rowId)).toEqual(["window:a"]);
+  });
+
+  it("yields even when the claiming pane is inside no worktree", async () => {
+    // The pane produces no row, so the session would otherwise be free — and
+    // labelled as running in another window, in the window running it.
+    const h = makeProjector([pane({ paneId: "a", cwd: "/somewhere/else" })]);
+    h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1", cwd: WT })] });
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+
+    expect((await h.projector.project([WT])).rowsByWorktreeId).toEqual({});
+  });
+
+  it("drops a session no worktree contains", async () => {
+    const h = withRegistry(session({ cwd: "/elsewhere" }));
+    expect((await h.projector.project([WT])).rowsByWorktreeId).toEqual({});
+  });
+
+  it("gives a nested worktree the session, not the tree containing it", async () => {
+    const h = withRegistry(session({ cwd: `${NESTED}/src` }));
+
+    const presence = await h.projector.project([WT, NESTED]);
+
+    expect(presence.rowsByWorktreeId[NESTED]).toHaveLength(1);
+    expect(presence.rowsByWorktreeId[WT]).toBeUndefined();
+  });
+
+  it("orders external rows by rowId, so the same set never re-renders", async () => {
+    // The reader's order follows readdir and Map insertion, and the render
+    // signature is row-order sensitive.
+    const h = withRegistry(session({ sessionId: "zzz", pid: 3 }), session({ sessionId: "aaa", pid: 4 }));
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.map((r) => r.rowId)).toEqual(["external:claude:aaa", "external:claude:zzz"]);
+  });
+
+  it("stamps a session with no launch time when first seen, and keeps that stamp", async () => {
+    const h = withRegistry(session({ startedAt: undefined }));
+
+    const first = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+    clock += 60_000;
+    const second = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    expect(first.startedAt).toBe(second.startedAt);
+    expect(second.lastActivityAt).toBe(first.startedAt);
+  });
+
+  it("does not move the ordering key when a later scan finds the same session", async () => {
+    // Stamping the scan would re-sort the listing every poll and claim activity
+    // the registry never gave.
+    const h = withRegistry(session());
+
+    const first = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+    clock += 5_000;
+    const second = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    expect(second.lastActivityAt).toBe(first.lastActivityAt);
+  });
+
+  it("ranks the worktree it is under", async () => {
+    const h = withRegistry(session({ startedAt: 1_650_000_000_000 }));
+    await h.projector.project([WT]);
+    expect(h.projector.rank(WT)).toBe(1_650_000_000_000);
+  });
+
+  it("clears its rows when a readable registry finds nothing", async () => {
+    const h = withRegistry(session());
+    expect((await h.projector.project([WT])).rowsByWorktreeId[WT]).toHaveLength(1);
+
+    h.setRegistry({ kind: "ok", sessions: [] });
+
+    expect((await h.projector.project([WT])).rowsByWorktreeId).toEqual({});
+  });
+});
+
+describe("an unreadable registry is not an empty one", () => {
+  function session(over: Partial<RunningClaudeSession> = {}): RunningClaudeSession {
+    return { sessionId: "s1", cwd: WT, pid: 4242, startedAt: 1_600_000_000_000, ...over };
+  }
+
+  const UNREADABLE = { kind: "failed", reason: "registry unreadable (EACCES)" } as const;
+
+  async function afterOneGoodScan(...sessions: RunningClaudeSession[]) {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: sessions.length ? sessions : [session()] });
+    await h.projector.project([WT]);
+    return h;
+  }
+
+  it("keeps the rows the last readable scan produced", async () => {
+    const h = await afterOneGoodScan();
+    h.setRegistry(UNREADABLE);
+
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.rowsByWorktreeId[WT].map((r) => r.rowId)).toEqual(["external:claude:s1"]);
+  });
+
+  it("names the registry, with the reason, rather than showing the rows as fresh", async () => {
+    const h = await afterOneGoodScan();
+    h.setRegistry(UNREADABLE);
+
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.degradedSources).toEqual([{ source: "registry", reason: UNREADABLE.reason, since: clock }]);
+  });
+
+  it("reports the epoch of the first failure, not the latest", async () => {
+    const h = await afterOneGoodScan();
+    h.setRegistry(UNREADABLE);
+    await h.projector.project([WT]);
+    const first = clock;
+
+    clock += 30_000;
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.degradedSources[0]).toMatchObject({ since: first });
+  });
+
+  it("drops the degradation once the registry answers again", async () => {
+    const h = await afterOneGoodScan();
+    h.setRegistry(UNREADABLE);
+    await h.projector.project([WT]);
+
+    h.setRegistry({ kind: "ok", sessions: [session()] });
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.degradedSources).toEqual([]);
+    expect(presence.rowsByWorktreeId[WT]).toHaveLength(1);
+  });
+
+  it("re-attributes the retained sessions against the tree it is published with", async () => {
+    // Rows are not cached; the session list is. A worktree that went away between
+    // the good scan and the failed one must not still be named by presence.
+    const h = await afterOneGoodScan();
+    h.setRegistry(UNREADABLE);
+
+    const presence = await h.projector.project([]);
+
+    expect(presence.rowsByWorktreeId).toEqual({});
+    expect(presence.degradedSources).toHaveLength(1);
+  });
+
+  it("does not evict first-seen state on a failed read", async () => {
+    const h = await afterOneGoodScan(session({ startedAt: undefined }));
+    const stamped = (await h.projector.project([WT])).rowsByWorktreeId[WT][0].startedAt;
+
+    h.setRegistry(UNREADABLE);
+    clock += 60_000;
+    const retained = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    expect(retained.startedAt).toBe(stamped);
+  });
+
+  it("names nothing when a readable registry is simply empty", async () => {
+    const h = await afterOneGoodScan();
+    h.setRegistry({ kind: "ok", sessions: [] });
+
+    const presence = await h.projector.project([WT]);
+
+    expect(presence.rowsByWorktreeId).toEqual({});
+    expect(presence.degradedSources).toEqual([]);
+  });
+});
+
+describe("an external-only projection", () => {
+  function session(over: Partial<RunningClaudeSession> = {}): RunningClaudeSession {
+    return { sessionId: "s1", cwd: WT, pid: 4242, startedAt: 1_600_000_000_000, ...over };
+  }
+
+  it("resolves no pane — that is the whole point of pacing it at 5 s", async () => {
+    // A full pass re-resolves every pane with no proven identity, because
+    // negatives are deliberately not cached. Polling that would shell out to
+    // `ps` every five seconds forever (design.md D6).
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    await h.projector.project([WT]);
+    const before = h.counts().resolves;
+
+    await h.projector.project([WT], { external: true });
+
+    expect(h.counts().resolves).toBe(before);
+  });
+
+  it("replays the window rows the last full pass produced", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "pane-session" }));
+    await h.projector.project([WT]);
+
+    // Emptying the pane set is what makes this discriminating: a full pass would
+    // now produce no window row at all, so a surviving row can only be a replay.
+    h.panes.length = 0;
+    const presence = await h.projector.project([WT], { external: true });
+
+    expect(presence.rowsByWorktreeId[WT].map((r) => r.rowId)).toEqual(["window:a"]);
+  });
+
+  it("still refuses a session the replayed window rows already claim", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    await h.projector.project([WT]);
+
+    // The claim has to survive into the replay: with the pane no longer resolved,
+    // a lost claim would put the same session on screen as "other window".
+    h.setLookup(() => ({ kind: "absent" }));
+    h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1" })] });
+    const presence = await h.projector.project([WT], { external: true });
+
+    expect(presence.rowsByWorktreeId[WT].map((r) => r.rowId)).toEqual(["window:a"]);
+  });
+
+  it("picks up a session that appeared since the last full pass", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    await h.projector.project([WT]);
+
+    h.setLookup(() => ({ kind: "absent" }));
+    h.setRegistry({ kind: "ok", sessions: [session()] });
+    const presence = await h.projector.project([WT], { external: true });
+
+    expect(presence.rowsByWorktreeId[WT].map((r) => r.rowId)).toEqual(["window:a", "external:claude:s1"]);
+  });
+
+  it("keeps a pane degradation it did not re-check rather than reporting it healed", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setLookup(() => ({ kind: "failed", source: "panes", reason: "`ps` timed out" }));
+    await h.projector.project([WT]);
+
+    // A full pass here would find the table healthy and drop the entry; only a
+    // pass that never re-checked it can honestly keep saying it is out.
+    h.setLookup(() => ({ kind: "absent" }));
+    const presence = await h.projector.project([WT], { external: true });
+
+    expect(presence.degradedSources).toEqual([{ source: "panes", reason: "`ps` timed out", since: clock }]);
+  });
+
+  it("keeps the window rows' ranking contribution", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT, lastOutputAt: 1_690_000_000_000 })]);
+    await h.projector.project([WT]);
+    const ranked = h.projector.rank(WT);
+
+    h.panes.length = 0;
+    await h.projector.project([WT], { external: true });
+
+    expect(h.projector.rank(WT)).toBe(ranked);
+  });
+
+  it("runs a full pass instead when the worktree set has moved under it", async () => {
+    // A replay attributed against a different tree could name a worktree the
+    // tree no longer holds.
+    const h = makeProjector([pane({ paneId: "a", cwd: `${NESTED}/src` })]);
+    await h.projector.project([WT]);
+    const before = h.counts().resolves;
+
+    const presence = await h.projector.project([WT, NESTED], { external: true });
+
+    expect(h.counts().resolves).toBeGreaterThan(before);
+    expect(presence.rowsByWorktreeId[NESTED].map((r) => r.rowId)).toEqual(["window:a"]);
+  });
+
+  it("runs a full pass when no full pass has happened yet", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+
+    const presence = await h.projector.project([WT], { external: true });
+
+    expect(h.counts().resolves).toBe(1);
+    expect(presence.rowsByWorktreeId[WT].map((r) => r.rowId)).toEqual(["window:a"]);
+  });
+});
+
+describe("the registry owns its own degradation entry", () => {
+  function session(over: Partial<RunningClaudeSession> = {}): RunningClaudeSession {
+    return { sessionId: "s1", cwd: WT, pid: 4242, startedAt: 1_600_000_000_000, ...over };
+  }
+
+  it("stops naming the registry as soon as an external-only pass reads it again", async () => {
+    // The replay copies forward every failure the last full pass recorded. The
+    // registry is not one of them: this pass re-read it, so its own outcome
+    // decides — otherwise recovery can never be reported (.reviews/round-1.md B2).
+    // Both halves fail together, the way production couples them: a registry
+    // read that failed makes every pane lookup inconclusive and names `registry`
+    // (D7), so the entry is in the pane pass's own failure set — which is what
+    // the replay copies forward.
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setLookup(() => ({ kind: "failed", source: "registry", reason: "registry unreadable (EACCES)" }));
+    h.setRegistry({ kind: "failed", reason: "registry unreadable (EACCES)" });
+    const failed = await h.projector.project([WT]);
+    expect(failed.degradedSources.map((d) => d.source)).toEqual(["registry"]);
+
+    h.setLookup(() => ({ kind: "absent" }));
+    h.setRegistry({ kind: "ok", sessions: [session()] });
+    const recovered = await h.projector.project([WT], { external: true });
+
+    expect(recovered.degradedSources).toEqual([]);
+    expect(recovered.rowsByWorktreeId[WT].map((r) => r.rowId)).toContain("external:claude:s1");
+  });
+
+  it("still names it when the external-only pass is the one that could not read it", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setRegistry({ kind: "ok", sessions: [session()] });
+    await h.projector.project([WT]);
+
+    h.setRegistry({ kind: "failed", reason: "registry unreadable (EACCES)" });
+    const presence = await h.projector.project([WT], { external: true });
+
+    expect(presence.degradedSources.map((d) => d.source)).toEqual(["registry"]);
+  });
+
+  it("keeps replaying a pane failure it genuinely did not re-check", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setLookup(() => ({ kind: "failed", source: "panes", reason: "`ps` timed out" }));
+    await h.projector.project([WT]);
+
+    h.setLookup(() => ({ kind: "absent" }));
+    const presence = await h.projector.project([WT], { external: true });
+
+    expect(presence.degradedSources.map((d) => d.source)).toEqual(["panes"]);
+  });
+});
+
+describe("replaying the last full pass", () => {
+  it("still replays when the same worktrees arrive in a different order", async () => {
+    // The host feeds `project()` the ids in CACHE order, and D12's reorder is
+    // exactly what changes that order without changing membership. Comparing
+    // positionally makes the first poll after every ranking change reject its
+    // own replay and resolve panes — the work D6 exists to avoid
+    // (.reviews/round-4.md W3).
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    await h.projector.project([WT, NESTED]);
+    const before = h.counts().resolves;
+
+    await h.projector.project([NESTED, WT], { external: true });
+
+    expect(h.counts().resolves).toBe(before);
+  });
+
+  it("falls back to a full pass when a worktree was swapped for another", async () => {
+    // Same count, different members — the case a length check alone cannot see.
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    await h.projector.project([WT, NESTED]);
+    const before = h.counts().resolves;
+
+    await h.projector.project([WT, "/repo-two"], { external: true });
+
+    expect(h.counts().resolves).toBeGreaterThan(before);
+  });
+
+  it("still falls back to a full pass when the membership itself changed", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    await h.projector.project([WT, NESTED]);
+    const before = h.counts().resolves;
+
+    await h.projector.project([WT], { external: true });
+
+    expect(h.counts().resolves).toBeGreaterThan(before);
+  });
+});
+
+describe("the rank revision the cache acknowledges", () => {
+  it("does not advance when a projection reproduces the same ranks", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT, lastOutputAt: clock + 1_000 })]);
+    await h.projector.project([WT]);
+    const after = h.projector.rankRevision();
+
+    await h.projector.project([WT]);
+
+    expect(h.projector.rankRevision()).toBe(after);
+  });
+
+  it("advances when a worktree gains a row", async () => {
+    const h = makeProjector();
+    await h.projector.project([WT]);
+    const before = h.projector.rankRevision();
+
+    h.setRegistry({ kind: "ok", sessions: [{ sessionId: "s1", cwd: WT, pid: 1, startedAt: 1_600_000_000_000 }] });
+    await h.projector.project([WT]);
+
+    expect(h.projector.rankRevision()).toBeGreaterThan(before);
+  });
+
+  it("advances when a worktree loses its only row", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [{ sessionId: "s1", cwd: WT, pid: 1, startedAt: 1_600_000_000_000 }] });
+    await h.projector.project([WT]);
+    const before = h.projector.rankRevision();
+
+    h.setRegistry({ kind: "ok", sessions: [] });
+    await h.projector.project([WT]);
+
+    expect(h.projector.rankRevision()).toBeGreaterThan(before);
+  });
+
+  it("advances when a worktree's newest activity advances", async () => {
+    const h = makeProjector([pane({ paneId: "a", cwd: WT, lastOutputAt: clock + 1_000 })]);
+    await h.projector.project([WT]);
+    const before = h.projector.rankRevision();
+
+    h.panes[0] = pane({ paneId: "a", cwd: WT, lastOutputAt: clock + 99_000 });
+    await h.projector.project([WT]);
+
+    expect(h.projector.rankRevision()).toBeGreaterThan(before);
+  });
+
+  it("never goes backwards, so a consumer can compare it with what it applied", async () => {
+    // The whole point of a revision over a boolean: a projection the host
+    // DISCARDED still advanced it, and the identical rerun must not report the
+    // ranking back to where the cache already is (.reviews/round-3.md B3).
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [{ sessionId: "s1", cwd: WT, pid: 1, startedAt: 1_600_000_000_000 }] });
+    await h.projector.project([WT]);
+    const moved = h.projector.rankRevision();
+
+    await h.projector.project([WT]);
+
+    expect(h.projector.rankRevision()).toBe(moved);
   });
 });

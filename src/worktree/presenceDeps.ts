@@ -19,9 +19,9 @@ import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { resolveClaudeSession } from "../session/resolveClaudeSession";
 import { claudeSessionMtime } from "../vault/readers/claudePaths";
 import {
-  indexRunningSessions,
+  indexRunningSessionsOrEmpty,
   listRunningClaudeSessions,
-  type RunningClaudeSession,
+  type RunningSessionsOutcome,
 } from "../vault/readers/runningSessions";
 import type { SessionLookup } from "./agentIdentity";
 import type { PresenceProjectorDeps, ResolutionSnapshot } from "./presenceProjector";
@@ -31,7 +31,7 @@ export interface PresenceDepsOptions {
   store: PaneEvidenceStore;
   /** Shared process table. One per window, so an external scan can join its read. */
   table?: ProcessTableSnapshot;
-  listRunning?(): Promise<RunningClaudeSession[]>;
+  listRunning?(): Promise<RunningSessionsOutcome>;
   sessionMtime?(sessionId: string): Promise<number | undefined>;
   now?(): number;
 }
@@ -59,7 +59,14 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
       // `resolveClaudeSession` reads the registry itself on every invocation —
       // and the registry is `~/.claude/sessions`, every live Claude session on
       // the machine, so the per-pane filter had no bound (.reviews/round-2.md W1).
-      const running = listRunning().then(indexRunningSessions);
+      // The outcome is kept, not unwrapped: 1_3 hands it to the external pass and
+      // types the failure through to pane resolution, and an empty index built
+      // from a failed read is exactly the silent clear this change removes.
+      // The outcome is kept whole. Unwrapping it here would hand a failed read
+      // to resolution as an empty index — the silent clear this change removes —
+      // and would leave the external pass unable to tell empty from unreadable.
+      const registryRead = listRunning();
+      const running = indexRunningSessionsOrEmpty(registryRead);
 
       // One table for the whole rebuild, taken on first use so a window with no
       // pty-backed pane costs no `ps` at all. Asking the snapshot per pane left
@@ -80,16 +87,29 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
       };
 
       return {
+        async sessions(): Promise<RunningSessionsOutcome> {
+          const read = await registryRead;
+          // `all()`, never `read.sessions`: the headless drop happens in the
+          // index, and the raw array still carries every `claude -p` one-shot.
+          return read.kind === "ok" ? { kind: "ok", sessions: [...(await running).all()] } : read;
+        },
+
         async resolve(pane): Promise<SessionLookup> {
-          // Checked before resolution rather than inside it: the descendant
-          // lookup is the one source here that can say it FAILED, and
-          // `ResolveClaudeSessionDeps.descendantPids` has no way to carry that
-          // (design.md D10). Its typing lands in WT-004.2.
+          // Checked first: a registry that could not be read says nothing about
+          // this pane, and resolving against the empty index it degrades to
+          // would read as a conclusive "no agent here" (design.md D7).
+          const read = await registryRead;
+          if (read.kind === "failed") {
+            return { kind: "failed", source: "registry", reason: read.reason };
+          }
+          // The descendant lookup is checked before resolution rather than
+          // inside it: `ResolveClaudeSessionDeps.descendantPids` has no way to
+          // carry a failure, so the outcome would be flattened to "no pids".
           let descendants: readonly number[] = [];
           if (pane.ptyPid !== undefined) {
             const outcome = (await processTable()).descendantsOf(pane.ptyPid);
             if (outcome.kind === "failed") {
-              return { kind: "failed", reason: outcome.reason };
+              return { kind: "failed", source: "panes", reason: outcome.reason };
             }
             descendants = outcome.kind === "ok" ? outcome.pids : [];
           }

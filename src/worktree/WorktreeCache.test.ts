@@ -421,3 +421,56 @@ describe("WorktreeCache — degraded cause while git is unavailable", () => {
     expect(cache.read().repos[0].degraded).toBe("This repository is not being watched.");
   });
 });
+
+describe("WorktreeCache — re-ranking without re-reading git", () => {
+  it("re-sorts stored groups from a rank the cache did not have when it stored them", () => {
+    // Order is baked in at assemble time. Presence-only work — a pane change, an
+    // external scan — moves the rank but never re-reads git, so without this the
+    // worktree that just gained an agent would not move until some unrelated
+    // rebuild happened to re-assemble the group.
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A], {
+        "/a/.git": listing([
+          worktree("/a", { kind: "main" }),
+          worktree("/a/one", { branch: "one" }),
+          worktree("/a/two", { branch: "two" }),
+        ]),
+      }),
+    );
+    expect(cache.read().repos[0]?.worktrees.map((w) => w.id)).toEqual(["/a", "/a/one", "/a/two"]);
+
+    cache.reorder((id) => (id === "/a/two" ? 500 : undefined));
+
+    expect(cache.read().repos[0]?.worktrees.map((w) => w.id)).toEqual(["/a", "/a/two", "/a/one"]);
+  });
+
+  it("re-sorts every stored repository, not only the first", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A, REPO_B], {
+        "/a/.git": listing([worktree("/a/one", { branch: "one" }), worktree("/a/two", { branch: "two" })]),
+        "/b/.git": listing([worktree("/b/one", { branch: "one" }), worktree("/b/two", { branch: "two" })]),
+      }),
+    );
+
+    cache.reorder((id) => (id.endsWith("/two") ? 7 : undefined));
+
+    expect(cache.read().repos.map((r) => r.worktrees[0]?.id)).toEqual(["/a/two", "/b/two"]);
+  });
+
+  it("drops a worktree out of the active bucket when its rank goes away", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A], {
+        "/a/.git": listing([worktree("/a/one", { branch: "one" }), worktree("/a/two", { branch: "two" })]),
+      }),
+    );
+    cache.reorder((id) => (id === "/a/two" ? 5 : undefined));
+    expect(cache.read().repos[0]?.worktrees.map((w) => w.id)).toEqual(["/a/two", "/a/one"]);
+
+    cache.reorder(() => undefined);
+
+    expect(cache.read().repos[0]?.worktrees.map((w) => w.id)).toEqual(["/a/one", "/a/two"]);
+  });
+});

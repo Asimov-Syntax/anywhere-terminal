@@ -10,7 +10,7 @@
 import type { ResolvedRepo } from "./repoRoots";
 import type { WorktreeRepo, WorktreeTree } from "./types";
 import { assembleRepo, type RepoListing, type WorktreeTreeBuild } from "./WorktreeDiscovery";
-import type { WorktreeActivityRank } from "./worktreeOrder";
+import { orderWorktrees, type WorktreeActivityRank } from "./worktreeOrder";
 
 interface CachedRepo {
   repo: WorktreeRepo;
@@ -24,6 +24,15 @@ export interface WorktreeCache {
   applyBuild(build: WorktreeTreeBuild): void;
   /** Update one repository. A repoId outside the resolved roots is ignored. */
   applyRepo(repoId: string, listing: RepoListing, rank?: WorktreeActivityRank): void;
+  /**
+   * Re-sort every stored group against a rank taken now — no git read.
+   *
+   * Order is baked in at `assembleRepo` time, using the rank the projector held
+   * then. Presence-only work moves the rank without ever re-assembling a group,
+   * so a worktree that just gained an agent would otherwise not move until some
+   * unrelated git rebuild happened to re-read it (design.md D8).
+   */
+  reorder(rank?: WorktreeActivityRank): void;
   /** The assembled tree, in resolved-root order. */
   read(): WorktreeTree;
   roots(): readonly ResolvedRepo[];
@@ -130,6 +139,12 @@ export function createWorktreeCache(): WorktreeCache {
     repos.set(repoId, merge(repoId, assembleRepo(root, listing, folders, rank), listing));
   }
 
+  function reorder(rank?: WorktreeActivityRank): void {
+    for (const cached of repos.values()) {
+      cached.repo = { ...cached.repo, worktrees: orderWorktrees(cached.repo.worktrees, rank) };
+    }
+  }
+
   function read(): WorktreeTree {
     const out: WorktreeRepo[] = [];
     const reasons = new Set<string>();
@@ -175,6 +190,7 @@ export function createWorktreeCache(): WorktreeCache {
   return {
     applyBuild,
     applyRepo,
+    reorder,
     read,
     roots: () => order,
     rootFor: (repoId) => order.find((one) => one.repoId === repoId),

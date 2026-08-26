@@ -245,23 +245,36 @@ worktree with a live agent started from another window or a bare terminal must n
 "nobody is working here" — a worktree view that under-reports is worse than one that says
 "external".
 
-1. `listRunningClaudeSessions()` (`src/vault/readers/runningSessions.ts:115`), already
-   liveness-probed and deduped — but it **never throws and maps an unreadable registry to an
-   empty list**. Presence therefore cannot tell "no agents are running" from "the registry
-   could not be read", and would silently clear every external row on a permissions error.
-   Extending it with a typed outcome that distinguishes the two is part of this work; without
-   that distinction the degraded-stickiness rule below has nothing to trigger on.
+1. `listRunningClaudeSessions()`, liveness-probed, deduped, and returning a **typed outcome**:
+   a registry directory that does not exist is `ok` with no sessions — a machine where Claude
+   never ran genuinely has none — while any other read failure is `failed` and carries its
+   reason. Mapping both to an empty list is what would silently clear every external row on a
+   permissions error, and it is what the degraded-stickiness rule below triggers on. A record
+   earns its place: the numeric filename stem must equal the payload pid (Claude writes
+   `${process.pid}.json` carrying `pid: process.pid`, so a mismatch is malformed by
+   construction and could otherwise impersonate whatever live process it names), the session id
+   must pass the same canonical guard every Claude reader uses, the cwd must be absolute, and a
+   launch time is honoured only when finite and non-negative.
 2. Drop headless one-shots via `isHeadlessSession` — `claude -p` hook subprocesses are the
    single largest source of phantom "an agent is running" rows (`01-agent-detection.md`
    § 3.3).
 3. Normalize each session's `cwd`, map to a worktree by § 3.1.
 4. **Dedupe against window panes**: resolve each window pane's session id (the existing
-   `resolveClaudeSession` path). A registry session already claimed by a pane is that pane's
-   row — never a second, external row.
+   `resolveClaudeSession` path) — every pane this rebuild resolved, not merely the panes that
+   produced rows. A registry session already claimed by a pane is that pane's row — never a
+   second, external row. The limit is deliberate: a pane inside no worktree emits no row, so
+   its session can still surface as external under the registry's own cwd.
 5. What survives becomes `scope: "external"`, `agentSource: "registry"`,
    `activitySource: "registry"` — authoritative for identity by the § 2 derivation — with
    `activity: "running"` only while the pid is alive. There is no turn-level state without
    hooks, so an external row reports `running` (a live agent process) and never `waiting`.
+
+**A failed read retains, it does not clear.** The last successfully indexed session list is
+re-attributed against the current worktrees and the scope is marked degraded with the reason,
+so an unreadable registry leaves the rows standing rather than emptying them. Pane identity is
+told the registry failed rather than handed that retained list: resolving a pane against a list
+the failed read did not produce would manufacture identity evidence, where retaining what the
+pane last proved is both honest and cheaper.
 
 **External rows are non-focusable by contract.** There is no pane in this window to reveal.
 Their affordances are: open that worktree's folder, resume the session in a new terminal
@@ -324,8 +337,14 @@ their worktree.
 The external scan is the one polled source, because the PID registry emits no events. **Poll
 it at a flat 5 s while the Worktree view is the active segment on at least one surface, and
 not at all otherwise.** The scan is a readdir, a JSON parse per entry, and a `kill(0)` — low
-single-digit milliseconds. Tiered cadences with jitter would be more machinery than the thing
-being paced, and the cost of getting the tiers wrong exceeds anything they save.
+single-digit milliseconds. It is priced that way only because the poll runs an **external-only
+projection**: the pane pass is skipped and the last full pass's window rows, ranks and pane
+degradation are replayed, so a poll costs no process-table read. Replay is refused — and a full
+pass runs — when the worktree MEMBERSHIP has moved, never merely its order, since presence
+re-ranks the tree and a positional test would reject the replay after every ranking change. A
+poll also runs the full pass while pane evidence is outstanding, which it is until a full pass
+that read the panes completes and says so. Tiered cadences with jitter would be more machinery
+than the thing being paced, and the cost of getting the tiers wrong exceeds anything they save.
 
 "Active on at least one surface" is a window-level fact assembled from per-surface reports:
 three surfaces render this view independently, so the scan pauses only when none of them is
@@ -334,8 +353,14 @@ showing it.
 **Worktree ordering by presence is owned here**, not by the tree. The listing in
 [worktree-model.md](worktree-model.md) § 3.4 ranks worktrees with live panes above the rest,
 newest activity first; the ranking key is `max(lastActivityAt)` over that worktree's rows,
-supplied by this projection. Before presence has resolved, every worktree ranks as having
-none, so the order stabilizes on the next push rather than reshuffling mid-render.
+supplied by this projection. Order is baked into the cache when a repo is assembled, so
+presence-only work re-ranks the cached tree in place — but only while the cache has not yet
+applied the ranking the projection holds. That is tracked as a revision the CACHE
+acknowledges, never as "did the last projection differ": a projection the host discarded
+still advances the projector, and an assembly that writes one repo, or retains a degraded
+repo's existing rows, has not established a cache-wide order it could acknowledge. Before
+presence has resolved, every worktree ranks as having none, so the order stabilizes on the next
+push rather than reshuffling mid-render.
 
 ## 4. Interface
 

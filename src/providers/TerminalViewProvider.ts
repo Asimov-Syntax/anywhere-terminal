@@ -11,7 +11,7 @@ import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { ContinuationTarget, LaunchMode } from "../vault/LaunchBuilder";
 import { resolveAssistantMessageRef } from "../vault/messageText";
 import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
-import { indexRunningSessions, listRunningClaudeSessions } from "../vault/readers/runningSessions";
+import { indexRunningSessionsOrEmpty, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
 import { agentKindForExecutable, detectContinuationTargets } from "../vault/registry";
 import { parseEntryId, type VaultSessionEntry } from "../vault/types";
@@ -797,7 +797,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         (await this.sessionManager.getLiveCwd(id)) ??
         this.sessionManager.getCurrentCwd(id) ??
         this.sessionManager.getInitialCwd(id),
-      runningIndex: async () => indexRunningSessions(await listRunningClaudeSessions()),
+      runningIndex: () => indexRunningSessionsOrEmpty(listRunningClaudeSessions()),
       descendantPids: (pid) => descendantPids(pid),
       sessionMtime: (sessionId) => claudeSessionMtime(sessionId),
       newestSessionUnderCwd: async (cwd) => {
