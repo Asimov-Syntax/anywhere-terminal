@@ -46,6 +46,8 @@ asimov/memory.db*
 .claude/settings.local.json
 .opencode/agents/asimov
 .code-review-graph/
+asimov/worktrees/
+.env.worktree
 
 # asimov
 .opencode/plugins/asimov.ts

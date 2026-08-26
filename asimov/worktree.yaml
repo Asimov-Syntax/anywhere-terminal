@@ -1,0 +1,38 @@
+# What a fresh worktree of anywhere-terminal needs.
+# Recipe: .claude/skills/asimov/references/worktree-setup.md
+#
+# node_modules is deliberately in NEITHER key — `pnpm install` in `setup`
+# rebuilds it from pnpm's global store in seconds, and it produces the tree
+# THIS branch's lockfile specifies instead of a snapshot of main's.
+
+copy:
+  # opencode plugin runtime. `link` already covers .opencode/agents and
+  # .opencode/plugins, but not the deps those plugins import. Both files are
+  # gitignored asimov tooling, identical on every branch, and no setup command
+  # rebuilds them — so there is no install to double-pay for here.
+  - .opencode/package.json
+  - .opencode/node_modules
+  # Claude permission allowlist for this project.
+  - .claude/settings.local.json
+  # code-review-graph cache. Written by build_or_update_graph_tool, so it can
+  # never be a link. Copying gives asm-finder a warm graph instead of a
+  # from-scratch rebuild.
+  - .code-review-graph
+
+link:
+  # withfig-autocomplete reference corpus. Read-only: excluded in
+  # tsconfig.json, not imported by src/ or esbuild.js — research material only.
+  - third_party
+
+# No `ports:` — the only server in the codebase (src/cursor/CursorHookRuntime.ts)
+# defaults to port 0, so the OS assigns an ephemeral loopback port per instance
+# and worktrees cannot collide with the main checkout.
+
+setup:
+  # Populates node_modules. Frozen so the worktree reproduces the committed
+  # tree — it will fail loudly if a branch's lockfile has drifted.
+  - pnpm install --frozen-lockfile
+  # Regenerates dist/extension.js, media/webview.js and media/xterm.css so the
+  # extension is launchable (F5) straight after create. Idempotent — a full
+  # rebuild each run.
+  - node esbuild.js
