@@ -3,6 +3,8 @@
 // See: docs/design/message-protocol.md
 
 import type { VaultLaunchTarget, VaultListResult, VaultSessionDetail } from "../vault/types";
+import type { WorktreePresence } from "../worktree/presenceTypes";
+import type { WorktreeTree } from "../worktree/types";
 
 // ─── Shared Types ───────────────────────────────────────────────────
 
@@ -600,6 +602,31 @@ export interface RequestSubagentPreviewMessage {
 }
 
 /**
+ * WebView → Extension: ask for the worktree tree. `force` bypasses the per-repo
+ * cache and rebuilds before answering; without it a cached listing may answer.
+ * Two requests in flight for one scope collapse into a single rebuild.
+ *
+ * See: docs/design/worktree-rpc.md § 2.1.
+ */
+export interface RequestWorktreeTreeMessage {
+  type: "requestWorktreeTree";
+  force?: boolean;
+}
+
+/**
+ * WebView → Extension: this surface declares whether its Worktree view is being
+ * shown. A surface starts NOT visible and receives no push until it says
+ * otherwise — all three surfaces retain their DOM while hidden, so pushing to
+ * one that never showed the view pays render cost nobody asked for.
+ *
+ * See: asimov/changes/cache-and-broadcast-worktree-tree/design.md D7.
+ */
+export interface WorktreeViewVisibilityMessage {
+  type: "worktreeViewVisibility";
+  visible: boolean;
+}
+
+/**
  * All messages that can be sent from the WebView to the Extension Host.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
  */
@@ -650,7 +677,9 @@ export type WebViewToExtensionMessage =
   | RequestSubagentPreviewMessage
   | PasteClipboardImageMessage
   | RequestClipboardImagePreviewMessage
-  | PasteOsClipboardImageMessage;
+  | PasteOsClipboardImageMessage
+  | RequestWorktreeTreeMessage
+  | WorktreeViewVisibilityMessage;
 
 /**
  * Webview → Extension. Sent by the editor webview after it has merged the
@@ -1219,6 +1248,26 @@ export interface AgentActivityStatusMessage {
 }
 
 /**
+ * Extension → WebView: the whole Worktree view state.
+ *
+ * Sent both as the reply to `requestWorktreeTree` and unsolicited when the host
+ * rebuilds; a recipient handles every arrival identically and never polls.
+ *
+ * `tree` and `presence` always travel together. Two messages would let a
+ * recipient hold an agent row whose `worktreeId` is absent from the tree it
+ * currently has — one message makes that unrepresentable. `presence` carries no
+ * rows until WT-004 supplies the projection.
+ *
+ * See: docs/design/worktree-rpc.md § 2.2;
+ *      asimov/changes/cache-and-broadcast-worktree-tree/design.md D6.
+ */
+export interface WorktreeTreeResponseMessage {
+  type: "worktreeTreeResponse";
+  tree: WorktreeTree;
+  presence: WorktreePresence;
+}
+
+/**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
  */
@@ -1264,7 +1313,8 @@ export type ExtensionToWebViewMessage =
   | ClipboardImagePreviewMessage
   | OsClipboardPasteMissMessage
   | OpenVaultMessage
-  | AgentActivityStatusMessage;
+  | AgentActivityStatusMessage
+  | WorktreeTreeResponseMessage;
 
 /**
  * Extension → Webview. Visual feedback for title-bar "export" click — briefly

@@ -133,7 +133,7 @@ state. There is nothing to provision.
 | **Labels** | new-api-contract |
 | **Notes** | Adds a message family to the shared protocol union, and requires the shared watcher pool to gain a typed failure outcome it does not have today |
 | **Acceptance** | The tree is rebuilt only when something structural changed, once per affected repo, and never on a timer; an agent working inside a worktree drives no rebuild; every live surface receives the same tree, and a surface not showing the view is skipped; freshness is owned once per window, so a second surface adds no git or watcher work; a watcher or command that fails leaves the repo degraded with a reason and its last good listing intact, never silently stale |
-| **Status** | todo |
+| **Status** | done |
 
 ---
 
@@ -294,8 +294,8 @@ state. There is nothing to provision.
 | **Stage** | 2 |
 | **Size** | L |
 | **Labels** | security-privacy |
-| **Notes** | User-supplied refs and paths reach git; destructive operations. Risk: highest in the feature |
-| **Acceptance** | No user-supplied ref or path reaches git as anything but a literal token, and a create path is revalidated immediately before use; a destructive action names every applicable blocker before running, and a confirmation authorizes exactly the blocker set the user saw and no more; the main worktree, and any worktree holding a working agent, are refused outright with no confirmation path; what removal destroys and what it leaves alone is stated before it runs and true afterwards; every attempt leaves the tree reflecting reality, reporting indeterminate rather than clean failure when git and the filesystem disagree, and nothing partially applied is retried |
+| **Notes** | User-supplied refs and paths reach git; destructive operations. Risk: highest in the feature. Registers the two `anywhereTerminal.worktree.*` settings keys, which no manifest declares yet |
+| **Acceptance** | No user-supplied ref or path reaches git as anything but a literal token, and a create path is revalidated immediately before use; the suggested create path follows the repo's own worktree layout when it has one and an explicit setting whenever the user stated one, falling back to the documented default only when neither exists, and a root inside the main worktree leaves the parent's `git status` clean without touching a tracked file; a destructive action names every applicable blocker before running, and a confirmation authorizes exactly the blocker set the user saw and no more; the main worktree, and any worktree holding a working agent, are refused outright with no confirmation path; what removal destroys and what it leaves alone is stated before it runs and true afterwards; every attempt leaves the tree reflecting reality, reporting indeterminate rather than clean failure when git and the filesystem disagree, and nothing partially applied is retried |
 | **Status** | todo |
 
 ### [WT-005.3] Launch an Agent into a Worktree

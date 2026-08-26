@@ -456,7 +456,7 @@ one definition; every other document references it.
 | Hook settings keys | `anywhereTerminal.agentHooks.claude.enabled`, `anywhereTerminal.agentHooks.claudeConfigDir`, and the pre-existing `anywhereTerminal.cursorAgent.hooks.enabled` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
 | Hook uninstall command | `anywhereTerminal.agentHooks.uninstall` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
 | Persisted view keys | `vaultView`, `vaultGroupMode`, `worktreeCollapsed`, `worktreeExpandedRows` — per **surface**, not per window | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.1 | — |
-| Worktree settings keys | `anywhereTerminal.worktree.createRoot` (string, default empty = sibling of the main worktree), `anywhereTerminal.worktree.rowActivation` (`focus` \| `preview`, default `focus`) | [worktree-actions.md](design/worktree-actions.md) § 3.2, [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6 | — |
+| Worktree settings keys | `anywhereTerminal.worktree.createRoot` (string, default `.claude/worktrees`; relative resolves against the main worktree, absolute used as-is; set explicitly it outranks detection, unset the repo's own layout wins), `anywhereTerminal.worktree.rowActivation` (`focus` \| `preview`, default `focus`) | [worktree-actions.md](design/worktree-actions.md) § 3.2, [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6 | — |
 | `WorktreeOpenAfter` | `none` / `terminal` / `agent` / `newWindow` / `addToWorkspace` | [worktree-rpc.md](design/worktree-rpc.md) § 2.2 | actions § 3.2 |
 | Worktree row state precedence | `waiting` > `running` > `idle` > `exited` | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.2 | ui § 8 |
 

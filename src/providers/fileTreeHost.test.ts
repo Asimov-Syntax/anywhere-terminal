@@ -712,7 +712,7 @@ describe("FileTreeHost.attach — git delta forwarding", () => {
     let onRehydrate: (() => void) | null = null;
     const pool: WatcherPool = {
       subscribe: () => ({ dispose: () => {} }),
-      subscribePattern: () => ({ dispose: () => {} }),
+      subscribePattern: () => ({ active: true, dispose: () => {} }),
       onDidRequestRehydrate: (listener) => {
         onRehydrate = listener;
         return { dispose: () => {} };
@@ -792,7 +792,7 @@ describe("FileTreeHost — FS subscribe/unsubscribe/rehydrate dispatch", () => {
         subscribeCalls.push({ path, cb, dispose });
         return { dispose };
       },
-      subscribePattern: () => ({ dispose: vi.fn() }),
+      subscribePattern: () => ({ active: true, dispose: vi.fn() }),
       onDidRequestRehydrate: (l) => {
         rehydrateListener = l;
         return { dispose: () => {} };

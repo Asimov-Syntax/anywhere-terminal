@@ -41,7 +41,9 @@ Two invariants carried over from the vault protocol:
   live surfaces, including the reply to a request that came from one of them, because they
   all render the same window-scoped truth. A surface whose Worktree view is not the active
   segment is skipped: all three retain their DOM while hidden, so an unfiltered broadcast
-  pays render cost in panels nobody is looking at.
+  pays render cost in panels nobody is looking at. The host learns which surfaces those are
+  from `worktreeViewVisibility` (§ 2.1) — a surface receives nothing until it has declared
+  the view visible at least once.
 - **Actions on existing objects name ids, never paths.** Every action against a worktree that
   already exists names a `worktreeId` / `repoId` the host previously issued; the host
   re-resolves the path server-side from its own cache before touching git. A path in such a
@@ -62,6 +64,7 @@ Two invariants carried over from the vault protocol:
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `requestWorktreeTree` | `{ force?: boolean }` | Ask for the tree. `force` bypasses the per-repo cache |
+| `worktreeViewVisibility` | `{ visible: boolean }` | Declare whether this surface is showing the Worktree view. Gates every push to it (§ 1) |
 | `requestWorktreeSubagents` | `{ rowId, entryId }` | Lazy subagent rows for one expanded agent row |
 | `worktreeFocusPane` | `{ paneId }` | Reveal a window-scope pane. Rejected for external rows |
 | `worktreeOpenFolder` | `{ worktreeId, mode: "newWindow" \| "addToWorkspace" }` | Open the worktree as a folder |
@@ -178,7 +181,7 @@ Applied host-side on every inbound message, before any git or shell work:
 | `entryId` | Must resolve in the vault store; never used to open a path the webview supplied |
 | `branchName` | Non-empty; passes `git check-ref-format --branch`; rejected if it starts with `-` |
 | `baseRef` | Rejected if it starts with `-`; passed as a single argv token |
-| `path` | Must be absolute after normalization; must not exist, or must be an empty directory; must not be inside any existing worktree of the same repo |
+| `path` | Must be absolute after normalization; must not exist, or must be an empty directory; must not be inside any **linked** worktree of the same repo. A path inside the **main** worktree is allowed — that is where the default root lives ([worktree-actions.md](worktree-actions.md) § 3.2) — and must not be the main worktree itself |
 | `openAfter` | One of the documented modes. `agent` requires the launch fields; every other mode rejects them |
 | `agent` | Must be a known `VaultAgentId` |
 | `permissionChoiceId` | Must be one the registry declares for that agent |
@@ -238,7 +241,7 @@ thing we can show, and hiding them would make the failure unactionable.
 - [ ] Mutation that fails or times out → a rebuild is still pushed; a disagreeing state reports `indeterminate` with `observed`
 - [ ] `worktreeRemove` on the main worktree with `force: true` → refused, `isMain: true`
 - [ ] `branchName` of `-x` → rejected in validation
-- [ ] `path` inside an existing worktree of the same repo → rejected
+- [ ] `path` inside a linked worktree of the same repo → rejected; a path under the default root inside the main worktree → accepted
 - [ ] `worktreeFocusPane` for an external row's identity → rejected
 - [ ] Git exits non-zero → stderr reaches the webview, bounded
 - [ ] `openAfter: "agent"` without the launch fields → rejected; launch fields with any other mode → rejected

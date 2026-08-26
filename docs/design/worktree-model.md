@@ -208,13 +208,23 @@ Every comparison ends in an `id` tie-break so the order never depends on readdir
 
 | Signal | Watch target | Invalidates |
 |--------|--------------|-------------|
-| Worktree added / removed | `<repoId>/worktrees` — **non-recursive**, create + delete only | That repo's listing |
-| Linked worktree switched branch | `<repoId>/worktrees/*/HEAD` — change events included | That repo's listing |
-| Main worktree switched branch | `<repoId>/HEAD` — change events included | That repo's listing |
+| Worktree added / removed | base `<repoId>`, glob `worktrees/*` — one path segment, create + delete only | That repo's listing |
+| Linked worktree switched branch | base `<repoId>`, glob `worktrees/*/HEAD` — change events included | That repo's listing |
+| Main worktree switched branch | base `<repoId>`, glob `HEAD` — change events included | That repo's listing |
 | Repo state changed (open repos) | git API `onDidChangeState` on the matching repository | That repo's listing |
-| Workspace folders changed | `workspace.onDidChangeWorkspaceFolders` | Whole tree (re-resolve roots) |
+| Workspace folders changed | `workspace.onDidChangeWorkspaceFolders` | Whole tree, forced (re-resolve roots) |
 | Repo opened / closed in VS Code | git API `onDidOpenRepository` / `onDidCloseRepository` | Whole tree |
 | User pressed refresh | — | Whole tree, forced |
+
+All three watches are based at the common dir itself rather than at `<repoId>/worktrees`: a
+repository with no linked worktrees has no `worktrees/` directory yet, and a watcher based on
+a directory that does not exist never sees it appear.
+
+The two git-API rows are **not wired** as of WT-001.2. The extension acquires no `vscode.git`
+API handle of its own today — the only acquisition pipeline is fused into
+`createGitDecorationProvider` — so those signals wait on a change that extracts it. The three
+filesystem watches plus the workspace-folder event cover everything except `git init` inside a
+folder that was already open.
 
 Watching uses `subscribePattern` on the shared watcher pool
 (`src/providers/fsWatcherPool.ts:89`), which debounces each event kind at
@@ -264,11 +274,11 @@ Two watcher caveats to honour:
 - The common dir of a repo opened *as* a linked worktree lives outside every workspace
   folder. Watch it with an absolute-base `RelativePattern`, and when the watcher cannot be
   created, fall back to re-reading on view-show only, recording `degraded` on that repo.
-- **The pool cannot currently report that failure.** `subscribePattern` catches watcher
-  creation errors internally and hands back an inert `Disposable`
-  (`fsWatcherPool.ts:298-398`), so a caller cannot distinguish a working subscription from a
-  dead one and would silently believe it is receiving events. Extending it with a typed
-  outcome is part of this work; without it the degraded path above can never trigger.
+- **The pool reports that failure.** `subscribePattern` returns a `PatternSubscription`
+  carrying `active` and, when false, a `failureReason` — so a caller can tell a working
+  subscription from a dead one instead of silently believing it is receiving events. A
+  repository whose watch did not come up in full is marked `degraded` with that reason on
+  every rebuild, and stays reachable by a forced refresh.
 
 ### 3.6 Caching
 
@@ -288,7 +298,8 @@ cost is one `rev-parse` plus one `worktree list` per repo, which is milliseconds
 | Operation | Identifier | Summary |
 |-----------|-----------|---------|
 | Read tree | `requestWorktreeTree` | Webview asks for the current tree |
-| Push tree | `worktreeTreeResponse` | Host pushes a rebuilt tree (request reply *and* watcher-driven) |
+| Push tree | `worktreeTreeResponse` | Host pushes a rebuilt tree and its presence projection in one envelope (request reply *and* watcher-driven) |
+| Declare visibility | `worktreeViewVisibility` | One surface says whether it is showing the view; gates every push to it |
 
 > **Full contracts**: [worktree-rpc.md](worktree-rpc.md) § 2
 

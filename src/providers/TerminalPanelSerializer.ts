@@ -14,6 +14,7 @@ import type { SessionManager } from "../session/SessionManager";
 import type { WatcherPool } from "./fsWatcherPool";
 import type { GitDecorationProvider } from "./gitDecorationProvider";
 import { TerminalEditorProvider } from "./TerminalEditorProvider";
+import type { WorktreeHost } from "./WorktreeHost";
 
 export class TerminalPanelSerializer implements vscode.WebviewPanelSerializer<{ panelId?: string }> {
   constructor(
@@ -21,6 +22,7 @@ export class TerminalPanelSerializer implements vscode.WebviewPanelSerializer<{ 
     private readonly sessionManager: SessionManager,
     private readonly gitDecorationProvider: GitDecorationProvider | null,
     private readonly watcherPool: WatcherPool | null,
+    private readonly worktreeHost: WorktreeHost | null = null,
   ) {}
 
   async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: { panelId?: string } | null): Promise<void> {
@@ -71,6 +73,7 @@ export class TerminalPanelSerializer implements vscode.WebviewPanelSerializer<{ 
       snapshots,
       this.gitDecorationProvider,
       this.watcherPool,
+      this.worktreeHost,
     );
   }
 }

@@ -14,6 +14,7 @@ import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalPanelSerializer } from "./providers/TerminalPanelSerializer";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
 import { VaultWatchCoordinator } from "./providers/VaultWatchCoordinator";
+import { createWorktreeHost } from "./providers/WorktreeHost";
 import { loadNodePty } from "./pty/PtyManager";
 import type { MessageSender } from "./session/OutputBuffer";
 import { SessionManager } from "./session/SessionManager";
@@ -31,6 +32,7 @@ import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
+import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Validate node-pty availability early — show user-facing error if missing
@@ -179,6 +181,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const fsWatcherPool = createWatcherPool();
   context.subscriptions.push(fsWatcherPool);
 
+  // Worktree tree — one host per window, shared by the sidebar / panel / editor
+  // surfaces so freshness costs one set of git calls and watchers regardless of
+  // how many surfaces show it. See: cache-and-broadcast-worktree-tree design.md D1.
+  const worktreeHost = createWorktreeHost({
+    deps: createWorktreeTreeDeps(),
+    workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+    pool: fsWatcherPool,
+    onDidChangeWorkspaceFolders: (listener) => vscode.workspace.onDidChangeWorkspaceFolders(listener),
+  });
+  context.subscriptions.push(worktreeHost);
+
   // AI coding vault — reads the user's existing CLI-agent session stores and
   // resumes/forks them. Backed by a persistent list cache under globalStorageUri
   // so the panel displays instantly on open, then refreshes only changed sources
@@ -205,6 +218,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultService,
     vaultLauncher,
     vaultWatchCoordinator,
+    worktreeHost,
   );
 
   context.subscriptions.push(
@@ -223,6 +237,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultService,
     vaultLauncher,
     vaultWatchCoordinator,
+    worktreeHost,
   );
 
   context.subscriptions.push(
@@ -239,6 +254,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sessionManager,
         gitDecorationProvider,
         fsWatcherPool,
+        worktreeHost,
       );
       context.subscriptions.push(panelDisposable);
     }),
@@ -250,7 +266,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.window.registerWebviewPanelSerializer(
       TerminalEditorProvider.viewType,
-      new TerminalPanelSerializer(context, sessionManager, gitDecorationProvider, fsWatcherPool),
+      new TerminalPanelSerializer(context, sessionManager, gitDecorationProvider, fsWatcherPool, worktreeHost),
     ),
   );
 

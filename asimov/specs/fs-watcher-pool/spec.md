@@ -27,7 +27,7 @@ The pool SHALL emit `console.warn` exactly once per cap-crossing when the count 
 
 ### Requirement: ENOSPC / EMFILE surfacing
 
-When `createFileSystemWatcher` throws (or its constructor signals a watch-error via VS Code's underlying file service), the pool SHALL log a single `console.error` line including the path and the error code (`ENOSPC`, `EMFILE`, or `<unknown>`), and SHALL NOT re-throw. Subscribers registered for that path SHALL still receive a disposable, but invalidation events for that path SHALL silently drop until the next process restart.
+When `createFileSystemWatcher` throws (or its constructor signals a watch-error via VS Code's underlying file service), the pool SHALL log a single `console.error` line including the path and the error code (`ENOSPC`, `EMFILE`, or `<unknown>`), and SHALL NOT re-throw. For a path subscription, subscribers SHALL still receive a disposable, but invalidation events for that path SHALL silently drop until the next process restart.
 
 ### Requirement: dispose() force-releases
 
@@ -50,4 +50,13 @@ The `WatcherPool` SHALL accept an `onDidChangeWindowState: vscode.Event<{focused
 ### Requirement: Testability — injected factories
 
 The `WatcherPool` constructor SHALL accept an options bag `{ createFileSystemWatcher?: typeof vscode.workspace.createFileSystemWatcher, onDidChangeWindowState?: vscode.Event<{focused: boolean}>, initialWindowFocused?: boolean }` so unit tests inject fake implementations without monkey-patching the `vscode` module. When omitted, the real `vscode.workspace.createFileSystemWatcher`, `vscode.window.onDidChangeWindowState`, and `vscode.window.state.focused` SHALL be used.
+
+### Requirement: Pattern subscription failure is observable
+
+A pattern subscription SHALL report whether it is live and, when it is not, the reason — so a caller cannot mistake a dead subscription for a working one. The returned value SHALL remain disposable whether or not a watcher was created, so a caller that ignores the outcome behaves exactly as before.
+
+#### Scenario: A pattern subscription whose watcher could not be created reports it
+
+- **WHEN** watcher creation throws for a pattern subscription
+- **THEN** the returned subscription reports itself as not live, carrying the reason
 

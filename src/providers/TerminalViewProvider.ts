@@ -29,6 +29,7 @@ import { previewFileLink } from "./previewFileLink";
 import { isValidPreviewRequest } from "./previewValidation";
 import { readBytesBounded } from "./readBytesBounded";
 import type { VaultWatchClient, VaultWatchCoordinator } from "./VaultWatchCoordinator";
+import type { WorktreeHost, WorktreeSurface } from "./WorktreeHost";
 import { getTerminalHtml } from "./webviewHtml";
 
 /**
@@ -138,6 +139,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     private readonly vaultService: VaultService | null = null,
     private readonly vaultLauncher: VaultLauncher | null = null,
     private readonly vaultWatchCoordinator: VaultWatchCoordinator | null = null,
+    /** Window-scoped worktree tree — null in contexts where it is not wired (tests). */
+    private readonly worktreeHost: WorktreeHost | null = null,
   ) {
     this.fileTreeHost = new FileTreeHost(gitDecorationProvider, watcherPool);
   }
@@ -162,9 +165,16 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     const disposables: vscode.Disposable[] = [];
     let vaultWatchClient: VaultWatchClient | undefined;
 
+    // This surface's identity to the worktree host: it carries the visibility
+    // flag, so the object must be the same one across attach and every message.
+    const worktreeSurface: WorktreeSurface = {
+      isReady: () => this._ready,
+      post: (msg) => this.safePostMessage(webviewView.webview, msg),
+    };
+
     disposables.push(
       webviewView.webview.onDidReceiveMessage((msg: unknown) => {
-        this.handleMessage(msg, webviewView, vaultWatchClient);
+        this.handleMessage(msg, webviewView, vaultWatchClient, worktreeSurface);
       }),
     );
 
@@ -208,6 +218,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         post: (msg) => this.safePostMessage(webviewView.webview, msg),
       }),
     );
+
+    // 4a-quater. Worktree tree — one host per window, broadcast to every
+    // surface that says it is showing the view. Attaching costs no git call.
+    const worktreeAttachment = this.worktreeHost?.attach(worktreeSurface);
+    if (worktreeAttachment) {
+      disposables.push(worktreeAttachment);
+    }
 
     // 4b. Wire visibility handler (for deferred resize on re-show + output pause/resume)
     disposables.push(
@@ -871,7 +888,12 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    *
    * See: docs/design/webview-provider.md#§8, docs/design/message-protocol.md#§10
    */
-  private handleMessage(msg: unknown, webviewView: vscode.WebviewView, vaultWatchClient?: VaultWatchClient): void {
+  private handleMessage(
+    msg: unknown,
+    webviewView: vscode.WebviewView,
+    vaultWatchClient?: VaultWatchClient,
+    worktreeSurface?: WorktreeSurface,
+  ): void {
     // Basic shape validation
     if (!msg || typeof msg !== "object" || !("type" in msg) || typeof (msg as { type: unknown }).type !== "string") {
       console.warn("[AnyWhere Terminal] Invalid message from webview:", msg);
@@ -1253,6 +1275,15 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           // sidebar / panel / editor providers share one wiring. See
           // providers/fileTreeHost.ts.
           this.fileTreeHost.handleMessage(message, (response) => this.safePostMessage(webviewView.webview, response));
+          break;
+
+        case "requestWorktreeTree":
+        case "worktreeViewVisibility":
+          // Window-scoped, so the host answers and broadcasts; this provider
+          // only names which surface the message came from.
+          if (worktreeSurface) {
+            this.worktreeHost?.handleMessage(worktreeSurface, message);
+          }
           break;
 
         case "updateHoverPreviewSetting":

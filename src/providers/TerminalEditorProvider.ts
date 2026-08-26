@@ -22,6 +22,7 @@ import { previewFileLink } from "./previewFileLink";
 import { isValidPreviewRequest } from "./previewValidation";
 import { readBytesBounded } from "./readBytesBounded";
 import { themeKindFor } from "./TerminalViewProvider";
+import type { WorktreeHost, WorktreeSurface } from "./WorktreeHost";
 import { getTerminalHtml } from "./webviewHtml";
 
 /**
@@ -102,6 +103,9 @@ export class TerminalEditorProvider {
    */
   private readonly fileTreeHost: FileTreeHost;
 
+  /** This panel's identity to the worktree host; carries its visibility flag. */
+  private worktreeSurface: WorktreeSurface | undefined;
+
   /** Public accessor for `extension.ts` ctx command routing. */
   get rootGeneration(): number {
     return this.fileTreeHost.rootGeneration;
@@ -165,6 +169,7 @@ export class TerminalEditorProvider {
     watcherPool: WatcherPool | null = null,
     panelId: string = crypto.randomUUID(),
     restoreSnapshots: PendingSnapshot[] = [],
+    private readonly worktreeHost: WorktreeHost | null = null,
   ) {
     this._panel = panel;
     this._panelId = panelId;
@@ -185,6 +190,7 @@ export class TerminalEditorProvider {
     sessionManager: SessionManager,
     gitDecorationProvider: GitDecorationProvider | null = null,
     watcherPool: WatcherPool | null = null,
+    worktreeHost: WorktreeHost | null = null,
   ): vscode.Disposable {
     const panel = vscode.window.createWebviewPanel(
       TerminalEditorProvider.viewType,
@@ -205,6 +211,7 @@ export class TerminalEditorProvider {
       watcherPool,
       crypto.randomUUID(),
       [],
+      worktreeHost,
     );
 
     // Track this panel for config updates + the provider instance for host-side
@@ -236,6 +243,7 @@ export class TerminalEditorProvider {
     restoreSnapshots: PendingSnapshot[],
     gitDecorationProvider: GitDecorationProvider | null = null,
     watcherPool: WatcherPool | null = null,
+    worktreeHost: WorktreeHost | null = null,
   ): TerminalEditorProvider {
     const provider = new TerminalEditorProvider(
       context.extensionUri,
@@ -245,6 +253,7 @@ export class TerminalEditorProvider {
       watcherPool,
       panelId,
       restoreSnapshots,
+      worktreeHost,
     );
     TerminalEditorProvider._activePanels.add(panel);
     TerminalEditorProvider._instances.set(panel, provider);
@@ -312,6 +321,14 @@ export class TerminalEditorProvider {
         post: (msg) => this.safePostMessage(msg),
       }),
     );
+
+    // 3d. Worktree tree — the editor panel mounts the same webview document as
+    // the sidebar and panel, so it is a live surface of the window's host.
+    this.worktreeSurface = { isReady: () => this._ready, post: (msg) => this.safePostMessage(msg) };
+    const worktreeAttachment = this.worktreeHost?.attach(this.worktreeSurface);
+    if (worktreeAttachment) {
+      disposables.push(worktreeAttachment);
+    }
 
     // 4. Wire dispose handler — clean up all subscriptions and sessions.
     //    NOTE: PTY destruction is DEFERRED via scheduleDestroyForView so a
@@ -600,6 +617,15 @@ export class TerminalEditorProvider {
           // sidebar / panel / editor providers share one wiring. See
           // providers/fileTreeHost.ts.
           this.fileTreeHost.handleMessage(message, (response) => this.safePostMessage(response));
+          break;
+
+        case "requestWorktreeTree":
+        case "worktreeViewVisibility":
+          // Window-scoped: the host answers and broadcasts; this panel only
+          // names which surface the message came from.
+          if (this.worktreeSurface) {
+            this.worktreeHost?.handleMessage(this.worktreeSurface, message);
+          }
           break;
 
         case "openLink":

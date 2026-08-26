@@ -432,4 +432,63 @@ describe("WatcherPool", () => {
     expect(remove).toHaveBeenCalledWith(expect.objectContaining({ fsPath: "/cursor/a/chat-3/meta.json" }));
     pool.dispose();
   });
+
+  // A caller that cannot tell a dead subscription from a working one silently
+  // believes it is receiving events. See:
+  // asimov/changes/cache-and-broadcast-worktree-tree/design.md D5.
+  it("reports a live pattern subscription as active with no reason", () => {
+    const factory = makeFakeFactory();
+    const focusEm = createEmitter<{ focused: boolean }>();
+    const pool = createWatcherPool({
+      createFileSystemWatcher: factory.fn,
+      onDidChangeWindowState: focusEm.event,
+      initialWindowFocused: true,
+    });
+
+    const sub = pool.subscribePattern("/repo/.git", "worktrees/*", { create: vi.fn() });
+
+    expect(sub.active).toBe(true);
+    expect(sub.failureReason).toBeUndefined();
+    pool.dispose();
+  });
+
+  it("reports a pattern subscription whose watcher could not be created", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const focusEm = createEmitter<{ focused: boolean }>();
+    const pool = createWatcherPool({
+      createFileSystemWatcher: () => {
+        const err = new Error("no space left on device") as Error & { code?: string };
+        err.code = "ENOSPC";
+        throw err;
+      },
+      onDidChangeWindowState: focusEm.event,
+      initialWindowFocused: true,
+    });
+
+    const sub = pool.subscribePattern("/repo/.git", "worktrees/*", { create: vi.fn() });
+
+    expect(sub.active).toBe(false);
+    expect(sub.failureReason).toContain("ENOSPC");
+    // A caller that ignores the outcome must behave exactly as before.
+    expect(() => sub.dispose()).not.toThrow();
+    pool.dispose();
+  });
+
+  it("reports a pattern subscription requested after dispose as inactive", () => {
+    const factory = makeFakeFactory();
+    const focusEm = createEmitter<{ focused: boolean }>();
+    const pool = createWatcherPool({
+      createFileSystemWatcher: factory.fn,
+      onDidChangeWindowState: focusEm.event,
+      initialWindowFocused: true,
+    });
+    pool.dispose();
+
+    const sub = pool.subscribePattern("/repo/.git", "HEAD", { change: vi.fn() });
+
+    expect(sub.active).toBe(false);
+    expect(sub.failureReason).toBeDefined();
+    expect(factory.calls).toHaveLength(0);
+    expect(() => sub.dispose()).not.toThrow();
+  });
 });
