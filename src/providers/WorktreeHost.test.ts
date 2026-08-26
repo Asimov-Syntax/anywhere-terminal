@@ -84,6 +84,16 @@ function surface(ready = true): WorktreeSurface & { posts: ExtensionToWebViewMes
   return { posts, isReady: () => ready, post: (m) => posts.push(m) };
 }
 
+/**
+ * Attach a surface the window is displaying — the normal case, and what every
+ * test written before the display gate existed assumed implicitly.
+ */
+function attachShown(h: ReturnType<typeof host>, s: WorktreeSurface) {
+  const attachment = h.attach(s);
+  attachment.setDisplayed(true);
+  return attachment;
+}
+
 /** Let the gate's run and the git listing behind it settle. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 6; i += 1) {
@@ -186,8 +196,8 @@ describe("WorktreeHost — attachment", () => {
     const { runner, run } = oneRepo(MAIN);
     const worktrees = host(runner);
 
-    worktrees.attach(surface());
-    worktrees.attach(surface());
+    attachShown(worktrees, surface());
+    attachShown(worktrees, surface());
     await settle();
 
     expect(run).not.toHaveBeenCalled();
@@ -198,8 +208,8 @@ describe("WorktreeHost — attachment", () => {
     const worktrees = host(runner);
     const gone = surface();
     const kept = surface();
-    const detach = worktrees.attach(gone);
-    worktrees.attach(kept);
+    const detach = attachShown(worktrees, gone);
+    attachShown(worktrees, kept);
     worktrees.handleMessage(gone, { type: "worktreeViewVisibility", visible: true });
     worktrees.handleMessage(kept, { type: "worktreeViewVisibility", visible: true });
 
@@ -233,7 +243,7 @@ describe("WorktreeHost — visibility gating", () => {
     const hidden = surface();
     const silent = surface();
     for (const one of [first, second, hidden, silent]) {
-      worktrees.attach(one);
+      attachShown(worktrees, one);
     }
     worktrees.handleMessage(first, { type: "worktreeViewVisibility", visible: true });
     worktrees.handleMessage(second, { type: "worktreeViewVisibility", visible: true });
@@ -253,7 +263,7 @@ describe("WorktreeHost — visibility gating", () => {
     const { runner } = oneRepo(MAIN);
     const worktrees = host(runner);
     const notReady = surface(false);
-    worktrees.attach(notReady);
+    attachShown(worktrees, notReady);
     worktrees.handleMessage(notReady, { type: "worktreeViewVisibility", visible: true });
 
     worktrees.handleMessage(notReady, { type: "requestWorktreeTree" });
@@ -266,7 +276,7 @@ describe("WorktreeHost — visibility gating", () => {
     const { runner } = oneRepo(MAIN);
     const worktrees = host(runner);
     const late = surface();
-    worktrees.attach(late);
+    attachShown(worktrees, late);
 
     worktrees.handleMessage(late, { type: "requestWorktreeTree" });
     await settle();
@@ -285,7 +295,7 @@ describe("WorktreeHost — answering a request", () => {
     const { runner } = oneRepo(MAIN, FEAT);
     const worktrees = host(runner);
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
 
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
@@ -304,7 +314,7 @@ describe("WorktreeHost — answering a request", () => {
     const { runner, run } = oneRepo(MAIN, FEAT);
     const worktrees = host(runner);
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
 
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
@@ -319,7 +329,7 @@ describe("WorktreeHost — answering a request", () => {
     const { runner, run } = oneRepo(MAIN);
     const worktrees = host(runner);
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
     await settle();
@@ -336,7 +346,7 @@ describe("WorktreeHost — answering a request", () => {
     const { runner, run } = oneRepo(MAIN);
     const worktrees = host(runner);
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
     await settle();
@@ -353,7 +363,7 @@ describe("WorktreeHost — answering a request", () => {
     const { runner, run } = oneRepo(MAIN);
     const worktrees = host(runner, []);
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
 
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
@@ -367,7 +377,7 @@ describe("WorktreeHost — answering a request", () => {
     const { runner, run } = oneRepo(MAIN);
     const worktrees = host(runner);
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
 
     worktrees.handleMessage(view, { type: "ready" });
@@ -389,7 +399,7 @@ describe("WorktreeHost — watch targets", () => {
       now: () => 1000,
     });
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
     await settle();
@@ -426,7 +436,7 @@ describe("WorktreeHost — watch targets", () => {
       now: () => 1000,
     });
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
     await settle();
@@ -448,7 +458,7 @@ describe("WorktreeHost — disposal", () => {
     const { runner } = oneRepo(MAIN);
     const worktrees = host(runner);
     const view = surface();
-    worktrees.attach(view);
+    attachShown(worktrees, view);
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
 
     worktrees.handleMessage(view, { type: "requestWorktreeTree" });
@@ -469,8 +479,8 @@ describe("WorktreeHost — disposal", () => {
       },
     };
     const view = surface();
-    worktrees.attach(broken);
-    worktrees.attach(view);
+    attachShown(worktrees, broken);
+    attachShown(worktrees, view);
     worktrees.handleMessage(broken, { type: "worktreeViewVisibility", visible: true });
     worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
 
@@ -478,5 +488,171 @@ describe("WorktreeHost — disposal", () => {
     await settle();
 
     expect(view.posts).toHaveLength(1);
+  });
+});
+
+// The falling edge (audit B1). `retainContextWhenHidden` keeps a hidden webview's
+// DOM and its declaration, so the declaration alone cannot say whether anyone can
+// see the panel — the window's own answer has to gate the push too.
+describe("WorktreeHost — a surface the window is not displaying", () => {
+  it("skips it while a displayed sibling is still served", async () => {
+    const { runner } = oneRepo(MAIN);
+    const worktrees = host(runner);
+    const shown = surface();
+    const offscreen = surface();
+    worktrees.attach(shown).setDisplayed(true);
+    // `offscreen` declares the body shown but the window never displays it.
+    worktrees.attach(offscreen);
+    worktrees.handleMessage(shown, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(offscreen, { type: "worktreeViewVisibility", visible: true });
+
+    worktrees.handleMessage(shown, { type: "requestWorktreeTree" });
+    await settle();
+
+    expect(shown.posts).toHaveLength(1);
+    expect(offscreen.posts).toHaveLength(0);
+  });
+
+  it("stops pushing to it the moment the window hides it", async () => {
+    const { runner } = oneRepo(MAIN);
+    const worktrees = host(runner);
+    const view = surface();
+    const attachment = worktrees.attach(view);
+    attachment.setDisplayed(true);
+    worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(view, { type: "requestWorktreeTree" });
+    await settle();
+    expect(view.posts).toHaveLength(1);
+
+    attachment.setDisplayed(false);
+    worktrees.handleMessage(view, { type: "requestWorktreeTree", force: true });
+    await settle();
+
+    // Still one: the rebuild ran, and reached nobody.
+    expect(view.posts).toHaveLength(1);
+  });
+});
+
+// The falling edge is only safe if the rising edge repairs it: the moment the
+// user can see the panel again is the moment it has to be current.
+describe("WorktreeHost — a surface displayed again", () => {
+  it("receives listings that changed while it was not displayed, running no rebuild", async () => {
+    const repo = growingRepo(MAIN);
+    const worktrees = host(repo.runner);
+    const shown = surface();
+    const away = surface();
+    attachShown(worktrees, shown);
+    const awayAttachment = worktrees.attach(away);
+    awayAttachment.setDisplayed(true);
+    for (const one of [shown, away]) {
+      worktrees.handleMessage(one, { type: "worktreeViewVisibility", visible: true });
+    }
+    worktrees.handleMessage(shown, { type: "requestWorktreeTree" });
+    await settle();
+    expect(away.posts).toHaveLength(1);
+
+    awayAttachment.setDisplayed(false);
+    repo.setRecords(MAIN, FEAT);
+    worktrees.handleMessage(shown, { type: "requestWorktreeTree", force: true });
+    await settle();
+    // The rebuild happened; it just did not reach the surface nobody can see.
+    expect(shown.posts).toHaveLength(2);
+    expect(away.posts).toHaveLength(1);
+    const listingsBefore = repo.run.mock.calls.filter((c) => c[0][0] === "worktree").length;
+
+    awayAttachment.setDisplayed(true);
+    await settle();
+
+    const latest = away.posts.at(-1);
+    expect(away.posts).toHaveLength(2);
+    expect(latest?.type === "worktreeTreeResponse" && latest.tree.repos[0].worktrees).toHaveLength(2);
+    expect(repo.run.mock.calls.filter((c) => c[0][0] === "worktree")).toHaveLength(listingsBefore);
+  });
+
+  it("pushes nothing further when the window repeats a report it already made", async () => {
+    const { runner } = oneRepo(MAIN);
+    const worktrees = host(runner);
+    const view = surface();
+    const attachment = worktrees.attach(view);
+    attachment.setDisplayed(true);
+    worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(view, { type: "requestWorktreeTree" });
+    await settle();
+    expect(view.posts).toHaveLength(1);
+
+    attachment.setDisplayed(true);
+    await settle();
+
+    expect(view.posts).toHaveLength(1);
+  });
+});
+
+// Review round 1, W1. The rise is the only thing that serves a re-shown surface,
+// so consuming it on a delivery that never landed strands the panel until some
+// unrelated rebuild happens by.
+describe("WorktreeHost — a re-show whose delivery did not land", () => {
+  /** A surface that can refuse to deliver, either by throwing or by not being ready. */
+  function flaky() {
+    const posts: ExtensionToWebViewMessage[] = [];
+    const state = { ready: true, throws: false };
+    return {
+      posts,
+      state,
+      surface: {
+        isReady: () => state.ready,
+        post: (m: ExtensionToWebViewMessage) => {
+          if (state.throws) {
+            throw new Error("webview is gone");
+          }
+          posts.push(m);
+        },
+      } as WorktreeSurface,
+    };
+  }
+
+  async function shownOnce(subject: ReturnType<typeof flaky>) {
+    const { runner } = oneRepo(MAIN);
+    const worktrees = host(runner);
+    const attachment = worktrees.attach(subject.surface);
+    attachment.setDisplayed(true);
+    worktrees.handleMessage(subject.surface, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(subject.surface, { type: "requestWorktreeTree" });
+    await settle();
+    expect(subject.posts).toHaveLength(1);
+    return attachment;
+  }
+
+  it("serves the next report after a post that threw", async () => {
+    const subject = flaky();
+    const attachment = await shownOnce(subject);
+
+    attachment.setDisplayed(false);
+    subject.state.throws = true;
+    attachment.setDisplayed(true);
+    await settle();
+    expect(subject.posts).toHaveLength(1);
+
+    subject.state.throws = false;
+    attachment.setDisplayed(true);
+    await settle();
+
+    expect(subject.posts).toHaveLength(2);
+  });
+
+  it("serves the next report after a rise the surface was not ready for", async () => {
+    const subject = flaky();
+    const attachment = await shownOnce(subject);
+
+    attachment.setDisplayed(false);
+    subject.state.ready = false;
+    attachment.setDisplayed(true);
+    await settle();
+    expect(subject.posts).toHaveLength(1);
+
+    subject.state.ready = true;
+    attachment.setDisplayed(true);
+    await settle();
+
+    expect(subject.posts).toHaveLength(2);
   });
 });

@@ -86,6 +86,7 @@ function mountSurface(host: WorktreeHost, location: "sidebar" | "panel") {
   );
   const handlers: Array<(msg: unknown) => void> = [];
   const disposeHandlers: Array<() => void> = [];
+  const visibilityHandlers: Array<() => void> = [];
   const postMessage = vi.fn((_msg: unknown) => Promise.resolve(true));
   const webviewView = {
     visible: true,
@@ -101,7 +102,10 @@ function mountSurface(host: WorktreeHost, location: "sidebar" | "panel") {
       },
       postMessage,
     },
-    onDidChangeVisibility: () => ({ dispose: () => {} }),
+    onDidChangeVisibility: (h: () => void) => {
+      visibilityHandlers.push(h);
+      return { dispose: () => {} };
+    },
     onDidDispose: (h: () => void) => {
       disposeHandlers.push(h);
       return { dispose: () => {} };
@@ -118,6 +122,13 @@ function mountSurface(host: WorktreeHost, location: "sidebar" | "panel") {
     },
     closeWebview: () => {
       for (const h of disposeHandlers) {
+        h();
+      }
+    },
+    /** Move what VS Code reports about this view, then fire its event. */
+    setWindowVisible: (visible: boolean) => {
+      (webviewView as unknown as { visible: boolean }).visible = visible;
+      for (const h of visibilityHandlers) {
         h();
       }
     },
@@ -238,5 +249,34 @@ describe("TerminalViewProvider — worktree surface", () => {
     await settle();
 
     sessions.dispose();
+  });
+});
+
+// The window's own answer, not the webview's. `retainContextWhenHidden` keeps the
+// declaration alive across a hide, so this is the only signal that falsifies it.
+describe("TerminalViewProvider — a view the window has hidden", () => {
+  it("stops receiving pushes, and is brought up to date when shown again", async () => {
+    const { deps } = gitDeps();
+    const host = makeHost(deps);
+    const view = mountSurface(host, "sidebar");
+    view.send({ type: "ready" });
+    view.send({ type: "worktreeViewVisibility", visible: true });
+    view.send({ type: "requestWorktreeTree" });
+    await settle();
+    const served = view.trees().length;
+    expect(served).toBeGreaterThan(0);
+
+    view.setWindowVisible(false);
+    view.send({ type: "requestWorktreeTree", force: true });
+    await settle();
+    // The rebuild ran; nobody could see the panel, so nothing was serialized into it.
+    expect(view.trees()).toHaveLength(served);
+
+    view.setWindowVisible(true);
+    await settle();
+
+    // Shown again, and current — without the webview having to ask.
+    expect(view.trees()).toHaveLength(served + 1);
+    view.dispose();
   });
 });

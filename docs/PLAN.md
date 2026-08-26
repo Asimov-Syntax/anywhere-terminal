@@ -201,7 +201,7 @@ state. There is nothing to provision.
 | **Labels** | None |
 | **Notes** | Risk: this is the difference between a usable panel and one that fights the user. A spinner at animation rate repaints the tree many times per second otherwise. The shell already carries a render signature over the fixture shapes; this task's work is proving it covers every input the live data can move, since a field omitted from the key renders stale forever |
 | **Acceptance** | A push that changed nothing meaningful performs no DOM work, so scroll, focus, and expansion survive it; animated titles cannot drive re-renders, and a continuously working agent produces no steady-state render load |
-| **Status** | todo |
+| **Status** | done |
 
 ---
 

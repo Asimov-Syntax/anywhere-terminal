@@ -148,7 +148,8 @@ async function builtHost(options: { folders?: string[]; failWatchFor?: string } 
     clock,
   });
   const view = surface();
-  host.attach(view);
+  // The window is displaying this surface — the gate needs both facts.
+  host.attach(view).setDisplayed(true);
   host.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
   host.handleMessage(view, { type: "requestWorktreeTree" });
   await settle();
@@ -189,7 +190,7 @@ describe("WorktreeHost — watch targets", () => {
     const listedBefore = listedRepos(run).length;
 
     const second = surface();
-    host.attach(second);
+    host.attach(second).setDisplayed(true);
     host.handleMessage(second, { type: "worktreeViewVisibility", visible: true });
     host.handleMessage(second, { type: "requestWorktreeTree" });
     await settle();

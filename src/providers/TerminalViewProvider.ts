@@ -223,6 +223,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     // surface that says it is showing the view. Attaching costs no git call.
     const worktreeAttachment = this.worktreeHost?.attach(worktreeSurface);
     if (worktreeAttachment) {
+      // Seeded rather than left to the first change: a view resolved while
+      // already on screen never fires a visibility event, and would sit silent.
+      worktreeAttachment.setDisplayed(webviewView.visible);
       disposables.push(worktreeAttachment);
     }
 
@@ -230,6 +233,10 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     disposables.push(
       webviewView.onDidChangeVisibility(() => {
         const viewId = this.getViewId();
+        // The worktree host pushes only to a surface the window is displaying;
+        // `retainContextWhenHidden` means the webview's own declaration cannot
+        // tell it that (audit B1).
+        worktreeAttachment?.setDisplayed(webviewView.visible);
         if (webviewView.visible) {
           // Resume output flushing when view becomes visible
           this.sessionManager.resumeOutputForView(viewId);

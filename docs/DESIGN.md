@@ -381,7 +381,7 @@ its own `VaultPanel` instance over its own state. Three consequences the design 
 | Consequence | Rule |
 |-------------|------|
 | There is no single "the webview" | The host **broadcasts** the tree to every live webview. A reply to one surface's request still goes to all, because they render the same window-scoped truth |
-| Every surface retains its DOM while hidden | All three are registered with `retainContextWhenHidden: true` (`src/extension.ts:198-231`, `src/providers/TerminalEditorProvider.ts:189-197`). A hidden surface's tree still costs DOM work on push, so pushes are skipped for surfaces whose Worktree view is not the active segment, and the render-signature guard catches the rest |
+| Every surface retains its DOM while hidden | All three are registered with `retainContextWhenHidden: true` (`src/extension.ts:198-231`, `src/providers/TerminalEditorProvider.ts:189-197`). A hidden surface's tree still costs DOM work on push, so a push goes only to a surface whose Worktree view is the active segment *and* which the window reports it is displaying (`worktree-rpc.md` § 1) — neither fact implies the other, and the declaration alone survives hiding. The render-signature guard catches the rest |
 | Per-surface state is not window state | Anything scoped to the window — which panes exist, what each is doing — must be projected **host-side**. Anything genuinely per-surface — scroll, collapse, expansion — stays in that surface's own persisted state |
 
 The last row is why the agent-activity projection lives in the host rather than reusing the

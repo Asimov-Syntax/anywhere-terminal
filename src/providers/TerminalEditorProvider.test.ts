@@ -307,3 +307,55 @@ describe("TerminalEditorProvider.createPanel", () => {
     sm.dispose();
   });
 });
+
+// The editor panel subscribes to view-state changes BEFORE it attaches its
+// worktree surface, so the handler closes over a binding assigned later. If that
+// ordering ever breaks the panel silently stops reporting and the host, which
+// pushes only to a surface the window displays, goes quiet forever.
+describe("TerminalEditorProvider — worktree display reporting", () => {
+  function recordingHost() {
+    const reported: boolean[] = [];
+    return {
+      reported,
+      host: {
+        initPayload: () => ({ worktreeHasRepo: false }),
+        attach: () => ({ dispose: () => {}, setDisplayed: (d: boolean) => reported.push(d) }),
+        handleMessage: () => {},
+        dispose: () => {},
+      },
+    };
+  }
+
+  it("seeds from the panel and reports every view-state change after it", async () => {
+    const ctx = createMockContext();
+    const sm = new SessionManager();
+    const vscode = await import("vscode");
+    const createSpy = vi.spyOn(vscode.window, "createWebviewPanel");
+    const { host, reported } = recordingHost();
+
+    TerminalEditorProvider.createPanel(
+      ctx,
+      sm,
+      null,
+      null,
+      host as unknown as Parameters<typeof TerminalEditorProvider.createPanel>[4],
+    );
+
+    const panel = createSpy.mock.results[0]?.value as {
+      visible: boolean;
+      __viewStateHandlers: Array<(e: { webviewPanel: { visible: boolean } }) => void>;
+    };
+    // Seeded at attach: a panel created already active fires no event.
+    expect(reported).toEqual([true]);
+
+    for (const visible of [false, true]) {
+      panel.visible = visible;
+      for (const h of panel.__viewStateHandlers) {
+        h({ webviewPanel: { visible } });
+      }
+    }
+
+    expect(reported).toEqual([true, false, true]);
+    sm.dispose();
+  });
+});

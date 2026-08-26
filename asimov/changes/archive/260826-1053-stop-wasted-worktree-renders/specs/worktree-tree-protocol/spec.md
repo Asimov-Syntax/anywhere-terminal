@@ -1,36 +1,6 @@
-# worktree-tree-protocol Specification
-## Requirements
+# Spec Delta: worktree-tree-protocol (stop-wasted-worktree-renders)
 
-### Requirement: Answer a worktree tree request
-
-The system SHALL accept a `requestWorktreeTree` message carrying an optional `force` flag and
-SHALL answer it with exactly one `worktreeTreeResponse`. Without `force` the answer MAY be served
-from the cached listing; with `force` the listings SHALL be rebuilt before the answer is sent, and
-a rebuild already running SHALL NOT be taken as that rebuild.
-
-#### Scenario: Concurrent requests without force produce one rebuild
-
-- **WHEN** two `requestWorktreeTree` messages without `force` arrive while a rebuild for the same
-  scope is already in flight
-- **THEN** one rebuild runs and one push is produced
-
-#### Scenario: A forced request during a rebuild rebuilds again
-
-- **WHEN** a `requestWorktreeTree` carrying `force` arrives while a rebuild for the same scope is
-  already in flight
-- **THEN** a further rebuild runs, and the request is answered from it
-
-### Requirement: Push the tree and the presence projection together
-
-Every `worktreeTreeResponse` SHALL carry both the worktree tree and the presence projection in
-one message. The two halves SHALL NOT be delivered as separate messages, so a recipient can
-never hold a presence row keyed to a worktree absent from the tree it currently has.
-
-### Requirement: Push unsolicited on the same message
-
-A rebuild the system initiated SHALL be delivered as a `worktreeTreeResponse` identical in
-shape to the reply to a request, so a recipient cannot distinguish, and need not, whether it
-asked for a given tree.
+## MODIFIED Requirements
 
 ### Requirement: Deliver each push only to surfaces showing the view
 
@@ -49,6 +19,8 @@ including the surface whose request produced it — and SHALL NOT be delivered t
 - **WHEN** a surface that declared the view visible stops being displayed, and a rebuild produces a push
 - **THEN** that surface receives no push, and the surfaces still displayed receive it
 
+## ADDED Requirements
+
 ### Requirement: Serve a surface that is displayed again
 
 WHEN a surface begins showing the view again after a period of not showing it, the system SHALL
@@ -62,4 +34,3 @@ showing it performs no work on another surface's transition.
 
 - **WHEN** a surface stops being displayed, the listings change while it is not displayed, and it is displayed again
 - **THEN** that surface receives the changed listings, and no rebuild is run to produce them
-

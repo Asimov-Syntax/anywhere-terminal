@@ -22,7 +22,7 @@ import { previewFileLink } from "./previewFileLink";
 import { isValidPreviewRequest } from "./previewValidation";
 import { readBytesBounded } from "./readBytesBounded";
 import { themeKindFor } from "./TerminalViewProvider";
-import type { WorktreeHost, WorktreeSurface } from "./WorktreeHost";
+import type { WorktreeAttachment, WorktreeHost, WorktreeSurface } from "./WorktreeHost";
 import { getTerminalHtml } from "./webviewHtml";
 
 /**
@@ -305,8 +305,14 @@ export class TerminalEditorProvider {
     );
 
     // 3b. Wire visibility handler (for deferred resize on tab switch)
+    // Assigned by 3d below; this subscription only reads it at event time, which
+    // is always after the attach.
+    let worktreeAttachment: WorktreeAttachment | undefined;
     disposables.push(
       this._panel.onDidChangeViewState((e) => {
+        // The worktree host pushes only to a surface the window is displaying —
+        // this panel retains its context when hidden, so nothing else says so.
+        worktreeAttachment?.setDisplayed(e.webviewPanel.visible);
         if (e.webviewPanel.visible && this._ready) {
           this.safePostMessage({ type: "viewShow" });
         }
@@ -325,8 +331,10 @@ export class TerminalEditorProvider {
     // 3d. Worktree tree — the editor panel mounts the same webview document as
     // the sidebar and panel, so it is a live surface of the window's host.
     this.worktreeSurface = { isReady: () => this._ready, post: (msg) => this.safePostMessage(msg) };
-    const worktreeAttachment = this.worktreeHost?.attach(this.worktreeSurface);
+    worktreeAttachment = this.worktreeHost?.attach(this.worktreeSurface);
     if (worktreeAttachment) {
+      // Seeded: a panel resolved while already active fires no view-state event.
+      worktreeAttachment.setDisplayed(this._panel.visible);
       disposables.push(worktreeAttachment);
     }
 

@@ -41,9 +41,20 @@ Two invariants carried over from the vault protocol:
   live surfaces, including the reply to a request that came from one of them, because they
   all render the same window-scoped truth. A surface whose Worktree view is not the active
   segment is skipped: all three retain their DOM while hidden, so an unfiltered broadcast
-  pays render cost in panels nobody is looking at. The host learns which surfaces those are
-  from `worktreeViewVisibility` (§ 2.1) — a surface receives nothing until it has declared
-  the view visible at least once.
+  pays render cost in panels nobody is looking at.
+
+  Being skipped takes **two independent facts**, and neither stands for the other. The
+  webview declares which body it is showing, via `worktreeViewVisibility` (§ 2.1). The window
+  reports whether it is displaying that surface at all, which the webview cannot know:
+  `retainContextWhenHidden` means a hidden surface keeps its DOM *and* its last declaration,
+  so the declaration alone would stay true forever. The worktree body can be the shown body
+  inside a panel the user has hidden, and a fully visible panel can be showing the sessions
+  body — so a push goes only to a surface where both hold.
+
+  Because a surface stops receiving while it is away, the moment it is displayed again is the
+  moment it has to be current: that transition serves it **from the cache**, alone, without a
+  rebuild. The watches keep running while it is away, so the cache already holds the answer
+  a rebuild would go and re-read.
 - **Actions on existing objects name ids, never paths.** Every action against a worktree that
   already exists names a `worktreeId` / `repoId` the host previously issued; the host
   re-resolves the path server-side from its own cache before touching git. A path in such a
@@ -216,6 +227,8 @@ thing we can show, and hiding them would make the failure unactionable.
 | Condition | Behavior |
 |-----------|----------|
 | Two `requestWorktreeTree` in flight | Coalesced; one rebuild, one push |
+| Window hides a surface that is showing the view | Pushes stop; the cache is served to it alone when the window displays it again |
+| That re-show delivery is skipped or throws | The transition is not consumed, so the next report serves it |
 | Action arrives during a rebuild | Queued behind it, then re-resolves against the new tree |
 | `worktreeCreate` with a path that exists and is non-empty | Rejected in validation, before git |
 | `worktreeCreate` for a branch already checked out elsewhere | Git refuses; its message is surfaced verbatim |

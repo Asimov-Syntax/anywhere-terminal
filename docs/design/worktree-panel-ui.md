@@ -258,10 +258,17 @@ inventing a second tree idiom in the same webview.
 ### 6.1 Re-render discipline
 
 The vault list already guards against re-rendering when nothing changed, via a render
-signature (`src/webview/vault/vaultRenderSignature.ts`). The Worktree view needs the same
+signature (`src/webview/vault/vaultRenderSignature.ts`). The Worktree view carries the same
 guard, computed over the tree plus presence with **decorative title frames stripped first**.
 Without it, a single agent's spinner repaints the whole tree at animation rate and destroys
 scroll position and expansion state.
+
+The key covers **every field of every wire shape**, not only the ones a renderer prints. A
+row's DOM listeners close over the row object they were built with, so a render the guard
+skipped hands the old value back at interaction time — which makes a routing field nobody
+displays, like the pane a row would focus, just as load-bearing as a visible one. Exclusions
+are therefore named one field at a time with a reason, never a whole shape, and the only
+standing ones are a rescan timestamp that moves on every poll and fields that cannot vary.
 
 ## 7. Visual specification
 

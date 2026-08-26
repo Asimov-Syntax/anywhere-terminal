@@ -50,11 +50,21 @@ export interface WorktreeInitPayload {
   worktreeHasRepo: boolean;
 }
 
+/**
+ * What `attach` hands back. Carrying the display-state setter here rather than
+ * exposing it on the host keyed by surface is what stops a provider reporting
+ * for a surface it never attached, or one whose attachment it already disposed.
+ */
+export interface WorktreeAttachment extends vscode.Disposable {
+  /** Report whether the window is displaying this surface (design.md D1). */
+  setDisplayed(displayed: boolean): void;
+}
+
 export interface WorktreeHost extends vscode.Disposable {
   /** Fields this host contributes to a surface's `init` message. */
   initPayload(): WorktreeInitPayload;
   /** Register one surface. Disposing detaches only that surface. */
-  attach(surface: WorktreeSurface): vscode.Disposable;
+  attach(surface: WorktreeSurface): WorktreeAttachment;
   /** Route an inbound worktree message from `surface`. Unknown types ignored. */
   handleMessage(surface: WorktreeSurface, msg: WebViewToExtensionMessage): void;
 }
@@ -66,6 +76,14 @@ interface SurfaceState {
    * shown the view — the cost this gate exists to avoid.
    */
   visible: boolean;
+  /**
+   * The window is displaying this surface. Independent of `visible`, and false
+   * for the same reason: `retainContextWhenHidden` means a surface that stopped
+   * being displayed still holds — and still means — its last declaration.
+   */
+  displayed: boolean;
+  /** Last computed `visible && displayed`, so the transition is edge-triggered. */
+  showing: boolean;
 }
 
 export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
@@ -81,25 +99,72 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return { rowsByWorktreeId: {}, scannedAt: now(), degradedSources: [] };
   }
 
+  function currentMessage(): ExtensionToWebViewMessage {
+    return { type: "worktreeTreeResponse", tree: cache.read(), presence: presence() };
+  }
+
+  /**
+   * Deliver to one surface, or skip it. The gate lives here alone so a broadcast
+   * and a single-surface delivery cannot come to different answers about who may
+   * receive a push.
+   */
+  function postTo(surface: WorktreeSurface, state: SurfaceState, message: ExtensionToWebViewMessage): boolean {
+    if (!state.visible || !state.displayed || !surface.isReady()) {
+      return false;
+    }
+    try {
+      surface.post(message);
+      return true;
+    } catch (err) {
+      console.warn(`${LOG_PREFIX} surface post threw — continuing broadcast`, err);
+      return false;
+    }
+  }
+
   function broadcast(): void {
     if (disposed) {
       return;
     }
-    const message: ExtensionToWebViewMessage = {
-      type: "worktreeTreeResponse",
-      tree: cache.read(),
-      presence: presence(),
-    };
+    const message = currentMessage();
     for (const [surface, state] of surfaces) {
-      if (!state.visible || !surface.isReady()) {
-        continue;
-      }
-      try {
-        surface.post(message);
-      } catch (err) {
-        console.warn(`${LOG_PREFIX} surface post threw — continuing broadcast`, err);
-      }
+      postTo(surface, state, message);
     }
+  }
+
+  /**
+   * Serve a surface that has just begun showing the view. Edge-triggered on both
+   * facts together, so a repeated report from either one is a no-op, and served
+   * from the cache: the watches ran while the surface was away, so a rebuild
+   * would re-read git for what is already held — and would push it to everyone.
+   *
+   * `serveOnRise` is false for the webview's own declaration, which arrives with
+   * a tree request behind it — serving that edge as well would post twice. The
+   * window displaying a surface again is the edge with no requester, which is
+   * the gap this exists to close.
+   */
+  function reconcileShowing(surface: WorktreeSurface, state: SurfaceState, serveOnRise: boolean): void {
+    const showing = state.visible && state.displayed;
+    if (showing === state.showing) {
+      return;
+    }
+    if (!showing) {
+      state.showing = false;
+      return;
+    }
+    if (disposed || !serveOnRise) {
+      state.showing = true;
+      return;
+    }
+    if (!built) {
+      // Nothing to serve yet; the build's own broadcast reaches this surface.
+      state.showing = true;
+      void gate.request(WHOLE_TREE_SCOPE, {});
+      return;
+    }
+    // Recorded only once it actually reached the surface. A post that was
+    // skipped as not-ready, or that threw, must not consume the edge — the next
+    // report would find nothing to do and the surface would stay stale.
+    state.showing = postTo(surface, state, currentMessage());
   }
 
   /**
@@ -172,9 +237,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     void gate.request(WHOLE_TREE_SCOPE, { force: true });
   });
 
-  function attach(surface: WorktreeSurface): vscode.Disposable {
-    surfaces.set(surface, { visible: false });
-    return { dispose: () => surfaces.delete(surface) };
+  function attach(surface: WorktreeSurface): WorktreeAttachment {
+    surfaces.set(surface, { visible: false, displayed: false, showing: false });
+    return {
+      dispose: () => surfaces.delete(surface),
+      setDisplayed: (displayed: boolean) => {
+        const state = surfaces.get(surface);
+        if (state) {
+          state.displayed = displayed;
+          reconcileShowing(surface, state, true);
+        }
+      },
+    };
   }
 
   function handleMessage(surface: WorktreeSurface, msg: WebViewToExtensionMessage): void {
@@ -185,6 +259,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     switch (msg.type) {
       case "worktreeViewVisibility":
         state.visible = msg.visible;
+        reconcileShowing(surface, state, false);
         return;
       case "requestWorktreeTree":
         // Nothing to serve before the first build, whatever the caller asked for.

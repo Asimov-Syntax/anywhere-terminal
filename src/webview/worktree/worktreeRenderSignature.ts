@@ -79,6 +79,10 @@ export function worktreeSignature(tree: WorktreeTree | null, presence: WorktreeP
               r.rowId,
               r.scope,
               r.paneId ?? "",
+              // Keyed though nothing renders them: a row's listeners close over
+              // the row object, so a guarded-out render hands the old routing
+              // value back at click time (review round 1, B1).
+              r.viewId ?? "",
               // Stripped, so a spinner tick alone leaves the signature unchanged.
               stripDecorations(r.title),
               r.preview ?? "",
@@ -94,7 +98,9 @@ export function worktreeSignature(tree: WorktreeTree | null, presence: WorktreeP
               String(r.finishedAt ?? ""),
               String(r.lastActivityAt ?? ""),
               String(r.startedAt ?? ""),
-              (r.subagents ?? []).map((s) => [s.name, s.title ?? "", s.status].join(FIELD_SEP)).join(","),
+              (r.subagents ?? [])
+                .map((s) => [s.name, s.title ?? "", s.status, s.entryId ?? ""].join(FIELD_SEP))
+                .join(","),
             ].join(FIELD_SEP),
           )
           .join(ROW_SEP),
