@@ -91,7 +91,7 @@
 
 ## 5. Proof against the real agents
 
-- [ ] 5_1 Confirm the reported id is the id the vault reads
+- [x] 5_1 Confirm the reported id is the id the vault reads — verified: manual — Walked headlessly against real OpenCode 1.18.22 rather than through the extension UI, which this session cannot drive. States walked: the generated plugin (from buildOpenCodePluginSource, written into a temp OPENCODE_CONFIG_DIR) was loaded by a real `opencode serve`; creating a session through opencode own HTTP API made it POST {"sessionID":"ses_fbc63f61effeFBA9eGgKRDkE5D"} to the credential URL — byte-identical to the id opencode API returned; `sqlite3 ~/.local/share/opencode/opencode.db` holds that id as session.id with the same directory; and this repo readOpenCodeEntry resolves it to entry id opencode:ses_fbc63f61effeFBA9eGgKRDkE5D with the matching cwd and title. NOT walked: the extension host rendering that entry id into a worktree row, which only a running VS Code window can show; that leg is covered by unit tests, not by this run. The probe session was deleted afterwards.
   - **Deps**: 4_2
   - **Refs**: specs/agent-hook-identity/spec.md#an-agent-reports-the-session-it-is-running, design.md#d2-opencode-needs-no-configuration-overlay
   - **Acceptance**:
