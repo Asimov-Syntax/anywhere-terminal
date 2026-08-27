@@ -83,7 +83,7 @@
     1. In src/providers/WorktreeHost.secondSurface.test.ts, snapshot every counter in D4 with one surface shown
     2. Attach and show a second surface, then assert each counter is unchanged and only the post count rose
 
-- [ ] 3_4 Measure the two published latency budgets outside the unit suite
+- [x] 3_4 Measure the two published latency budgets outside the unit suite — verified: pnpm run bench:scale && pnpm run check-types && pnpm exec vitest run src/worktree/presenceProjector.scale.test.ts src/test/invariants exit 0
   - **Deps**: 3_1, 3_2
   - **Refs**: design.md D2
   - **Acceptance**:
@@ -93,7 +93,7 @@
   - **Plan**:
     1. Add src/test/bench/scale.bench.ts — presence at 10 panes × 10 worktrees, and a model rebuild over a real temporary repo with ten worktrees built from the existing integration fixtures
     2. Assert each measurement against src/test/invariants/budgets.ts and exit non-zero on breach
-    3. Register the `bench:scale` script in package.json, kept out of `test:unit`
+    3. Register the `bench:scale` script in package.json plus vitest.bench.config.ts, kept out of `test:unit` — the main config includes only `*.test.ts`, so exclusion is structural rather than a list that can drift
 
 ## 4. Registration and hygiene
 

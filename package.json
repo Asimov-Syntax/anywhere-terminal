@@ -632,6 +632,7 @@
     "format": "biome format --write src/",
     "test": "vscode-test",
     "test:unit": "vitest run",
+    "bench:scale": "bun src/test/bench/scale.bench.ts",
     "test:unit:watch": "vitest watch",
     "test:unit:coverage": "vitest run --coverage",
     "vsix": "rm -f anywhere-terminal-*.vsix && vsce package --no-dependencies",
