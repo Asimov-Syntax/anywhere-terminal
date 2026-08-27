@@ -51,7 +51,7 @@
 
 ## 3. Bounds and cost
 
-- [ ] 3_1 Hold the presence cost envelope over production wiring
+- [x] 3_1 Hold the presence cost envelope over production wiring — verified: bun test 'src/worktree/presenceProjector.scale.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D2
   - **Acceptance**:
