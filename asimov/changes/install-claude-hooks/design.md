@@ -238,7 +238,11 @@ failure escaped the surrounding `try`/`catch`. And the two deadlines were both 2
 outer one resolved before the inner reap wait it was supposed to back up: the awaiting added in
 round 3 never actually ran.
 
-### D15: The ledger is a lock-protected file under global storage, not `globalState`
+### D15: The ledger is a lock-protected file, not `globalState`
+
+> **Amended by D16** after review cycle 3: the lock-and-atomic-rename discipline below stands;
+> the ledger no longer lives under `globalStorageUri`, and the read rule below is tightened
+> from "inside the lock" to "inside the lock, per operation".
 
 **Amends D12's persistence.** The ledger is a JSON file beside the agent wrapper directories
 under `globalStorageUri`, written through the same lock-and-atomic-rename discipline the
@@ -253,13 +257,69 @@ different path, and `recordPending`/`clearPending` run outside it. The failure i
 preference but a lost record that cleanup is still owed, which is exactly what D13 relies on
 surviving.
 
-The same authority covers reads. A snapshot taken before the lock is stale by definition, so
-the entry is read inside the lock rather than from a cached root.
+The same authority covers reads, and it covers them per operation rather than once per host.
+A snapshot taken before the lock is stale by definition; so is one taken under the lock and
+then reused, because another host may write between the read and the decision it feeds.
+Every operation that freezes an ownership or destination inventory — a transition, an
+uninstall sweep, an ownership test under the config lock — takes its own snapshot under the
+ledger lock first. A host that loaded once at activation and answered from that view could
+report a clean uninstall while a destination another window recorded still holds our entries.
 
-Finalization failure is treated as a destination that still holds our entries: if recording
-the installed destination fails after the configuration was replaced, the written path is
-recorded pending, and the host keeps it in memory for the rest of the session so this window
-can still reconcile it even when nothing persisted.
+Failure is read differently on each side of the configuration write, because the two sides
+lose different things. **Before** the write, a record that did not reach durable storage stops
+the installation: the alternative is a command in the user's file that no future session can
+recognise, which is the unowned-entry outcome the whole ledger exists to prevent. **After** the
+write the bytes are already on disk, so refusing helps nobody; there the written path is
+recorded pending and the host keeps it in memory for the rest of the session, so this window
+can still reconcile it even when nothing persisted. A session-only record is therefore a
+fallback for what already happened, never a licence for what has not happened yet — and it is
+never reported to a caller as a durable one. A caller that asks whether a destination is
+tracked is asking whether it will survive this window, so the answer is the durability of the
+write, not the outcome of the in-memory bookkeeping.
+
+Session-only records merge back under the same ceiling that governs direct insertion. Folding
+one host's unpersisted list into another's durable one without re-applying the bound is how a
+capped list becomes an uncapped one, and the bound exists to keep cleanup work from growing
+with history.
+
+### D16: Ownership history outlives the root it describes
+
+**Amends D15's location.** The ledger is not stored under `globalStorageUri`. It lives at a
+fixed per-user path — `~/.anywhere-terminal/agent-hooks-ledger.json` — and only the wrapper
+scripts stay under the extension's storage root.
+
+`globalStorageUri` is stable across extension **updates**, which is what D3 established and all
+that it established. It is not stable across a profile change, portable mode, or a move between
+a local and a remote window. When it moves, the wrapper moves with it, so the command this build
+writes changes — and if the ledger moved too, nothing left can recognise the command the
+previous root wrote. That entry is then unowned: never swept, and re-appended beside its
+replacement, so the agent fires both. A parser is not the alternative; that was settled in
+cycle 1 and the reasons have not changed.
+
+The rule this expresses is narrow: **a record of what we wrote must outlive every location it
+describes.** The wrapper is a location, so the ledger cannot live inside it. Relocating the
+wrapper as well was considered and rejected — it would make the command itself stable, but the
+registered executable path is the security surface this change was reviewed on, and moving it
+out of the extension's own storage means nothing reclaims it when the extension is uninstalled.
+
+The consequence is that one ledger now serves every VS Code installation for this user. That is
+correct rather than incidental: they already share the agent configuration files they write
+into, so they should share the record of what was written there. Concurrency is already handled
+— the file's lock is a cross-process one, and D15's per-operation read makes a second
+installation's writes visible to the first.
+
+### Guarantee this design can honestly claim
+
+Ownership is byte equality against a command we recorded writing. That refuses every lookalike:
+a foreign root, a re-quoted equivalent, a suffix past the closing quote, our command as somebody
+else's argument. What it cannot do is distinguish an entry this extension wrote from a
+byte-identical copy the user wrote themselves — nothing in the document records provenance, and
+D16 does not change that.
+
+So the claim is **"never removes a non-identical lookalike or a command-edited entry"**, not
+per-occurrence provenance. Stating the stronger version would be the same overreach the parsers
+made. The weaker claim is still the one that matters, because the failure it prevents — silently
+deleting configuration the user owns — is the irreversible one.
 
 ## Interfaces
 

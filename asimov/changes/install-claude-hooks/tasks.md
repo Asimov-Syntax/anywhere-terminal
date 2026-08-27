@@ -198,3 +198,61 @@
     1. In src/agentHooks/install/agentHookTransitions.ts abandon the reconcile when a stale destination could neither be cleaned nor recorded, leaving the recorded destination naming it, and report which path is holding the move
     2. Cover in src/agentHooks/install/agentHookTransitions.test.ts: a full pending list with a refused cleanup leaving the recorded destination unchanged and nothing installed at the new one, that uninstall still finds it, and that the move proceeds once a slot frees
 
+## 7. Cycle-3 round-7 fixes
+
+- [ ] 7_1 Keep the ownership record where it outlives what it describes, and read it per operation
+  - **Deps**: 6_1
+  - **Refs**: .reviews/round-7.md#b9, .reviews/round-7.md#b5, .reviews/round-7.md#b6, .reviews/round-7.md#b10, design.md#d16-ownership-history-outlives-the-root-it-describes, design.md#d15-the-ledger-is-a-lock-protected-file-not-globalstate
+  - **Acceptance**:
+    - Outcome: A command survives a storage-root move, and no decision uses a stale ledger view
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Point the ledger at the per-user path in src/extension.ts, leaving the wrapper under the storage root, and create the containing directory before the first lock attempt
+    2. Give src/agentHooks/install/managedEntryLedger.ts a per-operation snapshot taken under the ledger lock, so ownership, destination and pending answers come from a read this operation made rather than from a view refreshed once per host
+    3. Stop reporting a write that reached only session memory as a durable one, and refuse the pre-write command record's failure rather than continuing into the configuration write
+    4. Apply the pending ceiling where session-only and stored lists merge, refusing new obligations rather than truncating existing ones
+    5. Reuse src/utils/keyedSerialQueue.ts for the store's in-process serialization instead of the second chain in src/agentHooks/install/managedEntryLedger.ts
+    6. Cover in src/agentHooks/install/managedEntryLedger.test.ts: two ledgers over one file where the second writes between the first's load and its uninstall sweep; a storage root that moves while the ledger path does not, with the old command still claimed; a pre-write record that cannot persist leaving the configuration untouched; and a fold of two full pending lists staying at the ceiling
+
+- [ ] 7_2 Answer only the settings this feature owns, and let the latest desired state win
+  - **Deps**: 7_1
+  - **Refs**: .reviews/round-7.md#b13, design.md#d13-one-serialized-transition-owner-per-agent
+  - **Acceptance**:
+    - Outcome: An unrelated settings change costs nothing; a burst settles at the latest state
+    - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
+  - **Plan**:
+    1. In src/extension.ts submit only for agents whose own settings the event touched
+    2. In src/agentHooks/install/agentHookTransitions.ts hold at most one running transition per agent plus one pending rerun that carries the latest desired state, so a burst collapses to the current answer without discarding the obligation to converge
+    3. Cover in src/agentHooks/install/agentHookTransitions.test.ts: an unrelated settings event enqueueing nothing, a burst of relevant events running fewer transitions than events while ending at the latest state, and the forced location-only edit still reconciling
+
+- [ ] 7_3 Qualify every interpreter the Windows wrappers invoke
+  - **Deps**: 2_3
+  - **Refs**: .reviews/round-7.md#b11
+  - **Acceptance**:
+    - Outcome: No wrapper resolves an executable against the working directory
+    - Verify: unit src/agentHooks/install/cursorConfigAdapter.test.ts
+  - **Plan**:
+    1. Invoke PowerShell through its absolute system path in the Windows wrapper in src/agentHooks/install/cursorConfigAdapter.ts, as the same template already does for more.com
+    2. Cover in src/agentHooks/install/cursorConfigAdapter.test.ts, and in src/agentHooks/install/claudeConfigAdapter.test.ts for its own wrapper, that no emitted Windows wrapper names an unqualified executable
+
+- [ ] 7_4 Report a termination that did not complete, however it failed
+  - **Deps**: 5_3
+  - **Refs**: .reviews/round-7.md#b12, design.md#d14-one-process-runner-contract-absolute-and-cancellable
+  - **Acceptance**:
+    - Outcome: A tree kill that did not complete is always reported as incomplete
+    - Verify: unit src/agentHooks/install/probeRunner.test.ts
+  - **Plan**:
+    1. In src/agentHooks/install/probeRunner.ts observe the terminator's exit status as well as its spawn failure, fall back to killing the leader on a nonzero exit, and settle only once the termination outcome is known
+    2. Cover in src/agentHooks/install/probeRunner.test.ts: a terminator that starts and exits nonzero reporting incomplete termination and still killing the leader
+
+- [ ] 7_5 Write the user's configuration only when it would change
+  - **Deps**: 7_3
+  - **Refs**: .reviews/round-7.md#w6
+  - **Acceptance**:
+    - Outcome: Installing over an installation already in the desired shape leaves the file untouched
+    - Verify: unit src/agentHooks/install/ManagedConfigInstaller.test.ts
+  - **Plan**:
+    1. In src/agentHooks/install/ManagedConfigInstaller.ts skip the replacement when the serialized result equals what was read, so an idempotent install performs no write
+    2. Replace the temporary-write, chmod, rename and cleanup sequence in the wrapper path with the one src/agentHooks/install/lockedJsonFile.ts already owns
+    3. Cover in src/agentHooks/install/ManagedConfigInstaller.test.ts: a second install leaving the file's modification time unchanged, and an install that must change the file still replacing it
+
