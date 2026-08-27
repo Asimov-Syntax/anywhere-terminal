@@ -6,6 +6,7 @@
 // NOT stop git from parsing a leading dash as a flag, and those are different
 // problems (worktree-actions.md § 7).
 
+import { readsAsFlag } from "../utils/readsAsFlag";
 import { describeGitFailure } from "./describeGitFailure";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
 
@@ -20,11 +21,6 @@ export interface LockRequest {
 export interface UnlockRequest {
   repoPath: string;
   worktreePath: string;
-}
-
-/** A token git would parse as an option rather than as a value. */
-function readsAsFlag(token: string): boolean {
-  return token.startsWith("-");
 }
 
 function settle(result: GitCommandResult, command: string): MutationResult {

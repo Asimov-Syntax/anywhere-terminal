@@ -93,7 +93,11 @@ describe("create worktree — default state (§ 9)", () => {
     const { host, q } = open({
       repos: [
         createDefaults(),
-        createDefaults({ repoId: "/other/.git", repoLabel: "other", agents: [{ id: "codex", label: "Codex" }] }),
+        createDefaults({
+          repoId: "/other/.git",
+          repoLabel: "other",
+          agents: [{ id: "codex", label: "Codex", canSeedPrompt: true, permissionChoices: [] }],
+        }),
       ],
     });
     const after = q<HTMLSelectElement>("#wt-after");
@@ -113,11 +117,19 @@ describe("create worktree — default state (§ 9)", () => {
     expect(agents?.value).toBe("codex");
   });
 
-  it("submits the agent the rebuilt list actually offers", () => {
+  it("submits no launch details on a create that is not launching", () => {
+    // Was "submits the agent the rebuilt list actually offers". The protocol now
+    // REJECTS an agent, posture or prompt on any mode but `agent`, so carrying
+    // the picker's value on a `none` create is the defect, not the feature. That
+    // the rebuilt list drives the picker is asserted by the case above.
     const { q, submitted } = open({
       repos: [
         createDefaults(),
-        createDefaults({ repoId: "/other/.git", repoLabel: "other", agents: [{ id: "codex", label: "Codex" }] }),
+        createDefaults({
+          repoId: "/other/.git",
+          repoLabel: "other",
+          agents: [{ id: "codex", label: "Codex", canSeedPrompt: true, permissionChoices: [] }],
+        }),
       ],
     });
     const repo = q<HTMLSelectElement>("#wt-repo-select");
@@ -125,35 +137,59 @@ describe("create worktree — default state (§ 9)", () => {
     repo.dispatchEvent(new Event("change"));
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     q<HTMLButtonElement>(".wt-btn--primary").click();
-    expect(submitted[0]?.agentId).toBe("codex");
+    expect(submitted[0]?.openAfter).toBe("none");
+    expect(submitted[0]).not.toHaveProperty("agentId");
+    expect(submitted[0]).not.toHaveProperty("permissionChoiceId");
+    expect(submitted[0]).not.toHaveProperty("prompt");
   });
 
-  it("offers no agent option at all, so nothing can select one", () => {
-    // This replaces the old "unhides the agent picker when After creating asks
-    // for one" case. WT-005.3 owns the launch that mode names, and its registry
-    // capability does not exist yet — so the option is ABSENT rather than
-    // present and refused on submit (design.md D9).
+  it("offers the agent mode where agents exist and omits it where none do", () => {
+    // WT-005.3 supplies the launch the mode names, so the option is offered —
+    // but only against a repo that reported an agent. A repo with none leaves it
+    // absent rather than selectable-and-refused (design.md D9).
     const { q } = open();
-    const after = q<HTMLSelectElement>("#wt-after");
-    expect([...after.options].map((o) => o.value)).not.toContain("agent");
+    expect([...q<HTMLSelectElement>("#wt-after").options].map((o) => o.value)).toContain("agent");
+    document.body.replaceChildren();
+    const { q: bare } = open({ repos: [createDefaults({ agents: [] })] });
+    expect([...bare<HTMLSelectElement>("#wt-after").options].map((o) => o.value)).not.toContain("agent");
   });
 
-  it("keeps the agent picker hidden, including when a mode it does not offer is forced in", () => {
-    const { host, q } = open();
+  it("unhides the agent picker when After creating asks for one", () => {
+    const { q } = open();
     expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(true);
     const after = q<HTMLSelectElement>("#wt-after");
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
-    expect(host.querySelector<HTMLElement>(".wt-agentbox")?.hidden).toBe(true);
+    expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(false);
+  });
+
+  it("drops the agent mode when the chosen repo withdraws its agents", () => {
+    // Leaving `agent` selected against a repo offering none would submit a launch
+    // nothing can perform.
+    const { q } = open({
+      repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other", agents: [] })],
+    });
+    const after = q<HTMLSelectElement>("#wt-after");
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    const repo = q<HTMLSelectElement>("#wt-repo-select");
+    repo.value = "/other/.git";
+    repo.dispatchEvent(new Event("change"));
+    expect([...after.options].map((o) => o.value)).not.toContain("agent");
+    expect(after.value).toBe("none");
+    expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(true);
   });
 
   it("never preselects the dangerous permission posture", () => {
+    // The postures are the CHOSEN AGENT's own now, not a shared three — permission
+    // is agent-shaped, so the ids moved with them. The rule did not: whatever the
+    // agent declares, the initial value is never its dangerous one.
     const { q } = open();
     const perm = q<HTMLSelectElement>("#wt-perm");
-    expect(perm.value).toBe("ask");
+    expect(perm.value).toBe("default");
     const options = Array.from(perm.options).map((o) => o.textContent);
     // It is offered, and labelled as what it is.
-    expect(options).toContain("Skip all prompts (dangerous)");
+    expect(options).toContain("Bypass permission checks (dangerous)");
   });
 
   it("submits the draft on the primary button and on the keyboard shortcut", () => {

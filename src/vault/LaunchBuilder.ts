@@ -9,10 +9,11 @@
 
 import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
 import { posixShellQuote } from "../utils/posixShellQuote";
+import { readsAsFlag } from "../utils/readsAsFlag";
 import { applyContextTag, readClaudeContextTag } from "./claudeContextTag";
 import { isCursorCliResumableEntry } from "./cursorCapabilities";
 import { getAgentDefinition } from "./registry";
-import type { AgentVaultDefinition, CommandTemplate, VaultSessionEntry } from "./types";
+import type { AgentVaultDefinition, CommandTemplate, VaultSessionEntry, VaultSessionFlags } from "./types";
 
 export type LaunchMode = "resume" | "fork" | "continue";
 
@@ -35,6 +36,8 @@ export class VaultLaunchError extends Error {
       | "unknown-entry"
       | "no-continue-command"
       | "no-prompt"
+      | "prompt-reads-as-flag"
+      | "no-start-command"
       | "unknown-permission-choice"
       | "executable-not-found",
   ) {
@@ -43,17 +46,23 @@ export class VaultLaunchError extends Error {
   }
 }
 
-function substituteTokens(token: string, entry: VaultSessionEntry, executable: string, prompt: string): string {
+function substituteTokens(token: string, sessionId: string, executable: string, prompt: string): string {
   return token
-    .replace(/\{\{sessionId\}\}/g, entry.sessionId)
+    .replace(/\{\{sessionId\}\}/g, sessionId)
     .replace(/\{\{sessionPath\}\}/g, "")
     .replace(/\{\{executable\}\}/g, executable)
     .replace(/\{\{prompt\}\}/g, prompt);
 }
 
+/**
+ * Expand a template against the two things a template can read: the session id
+ * its tokens name, and the flags its fragments draw from. Neither is a whole
+ * entry, and a fresh start has neither — so it passes nothing rather than a
+ * stand-in session (design.md D4).
+ */
 function expandArgs(
   template: CommandTemplate,
-  entry: VaultSessionEntry,
+  source: { sessionId: string; flags: VaultSessionFlags },
   executable = template.executable,
   prompt = "",
   contextTag?: string,
@@ -61,11 +70,24 @@ function expandArgs(
   const args: string[] = [];
   for (const part of template.args) {
     if (typeof part === "string") {
-      args.push(substituteTokens(part, entry, executable, prompt));
+      args.push(substituteTokens(part, source.sessionId, executable, prompt));
+      continue;
+    }
+    // Prompt fragment: emit [flag?, text] only when there IS text. The slot
+    // disappears with the prompt rather than expanding to an empty argument —
+    // claude reads a bare "" as an empty first turn.
+    if ("prompt" in part) {
+      if (prompt === "") {
+        continue;
+      }
+      if (part.flag !== undefined) {
+        args.push(part.flag);
+      }
+      args.push(prompt);
       continue;
     }
     // Flag fragment: emit [flag, value] only when the captured value is present.
-    const value = entry.flags[part.from];
+    const value = source.flags[part.from];
     if (value === undefined || value === "") {
       continue;
     }
@@ -170,7 +192,7 @@ export async function resolveContextTag(
 
 function buildClaudeEnv(
   def: AgentVaultDefinition,
-  entry: VaultSessionEntry,
+  configDir: string | undefined,
   hostEnv: Record<string, string | undefined>,
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -180,9 +202,10 @@ function buildClaudeEnv(
       env[key] = value;
     }
   }
-  // A configDir captured at index time overrides the host's (D6).
-  if (entry.flags.configDir) {
-    env.CLAUDE_CONFIG_DIR = entry.flags.configDir;
+  // A configDir captured at index time overrides the host's (D6). A fresh start
+  // has none, so the host's own config is what applies.
+  if (configDir) {
+    env.CLAUDE_CONFIG_DIR = configDir;
   }
   return env;
 }
@@ -197,23 +220,76 @@ export interface ContinuationTarget {
  * The posture to launch under: the reader's choice, else the one the entry was
  * captured with, on whichever axis this agent keys its choices by.
  */
+function chosenPermissionArgs(def: AgentVaultDefinition, chosenId: string): string[] {
+  const choices = def.permissionChoices;
+  if (!choices?.length) {
+    return [];
+  }
+  const chosen = choices.find((c) => c.id === chosenId);
+  if (!chosen) {
+    throw new VaultLaunchError(`Unknown permission choice: ${chosenId}`, "unknown-permission-choice");
+  }
+  return chosen.args;
+}
+
 function permissionArgs(def: AgentVaultDefinition, entry: VaultSessionEntry, chosenId?: string): string[] {
   const choices = def.permissionChoices;
   if (!choices?.length) {
     return [];
   }
   if (chosenId !== undefined) {
-    const chosen = choices.find((c) => c.id === chosenId);
-    if (!chosen) {
-      throw new VaultLaunchError(`Unknown permission choice: ${chosenId}`, "unknown-permission-choice");
-    }
-    return chosen.args;
+    return chosenPermissionArgs(def, chosenId);
   }
   const captured = entry.flags.permissionMode ?? entry.flags.sandbox;
   if (!captured) {
     return [];
   }
   return (choices.find((c) => c.id === captured) ?? choices[0]).args;
+}
+
+/**
+ * Build a launch for a BRAND-NEW session: no stored entry, so not `build`.
+ *
+ * `build` is entry-backed: it asserts a launch capability against the entry and
+ * falls back to the posture the entry was captured with. A fresh start has no
+ * entry to assert or fall back to, and standing one in would feed a fabricated
+ * session id into the code path whose whole job is honouring it (design.md D4).
+ *
+ * A launch that names no posture gets none: the agent's own default applies,
+ * because there is nothing captured to fall back to.
+ */
+export function buildStart(
+  agent: string,
+  cwd: string,
+  hostEnv: Record<string, string | undefined>,
+  opts: { permissionChoiceId?: string; prompt?: string; executable?: string },
+): LaunchSpec {
+  const def = getAgentDefinition(agent);
+  if (!def) {
+    throw new VaultLaunchError(`Unknown agent: ${agent}`, "unknown-agent");
+  }
+  const template = def.startCommand;
+  if (!template) {
+    throw new VaultLaunchError(`${def.displayName} cannot start a new session`, "no-start-command");
+  }
+  const prompt = opts.prompt?.trim() ?? "";
+  // The prompt rides beside the posture flags on every positional-prompt agent,
+  // so a leading dash would not be a prompt at all — it would be a posture the
+  // user did not pick. Refused before anything spawns.
+  if (prompt !== "" && readsAsFlag(prompt)) {
+    throw new VaultLaunchError(
+      "A prompt cannot begin with a hyphen — the agent would read it as an option",
+      "prompt-reads-as-flag",
+    );
+  }
+  const executable = resolveTemplateExecutable(template, opts.executable);
+  const postureArgs = opts.permissionChoiceId === undefined ? [] : chosenPermissionArgs(def, opts.permissionChoiceId);
+  return {
+    file: executable,
+    args: [...postureArgs, ...expandArgs(template, { sessionId: "", flags: {} }, executable, prompt)],
+    cwd,
+    env: def.id === "claude" ? buildClaudeEnv(def, undefined, hostEnv) : {},
+  };
 }
 
 export async function resolveLaunchExecutable(
@@ -266,7 +342,7 @@ function buildContinue(
       ...expandArgs(continueCommand, source, executable, prompt, agent === "claude" ? contextTag : undefined),
     ],
     cwd: entry.cwd,
-    env: def.id === "claude" ? buildClaudeEnv(def, source, hostEnv) : {},
+    env: def.id === "claude" ? buildClaudeEnv(def, source.flags.configDir, hostEnv) : {},
   };
 }
 
@@ -284,6 +360,7 @@ export function build(
   target?: ContinuationTarget,
   resolvedExecutable?: string,
   contextTag?: string,
+  cwd?: string,
 ): LaunchSpec {
   const def = getAgentDefinition(entry.agent);
   if (!def) {
@@ -293,19 +370,23 @@ export function build(
   // `continue` is the one mode whose values come from the CALL, not the entry: the
   // host composed the prompt (D7) and the reader chose the agent and posture (D11).
   if (mode === "continue") {
-    return buildContinue(entry, hostEnv, prompt, target, resolvedExecutable, contextTag);
+    const spec = buildContinue(entry, hostEnv, prompt, target, resolvedExecutable, contextTag);
+    return cwd === undefined ? spec : { ...spec, cwd };
   }
   const template = mode === "fork" ? def.forkCommand : def.resumeCommand;
   if (!template) {
     throw new VaultLaunchError(`Agent ${entry.agent} has no fork command`, "no-fork-command");
   }
 
-  const env = def.id === "claude" ? buildClaudeEnv(def, entry, hostEnv) : {};
+  const env = def.id === "claude" ? buildClaudeEnv(def, entry.flags.configDir, hostEnv) : {};
   const executable = resolveTemplateExecutable(template, resolvedExecutable);
   return {
     file: executable,
     args: expandArgs(template, entry, executable, "", def.id === "claude" ? contextTag : undefined),
-    cwd: entry.cwd,
+    // The caller's directory wins over the recorded one. `cwdPolicy: "preserve"`
+    // is what applies when nobody named one — it is the default, not a veto, so
+    // "resume this session over THERE" is expressible without a fourth mode.
+    cwd: cwd ?? entry.cwd,
     env,
   };
 }

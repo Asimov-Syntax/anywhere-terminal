@@ -529,9 +529,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               : {}),
           });
         },
-        afterCreate: async (createdPath, openAfter) => {
+        afterCreate: async (createdPath, openAfter, launch, origin) => {
           if (openAfter === "newWindow" || openAfter === "addToWorkspace") {
             await worktreeActions.openFolder(createdPath, openAfter);
+            return;
+          }
+          // The same two halves the menu's launch uses — resolve the argv here,
+          // open the pane on the surface that asked. Throwing is the contract:
+          // the service reports it as an agent that did not start, and the
+          // worktree it was created in stays.
+          if (openAfter === "agent" && launch !== undefined) {
+            const open = origin?.launchAgent;
+            if (!open) {
+              throw new Error("This view cannot start an agent.");
+            }
+            await open.call(
+              origin,
+              await vaultLauncher.startAgent(launch.agent, createdPath, {
+                ...(launch.permissionChoiceId === undefined ? {} : { permissionChoiceId: launch.permissionChoiceId }),
+                ...(launch.prompt === undefined ? {} : { prompt: launch.prompt }),
+              }),
+            );
           }
           // `terminal` needs a view id and a webview, which only a surface
           // holds, and `none` is the no-op it says it is.
@@ -602,6 +620,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // The mutating half. Every one re-resolves its own target on the far side
       // of a forced rebuild, so none of them takes a path (round-1 B1, B2).
       createWorktree: (request) => mutations().createWorktree(request),
+      // Resolution only — the surface that asked owns the pane it opens in.
+      startAgent: (agent, cwd, opts) => vaultLauncher.startAgent(agent, cwd, opts),
+      resumeSessionAt: (entryId, cwd) => vaultLauncher.resolve(entryId, "resume", undefined, undefined, cwd),
       removeWorktree: (target, force, fingerprint) => mutations().removeWorktree(target, force, fingerprint),
       lockWorktree: (target, reason) => mutations().lockWorktree(target, reason),
       unlockWorktree: (target) => mutations().unlockWorktree(target),

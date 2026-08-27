@@ -9,7 +9,12 @@ import {
   readTerminalSettings,
   readWorktreeRowActivation,
 } from "../settings/SettingsReader";
-import type { ThemeChangedMessage, VaultContinueSessionMessage, WebViewToExtensionMessage } from "../types/messages";
+import type {
+  ThemeChangedMessage,
+  VaultContinueSessionMessage,
+  VaultLaunchCapability,
+  WebViewToExtensionMessage,
+} from "../types/messages";
 import { isWorktreeMessage } from "../types/messages";
 import { buildContinuationPrompt } from "../vault/ContinuationPrompt";
 import type { VaultRefreshHint } from "../vault/cacheTypes";
@@ -19,10 +24,10 @@ import { resolveAssistantMessageRef } from "../vault/messageText";
 import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
 import { indexRunningSessionsOrEmpty, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
-import { agentKindForExecutable, detectContinuationTargets } from "../vault/registry";
+import { agentKindForExecutable, detectLaunchTargets } from "../vault/registry";
 import { parseEntryId, type VaultSessionEntry } from "../vault/types";
 import { normalizeVaultCustomName } from "../vault/VaultCustomNameRegistry";
-import type { VaultLauncher } from "../vault/VaultLauncher";
+import type { CreateSessionOptions, VaultLauncher } from "../vault/VaultLauncher";
 import type { VaultService } from "../vault/VaultService";
 import { handlePasteClipboardImage, handlePasteOsClipboardImage, readImageFromOsClipboard } from "./clipboardImageSync";
 import { FileTreeHost } from "./fileTreeHost";
@@ -187,6 +192,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       // own path, never an id the webview sent (design.md D2).
       openTerminal: async (cwd) => {
         this.newTerminalAt(webviewView.webview, cwd);
+      },
+      // Same reason as `openTerminal`: the host resolves WHAT to run and where,
+      // and only the provider owning this view can hold the pane it runs in.
+      launchAgent: async (options) => {
+        this.openSessionTab(options, webviewView.webview);
       },
     };
 
@@ -507,7 +517,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     if (!this.vaultLauncher) {
       return;
     }
-    const opts = await this.vaultLauncher.resolve(entryId, mode, prompt, target);
+    this.openSessionTab(await this.vaultLauncher.resolve(entryId, mode, prompt, target), webview);
+  }
+
+  /**
+   * Open resolved session options as a new tab.
+   *
+   * Shared by every launch this provider performs — a continuation, and the
+   * worktree surface's own launches — so a fresh agent lands in a pane the same
+   * way a resumed one does rather than in a second, similar-looking one.
+   */
+  private openSessionTab(opts: CreateSessionOptions, webview: vscode.Webview): void {
     const newSessionId = this.sessionManager.createSession(this.getViewId(), webview, {
       shell: opts.shell,
       shellArgs: opts.shellArgs,
@@ -632,11 +652,19 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    * (improve-vault-transcript-messages D5). Both failure modes reply with an
    * error rather than silence, so the webview can decline to confirm the copy.
    */
-  /** Which agents this host can continue into (D11) — probed, not assumed, so the
-   *  dialog cannot offer an agent that would fail at spawn. */
-  private async handleRequestVaultLaunchTargets(webview: vscode.Webview): Promise<void> {
-    const targets = await detectContinuationTargets();
-    void this.safeSendWithRetry(webview, { type: "vaultLaunchTargets", targets });
+  /**
+   * Which agents this host can launch into (D11) — probed, not assumed, so a
+   * dialog cannot offer an agent that would fail at spawn.
+   *
+   * The reply echoes the capability it answers: continuing and starting return
+   * different agent sets, and two dialogs listen on this one message.
+   */
+  private async handleRequestVaultLaunchTargets(
+    webview: vscode.Webview,
+    capability: VaultLaunchCapability = "continue",
+  ): Promise<void> {
+    const targets = await detectLaunchTargets(capability);
+    void this.safeSendWithRetry(webview, { type: "vaultLaunchTargets", capability, targets });
   }
 
   private async handleRequestVaultMessageRecord(
@@ -1146,7 +1174,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case "requestVaultLaunchTargets":
-          void this.handleRequestVaultLaunchTargets(webviewView.webview);
+          // Untrusted like every other inbound field: anything but the one known
+          // alternative falls back to continue, which is what an older webview
+          // (sending no capability at all) means.
+          void this.handleRequestVaultLaunchTargets(
+            webviewView.webview,
+            message.capability === "start" ? "start" : "continue",
+          );
           break;
 
         case "requestVaultMessageRecord":

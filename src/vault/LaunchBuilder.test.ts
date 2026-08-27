@@ -1,7 +1,7 @@
 // src/vault/LaunchBuilder.test.ts — Unit tests for launch argv/env synthesis.
 
 import { describe, expect, it } from "vitest";
-import { build, buildResumeCommandString, VaultLaunchError } from "./LaunchBuilder";
+import { build, buildResumeCommandString, buildStart, VaultLaunchError } from "./LaunchBuilder";
 import type { VaultSessionEntry } from "./types";
 
 function entry(overrides: Partial<VaultSessionEntry> = {}): VaultSessionEntry {
@@ -369,5 +369,69 @@ describe("build: continue with a chosen target", () => {
     } catch (e) {
       expect((e as VaultLaunchError).code).toBe("unknown-agent");
     }
+  });
+});
+
+describe("buildStart", () => {
+  const env = {} as Record<string, string | undefined>;
+
+  it("emits no prompt argument at all when there is no prompt", () => {
+    const spec = buildStart("claude", "/wt/feat", env, {});
+    expect(spec.file).toBe("claude");
+    expect(spec.args).toEqual([]);
+    expect(spec.args).not.toContain("");
+    expect(spec.cwd).toBe("/wt/feat");
+  });
+
+  it("puts the prompt last, after the posture the user chose", () => {
+    const spec = buildStart("claude", "/wt/feat", env, {
+      permissionChoiceId: "acceptEdits",
+      prompt: "ship the thing",
+    });
+    expect(spec.args).toEqual(["--permission-mode", "acceptEdits", "ship the thing"]);
+  });
+
+  it("carries opencode's prompt behind its flag, and drops the flag with the text", () => {
+    expect(buildStart("opencode", "/wt/feat", env, { prompt: "go" }).args).toEqual(["--prompt", "go"]);
+    expect(buildStart("opencode", "/wt/feat", env, {}).args).toEqual([]);
+  });
+
+  it("refuses a prompt the agent would parse as an option", () => {
+    // A single argv token stops SHELL injection, not CLI option parsing: claude
+    // takes its prompt positionally beside --permission-mode, so this would
+    // silently replace the posture the user picked.
+    expect(() => buildStart("claude", "/wt/feat", env, { permissionChoiceId: "plan", prompt: "--force" })).toThrow(
+      VaultLaunchError,
+    );
+    expect(() =>
+      buildStart("codex", "/wt/feat", env, { prompt: "--dangerously-bypass-approvals-and-sandbox" }),
+    ).toThrow(/option/i);
+  });
+
+  it("applies no posture when the launch names none — a fresh session has nothing captured", () => {
+    expect(buildStart("codex", "/wt/feat", env, {}).args).toEqual([]);
+  });
+
+  it("rejects a posture the chosen agent does not declare", () => {
+    expect(() => buildStart("claude", "/wt/feat", env, { permissionChoiceId: "danger-full-access" })).toThrow(
+      VaultLaunchError,
+    );
+  });
+
+  it("rejects an agent with no start command of its own", () => {
+    expect(() => buildStart("nosuch", "/wt/feat", env, {})).toThrow(VaultLaunchError);
+  });
+
+  it("forwards only Claude's auth allowlist, and nothing for other agents", () => {
+    const hostEnv = { ANTHROPIC_API_KEY: "k", HOME: "/home/me", SECRET: "s" };
+    expect(buildStart("claude", "/wt/feat", hostEnv, {}).env).toEqual({ ANTHROPIC_API_KEY: "k" });
+    expect(buildStart("codex", "/wt/feat", hostEnv, {}).env).toEqual({});
+  });
+
+  it("resolves a templated executable, and refuses when it cannot", () => {
+    expect(buildStart("cursor", "/wt/feat", env, { executable: "/usr/bin/cursor-agent" }).file).toBe(
+      "/usr/bin/cursor-agent",
+    );
+    expect(() => buildStart("cursor", "/wt/feat", env, {})).toThrow(VaultLaunchError);
   });
 });

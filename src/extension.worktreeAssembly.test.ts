@@ -21,8 +21,11 @@ import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorktreeHost, WorktreeSurface } from "./providers/WorktreeHost";
 import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "./types/messages";
+import type { VaultSessionEntry } from "./vault/types";
+import type { CreateSessionOptions } from "./vault/VaultLauncher";
 import { createMessageRouter, type MessageHandlers } from "./webview/messaging/MessageRouter";
 import { WorktreeController } from "./webview/worktree/WorktreeController";
+import type { WorktreeAgentRow } from "./webview/worktree/worktreeViewTypes";
 
 // A REAL directory: the create-path probe asks the filesystem, and a fake root
 // nothing could ever occupy makes that probe untestable (round-4 B12).
@@ -121,6 +124,73 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
 
 const captured: { host?: WorktreeHost } = {};
 
+/** Session options the surface was handed, i.e. what a launch actually became. */
+let launched: CreateSessionOptions[] = [];
+
+/** An agent row to publish under the linked worktree, for the resume walk. */
+let publishedRow: WorktreeAgentRow | null = null;
+
+/** Set by the test that needs the host to report nothing able to start a session. */
+let noStartableAgents = false;
+
+/**
+ * The presence projection is built from THIS window's pane evidence, and the
+ * assembly has no panes — so the one row a resume needs is merged into the real
+ * projector's answer rather than replacing it.
+ */
+vi.mock("./worktree/presenceProjector", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./worktree/presenceProjector")>();
+  return {
+    ...real,
+    createPresenceProjector: (deps: never) => {
+      const inner = real.createPresenceProjector(deps);
+      return {
+        rank: (id: string) => inner.rank(id),
+        rankRevision: () => inner.rankRevision(),
+        project: async (ids: readonly string[], options?: never) => {
+          const base = await inner.project(ids, options);
+          if (publishedRow === null) {
+            return base;
+          }
+          return { ...base, rowsByWorktreeId: { ...base.rowsByWorktreeId, [LINKED]: [publishedRow] } };
+        },
+      };
+    },
+  };
+});
+
+/**
+ * The vault's on-disk stores are the same kind of boundary as the git binary:
+ * faked here so a resume resolves deterministically, while the argv it produces
+ * is still the real LaunchBuilder's.
+ */
+vi.mock("./vault/VaultService", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./vault/VaultService")>();
+  class AssemblyVaultService extends real.VaultService {
+    async getLaunchTarget(entryId: string) {
+      if (entryId !== STORED_ENTRY.id) {
+        return null;
+      }
+      return { entry: STORED_ENTRY, verify: async () => true };
+    }
+  }
+  return { ...real, VaultService: AssemblyVaultService };
+});
+
+/** The one stored session the faked vault knows about. */
+const STORED_ENTRY: VaultSessionEntry = {
+  id: "claude:sess-1",
+  agent: "claude",
+  sessionId: "sess-1",
+  title: "worktree walk",
+  // Deliberately NOT the worktree: a resume-here must override this.
+  cwd: REPO,
+  modified: 1,
+  flags: {},
+  canFork: true,
+  canResume: true,
+};
+
 vi.mock("./providers/WorktreeHost", async (importOriginal) => {
   const real = await importOriginal<typeof import("./providers/WorktreeHost")>();
   return {
@@ -134,6 +204,9 @@ vi.mock("./providers/WorktreeHost", async (importOriginal) => {
 
 beforeEach(() => {
   argv = [];
+  launched = [];
+  publishedRow = null;
+  noStartableAgents = false;
   lockedRow = false;
   prunableRow = false;
   registered = [LINKED];
@@ -184,19 +257,42 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   // only the four worktree ones carry this walk.
   const worktreeHandlers: Pick<
     MessageHandlers,
-    "onWorktreeTreeResponse" | "onWorktreeCreateDefaults" | "onWorktreeMutationResult"
+    "onWorktreeTreeResponse" | "onWorktreeCreateDefaults" | "onWorktreeMutationResult" | "onVaultLaunchTargets"
   > = {
     onWorktreeTreeResponse: (m) => controller?.handleTreeResponse(m),
     onWorktreeCreateDefaults: (m) => controller?.handleCreateDefaults(m),
     onWorktreeMutationResult: (m) => controller?.handleMutationResult(m),
+    // Routed by the capability it echoes, exactly as main.ts does — the vault
+    // panel gets `continue`, the worktree controller gets `start`.
+    onVaultLaunchTargets: (m) => controller?.handleLaunchTargets(m),
   };
   const route = createMessageRouter(worktreeHandlers as MessageHandlers);
-  const surface: WorktreeSurface = { isReady: () => true, post: (msg: ExtensionToWebViewMessage) => route(msg) };
+  const surface: WorktreeSurface = {
+    isReady: () => true,
+    post: (msg: ExtensionToWebViewMessage) => route(msg),
+    // The provider's half of a launch, recorded rather than opened: a pane needs
+    // a webview, and what this walk is about is WHAT would run and WHERE.
+    launchAgent: async (options: CreateSessionOptions) => {
+      launched.push(options);
+    },
+  };
 
   const state: Record<string, unknown> = {};
   controller = WorktreeController.mount({
     host: document.body,
     postMessage: (msg: WebViewToExtensionMessage) => {
+      // The provider owns this one, not the host: answered here with a fixed set
+      // so the walk does not depend on which agents this machine has installed.
+      if (msg.type === "requestVaultLaunchTargets") {
+        route({
+          type: "vaultLaunchTargets",
+          capability: msg.capability ?? "continue",
+          targets: noStartableAgents
+            ? []
+            : [{ agent: "claude", displayName: "Claude Code", permissionChoices: [], canSeedPrompt: true }],
+        });
+        return;
+      }
       void host.handleMessage(surface, msg as never);
     },
     store: {
@@ -395,6 +491,105 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
 
     // And the answer names the question, so a form can tell it from a stale one.
     expect((await ask("feat/login")).branch).toBe("feat/login");
+  });
+
+  it("starts an agent from the menu item, in the worktree that item was on", async () => {
+    await assemble();
+    clickItem(openMenu("feature"), /start an agent here/i);
+    await settle();
+    const prompt = document.querySelector<HTMLTextAreaElement>("#wt-prompt");
+    if (prompt === null) {
+      throw new Error("the launch dialog has no prompt field");
+    }
+    prompt.value = "read the failing test";
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    const start = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /^Start agent/.test(b.textContent ?? ""),
+    );
+    if (start === undefined) {
+      throw new Error("the launch dialog has no start button");
+    }
+    start.click();
+    await settle();
+
+    // The real registry template, the real builder: a positional prompt for
+    // Claude, and the worktree the menu was opened on as the directory.
+    expect(launched).toEqual([
+      expect.objectContaining({
+        shell: "claude",
+        shellArgs: ["read the failing test"],
+        cwd: LINKED,
+        isAgentLaunch: true,
+      }),
+    ]);
+  });
+
+  it("offers no launch items at all when nothing on this host can start a session", async () => {
+    noStartableAgents = true;
+    await assemble();
+    const labels = openMenu("feature").map((i) => i.textContent ?? "");
+    expect(labels.some((l) => /start an agent here/i.test(l))).toBe(false);
+  });
+
+  it("launches the agent a create asked for, in the worktree the create just made", async () => {
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    const after = document.querySelector<HTMLSelectElement>("#wt-after");
+    if (branch === null || after === null) {
+      throw new Error("the create form is missing a field this walk needs");
+    }
+    branch.value = "feat/agent";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    await settle();
+    const create = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /create worktree/i.test(b.textContent ?? ""),
+    );
+    create?.click();
+    await settle();
+
+    // Order matters: git first, and the launch only against the path it made.
+    const added = gitCalls("add");
+    expect(added).toHaveLength(1);
+    const destination = added[0]?.find((a) => a.startsWith(TMP) && a.includes("agent"));
+    expect(destination).toBeDefined();
+    expect(launched).toEqual([expect.objectContaining({ shell: "claude", cwd: destination })]);
+  });
+
+  it("resumes a row's stored session in the worktree it is published under", async () => {
+    // The entry records a DIFFERENT cwd; resume-here overrides it with the
+    // worktree the row was published under, which is the whole action.
+    publishedRow = {
+      rowId: "row-1",
+      scope: "window",
+      agent: "claude",
+      agentSource: "launch",
+      activity: "idle",
+      activitySource: "hook",
+      title: "worktree walk",
+      entryId: STORED_ENTRY.id,
+    };
+    await assemble();
+    // The card holds its agents collapsed until it is opened, exactly as a user
+    // must open it before the row is there to right-click.
+    const card = [...document.querySelectorAll<HTMLElement>('[role="treeitem"]')].find((r) =>
+      (r.textContent ?? "").includes("feature"),
+    );
+    card?.click();
+    await settle();
+    clickItem(openMenu("worktree walk"), /resume session here/i);
+    await settle();
+
+    expect(launched).toEqual([
+      expect.objectContaining({
+        shell: "claude",
+        shellArgs: expect.arrayContaining(["--resume", STORED_ENTRY.sessionId]),
+        cwd: LINKED,
+      }),
+    ]);
   });
 
   it("does not offer Prune when git reports nothing prunable", async () => {

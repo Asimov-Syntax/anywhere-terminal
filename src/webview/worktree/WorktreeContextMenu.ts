@@ -32,6 +32,13 @@ export interface WorktreeMenuActions {
    * § 3.5, `:351`).
    */
   pruneRepo?: (info: WorktreeInfo) => void;
+  /**
+   * Start an agent in this worktree. Offered ONLY when the host reported at
+   * least one agent that can start a fresh session — an item that opens a
+   * dialog with nothing to pick is the inert control this rule forbids
+   * (worktree-actions.md § 4).
+   */
+  launchAgentHere?: (info: WorktreeInfo) => void;
 
   focusPane?: (row: WorktreeAgentRow) => void;
   openPreview?: (row: WorktreeAgentRow) => void;
@@ -103,6 +110,9 @@ export class WorktreeContextMenu {
       // Create is repo-scoped, so it is offered from any row of the repo — and
       // it is the item that makes the whole create path reachable at all.
       ...item(a.createWorktree, info, "New Worktree…", ICON_PLUS),
+      // Above the destructive pair, below the openers: starting an agent is the
+      // point of most worktrees, not an afterthought.
+      ...item(a.launchAgentHere, info, "Start an Agent Here…", ICON_RESUME),
       // Absent, not disabled, when nothing is prunable: a disabled item claims
       // the action exists here.
       ...(prunableCount > 0

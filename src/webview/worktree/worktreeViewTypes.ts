@@ -110,8 +110,21 @@ export interface WorktreeCreateDefaults {
    * derived path IS the occupied one, and claiming it would be false.
    */
   resolvedPath?: string;
-  /** Only agents whose executable resolves. */
-  agents: { id: string; label: string }[];
+  /**
+   * Only agents the host reported as able to start a fresh session, each with
+   * its OWN postures — permission is agent-shaped, so a shared list would offer
+   * claude's postures for codex.
+   */
+  agents: WorktreeLaunchAgent[];
+}
+
+/** One offerable agent, as the host reported it. */
+export interface WorktreeLaunchAgent {
+  id: string;
+  label: string;
+  permissionChoices: { id: string; label: string; dangerous?: boolean }[];
+  /** False → this agent takes no seed prompt, so none is offered for it. */
+  canSeedPrompt: boolean;
 }
 
 export type WorktreeBranchMode = "new" | "existing" | "detached";
@@ -127,8 +140,9 @@ export interface WorktreeCreateDraft {
   path: string;
   openAfter: WorktreeOpenAfter;
   agentId?: string;
-  permissionMode?: string;
-  firstPrompt?: string;
+  /** The chosen agent's own posture id — never a shared enum. */
+  permissionChoiceId?: string;
+  prompt?: string;
   /** `git check-ref-format` said no; the message is shown under the field. */
   branchError?: string;
   pathError?: string;

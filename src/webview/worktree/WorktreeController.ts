@@ -9,6 +9,7 @@
 // as it does for FileTreeController.
 
 import type {
+  VaultLaunchTargetsMessage,
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
   WorktreeMutationResultMessage,
@@ -20,8 +21,11 @@ import type { WorktreeMenuActions } from "./WorktreeContextMenu";
 import { WorktreeView } from "./WorktreeView";
 import type {
   WorktreeActionResult,
+  WorktreeAgentRow,
   WorktreeCreateDefaults,
   WorktreeInfo,
+  WorktreeLaunchAgent,
+  WorktreeOpenAfter,
   WorktreePresence,
   WorktreeRowActivation,
   WorktreeTree,
@@ -69,9 +73,9 @@ export function resolveInitialView(persisted: VaultView | undefined, hasRepo: bo
  * else. Ids only: the host re-resolves them against its own tree and presence,
  * so a path the view carried could never become the path an action ran on (D2).
  *
- * The LAUNCH actions are still absent — WT-005.3 owns them, and an item that
- * resolves to nothing is worse than no item at all. The mutating ones are live
- * as of WT-005.2.
+ * Every launch capability is conditional on the host having reported something
+ * to launch: `undefined` makes the item absent, which is the truthful rendering
+ * of "no agent here can start a session".
  */
 export function worktreeMenuActions(
   post: (msg: WebViewToExtensionMessage) => void,
@@ -94,17 +98,27 @@ export function worktreeMenuActions(
    * cheaper version of this action, it is a different one.
    */
   confirmPrune?: (repoId: string) => void,
+  /**
+   * Open the launch dialog for a worktree. Absent → no item, which is how the
+   * panel says "no agent on this host can start a fresh session" rather than
+   * offering a picker with nothing in it.
+   */
+  onLaunch?: (info: WorktreeInfo) => void,
+  /**
+   * Resume an agent row's session in ITS worktree. Absent for the same reason,
+   * and additionally per-row: a row with no session is never offered it.
+   */
+  onResumeHere?: (row: WorktreeAgentRow) => void,
 ): WorktreeMenuActions {
   return {
     ...(onCreate === undefined ? {} : { createWorktree: onCreate }),
+    ...(onLaunch === undefined ? {} : { launchAgentHere: onLaunch }),
+    ...(onResumeHere === undefined ? {} : { resumeHere: onResumeHere }),
     openFolderInNewWindow: (info) => post({ type: "worktreeOpenFolder", worktreeId: info.id, mode: "newWindow" }),
     addFolderToWorkspace: (info) => post({ type: "worktreeOpenFolder", worktreeId: info.id, mode: "addToWorkspace" }),
     openTerminalHere: (info) => post({ type: "worktreeOpenTerminal", worktreeId: info.id }),
     revealWorktree: (info) => post({ type: "worktreeRevealInOS", worktreeId: info.id }),
     copyWorktreePath: (info) => post({ type: "worktreeCopyPath", worktreeId: info.id }),
-    // WT-005.2 lights these. `resumeHere` stays ABSENT — WT-005.3 owns the
-    // launch behind it, and an item that resolves to nothing is worse than no
-    // item at all.
     toggleLock: (info) =>
       post(
         info.locked ? { type: "worktreeUnlock", worktreeId: info.id } : { type: "worktreeLock", worktreeId: info.id },
@@ -194,6 +208,17 @@ export class WorktreeController {
   /** Notices the panel is showing, newest last, one per scope+verb. */
   private actionResults: WorktreeActionResult[] = [];
   /**
+   * Agents the host said can start a fresh session. Empty until it answers, and
+   * empty is meaningful: no launch item is offered, rather than one that opens a
+   * picker with nothing in it.
+   */
+  private launchAgents: WorktreeLaunchAgent[] = [];
+
+  /** Held rather than passed: the two launch items appear only once one can act. */
+  private readonly menuActions: WorktreeMenuActions;
+  /** Which worktree the open launch dialog is for. */
+  private launchTarget: string | null = null;
+  /**
    * Display paths of rows that have LEFT the tree, so a result arriving after
    * the rebuild that removed its row can still say what it was about.
    *
@@ -227,18 +252,22 @@ export class WorktreeController {
 
   private constructor(deps: WorktreeControllerDeps) {
     this.deps = deps;
+    this.menuActions = worktreeMenuActions(
+      (msg) => deps.postMessage(msg),
+      (info) => this.repoFor(info),
+      (info) => this.openCreateFor(info),
+      (repoId) => this.confirmPrune(repoId),
+    );
     // No folder means no tree is ever coming, so the skeleton would be a promise
     // the workspace cannot keep.
     this.loading = deps.init.workspaceRoot !== null;
     this.rowActivation = deps.init.rowActivation;
     this.view = new WorktreeView({
       host: deps.host,
-      actions: worktreeMenuActions(
-        (msg) => deps.postMessage(msg),
-        (info) => this.repoFor(info),
-        (info) => this.openCreateFor(info),
-        (repoId) => this.confirmPrune(repoId),
-      ),
+      // Both launch items start absent: nothing here can launch until the host
+      // has answered which agents can, and an item that opens an empty picker
+      // is the inert rendering the panel spec forbids.
+      actions: this.menuActions,
       // The form's seed is the HOST's answer, never a path derived here: the
       // spec says a create names the destination it will actually use, and only
       // the host knows the configured root and which candidates are free.
@@ -251,6 +280,13 @@ export class WorktreeController {
           this.applyCreateDefaults = apply;
         },
       }),
+      onLaunchSubmit: (request) => {
+        if (this.launchTarget === null) {
+          return;
+        }
+        deps.postMessage({ type: "worktreeLaunchAgent", worktreeId: this.launchTarget, ...request });
+        this.launchTarget = null;
+      },
       onDismissActionResult: (result) => {
         this.actionResults = this.actionResults.filter((r) => r !== result);
         this.push();
@@ -270,10 +306,9 @@ export class WorktreeController {
       // nothing ever submitted it anywhere (round-1 B1); this is where the
       // draft becomes the request the host validates.
       onCreateSubmit: (draft) => {
-        // `agent` is not offered by the form and is rejected by the host — it
-        // is WT-005.3's, and posting it would be asking for a launch nothing
-        // can perform.
-        if (draft.openAfter === "agent") {
+        // An agent mode with nothing behind it would ask the host for a launch
+        // it must refuse, so the mode is dropped rather than posted.
+        if (draft.openAfter === "agent" && draft.agentId === undefined) {
           return;
         }
         // An OPTIONAL field left blank must be absent, not empty: git reads an
@@ -288,7 +323,18 @@ export class WorktreeController {
           type: "worktreeCreate",
           repoId: draft.repoId,
           path: draft.path,
-          openAfter: draft.openAfter,
+          // The launch details travel with the agent mode and with no other —
+          // the host rejects any other pairing rather than ignoring them.
+          ...(draft.openAfter === "agent" && draft.agentId !== undefined
+            ? {
+                openAfter: "agent" as const,
+                launch: {
+                  agent: draft.agentId,
+                  ...(draft.permissionChoiceId === undefined ? {} : { permissionChoiceId: draft.permissionChoiceId }),
+                  ...(draft.prompt === undefined ? {} : { prompt: draft.prompt }),
+                },
+              }
+            : { openAfter: draft.openAfter as Exclude<WorktreeOpenAfter, "agent"> }),
           ...(draft.branchMode === "detached"
             ? { detach: true, ...(baseRef.length > 0 ? { baseRef } : {}) }
             : draft.branchMode === "new"
@@ -349,6 +395,10 @@ export class WorktreeController {
     this.deps.postMessage({ type: "worktreeViewVisibility", visible });
     if (visible) {
       this.deps.postMessage({ type: "requestWorktreeTree" });
+      // Asked on the way in rather than once at mount: which agents resolve is a
+      // property of the machine, and one installed since the last look should
+      // appear without reloading the window.
+      this.deps.postMessage({ type: "requestVaultLaunchTargets", capability: "start" });
       return;
     }
     // A force in flight across this transition is never answered — the host skips
@@ -411,6 +461,74 @@ export class WorktreeController {
   }
 
   /** Every repo the host has answered for, as the form's seed. */
+  /**
+   * Open the launch dialog for one worktree.
+   *
+   * The worktree is remembered rather than threaded through the dialog: the
+   * dialog collects WHAT to launch, and the panel already knows WHERE, so a
+   * mismatch between the two is not representable.
+   */
+  private openLaunchFor(info: WorktreeInfo): void {
+    this.launchTarget = info.id;
+    this.view.openLaunchDialog(info.branch ?? info.displayPath, this.launchAgents);
+  }
+
+  /** Resume a row's session in the worktree that row is published under. */
+  private resumeHere(row: WorktreeAgentRow): void {
+    const worktreeId = this.worktreeIdOf(row);
+    if (row.entryId === undefined || worktreeId === undefined) {
+      return;
+    }
+    this.deps.postMessage({
+      type: "worktreeResumeHere",
+      worktreeId,
+      rowId: row.rowId,
+      entryId: row.entryId,
+    });
+  }
+
+  /** Which worktree the presence envelope published this row under. */
+  private worktreeIdOf(row: WorktreeAgentRow): string | undefined {
+    for (const [worktreeId, rows] of Object.entries(this.presence?.rowsByWorktreeId ?? {})) {
+      if (rows.some((r) => r.rowId === row.rowId)) {
+        return worktreeId;
+      }
+    }
+    return undefined;
+  }
+
+  /** The host's answer to "which agents can start a fresh session here". */
+  handleLaunchTargets(msg: VaultLaunchTargetsMessage): void {
+    // Only the start answer is ours: the continuation dialog asks the same
+    // question with the other capability and gets a different set back.
+    if (msg.capability !== "start") {
+      return;
+    }
+    this.launchAgents = msg.targets.map((t) => ({
+      id: t.agent,
+      label: t.displayName,
+      permissionChoices: t.permissionChoices,
+      canSeedPrompt: t.canSeedPrompt,
+    }));
+    this.syncLaunchActions();
+    this.push();
+  }
+
+  /**
+   * Both launch items ride on the same host capability, so the host's own answer
+   * gates them together: no agent can start a session here means neither item is
+   * offered, rather than offered and refused.
+   */
+  private syncLaunchActions(): void {
+    if (this.launchAgents.length === 0) {
+      delete this.menuActions.launchAgentHere;
+      delete this.menuActions.resumeHere;
+      return;
+    }
+    this.menuActions.launchAgentHere = (info) => this.openLaunchFor(info);
+    this.menuActions.resumeHere = (row) => this.resumeHere(row);
+  }
+
   private createRepos(): WorktreeCreateDefaults[] {
     const repos: WorktreeCreateDefaults[] = [];
     for (const repo of this.tree?.repos ?? []) {
@@ -433,7 +551,7 @@ export class WorktreeController {
         ...(answer.collidedWith === undefined ? {} : { collidedWith: answer.collidedWith }),
         // WT-005.3 owns launches; an option that resolves to nothing is worse
         // than no option at all.
-        agents: [],
+        agents: this.launchAgents,
       });
     }
     return repos;

@@ -8,6 +8,7 @@ import {
   agentKindForExecutable,
   CLAUDE_AUTH_ENV_ALLOWLIST,
   detectContinuationTargets,
+  detectLaunchTargets,
   getAgentDefinition,
   VAULT_AGENT_IDS,
 } from "./registry";
@@ -216,5 +217,83 @@ describe("detectContinuationTargets", () => {
       throw new Error("command not found");
     });
     expect(await detectContinuationTargets({ exec })).toEqual([]);
+  });
+});
+
+describe("start capability", () => {
+  it("every agent declares a start command, so a fresh launch never assembles argv", () => {
+    for (const def of AGENT_DEFINITIONS) {
+      expect(def.startCommand, def.id).toBeDefined();
+    }
+  });
+
+  it("a start command's prompt is a fragment, so a promptless launch emits no empty token", () => {
+    for (const def of AGENT_DEFINITIONS) {
+      const args = def.startCommand?.args ?? [];
+      // `{{prompt}}` is the CONTINUE token — mandatory there, unrepresentable-as-absent here.
+      expect(staticTokens({ executable: "x", args }), def.id).not.toContain("{{prompt}}");
+      expect(
+        args.some((a) => typeof a === "object" && "prompt" in a),
+        def.id,
+      ).toBe(true);
+    }
+  });
+
+  it("opencode seeds through --prompt; claude, codex and cursor seed positionally", () => {
+    const flagOf = (id: string): string | undefined => {
+      const part = getAgentDefinition(id)?.startCommand?.args.find((a) => typeof a === "object" && "prompt" in a);
+      return part && typeof part === "object" && "prompt" in part ? part.flag : undefined;
+    };
+    expect(flagOf("opencode")).toBe("--prompt");
+    expect(flagOf("claude")).toBeUndefined();
+    expect(flagOf("codex")).toBeUndefined();
+    expect(flagOf("cursor")).toBeUndefined();
+  });
+});
+
+describe("detectLaunchTargets", () => {
+  const installed = vi.fn(async (file: string, args: string[]) => {
+    if (file === "agent" && args[0] === "--help") {
+      return { stdout: "Cursor Agent\nUsage: agent [prompt]\n--resume <id>\n--mode <mode> plan\n--force", stderr: "" };
+    }
+    return { stdout: "1.0.0", stderr: "" };
+  });
+
+  it("answers the start capability with start-capable installed agents", async () => {
+    const targets = await detectLaunchTargets("start", { exec: installed });
+    expect(targets.map((t) => t.agent)).toEqual(["claude", "codex", "opencode", "cursor"]);
+  });
+
+  it("reports whether each target can be seeded, derived from its own template", async () => {
+    const targets = await detectLaunchTargets("start", { exec: installed });
+    for (const target of targets) {
+      expect(target.canSeedPrompt, target.agent).toBe(true);
+    }
+  });
+
+  it("omits an agent that declares no command for the capability asked about", async () => {
+    // opencode's executable resolves here; only the CAPABILITY filter may drop it.
+    const targets = await detectLaunchTargets("continue", { exec: installed });
+    expect(targets.map((t) => t.agent)).toContain("opencode");
+  });
+
+  it("never publishes the argv a posture contributes — the webview sends back an id", async () => {
+    const targets = await detectLaunchTargets("start", { exec: installed });
+    const claude = targets.find((t) => t.agent === "claude");
+    expect(claude?.permissionChoices.length).toBeGreaterThan(0);
+    for (const choice of claude?.permissionChoices ?? []) {
+      expect(Object.keys(choice)).not.toContain("args");
+    }
+  });
+
+  it("drops an agent whose executable does not resolve", async () => {
+    const exec = vi.fn(async (file: string, args: string[]) => {
+      if (file === "opencode") {
+        throw new Error("command not found");
+      }
+      return installed(file, args);
+    });
+    const targets = await detectLaunchTargets("start", { exec });
+    expect(targets.map((t) => t.agent)).not.toContain("opencode");
   });
 });

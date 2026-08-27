@@ -14,6 +14,7 @@
 //  - The repo picker appears only once the workspace holds more than one repo.
 
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
+import { createWorktreeAgentBox } from "./worktreeAgentBox";
 import { dialogTitle, field, keyHint, openDialogShell, selectControl, textButton } from "./worktreeDialogShell";
 import type {
   WorktreeBranchMode,
@@ -29,25 +30,20 @@ const BRANCH_MODES: readonly { id: WorktreeBranchMode; label: string }[] = [
 ];
 
 /**
- * No "Start an agent" here until WT-005.3 supplies the launch it names.
- *
- * The host rejects the mode too, but rejection alone would leave a selectable
- * option that fails on submit — exactly what the absent-not-inert rule forbids.
- * The agent box below stays wired and simply never unhides, so restoring the
- * option is one line when the capability behind it exists (design.md D9).
+ * `agent` is offered only where something can perform it — the option is built
+ * from the repo's own agent list, so a host that reported none leaves it absent
+ * rather than selectable-and-refused.
  */
+function openAfterOptions(canLaunch: boolean): { value: WorktreeOpenAfter; label: string }[] {
+  return OPEN_AFTER.filter((o) => o.value !== "agent" || canLaunch);
+}
+
 const OPEN_AFTER: readonly { value: WorktreeOpenAfter; label: string }[] = [
   { value: "none", label: "Nothing" },
   { value: "terminal", label: "Open a terminal here" },
+  { value: "agent", label: "Start an agent" },
   { value: "newWindow", label: "Open folder in a new window" },
   { value: "addToWorkspace", label: "Add folder to workspace" },
-];
-
-/** Permission postures. The dangerous one is last and never the initial value. */
-const PERMISSIONS: readonly { id: string; label: string; dangerous?: boolean }[] = [
-  { id: "ask", label: "Ask before edits" },
-  { id: "acceptEdits", label: "Accept edits" },
-  { id: "skipAll", label: "Skip all prompts", dangerous: true },
 ];
 
 export interface WorktreeCreateDialogDeps {
@@ -95,7 +91,6 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     baseRef: "",
     path: "",
     openAfter: "none",
-    permissionMode: PERMISSIONS[0]?.id,
   };
   /** True until the user edits the path themselves; after that we stop deriving it. */
   let pathIsDerived = true;
@@ -127,7 +122,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     );
     repoSelect.addEventListener("change", () => {
       draft.repoId = repoSelect.value;
-      syncAgents();
+      agentBox.setAgents(currentRepo().agents);
+      rebuildAfterOptions();
       syncDerived();
     });
     repoField.append(repoSelect, repoHint);
@@ -200,7 +196,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const afterField = field("After creating", "wt-after");
   const afterSelect = selectControl(
     "wt-after",
-    OPEN_AFTER.map((o) => ({ value: o.value, label: o.label })),
+    openAfterOptions(currentRepo().agents.length > 0).map((o) => ({ value: o.value, label: o.label })),
     draft.openAfter,
   );
   afterSelect.addEventListener("change", () => {
@@ -212,67 +208,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   shell.dialog.appendChild(afterField);
 
   // ── Agent box — shown only for `openAfter: "agent"` ─────────────────────
-  const agentBox = document.createElement("div");
-  agentBox.className = "wt-agentbox";
-  agentBox.hidden = true;
-
-  const agentCols = document.createElement("div");
-  agentCols.className = "wt-cols";
-  const agentField = field("Agent", "wt-agent");
-  const agentSelect = selectControl("wt-agent", []);
-  agentSelect.addEventListener("change", () => {
-    draft.agentId = agentSelect.value;
-  });
-  /** Which agents resolve is a property of the REPO, so switching repo rebuilds the
-   *  list and drops a selection the new repo does not offer. */
-  const syncAgents = (): void => {
-    const agents = currentRepo().agents;
-    const keep = agents.some((a) => a.id === draft.agentId) ? draft.agentId : agents[0]?.id;
-    agentSelect.replaceChildren();
-    for (const a of agents) {
-      const opt = document.createElement("option");
-      opt.value = a.id;
-      opt.textContent = a.label;
-      opt.selected = a.id === keep;
-      agentSelect.appendChild(opt);
-    }
-    draft.agentId = keep;
-  };
-  syncAgents();
-  agentField.appendChild(agentSelect);
-
-  const permField = field("Permissions", "wt-perm");
-  const permSelect = selectControl(
-    "wt-perm",
-    PERMISSIONS.map((p) => ({ value: p.id, label: p.dangerous ? `${p.label} (dangerous)` : p.label })),
-    draft.permissionMode,
-  );
-  permSelect.addEventListener("change", () => {
-    draft.permissionMode = permSelect.value;
-  });
-  permField.appendChild(permSelect);
-  agentCols.append(agentField, permField);
-
-  const promptField = field("First prompt", "wt-prompt", true);
-  const promptInput = document.createElement("textarea");
-  promptInput.className = "wt-textarea";
-  promptInput.id = "wt-prompt";
-  promptInput.placeholder = "Sent once the agent's composer is ready…";
-  promptInput.addEventListener("input", () => {
-    draft.firstPrompt = promptInput.value;
-  });
-  promptField.appendChild(promptInput);
-
-  const agentHint = document.createElement("span");
-  agentHint.className = "wt-fhint";
-  agentHint.append(document.createTextNode("Only agents whose executable resolves are listed."));
-  const dangerTag = document.createElement("span");
-  dangerTag.className = "wt-danger-tag";
-  dangerTag.textContent = "dangerous";
-  agentHint.append(dangerTag, document.createTextNode("choices are never preselected."));
-
-  agentBox.append(agentCols, promptField, agentHint);
-  shell.dialog.appendChild(agentBox);
+  // The block itself is shared with the standalone launch dialog, so create-then-
+  // launch and launch-here collect the same thing rather than two things that
+  // happen to look alike (design.md D7).
+  const agentBox = createWorktreeAgentBox(currentRepo().agents);
+  agentBox.setVisible(false);
+  shell.dialog.appendChild(agentBox.element);
 
   // ── Actions ─────────────────────────────────────────────────────────────
   const cancelBtn = textButton("Cancel", "plain", cancel);
@@ -285,15 +226,35 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (createBtn.disabled) {
       return;
     }
-    deps.onSubmit({ ...draft });
+    const launch = draft.openAfter === "agent" ? agentBox.read() : {};
+    deps.onSubmit({ ...draft, ...launch });
     shell.dispose();
   }
 
+  /**
+   * Two different questions, and the box keeps them apart: "this create is not
+   * launching" is ours, "there is nothing to launch" is its own.
+   */
   function syncAgentBox(): void {
-    agentBox.hidden = draft.openAfter !== "agent";
-    if (!agentBox.hidden && !draft.agentId) {
-      draft.agentId = agentSelect.value || undefined;
+    agentBox.setVisible(draft.openAfter === "agent");
+  }
+
+  /** A repo switch can withdraw the launch — the mode goes with it, not just the box. */
+  function rebuildAfterOptions(): void {
+    const offered = openAfterOptions(currentRepo().agents.length > 0);
+    if (!offered.some((o) => o.value === draft.openAfter)) {
+      draft.openAfter = "none";
     }
+    afterSelect.replaceChildren(
+      ...offered.map((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        return opt;
+      }),
+    );
+    afterSelect.value = draft.openAfter;
+    syncAgentBox();
   }
 
   /** The branch the last host request was made for, so edits do not re-ask. */

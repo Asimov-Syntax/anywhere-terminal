@@ -11,6 +11,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionToWebViewMessage, WorktreeMutationResultMessage } from "../types/messages";
+import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
+import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { PresenceProjector } from "../worktree/presenceProjector";
@@ -154,14 +156,20 @@ function recordingActions() {
 function surface(canOpenTerminal = true): WorktreeSurface & {
   posts: ExtensionToWebViewMessage[];
   terminals: string[];
+  launches: CreateSessionOptions[];
 } {
   const posts: ExtensionToWebViewMessage[] = [];
   const terminals: string[] = [];
+  const launches: CreateSessionOptions[] = [];
   return {
     posts,
     terminals,
+    launches,
     isReady: () => true,
     post: (m) => posts.push(m),
+    launchAgent: async (options) => {
+      launches.push(options);
+    },
     ...(canOpenTerminal
       ? {
           openTerminal: async (cwd: string) => {
@@ -176,7 +184,13 @@ function surface(canOpenTerminal = true): WorktreeSurface & {
 async function builtHost(
   rows: WorktreeAgentRow[] = [windowRow()],
   gone = false,
-  over: { extra?: string[][]; createRoot?: string; exists?: (p: string) => boolean } = {},
+  over: {
+    extra?: string[][];
+    createRoot?: string;
+    exists?: (p: string) => boolean;
+    startAgent?: WorktreeActions["startAgent"];
+    resumeSessionAt?: WorktreeActions["resumeSessionAt"];
+  } = {},
 ) {
   const presence: WorktreePresence = { rowsByWorktreeId: { [MAIN_PATH]: rows }, scannedAt: 1, degradedSources: [] };
   const projector: PresenceProjector = {
@@ -201,7 +215,11 @@ async function builtHost(
     pool: { subscribePattern: () => ({ active: true, dispose: () => {} }) },
     clock,
     projector,
-    actions,
+    actions: {
+      ...actions,
+      ...(over.startAgent === undefined ? {} : { startAgent: over.startAgent }),
+      ...(over.resumeSessionAt === undefined ? {} : { resumeSessionAt: over.resumeSessionAt }),
+    },
     now: () => 1000,
     // Without these `assessRemoval` returns null before it reaches git, which
     // would make every assertion about WHICH git commands it issues vacuous.
@@ -900,6 +918,202 @@ describe("the destination the host resolves for a branch", () => {
     };
     expect(answer.path).not.toBe("/trees/repo");
     expect(answer.collidedWith).toBe("/trees/repo");
+    dispose();
+  });
+});
+
+describe("launching an agent", () => {
+  const OPTS: CreateSessionOptions = { shell: "claude", shellArgs: [], cwd: FEAT_PATH, isAgentLaunch: true };
+  const ok = () => vi.fn(async () => OPTS);
+
+  it("resolves the worktree from its own tree and opens the pane on the asking surface", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "claude" });
+    await settle();
+    expect(startAgent).toHaveBeenCalledWith("claude", FEAT_PATH, {});
+    expect(view.launches).toEqual([OPTS]);
+    dispose();
+  });
+
+  it("passes the display path git reported, never the normalized id", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: RAW_ID, agent: "claude" });
+    await settle();
+    expect(startAgent).toHaveBeenCalledWith("claude", RAW_DISPLAY, {});
+    dispose();
+  });
+
+  it("launches nothing for a worktree the host does not hold", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: "/somewhere/else", agent: "claude" });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    expect(view.launches).toEqual([]);
+    dispose();
+  });
+
+  it("carries the posture and prompt through untouched", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+      permissionChoiceId: "plan",
+      prompt: "read the spec",
+    });
+    await settle();
+    expect(startAgent).toHaveBeenCalledWith("claude", FEAT_PATH, {
+      permissionChoiceId: "plan",
+      prompt: "read the spec",
+    });
+    dispose();
+  });
+
+  it("refuses a prompt past the published bound rather than truncating it", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+      prompt: "x".repeat(MAX_CONTINUATION_INSTRUCTION + 1),
+    });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("tells the asking surface when the launch fails", async () => {
+    // NOT swallowed to a log the way a copy or a reveal is: the user asked for a
+    // pane and did not get one, and this is the only error surface it has.
+    const startAgent = vi.fn(async () => {
+      throw new Error("No executable found for Claude Code");
+    });
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      startAgent: startAgent as unknown as WorktreeActions["startAgent"],
+    });
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "claude" });
+    await settle();
+    expect(view.launches).toEqual([]);
+    expect(view.posts).toContainEqual({
+      type: "error",
+      message: "No executable found for Claude Code",
+      severity: "error",
+    });
+    dispose();
+  });
+
+  it("offers no launch at all from a surface that cannot open a pane", async () => {
+    const startAgent = ok();
+    const { host, dispose } = await builtHost([windowRow()], false, { startAgent });
+    const paneless: WorktreeSurface = { isReady: () => true, post: () => {} };
+    host.attach(paneless).setDisplayed(true);
+    host.handleMessage(paneless, { type: "worktreeViewVisibility", visible: true });
+    await settle();
+    host.handleMessage(paneless, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "claude" });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+});
+
+describe("resuming a session into a worktree", () => {
+  const OPTS: CreateSessionOptions = {
+    shell: "claude",
+    shellArgs: ["--resume", "s1"],
+    cwd: FEAT_PATH,
+    isAgentLaunch: true,
+  };
+  const ok = () => vi.fn(async () => OPTS);
+
+  it("resumes the published row's own session, in the resolved worktree", async () => {
+    const resumeSessionAt = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { resumeSessionAt });
+    host.handleMessage(view, {
+      type: "worktreeResumeHere",
+      worktreeId: FEAT_PATH,
+      rowId: "window:a",
+      entryId: SESSION,
+    });
+    await settle();
+    expect(resumeSessionAt).toHaveBeenCalledWith(SESSION, FEAT_PATH);
+    expect(view.launches).toEqual([OPTS]);
+    dispose();
+  });
+
+  it("resumes nothing when the row no longer holds the session the request names", async () => {
+    const resumeSessionAt = ok();
+    const { host, view, dispose } = await builtHost([windowRow({ entryId: "claude:moved" })], false, {
+      resumeSessionAt,
+    });
+    host.handleMessage(view, {
+      type: "worktreeResumeHere",
+      worktreeId: FEAT_PATH,
+      rowId: "window:a",
+      entryId: SESSION,
+    });
+    await settle();
+    expect(resumeSessionAt).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("resumes nothing when the worktree went stale, even with a matching row", async () => {
+    const resumeSessionAt = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { resumeSessionAt });
+    host.handleMessage(view, {
+      type: "worktreeResumeHere",
+      worktreeId: "/gone",
+      rowId: "window:a",
+      entryId: SESSION,
+    });
+    await settle();
+    expect(resumeSessionAt).not.toHaveBeenCalled();
+    dispose();
+  });
+});
+
+describe("create with a launch", () => {
+  const REQ = { type: "worktreeCreate", repoId: REPO, path: "/trees/feat" } as const;
+  const creates = (calls: Array<[string, ...unknown[]]>) => calls.filter(([name]) => name === "createWorktree");
+
+  it("accepts the agent mode now that a launch exists behind it", async () => {
+    const { host, view, calls, dispose } = await builtHost();
+    host.handleMessage(view, { ...REQ, openAfter: "agent", launch: { agent: "claude" } });
+    await settle();
+    expect(creates(calls)).toHaveLength(1);
+    expect(creates(calls)[0]?.[1]).toMatchObject({ openAfter: "agent", launch: { agent: "claude" } });
+    dispose();
+  });
+
+  it("refuses an agent mode that describes no launch", async () => {
+    const { host, view, calls, dispose } = await builtHost();
+    host.handleMessage(view, { ...REQ, openAfter: "agent" } as never);
+    await settle();
+    expect(creates(calls)).toHaveLength(0);
+    dispose();
+  });
+
+  it("refuses launch details riding a mode that is not launching", async () => {
+    const { host, view, calls, dispose } = await builtHost();
+    host.handleMessage(view, { ...REQ, openAfter: "none", launch: { agent: "claude" } } as never);
+    await settle();
+    expect(creates(calls)).toHaveLength(0);
+    dispose();
+  });
+
+  it("refuses an oversized prompt before any create runs", async () => {
+    const { host, view, calls, dispose } = await builtHost();
+    host.handleMessage(view, {
+      ...REQ,
+      openAfter: "agent",
+      launch: { agent: "claude", prompt: "x".repeat(MAX_CONTINUATION_INSTRUCTION + 1) },
+    });
+    await settle();
+    expect(creates(calls)).toHaveLength(0);
     dispose();
   });
 });

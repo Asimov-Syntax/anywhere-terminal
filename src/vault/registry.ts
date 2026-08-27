@@ -10,7 +10,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
-import { type AgentVaultDefinition, VAULT_AGENT_IDS, type VaultAgentId, type VaultLaunchTarget } from "./types";
+import {
+  type AgentVaultDefinition,
+  type CommandTemplate,
+  VAULT_AGENT_IDS,
+  type VaultAgentId,
+  type VaultLaunchTarget,
+} from "./types";
 
 // Re-exported for back-compat: the SINGLE source now lives in types.ts (so the
 // webview can share it without importing the host's launch data). See types.ts.
@@ -66,6 +72,13 @@ const claude: AgentVaultDefinition = {
     executable: "claude",
     args: [{ flag: "--model", from: "model" }, "{{prompt}}"],
   },
+  // claude [--permission-mode <p>] ["<prompt>"] — a fresh session. The posture
+  // is prepended by the launcher from `permissionChoices`; the prompt slot goes
+  // LAST so the flags parse, and vanishes entirely when there is none.
+  startCommand: {
+    executable: "claude",
+    args: [{ prompt: true }],
+  },
   cwdPolicy: "preserve",
   authEnvAllowlist: [...CLAUDE_AUTH_ENV_ALLOWLIST],
   // Ids ARE claude's own `--permission-mode` values, so a captured posture
@@ -118,6 +131,11 @@ const codex: AgentVaultDefinition = {
       "{{prompt}}",
     ],
   },
+  // codex [-a <a> -s <s>] ["<prompt>"] — the posture carries both axes.
+  startCommand: {
+    executable: "codex",
+    args: [{ prompt: true }],
+  },
   cwdPolicy: "preserve",
   // Codex splits permission over approval AND sandbox, so a choice carries both
   // and is identified by its sandbox value — the axis the entry captures (D11).
@@ -158,6 +176,12 @@ const opencode: AgentVaultDefinition = {
     executable: "opencode",
     args: [{ flag: "-m", from: "model" }, { flag: "--agent", from: "agent" }, "--prompt", "{{prompt}}"],
   },
+  // opencode [--prompt "<prompt>"] — flag-carried, so the flag disappears with
+  // the text rather than being left dangling.
+  startCommand: {
+    executable: "opencode",
+    args: [{ prompt: true, flag: "--prompt" }],
+  },
   cwdPolicy: "preserve",
 };
 
@@ -181,6 +205,11 @@ const cursor: AgentVaultDefinition = {
   continueCommand: {
     executable: "{{executable}}",
     args: ["{{prompt}}"],
+  },
+  // cursor-agent [--mode plan|--force] ["<prompt>"]
+  startCommand: {
+    executable: "{{executable}}",
+    args: [{ prompt: true }],
   },
   cwdPolicy: "preserve",
   permissionChoices: [
@@ -223,22 +252,50 @@ const defaultDetectDeps: AgentDetectDeps = {
     })),
 };
 
+/** Which launch a target list is being asked about. */
+export type LaunchCapability = "continue" | "start";
+
+/** True when this template has a prompt slot at all — either shape of one. */
+function seedsPrompt(template: CommandTemplate): boolean {
+  return template.args.some((part) => (typeof part === "string" ? part.includes("{{prompt}}") : "prompt" in part));
+}
+
 /**
- * The agents a continuation can start, in registry order: those that can be
- * seeded with a prompt at all AND whose executable answers on this host. Probed
- * rather than assumed — the dialog offering an agent that is not installed would
- * fail at spawn, after the reader committed (D11).
+ * The agents a launch can target, in registry order: those declaring a command
+ * for the capability asked about AND whose executable answers on this host.
+ * Probed rather than assumed — a dialog offering an agent that is not installed
+ * would fail at spawn, after the reader committed (D11).
+ *
+ * The answer is deliberately narrower than the registry record: `canSeedPrompt`
+ * is DERIVED from the template rather than declared beside it, and each
+ * posture's argv is dropped, because the webview sends back an id and the host
+ * resolves the arguments itself.
  */
-export async function detectContinuationTargets(
+export async function detectLaunchTargets(
+  capability: LaunchCapability,
   deps: AgentDetectDeps = defaultDetectDeps,
 ): Promise<VaultLaunchTarget[]> {
-  const candidates = AGENT_DEFINITIONS.filter((d) => d.continueCommand);
+  const templateFor = (d: AgentVaultDefinition): CommandTemplate | undefined =>
+    capability === "start" ? d.startCommand : d.continueCommand;
+  const candidates = AGENT_DEFINITIONS.filter((d) => templateFor(d) !== undefined);
   const present = await Promise.all(
     candidates.map(async (definition) => (await resolveAgentExecutable(definition, deps)) !== null),
   );
   return candidates
     .filter((_, i) => present[i])
-    .map((d) => ({ agent: d.id, displayName: d.displayName, permissionChoices: d.permissionChoices ?? [] }));
+    .map((d) => ({
+      agent: d.id,
+      displayName: d.displayName,
+      permissionChoices: (d.permissionChoices ?? []).map(({ args: _args, ...option }) => option),
+      canSeedPrompt: seedsPrompt(templateFor(d) as CommandTemplate),
+    }));
+}
+
+/** The continuation half of {@link detectLaunchTargets}, kept for its callers. */
+export async function detectContinuationTargets(
+  deps: AgentDetectDeps = defaultDetectDeps,
+): Promise<VaultLaunchTarget[]> {
+  return detectLaunchTargets("continue", deps);
 }
 
 export function agentKindForExecutable(executable: string | undefined): VaultAgentId | undefined {

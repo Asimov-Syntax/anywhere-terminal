@@ -13,6 +13,7 @@
 
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
 import { openWorktreeCreateDialog, type WorktreeCreateDialogDeps } from "./WorktreeCreateDialog";
+import { openWorktreeLaunchDialog, type WorktreeLaunchRequest } from "./WorktreeLaunchDialog";
 import { openWorktreePruneDialog, type PruneDialogDeps } from "./WorktreePruneDialog";
 import { openWorktreeRemoveDialog, type WorktreeRemoveDialogDeps } from "./WorktreeRemoveDialog";
 import {
@@ -41,6 +42,7 @@ import type {
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeInfo,
+  WorktreeLaunchAgent,
   WorktreePresence,
   WorktreeRepo,
   WorktreeRowActivation,
@@ -100,6 +102,8 @@ export interface WorktreeViewDeps {
   /** Seeds the create form; absent → the create affordance does nothing. */
   createDialogDeps?: () => Omit<WorktreeCreateDialogDeps, "onSubmit" | "onCancel">;
   onCreateSubmit?: WorktreeCreateDialogDeps["onSubmit"];
+  /** What the launch dialog collected, for the worktree it was opened on. */
+  onLaunchSubmit?: (request: WorktreeLaunchRequest) => void;
   /**
    * Collapsed repoIds + worktreeIds, restored on open (§ 2.1). `undefined` means
    * nothing was ever persisted, and is NOT the same as `[]` — an empty array is a
@@ -249,6 +253,29 @@ export class WorktreeView {
       onSubmit: (draft) => {
         this.closeDialog = null;
         this.deps.onCreateSubmit?.(draft);
+      },
+      onCancel: () => {
+        this.closeDialog = null;
+      },
+    });
+  }
+
+  /**
+   * Open the launch dialog over the panel. No-op without agents to offer — the
+   * menu item is absent in that case too; this is the same rule at the second
+   * door.
+   */
+  openLaunchDialog(worktreeLabel: string, agents: readonly WorktreeLaunchAgent[]): void {
+    if (agents.length === 0) {
+      return;
+    }
+    this.closeDialog?.();
+    openWorktreeLaunchDialog(this.deps.host, {
+      worktreeLabel,
+      agents,
+      onConfirm: (request) => {
+        this.closeDialog = null;
+        this.deps.onLaunchSubmit?.(request);
       },
       onCancel: () => {
         this.closeDialog = null;

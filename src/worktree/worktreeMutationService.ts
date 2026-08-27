@@ -10,7 +10,7 @@
 // module is that assembly, and the one place the ordering rules live.
 
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
-import type { WorktreeOpenAfterMode } from "../types/messages";
+import type { WorktreeAgentLaunchFields, WorktreeOpenAfterMode } from "../types/messages";
 import { type CreatePathContext, type CreatePathDeps, identityOf, validateCreatePath } from "./createPath";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
@@ -138,8 +138,19 @@ export interface MutationServiceDeps {
   pathDeps: CreatePathDeps;
   /** Report an outcome to the surface that started it (D17). */
   report(outcome: MutationOutcome, origin?: WorktreeSurface): void;
-  /** Everything this action should do once git has succeeded. */
-  afterCreate(path: string, openAfter: WorktreeOpenAfterMode): Promise<void>;
+  /**
+   * Everything this action should do once git has succeeded.
+   *
+   * `launch` accompanies the `agent` mode and no other, and `origin` is the
+   * surface that asked — only a surface can hold the session a launch creates.
+   * A rejection here is the create's `openFailed`, never the create's failure.
+   */
+  afterCreate(
+    path: string,
+    openAfter: WorktreeOpenAfterMode,
+    launch?: WorktreeAgentLaunchFields,
+    origin?: WorktreeSurface,
+  ): Promise<void>;
   /** The `.git` dir whose `info/exclude` needs the entry, or null (D8). */
   /**
    * The `.git` directory whose `info/exclude` should hide `createdPath`, plus
@@ -432,6 +443,14 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // worktree exists whether or not a window opened (round-3 W7).
       let openFailure: string | null = null;
 
+      // The launch details and the mode that names them are one thing: the mode
+      // without them describes no launch, and them without the mode is a caller
+      // that meant something else. Neither is repairable here.
+      if ((request.openAfter === "agent") !== (request.launch !== undefined)) {
+        deps.report(fail("That launch does not match the mode it was asked for."), request.origin);
+        return;
+      }
+
       const before = deps.createContext(request.repoId);
       if (before === null) {
         deps.report(fail("That repository is gone."), request.origin);
@@ -499,9 +518,14 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             if (exclude !== null) {
               await deps.addToGitExclude(exclude.gitDir, excludePatternFor(exclude.relativePath));
             }
-            await deps.afterCreate(check.path, request.openAfter).catch((error: unknown) => {
-              openFailure = messageOf(error);
-            });
+            // The worktree is already made. Whatever this rejects with, it
+            // reports as a launch that did not happen — it never unmakes it.
+            await deps
+              .afterCreate(check.path, request.openAfter, request.launch, request.origin)
+              .catch((error: unknown) => {
+                const reason = messageOf(error);
+                openFailure = request.openAfter === "agent" ? `Agent did not start: ${reason}` : reason;
+              });
             return {
               kind: "ok",
               verb: "create",

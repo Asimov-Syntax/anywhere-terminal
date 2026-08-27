@@ -6,7 +6,7 @@
 // modal. Everything untrusted goes in through textContent / input value.
 
 import { MAX_CONTINUATION_INSTRUCTION } from "../../vault/continuationLimits";
-import type { AgentPermissionChoice, VaultLaunchTarget } from "../../vault/types";
+import type { AgentPermissionOption, VaultLaunchTarget } from "../../vault/types";
 import type { ForkPoint } from "./forkPoint";
 
 export interface ContinueDialogResult {
@@ -187,7 +187,7 @@ export function openContinueDialog(root: HTMLElement, deps: ContinueDialogDeps):
     return targets.find((t) => t.agent === agentSelect.value);
   }
 
-  function currentChoice(): AgentPermissionChoice | undefined {
+  function currentChoice(): AgentPermissionOption | undefined {
     return currentTarget()?.permissionChoices.find((c) => c.id === permissionSelect.value);
   }
 

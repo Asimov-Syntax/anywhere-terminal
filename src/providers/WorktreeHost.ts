@@ -11,9 +11,12 @@ import type {
   ExtensionToWebViewMessage,
   WebViewToExtensionMessage,
   WorktreeActionMessage,
+  WorktreeAgentLaunchFields,
   WorktreeMutationResultMessage,
   WorktreeOpenAfterMode,
 } from "../types/messages";
+import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
+import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
@@ -75,6 +78,16 @@ export interface WorktreeSurface {
    * offers no terminals, exactly as it behaved before actions existed.
    */
   openTerminal?(cwd: string): Promise<void>;
+  /**
+   * Open a pane running an already-resolved launch, in THIS surface's view.
+   *
+   * Here rather than in {@link WorktreeActions} for the same reason as
+   * `openTerminal`: creating a pane is `createSession(viewId, webview, …)` and
+   * only the provider that built this surface holds both. What it receives is a
+   * resolved command — the host decided WHICH agent and WHERE, and the launcher
+   * turned that into argv; the surface only spawns it.
+   */
+  launchAgent?(options: CreateSessionOptions): Promise<void>;
 }
 
 export interface WorktreeHostOptions {
@@ -145,6 +158,18 @@ export interface WorktreeActions {
   revealSessionCwd(entryId: string): Promise<void>;
   copySessionCwd(entryId: string): Promise<void>;
 
+  // ── Launch (worktree-actions.md § 4) ─────────────────────────────────
+  // These RESOLVE a launch; they do not spawn it. The pane belongs to the
+  // surface, so the resolved options come back here and go out to it.
+  /** A brand-new session for `agent`, in `cwd`. Rejects on anything it cannot admit. */
+  startAgent?(
+    agent: string,
+    cwd: string,
+    opts: { permissionChoiceId?: string; prompt?: string },
+  ): Promise<CreateSessionOptions>;
+  /** An existing session, run in `cwd` rather than the one it was recorded in. */
+  resumeSessionAt?(entryId: string, cwd: string): Promise<CreateSessionOptions>;
+
   // ── Mutating (design.md D1, D12, D13) ────────────────────────────────
   // Optional, so a surface or a host wired without them offers nothing rather
   // than offering a control that resolves to no capability.
@@ -165,6 +190,8 @@ export interface WorktreeActions {
     baseRef?: string;
     detach?: boolean;
     openAfter: WorktreeOpenAfterMode;
+    /** Present exactly when `openAfter` is `"agent"` — the host refuses any other pairing. */
+    launch?: WorktreeAgentLaunchFields;
     origin?: WorktreeSurface;
   }): Promise<void>;
   removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
@@ -595,6 +622,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return own !== undefined && own === carried ? row : undefined;
   }
 
+  /**
+   * The published bound on a seed prompt. Absent is fine — a launch without one
+   * is not an error; oversized is not, and it is refused rather than truncated,
+   * because a silently shortened first turn is a different instruction.
+   */
+  function admissiblePrompt(prompt: string | undefined): boolean {
+    return prompt === undefined || prompt.length <= MAX_CONTINUATION_INSTRUCTION;
+  }
+
   /** Run one capability, keeping a rejection out of the message loop. */
   function perform(run: () => Promise<void>): void {
     void run().catch((err) => {
@@ -632,11 +668,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
       case "worktreeCreate": {
         const create = actions.createWorktree;
-        // Validated, not trusted. `agent` is rejected until WT-005.3 supplies
-        // the launch it names — defence in depth behind the form, which does
-        // not offer the option at all (design.md D9).
-        const modes: readonly WorktreeOpenAfterMode[] = ["none", "terminal", "newWindow", "addToWorkspace"];
+        // Validated, not trusted: an unknown mode must fail closed rather than
+        // fall through to whatever the capability defaults to.
+        const modes: readonly WorktreeOpenAfterMode[] = ["none", "terminal", "agent", "newWindow", "addToWorkspace"];
         if (!modes.includes(msg.openAfter)) {
+          return;
+        }
+        // Launch details belong to the agent mode alone. Riding another mode
+        // they are a caller bug, not a field to ignore — and an agent mode
+        // without them names a launch nobody described (worktree-rpc.md § 2.2).
+        if ((msg.openAfter === "agent") !== (msg.launch !== undefined)) {
+          return;
+        }
+        if (msg.launch !== undefined && !admissiblePrompt(msg.launch.prompt)) {
           return;
         }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
@@ -648,6 +692,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               baseRef: msg.baseRef,
               detach: msg.detach,
               openAfter: msg.openAfter,
+              ...(msg.launch === undefined ? {} : { launch: msg.launch }),
               origin: surface,
             }),
           );
@@ -814,7 +859,58 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         }
         return;
       }
+      case "worktreeLaunchAgent": {
+        const start = actions.startAgent;
+        const path = actionPath(msg.worktreeId, false);
+        if (!start || path === undefined || !admissiblePrompt(msg.prompt)) {
+          return;
+        }
+        // The agent id and posture are NOT checked here: the launcher owns the
+        // registry and refuses anything it did not declare, so a second copy of
+        // that list would be a second thing to keep in step.
+        launch(surface, () =>
+          start(msg.agent, path, {
+            ...(msg.permissionChoiceId === undefined ? {} : { permissionChoiceId: msg.permissionChoiceId }),
+            ...(msg.prompt === undefined ? {} : { prompt: msg.prompt }),
+          }),
+        );
+        return;
+      }
+      case "worktreeResumeHere": {
+        const resume = actions.resumeSessionAt;
+        // BOTH doors: the row must still hold this session, and the worktree
+        // must still be in the tree. Either half going stale launches nothing.
+        const row = matchedRow(msg.rowId, "entryId", msg.entryId);
+        const path = actionPath(msg.worktreeId, false);
+        if (!resume || row?.entryId === undefined || path === undefined) {
+          return;
+        }
+        const entryId = row.entryId;
+        launch(surface, () => resume(entryId, path));
+        return;
+      }
     }
+  }
+
+  /**
+   * Resolve a launch, then hand the resolved command to the surface that asked.
+   *
+   * Deliberately NOT `perform`: that swallows a rejection into a log, which is
+   * right for a copy or a reveal and wrong here. A launch the user asked for and
+   * did not get has to say so — "agent executable not found" is the whole error
+   * surface this action has (worktree-actions.md § 5).
+   */
+  function launch(surface: WorktreeSurface, resolve: () => Promise<CreateSessionOptions>): void {
+    const open = surface.launchAgent;
+    if (!open) {
+      return;
+    }
+    void resolve()
+      .then((options) => open.call(surface, options))
+      .catch((err: unknown) => {
+        const reason = err instanceof Error ? err.message : "The agent could not be started.";
+        surface.post({ type: "error", message: reason, severity: "error" });
+      });
   }
 
   /**
@@ -1295,6 +1391,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeCopyResumeCommand":
       case "worktreeRevealAgentCwd":
       case "worktreeCopyAgentPath":
+      case "worktreeLaunchAgent":
+      case "worktreeResumeHere":
       case "worktreeCreate":
       case "worktreeRemove":
       case "worktreeLock":

@@ -10,6 +10,20 @@ vi.mock("../pty/PtyManager", async () => (await import("../test/sessionMocks")).
 vi.mock("../pty/PtySession", async () => (await import("../test/sessionMocks")).ptySessionMock());
 vi.mock("../session/OutputBuffer", async () => (await import("../test/sessionMocks")).outputBufferMock());
 
+// The registry's own probe spawns each agent executable. Real here, it competes
+// with the whole suite for process slots and the reply misses its deadline — a
+// flake that says nothing about routing. Detection is covered in registry.test.ts
+// against a fake exec; what THIS file owns is which capability was asked for and
+// what came back.
+const STUB_TARGETS = {
+  start: [{ agent: "claude", displayName: "Claude Code", permissionChoices: [], canSeedPrompt: true }],
+  continue: [{ agent: "codex", displayName: "Codex", permissionChoices: [], canSeedPrompt: true }],
+} as const;
+vi.mock("../vault/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../vault/registry")>()),
+  detectLaunchTargets: vi.fn(async (capability: "continue" | "start") => STUB_TARGETS[capability]),
+}));
+
 import type * as vscode from "vscode";
 import { SessionManager } from "../session/SessionManager";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
@@ -241,5 +255,43 @@ describe("vaultContinueSession", () => {
     expect(errors(postMessageSpy)).toEqual(["claude has no continue command"]);
     expect(postMessageSpy.mock.calls.some(([m]) => (m as { type?: string }).type === "tabCreated")).toBe(false);
     dispose();
+  });
+});
+
+describe("requestVaultLaunchTargets", () => {
+  function replies(spy: ReturnType<typeof vi.fn>): { capability?: string; targets: { agent: string }[] }[] {
+    return spy.mock.calls
+      .map(([m]) => m as { type?: string; capability?: string; targets?: { agent: string }[] })
+      .filter((m) => m.type === "vaultLaunchTargets")
+      .map((m) => ({ capability: m.capability, targets: m.targets ?? [] }));
+  }
+
+  it("answers the start capability, and says so on the reply", async () => {
+    const h = mount(makeVault());
+    h.send({ type: "requestVaultLaunchTargets", capability: "start" });
+    await tick();
+    const reply = replies(h.postMessageSpy)[0];
+    // Without the echo the two answers are indistinguishable, so a start answer
+    // would populate whichever dialog happened to be listening (design D5).
+    expect(reply?.capability).toBe("start");
+    h.dispose();
+  });
+
+  it("treats an absent capability as continue, so the existing dialog is unchanged", async () => {
+    const h = mount(makeVault());
+    h.send({ type: "requestVaultLaunchTargets" });
+    await tick();
+    expect(replies(h.postMessageSpy)[0]?.capability).toBe("continue");
+    h.dispose();
+  });
+
+  it("forwards the answer for the capability asked about, not the other one", async () => {
+    // An EQUALITY, not a loop over the postures: where no agent resolves, a loop
+    // runs zero times and the test passes having checked nothing.
+    const h = mount(makeVault());
+    h.send({ type: "requestVaultLaunchTargets", capability: "start" });
+    await tick();
+    expect(replies(h.postMessageSpy)[0]?.targets).toEqual(STUB_TARGETS.start);
+    h.dispose();
   });
 });

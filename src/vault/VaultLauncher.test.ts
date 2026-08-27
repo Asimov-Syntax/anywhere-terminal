@@ -360,3 +360,55 @@ describe("VaultLauncher.buildResumeCommand", () => {
     await expect(launcher.buildResumeCommand("claude:sess-1")).resolves.toBe("claude --resume sess-1");
   });
 });
+
+describe("VaultLauncher — launching somewhere else", () => {
+  it("runs a resume in the directory the caller named, not the one recorded", async () => {
+    const launcher = new VaultLauncher(stubService([makeEntry({ cwd: "/recorded/proj" })]), {});
+    await expect(launcher.resolve("claude:sess-1", "resume", undefined, undefined, "/wt/feat")).resolves.toMatchObject({
+      cwd: "/wt/feat",
+    });
+  });
+
+  it("still honours the recorded directory when none is named", async () => {
+    const launcher = new VaultLauncher(stubService([makeEntry({ cwd: "/recorded/proj" })]), {});
+    await expect(launcher.resolve("claude:sess-1", "resume")).resolves.toMatchObject({ cwd: "/recorded/proj" });
+  });
+
+  it("overrides the directory for a fork too — the override is the mode's, not resume's", async () => {
+    const launcher = new VaultLauncher(stubService([makeEntry({ cwd: "/recorded/proj" })]), {});
+    await expect(launcher.resolve("claude:sess-1", "fork", undefined, undefined, "/wt/feat")).resolves.toMatchObject({
+      cwd: "/wt/feat",
+    });
+  });
+});
+
+describe("VaultLauncher.startAgent", () => {
+  const launcher = () => new VaultLauncher(stubService([]), { ANTHROPIC_API_KEY: "sk-1" });
+
+  it("starts a fresh session with no stored entry at all", async () => {
+    const opts = await launcher().startAgent("claude", "/wt/feat", {});
+    expect(opts).toMatchObject({ shell: "claude", shellArgs: [], cwd: "/wt/feat", isAgentLaunch: true });
+  });
+
+  it("carries the posture and prompt the caller chose", async () => {
+    const opts = await launcher().startAgent("claude", "/wt/feat", {
+      permissionChoiceId: "plan",
+      prompt: "read the design doc",
+    });
+    expect(opts.shellArgs).toEqual(["--permission-mode", "plan", "read the design doc"]);
+  });
+
+  it("forwards Claude's auth allowlist so the fresh session targets the same account", async () => {
+    expect((await launcher().startAgent("claude", "/wt/feat", {})).env).toEqual({ ANTHROPIC_API_KEY: "sk-1" });
+  });
+
+  it("refuses a prompt the agent would read as an option", async () => {
+    await expect(launcher().startAgent("claude", "/wt/feat", { prompt: "--force" })).rejects.toMatchObject({
+      code: "prompt-reads-as-flag",
+    });
+  });
+
+  it("refuses an agent it does not know", async () => {
+    await expect(launcher().startAgent("nosuch", "/wt/feat", {})).rejects.toBeInstanceOf(VaultLaunchError);
+  });
+});

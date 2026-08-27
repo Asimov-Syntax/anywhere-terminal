@@ -662,6 +662,70 @@ describe("evidence that could not be read is not evidence of safety", () => {
     ]);
   });
 
+  it("reports a failed AGENT launch as an agent that did not start", async () => {
+    // Same channel as any other open-after, different sentence: the user needs
+    // to read "the worktree is there, the agent is not" off one notice.
+    const h = harness({
+      afterCreate: async () => {
+        throw new Error("Claude Code cannot start a new session");
+      },
+    });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      branch: "feat",
+      openAfter: "agent",
+      launch: { agent: "claude" },
+    });
+    expect(h.outcomes).toEqual([
+      expect.objectContaining({
+        kind: "ok",
+        verb: "create",
+        openFailed: "Agent did not start: Claude Code cannot start a new session",
+      }),
+    ]);
+  });
+
+  it("hands the launch details and the asking surface to the after-create", async () => {
+    const seen: unknown[] = [];
+    const surface = { isReady: () => true, post: () => {} };
+    const h = harness({
+      afterCreate: async (path, openAfter, launch, origin) => {
+        seen.push({ path, openAfter, launch, sameSurface: origin === surface });
+      },
+    });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      branch: "feat",
+      openAfter: "agent",
+      launch: { agent: "claude", permissionChoiceId: "plan", prompt: "read the failing test" },
+      origin: surface,
+    });
+    expect(seen).toEqual([
+      {
+        path: "/repo-wt/new",
+        openAfter: "agent",
+        launch: { agent: "claude", permissionChoiceId: "plan", prompt: "read the failing test" },
+        sameSurface: true,
+      },
+    ]);
+  });
+
+  it("creates nothing when the mode and its launch details disagree", async () => {
+    // Both directions: an agent mode describing no launch, and launch details
+    // riding a mode that never asked for one.
+    for (const request of [
+      { openAfter: "agent" as const },
+      { openAfter: "terminal" as const, launch: { agent: "claude" } },
+    ]) {
+      const h = harness();
+      await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", branch: "feat", ...request });
+      expect(h.outcomes).toEqual([expect.objectContaining({ kind: "error", verb: "create" })]);
+      expect(h.order).toEqual([]);
+    }
+  });
+
   it("says nothing extra when the open-after succeeds", async () => {
     const h = harness();
     await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", branch: "feat", openAfter: "newWindow" });

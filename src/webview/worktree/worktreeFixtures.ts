@@ -296,9 +296,29 @@ export function createDefaults(over: Partial<WorktreeCreateDefaults> = {}): Work
     pathParent: "/Users/dev/Projects/ai-oss",
     pathPrefix: "anywhere-terminal",
     agents: [
-      { id: "claude", label: "Claude Code" },
-      { id: "codex", label: "Codex" },
-      { id: "opencode", label: "OpenCode" },
+      {
+        id: "claude",
+        label: "Claude Code",
+        canSeedPrompt: true,
+        permissionChoices: [
+          { id: "default", label: "Ask for permission" },
+          { id: "plan", label: "Plan only" },
+          { id: "acceptEdits", label: "Accept edits" },
+          { id: "bypassPermissions", label: "Bypass permission checks", dangerous: true },
+        ],
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        canSeedPrompt: true,
+        permissionChoices: [
+          { id: "read-only", label: "Read only" },
+          { id: "workspace-write", label: "Write in the workspace" },
+          { id: "danger-full-access", label: "Full access, no approvals", dangerous: true },
+        ],
+      },
+      // No postures at all — the box must render without a posture control.
+      { id: "opencode", label: "OpenCode", canSeedPrompt: true, permissionChoices: [] },
     ],
     ...over,
   };

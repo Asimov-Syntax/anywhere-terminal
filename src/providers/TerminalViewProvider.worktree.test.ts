@@ -406,6 +406,13 @@ const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unk
   worktreeRevealAgentCwd: { type: "worktreeRevealAgentCwd", rowId: "window:a", entryId: "claude:s1" },
   worktreeCopyAgentPath: { type: "worktreeCopyAgentPath", rowId: "window:a", entryId: "claude:s1" },
   worktreeCreate: { type: "worktreeCreate", repoId: "/repo", path: "/trees/feat", openAfter: "none" },
+  worktreeLaunchAgent: { type: "worktreeLaunchAgent", worktreeId: "/repo-wt/feat", agent: "claude" },
+  worktreeResumeHere: {
+    type: "worktreeResumeHere",
+    worktreeId: "/repo-wt/feat",
+    rowId: "window:a",
+    entryId: "claude:s1",
+  },
   worktreeRemove: { type: "worktreeRemove", worktreeId: "/repo-wt/feat", force: false },
   worktreeLock: { type: "worktreeLock", worktreeId: "/repo-wt/feat", reason: "release build" },
   worktreeUnlock: { type: "worktreeUnlock", worktreeId: "/repo-wt/feat" },

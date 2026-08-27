@@ -451,7 +451,15 @@ export interface VaultContinueSessionMessage {
  */
 export interface RequestVaultLaunchTargetsMessage {
   type: "requestVaultLaunchTargets";
+  /**
+   * Which launch is being asked about. Absent means `"continue"`, so the
+   * continuation dialog's existing request keeps its meaning unchanged.
+   */
+  capability?: VaultLaunchCapability;
 }
+
+/** The two launches a target list can describe. */
+export type VaultLaunchCapability = "continue" | "start";
 
 /** Webview → Extension: reveal the session's file in the OS file manager. */
 export interface VaultRevealInOSMessage {
@@ -662,11 +670,37 @@ export interface WorktreeOpenFolderMessage {
   mode: "newWindow" | "addToWorkspace";
 }
 
-/** After-creation modes create ships with. `agent` is WT-005.3's (design.md D9). */
-export type WorktreeOpenAfterMode = "none" | "terminal" | "newWindow" | "addToWorkspace";
+/** After-creation modes create ships with. */
+export type WorktreeOpenAfterMode = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspace";
 
-/** WebView → Extension: create a worktree at a path the host will re-validate. */
-export interface WorktreeCreateRequestMessage {
+/**
+ * What a launch runs: which agent, under which posture, seeded with what.
+ *
+ * `permissionChoiceId` and `prompt` are the agent's OWN vocabulary — an id it
+ * declared and text it will receive as one argument. Neither is argv; the host
+ * resolves that from the registry, so nothing here is a command fragment.
+ */
+export interface WorktreeAgentLaunchFields {
+  agent: string;
+  permissionChoiceId?: string;
+  prompt?: string;
+}
+
+/**
+ * WebView → Extension: create a worktree at a path the host will re-validate.
+ *
+ * The launch fields are required exactly when `openAfter` is `"agent"` and
+ * rejected on every other mode — a launch payload riding a non-launch mode is a
+ * caller bug, not a field to ignore (worktree-rpc.md § 2.2). The union makes
+ * that unrepresentable rather than validated.
+ */
+export type WorktreeCreateRequestMessage = WorktreeCreateRequestBase &
+  (
+    | { openAfter: "agent"; launch: WorktreeAgentLaunchFields }
+    | { openAfter: Exclude<WorktreeOpenAfterMode, "agent">; launch?: never }
+  );
+
+interface WorktreeCreateRequestBase {
   type: "worktreeCreate";
   repoId: string;
   /** Untrusted: the one action with no host-issued id to re-resolve from. */
@@ -674,7 +708,27 @@ export interface WorktreeCreateRequestMessage {
   branch?: string;
   baseRef?: string;
   detach?: boolean;
-  openAfter: WorktreeOpenAfterMode;
+}
+
+/** WebView → Extension: start a fresh agent session in a worktree. */
+export interface WorktreeLaunchAgentMessage extends WorktreeAgentLaunchFields {
+  type: "worktreeLaunchAgent";
+  worktreeId: string;
+}
+
+/**
+ * WebView → Extension: resume an existing session, in this worktree rather than
+ * the one it was recorded in.
+ *
+ * `rowId` travels with `entryId` because every agent-row action resolves through
+ * the published row rather than the id the request carried — the entry id is an
+ * expected-version token, never an argument (design.md D1).
+ */
+export interface WorktreeResumeHereMessage {
+  type: "worktreeResumeHere";
+  worktreeId: string;
+  rowId: string;
+  entryId: string;
 }
 
 /**
@@ -912,6 +966,8 @@ export type WebViewToExtensionMessage =
   | WorktreeRevealAgentCwdMessage
   | WorktreeCopyAgentPathMessage
   | WorktreeViewVisibilityMessage
+  | WorktreeLaunchAgentMessage
+  | WorktreeResumeHereMessage
   | WorktreeCreateRequestMessage
   | WorktreeCreateDefaultsRequestMessage
   | WorktreeRemoveRequestMessage
@@ -959,6 +1015,8 @@ export const WORKTREE_MESSAGE_TYPES = [
   "worktreeCopyResumeCommand",
   "worktreeRevealAgentCwd",
   "worktreeCopyAgentPath",
+  "worktreeLaunchAgent",
+  "worktreeResumeHere",
   "worktreeCreate",
   "worktreeRemove",
   "worktreeLock",
@@ -1524,6 +1582,12 @@ export type VaultMessageRecordResponseMessage =
 /** Extension → Webview: reply to `requestVaultLaunchTargets` (D11). */
 export interface VaultLaunchTargetsMessage {
   type: "vaultLaunchTargets";
+  /**
+   * Echoes the question. The two capabilities return different agent sets, so
+   * without this a reply cannot be told from the other one's and would populate
+   * whichever dialog happened to be listening (design.md D5).
+   */
+  capability: VaultLaunchCapability;
   targets: VaultLaunchTarget[];
 }
 

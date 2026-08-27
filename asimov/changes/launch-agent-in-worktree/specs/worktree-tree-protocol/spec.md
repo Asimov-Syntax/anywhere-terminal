@@ -1,0 +1,65 @@
+## ADDED Requirements
+
+### Requirement: Report which agents can start a fresh session
+
+The host SHALL answer a request for launch targets with the agents that are installed AND
+declare a way to start a fresh session, each carrying its display name, its own permission
+postures, and whether it can be seeded with a prompt.
+
+- An agent that is declared but not installed SHALL be absent from the answer.
+- The answer SHALL be the panel's only source of offerable agents.
+
+#### Scenario: An answer states which question it answers
+
+- **WHEN** launch targets are requested for starting a session and for continuing one
+- **THEN** each answer names the capability it was asked about, and neither answer can be taken for the other
+
+### Requirement: A launch resolves its own target
+
+A launch request SHALL name a worktree by identifier, and the host SHALL resolve the directory
+from its own current tree rather than from anything the request supplied.
+
+#### Scenario: A stale worktree launches nothing
+
+- **WHEN** a launch names a worktree that has since left the tree
+- **THEN** no agent is started, and no other worktree is used in its place
+
+### Requirement: A launch is admitted only on values the host declared
+
+The host SHALL reject an agent absent from its own launch-target answer, a permission posture
+the chosen agent does not declare, and a prompt beyond the bound it publishes.
+
+### Requirement: Resuming a session into a worktree runs it there
+
+Resuming SHALL use the session the displayed row identified, and SHALL run it in the resolved
+worktree rather than the session's recorded directory.
+
+### Requirement: A launch that was asked for on its own reports its own failure
+
+WHEN a launch requested directly on a worktree fails, the failure SHALL be reported to the
+surface that asked for it.
+
+#### Scenario: A missing executable is not silent
+
+- **WHEN** a launch is requested for an agent whose executable cannot be run
+- **THEN** the asking surface is told the launch failed, rather than the request ending with nothing shown
+
+### Requirement: Launch details belong to the agent mode alone
+
+A create SHALL require an agent, and admit a permission posture and a prompt, exactly when it
+asks for an agent, and SHALL reject any of the three on every other mode.
+
+#### Scenario: Launch details on the wrong mode are refused
+
+- **WHEN** a create that does not ask for an agent carries an agent, a posture, or a prompt
+- **THEN** the create is rejected rather than the extra details being ignored
+
+### Requirement: A create launches its agent only after the create succeeded
+
+WHERE a create asks for an agent, the launch SHALL run only after the create has succeeded, and
+a create that failed SHALL launch nothing.
+
+### Requirement: A failed launch never undoes its worktree
+
+WHEN a create succeeds and the launch that followed it fails, the created worktree SHALL remain
+and the outcome SHALL be reported as a success carrying the reason the agent did not start.

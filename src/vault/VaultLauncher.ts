@@ -7,16 +7,19 @@
 // the argv from LaunchBuilder). It does NOT spawn — the provider owns the
 // createSession call + the `tabCreated` post so the terminal becomes visible (D5).
 
+import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
 import { isCursorCliResumableEntry } from "./cursorCapabilities";
 import {
   build,
   buildResumeCommandString,
+  buildStart,
   type ContinuationTarget,
   type LaunchMode,
   resolveContextTag,
   resolveLaunchExecutable,
   VaultLaunchError,
 } from "./LaunchBuilder";
+import { getAgentDefinition } from "./registry";
 import type { VaultSessionEntry } from "./types";
 import type { VaultService } from "./VaultService";
 
@@ -46,6 +49,7 @@ export class VaultLauncher {
     mode: LaunchMode,
     prompt?: string,
     target?: ContinuationTarget,
+    cwd?: string,
   ): Promise<CreateSessionOptions> {
     const entry = await this.resolveLaunchable(entryId, mode);
     if (mode === "fork" && !entry.canFork) {
@@ -58,11 +62,43 @@ export class VaultLauncher {
       this.hostEnv,
       mode === "continue" ? (target?.agent ?? entry.agent) : undefined,
     );
-    const spec = build(entry, mode, this.hostEnv, prompt, target, executable, contextTag);
+    const spec = build(entry, mode, this.hostEnv, prompt, target, executable, contextTag, cwd);
     // Spawn the agent CLI directly as the terminal's process (PTY root). This is
     // killed cleanly on window reload; on exit, the session manager respawns a
     // shell in the same tab so the user keeps an input prompt (see
     // SessionManager.respawnFallbackShell + isAgentLaunch).
+    return {
+      shell: spec.file,
+      shellArgs: spec.args,
+      cwd: spec.cwd,
+      env: Object.keys(spec.env).length > 0 ? spec.env : undefined,
+      isAgentLaunch: true,
+    };
+  }
+
+  /**
+   * Start a BRAND-NEW session for `agent`, in `cwd`.
+   *
+   * No entry id, because there is no stored session — this is the one launch
+   * that begins from nothing. The directory is required rather than optional:
+   * a fresh start has no recorded cwd to fall back to, so the caller naming one
+   * is the whole contract (design.md D4).
+   */
+  async startAgent(
+    agent: string,
+    cwd: string,
+    opts: { permissionChoiceId?: string; prompt?: string },
+  ): Promise<CreateSessionOptions> {
+    const def = getAgentDefinition(agent);
+    if (!def) {
+      throw new VaultLaunchError(`Unknown agent: ${agent}`, "unknown-agent");
+    }
+    // Resolved only when the template asks for it — the same rule the entry-backed
+    // modes follow, so an agent whose executable is fixed is not probed at all.
+    const executable = def.startCommand?.executable.includes("{{executable}}")
+      ? ((await resolveAgentExecutable(def)) ?? undefined)
+      : undefined;
+    const spec = buildStart(agent, cwd, this.hostEnv, { ...opts, ...(executable ? { executable } : {}) });
     return {
       shell: spec.file,
       shellArgs: spec.args,

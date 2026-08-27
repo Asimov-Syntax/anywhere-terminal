@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import type {
+  VaultLaunchTargetsMessage,
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
   WorktreeTreeResponseMessage,
@@ -94,7 +95,13 @@ describe("visibility", () => {
   it("declares the view visible and asks for the tree on the way in", () => {
     const { controller, posts } = mount();
     controller.setVisible(true);
-    expect(posts).toEqual([{ type: "worktreeViewVisibility", visible: true }, { type: "requestWorktreeTree" }]);
+    // Which agents resolve is a property of the machine, so the panel asks on
+    // every way in rather than once at mount.
+    expect(posts).toEqual([
+      { type: "worktreeViewVisibility", visible: true },
+      { type: "requestWorktreeTree" },
+      { type: "requestVaultLaunchTargets", capability: "start" },
+    ]);
   });
 
   it("says nothing when the value has not moved", () => {
@@ -414,9 +421,13 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     expect(posted).toEqual([{ type: "worktreeRemove", worktreeId: "/wt", force: false }]);
   });
 
-  it("still offers no resume-here, because WT-005.3 owns the launch behind it", () => {
+  it("offers neither launch item to a caller that supplied no launch", () => {
+    // WT-005.3 supplies them, but the factory still leaves both ABSENT for a
+    // caller with nothing behind them — the controller lights them only once the
+    // host has named an agent that can start a session.
     const { actions } = controllerActions();
     expect(actions.resumeHere).toBeUndefined();
+    expect(actions.launchAgentHere).toBeUndefined();
   });
 
   it("hands the view both halves of create's entry path", () => {
@@ -528,7 +539,9 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     expect(h.posts).toEqual([]);
   });
 
-  it("posts no create for the agent mode WT-005.3 still owns", () => {
+  it("posts no create for an agent mode naming no agent", () => {
+    // The mode and its launch details are one thing on the wire; a mode with no
+    // agent would ask the host for a launch it must refuse.
     const h = mount();
     const view = (
       h.controller as unknown as {
@@ -545,6 +558,143 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     });
 
     expect(h.posts.filter((m) => m.type === "worktreeCreate")).toEqual([]);
+  });
+
+  it("carries the launch details with the agent mode and with no other", () => {
+    const h = mount();
+    const view = (
+      h.controller as unknown as {
+        view: { deps: { onCreateSubmit(d: unknown): void } };
+      }
+    ).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "existing",
+      branchName: "feat",
+      baseRef: "",
+      path: "/wt",
+      openAfter: "agent",
+      agentId: "claude",
+      permissionChoiceId: "plan",
+      prompt: "read the failing test",
+    });
+
+    expect(h.posts.filter((m) => m.type === "worktreeCreate")).toEqual([
+      {
+        type: "worktreeCreate",
+        repoId: "/repo/.git",
+        path: "/wt",
+        branch: "feat",
+        openAfter: "agent",
+        launch: { agent: "claude", permissionChoiceId: "plan", prompt: "read the failing test" },
+      },
+    ]);
+  });
+});
+
+describe("the launch entry paths WT-005.3 supplies", () => {
+  const STARTABLE: VaultLaunchTargetsMessage = {
+    type: "vaultLaunchTargets",
+    capability: "start",
+    targets: [
+      {
+        agent: "claude",
+        displayName: "Claude Code",
+        canSeedPrompt: true,
+        permissionChoices: [
+          { id: "default", label: "Ask for permission" },
+          { id: "bypassPermissions", label: "Bypass permission checks", dangerous: true },
+        ],
+      },
+    ],
+  };
+
+  /** A mounted panel that has been told which agents can start a session. */
+  function launchable(): Harness {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.handleLaunchTargets(STARTABLE);
+    return h;
+  }
+
+  it("offers neither launch item until the host names an agent that can start one", () => {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    const actions = menuActions(h);
+    expect(actions.launchAgentHere).toBeUndefined();
+    expect(actions.resumeHere).toBeUndefined();
+  });
+
+  it("lights both once an agent that can start a session is reported", () => {
+    const actions = menuActions(launchable());
+    expect(actions.launchAgentHere).toBeInstanceOf(Function);
+    expect(actions.resumeHere).toBeInstanceOf(Function);
+  });
+
+  it("ignores the continuation answer — the other question, and a different set", () => {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.handleLaunchTargets({ ...STARTABLE, capability: "continue" });
+    expect(menuActions(h).launchAgentHere).toBeUndefined();
+  });
+
+  it("withdraws the items again when the host reports nothing startable", () => {
+    const h = launchable();
+    h.controller.handleLaunchTargets({ ...STARTABLE, targets: [] });
+    expect(menuActions(h).launchAgentHere).toBeUndefined();
+  });
+
+  it("posts what the dialog collected against the worktree the menu was opened on", () => {
+    const h = launchable();
+    const info = firstWorktree();
+    (menuActions(h).launchAgentHere as (i: WorktreeInfo) => void)(info);
+    const agent = document.querySelector<HTMLSelectElement>("#wt-agent");
+    expect(agent?.value).toBe("claude");
+    const prompt = document.querySelector<HTMLTextAreaElement>("#wt-prompt");
+    if (prompt) {
+      prompt.value = "look at the diff";
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    const start = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /^Start agent/.test(b.textContent ?? ""),
+    );
+    start?.click();
+
+    expect(h.posts.filter((m) => m.type === "worktreeLaunchAgent")).toEqual([
+      {
+        type: "worktreeLaunchAgent",
+        worktreeId: info.id,
+        agent: "claude",
+        permissionChoiceId: "default",
+        prompt: "look at the diff",
+      },
+    ]);
+  });
+
+  it("resumes a row's session in the worktree that row is published under", () => {
+    // The worktree is the panel's own answer, from the presence envelope — a
+    // resume can never land in a worktree the row was not published under.
+    const h = launchable();
+    const rows = singleRepoPresence(1_000_000).rowsByWorktreeId;
+    const [worktreeId, published] = Object.entries(rows)[0] as [string, WorktreeAgentRow[]];
+    const row = published.find((r) => r.entryId !== undefined);
+    if (!row) {
+      throw new Error("fixture lost its session rows");
+    }
+    (menuActions(h).resumeHere as unknown as (r: WorktreeAgentRow) => void)(row);
+
+    expect(h.posts.filter((m) => m.type === "worktreeResumeHere")).toEqual([
+      { type: "worktreeResumeHere", worktreeId, rowId: row.rowId, entryId: row.entryId },
+    ]);
+  });
+
+  it("posts no resume for a row the presence envelope never published", () => {
+    const h = launchable();
+    (menuActions(h).resumeHere as unknown as (r: WorktreeAgentRow) => void)({
+      rowId: "ghost",
+      entryId: "claude:ghost",
+    } as WorktreeAgentRow);
+    expect(h.posts.filter((m) => m.type === "worktreeResumeHere")).toEqual([]);
   });
 });
 

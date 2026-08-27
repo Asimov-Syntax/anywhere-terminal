@@ -766,6 +766,13 @@ const routeMessage = createMessageRouter({
     vaultPanel?.handleMessageRecordResponse(msg);
   },
   onVaultLaunchTargets(msg) {
+    // Two dialogs ask the same question with different capabilities, and the
+    // answers are different agent sets — so the reply is routed by what it says
+    // it answers, never broadcast to both.
+    if (msg.capability === "start") {
+      worktreeController?.handleLaunchTargets(msg);
+      return;
+    }
     vaultPanel?.handleLaunchTargets(msg);
   },
   onSubagentPreviewResponse(msg) {
