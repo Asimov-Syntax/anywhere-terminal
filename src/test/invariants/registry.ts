@@ -123,9 +123,8 @@ export const INVARIANTS: readonly InvariantRow[] = [
     id: "I13",
     statement: "Every turn state maps to exactly one activity; a state no event can produce does not exist",
     owners: ["WT-006.3"],
-    stimulus: "Add a turn state with no activity, or map one turn state onto two activities",
-    status: "uncovered",
-    reason: "no total-mapping test exists over the turn-state vocabulary (task 1_3)",
+    stimulus: "Add a turn state with no activity, map one turn state onto two activities, or leave a mapped state no event can produce",
+    status: "covered",
   },
   {
     id: "I14",

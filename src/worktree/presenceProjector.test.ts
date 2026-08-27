@@ -1092,7 +1092,7 @@ describe("a reported turn decides activity", () => {
     expect(row).toMatchObject({ activity: "running", activitySource: "hook" });
   });
 
-  it("lands each turn state on the activity the table names", async () => {
+  it("[I13] lands each turn state on the activity the table names", async () => {
     for (const [state, activity] of [
       ["working", "running"],
       ["waiting", "waiting"],
@@ -1107,7 +1107,7 @@ describe("a reported turn decides activity", () => {
     }
   });
 
-  it("never produces exited, and yields to a pty that did exit", async () => {
+  it("[I13] never produces exited, and yields to a pty that did exit", async () => {
     const h = makeProjector([pane({ paneId: "a", exited: true, turn: reported({ state: "working" }) })]);
     h.setActivity("a", "exited", "quiet");
 

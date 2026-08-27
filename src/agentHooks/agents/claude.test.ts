@@ -90,6 +90,26 @@ describe("claude agent registration", () => {
     expect(reasons.some((r) => r.reason === "agent-error")).toBe(false);
   });
 
+  it("[I13] produces every turn state the activity table maps, so no mapped state is unreachable", async () => {
+    // The projector gives working/waiting/done an activity each. A state nothing can
+    // produce would be a row the UI can never show — the second half of I13, which the
+    // projector's own mapping test cannot see from where it stands.
+    const { runtime, status } = await fixture();
+    const env = runtime.create("s");
+
+    for (const event of CLAUDE_HOOK_EVENTS) {
+      await post(`${env[CLAUDE_HOOK_ENV_VAR]}/${CLAUDE_HOOK_SLUG}`, eventBody(event, { nonce: event }));
+    }
+
+    const produced = new Set(
+      status
+        .map((update) => update.state)
+        .filter((state): state is AgentTurnReport => typeof state === "object" && state !== null)
+        .map((report) => report.state),
+    );
+    expect([...produced].sort()).toEqual(["done", "waiting", "working"]);
+  });
+
   it("handles every registered event without erroring", async () => {
     const { runtime, reasons } = await fixture();
     const env = runtime.create("s");

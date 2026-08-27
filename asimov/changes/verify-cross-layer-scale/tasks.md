@@ -24,7 +24,7 @@
     3. Prove the scan rejects a tag in a comment and a tag on a skipped test
     4. Declare the title edits at verify time with `--test-change`
 
-- [ ] 1_3 Cover the single-layer invariants the audit found untested
+- [x] 1_3 Cover the single-layer invariants the audit found untested — verified: pnpm run test:unit && pnpm run check-types exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D1
   - **Acceptance**:
