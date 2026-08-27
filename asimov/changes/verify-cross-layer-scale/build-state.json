@@ -1,9 +1,7 @@
 {
   "change": "verify-cross-layer-scale",
   "leases": [],
-  "attempts": {
-    "5_1": 2
-  },
+  "attempts": {},
   "locked": [],
   "reads": 0
 }

@@ -121,7 +121,7 @@
 
 ## 5. Suite integrity
 
-- [ ] 5_1 Root-cause the assembly suite flake, then fix or quarantine it
+- [x] 5_1 Root-cause the assembly suite flake, then fix or quarantine it — verified: bash -c "for i in 1 2 3 4 5; do pnpm run test:unit || exit 1; done" && pnpm run check-types exit 0
   - **Deps**: none
   - **Refs**: design.md D8, D9
   - **Acceptance**:
