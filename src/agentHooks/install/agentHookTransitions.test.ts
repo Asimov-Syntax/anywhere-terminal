@@ -503,3 +503,69 @@ describe("two installations sharing one ledger (round-9 B14)", () => {
     expect(first.ledger.pending(entry.agent)).toEqual([]);
   });
 });
+
+describe("a ledger that cannot be read (round-9 B16)", () => {
+  /** A store whose reads fail until `heal` is called. */
+  function brittleStore() {
+    let failing = true;
+    const backing = memoryLedgerStore();
+    return {
+      heal: () => {
+        failing = false;
+      },
+      store: {
+        ...backing,
+        read: async (key: string) => {
+          if (failing) {
+            throw new Error("ledger unreadable");
+          }
+          return backing.read(key);
+        },
+      },
+    };
+  }
+
+  it("reports the failure and still reconciles once the ledger comes back", async () => {
+    const { settings, location, storageRoot, adapters } = await agentConfigs();
+    const { entry } = adapters[0];
+    const brittle = brittleStore();
+    const warnings: string[] = [];
+    const transitions = transitionsFor({
+      settings,
+      location,
+      storageRoot,
+      ledger: new ManagedEntryLedger(brittle.store),
+      registry: [entry],
+    });
+
+    const failed = await transitions.submit(entry, true);
+    // The defect: this rejection was cached against the agent, so every later
+    // submission got the same rejected promise back — forever.
+    expect(failed).toMatchObject({ agent: entry.agent, reconciled: false, unavailable: true });
+
+    brittle.heal();
+    const recovered = await transitions.submit(entry, true);
+
+    expect(recovered.unavailable).toBeUndefined();
+    expect(recovered.reconciled).toBe(true);
+    expect(warnings).toEqual([]);
+  });
+
+  it("summarizes every agent when one of them cannot be read", async () => {
+    const { settings, location, storageRoot } = await agentConfigs();
+    const brittle = brittleStore();
+    const transitions = transitionsFor({
+      settings,
+      location,
+      storageRoot,
+      ledger: new ManagedEntryLedger(brittle.store),
+    });
+
+    const results = await transitions.uninstallEverything();
+
+    // Promise.all discarded all of them the moment one rejected.
+    expect(results).toHaveLength(AGENT_HOOK_REGISTRY.length);
+    expect(results.map((result) => result.agent)).toEqual(AGENT_HOOK_REGISTRY.map((entry) => entry.agent));
+    expect(summarizeUninstall(results)).toBeTruthy();
+  });
+});

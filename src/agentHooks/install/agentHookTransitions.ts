@@ -49,6 +49,13 @@ export interface TransitionOutcome {
   reconciled: boolean;
   /** Set when a destination that could neither be cleaned nor tracked stopped the move (round-5 B8). */
   blockedBy?: string;
+  /**
+   * Set when the ledger could not be read at all. A read failure is not a write
+   * failure and must not be reported as one — and it must not escape as a
+   * rejection either, which is how one transient failure disabled reconciliation
+   * for an agent until restart (round-9 B16).
+   */
+  unavailable?: true;
 }
 
 /** One running transition per agent, plus at most one rerun carrying what arrived meanwhile. */
@@ -91,17 +98,24 @@ export class AgentHookTransitions {
 
   /** Runs until nothing arrived while the last run was in flight. */
   private async converge(entry: AgentHookRegistryEntry, state: CoalescedTransitions): Promise<TransitionOutcome> {
-    for (;;) {
-      const force = state.force;
-      state.force = false;
-      state.rerun = false;
-      const outcome = await this.transition(entry, force);
-      // Checked in the same synchronous step the await resumes in, so a
-      // submission cannot land between the check and the release and be lost.
-      if (!state.rerun) {
-        this.coalesced.delete(entry.agent);
-        return outcome;
+    try {
+      for (;;) {
+        const force = state.force;
+        state.force = false;
+        state.rerun = false;
+        const outcome = await this.transition(entry, force);
+        // Checked in the same synchronous step the await resumes in, so a
+        // submission cannot land between the check and the release and be lost.
+        if (!state.rerun) {
+          return outcome;
+        }
       }
+    } finally {
+      // Released however the run ends. Leaving it behind on a throw cached a
+      // rejected promise that every later submission for this agent got back,
+      // so one unreadable ledger stopped the agent reconciling for the rest of
+      // the session (round-9 B16).
+      this.coalesced.delete(entry.agent);
     }
   }
 
@@ -115,8 +129,11 @@ export class AgentHookTransitions {
    * the case a user actually hits is a setting already false and a config file
    * still carrying our entries — sometimes more than one.
    */
-  public uninstallEverything(): Promise<AgentUninstallResult[]> {
-    return Promise.all(
+  public async uninstallEverything(): Promise<AgentUninstallResult[]> {
+    // Settled, not all: one agent whose ledger cannot be read used to discard
+    // every other agent's result, so the user was shown no summary at all for
+    // work that did happen (round-9 B16).
+    const settled = await Promise.allSettled(
       this.options.registry.map((entry) =>
         this.queue.run(entry.agent, async (): Promise<AgentUninstallResult> => {
           // Same reason as `transition`: "remove everything" is exactly the claim
@@ -160,6 +177,17 @@ export class AgentHookTransitions {
         }),
       ),
     );
+    return settled.map((result, index) =>
+      result.status === "fulfilled"
+        ? result.value
+        : {
+            agent: this.options.registry[index]?.agent as VaultAgentId,
+            destinations: [],
+            left: [],
+            removed: false,
+            reason: "write-failed" as const,
+          },
+    );
   }
 
   private async transition(entry: AgentHookRegistryEntry, force: boolean): Promise<TransitionOutcome> {
@@ -167,8 +195,15 @@ export class AgentHookTransitions {
     // This operation's own read. Everything below freezes an inventory from it,
     // and an inventory built from a view another window has already changed
     // reports a cleanup done that never ran (round-7 B5).
-    await ledger.refresh(entry.agent);
     const destination = entry.createAdapter(settings, location).configPath();
+    try {
+      await ledger.refresh(entry.agent);
+    } catch {
+      // Nothing below may run on an inventory we could not read: that is the
+      // stale-view cleanup claim round-7 B5 removed. Reported, not thrown.
+      this.options.onWarning?.(entry.agent, "the hook record could not be read, so nothing was reconciled");
+      return { agent: entry.agent, destination, pending: [], reconciled: false, unavailable: true };
+    }
     const recorded = ledger.destination(entry.agent);
     // Canonicalized on both sides: the ledger stores resolved paths, so a
     // settings value spelled with a `..` would otherwise look like a move away

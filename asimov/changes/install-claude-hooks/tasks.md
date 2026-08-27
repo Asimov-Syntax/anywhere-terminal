@@ -307,7 +307,7 @@
     2. Carry a location-only change as a forced reconciliation rather than as no reconciliation
     3. Cover in src/agentHooks/install/agentHookEvents.test.ts: an event touching only the location submitting a forced reconciliation, an event touching only the enablement submitting an unforced one, and an unrelated event submitting nothing
 
-- [ ] 8_5 Survive a ledger read that fails
+- [x] 8_5 Survive a ledger read that fails — verified: bun test 'src/agentHooks/install/agentHookTransitions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_1, 7_2, 8_2, 8_4
   - **Refs**: .reviews/round-9.md#b16, design.md#d13-one-serialized-transition-owner-per-agent
   - **Acceptance**:
