@@ -45,6 +45,9 @@ a newer CLI's settings unsupported. See
 
 ### D3: A managed entry is identified by its extension-owned directory suffix, not a bare filename
 
+> **Superseded by D12** after review cycle 1. The reconciliation goal below still holds; the
+> matching rule does not. Kept for the rationale D12 builds on.
+
 `isOwnedEntry` matches the managed entry shape plus a command whose path ends with the
 extension-owned pair `<agent>-hooks/<agent>-hook-observer.<ext>`, compared on a normalized
 path. It does **not** match a bare filename appearing anywhere in the command. The current
@@ -162,6 +165,67 @@ The shipped order writes the canonical path first and `chmod`s after
 (`CursorHookInstaller.ts:139-146`), leaving a window where the agent can find the script
 non-executable and the hook silently fails. Rename is atomic, so the canonical path is never
 observable in the wrong mode.
+
+### D12: Ownership is exact equality against a ledger of what we wrote, never a parse of the user's string
+
+**Supersedes D3's matching rule.** The extension keeps a persisted ledger in `globalState`:
+per agent, the destination it is installed into, the exact command strings it has written,
+and any destinations whose cleanup has not yet succeeded. An entry is ours **iff** its
+command is byte-equal to one the ledger records. Nothing else is ever removed.
+
+D3's premise — that we could recognise our own entry by looking at the command — survived
+three revisions and failed each time, in a widening way. Round 1: `includes()` claimed
+`not-cursor-hooks/cursor-hook-observer.sh`. Round 2: the single-token unquoter claimed
+`'…/observer.sh'.bak`, which the shell actually executes as the `.bak` file. Round 3: the
+first-word parser claimed a single-quoted POSIX path containing a literal backslash, because
+`my\cursor-hooks` is one real directory that separator normalization splits into two. Each
+fix was correct about the case it named. The pattern is the point: recognising an arbitrary
+user-authored shell string requires reimplementing two shell grammars correctly, and the
+failure mode is silently deleting configuration the user wrote.
+
+Exact equality inverts the risk. A command we did not write is never claimed, whatever it
+looks like. A command the user hand-edited is also not claimed — we decline to remove it,
+which is the safe direction and visible to the user rather than silent.
+
+The ledger keeps what D3 was actually for. A moved storage root still matches, because the
+ledger holds the command as written, not as recomputed. `globalState` survives extension
+updates for the same reason `globalStorageUri` does.
+
+Entries written by the shipped Cursor build predate the ledger. On first run with no ledger,
+the extension seeds it with the exact command that build emitted for the current
+`globalStorageUri` — a deterministic construction, not a search. A user whose `globalState`
+was cleared keeps whatever we cannot prove is ours; the uninstall command reports it rather
+than guessing.
+
+### D13: One serialized transition owner per agent
+
+Every change to an agent's hook state — enable, disable, destination moved — is one operation
+on a per-agent serial queue. An operation reads the ledger, acts, and writes the ledger back;
+no two operations for one agent ever overlap.
+
+The listener was the defect, not the individual transition. Each configuration event started
+its own unawaited async run, so a slow migration could reinstall after a newer event had
+disabled, two rapid moves could let the older continuation win the destination record, and a
+failed cleanup left a file installed that nothing remembered. Making one transition correct,
+as round 2 did, does not make a sequence of them correct.
+
+Destinations whose cleanup failed stay in the ledger's pending list rather than being
+forgotten, and are retried on the next transition and at activation. That closes the
+cross-restart stranding recorded as out of reach in cycle 1 — with the ledger it is reachable,
+so it is no longer deferred.
+
+### D14: One process-runner contract, absolute and cancellable
+
+The probe runner takes an absolute executable path, contains `error` and `close`, owns exactly
+one deadline, and terminates the process group before reporting. The injected-runner bound the
+installer applies is strictly greater than that deadline plus its reap grace.
+
+`spawn("taskkill", …)` searched the working directory before PATH — the same defect as the
+unqualified `more` corrected in task 2_3, reintroduced two tasks later, which is what a
+one-off spot fix buys. The spawned process also had no `error` listener, so a lookup or policy
+failure escaped the surrounding `try`/`catch`. And the two deadlines were both 2,000 ms, so the
+outer one resolved before the inner reap wait it was supposed to back up: the awaiting added in
+round 3 never actually ran.
 
 ## Interfaces
 

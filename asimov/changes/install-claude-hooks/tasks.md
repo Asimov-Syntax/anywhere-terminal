@@ -95,3 +95,42 @@
     3. W1 — await the child's close behind a secondary deadline and terminate the process group rather than the leader
     4. W3 — pin both cursor wrappers to independent literals in src/agentHooks/install/ManagedConfigInstaller.test.ts
     5. S3 — let src/agentHooks/install/claudeConfigAdapter.ts take an exact config file so the pinned factory returns what it was given
+
+## 4. Cycle-1 redesign
+
+- [ ] 4_1 Replace command parsing with a written-command ledger
+  - **Deps**: 3_2
+  - **Refs**: design.md#d12-ownership-is-exact-equality-against-a-ledger-of-what-we-wrote-never-a-parse-of-the-users-string, specs/agent-hook-installation/spec.md#{user-authored-configuration-is-preserved, a-moved-managed-script-is-reconciled-not-duplicated}
+  - **Acceptance**:
+    - Outcome: Only a command this extension recorded writing is ever removed
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Create src/agentHooks/install/managedEntryLedger.ts holding, per agent, the active destination, the commands written, and destinations pending cleanup, over an injectable key-value store
+    2. Replace the ownership predicate in src/agentHooks/install/ManagedConfigInstaller.ts with exact equality against recorded commands, and delete the command parser and separator normalization it depended on
+    3. Seed the ledger for an installation that predates it by constructing the command the shipped build emitted for the current storage root
+    4. Create src/agentHooks/install/managedEntryLedger.test.ts covering: every lookalike from rounds 1 to 3 refused, a recorded command removed, a hand-edited command left alone and reported, a moved storage root still matched, and the seed matching what the shipped build wrote
+    5. Update src/agentHooks/install/cursorConfigAdapter.ts and src/agentHooks/install/claudeConfigAdapter.ts to take ownership from the ledger, and drop the lookalike cases those suites assert through the old predicate
+
+- [ ] 4_2 Serialize each agent's hook transitions
+  - **Deps**: 4_1
+  - **Refs**: design.md#d13-one-serialized-transition-owner-per-agent, specs/agent-hook-installation/spec.md#{per-agent-opt-in-hook-installation, uninstall-command-clears-every-managed-entry}
+  - **Acceptance**:
+    - Outcome: Overlapping configuration events settle on the latest setting with nothing orphaned
+    - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
+  - **Plan**:
+    1. Create src/agentHooks/install/agentHookTransitions.ts running enable, disable and destination-moved as one serial queue per agent over the ledger
+    2. Retry every destination left pending cleanup on the next transition and at activation
+    3. Reduce the listener in src/extension.ts to submitting a transition, removing the per-event async run and the destination map
+    4. Create src/agentHooks/install/agentHookTransitions.test.ts covering: interleaved enable and disable settling on the latest, two rapid destination moves leaving one active destination, a failed cleanup retried rather than forgotten, and cleanup surviving a restart
+    5. Have the uninstall command clear every pending destination as well as the active one
+
+- [ ] 4_3 One trusted, cancellable process runner
+  - **Deps**: 4_1
+  - **Refs**: design.md#d14-one-process-runner-contract-absolute-and-cancellable, specs/agent-hook-installation/spec.md#an-unreachable-hook-costs-the-agent-nothing
+  - **Acceptance**:
+    - Outcome: The probe runs and is terminated through absolute paths with one owned deadline
+    - Verify: unit src/agentHooks/install/probeRunner.test.ts
+  - **Plan**:
+    1. Create src/agentHooks/install/probeRunner.ts taking an absolute executable, containing error and close, owning one deadline, and terminating the process group through an absolute system path on each platform
+    2. Move the probe off the runner embedded in src/agentHooks/install/ManagedConfigInstaller.ts and make the injected-runner bound exceed the deadline plus reap grace
+    3. Create src/agentHooks/install/probeRunner.test.ts covering: a descendant terminated with its leader, a spawn failure contained rather than thrown, the reap awaited before reporting, and the outer bound not preempting it
