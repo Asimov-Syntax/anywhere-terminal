@@ -40,6 +40,19 @@ export interface WorktreeMenuActions {
    */
   launchAgentHere?: (info: WorktreeInfo) => void;
 
+  /**
+   * Called as an agent row's menu is BUILT, before any item is offered.
+   *
+   * Every value an item acts on is captured when the menu is built — `item()`
+   * closes over its target. Anything an action needs that is NOT on the row has
+   * to be captured at the same moment, or it is read from state that moved
+   * while the menu sat open. The registration a resume quotes is such a value:
+   * it changes without repainting, by design (design.md D10), so the open menu
+   * keeps showing the row it was built for while the tree behind it moves on
+   * (round-7 B5).
+   */
+  captureTarget?: (row: WorktreeAgentRow) => void;
+
   focusPane?: (row: WorktreeAgentRow) => void;
   openPreview?: (row: WorktreeAgentRow) => void;
   resumeHere?: (row: WorktreeAgentRow) => void;
@@ -150,6 +163,7 @@ export class WorktreeContextMenu {
   }
 
   openForAgent(agentRow: WorktreeAgentRow, ev: MouseEvent, row: HTMLElement): void {
+    this.actions.captureTarget?.(agentRow);
     this.openMenu(this.agentItems(agentRow), ev, row);
   }
 

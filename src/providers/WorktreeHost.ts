@@ -1519,21 +1519,25 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
     }
     for (const [repoId, watch] of watches) {
-      // A rebuild just cleared this repo's `degraded`, and an unestablished
-      // watch means the listing it produced can go stale unnoticed. Saying so
-      // is the difference between a stale tree and a tree known to be stale.
-      if (watch.failureReason !== undefined) {
-        // Annotated, not re-listed: an unwatched repository's worktrees were
-        // still observed by the rebuild that just ran, so this must not travel
-        // through the retain path and withdraw their registration token.
-        cache.markDegraded(
-          repoId,
-          `This repository is not being watched, so its worktrees may be out of date: ${watch.failureReason}`,
-        );
-        // A cache write is a tree move, wherever it comes from. Delivery waits
-        // for the projection that describes it.
-        treeVersion += 1;
-      }
+      // An unestablished watch means the listing this repo produced can go stale
+      // unnoticed. Saying so is the difference between a stale tree and a tree
+      // KNOWN to be stale — which is the condition D11's launch authority rests
+      // on, so it has to survive every rebuild rather than be re-asserted after
+      // some of them (round-7 W8).
+      //
+      // Reported in both directions: a watcher that came back must clear the
+      // warning, or the panel keeps telling the user about a limitation that is
+      // over. Annotated, not re-listed — an unwatched repository's worktrees
+      // were still observed by the rebuild that just ran, so this must not
+      // travel the retain path and withdraw their registration token.
+      const reason =
+        watch.failureReason === undefined
+          ? undefined
+          : `This repository is not being watched, so its worktrees may be out of date: ${watch.failureReason}`;
+      cache.markUnwatched(repoId, reason);
+      // A cache write is a tree move, wherever it comes from. Delivery waits
+      // for the projection that describes it.
+      treeVersion += 1;
     }
   }
 
@@ -1677,9 +1681,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       // Whether the listing behind the current tree can be relied on. The cache
       // retains the last-good repos when a rebuild fails, which is right for
       // rendering and wrong for judging what a removal did (round-2 B7).
+      //
+      // Asked of the registration token, not of `degraded`: the token is absent
+      // exactly when the listing was retained rather than read, while `degraded`
+      // is the composed line shown to the user and also carries "not being
+      // watched" — a claim about the future that must not veto a removal
+      // (round-7 W8).
       isDegraded: (repoId) => {
         const repo = cache.read().repos.find((r) => r.repoId === repoId);
-        return repo === undefined || repo.degraded !== undefined;
+        return repo === undefined || repo.generation === undefined;
       },
       createContext: (repoId) => {
         const repo = cache.read().repos.find((r) => r.repoId === repoId);
@@ -1724,8 +1734,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                 ? { ok: true, value: status.stdout.toString("utf8") }
                 : { ok: false },
           // The cache keeps the last-good listing when a rebuild fails, which is
-          // right for rendering and wrong for authorizing a delete.
-          listingDegraded: found.repo.degraded !== undefined,
+          // right for rendering and wrong for authorizing a delete. Same
+          // predicate as `isDegraded`, and for the same reason.
+          listingDegraded: found.repo.generation === undefined,
         });
       },
     }),

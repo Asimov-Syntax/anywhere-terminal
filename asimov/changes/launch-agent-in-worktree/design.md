@@ -178,7 +178,10 @@ The host mints `offerId` and `generation`; the webview mints nothing and quotes 
 
 **Where each half is captured.** The offer id and the generation are captured together with the
 agent list and the worktree row the dialog RENDERS, at the moment it opens, as one frozen
-object. Submission reads only that object. Capturing at submit — or reading the controller's
+object. The context menu captures the same way, when the menu is BUILT — every other value its
+items act on is already captured there, and the generation must be too, because excluding it
+from the render signature means the tree can move under an open menu without repainting it
+(round-7 B5). Submission reads only that object. Capturing at submit — or reading the controller's
 current field, as the code does now — is what lets a refresh landing under an open dialog
 relabel an old choice as current.
 
@@ -207,6 +210,15 @@ have done only the first while minting fresh authority over registrations nobody
 (round-5 B7). Being unwatched is different: that listing WAS read, it may merely go stale
 unnoticed, so it is an annotation on the repository rather than a re-listing of it, and it
 keeps its token.
+
+**Degradation is two claims, and three consumers wanted different ones.** `WorktreeRepo.degraded`
+was carrying "this listing failed" and "this repository is not being watched" in one string,
+which lost the second on every repo-scoped rebuild and let each overwrite the other. They are
+now stored apart and composed only for display. The authority consumers — launch admission, and
+the two removal bindings that judge whether a listing can be relied on — ask the registration
+token instead, which is absent exactly when a listing was retained rather than read. So a
+watcher that cannot be established no longer vetoes a removal, and a listing failure is no
+longer described to the user as a future watcher limitation (round-7 W8).
 
 **One seam owns the sequence.** `admitLaunch` becomes synchronous — it performs no I/O today
 despite being `async`, and that gratuitous promise boundary is B5 — and returns the admitted

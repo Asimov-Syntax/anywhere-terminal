@@ -549,9 +549,38 @@ describe("registration generation", () => {
     const cache = createWorktreeCache();
     cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
     const before = genOf(cache, "/a/.git");
-    cache.markDegraded("/a/.git", "not watched");
+    cache.markUnwatched("/a/.git", "not watched");
     expect(cache.read().repos[0]?.degraded).toBe("not watched");
     expect(genOf(cache, "/a/.git")).toBe(before);
+  });
+
+  it("keeps the watch claim across a rebuild that re-listed the repository", () => {
+    // The rebuild says what the repository CONTAINS. Whether a watcher is
+    // established is a different question, and letting a listing clear it left
+    // the panel silently claiming freshness it did not have (round-7 W8).
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    cache.markUnwatched("/a/.git", "not watched");
+    cache.applyRepo("/a/.git", listing([worktree("/a", { kind: "main" })]));
+    expect(cache.read().repos[0]?.degraded).toBe("not watched");
+    // And it clears when the watcher comes back, rather than outliving it.
+    cache.markUnwatched("/a/.git", undefined);
+    expect(cache.read().repos[0]?.degraded).toBeUndefined();
+  });
+
+  it("does not let either degradation claim hide the other", () => {
+    // A current listing failure described only as a future watcher limitation
+    // is the wrong story told to the user, and the more urgent half is the one
+    // that was being lost.
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    cache.markUnwatched("/a/.git", "not watched");
+    cache.applyRepo("/a/.git", listing([], { degraded: "`git worktree list` timed out." }));
+    const shown = cache.read().repos[0]?.degraded ?? "";
+    expect(shown).toContain("timed out");
+    expect(shown).toContain("not watched");
+    // And the listing failure still withdraws authority, watcher or no watcher.
+    expect(genOf(cache, "/a/.git")).toBeUndefined();
   });
 
   it("advances every repository a whole-tree build re-listed", () => {

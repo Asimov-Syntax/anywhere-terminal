@@ -59,6 +59,14 @@ function menuActions(h: Harness) {
     .deps.actions;
 }
 
+/**
+ * Open an agent row's menu, which is what captures the values its items act on.
+ * Clicking an item without this is not a path the UI has.
+ */
+function openAgentMenu(h: Harness, row: WorktreeAgentRow): void {
+  (menuActions(h).captureTarget as unknown as (r: WorktreeAgentRow) => void)(row);
+}
+
 /** The first worktree of the fixture tree — any row resolves the same repo. */
 function firstWorktree(): WorktreeInfo {
   const first = singleRepoTree().repos[0]?.worktrees[0];
@@ -767,11 +775,38 @@ describe("the launch entry paths WT-005.3 supplies", () => {
     if (!row) {
       throw new Error("fixture lost its session rows");
     }
+    // Through the menu, as the only reachable path: the item is built by a menu
+    // open, and the open is what captures what it is being built against.
+    openAgentMenu(h, row);
     (menuActions(h).resumeHere as unknown as (r: WorktreeAgentRow) => void)(row);
 
     expect(h.posts.filter((m) => m.type === "worktreeResumeHere")).toEqual([
       { type: "worktreeResumeHere", worktreeId, rowId: row.rowId, entryId: row.entryId },
     ]);
+  });
+
+  it("resumes against the registration its MENU was built under, not the tree's current one", () => {
+    // The exact race D10 creates on purpose: a generation-only update replaces
+    // the tree and repaints nothing, so the menu on screen still belongs to the
+    // registration it was opened under. Reading the tree at click time posts the
+    // replacement's token and the host admits it (round-7 B5).
+    const h = launchable();
+    const stamped = (generation: number): WorktreeTreeResponseMessage => {
+      const base = response();
+      return { ...base, tree: { ...base.tree, repos: base.tree.repos.map((r) => ({ ...r, generation })) } };
+    };
+    h.controller.handleTreeResponse(stamped(4));
+    const rows = singleRepoPresence(1_000_000).rowsByWorktreeId;
+    const published = Object.values(rows)[0] as WorktreeAgentRow[];
+    const row = published.find((r) => r.entryId !== undefined);
+    if (!row) {
+      throw new Error("fixture lost its session rows");
+    }
+    openAgentMenu(h, row);
+    h.controller.handleTreeResponse(stamped(5));
+    (menuActions(h).resumeHere as unknown as (r: WorktreeAgentRow) => void)(row);
+    const posted = h.posts.filter((m) => m.type === "worktreeResumeHere")[0] as { generation?: number } | undefined;
+    expect(posted?.generation).toBe(4);
   });
 
   it("posts no resume for a row the presence envelope never published", () => {

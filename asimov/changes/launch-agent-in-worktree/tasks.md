@@ -237,3 +237,21 @@
     4. `src/webview/worktree/WorktreeController.ts` — quote it from the row the action was raised on (round-5 B5)
     5. `src/providers/WorktreeHost.actions.test.ts` — resume across a replacement, a degraded repository admitting nothing, and an unrelated repository rebuilding refusing nothing
     6. `src/webview/worktree/WorktreeController.test.ts` — the create form submits the offer it was opened against (round-5 W6)
+
+## 9. Review round 7 fixes
+
+- [x] 9_1 Freeze what the menu shows, and keep the two degradation claims apart — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 8_1
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-acts-on-the-registration-it-was-chosen-against, a-repository-whose-listing-failed-authorizes-nothing}, design.md#d11-an-unwatched-repository-keeps-launch-authority-an-unobserved-one-does-not, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
+  - **Boundary**: no rendered action may read tree state that moved after the menu was built
+  - **Acceptance**:
+    - Outcome: a resume posts the registration its menu was built under
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeContextMenu.ts` — the menu announces the row it is being built for, so an action can capture what is on screen at that moment
+    2. `src/webview/worktree/WorktreeController.ts` — freeze `{worktreeId, generation}` there and resume from it, never from the live tree (round-7 B5)
+    3. `src/worktree/WorktreeCache.ts` — hold the listing failure and the watch failure as separate claims and compose them for display, so a repo-scoped rebuild cannot drop the watch one and neither can overwrite the other (round-7 W8)
+    4. `src/providers/WorktreeHost.ts` — report a recovered watcher as well as a failed one
+    5. `src/worktree/WorktreeCache.test.ts` — a repo rebuild keeps the watch claim; a listing failure is not described as a watcher limitation
+    6. `src/webview/worktree/WorktreeController.test.ts` — menu opened under one registration, a generation-only update, then the click (round-7 W6)
+    7. `src/providers/WorktreeHost.actions.test.ts` — a launch survives a sibling repository rebuilding, and an unwatched repository still admits one

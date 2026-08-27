@@ -235,6 +235,15 @@ export class WorktreeController {
   /** The offer the open create form was rendered against. Same rule. */
   private frozenCreateOffer: { offerId?: string } | null = null;
   /**
+   * What the open agent menu was BUILT against, by row.
+   *
+   * Not read from the tree when the item is clicked: a generation-only update
+   * replaces the tree without repainting — that is D10's deliberate choice —
+   * so at click time the tree and the menu on screen disagree, and the tree is
+   * the wrong one of the two to believe (round-7 B5).
+   */
+  private frozenMenuTarget: { rowId: string; worktreeId: string; generation?: number } | null = null;
+  /**
    * Display paths of rows that have LEFT the tree, so a result arriving after
    * the rebuild that removed its row can still say what it was about.
    *
@@ -274,6 +283,10 @@ export class WorktreeController {
       (info) => this.openCreateFor(info),
       (repoId) => this.confirmPrune(repoId),
     );
+    // Always wired, unlike `resumeHere`: the capture is what makes the menu's
+    // own view of the tree authoritative, and it must happen even on an open
+    // that offers no resume, so a later one cannot inherit an older capture.
+    this.menuActions.captureTarget = (row) => this.captureMenuTarget(row);
     // No folder means no tree is ever coming, so the skeleton would be a promise
     // the workspace cannot keep.
     this.loading = deps.init.workspaceRoot !== null;
@@ -515,22 +528,37 @@ export class WorktreeController {
     return this.tree?.repos.find((repo) => repo.worktrees.some((wt) => wt.id === worktreeId))?.generation;
   }
 
+  /** Capture what an agent row's menu is being built against. */
+  private captureMenuTarget(row: WorktreeAgentRow): void {
+    const worktreeId = this.worktreeIdOf(row);
+    this.frozenMenuTarget =
+      worktreeId === undefined
+        ? null
+        : {
+            rowId: row.rowId,
+            worktreeId,
+            ...(this.generationOf(worktreeId) === undefined ? {} : { generation: this.generationOf(worktreeId) }),
+          };
+  }
+
   /** Resume a row's session in the worktree that row is published under. */
   private resumeHere(row: WorktreeAgentRow): void {
-    const worktreeId = this.worktreeIdOf(row);
-    if (row.entryId === undefined || worktreeId === undefined) {
+    const frozen = this.frozenMenuTarget;
+    // The menu this item belongs to must be the one that was captured. A row
+    // that never went through a menu open, or one from an earlier menu, has no
+    // authority here — refusing is the safe direction, and the item cannot be
+    // reached any other way.
+    if (row.entryId === undefined || frozen === null || frozen.rowId !== row.rowId) {
       return;
     }
-    const generation = this.generationOf(worktreeId);
     this.deps.postMessage({
       type: "worktreeResumeHere",
-      worktreeId,
+      worktreeId: frozen.worktreeId,
       rowId: row.rowId,
       entryId: row.entryId,
-      // Read at the click, from the tree the row was rendered from — the same
-      // freeze a dialog does, over a much shorter window (round-5 B5).
-      ...(generation === undefined ? {} : { generation }),
+      ...(frozen.generation === undefined ? {} : { generation: frozen.generation }),
     });
+    this.frozenMenuTarget = null;
   }
 
   /** Which worktree the presence envelope published this row under. */

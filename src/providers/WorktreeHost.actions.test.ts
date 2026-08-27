@@ -58,6 +58,9 @@ function runner(
     if (args[0] === "--version") {
       return res({ stdout: Buffer.from("git version 2.50.1\n") });
     }
+    if (cwd === OTHER_ROOT) {
+      return args[0] === "worktree" ? res({ stdout: nul(OTHER) }) : res({ stdout: Buffer.from(`${OTHER_REPO}\n`) });
+    }
     if (cwd !== "/repo") {
       return res({ code: 128, stderr: "fatal: not a git repository" });
     }
@@ -71,14 +74,25 @@ function runner(
   return { run } as unknown as GitCommandRunner;
 }
 
+const OTHER_ROOT = "/other";
+const OTHER = ["worktree /other", "HEAD 999", "branch refs/heads/main"];
+const OTHER_REPO = "/other/.git";
+
 const api: GitApiAccessor = () =>
   ({ state: "initialized", repositories: [{ rootUri: { fsPath: "/repo" } }] }) as ReturnType<GitApiAccessor>;
+
+const apiWithSibling: GitApiAccessor = () =>
+  ({
+    state: "initialized",
+    repositories: [{ rootUri: { fsPath: "/repo" } }, { rootUri: { fsPath: OTHER_ROOT } }],
+  }) as ReturnType<GitApiAccessor>;
 
 /** `gone` makes the feat worktree prunable AND absent, which is `missing`. */
 function deps(
   gone: boolean | (() => boolean) = false,
   extra: string[][] = [],
   shared?: GitCommandRunner,
+  sibling = false,
 ): WorktreeTreeDeps {
   const isGone = typeof gone === "function" ? gone : () => gone;
   const r = shared ?? runner(gone, extra);
@@ -92,7 +106,7 @@ function deps(
       }
       return undefined;
     },
-    getGitApi: api,
+    getGitApi: sibling ? apiWithSibling : api,
   };
 }
 
@@ -117,9 +131,14 @@ let currentGeneration: number | undefined;
 const gen = (): number | undefined => currentGeneration;
 
 /** Remember the generation from the most recent tree this surface was posted. */
+let lastRepoCount = 0;
+
 function noteTree(view: ReturnType<typeof surface>): void {
   const trees = view.posts.filter((m) => m.type === "worktreeTreeResponse");
   const last = trees[trees.length - 1] as { tree?: WorktreeTree } | undefined;
+  if (last?.tree !== undefined) {
+    lastRepoCount = last.tree.repos.length;
+  }
   const repo = last?.tree?.repos.find((r) => r.worktrees.some((w) => w.id === FEAT_PATH));
   if (repo !== undefined) {
     currentGeneration = repo.generation;
@@ -261,6 +280,10 @@ async function builtHost(
     extra?: string[][];
     createRoot?: string;
     exists?: (p: string) => boolean;
+    /** Add a second, unrelated repository to the workspace. */
+    sibling?: boolean;
+    /** No watcher can be established, as on a host without file watching. */
+    watchFails?: boolean;
     startAgent?: WorktreeActions["startAgent"];
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
@@ -294,9 +317,14 @@ async function builtHost(
     },
   };
   const host = createWorktreeHost({
-    deps: deps(isGone, over.extra ?? [], shared),
-    workspaceFolders: () => ["/repo"],
-    pool: { subscribePattern: () => ({ active: true, dispose: () => {} }) },
+    deps: deps(isGone, over.extra ?? [], shared, over.sibling === true),
+    workspaceFolders: () => (over.sibling === true ? ["/repo", OTHER_ROOT] : ["/repo"]),
+    pool: {
+      subscribePattern: () =>
+        over.watchFails === true
+          ? { active: false, failureReason: "watcher unavailable", dispose: () => {} }
+          : { active: true, dispose: () => {} },
+    },
     clock,
     projector,
     actions: {
@@ -354,6 +382,18 @@ async function builtHost(
     degrade: async () => {
       listingFails.now = true;
       host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+      await settle();
+      noteTree(view);
+    },
+    /** How many repositories the host currently holds. */
+    repoCount: () => {
+      const trees = view.posts.filter((m) => m.type === "worktreeTreeResponse");
+      const last = trees[trees.length - 1] as { tree?: WorktreeTree } | undefined;
+      return last?.tree?.repos.length ?? lastRepoCount;
+    },
+    /** Rebuild ONLY the sibling repository, which this launch has nothing to do with. */
+    rebuildSibling: async () => {
+      await host.mutationBindings().forceRebuild(OTHER_REPO);
       await settle();
       noteTree(view);
     },
@@ -1463,6 +1503,67 @@ describe("launching an agent", () => {
     });
     await settle();
     expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("hands over a launch that only an UNRELATED repository's rebuild interrupted", async () => {
+    // The reason the token is per repository rather than the global tree
+    // version: someone else's repository moving is not news about this one, and
+    // refusing there would make the guard fire constantly in a multi-repo
+    // workspace (design.md D10, round-7 W6).
+    let release: (() => void) | undefined;
+    const startAgent = vi.fn(
+      async () =>
+        new Promise<CreateSessionOptions>((resolve) => {
+          release = () => resolve(OPTS);
+        }),
+    );
+    const { host, view, dispose, rebuildSibling, repoCount } = await builtHost([windowRow()], false, {
+      sibling: true,
+      startAgent,
+    });
+    // Otherwise the rebuild below is a no-op and this test proves nothing.
+    expect(repoCount()).toBe(2);
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
+    await settle();
+    expect(startAgent).toHaveBeenCalled();
+    await rebuildSibling();
+    release?.();
+    await settle();
+    expect(view.launches).toHaveLength(1);
+    dispose();
+  });
+
+  it("still admits a launch from a repository it cannot WATCH, and says the tree may be stale", async () => {
+    // D11's boundary, made explicit: "this listing failed" withdraws authority,
+    // "I cannot watch this for later changes" does not — the registrations were
+    // read either way, and refusing here would leave a watcher-less host with no
+    // launch capability at all. The disclosure is what makes that acceptable, so
+    // both halves are asserted together (round-7 W6, W8).
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { watchFails: true, startAgent });
+    host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+    await settle();
+    const trees = view.posts.filter((m) => m.type === "worktreeTreeResponse");
+    const last = trees[trees.length - 1] as { tree?: WorktreeTree } | undefined;
+    const repo = last?.tree?.repos.find((r) => r.worktrees.some((w) => w.id === FEAT_PATH));
+    expect(repo?.degraded).toContain("not being watched");
+    noteTree(view);
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
+    await settle();
+    expect(view.launches).toHaveLength(1);
     dispose();
   });
 

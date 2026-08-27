@@ -19,6 +19,16 @@ interface CachedRepo {
    * its worktrees instead of observing them.
    */
   generation: number | undefined;
+  /**
+   * Why this repository is not being watched, if it is not.
+   *
+   * Kept apart from the listing's own `degraded` because the two are different
+   * claims with different consequences: a failed listing means these
+   * registrations were never read, an unestablished watcher means later changes
+   * to them may go unnoticed. Sharing one field lost the watcher claim on every
+   * repo-scoped rebuild and let each overwrite the other (round-7 W8).
+   */
+  unwatched: string | undefined;
   /** This repo's own share of the tree's `unreadable`, replaced per rebuild. */
   reasons: string[];
   skipped: number;
@@ -30,14 +40,15 @@ export interface WorktreeCache {
   /** Update one repository. A repoId outside the resolved roots is ignored. */
   applyRepo(repoId: string, listing: RepoListing, rank?: WorktreeActivityRank): void;
   /**
-   * Annotate a stored repository with a reason, leaving its listing alone.
+   * Record whether a repository is being watched — `undefined` clears it.
    *
-   * For things that are true ABOUT a repository rather than reports of what it
-   * contains — "this one is not being watched" is not an observation of its
-   * registrations, so it neither replaces them nor withdraws the registration
-   * token they were published under.
+   * A claim ABOUT a repository rather than a report of what it contains, so it
+   * neither replaces its registrations nor withdraws the token they were
+   * published under. It outlives every listing, because whether a watcher is
+   * established has nothing to do with whether the last `git worktree list`
+   * succeeded.
    */
-  markDegraded(repoId: string, reason: string): void;
+  markUnwatched(repoId: string, reason: string | undefined): void;
   /**
    * Re-sort every stored group against a rank taken now — no git read.
    *
@@ -52,6 +63,14 @@ export interface WorktreeCache {
   roots(): readonly ResolvedRepo[];
   rootFor(repoId: string): ResolvedRepo | undefined;
   normalizedFolders(): readonly string[];
+}
+
+/** Both claims, in one line, with neither able to hide the other. */
+function composeDegraded(listing: string | undefined, unwatched: string | undefined): string | undefined {
+  if (listing === undefined) {
+    return unwatched;
+  }
+  return unwatched === undefined ? listing : `${listing} ${unwatched}`;
 }
 
 export function createWorktreeCache(): WorktreeCache {
@@ -100,11 +119,20 @@ export function createWorktreeCache(): WorktreeCache {
       return {
         repo: { ...incoming, worktrees: stored.repo.worktrees, degraded: listing.degraded },
         generation: undefined,
+        unwatched: stored.unwatched,
         reasons: stored.reasons,
         skipped: stored.skipped,
       };
     }
-    return { repo: incoming, generation: nextGeneration(), reasons: listing.reasons, skipped: listing.skipped };
+    return {
+      repo: incoming,
+      generation: nextGeneration(),
+      // Survives the listing that just replaced everything else: a rebuild says
+      // what the repository contains, never whether it is being watched.
+      unwatched: stored?.unwatched,
+      reasons: listing.reasons,
+      skipped: listing.skipped,
+    };
   }
 
   function applyBuild(build: WorktreeTreeBuild): void {
@@ -113,7 +141,15 @@ export function createWorktreeCache(): WorktreeCache {
       const listing = build.listings.get(repo.repoId);
       next.set(
         repo.repoId,
-        listing ? merge(repo.repoId, repo, listing) : { repo, generation: nextGeneration(), reasons: [], skipped: 0 },
+        listing
+          ? merge(repo.repoId, repo, listing)
+          : {
+              repo,
+              generation: nextGeneration(),
+              unwatched: repos.get(repo.repoId)?.unwatched,
+              reasons: [],
+              skipped: 0,
+            },
       );
     }
 
@@ -143,6 +179,7 @@ export function createWorktreeCache(): WorktreeCache {
             // failed to resolve, so nothing here was observed either.
             repo: { ...stored.repo, degraded: outcome.reason },
             generation: undefined,
+            unwatched: stored.unwatched,
             reasons: stored.reasons,
             skipped: stored.skipped,
           });
@@ -182,12 +219,12 @@ export function createWorktreeCache(): WorktreeCache {
     repos.set(repoId, merge(repoId, assembleRepo(root, listing, folders, rank), listing));
   }
 
-  function markDegraded(repoId: string, reason: string): void {
+  function markUnwatched(repoId: string, reason: string | undefined): void {
     const cached = repos.get(repoId);
     if (!cached) {
       return;
     }
-    repos.set(repoId, { ...cached, repo: { ...cached.repo, degraded: reason } });
+    repos.set(repoId, { ...cached, unwatched: reason });
   }
 
   function reorder(rank?: WorktreeActivityRank): void {
@@ -209,8 +246,13 @@ export function createWorktreeCache(): WorktreeCache {
       // broadcast, and a consumer that mutates what it was handed must not be
       // able to edit the cache. The `WorktreeInfo` records inside stay shared —
       // copying each one per read costs with worktree count for no caller.
+      // Composed at read, not merged at write: the listing failure is the more
+      // specific and more urgent claim, so it leads, and the watcher warning is
+      // appended rather than replacing it (round-7 W8).
+      const degraded = composeDegraded(cached.repo.degraded, cached.unwatched);
       out.push({
         ...cached.repo,
+        ...(degraded === undefined ? {} : { degraded }),
         ...(cached.generation === undefined ? {} : { generation: cached.generation }),
         worktrees: [...cached.repo.worktrees],
       });
@@ -245,7 +287,7 @@ export function createWorktreeCache(): WorktreeCache {
   return {
     applyBuild,
     applyRepo,
-    markDegraded,
+    markUnwatched,
     reorder,
     read,
     roots: () => order,
