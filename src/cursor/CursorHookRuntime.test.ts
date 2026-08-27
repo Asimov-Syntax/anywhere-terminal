@@ -32,7 +32,7 @@ async function fixture(options: Parameters<typeof createCursorHookRuntime>[0] = 
   const reasons: Array<{ reason: CursorHookReasonCode; sessionSuffix: string }> = [];
   const reports: AgentSessionReport[] = [];
   const runtime = await createCursorHookRuntime(
-    { enabled: true, ...options },
+    { enabled: true, reporting: true, ...options },
     {
       onStatus: (update) => status.push(update),
       onReasonCode: (reason, sessionSuffix) => reasons.push({ reason, sessionSuffix }),
@@ -170,6 +170,41 @@ describe("CursorHookRuntime", () => {
       await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc123" }));
 
       expect(status).toEqual([]);
+    });
+
+    // The credential outlives the setting: a terminal launched while reporting
+    // was on still holds a valid URL after the user switches it off, and the
+    // receiver stays up for Cursor (.reviews/round-3.md B8).
+    it("refuses a report once reporting has been switched off", async () => {
+      const { runtime, reports, reasons } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+      runtime.setReportingEnabled(false);
+
+      await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc123" }));
+
+      expect(reports).toEqual([]);
+      expect(reasons.map((entry) => entry.reason)).toContain("disabled");
+    });
+
+    it("forgets the sessions it was already holding when reporting is switched off", async () => {
+      const { runtime } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+      await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc123" }));
+      expect(runtime.reportedSession("session-1")).toBeDefined();
+
+      runtime.setReportingEnabled(false);
+
+      expect(runtime.reportedSession("session-1")).toBeUndefined();
+    });
+
+    it("still accepts a Cursor event while reporting is off", async () => {
+      const { runtime, status } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+      runtime.setReportingEnabled(false);
+
+      await postRaw(`${base}/cursor`, eventBody("beforeSubmitPrompt"));
+
+      expect(status.map((update) => update.state)).toContain("working");
     });
 
     it("refuses a path naming an agent that does not report", async () => {

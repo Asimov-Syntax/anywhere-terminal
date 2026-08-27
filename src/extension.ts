@@ -424,6 +424,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     opencodeEnvironment = environment;
     cursorHookController.setDesiredReceiverEnabled(enabled);
+    // Switching reporting off makes the receiver forget what it held, and a row
+    // resting on one of those reports has to give it up now rather than at
+    // whatever happens to schedule the next projection (.reviews/round-3.md B8).
+    onPaneEvidenceChange?.();
   }
   await applyOpencodeHooks();
   await cursorHookController.start();

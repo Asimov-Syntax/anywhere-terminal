@@ -82,6 +82,8 @@ const EVENT_EFFECTS: Record<string, CursorHookEventEffect> = {
 
 export interface CursorHookRuntimeOptions {
   enabled?: boolean;
+  /** Whether a reporting agent may post; see `setReportingEnabled`. */
+  reporting?: boolean;
   /** 0 (default) lets the OS assign an ephemeral loopback port. */
   port?: number;
   bodyCapBytes?: number;
@@ -119,6 +121,15 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
   private readonly sessions = new Map<string, SessionState>();
   /** Held here, not outside, so a report cannot outlive the credential that carried it. */
   private readonly reported = new ReportedSessions();
+  /**
+   * Whether a reporting agent may post at all.
+   *
+   * Its own switch, not Cursor's: the receiver stays up for whichever of the
+   * two is on, so a terminal launched while OpenCode reporting was enabled
+   * still holds a valid credential after the user switches it off
+   * (.reviews/round-3.md B8).
+   */
+  private reportingEnabled: boolean;
   private enabled: boolean;
   private port: number;
 
@@ -139,6 +150,7 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
 
   public constructor(options: CursorHookRuntimeOptions = {}, dependencies: CursorHookRuntimeDependencies = {}) {
     this.enabled = options.enabled ?? false;
+    this.reportingEnabled = options.reporting ?? false;
     this.port = options.port ?? 0;
     this.bodyCapBytes = options.bodyCapBytes ?? CURSOR_HOOK_BODY_CAP_BYTES;
     this.requestDeadlineMs = options.requestDeadlineMs ?? CURSOR_HOOK_REQUEST_DEADLINE_MS;
@@ -189,6 +201,20 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
    * disabled (SessionManager wiring races); a repeated `setEnabled(false)`
    * must still revoke it, idempotently.
    */
+  /**
+   * Switch reporting on or off for every terminal at once.
+   *
+   * Switching it off forgets what was already reported: the setting governs
+   * reporting on this host, and a row still resting on a report the user
+   * revoked is the same disclosure a moment later.
+   */
+  public setReportingEnabled(enabled: boolean): void {
+    this.reportingEnabled = enabled;
+    if (!enabled) {
+      this.reported.clear();
+    }
+  }
+
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) {
@@ -391,6 +417,13 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
       return;
     }
     if (source !== "cursor") {
+      // Refused rather than parsed: the credential outlives the setting, so
+      // this is the only place a report can be stopped once a terminal already
+      // holds one (.reviews/round-3.md B8).
+      if (!this.reportingEnabled) {
+        this.onReasonCode("disabled", sessionSuffix(sessionId));
+        return;
+      }
       // A report says which session this terminal is on, never what it is
       // doing: it must not touch the status table Cursor's events drive.
       const report = parseAgentSessionReport(sessionId, source, parsed);

@@ -43,6 +43,10 @@ export class CursorHookController {
    */
   public setDesiredReceiverEnabled(enabled: boolean): void {
     this.receiverWanted = enabled;
+    // Pushed even when authority does not move: Cursor may be holding the
+    // receiver up on its own, and reporting is a switch of its own
+    // (.reviews/round-3.md B8).
+    this.runtime?.setReportingEnabled(enabled);
     this.applyReconciledAuthority();
   }
 
@@ -169,6 +173,7 @@ export class CursorHookController {
 
   private applyReconciledAuthority(): void {
     if (this.runtime && (this.cursorAuthorized() || this.receiverWanted)) {
+      this.runtime.setReportingEnabled(this.receiverWanted);
       if (!this.authorityGranted) {
         this.runtime.setEnabled(true);
         this.options.setContributor(this.runtime);
@@ -190,6 +195,7 @@ export class CursorHookController {
 
   private revokeAuthority(): void {
     this.options.setContributor(undefined);
+    this.runtime?.setReportingEnabled(false);
     this.runtime?.setEnabled(false);
     this.authorityGranted = false;
   }

@@ -14,6 +14,10 @@ function deferred<T>() {
 function runtimeDouble(events: string[] = []) {
   return {
     setEnabled: vi.fn((enabled: boolean) => events.push(`runtime:${enabled}`)),
+    // Deliberately not recorded in `events`: the ordering those assertions pin
+    // down is attach/detach against the runtime's own enable, and reporting is
+    // a separate switch that rides along with both.
+    setReportingEnabled: vi.fn(),
     create: vi.fn(() => ({})),
     release: vi.fn(),
     dispose: vi.fn(() => events.push("dispose")),
@@ -63,23 +67,24 @@ describe("CursorHookController", () => {
     expect(events).toEqual(["detach", "runtime:false", "runtime:true", "attach"]);
   });
 
-  it.each(["unsupported-config", "write-failed", "windows-probe-failed"] as const)(
-    "detaches and disables after %s installation failure",
-    async (reason) => {
-      const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
-        initialEnabled: true,
-        install: async () => ({ installed: false, reason }),
-      });
+  it.each([
+    "unsupported-config",
+    "write-failed",
+    "windows-probe-failed",
+  ] as const)("detaches and disables after %s installation failure", async (reason) => {
+    const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({ installed: false, reason }),
+    });
 
-      await controller.start();
+    await controller.start();
 
-      expect(runtime.setEnabled).not.toHaveBeenCalledWith(true);
-      expect(setContributor).not.toHaveBeenCalledWith(runtime);
-      expect(events.at(-2)).toBe("detach");
-      expect(events.at(-1)).toBe("runtime:false");
-      expect(onWarning).toHaveBeenCalledWith("install", reason);
-    },
-  );
+    expect(runtime.setEnabled).not.toHaveBeenCalledWith(true);
+    expect(setContributor).not.toHaveBeenCalledWith(runtime);
+    expect(events.at(-2)).toBe("detach");
+    expect(events.at(-1)).toBe("runtime:false");
+    expect(onWarning).toHaveBeenCalledWith("install", reason);
+  });
 
   it("uses a setting change made while runtime creation awaits", async () => {
     const runtimeReady = deferred<CursorHookRuntime>();

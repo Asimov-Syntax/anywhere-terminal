@@ -67,7 +67,11 @@ describe("what a terminal is told", () => {
 
 describe("who keeps the receiver up", () => {
   function harness(options: { installs: boolean; receiver?: boolean }) {
-    const runtime = { setEnabled: vi.fn(), dispose: vi.fn() } as unknown as CursorHookRuntime;
+    const runtime = {
+      setEnabled: vi.fn(),
+      setReportingEnabled: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as CursorHookRuntime;
     const contributors: Array<CursorHookRuntime | undefined> = [];
     const controller = new CursorHookController({
       initialEnabled: false,
@@ -103,6 +107,20 @@ describe("who keeps the receiver up", () => {
 
     h.controller.setDesiredReceiverEnabled(true);
 
+    expect(h.contributors.at(-1)).toBeDefined();
+  });
+
+  // The receiver can stay up for Cursor while the reporting agent is switched
+  // off, so the switch has to reach the runtime whether or not authority moves
+  // (.reviews/round-3.md B8).
+  it("stops reporting when that agent is switched off but Cursor keeps the receiver", async () => {
+    const h = harness({ installs: true, receiver: true });
+    await h.controller.start();
+    await h.controller.setDesiredEnabled(true);
+
+    h.controller.setDesiredReceiverEnabled(false);
+
+    expect(h.runtime.setReportingEnabled).toHaveBeenLastCalledWith(false);
     expect(h.contributors.at(-1)).toBeDefined();
   });
 

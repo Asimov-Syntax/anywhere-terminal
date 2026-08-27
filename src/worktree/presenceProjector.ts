@@ -460,24 +460,35 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     snapshot: ResolutionSnapshot,
     failures: Map<PresenceDegradation["source"], string>,
   ): Promise<ProvenIdentity | undefined> {
+    // Answered FIRST, ahead of the cache and ahead of every weaker source. A
+    // report comes from inside the agent, under a credential issued to this
+    // terminal for this run, so nothing the projector could read about the pane
+    // outranks it — and nothing else notices when a pane's agent changes under
+    // an unmoved pty and directory (.reviews/round-3.md B1).
+    const claim = deps.reportedSession?.(pane.paneId);
+    if (claim !== undefined) {
+      if (
+        state.proven?.source === "report" &&
+        state.proven.agent === claim.agent &&
+        state.proven.entryId === claim.entryId
+      ) {
+        return state.proven;
+      }
+      state.proven = { agent: claim.agent, source: "report", entryId: claim.entryId, evidence: "reported" };
+      state.provenPtyPid = pane.ptyPid;
+      state.provenCwd = pane.cwd;
+      return state.proven;
+    }
+
+    // Reporting can be switched off, or the terminal's credential released,
+    // under a pane that is still open. An identity that rested on a report goes
+    // with the report: the cache is cleared so this rebuild resolves the pane
+    // on its own evidence, and clears the row if there is none.
+    if (state.proven?.source === "report") {
+      state.proven = undefined;
+    }
+
     if (state.proven && state.provenPtyPid === pane.ptyPid && state.provenCwd === pane.cwd) {
-      // The one thing the cache key cannot see. An agent has to start before it
-      // can report, so the report always lands on an already-proven pane, and
-      // neither the pty nor the directory moves when it does — cached on those
-      // two alone, the row would keep the guess for the life of the pane
-      // (.reviews/round-1.md B1).
-      const reported = deps.reportedSession?.(pane.paneId);
-      if (reported === undefined || reported.agent !== state.proven.agent) {
-        return state.proven;
-      }
-      // Re-stamped even when the report only CONFIRMS the id already there: the
-      // rank is what settles a contested session, so a confirmed guess left at
-      // `directory` ties with the pane that merely shares the directory, and a
-      // tie gives the session to neither (.reviews/round-2.md B1).
-      if (reported.entryId === state.proven.entryId && state.proven.evidence === "reported") {
-        return state.proven;
-      }
-      state.proven = { ...state.proven, entryId: reported.entryId, evidence: "reported" };
       return state.proven;
     }
 
@@ -495,19 +506,17 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // handle there is.
       // Unless the agent itself said which session it is on. A report names one
       // terminal, so it settles what the directory could only guess at.
-      const claim = deps.reportedSession?.(pane.paneId);
-      const reported = claim?.agent === outcome.agent ? claim.entryId : undefined;
       const guessed =
-        reported !== undefined || outcome.entryId !== undefined || pane.cwd === undefined
+        outcome.entryId !== undefined || pane.cwd === undefined
           ? undefined
           : await snapshot.sessionUnderCwd?.(outcome.agent, deps.normalize(pane.cwd));
-      const entryId = reported ?? outcome.entryId ?? guessed;
+      const entryId = outcome.entryId ?? guessed;
       state.proven = {
         agent: outcome.agent,
         source: outcome.source,
         entryId,
         name: outcome.name,
-        evidence: reported !== undefined ? "reported" : guessed !== undefined ? "directory" : outcome.evidence,
+        evidence: guessed !== undefined ? "directory" : outcome.evidence,
       };
       state.provenPtyPid = pane.ptyPid;
       state.provenCwd = pane.cwd;
@@ -521,19 +530,6 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       if (!failures.has(outcome.source)) {
         failures.set(outcome.source, outcome.reason);
       }
-      return state.proven;
-    }
-
-    // Conclusively nothing the pane itself shows — but the agent may have
-    // spoken for itself. A plugin runs only inside its own agent and posts
-    // under a credential issued to this terminal for this run, and the map it
-    // lands in is cleared when the terminal exits, so a report standing here is
-    // proof the agent is running in this pane (.reviews/round-2.md B1).
-    const claim = deps.reportedSession?.(pane.paneId);
-    if (claim !== undefined) {
-      state.proven = { agent: claim.agent, source: "report", entryId: claim.entryId, evidence: "reported" };
-      state.provenPtyPid = pane.ptyPid;
-      state.provenCwd = pane.cwd;
       return state.proven;
     }
 

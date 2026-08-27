@@ -129,3 +129,16 @@
     5. `src/extension.ts` — hand the projector the vault read and the reported agent, not a per-pane lookup (B1, B7)
     6. `src/agentHooks/opencodePlugin.ts` — remember only the session currently reported (W2)
     7. `src/worktree/presenceProjector.test.ts`, `src/worktree/presenceDeps.test.ts`, `src/agentHooks/opencodePlugin.test.ts`, `src/webview/worktree/worktreeFormat.test.ts` — the cases above
+
+- [x] 6_3 A standing report is the identity, and only while it stands — verified: bun test 'src/worktree/presenceProjector.test.ts' && bun run check-types && bun run test:unit exit 0
+  - **Deps**: 6_2
+  - **Refs**: specs/agent-hook-identity/spec.md#{an-agent-reports-the-session-it-is-running, identity-reporting-is-opt-in-per-agent}, specs/worktree-agent-presence/spec.md#claim-agent-identity-only-from-evidence-that-proves-it, design.md#d4-a-report-is-a-fourth-kind-of-evidence-ranked-above-the-rest, .reviews/round-3.md#{b1, b8}
+  - **Acceptance**:
+    - Outcome: a standing report decides a pane's whole identity ahead of every weaker source, and switching OpenCode reporting off stops the reports and drops the rows that rested on them
+    - Verify: unit src/worktree/presenceProjector.test.ts
+  - **Plan**:
+    1. `src/worktree/presenceProjector.ts` — resolve a standing report before the cache and before weaker resolution, build the whole identity from it, and drop a report-derived identity once no report stands (B1)
+    2. `src/cursor/CursorHookRuntime.ts` — reporting is a switch of its own: refuse a report while it is off, and forget the reports already held (B8)
+    3. `src/cursor/CursorHookController.ts` — carry the reporting switch to the runtime, leaving Cursor's own authority alone (B8)
+    4. `src/extension.ts` — reproject when reporting is switched off, so the rows that rested on a report clear (B8)
+    5. `src/worktree/presenceProjector.test.ts`, `src/cursor/CursorHookRuntime.test.ts`, `src/cursor/CursorHookController.test.ts`, `src/agentHooks/hookEnvironment.test.ts` — the cases above

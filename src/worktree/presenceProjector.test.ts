@@ -840,6 +840,59 @@ describe("the agent said which session it is on", () => {
     expect(second.title).toBe("Port the pty layer to bun");
   });
 
+  // A pane is one pty and one directory, and neither moves when the user quits
+  // one agent and starts another in it. The report is the only source that
+  // notices (.reviews/round-3.md B1).
+  it("hands the pane over when the report names a different agent", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_one" }));
+    await h.projector.project([WT]);
+
+    h.setReportedSession(() => ({ agent: "codex", entryId: "codex:ses_two" }));
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ agent: "codex", agentSource: "report", entryId: "codex:ses_two" });
+  });
+
+  // `agentSource` is what the affordances read: a titled pane that has since
+  // reported is proven, and leaving it at `title` withholds the proof it gave.
+  it("names the report as the source, not the title it was recognised by", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    await h.projector.project([WT]);
+
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.agentSource).toBe("report");
+  });
+
+  // A read that did not conclude says nothing about this pane — but the agent
+  // already did, and that answer needs no read at all.
+  it("still answers from the report when the registry read fails", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+    h.setLookup(() => ({ kind: "failed", source: "registry", reason: "EACCES" }));
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ agent: "opencode", agentSource: "report", entryId: "opencode:ses_live" });
+  });
+
+  // Reporting can be switched off under a live pane, and the receiver forgets
+  // what it held. An identity that rested on a report must go with it.
+  it("gives up a report-derived identity once no report stands", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
+    const first = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    h.setReportedSession(() => undefined);
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(first.agent).toBe("opencode");
+    expect(row.agent).toBeUndefined();
+    expect(row.agentSource).toBe("none");
+  });
+
   // The guess being right is the dangerous case, not the harmless one: a tie on
   // rank means `settleContestedSessions` gives the session to nobody, so the
   // pane that actually reported loses it (.reviews/round-2.md B1).
