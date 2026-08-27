@@ -43,6 +43,7 @@ import { detectLaunchTargets } from "./vault/registry";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
+import type { VaultSessionEntry } from "./vault/types";
 import { VaultService } from "./vault/VaultService";
 import { rosterFromDetail } from "./worktree/delegations";
 import { addToGitExclude } from "./worktree/gitExclude";
@@ -613,6 +614,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sessionTitle: async (entryId) => {
           const entry = await vaultService.getEntry(entryId);
           return entry?.customName || entry?.title || undefined;
+        },
+        // The handle for a pane no pid registry can name — every agent but
+        // claude. Newest wins, since the transcript being written now is the
+        // session the proven-running agent is in.
+        sessionUnderCwd: async (agent, cwd) => {
+          const { entries } = await vaultService.list();
+          let best: VaultSessionEntry | undefined;
+          for (const entry of entries) {
+            if (entry.agent !== agent || path.resolve(entry.cwd) !== cwd) {
+              continue;
+            }
+            if (best === undefined || entry.modified > best.modified) {
+              best = entry;
+            }
+          }
+          return best?.id;
         },
       }),
     ),

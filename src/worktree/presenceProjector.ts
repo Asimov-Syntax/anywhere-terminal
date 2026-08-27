@@ -15,6 +15,7 @@
 //      asimov/changes/project-worktree-agent-presence/design.md D8, D10–D13.
 
 import type { PaneEvidence } from "../session/PaneEvidenceStore";
+import type { ClaudeSessionEvidence } from "../session/resolveClaudeSession";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import { isPathInside } from "../utils/pathBoundary";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
@@ -71,6 +72,20 @@ export interface PresenceProjectorDeps {
    * `TITLE_REFRESH_MS`. Optional, so the projector's own tests need no vault.
    */
   sessionTitle?(entryId: string): Promise<string | undefined>;
+  /**
+   * The newest vault session this agent recorded under `cwd`, as an entry id.
+   *
+   * Only claude publishes a pid registry, so rank 2 answers claude alone and
+   * every other agent's pane reaches the row with no session to be named by.
+   * This is the fallback for exactly those panes — asked ONLY once the launch
+   * record has already proved which agent is running, so unlike a bare
+   * newest-transcript-here lookup it cannot paint a plain shell as the agent
+   * that used to occupy the directory (presenceDeps.ts).
+   *
+   * The answer is a guess of the same strength as a shared-directory match, and
+   * is settled the same way when two panes want one session.
+   */
+  sessionUnderCwd?(agent: VaultAgentId, cwd: string): Promise<string | undefined>;
   now?(): number;
 }
 
@@ -116,6 +131,8 @@ interface ProvenIdentity {
   entryId?: string;
   /** The session's own published name, when the registry carried one. */
   name?: string;
+  /** How the session was matched to the pane; absent when none was. */
+  evidence?: ClaudeSessionEvidence;
 }
 
 /**
@@ -147,6 +164,80 @@ interface PaneState {
  * and no other CLI publishes a registry to read.
  */
 const REGISTRY_AGENT: VaultAgentId = "claude";
+
+/** One pane's row, with the evidence its session claim rests on. */
+interface ProducedRow {
+  worktreeId: string;
+  row: WorktreeAgentRow;
+  evidence?: ClaudeSessionEvidence;
+  /** What the pane itself reported, so a disowned row falls back to it rather than to nothing. */
+  paneTitle?: string;
+}
+
+/**
+ * Give a contested session to the one pane that PROVED it, and to no one
+ * otherwise.
+ *
+ * Resolution matches a session to a pane by finding the claude pid inside the
+ * pane's pty subtree, and failing that by matching the pane's directory. The
+ * directory match is one every pane in that directory makes, so two panes in one
+ * repo came away wearing the same session — the same title, the same drill-down
+ * and the same delegation list, which is what the report showed.
+ *
+ * A subtree match is exclusive by construction, so exactly one such claim
+ * settles it. Two of them cannot both be right about one pid (nested panes), and
+ * none of them means nothing here is more than a guess: either way the session
+ * belongs to no row rather than to an arbitrary one. Presence never invents.
+ *
+ * A row that loses the session keeps everything the pane itself proved. Only the
+ * identity that WAS the session — `agentSource: "registry"` — goes with it,
+ * because without the session there is nothing left holding it up.
+ */
+function settleContestedSessions(produced: readonly ProducedRow[]): readonly ProducedRow[] {
+  const byEntryId = new Map<string, ProducedRow[]>();
+  for (const item of produced) {
+    if (item.row.entryId !== undefined) {
+      const sharing = byEntryId.get(item.row.entryId);
+      if (sharing) {
+        sharing.push(item);
+      } else {
+        byEntryId.set(item.row.entryId, [item]);
+      }
+    }
+  }
+
+  const disowned = new Set<WorktreeAgentRow>();
+  for (const sharing of byEntryId.values()) {
+    if (sharing.length < 2) {
+      continue;
+    }
+    const proved = sharing.filter((item) => item.evidence === "process");
+    for (const item of sharing) {
+      if (proved.length !== 1 || item !== proved[0]) {
+        disowned.add(item.row);
+      }
+    }
+  }
+
+  if (disowned.size === 0) {
+    return produced;
+  }
+  return produced.map((item) => {
+    if (!disowned.has(item.row)) {
+      return item;
+    }
+    const { entryId: _entryId, title: _title, ...rest } = item.row;
+    const fromSessionAlone = item.row.agentSource === "registry";
+    return {
+      worktreeId: item.worktreeId,
+      row: {
+        ...rest,
+        ...(item.paneTitle !== undefined ? { title: item.paneTitle } : {}),
+        ...(fromSessionAlone ? { agentSource: "none" as const, agent: undefined } : {}),
+      },
+    };
+  });
+}
 
 /**
  * How long a vault-read title is trusted before it is read again.
@@ -351,7 +442,19 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     });
 
     if (outcome.kind === "proven") {
-      state.proven = { agent: outcome.agent, source: outcome.source, entryId: outcome.entryId, name: outcome.name };
+      // A proven agent with no session is every non-claude pane: no registry
+      // names it, so the vault's own record under this directory is the only
+      // handle there is.
+      const entryId =
+        outcome.entryId ??
+        (pane.cwd === undefined ? undefined : await deps.sessionUnderCwd?.(outcome.agent, deps.normalize(pane.cwd)));
+      state.proven = {
+        agent: outcome.agent,
+        source: outcome.source,
+        entryId,
+        name: outcome.name,
+        evidence: outcome.entryId === undefined && entryId !== undefined ? "directory" : outcome.evidence,
+      };
       state.provenPtyPid = pane.ptyPid;
       state.provenCwd = pane.cwd;
       return state.proven;
@@ -502,7 +605,13 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
 
     // The external pass drops these: a session claimed by a pane is that pane's
     // row, never a second one labelled "other window" (D3).
+    //
+    // Filled from what each pane MATCHED, not from what its row ends up wearing.
+    // A session two panes both guessed at is shown by neither, but it is still
+    // running in this window, and an "other window" row for it would be a lie.
     const claimed = new Set<string>();
+
+    const produced: ProducedRow[] = [];
 
     for (const pane of panes) {
       let state = states.get(pane.paneId);
@@ -551,11 +660,15 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         lastActivityAt: state.lastActivityAt,
       };
 
-      (rowsByWorktreeId[worktreeId] ??= []).push(row);
+      produced.push({ worktreeId, row, evidence: identity?.evidence, paneTitle: pane.title });
       const at = state.lastActivityAt;
       if (at !== undefined) {
         nextRanks.set(worktreeId, Math.max(nextRanks.get(worktreeId) ?? 0, at));
       }
+    }
+
+    for (const { worktreeId, row } of settleContestedSessions(produced)) {
+      (rowsByWorktreeId[worktreeId] ??= []).push(row);
     }
 
     lastWindowPass = {

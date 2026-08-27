@@ -31,7 +31,7 @@ describe("resolveClaudeSession — step 1 (process subtree ∩ registry)", () =>
         indexRunningSessions([run("sess-x", 1002, "/launch/cwd"), run("sess-y", 5000, "/other")]),
       ),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "sess-x", cwd: "/launch/cwd" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "sess-x", cwd: "/launch/cwd", evidence: "process" });
     // An exact subtree hit must NOT consult the cwd fallbacks.
     expect(deps.getCwd).not.toHaveBeenCalled();
   });
@@ -42,7 +42,7 @@ describe("resolveClaudeSession — step 1 (process subtree ∩ registry)", () =>
       runningIndex: vi.fn(async () => indexRunningSessions([run("old", 1001, "/a"), run("new", 1002, "/b")])),
       sessionMtime: vi.fn(async (id: string) => (id === "new" ? 200 : 100)),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "new", cwd: "/b" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "new", cwd: "/b", evidence: "process" });
   });
 });
 
@@ -56,7 +56,7 @@ describe("resolveClaudeSession — step 2 (running by cwd)", () => {
         indexRunningSessions([run("sess-here", 4242, "/work/proj"), run("elsewhere", 4243, "/other")]),
       ),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "sess-here", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "sess-here", cwd: "/work/proj", evidence: "directory" });
   });
 
   it("tie-breaks multiple cwd matches by newest mtime", async () => {
@@ -66,7 +66,7 @@ describe("resolveClaudeSession — step 2 (running by cwd)", () => {
       runningIndex: vi.fn(async () => indexRunningSessions([run("a", 1, "/work/proj"), run("b", 2, "/work/proj")])),
       sessionMtime: vi.fn(async (id: string) => (id === "b" ? 9 : 1)),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "b", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "b", cwd: "/work/proj", evidence: "directory" });
   });
 });
 
@@ -78,7 +78,7 @@ describe("resolveClaudeSession — step 3 (newest under cwd) + null", () => {
       runningIndex: vi.fn(async () => indexRunningSessions([run("running-elsewhere", 1, "/elsewhere")])),
       newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "exited", cwd: "/work/proj" })),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "exited", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "exited", cwd: "/work/proj", evidence: "recent" });
   });
 
   it("returns null when nothing resolves", async () => {
@@ -108,7 +108,7 @@ describe("resolveClaudeSession — Windows / no pty pid", () => {
       getCwd: vi.fn(async () => "/work/proj"),
       runningIndex: vi.fn(async () => indexRunningSessions([run("by-cwd", 7, "/work/proj")])),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "by-cwd", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "by-cwd", cwd: "/work/proj", evidence: "directory" });
   });
 });
 
@@ -131,7 +131,7 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
       ),
       sessionMtime: vi.fn(async (id: string) => (id === "one-shot" ? 999 : 100)),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "interactive", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "interactive", cwd: "/work/proj", evidence: "process" });
   });
 
   it("falls through to the cwd fallbacks when the subtree holds only a headless run", async () => {
@@ -140,7 +140,7 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
       runningIndex: vi.fn(async () => indexRunningSessions([headless("one-shot", 1002, "/work/proj")])),
       newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "on-disk", cwd: "/work/proj" })),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj", evidence: "recent" });
   });
 
   it("excludes a headless run from the cwd fallback too", async () => {
@@ -151,7 +151,7 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
       runningIndex: vi.fn(async () => indexRunningSessions([headless("one-shot", 7777, "/work/proj")])),
       newestSessionUnderCwd: vi.fn(async () => ({ sessionId: "on-disk", cwd: "/work/proj" })),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "on-disk", cwd: "/work/proj", evidence: "recent" });
   });
 
   it("keeps a session whose entrypoint is unknown", async () => {
@@ -161,6 +161,6 @@ describe("resolveClaudeSession — headless one-shot exclusion", () => {
         indexRunningSessions([{ ...run("future", 1002, "/work/proj"), entrypoint: "some-new-value" }]),
       ),
     });
-    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "future", cwd: "/work/proj" });
+    expect(await resolveClaudeSession(TID, deps)).toEqual({ sessionId: "future", cwd: "/work/proj", evidence: "process" });
   });
 });

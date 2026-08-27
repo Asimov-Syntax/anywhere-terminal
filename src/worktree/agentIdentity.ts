@@ -11,6 +11,7 @@
 // See: docs/design/worktree-agent-presence.md § 3.2, § 5;
 //      asimov/changes/project-worktree-agent-presence/design.md D4, D5, D10.
 
+import type { ClaudeSessionEvidence } from "../session/resolveClaudeSession";
 import { matchTitleAgentName } from "../shared/agentNames";
 import { agentKindForExecutable } from "../vault/registry";
 import { formatEntryId, type VaultAgentId } from "../vault/types";
@@ -24,6 +25,8 @@ export type SessionLookup =
       sessionId: string;
       /** The session's own published name, when the source that resolved it carries one. */
       name?: string;
+      /** How the session was matched to the pane; see `ClaudeSessionEvidence`. */
+      evidence: ClaudeSessionEvidence;
     }
   | { kind: "absent" }
   | {
@@ -55,6 +58,8 @@ export type IdentityOutcome =
       entryId?: string;
       /** The resolved session's published name — a property of the session, not of the rank. */
       name?: string;
+      /** How the session was matched; absent when no session was resolved at all. */
+      evidence?: ClaudeSessionEvidence;
     }
   | { kind: "absent" }
   | { kind: "failed"; source: PresenceDegradation["source"]; reason: string };
@@ -80,6 +85,7 @@ export function resolveAgentIdentity(input: IdentityInput): IdentityOutcome {
     session.kind === "resolved"
       ? {
           entryId: formatEntryId(session.agent, session.sessionId),
+          evidence: session.evidence,
           ...(session.name !== undefined ? { name: session.name } : {}),
         }
       : undefined;

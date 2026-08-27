@@ -25,6 +25,7 @@ function makeProjector(initial: Pane[] = []) {
   let lookup: (paneId: string) => SessionLookup = () => ({ kind: "absent" });
   let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
+  let vaultUnderCwd: ((agent: string, cwd: string) => Promise<string | undefined>) | undefined;
   let snapshots = 0;
   let resolves = 0;
 
@@ -43,6 +44,7 @@ function makeProjector(initial: Pane[] = []) {
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
+    sessionUnderCwd: (agent, cwd) => (vaultUnderCwd ? vaultUnderCwd(agent, cwd) : Promise.resolve(undefined)),
     now: () => clock,
   };
 
@@ -62,6 +64,9 @@ function makeProjector(initial: Pane[] = []) {
     },
     setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
       vaultTitle = next;
+    },
+    setVaultUnderCwd(next: (agent: string, cwd: string) => Promise<string | undefined>) {
+      vaultUnderCwd = next;
     },
     counts: () => ({ snapshots, resolves }),
   };
@@ -182,7 +187,7 @@ describe("pane lifecycle", () => {
 describe("the resolution slot", () => {
   it("reuses a proven identity while the pane's process and directory hold", async () => {
     const h = makeProjector([pane({ paneId: "a" })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
     const first = h.counts().resolves;
     await h.projector.project([WT]);
@@ -194,14 +199,14 @@ describe("the resolution slot", () => {
     // tuple would never be retried for the life of the pane.
     const h = makeProjector([pane({ paneId: "a", ptyPid: 42 })]);
     await h.projector.project([WT]);
-    h.setLookup(() => ({ kind: "resolved", agent: "codex", sessionId: "s9" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "codex", sessionId: "s9", evidence: "process" }));
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
     expect(row).toMatchObject({ agent: "codex", agentSource: "registry", entryId: "codex:s9" });
   });
 
   it("re-reads once the pane changes directory", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 42 })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
     const before = h.counts().resolves;
     h.panes[0] = pane({ paneId: "a", ptyPid: 42, cwd: `${WT}/deeper` });
@@ -211,7 +216,7 @@ describe("the resolution slot", () => {
 
   it("evicts a closed pane's slot instead of holding it forever", async () => {
     const h = makeProjector([pane({ paneId: "a" })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
     h.panes.length = 0;
     await h.projector.project([WT]);
@@ -225,7 +230,7 @@ describe("the resolution slot", () => {
 describe("an inconclusive read retains identity", () => {
   it("keeps the proven agent and source when the read fails", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 42 })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
 
     h.panes[0] = pane({ paneId: "a", ptyPid: 43 });
@@ -237,7 +242,7 @@ describe("an inconclusive read retains identity", () => {
   it("does not let a failure flip the row to a less active state", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 42 })]);
     h.setActivity("a", "running");
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
 
     h.panes[0] = pane({ paneId: "a", ptyPid: 43 });
@@ -248,7 +253,7 @@ describe("an inconclusive read retains identity", () => {
 
   it("clears the agent on a conclusive empty read, so a real exit is seen", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 42 })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
 
     h.panes[0] = pane({ paneId: "a", ptyPid: 43 });
@@ -295,13 +300,13 @@ describe("a failed source degrades its scope", () => {
 describe("a row's age describes its agent", () => {
   it("resets the age when a different agent takes the pane over", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 1 })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     const started = clock;
     await h.projector.project([WT]);
 
     clock += 3_600_000;
     h.panes[0] = pane({ paneId: "a", ptyPid: 2 });
-    h.setLookup(() => ({ kind: "resolved", agent: "codex", sessionId: "s2" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "codex", sessionId: "s2", evidence: "process" }));
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
     expect(row.startedAt).toBe(clock);
     expect(row.startedAt).not.toBe(started);
@@ -309,12 +314,12 @@ describe("a row's age describes its agent", () => {
 
   it("resets the age for a new session of the same agent", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 1 })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
 
     clock += 60_000;
     h.panes[0] = pane({ paneId: "a", ptyPid: 2 });
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s2" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s2", evidence: "process" }));
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
     expect(row.startedAt).toBe(clock);
   });
@@ -328,7 +333,7 @@ describe("a row's age describes its agent", () => {
 
     clock += 60_000;
     h.panes[0] = pane({ paneId: "a", ptyPid: 1, isAgentLaunch: true, shell: "claude" });
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
     expect(row.startedAt).toBe(started);
   });
@@ -483,7 +488,7 @@ describe("every pane claims its session, whether or not it produces a row", () =
 
   it("keeps the identity it proved for an unattributed pane, so a later rebuild reuses it", async () => {
     const h = makeProjector([pane({ paneId: "elsewhere", cwd: "/somewhere/else" })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s9" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s9", evidence: "process" }));
 
     await h.projector.project([WT]);
     await h.projector.project([WT]);
@@ -536,7 +541,7 @@ describe("external rows — agents running outside this window", () => {
   it("yields to the pane that already claims the session", async () => {
     const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
     h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1" })] });
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
 
     const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
@@ -548,7 +553,7 @@ describe("external rows — agents running outside this window", () => {
     // labelled as running in another window, in the window running it.
     const h = makeProjector([pane({ paneId: "a", cwd: "/somewhere/else" })]);
     h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1", cwd: WT })] });
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
 
     expect((await h.projector.project([WT])).rowsByWorktreeId).toEqual({});
   });
@@ -643,7 +648,7 @@ describe("what a row is called", () => {
   it("titles a pane from its session, not from the title its shell left behind", async () => {
     const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
     h.setRegistry({ kind: "ok", sessions: [named()] });
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", name: "cyberk-skills-f9" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", name: "cyberk-skills-f9", evidence: "process" }));
     h.setVaultTitle(async () => "Fix the worktree row titles");
 
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
@@ -727,6 +732,99 @@ describe("what a row is called", () => {
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
     expect(row.title).toBe("hadern-analysis-a7");
+  });
+});
+
+describe("a pane whose agent keeps no PID registry", () => {
+  // Only claude publishes `~/.claude/sessions`, so resolution never returns an
+  // entryId for opencode — but the vault has its transcript, filed under the
+  // directory the pane is sitting in.
+  it("titles a proven pane from the newest vault session under its directory", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setLookup(() => ({ kind: "absent" }));
+    h.setVaultUnderCwd(async (agent, cwd) =>
+      agent === "opencode" && cwd === WT ? "opencode:ses_abc123" : undefined,
+    );
+    h.setVaultTitle(async (entryId) => (entryId === "opencode:ses_abc123" ? "Port the pty layer to bun" : undefined));
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBe("opencode:ses_abc123");
+    expect(row.title).toBe("Port the pty layer to bun");
+  });
+
+  it("leaves the pane's own title alone when the vault has nothing under the directory", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setVaultUnderCwd(async () => undefined);
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBeUndefined();
+    expect(row.title).toBe("opencode");
+  });
+});
+
+describe("two panes, one session", () => {
+  // Resolution's cwd step matches on the directory alone, so every pane sitting
+  // where an agent runs resolves to that agent's session — the reporter saw two
+  // rows wearing one delegation's title.
+  const bothResolve = (h: ReturnType<typeof makeProjector>, evidence: Record<string, "process" | "directory">) => {
+    h.setLookup((paneId) => ({
+      kind: "resolved",
+      agent: "claude",
+      sessionId: "s1",
+      evidence: evidence[paneId] ?? "directory",
+    }));
+    h.setVaultTitle(async () => "Adversarial review of Q3 options");
+  };
+
+  it("gives the session to the pane whose process subtree holds it", async () => {
+    const h = makeProjector([
+      pane({ paneId: "claude-pane", title: "zsh" }),
+      pane({ paneId: "shell-pane", title: "npm run watch" }),
+    ]);
+    bothResolve(h, { "claude-pane": "process" });
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+    const claude = rows.find((r) => r.paneId === "claude-pane");
+    const shell = rows.find((r) => r.paneId === "shell-pane");
+
+    expect(claude?.entryId).toBe("claude:s1");
+    expect(claude?.title).toBe("Adversarial review of Q3 options");
+    expect(shell?.entryId).toBeUndefined();
+    expect(shell?.title).toBe("npm run watch");
+  });
+
+  it("gives it to nobody when both panes only guessed from the directory", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" }), pane({ paneId: "b", title: "zsh" })]);
+    bothResolve(h, {});
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.map((r) => r.entryId)).toEqual([undefined, undefined]);
+  });
+
+  it("takes the agent away too when the session was the only thing naming it", async () => {
+    // `agentSource: "registry"` means the row is an agent BECAUSE of the session
+    // it just lost; a pane proven by its own process keeps what proved it.
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" }), pane({ paneId: "b", title: "zsh" })]);
+    bothResolve(h, { a: "process" });
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+    const disowned = rows.find((r) => r.paneId === "b");
+
+    expect(disowned?.agent).toBeUndefined();
+    expect(disowned?.agentSource).toBe("none");
+  });
+
+  it("leaves an uncontested session where it resolved, however weak the evidence", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+    bothResolve(h, {});
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBe("claude:s1");
+    expect(row.title).toBe("Adversarial review of Q3 options");
   });
 });
 
@@ -840,7 +938,7 @@ describe("an external-only projection", () => {
 
   it("replays the window rows the last full pass produced", async () => {
     const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "pane-session" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "pane-session", evidence: "process" }));
     await h.projector.project([WT]);
 
     // Emptying the pane set is what makes this discriminating: a full pass would
@@ -853,7 +951,7 @@ describe("an external-only projection", () => {
 
   it("still refuses a session the replayed window rows already claim", async () => {
     const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
     await h.projector.project([WT]);
 
     // The claim has to survive into the replay: with the pane no longer resolved,

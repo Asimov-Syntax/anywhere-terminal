@@ -12,6 +12,22 @@
 
 import type { RunningClaudeSession, RunningSessionIndex } from "../vault/readers/runningSessions";
 
+/**
+ * Which step matched, and so how much the match is worth.
+ *
+ * `process` is proof — the claude pid is inside this pane's pty subtree, and no
+ * other pane's. `directory` and `recent` are guesses that any pane sitting in
+ * the same directory would have made, so a caller with more than one pane can
+ * only settle a contested session by knowing which kind it holds.
+ */
+export type ClaudeSessionEvidence = "process" | "directory" | "recent";
+
+export interface ResolvedClaudeSession {
+  sessionId: string;
+  cwd: string;
+  evidence: ClaudeSessionEvidence;
+}
+
 export interface ResolveClaudeSessionDeps {
   /** The pane's pty pid (subtree root), or undefined when the session is unknown. */
   getPtyPid(terminalId: string): number | undefined;
@@ -56,7 +72,7 @@ async function pickNewest(
 export async function resolveClaudeSession(
   terminalId: string,
   deps: ResolveClaudeSessionDeps,
-): Promise<{ sessionId: string; cwd: string } | null> {
+): Promise<ResolvedClaudeSession | null> {
   // Headless runs are filtered at index build, not per step: a hook-spawned
   // `claude -p` is a descendant of this pty AND shares its cwd, so it can
   // hijack steps 1 and 2 alike, and its just-written transcript wins the mtime
@@ -69,11 +85,11 @@ export async function resolveClaudeSession(
     const subtree = new Set(await deps.descendantPids(ptyPid));
     const inTree = running.byPid(subtree);
     if (inTree.length === 1) {
-      return { sessionId: inTree[0].sessionId, cwd: inTree[0].cwd };
+      return { sessionId: inTree[0].sessionId, cwd: inTree[0].cwd, evidence: "process" };
     }
     if (inTree.length > 1) {
       const best = await pickNewest(inTree, deps.sessionMtime);
-      return { sessionId: best.sessionId, cwd: best.cwd };
+      return { sessionId: best.sessionId, cwd: best.cwd, evidence: "process" };
     }
   }
 
@@ -86,7 +102,8 @@ export async function resolveClaudeSession(
   const byCwd = running.byCwd(cwd);
   if (byCwd.length > 0) {
     const best = await pickNewest(byCwd, deps.sessionMtime);
-    return { sessionId: best.sessionId, cwd: best.cwd };
+    return { sessionId: best.sessionId, cwd: best.cwd, evidence: "directory" };
   }
-  return deps.newestSessionUnderCwd(cwd);
+  const recent = await deps.newestSessionUnderCwd(cwd);
+  return recent === null ? null : { ...recent, evidence: "recent" };
 }

@@ -53,18 +53,19 @@ describe("rank 1 — launch record", () => {
 
 describe("rank 2 — session registry", () => {
   it("proves identity from a resolved session and carries its entry id", () => {
-    expect(resolveAgentIdentity(input({ session: { kind: "resolved", agent: "claude", sessionId: "abc" } }))).toEqual({
+    expect(resolveAgentIdentity(input({ session: { kind: "resolved", agent: "claude", sessionId: "abc", evidence: "process" } }))).toEqual({
       kind: "proven",
       agent: "claude",
       source: "registry",
       entryId: "claude:abc",
+      evidence: "process",
     });
   });
 
   it("builds the entry id through the canonical formatter", () => {
     // A session id containing its own colon must survive intact.
     const outcome = resolveAgentIdentity(
-      input({ session: { kind: "resolved", agent: "claude", sessionId: "parent:subagent:leaf" } }),
+      input({ session: { kind: "resolved", agent: "claude", sessionId: "parent:subagent:leaf", evidence: "process" } }),
     );
     expect(outcome).toMatchObject({ entryId: "claude:parent:subagent:leaf" });
   });
@@ -72,9 +73,9 @@ describe("rank 2 — session registry", () => {
   it("loses to the launch record but still contributes the entry id", () => {
     expect(
       resolveAgentIdentity(
-        input({ isAgentLaunch: true, shell: "claude", session: { kind: "resolved", agent: "claude", sessionId: "z" } }),
+        input({ isAgentLaunch: true, shell: "claude", session: { kind: "resolved", agent: "claude", sessionId: "z", evidence: "process" } }),
       ),
-    ).toEqual({ kind: "proven", agent: "claude", source: "launch", entryId: "claude:z" });
+    ).toEqual({ kind: "proven", agent: "claude", source: "launch", entryId: "claude:z", evidence: "process" });
   });
 
   it("carries the session's own name whichever rank won, since the name is the session's", () => {
@@ -83,17 +84,24 @@ describe("rank 2 — session registry", () => {
         input({
           isAgentLaunch: true,
           shell: "claude",
-          session: { kind: "resolved", agent: "claude", sessionId: "z", name: "docs-54" },
+          session: { kind: "resolved", agent: "claude", sessionId: "z", name: "docs-54", evidence: "process" },
         }),
       ),
-    ).toEqual({ kind: "proven", agent: "claude", source: "launch", entryId: "claude:z", name: "docs-54" });
+    ).toEqual({
+      kind: "proven",
+      agent: "claude",
+      source: "launch",
+      entryId: "claude:z",
+      name: "docs-54",
+      evidence: "process",
+    });
   });
 
   it("omits the name entirely when the registry did not publish one", () => {
     // Absent, never "": the row falls through to the vault, and an empty string
     // would title it with nothing and stop the fallback from ever running.
     expect(
-      resolveAgentIdentity(input({ session: { kind: "resolved", agent: "claude", sessionId: "abc" } })),
+      resolveAgentIdentity(input({ session: { kind: "resolved", agent: "claude", sessionId: "abc", evidence: "process" } })),
     ).not.toHaveProperty("name");
   });
 });
@@ -122,7 +130,7 @@ describe("rank 4 — committed title", () => {
 
   it("loses to the session registry", () => {
     expect(
-      resolveAgentIdentity(input({ title: "codex", session: { kind: "resolved", agent: "claude", sessionId: "q" } })),
+      resolveAgentIdentity(input({ title: "codex", session: { kind: "resolved", agent: "claude", sessionId: "q", evidence: "process" } })),
     ).toMatchObject({ agent: "claude", source: "registry" });
   });
 });

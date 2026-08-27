@@ -23,6 +23,7 @@ import {
   listRunningClaudeSessions,
   type RunningSessionsOutcome,
 } from "../vault/readers/runningSessions";
+import type { VaultAgentId } from "../vault/types";
 import type { SessionLookup } from "./agentIdentity";
 import type { PresenceProjectorDeps, ResolutionSnapshot } from "./presenceProjector";
 
@@ -33,8 +34,10 @@ export interface PresenceDepsOptions {
   table?: ProcessTableSnapshot;
   listRunning?(): Promise<RunningSessionsOutcome>;
   sessionMtime?(sessionId: string): Promise<number | undefined>;
-  /** Vault title for a session the registry did not name; see `PresenceProjectorDeps`. */
+  /** Vault title for a resolved session; see `PresenceProjectorDeps`. */
   sessionTitle?(entryId: string): Promise<string | undefined>;
+  /** Newest vault session for an agent under a directory; see `PresenceProjectorDeps`. */
+  sessionUnderCwd?(agent: VaultAgentId, cwd: string): Promise<string | undefined>;
   now?(): number;
 }
 
@@ -55,6 +58,7 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
     normalize: (p) => path.resolve(p),
 
     ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),
+    ...(options.sessionUnderCwd ? { sessionUnderCwd: options.sessionUnderCwd } : {}),
 
     now: options.now,
 
@@ -141,6 +145,7 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
             kind: "resolved",
             agent: "claude",
             sessionId: session.sessionId,
+            evidence: session.evidence,
             ...(named !== undefined ? { name: named } : {}),
           };
         },
