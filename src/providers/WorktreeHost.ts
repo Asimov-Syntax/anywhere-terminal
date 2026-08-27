@@ -637,6 +637,27 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   /**
+   * The registration a repository publishes when the host OBSERVED its listing.
+   *
+   * Absent when the cache RETAINED the listing rather than reading it, and
+   * absent for every repository while git itself is unusable — a retained
+   * listing is right for DISPLAY (three worktrees marked degraded beats none)
+   * and wrong for authority, because admitting on it would mint fresh authority
+   * over registrations discovery just failed to verify (round-5 B7).
+   *
+   * Present for a repository nobody can watch: its listing WAS read, it may
+   * just go stale unnoticed, and refusing there would disable launches and
+   * removals on every host without file watching (D11).
+   *
+   * A launch and a removal ask this and nothing else (design.md D12). Nobody
+   * re-derives it from `degraded`, which is the composed line shown to the user
+   * and also carries the watch claim (round-7 W8).
+   */
+  function observationOf(repo: WorktreeRepo | undefined): number | undefined {
+    return repo?.generation;
+  }
+
+  /**
    * The path to act on for a worktree request, or undefined to do nothing.
    *
    * A `missing` worktree resolves for a copy and for nothing else: copying the
@@ -660,31 +681,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * rebuilding must not refuse this launch.
    */
   function launchTarget(worktreeId: string): LaunchTargetRecord | undefined {
-    const tree = cache.read();
-    // A retained listing is not an observation. The cache keeps the last-good
-    // worktrees when a listing fails, which is right for DISPLAY — showing three
-    // worktrees marked degraded beats showing none — and wrong for authority: it
-    // advances the generation because it re-observed nothing, and admitting on
-    // that number would mint fresh authority over registrations discovery just
-    // failed to verify (round-5 B7).
-    if (!tree.gitAvailable) {
-      return undefined;
-    }
-    for (const repo of tree.repos) {
+    for (const repo of cache.read().repos) {
       const found = repo.worktrees.find((wt) => wt.id === worktreeId);
       if (found === undefined) {
         continue;
       }
-      // No registration published means the cache RETAINED this repository
-      // rather than observing it — see WorktreeCache. A repository that is
-      // merely unwatched still carries one: its listing WAS read, it just may
-      // go stale unnoticed, and refusing there would refuse every launch on a
-      // host whose file watching is unavailable.
-      if (found.missing === true || repo.generation === undefined) {
+      const observed = observationOf(repo);
+      if (found.missing === true || observed === undefined) {
         return undefined;
       }
       // git's own display string, never the normalized id.
-      return { path: found.displayPath, generation: repo.generation };
+      return { path: found.displayPath, generation: observed };
     }
     return undefined;
   }
@@ -1678,19 +1685,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         };
       },
       repoPath: (repoId) => cache.read().repos.find((r) => r.repoId === repoId)?.mainPath ?? null,
-      // Whether the listing behind the current tree can be relied on. The cache
-      // retains the last-good repos when a rebuild fails, which is right for
-      // rendering and wrong for judging what a removal did (round-2 B7).
-      //
-      // Asked of the registration token, not of `degraded`: the token is absent
-      // exactly when the listing was retained rather than read, while `degraded`
-      // is the composed line shown to the user and also carries "not being
-      // watched" — a claim about the future that must not veto a removal
-      // (round-7 W8).
-      isDegraded: (repoId) => {
-        const repo = cache.read().repos.find((r) => r.repoId === repoId);
-        return repo === undefined || repo.generation === undefined;
-      },
+      // Whether the listing behind the current tree can be relied on — asked of
+      // `observationOf`, the same claim a launch is admitted against, and never
+      // of `degraded` (round-2 B7, round-7 W8, design.md D12).
+      isDegraded: (repoId) => observationOf(cache.read().repos.find((r) => r.repoId === repoId)) === undefined,
       createContext: (repoId) => {
         const repo = cache.read().repos.find((r) => r.repoId === repoId);
         if (repo === undefined) {
@@ -1733,10 +1731,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               : status.code === 0 && !status.timedOut
                 ? { ok: true, value: status.stdout.toString("utf8") }
                 : { ok: false },
-          // The cache keeps the last-good listing when a rebuild fails, which is
-          // right for rendering and wrong for authorizing a delete. Same
-          // predicate as `isDegraded`, and for the same reason.
-          listingDegraded: found.repo.generation === undefined,
+          // The same claim `isDegraded` asks before the attempt, so a removal
+          // cannot be authorized under one reading and classified under another.
+          listingDegraded: observationOf(found.repo) === undefined,
         });
       },
     }),

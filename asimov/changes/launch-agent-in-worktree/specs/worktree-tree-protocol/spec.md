@@ -50,6 +50,17 @@ the previous token or none.
 - **WHEN** a repository was listed successfully but cannot be watched for changes
 - **THEN** launching into its worktrees still works
 
+### Requirement: Removing a worktree needs the same observation a launch needs
+
+Removing a worktree SHALL be refused where the host could not observe the containing
+repository's listing — because its own listing failed, or because git itself is unusable — and
+SHALL NOT be refused merely because that repository cannot be watched for later changes.
+
+#### Scenario: An unusable git authorizes no removal
+
+- **WHEN** a removal is requested while no usable git is available
+- **THEN** the removal is refused rather than judged against a listing nobody could read
+
 ### Requirement: The registration token is not derived from git state
 
 The token SHALL NOT be derived from the branch or commit a worktree is on, and SHALL be scoped

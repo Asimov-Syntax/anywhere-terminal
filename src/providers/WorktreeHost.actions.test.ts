@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExtensionToWebViewMessage, WorktreeMutationResultMessage } from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
-import { createGitCapabilities } from "../worktree/gitCapabilities";
+import { createGitCapabilities, type GitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
@@ -93,12 +93,13 @@ function deps(
   extra: string[][] = [],
   shared?: GitCommandRunner,
   sibling = false,
+  capabilities?: GitCapabilities,
 ): WorktreeTreeDeps {
   const isGone = typeof gone === "function" ? gone : () => gone;
   const r = shared ?? runner(gone, extra);
   return {
     runner: r,
-    capabilities: createGitCapabilities(r),
+    capabilities: capabilities ?? createGitCapabilities(r),
     normalize: async (p: string) => p.replace(/\/+$/, "") || "/",
     stat: async (path: string) => {
       if (isGone() && path === FEAT_PATH) {
@@ -316,8 +317,17 @@ async function builtHost(
       return base.run(args, cwd);
     },
   };
+  // A supported version is believed permanently, so losing git mid-session
+  // cannot be staged through the runner — it is staged here instead.
+  const gitUsable = { now: true };
+  const probed = createGitCapabilities(shared);
+  const capabilities: GitCapabilities = {
+    runWithFallback: probed.runWithFallback,
+    probeVersion: async () =>
+      gitUsable.now ? await probed.probeVersion() : { kind: "absent", reason: "git is no longer on PATH" },
+  };
   const host = createWorktreeHost({
-    deps: deps(isGone, over.extra ?? [], shared, over.sibling === true),
+    deps: deps(isGone, over.extra ?? [], shared, over.sibling === true, capabilities),
     workspaceFolders: () => (over.sibling === true ? ["/repo", OTHER_ROOT] : ["/repo"]),
     pool: {
       subscribePattern: () =>
@@ -371,6 +381,16 @@ async function builtHost(
      * commit produces, which no value git returns can distinguish (round-4 B6).
      */
     relist: async () => {
+      host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+      await settle();
+      noteTree(view);
+    },
+    /**
+     * Take git away entirely, so no listing anywhere can be read — the tree the
+     * cache still shows is retained, not observed (design.md D12).
+     */
+    loseGit: async () => {
+      gitUsable.now = false;
       host.handleMessage(view, { type: "requestWorktreeTree", force: true });
       await settle();
       noteTree(view);
@@ -1789,6 +1809,58 @@ describe("create with a launch", () => {
     });
     await settle();
     expect(creates(calls)).toHaveLength(0);
+    dispose();
+  });
+});
+
+// design.md D12 — one claim, "this repository was observed", authorizes both a
+// launch and a removal. Round 8 caught the two coming apart: launch admission
+// also checked global git, the removal readers did not.
+describe("what an unobserved repository authorizes", () => {
+  it("authorizes no removal while git itself is unusable", async () => {
+    const { host, dispose, loseGit } = await builtHost();
+    await loseGit();
+
+    const result = await host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    // Not a refusal — a refusal is an answer, and nobody could read the listing
+    // this one would be derived from.
+    expect(result).toMatchObject({ kind: "unavailable" });
+    expect((result as { unreadable: readonly string[] }).unreadable).toContain("listing");
+    expect(host.mutationBindings().isDegraded(REPO)).toBe(true);
+    dispose();
+  });
+
+  it("authorizes no launch while git itself is unusable", async () => {
+    const { host, view, calls, dispose, loseGit } = await builtHost();
+    const before = gen();
+    await loseGit();
+
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      worktreeId: FEAT_PATH,
+      agentId: "claude",
+      offerId: offer(),
+      ...(before === undefined ? {} : { generation: before }),
+    } as never);
+    await settle();
+
+    expect(calls.filter((c) => c[0] === "startAgent")).toHaveLength(0);
+    dispose();
+  });
+
+  it("authorizes a removal on a repository nobody can watch, whose listing WAS read", async () => {
+    // The negative that keeps D11 honest: an unwatched repository is observed,
+    // and refusing there would disable removal on every host without file
+    // watching for a reason no user could act on.
+    const { host, dispose } = await builtHost([windowRow()], false, { watchFails: true });
+
+    const result = await host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    // The harness's `git status` is unreadable for reasons of its own, so the
+    // claim under test is the listing one specifically, not the verdict.
+    expect((result as { unreadable?: readonly string[] }).unreadable ?? []).not.toContain("listing");
+    expect(host.mutationBindings().isDegraded(REPO)).toBe(false);
     dispose();
   });
 });

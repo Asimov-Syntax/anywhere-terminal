@@ -276,8 +276,15 @@ export function createWorktreeCache(): WorktreeCache {
       // every retained group: a per-repo rebuild that landed after git went
       // away would otherwise read as fresh under a tree calling git unusable.
       // A group that already names a more specific cause keeps it.
-      const marked =
-        reason === undefined ? out : out.map((r) => (r.degraded === undefined ? { ...r, degraded: reason } : r));
+      //
+      // The registration token goes for the same reason and to the same extent:
+      // an unusable git OBSERVED nothing, so no group may authorize a launch or
+      // a removal on a number minted before git went away (design.md D12).
+      const marked = out.map((repo) => {
+        const retained: WorktreeRepo = { ...repo };
+        delete retained.generation;
+        return reason === undefined || retained.degraded !== undefined ? retained : { ...retained, degraded: reason };
+      });
       return { repos: marked, unreadable: { count, reasons: [...reasons] }, gitAvailable: false };
     }
 

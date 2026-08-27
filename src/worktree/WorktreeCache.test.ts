@@ -411,6 +411,30 @@ describe("WorktreeCache — degraded cause while git is unavailable", () => {
     expect(tree.repos[0].degraded).toContain("2.31");
   });
 
+  it("publishes no registration for any repository while git is unusable", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    expect(cache.read().repos[0].generation).not.toBeUndefined();
+
+    cache.applyBuild(gitGone("git 2.20 is below 2.31", ["/a"]));
+    expect(cache.read().repos[0].generation).toBeUndefined();
+
+    // And a per-repo rebuild that lands while git is still unusable mints no
+    // authority either — the same reasoning the degraded mark already gets
+    // (design.md D12).
+    cache.applyRepo("/a/.git", listing([worktree("/a", { kind: "main" }), worktree("/a/wt")]));
+    expect(cache.read().repos[0].generation).toBeUndefined();
+  });
+
+  it("publishes one again once git answers", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    cache.applyBuild(gitGone("git 2.20 is below 2.31", ["/a"]));
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+
+    expect(cache.read().repos[0].generation).not.toBeUndefined();
+  });
+
   it("leaves a more specific degraded cause in place", () => {
     const cache = createWorktreeCache();
     cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));

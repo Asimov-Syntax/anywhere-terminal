@@ -255,3 +255,18 @@
     5. `src/worktree/WorktreeCache.test.ts` — a repo rebuild keeps the watch claim; a listing failure is not described as a watcher limitation
     6. `src/webview/worktree/WorktreeController.test.ts` — menu opened under one registration, a generation-only update, then the click (round-7 W6)
     7. `src/providers/WorktreeHost.actions.test.ts` — a launch survives a sibling repository rebuilding, and an unwatched repository still admits one
+
+## 10. Round 8 handback — the removal boundary
+
+- [x] 10_1 Mint the observation claim once, and let every authority ask it — verified: pnpm exec vitest run 'src/worktree/WorktreeCache.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 9_1
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{removing-a-worktree-needs-the-same-observation-a-launch-needs, a-repository-whose-listing-failed-authorizes-nothing}, design.md#d12-one-predicate-this-repository-was-observed-authorizes-both-a-launch-and-a-removal
+  - **Boundary**: no consumer may re-derive the claim from a degradation string
+  - **Acceptance**:
+    - Outcome: an unusable git authorizes no removal and no launch
+    - Verify: unit src/worktree/WorktreeCache.test.ts
+  - **Plan**:
+    1. `src/worktree/WorktreeCache.ts` — an unusable git withdraws every repository's registration token, as it already withdraws their freshness
+    2. `src/providers/WorktreeHost.ts` — one helper answers "was this repository observed", and launch admission and both removal readers call it
+    3. `src/worktree/WorktreeCache.test.ts` — the token goes when git does, and comes back when git does
+    4. `src/providers/WorktreeHost.actions.test.ts` — an unusable git refuses a removal and a launch; an unwatched repository refuses neither

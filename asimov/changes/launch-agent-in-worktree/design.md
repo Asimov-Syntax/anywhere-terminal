@@ -290,6 +290,45 @@ The guard's actual claim is therefore narrower than "the worktree is the one you
 "the host has not observed a change to it since you picked it", which is exactly what the
 generation records, and is the strongest claim any listing-derived identity can make.
 
+### D12: One predicate — "this repository was observed" — authorizes both a launch and a removal
+
+Round 8 refused to verify `711c9cf` because it changed what authorizes a destructive removal,
+which is a different boundary from what authorizes a launch, and round 7 never approved it. The
+refusal was right, and it caught a regression: launch admission checks `tree.gitAvailable` AND
+the registration token, while the two removal readers I changed check only the token — and the
+cache still publishes a token for a repository re-listed before git became unusable. Removal
+would have been authorized on an unusable git, which is strictly worse than what it replaced.
+
+**What each authority actually needs.**
+
+| Reader | Question it is really asking |
+|---|---|
+| launch admission | were these registrations observed, so the one I quote still means something? |
+| `mutationBindings.isDegraded` | can I judge what a removal did by comparing listings? |
+| `observeAfter`'s `listingDegraded` | same, after the attempt |
+
+All three want "this repository's listing was READ, by a usable git" — and none of them wants
+"a watcher could not be established", which says nothing about whether the listing was read.
+Including the watcher in the removal predicate was never a safety margin; it was noise that
+happened to point the conservative way, and it disabled removal on watcher-less hosts for no
+reason a user could act on.
+
+**The decision.** One claim, minted where it is known and read everywhere: a repository publishes
+a registration token only when its own listing was observed by a usable git. Absence therefore
+means "not observed", and every authority asks exactly that.
+
+- Withdrawn where a repository's listing was retained rather than read.
+- Withdrawn for EVERY repository while git itself is unusable, including one whose repo-local
+  apply landed before git went away — the same reasoning the cache already applies to the
+  degradation it shows the user, now applied to the authority it grants.
+- Not withdrawn for an unwatched repository, whose listing was read (D11).
+
+**What removal loses and gains.** It no longer refuses on a watcher failure, so worktrees can be
+removed on hosts without file watching. It now refuses while git is unusable, which it did only
+incidentally before, through a degradation string that a more specific reason could displace.
+Both the pre-removal assessment and the post-attempt classification read the same claim, so a
+removal cannot be authorized under one reading and classified under another.
+
 ## Interfaces
 
 ```ts
