@@ -6,6 +6,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { AgentHookController } from "./agentHooks/AgentHookController";
 import { createAgentHookRuntime } from "./agentHooks/AgentHookRuntime";
+import { startAgentHooks } from "./agentHooks/install/activation";
 import { agentHookSubmissions } from "./agentHooks/install/agentHookEvents";
 import {
   AGENT_HOOK_REGISTRY,
@@ -478,10 +479,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showInformationMessage(`AnyWhere Terminal agent hooks — ${summarizeUninstall(results)}`);
     }),
   );
-  await agentHookController.start();
-  // Retries anything a previous session recorded but could not clean (D13) —
-  // after the ledger file is read, since that record is what names them.
-  void agentHookLedger.load().then(() => agentHookTransitions.reconcileAll());
+  await startAgentHooks({
+    loadLedger: () => agentHookLedger.load(),
+    startController: () => agentHookController.start(),
+    reconcileAll: () => agentHookTransitions.reconcileAll(),
+  });
 
   // Shared GitDecorationProvider — one singleton, threaded through every
   // FileTreeHost so the three webviews (sidebar / panel / editor) see one

@@ -340,12 +340,12 @@
     2. Answer ownership from the path and the command together, and materialize the pre-ledger seed once as a concrete record instead of re-arming whenever nothing is recorded
     3. Cover in src/agentHooks/install/managedEntryLedger.test.ts: a pending path whose command survived migrating with it; one whose command did not migrating as unresolved and surviving a sweep that reported nothing installed; and a cleaned entry no longer re-seeding
 
-- [ ] 8_8 Read the record before anything reconciles
+- [x] 8_8 Read the record before anything reconciles — verified: bun test 'src/agentHooks/install/activation.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_2
   - **Refs**: .reviews/round-9.md#b14, design.md#d19-ownership-is-a-path-and-a-command-and-unprovable-history-says-so
   - **Acceptance**:
     - Outcome: The first install of a session cannot overwrite the record naming what the last session wrote
     - Verify: unit src/agentHooks/install/activation.test.ts
   - **Plan**:
-    1. Order activation in src/extension.ts so the ledger is read before any agent reconciles
+    1. Order activation in src/extension.ts so the ledger is read before any agent reconciles, behind a named seam in src/agentHooks/install/activation.ts that a test can reach without VS Code
     2. Cover in src/agentHooks/install/activation.test.ts that the read precedes the controller's first install, and that a location changed while the extension was closed leaves the previous path still recorded and cleanable
