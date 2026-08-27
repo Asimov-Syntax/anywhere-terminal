@@ -295,7 +295,7 @@
     1. Stop the listener registered at spawn from settling the probe once the deadline has fired in src/agentHooks/install/probeRunner.ts, leaving the gated path the only one that can
     2. Cover in src/agentHooks/install/probeRunner.test.ts: a leader closing first while the terminator fails later, asserting the reported result carries the incomplete-termination signal
 
-- [ ] 8_4 Decide from a configuration event what to reconcile
+- [x] 8_4 Decide from a configuration event what to reconcile — verified: bun test 'src/agentHooks/install/agentHookEvents.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_2
   - **Refs**: .reviews/round-9.md#b15
   - **Acceptance**:

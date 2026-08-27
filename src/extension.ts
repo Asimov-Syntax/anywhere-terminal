@@ -6,6 +6,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { AgentHookController } from "./agentHooks/AgentHookController";
 import { createAgentHookRuntime } from "./agentHooks/AgentHookRuntime";
+import { agentHookSubmissions } from "./agentHooks/install/agentHookEvents";
 import {
   AGENT_HOOK_REGISTRY,
   AGENT_HOOK_UNINSTALL_COMMAND,
@@ -436,15 +437,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // the same serialized queue and the latest desired setting wins.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      for (const entry of AGENT_HOOK_REGISTRY) {
-        // Answered by the agents the event concerns, not by all of them: every
-        // unrelated setting change used to enqueue a full transition per agent,
-        // and each one now takes a cross-process lock (round-7 B13).
-        const enabled = event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`);
-        const moved = entry.locationSettingKeys.some((key) => event.affectsConfiguration(`anywhereTerminal.${key}`));
-        if (enabled || moved) {
-          void agentHookTransitions.submit(entry, enabled);
-        }
+      // The decision lives in `agentHookSubmissions` so it is testable without
+      // VS Code — this body could name a moved directory and then submit an
+      // unforced reconciliation, and nothing below it could tell (round-9 B15).
+      for (const { entry, force } of agentHookSubmissions(AGENT_HOOK_REGISTRY, (key) =>
+        event.affectsConfiguration(key),
+      )) {
+        void agentHookTransitions.submit(entry, force);
       }
     }),
     vscode.commands.registerCommand(AGENT_HOOK_UNINSTALL_COMMAND, async () => {
