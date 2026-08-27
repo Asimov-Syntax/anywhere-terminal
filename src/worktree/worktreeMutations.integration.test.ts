@@ -138,7 +138,7 @@ describe("remove", () => {
     expect(fs.existsSync(target)).toBe(false);
   });
 
-  it("destroys a NESTED registered worktree's files — which is why D4 refuses outright", async () => {
+  it("[I10] destroys a NESTED registered worktree's files — which is why D4 refuses outright", async () => {
     // The claim the whole refusal rests on: git treats a nested registered
     // worktree as ordinary untracked content and deletes it, leaving a
     // registration pointing at nothing.
@@ -164,7 +164,7 @@ describe("remove", () => {
     expect(git(["worktree", "list", "--porcelain"])).toContain("nested");
   });
 
-  it("removes a worktree whose directory is already gone, pruning its registration", async () => {
+  it("[I10] removes a worktree whose directory is already gone, pruning its registration", async () => {
     const target = path.join(tmp, "wt-missing");
     await createWorktree(runner, {
       repoPath: repo,

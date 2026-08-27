@@ -24,11 +24,22 @@ const worktreeIds = Array.from({ length: WORKTREES }, (_, i) => `/repo/wt-${i}`)
 
 function wireAtScale() {
   const outcome: DescendantsOutcome = { kind: "ok", pids: [] };
-  const open = vi.fn(async () => ({ descendantsOf: () => outcome }));
+  // Spied INSIDE the snapshot, because that is where per-pane resolution work happens:
+  // `open` is once per rebuild by design, so counting it cannot see a per-pane regression.
+  const descendantsFor = vi.fn(() => outcome);
+  const open = vi.fn(async () => ({ descendantsOf: descendantsFor }));
   const descendantsOf = vi.fn(async (): Promise<DescendantsOutcome> => outcome);
   const processTable = { open, descendantsOf } as unknown as ProcessTableSnapshot;
 
-  const listRunning = vi.fn(async (): Promise<RunningSessionsOutcome> => ({ kind: "ok", sessions: [] }));
+  // A real running session for pane-0, so its identity RESOLVES — the proven cache is
+  // deliberately not populated by a negative (presenceProjector.ts:178), so a test over
+  // unresolvable panes would measure nothing.
+  const listRunning = vi.fn(
+    async (): Promise<RunningSessionsOutcome> => ({
+      kind: "ok",
+      sessions: [{ sessionId: "live-0", cwd: worktreeIds[0], pid: 1000 }],
+    }),
+  );
   const sessionMtime = vi.fn(async () => 1);
   // A path, not null: `presenceDeps` deliberately does NOT cache a miss (a session that
   // cannot be located yet may be locatable later), so a null-returning stub would measure
@@ -53,7 +64,15 @@ function wireAtScale() {
     sessionPath,
     now: () => NOW,
   });
-  return { open, listRunning, sessionMtime, sessionPath, store, projector: createPresenceProjector(deps) };
+  return {
+    open,
+    descendantsFor,
+    listRunning,
+    sessionMtime,
+    sessionPath,
+    store,
+    projector: createPresenceProjector(deps),
+  };
 }
 
 describe(`presence cost envelope — ${PANES} panes across ${WORKTREES} worktrees`, () => {
@@ -79,6 +98,21 @@ describe(`presence cost envelope — ${PANES} panes across ${WORKTREES} worktree
 
     expect(ten.open).toHaveBeenCalledTimes(PROCESS_TABLE_READS.exactly);
     expect(ten.listRunning).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-resolve a pane whose id, pid and cwd are unchanged", async () => {
+    // Round-2 B9: the first attempt at D2's third condition drove `reportTurn`, which
+    // routes through `resolveReportedSession` and bypasses `identify()` entirely — so
+    // deleting the pane-key cache did not fail it. This drives the cache D2 actually
+    // names: `PaneState.proven`, keyed by pane id, PTY pid and cwd.
+    const { descendantsFor, projector } = wireAtScale();
+
+    await projector.project(worktreeIds);
+    const afterFirst = descendantsFor.mock.calls.length;
+    await projector.project(worktreeIds);
+
+    expect(afterFirst, "no pane resolved, so caching a resolution proves nothing").toBeGreaterThan(0);
+    expect(descendantsFor.mock.calls.length).toBeLessThan(2 * afterFirst);
   });
 
   it("does not re-resolve a reported session whose pane key has not changed", async () => {

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { MAX_WORKTREES_PER_REPO } from "../../webview/worktree/WorktreeView";
 import { DEFERRED_BY_WT_006_2, INVARIANTS } from "./registry";
-import { tsFiles, withoutComments } from "./sourceSources";
+import { declarationsIn, isActive, tsFiles } from "./sourceSources";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SRC = path.join(REPO_ROOT, "src");
@@ -39,30 +39,6 @@ function blueprintTaskIds(): Set<string> {
   return new Set([...plan.matchAll(/^###\s*\[(WT-[\d.]+)\]/gm)].map((m) => m[1]));
 }
 
-/** Modifiers that mean the declaration does not run, so it cannot hold an invariant open. */
-const INERT = /(^|\.)(skip|todo|failing|concurrent\.skip)($|\.)/;
-
-/**
- * Test declarations, found at their call sites rather than by scanning raw text — a tag inside
- * a comment or a fixture string is not coverage. Titles may span lines, hence [\s\S].
- */
-const DECLARATION = /\b(?:it|test)((?:\.\w+)*)\s*\(\s*(["'`])([\s\S]*?)\2/g;
-
-interface Declaration {
-  readonly title: string;
-  readonly active: boolean;
-}
-
-function declarationsIn(source: string): Declaration[] {
-  const found: Declaration[] = [];
-  // Comments blanked FIRST (round-1 B1): a commented-out declaration is not coverage, and
-  // the regex alone cannot tell the difference.
-  for (const match of withoutComments(source).matchAll(DECLARATION)) {
-    found.push({ title: match[3], active: !INERT.test(match[1]) });
-  }
-  return found;
-}
-
 const TAG = /\[(I\d+)\]/g;
 
 /** Every invariant id tagged on a declaration that actually runs, mapped to where it was found. */
@@ -71,7 +47,7 @@ function taggedInvariants(): Map<string, string[]> {
   for (const full of tsFiles(SRC).filter((f) => f.endsWith(".test.ts"))) {
     const rel = path.relative(REPO_ROOT, full);
     for (const declaration of declarationsIn(fs.readFileSync(full, "utf8"))) {
-      if (!declaration.active) {
+      if (!isActive(declaration)) {
         continue;
       }
       for (const [, id] of declaration.title.matchAll(TAG)) {
@@ -143,14 +119,19 @@ describe("truthfulness invariants — coverage", () => {
       'it.skip("[I3] a disabled one", () => {});',
       '/* it("[I5] a block comment is not coverage either", () => {}); */',
       'it("[I6] a real one after a block comment", () => {});',
-      'const notAComment = "// it(\\"[I7] this lives inside a string\\", () => {});";',
+      // Round-2 B1: comments were blanked but STRING CONTENTS were still scanned, so a
+      // declaration quoted inside an ordinary fixture counted as live coverage — an
+      // invariant's tag could survive in a quoted example after its real test was deleted.
+      `const quoted = 'it("[I7] a declaration inside a string", () => {});';`,
+      'const templated = `it("[I8] inside a template", () => {});`;',
+      String.raw`const pattern = /it\("\[I10\] inside a regex", \(\) => \{\}\);/;`,
     ].join("\n");
     // Round-1 B1: this expectation used to LIST the commented declaration, so the scan's own
-    // regression test certified the defect. Both comment forms are excluded now, and a
-    // comment-looking run inside a string literal is still code.
+    // regression test certified the defect. Round-2 B1: strings, templates and regex
+    // literals were still scanned. Only a call site reached as CODE counts now.
     expect(
       declarationsIn(source)
-        .filter((d) => d.active)
+        .filter(isActive)
         .map((d) => d.title),
     ).toEqual(["[I2] a real one", "[I6] a real one after a block comment"]);
   });
@@ -158,9 +139,9 @@ describe("truthfulness invariants — coverage", () => {
   it("treats a disabled declaration as inert, so it cannot hold an invariant open", () => {
     for (const modifier of ["skip", "todo", "failing"]) {
       const only = declarationsIn(`it.${modifier}("[I9] x", () => {});`);
-      expect(only[0]?.active, `it.${modifier} counted as active`).toBe(false);
+      expect(only[0] !== undefined && isActive(only[0]), `it.${modifier} counted as active`).toBe(false);
     }
-    expect(declarationsIn('it.only("[I9] x", () => {});')[0]?.active).toBe(true);
+    expect(isActive(declarationsIn('it.only("[I9] x", () => {});')[0])).toBe(true);
   });
 
   it("has a running test for every invariant it claims is covered", () => {

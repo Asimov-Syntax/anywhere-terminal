@@ -55,7 +55,14 @@ let listingFails = false;
 let dirtyPaths: string[] = [];
 /** Set by a test that needs git to be killed part-way through a removal. */
 let removeTimesOut = false;
-/** Set by a test that needs git and the filesystem to DISAGREE after a removal. */
+/**
+ * Set by a test that needs git and the filesystem to DISAGREE after a removal.
+ *
+ * Round-2 B7: this used to skip the whole simulated mutation, leaving BOTH the registration
+ * and the directory in place — only the exit code disagreed with the post-state, which is
+ * not what I15's second clause is about. It now moves exactly one source: the directory
+ * goes, the registration stays, so the listing and the filesystem genuinely differ.
+ */
 let removeLeavesRegistration = false;
 
 /** Every envelope the host posted to the surface, and every message the webview sent back. */
@@ -109,12 +116,14 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
     createGitCommandRunner: () => ({
       run: async (args: readonly string[], cwd: string) => {
         argv.push({ args: [...args], cwd });
-        if (args[0] === "worktree" && args[1] === "remove" && !removeLeavesRegistration) {
+        if (args[0] === "worktree" && args[1] === "remove") {
           // Real git drops the registration AND the directory; the host reads
           // both independently, so a fake that moved only one would leave every
           // removal indeterminate.
           const target = args[args.length - 1] ?? "";
-          registered = registered.filter((p) => p !== target);
+          if (!removeLeavesRegistration) {
+            registered = registered.filter((p) => p !== target);
+          }
           fs.rmSync(target, { recursive: true, force: true });
         }
         const key = `${cwd}|${args.join(" ")}`;
@@ -921,50 +930,65 @@ describe("the invariants that span the host and the webview", () => {
     expect(document.body.textContent).toContain("changed since you confirmed");
   });
 
-  it("[I14] refuses to force-remove a worktree whose agent became working", async () => {
-    // Round-1 B6: D5's I14 row has two clauses and only the blocker-set-changed one was
-    // covered. This is the other: a confirmation cannot authorize removing a folder out
-    // from under an agent that is mid-turn, so the dialog must offer no confirm button at
-    // all rather than a disabled one.
-    //
-    // The running row is published rather than driven from a hook event: this harness
-    // stubs the projector (an assembly with no panes cannot project one), and the
-    // hook-event → running-row link is what extension.crossLayer.test.ts owns. What THIS
-    // test owns is presence → blocker assessment → dialog, which no unit test spans.
+  it("[I14] refuses a confirmation once the agent starts working under the open dialog", async () => {
+    // Round-2 B6: the row used to be running before assembly, so the very first assessment
+    // refused and the "became working" in the name never happened. D5's clause is about a
+    // transition UNDER the open confirmation: the dialog opens on a removable worktree, the
+    // agent starts a turn, and the force the user then authorizes must not be spent.
     dirtyPaths = ["a.txt"];
     publishedRow = agentRow({
       rowId: "row-busy",
       paneId: "pane-busy",
       viewId: "view-1",
-      title: "mid turn",
+      title: "idle for now",
       agent: "claude",
-      activity: "running",
+      activity: "idle",
       activitySource: "hook",
     });
-    await assemble();
+    const { host } = await assemble();
 
+    // Blocked on the dirty file only — an agent that is idle blocks nothing.
     clickItem(openMenu("feature"), /remove/i);
     await settle();
-
-    // The notice offers the same "Force remove…" it offers any blocked removal — the
-    // refusal is not in the button, it is in what the button opens. Walking that click is
-    // the point: asserting only that git was never called would pass on a dialog that
-    // never opened at all.
     const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
       /force remove/i.test(b.textContent ?? ""),
     );
-    expect(force, "the blocked removal offered no way through to the dialog").toBeDefined();
+    expect(force, "an idle agent should leave the removal merely confirmable").toBeDefined();
     force?.click();
     await settle();
-
-    // A refusal dialog, not a confirmation: it names why, and carries NO confirm button —
-    // absent rather than disabled, because a disabled one claims the action exists here.
-    expect(document.body.textContent).toContain("out from under a working agent");
-    const confirms = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
-      /^remove/i.test((b.textContent ?? "").trim()),
+    const confirm = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find((b) =>
+      /force remove/i.test(b.textContent ?? ""),
     );
-    expect(confirms).toEqual([]);
-    expect(gitCalls("remove")).toEqual([]);
+    expect(
+      confirm,
+      `offered: ${[...document.querySelectorAll('[role="dialog"] button')].map((b) => b.textContent).join(" | ")}`,
+    ).toBeDefined();
+
+    // NOW the agent starts working, while the confirmation the user is looking at stays open.
+    publishedRow = { ...publishedRow, activity: "running" };
+    await host.mutationBindings().forceRebuild(REPO_ID);
+    await settle();
+
+    confirm?.click();
+    await settle();
+
+    // The force never reaches git: the agent that started working turned a CONFIRMABLE
+    // removal into a REFUSED one under the open dialog.
+    expect(gitCalls("remove").filter((a) => a.includes("--force"))).toEqual([]);
+
+    // And re-opening now shows why, with no confirm button to try again with — the same
+    // affordance that was confirmable a moment ago is a refusal.
+    const reopen = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
+      /force remove/i.test(b.textContent ?? ""),
+    );
+    expect(reopen, "the refusal offered no way to see the reason").toBeDefined();
+    reopen?.click();
+    await settle();
+    expect(document.body.textContent).toContain("out from under a working agent");
+    const retry = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
+      /force remove/i.test(b.textContent ?? ""),
+    );
+    expect(retry).toEqual([]);
   });
 
   it("[I15] reports a killed removal as indeterminate, and still rebuilds", async () => {

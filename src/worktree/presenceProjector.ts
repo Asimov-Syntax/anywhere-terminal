@@ -77,11 +77,13 @@ export interface PaneActivityReading {
  * reducer test asserted the three state names as a literal and this table listed the same
  * three, so a mapped-but-unreachable state updated neither.
  */
-export const TURN_ACTIVITY: Record<AgentTurnReport["state"], PaneActivity> = {
+export const TURN_ACTIVITY: Readonly<Record<AgentTurnReport["state"], PaneActivity>> = Object.freeze({
   working: "running",
   waiting: "waiting",
   done: "idle",
-};
+  // Frozen and readonly (round-2 W3): exporting it for I13's universe must not hand an
+  // importer a way to rewrite the mapping production projection reads.
+});
 
 /** What the row shows and which evidence chose it. */
 interface Reported {

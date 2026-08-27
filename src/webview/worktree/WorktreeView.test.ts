@@ -472,9 +472,14 @@ describe("subagent rows", () => {
     // separately focusable, separately closeable, and separately wrong.
     const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
     view.setData(populated());
-    const hist = view.element.querySelector<HTMLElement>(".wt-hist");
-    expect(hist, "no subagent row rendered, so its lack of identity proves nothing").not.toBeNull();
-    expect(hist?.dataset.paneId).toBeUndefined();
+    // Round-2 B2: this read `.wt-hist`, the CONTAINER, which never carried a paneId to
+    // begin with. The rows are `.wt-srow` (worktreeTreeView.ts:485), and they are what the
+    // invariant is about.
+    const rows = [...view.element.querySelectorAll<HTMLElement>(".wt-srow")];
+    expect(rows.length, "no subagent row rendered, so its lack of identity proves nothing").toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.dataset.paneId).toBeUndefined();
+    }
   });
 
   it("[I11] activating one targets the parent's pane", () => {

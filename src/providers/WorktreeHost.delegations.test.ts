@@ -472,12 +472,12 @@ describe("a child's running does not outlive its parent's freshness", () => {
     expect(lastRoster(h.view)).toEqual(RUNNING_CHILD);
   });
 
-  it("republishes running as unknown once the parent has stopped working", async () => {
+  it("[I12] republishes running as unknown once the parent has stopped working", async () => {
     const h = await withRunningChild({ activity: "idle", activitySource: "hook" });
     expect(lastRoster(h.view)).toEqual(DECAYED);
   });
 
-  it("republishes running as unknown when the parent's own evidence source is degraded", async () => {
+  it("[I12] republishes running as unknown when the parent's own evidence source is degraded", async () => {
     const h = await withRunningChild({ activity: "running", activitySource: "registry" }, [
       { source: "registry", reason: "spawn ENOENT", since: 1 },
     ]);

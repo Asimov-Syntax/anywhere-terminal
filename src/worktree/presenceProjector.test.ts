@@ -240,7 +240,7 @@ describe("the resolution slot", () => {
 });
 
 describe("an inconclusive read retains identity", () => {
-  it("keeps the proven agent and source when the read fails", async () => {
+  it("[I1] keeps the proven agent and source when the read fails", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 42 })]);
     h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
     await h.projector.project([WT]);
@@ -958,7 +958,7 @@ describe("the registry owns its own degradation entry", () => {
     expect(presence.degradedSources.map((d) => d.source)).toEqual(["registry"]);
   });
 
-  it("keeps replaying a pane failure it genuinely did not re-check", async () => {
+  it("[I1] keeps replaying a pane failure it genuinely did not re-check", async () => {
     const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
     h.setLookup(() => ({ kind: "failed", source: "panes", reason: "`ps` timed out" }));
     await h.projector.project([WT]);
