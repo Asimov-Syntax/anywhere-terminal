@@ -104,6 +104,18 @@
           "scope": "machine",
           "description": "Enable observational Cursor Agent hooks on this machine. Hooks are fail-open and only report terminal activity."
         },
+        "anywhereTerminal.agentHooks.claude.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Enable observational Claude Code hooks on this machine. Hooks are fail-open and only report terminal activity. Enabling this writes a managed entry into your Claude settings.json; disabling it removes that entry again."
+        },
+        "anywhereTerminal.agentHooks.claudeConfigDir": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Directory holding the Claude settings.json to install hooks into. Leave empty to use CLAUDE_CONFIG_DIR, or ~/.claude when that is unset."
+        },
         "anywhereTerminal.fileSearch.maxResults": {
           "type": "number",
           "default": 50,
@@ -215,6 +227,10 @@
       ]
     },
     "commands": [
+      {
+        "command": "anywhereTerminal.agentHooks.uninstall",
+        "title": "AnyWhere Terminal: Remove Installed Agent Hooks"
+      },
       {
         "command": "anywhereTerminal.newTerminalInEditor",
         "title": "AnyWhere Terminal: New Terminal in Editor"

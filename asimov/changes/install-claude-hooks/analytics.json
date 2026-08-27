@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "install-claude-hooks"
+  },
+  "sessions": [
+    {
+      "sessionId": "e49fe5a3-152f-4c47-8215-17619a318544",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787811442113,
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787811442113
+        },
+        {
+          "phase": "build",
+          "from": 1787813189488
+        }
+      ],
+      "firstAt": 1787811442113,
+      "lastAt": 1787812961491,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-librarian",
+          "model": "gpt-5.6-terra",
+          "messages": 9,
+          "inputTokens": 418371,
+          "outputTokens": 423,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 124928,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-oracle",
+          "model": "gpt-5.6-sol",
+          "messages": 19,
+          "inputTokens": 1608799,
+          "outputTokens": 531,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 159744,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 55,
+          "inputTokens": 110,
+          "outputTokens": 67884,
+          "reasoningTokens": 14917,
+          "cacheWriteTokens": 101938,
+          "cacheReadTokens": 16196318,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 101938,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

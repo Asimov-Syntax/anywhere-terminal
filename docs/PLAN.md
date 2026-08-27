@@ -346,7 +346,7 @@ state. There is nothing to provision.
 | **Labels** | security-privacy |
 | **Notes** | Writes into a user-owned configuration file and registers an executable path. The lock, atomic rename, and typed failure reasons already exist and must be reused rather than reimplemented |
 | **Acceptance** | Installation is opt-in per agent and preserves whatever the user already set; the user's config survives concurrent editors, interrupted writes, symlinked destinations, and keys we do not recognise; installing repeatedly converges, and uninstall removes everything managed regardless of settings; an extension update cannot leave a registered script path dangling; a hook with no coordinates, or no runtime to reach, costs the agent nothing and claims nothing |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-006.3] Turn State & Presence Upgrade
 

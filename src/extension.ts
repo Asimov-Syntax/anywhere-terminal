@@ -5,9 +5,15 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { AgentHookController } from "./agentHooks/AgentHookController";
 import { createAgentHookRuntime } from "./agentHooks/AgentHookRuntime";
-import { cursorAgentRegistration } from "./agentHooks/agents/cursor";
+import {
+  AGENT_HOOK_REGISTRY,
+  AGENT_HOOK_UNINSTALL_COMMAND,
+  isAgentHookEnabled,
+  type SettingsReader,
+} from "./agentHooks/install/agentHookRegistry";
+import { ManagedConfigInstaller } from "./agentHooks/install/ManagedConfigInstaller";
+import { summarizeUninstall, uninstallAllAgents } from "./agentHooks/install/uninstallAllAgents";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
-import { CursorHookInstaller } from "./cursor/CursorHookInstaller";
 import { createWatcherPool } from "./providers/fsWatcherPool";
 import { createGitDecorationProvider } from "./providers/gitDecorationProvider";
 import { resolveRenameTargetTabId } from "./providers/resolveRenameTarget";
@@ -116,22 +122,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // and runtime/contributor state so stale async transitions cannot restore
   // access. One runtime serves every hook-capable agent
   // (generalize-agent-hook-runtime D1, D6).
-  const readCursorHooksEnabled = (): boolean =>
-    vscode.workspace.getConfiguration("anywhereTerminal").get<boolean>("cursorAgent.hooks.enabled") ?? false;
+  const readAgentHookSetting: SettingsReader = <T>(key: string) =>
+    vscode.workspace.getConfiguration("anywhereTerminal").get<T>(key);
+  // storageRoot, not the wrapper directory: each adapter appends its own
+  // sub-directory, so cursor's on-disk location is unchanged.
+  const agentHookStorageRoot = context.globalStorageUri.fsPath;
   const agentHookController = new AgentHookController({
-    agents: [
-      {
-        agent: "cursor",
-        initialEnabled: readCursorHooksEnabled(),
-        installer: new CursorHookInstaller({
-          configPath: path.join(os.homedir(), ".cursor", "hooks.json"),
-          storagePath: path.join(context.globalStorageUri.fsPath, "cursor-hooks"),
-        }),
-      },
-    ],
+    agents: AGENT_HOOK_REGISTRY.map((entry) => ({
+      agent: entry.agent,
+      initialEnabled: isAgentHookEnabled(entry, readAgentHookSetting),
+      installer: new ManagedConfigInstaller(entry.createAdapter(readAgentHookSetting), {
+        storageRoot: agentHookStorageRoot,
+      }),
+    })),
     createRuntime: () =>
       createAgentHookRuntime(
-        [cursorAgentRegistration()],
+        AGENT_HOOK_REGISTRY.map((entry) => entry.createRegistration()),
         {},
         {
           onStatus: (update) => {
@@ -173,9 +179,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // the same serialized controller and the latest desired setting wins.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("anywhereTerminal.cursorAgent.hooks.enabled")) {
-        void agentHookController.setDesiredEnabled("cursor", readCursorHooksEnabled());
+      for (const entry of AGENT_HOOK_REGISTRY) {
+        if (event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`)) {
+          void agentHookController.setDesiredEnabled(entry.agent, isAgentHookEnabled(entry, readAgentHookSetting));
+        }
       }
+    }),
+    vscode.commands.registerCommand(AGENT_HOOK_UNINSTALL_COMMAND, async () => {
+      const results = await uninstallAllAgents({
+        storageRoot: agentHookStorageRoot,
+        settings: readAgentHookSetting,
+      });
+      void vscode.window.showInformationMessage(`AnyWhere Terminal agent hooks — ${summarizeUninstall(results)}`);
     }),
   );
   await agentHookController.start();

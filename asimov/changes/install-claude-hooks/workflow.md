@@ -1,0 +1,39 @@
+# Workflow State: install-claude-hooks
+
+> State file, not a procedure — stages live in the asimov-plan/build/archive skills.
+> Source of truth: gates → this file · task completion → `tasks.md`
+> States: `[ ]` pending · `[x]` done · `[-]` skipped/N/A · `[!]` failed non-blocking
+
+## Plan
+
+- [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
+
+## Implement
+
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [ ] Gate: implementation approved
+- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+
+## Archive
+
+- [ ] Apply deltas: `bun run asm change apply`
+- [ ] Archive change: `bun run asm change archive`
+
+> Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
+
+## Notes
+
+<!-- Blueprint source + lane below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
+
+Blueprint: docs/PLAN.md task WT-006.2
+Lane: full (standard) — writes into a user-owned config file and registers an executable path | flags: security-privacy
+Fastlane: no real fork at Gate 1. The PLAN Notes already mandate reuse of the existing lock, atomic rename, and typed reasons, so extract-and-adapt was the only direction; recorded as D1 rather than asked.
+Oracle review: REJECT → 6 findings, 5 accepted, 1 partially. Fixes landed as D10 (classified read — the finding that justified the REJECT: a malformed settings.json would have been rewritten as a fresh document), D2 tightened to container-level validation, D3 re-founded and narrowed to directory-suffix ownership, D11 wrapper chmod-before-rename, and a real wiring Verify on 2_2. Rejected: a rolling settings backup (atomic rename plus compare-and-retry is the accepted failure model) and a user-facing install-status detector (outside WT-006.2's contract).
+Two corrections owed to agent-hook-server.md at blueprint sync: § 4.7's scope column should read `machine` (D8), and § 4.7's update-reconciliation rationale is factually wrong — it claims the script lives in the extension install directory, while `src/extension.ts:128` puts it under `globalStorageUri`, which is stable across version upgrades (D3).
+docs/research/20260827-claude-code-hooks-settings-schema.md was produced during the oracle round and is cited by task 2_1.
+2_1 posts `application/json` with `--data-binary @-`, not the form-encoded body § 4.3's prose names. Form fields exist in the reference implementation only because it hand-builds JSON around path-bearing coordinate fields; ours carries every coordinate in the URL and streams stdin verbatim, so the hazard form-encoding solves does not exist here. A third correction owed to § 4.3 at blueprint sync.
+2_3 was added mid-build from the same reference read: Windows resolves an unqualified `more`/`curl` against the working directory before PATH, so the shipped cursor wrapper hands the hook payload to a repo-local `more.*` if one exists. Out of 2_1's lease, hence its own task.

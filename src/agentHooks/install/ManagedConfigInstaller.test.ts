@@ -1,18 +1,45 @@
+// src/agentHooks/install/ManagedConfigInstaller.test.ts — Migrated from
+// src/cursor/CursorHookInstaller.test.ts with its assertions intact, plus the
+// behaviours install-claude-hooks adds to the shared layer: classified reads
+// (D10), symlink refusal ahead of the lock (D5), directory-scoped managed-entry
+// ownership (D3), and chmod-before-rename wrapper creation (D11).
+
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CURSOR_HOOK_EVENTS, CursorHookInstaller, type CursorHookInstallerDependencies } from "./CursorHookInstaller";
+import { CURSOR_HOOK_EVENTS } from "../agents/cursor";
+import { CURSOR_WRAPPER_DIRECTORY, cursorConfigAdapter, cursorWrapperScripts } from "./cursorConfigAdapter";
+import { ManagedConfigInstaller, type ManagedConfigInstallerDependencies } from "./ManagedConfigInstaller";
 
 const tempDirectories: string[] = [];
 
-async function fixture(platform: "linux" | "win32" = "linux") {
+interface Paths {
+  configPath: string;
+  storageRoot: string;
+  wrapperDirectory: string;
+  platform: "linux" | "win32";
+}
+
+async function fixture(platform: "linux" | "win32" = "linux"): Promise<Paths> {
   const directory = await mkdtemp(join(tmpdir(), "cursor-hooks-"));
   tempDirectories.push(directory);
-  const configPath = join(directory, "hooks.json");
-  const storagePath = join(directory, "storage");
-  return { configPath, storagePath, platform };
+  const storageRoot = join(directory, "storage");
+  return {
+    configPath: join(directory, "hooks.json"),
+    storageRoot,
+    wrapperDirectory: join(storageRoot, CURSOR_WRAPPER_DIRECTORY),
+    platform,
+  };
+}
+
+function installerFor(paths: Paths, dependencies: ManagedConfigInstallerDependencies = {}) {
+  return new ManagedConfigInstaller(
+    cursorConfigAdapter(paths.configPath),
+    { storageRoot: paths.storageRoot, platform: paths.platform },
+    dependencies,
+  );
 }
 
 async function config(path: string) {
@@ -36,7 +63,7 @@ afterEach(async () => {
   await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe("CursorHookInstaller", () => {
+describe("ManagedConfigInstaller with the cursor adapter", () => {
   it("adds only its observer entries and exactly removes them again", async () => {
     const paths = await fixture();
     const original = {
@@ -48,7 +75,7 @@ describe("CursorHookInstaller", () => {
       },
     };
     await writeFile(paths.configPath, JSON.stringify(original));
-    const installer = new CursorHookInstaller(paths);
+    const installer = installerFor(paths);
 
     expect((await installer.install()).installed).toBe(true);
     const installed = await config(paths.configPath);
@@ -70,7 +97,7 @@ describe("CursorHookInstaller", () => {
   it("removes only exact owned entries and preserves lookalike user entries", async () => {
     const paths = await fixture();
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
-    const installer = new CursorHookInstaller(paths);
+    const installer = installerFor(paths);
     await installer.install();
     const document = await config(paths.configPath);
     const hooks = document.hooks as Record<string, Array<Record<string, unknown>>>;
@@ -95,18 +122,187 @@ describe("CursorHookInstaller", () => {
   ])("does not rewrite %s configuration", async (_name, contents) => {
     const paths = await fixture();
     await writeFile(paths.configPath, contents);
-    const installer = new CursorHookInstaller(paths);
+    const installer = installerFor(paths);
 
     await expect(installer.install()).resolves.toMatchObject({ installed: false, reason: "unsupported-config" });
     expect(await readFile(paths.configPath, "utf8")).toBe(contents);
     await expect(installer.uninstall()).resolves.toMatchObject({ removed: false, reason: "unsupported-config" });
   });
 
+  describe("classified reads (D10)", () => {
+    it.each([
+      ["an array root", "[]"],
+      ["a null root", "null"],
+      ["a numeric root", "42"],
+      ["a string root", '"hello"'],
+      ["truncated JSON", '{"version": 1, "hooks":'],
+    ])("refuses %s byte-for-byte instead of recreating the file", async (_name, contents) => {
+      const paths = await fixture();
+      await writeFile(paths.configPath, contents);
+      const installer = installerFor(paths);
+
+      await expect(installer.install()).resolves.toMatchObject({ installed: false, reason: "unsupported-config" });
+      expect(await readFile(paths.configPath, "utf8")).toBe(contents);
+      await expect(installer.uninstall()).resolves.toMatchObject({ removed: false, reason: "unsupported-config" });
+      expect(await readFile(paths.configPath, "utf8")).toBe(contents);
+    });
+
+    it("creates a configuration only when the file does not exist", async () => {
+      const paths = await fixture();
+
+      expect((await installerFor(paths).install()).installed).toBe(true);
+      expect(await config(paths.configPath)).toMatchObject({ version: 1 });
+    });
+
+    it("installs into a configuration directory that does not exist yet", async () => {
+      const paths = await fixture();
+      const nested = { ...paths, configPath: join(paths.storageRoot, "never", "created", "hooks.json") };
+
+      expect((await installerFor(nested).install()).installed).toBe(true);
+      expect(await config(nested.configPath)).toMatchObject({ version: 1 });
+    });
+
+    it("reports nothing to remove — not a lock failure — when the config directory is absent", async () => {
+      const paths = await fixture();
+      const nested = { ...paths, configPath: join(paths.storageRoot, "never", "created", "hooks.json") };
+
+      await expect(installerFor(nested).uninstall()).resolves.toEqual({ removed: false, reason: "not-installed" });
+      await expect(stat(join(paths.storageRoot, "never"))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  describe("symlink refusal (D5)", () => {
+    it.each([
+      "install",
+      "uninstall",
+    ] as const)("refuses a symlinked destination on %s and takes no lock", async (op) => {
+      const paths = await fixture();
+      const real = join(paths.storageRoot, "real-hooks.json");
+      await mkdir(paths.storageRoot, { recursive: true });
+      await writeFile(real, JSON.stringify({ version: 1, hooks: {} }));
+      await symlink(real, paths.configPath);
+      const installer = installerFor(paths);
+
+      const outcome = op === "install" ? await installer.install() : await installer.uninstall();
+      expect(outcome).toMatchObject({ reason: "unsupported-config" });
+      expect(await readFile(real, "utf8")).toBe(JSON.stringify({ version: 1, hooks: {} }));
+      await expect(stat(`${paths.configPath}.anywhere-terminal.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  describe("managed-entry ownership (D3)", () => {
+    it("sweeps and rewrites an entry left behind when the storage root moved", async () => {
+      const paths = await fixture();
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+      const stale = `'/somewhere/else/${CURSOR_WRAPPER_DIRECTORY}/cursor-hook-observer.sh'`;
+      await writeFile(
+        paths.configPath,
+        JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: stale, timeout: 2 }] } }),
+      );
+
+      expect((await installerFor(paths).install()).installed).toBe(true);
+      const hooks = (await config(paths.configPath)).hooks as Record<string, Array<Record<string, unknown>>>;
+      expect(hooks.sessionStart).toHaveLength(1);
+      expect(hooks.sessionStart[0]?.command).toContain(paths.storageRoot);
+      expect(hooks.sessionStart[0]?.command).not.toBe(stale);
+    });
+
+    it("leaves a same-named script the extension does not own untouched", async () => {
+      const paths = await fixture();
+      const foreign = { command: "'/home/alice/scripts/cursor-hook-observer.sh'", timeout: 2 };
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: { sessionStart: [{ ...foreign }] } }));
+      const installer = installerFor(paths);
+
+      expect((await installer.install()).installed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({
+        sessionStart: [foreign, { timeout: 2 }],
+      });
+
+      expect((await installer.uninstall()).removed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [foreign] });
+    });
+
+    it("converges to one managed entry per event across repeated installs", async () => {
+      const paths = await fixture();
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+      const installer = installerFor(paths);
+
+      await installer.install();
+      await installer.install();
+      await installer.install();
+
+      const hooks = (await config(paths.configPath)).hooks as Record<string, Array<Record<string, unknown>>>;
+      for (const event of CURSOR_HOOK_EVENTS) {
+        expect(hooks[event]).toHaveLength(1);
+      }
+    });
+  });
+
+  describe("wrapper bytes are pinned", () => {
+    // The move from CursorHookInstaller to the shared reconciler must not alter
+    // one byte of what a user's Cursor runs. Length is pinned alongside content
+    // so a whitespace-only regression cannot pass.
+    it("emits the POSIX wrapper verbatim at its recorded length", async () => {
+      const paths = await fixture();
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+
+      await installerFor(paths).install();
+
+      const contents = await readFile(join(paths.wrapperDirectory, "cursor-hook-observer.sh"), "utf8");
+      expect(contents).toBe(cursorWrapperScripts().posix);
+      expect(Buffer.byteLength(contents, "utf8")).toBe(423);
+      expect(contents.startsWith("#!/bin/sh\n")).toBe(true);
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted script must carry this shell expansion literally.
+      expect(contents).toContain("${ANYWHERE_TERMINAL_CURSOR_URL}/cursor");
+    });
+
+    it("emits the Windows wrapper verbatim at its recorded length", async () => {
+      const paths = await fixture("win32");
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+
+      await installerFor(paths, { run: async () => ({ exitCode: 0, stdout: "{}\n" }) }).install();
+
+      const contents = await readFile(join(paths.wrapperDirectory, "cursor-hook-observer.cmd"), "utf8");
+      expect(contents).toBe(cursorWrapperScripts().windows);
+      expect(Buffer.byteLength(contents, "utf8")).toBe(418);
+      expect(contents).toContain("$env:ANYWHERE_TERMINAL_CURSOR_URL + '/cursor'");
+      expect(contents).toContain('"%SystemRoot%\\System32\\more.com" >nul 2>nul');
+      expect(contents).not.toMatch(/^more /m);
+    });
+  });
+
+  it("makes the wrapper executable before it is reachable (D11)", async () => {
+    const paths = await fixture();
+    await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+    const order: string[] = [];
+    const wrapper = join(paths.wrapperDirectory, "cursor-hook-observer.sh");
+    const installer = installerFor(paths, {
+      fs: {
+        writeFile: (async (path: string, contents: string, options?: unknown) => {
+          if (String(path).includes("cursor-hook-observer")) {
+            order.push(`write:${String(path) === wrapper ? "canonical" : "temp"}`);
+          }
+          return writeFile(path, contents, options as never);
+        }) as never,
+        chmod: (async (path: string, mode: number) => {
+          if (String(path).includes("cursor-hook-observer")) {
+            order.push(`chmod:${String(path) === wrapper ? "canonical" : "temp"}`);
+          }
+          return chmod(path, mode);
+        }) as never,
+      },
+    });
+
+    expect((await installer.install()).installed).toBe(true);
+    expect(order).toEqual(["write:temp", "chmod:temp"]);
+    expect((await stat(wrapper)).mode & 0o777).toBe(0o700);
+  });
+
   it("retries when another writer changes the configuration before replacement", async () => {
     const paths = await fixture();
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
     let changes = 0;
-    const installer = new CursorHookInstaller(paths, {
+    const installer = installerFor(paths, {
       beforeReplace: async () => {
         changes += 1;
         if (changes === 1) {
@@ -123,7 +319,7 @@ describe("CursorHookInstaller", () => {
     const paths = await fixture();
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
     let changes = 0;
-    const installer = new CursorHookInstaller(paths, {
+    const installer = installerFor(paths, {
       beforeReplace: async () => {
         changes += 1;
         await writeFile(paths.configPath, JSON.stringify({ version: 1, externalChange: changes, hooks: {} }));
@@ -139,7 +335,7 @@ describe("CursorHookInstaller", () => {
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
     await writeFile(`${paths.configPath}.anywhere-terminal.lock`, "stale");
     await utimes(`${paths.configPath}.anywhere-terminal.lock`, 0, 0);
-    const installer = new CursorHookInstaller(paths, { now: () => 100_000 });
+    const installer = installerFor(paths, { now: () => 100_000 });
 
     expect((await installer.install()).installed).toBe(true);
   });
@@ -150,7 +346,7 @@ describe("CursorHookInstaller", () => {
     await writeFile(paths.configPath, original);
     await writeFile(`${paths.configPath}.anywhere-terminal.lock`, "active");
     let sleeps = 0;
-    const installer = new CursorHookInstaller(paths, {
+    const installer = installerFor(paths, {
       now: Date.now,
       sleep: async () => {
         sleeps += 1;
@@ -168,18 +364,21 @@ describe("CursorHookInstaller", () => {
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
     await chmod(paths.configPath, 0o640);
 
-    expect((await new CursorHookInstaller(paths).install()).installed).toBe(true);
+    expect((await installerFor(paths).install()).installed).toBe(true);
     expect((await stat(paths.configPath)).mode & 0o777).toBe(0o640);
   });
 
   it("uses a valid sibling temporary path for Windows-shaped configuration paths", async () => {
     const configPath = "C:\\Users\\alice\\.cursor\\hooks.json";
-    const storagePath = "C:\\Users\\alice\\AppData\\Local\\AnyWhere Terminal";
+    const storageRoot = "C:\\Users\\alice\\AppData\\Local\\AnyWhere Terminal";
     const files = new Map<string, string>([[configPath, JSON.stringify({ version: 1, hooks: {} })]]);
     const replacements: Array<[string, string]> = [];
     const memoryFs = {
       mkdir: vi.fn(async () => undefined),
       chmod: vi.fn(async () => undefined),
+      lstat: vi.fn(async () => {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      }),
       open: vi.fn(async (path: string) => {
         if (files.has(path)) {
           throw Object.assign(new Error("exists"), { code: "EEXIST" });
@@ -217,15 +416,16 @@ describe("CursorHookInstaller", () => {
       writeFile: vi.fn(async (path: string, contents: string | Uint8Array) => {
         files.set(path, typeof contents === "string" ? contents : Buffer.from(contents).toString("utf8"));
       }),
-    } as unknown as NonNullable<CursorHookInstallerDependencies["fs"]>;
-    const installer = new CursorHookInstaller(
-      { configPath, storagePath, platform: "win32" },
+    } as unknown as NonNullable<ManagedConfigInstallerDependencies["fs"]>;
+    const installer = new ManagedConfigInstaller(
+      cursorConfigAdapter(configPath),
+      { storageRoot, platform: "win32" },
       { fs: memoryFs, now: () => 123, run: async () => ({ exitCode: 0, stdout: "{}\n" }) },
     );
 
     expect((await installer.install()).installed).toBe(true);
-    expect(replacements).toEqual([
-      ["C:\\Users\\alice\\.cursor\\.hooks.json.123.tmp", "C:\\Users\\alice\\.cursor\\hooks.json"],
+    expect(replacements.filter(([, target]) => target === configPath)).toEqual([
+      ["C:\\Users\\alice\\.cursor\\.hooks.json.123.tmp", configPath],
     ]);
   });
 
@@ -233,13 +433,20 @@ describe("CursorHookInstaller", () => {
     const paths = await fixture();
     const original = JSON.stringify({ version: 1, hooks: {} });
     await writeFile(paths.configPath, original);
-    const installer = new CursorHookInstaller(paths, {
-      rename: async () => {
-        throw new Error("denied");
+    let renames = 0;
+    const installer = installerFor(paths, {
+      rename: async (oldPath, newPath) => {
+        renames += 1;
+        // Let the wrapper rename through; fail only the configuration replace.
+        if (newPath === paths.configPath) {
+          throw new Error("denied");
+        }
+        await rename(oldPath, newPath);
       },
     });
 
     await expect(installer.install()).resolves.toMatchObject({ installed: false, reason: "write-failed" });
+    expect(renames).toBeGreaterThan(0);
     expect(await readFile(paths.configPath, "utf8")).toBe(original);
   });
 
@@ -247,7 +454,7 @@ describe("CursorHookInstaller", () => {
     const paths = await fixture();
     const original = JSON.stringify({ version: 1, hooks: {} });
     await writeFile(paths.configPath, original);
-    const installer = new CursorHookInstaller(paths, {
+    const installer = installerFor(paths, {
       fs: {
         writeFile: async () => {
           throw new Error("permission denied");
@@ -262,10 +469,10 @@ describe("CursorHookInstaller", () => {
   it("reports cleanup failure and leaves the user configuration intact", async () => {
     const paths = await fixture();
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
-    const installer = new CursorHookInstaller(paths);
+    const installer = installerFor(paths);
     await installer.install();
     const before = await readFile(paths.configPath, "utf8");
-    const blocked = new CursorHookInstaller(paths, {
+    const blocked = installerFor(paths, {
       rename: async () => {
         throw new Error("denied");
       },
@@ -278,12 +485,12 @@ describe("CursorHookInstaller", () => {
   it("generates a POSIX wrapper that drains stdin and returns empty JSON after curl fails", async () => {
     const paths = await fixture();
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
-    const installer = new CursorHookInstaller(paths);
+    const installer = installerFor(paths);
 
     await installer.install();
-    const wrapper = join(paths.storagePath, "cursor-hook-observer.sh");
-    const bin = join(paths.storagePath, "bin");
-    await import("node:fs/promises").then(({ mkdir }) => mkdir(bin));
+    const wrapper = join(paths.wrapperDirectory, "cursor-hook-observer.sh");
+    const bin = join(paths.storageRoot, "bin");
+    await mkdir(bin, { recursive: true });
     const curl = join(bin, "curl");
     await writeFile(curl, "#!/bin/sh\nexit 1\n");
     await chmod(curl, 0o700);
@@ -307,7 +514,7 @@ describe("CursorHookInstaller", () => {
   it("does not install Windows observers when the no-op probe exits unsuccessfully", async () => {
     const paths = await fixture("win32");
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
-    const installer = new CursorHookInstaller(paths, { run: async () => ({ exitCode: 1, stdout: "" }) });
+    const installer = installerFor(paths, { run: async () => ({ exitCode: 1, stdout: "" }) });
 
     await expect(installer.install()).resolves.toMatchObject({ installed: false, reason: "windows-probe-failed" });
     expect(await config(paths.configPath)).toEqual({ version: 1, hooks: {} });
@@ -324,13 +531,13 @@ describe("CursorHookInstaller", () => {
         probeStarted = resolve;
       });
       const run = vi
-        .fn<NonNullable<CursorHookInstallerDependencies["run"]>>()
+        .fn<NonNullable<ManagedConfigInstallerDependencies["run"]>>()
         .mockImplementationOnce(async () => {
           probeStarted();
           return await new Promise<never>(() => undefined);
         })
         .mockResolvedValue({ exitCode: 0, stdout: "{}\n" });
-      const installer = new CursorHookInstaller(paths, { run });
+      const installer = installerFor(paths, { run });
 
       const hungInstall = installer.install();
       await started;
@@ -345,28 +552,29 @@ describe("CursorHookInstaller", () => {
     }
   });
 
-  it.each(["not JSON", "[]", '{"not":"empty"}'])(
-    "does not install Windows observers when the no-op probe output is %j",
-    async (stdout) => {
-      const paths = await fixture("win32");
-      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
-      const installer = new CursorHookInstaller(paths, { run: async () => ({ exitCode: 0, stdout }) });
+  it.each([
+    "not JSON",
+    "[]",
+    '{"not":"empty"}',
+  ])("does not install Windows observers when the no-op probe output is %j", async (stdout) => {
+    const paths = await fixture("win32");
+    await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+    const installer = installerFor(paths, { run: async () => ({ exitCode: 0, stdout }) });
 
-      await expect(installer.install()).resolves.toMatchObject({ installed: false, reason: "windows-probe-failed" });
-      expect(await config(paths.configPath)).toEqual({ version: 1, hooks: {} });
-    },
-  );
+    await expect(installer.install()).resolves.toMatchObject({ installed: false, reason: "windows-probe-failed" });
+    expect(await config(paths.configPath)).toEqual({ version: 1, hooks: {} });
+  });
 
   it("installs Windows observers only after an empty JSON no-op probe", async () => {
     const paths = await fixture("win32");
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
     const run = vi.fn(async () => ({ exitCode: 0, stdout: "{}\n" }));
-    const installer = new CursorHookInstaller(paths, { run });
+    const installer = installerFor(paths, { run });
 
     expect((await installer.install()).installed).toBe(true);
     expect(run).toHaveBeenCalledOnce();
-    const wrapper = await readFile(join(paths.storagePath, "cursor-hook-observer.cmd"), "utf8");
-    expect(wrapper).toContain("more >nul 2>nul");
+    const wrapper = await readFile(join(paths.wrapperDirectory, "cursor-hook-observer.cmd"), "utf8");
+    expect(wrapper).toContain('"%SystemRoot%\\System32\\more.com" >nul 2>nul');
     expect(wrapper).toContain("echo {}");
   });
 
@@ -374,9 +582,9 @@ describe("CursorHookInstaller", () => {
     const directory = await mkdtemp(join(tmpdir(), "cursor-hooks-"));
     tempDirectories.push(directory);
     const configPath = join(directory, "hooks.json");
-    const storagePath = join(directory, "O'Brien", "storage");
+    const storageRoot = join(directory, "O'Brien", "storage");
     await writeFile(configPath, JSON.stringify({ version: 1, hooks: {} }));
-    const installer = new CursorHookInstaller({ configPath, storagePath, platform: "linux" });
+    const installer = new ManagedConfigInstaller(cursorConfigAdapter(configPath), { storageRoot, platform: "linux" });
 
     expect((await installer.install()).installed).toBe(true);
     const hooks = (await config(configPath)).hooks as Record<string, Array<Record<string, unknown>>>;
