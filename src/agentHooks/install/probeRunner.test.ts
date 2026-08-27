@@ -206,6 +206,29 @@ describe("runProbe", () => {
     released?.();
   });
 
+  it("waits for the terminator when the leader closes first (round-9 B12)", async () => {
+    const spawnSlowKiller = ((file: string, args: string[], options: object) => {
+      if (file.endsWith("taskkill.exe")) {
+        // Reports after the leader is already gone.
+        return spawn("/bin/sh", ["-c", "sleep 0.3; exit 1"], options);
+      }
+      return spawn(file, args, options);
+    }) as never;
+
+    // The leader exits on its own shortly after the deadline. The listener
+    // registered at spawn ran before the gated one, so it settled here with a
+    // clean exit code and no incomplete-termination signal, while the kill it
+    // was reporting on had not answered and in fact failed (round-9 B12).
+    const result = await runProbe("/bin/sh", ["-c", "sleep 0.12"], {
+      deadlineMs: 50,
+      reapGraceMs: 2_000,
+      platform: "win32",
+      spawn: spawnSlowKiller,
+    });
+
+    expect(result.leaderOnlyTermination).toBe(true);
+  });
+
   it("reports incomplete termination when the grace expires before the killer answers", async () => {
     const spawnSilentKiller = ((file: string, args: string[], options: object) =>
       file.endsWith("taskkill.exe")

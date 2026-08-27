@@ -285,7 +285,7 @@
     3. Record and release claims per path in src/agentHooks/install/ManagedConfigInstaller.ts
     4. Cover in src/agentHooks/install/agentHookTransitions.test.ts, with two transition owners holding different scopes over one file-backed ledger: one reconciling leaves the other's registration untouched; one moving cleans only its own previous path; and removing everything clears both
 
-- [ ] 8_3 Settle a probe only once the termination outcome is known
+- [x] 8_3 Settle a probe only once the termination outcome is known — verified: bun test 'src/agentHooks/install/probeRunner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_4
   - **Refs**: .reviews/round-9.md#b12, design.md#d14-one-process-runner-contract-absolute-and-cancellable
   - **Acceptance**:

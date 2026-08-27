@@ -79,6 +79,16 @@ export function runProbe(
       resolve(leaderOnly ? { exitCode, stdout, leaderOnlyTermination: true } : { exitCode, stdout });
     };
 
+    // True once the deadline has fired and a termination is in flight; until the
+    // terminator reports AND the child closes, nothing may claim a clean kill.
+    let killing = false;
+    let terminated = false;
+    let closed = false;
+    const finishWhenKnown = () => {
+      if (terminated && closed) {
+        finish(1);
+      }
+    };
     let child: ReturnType<typeof spawn>;
     try {
       // Detached on POSIX so the child leads its own group and a single kill
@@ -95,17 +105,13 @@ export function runProbe(
     }
 
     deadline = setTimeout(() => {
+      // Past this point the child closing is only half the answer, so the
+      // listener registered at spawn must stop being able to settle on its own.
+      killing = true;
       // Both facts are needed before reporting: that the child is gone, and how
       // the kill went. A child that closes while the terminator is still running
       // would otherwise be reported as a clean termination we had not yet
       // observed (round-7 B12).
-      let terminated = false;
-      let closed = false;
-      const finishWhenKnown = () => {
-        if (terminated && closed) {
-          finish(1);
-        }
-      };
       terminateTree(child, {
         spawn,
         kill: dependencies.kill,
@@ -129,10 +135,6 @@ export function runProbe(
         }
         finish(1);
       }, reapGraceMs);
-      child.once("close", () => {
-        closed = true;
-        finishWhenKnown();
-      });
     }, deadlineMs);
 
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -142,7 +144,18 @@ export function runProbe(
       stdout = "";
       finish(1);
     });
-    child.on("close", (code) => finish(code ?? 1));
+    child.on("close", (code) => {
+      // A leader that dies while the terminator is still working reached this
+      // listener first — it was registered at spawn, so it ran before the gated
+      // one and reported a clean kill nobody had observed (round-9 B12). There
+      // is one listener now, and after the deadline it defers to the outcome.
+      if (killing) {
+        closed = true;
+        finishWhenKnown();
+        return;
+      }
+      finish(code ?? 1);
+    });
   });
 }
 
