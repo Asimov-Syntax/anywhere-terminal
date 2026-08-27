@@ -1,27 +1,6 @@
 {
   "change": "verify-cross-layer-scale",
-  "leases": [
-    {
-      "task": "6_1",
-      "id": "a354a1df-01fc-43b7-ad20-fa48482526d4",
-      "paths": [
-        "src/test/invariants/coverage.test.ts",
-        "src/test/invariants/sourceSources.ts",
-        "src/extension.worktreeAssembly.test.ts",
-        "src/extension.crossLayer.test.ts",
-        "src/agentHooks/agents/claude.test.ts",
-        "src/webview/integration/paneEvidenceReporting.test.ts",
-        "src/worktree/presenceProjector.test.ts",
-        "D2/D3/D4",
-        "src/worktree/presenceProjector.scale.test.ts",
-        "src/providers/WorktreeHost.scale.test.ts",
-        "src/providers/WorktreeHost.secondSurface.test.ts",
-        "src/test/bench/scale.bench.ts"
-      ],
-      "at": 1787854826695,
-      "stamp": "d7d2d3fbeef8597b8ffe9df33038c39f931ad28a"
-    }
-  ],
+  "leases": [],
   "attempts": {},
   "locked": [],
   "reads": 0

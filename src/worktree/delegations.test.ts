@@ -64,7 +64,7 @@ describe("what becomes a delegation row", () => {
     expect(roster.kind === "ok" && roster.rows).toHaveLength(1);
   });
 
-  it("never marks a row live, whatever the transcript recorded", () => {
+  it("[I5] never marks a row live, whatever the transcript recorded", () => {
     const roster = rosterFromDetail(detail({ timeline: [session({ status: "running" })] }));
     expect(roster.kind === "ok" && roster.rows[0]).toMatchObject({ status: "running", live: false });
   });

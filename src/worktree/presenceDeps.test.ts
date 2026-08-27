@@ -274,7 +274,7 @@ describe("the rebuild's registry read, exposed intact", () => {
     expect(listRunning).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a registry it could not read rather than an empty one", async () => {
+  it("[I1] reports a registry it could not read rather than an empty one", async () => {
     const { deps } = wire({ listRunning: async () => ({ kind: "failed", reason: "EACCES on the registry" }) });
 
     const outcome = await (await deps.openSnapshot()).sessions();
@@ -282,7 +282,7 @@ describe("the rebuild's registry read, exposed intact", () => {
     expect(outcome).toEqual({ kind: "failed", reason: "EACCES on the registry" });
   });
 
-  it("makes pane identity inconclusive when that read failed, naming the registry", async () => {
+  it("[I1] makes pane identity inconclusive when that read failed, naming the registry", async () => {
     // Without this the failure degrades to an empty index, resolution finds
     // nothing, and the projector reads that as a CONCLUSIVE absence — clearing
     // the identity of every pane it had proven (design.md D7).

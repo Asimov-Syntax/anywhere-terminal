@@ -458,12 +458,23 @@ describe("subagent rows", () => {
     expect(hist?.querySelector(".wt-outcome--live")).toBeNull();
   });
 
-  it("render no agent icon and nest exactly one level", () => {
+  it("[I11] render no agent icon and nest exactly one level", () => {
     const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
     view.setData(populated());
     const hist = view.element.querySelector(".wt-hist");
     expect(hist?.querySelector(".wt-aicon")).toBeNull();
     expect(hist?.querySelector(".wt-hist")).toBeNull();
+  });
+
+  it("[I11] carries no pane identity of its own", () => {
+    // Round-1 B2: I11 has three clauses and only two were tagged. This is the third — a
+    // subagent row is a view of its parent's work, so a paneId on it would make it
+    // separately focusable, separately closeable, and separately wrong.
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(populated());
+    const hist = view.element.querySelector<HTMLElement>(".wt-hist");
+    expect(hist, "no subagent row rendered, so its lack of identity proves nothing").not.toBeNull();
+    expect(hist?.dataset.paneId).toBeUndefined();
   });
 
   it("[I11] activating one targets the parent's pane", () => {

@@ -1284,7 +1284,7 @@ describe("a reported turn decides activity", () => {
     expect(row.agentSource).not.toBe("hook");
   });
 
-  it("never hands a reported path to the resolver, and never opens one", async () => {
+  it("[I16] never hands a reported path to the resolver, and never opens one", async () => {
     const h = makeProjector([
       pane({
         paneId: "a",
@@ -1303,7 +1303,7 @@ describe("a reported turn decides activity", () => {
     expect(row.entryId).toBe("claude:sess-1");
   });
 
-  it("grants no identity when the reported path disagrees with the stored one", async () => {
+  it("[I16] grants no identity when the reported path disagrees with the stored one", async () => {
     // § 4.6: the reported path is compared against the path the store already
     // holds, and a mismatch is dropped. A report that does not agree with itself
     // identifies nothing, and the row falls back to the heuristics (round-1 B2).

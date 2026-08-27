@@ -3,6 +3,7 @@
 // the session must never publish a state. The reducer lands in WT-006.3.
 
 import { afterEach, describe, expect, it } from "vitest";
+import { TURN_ACTIVITY } from "../../worktree/presenceProjector";
 import {
   type AgentActivityUpdate,
   type AgentHookReasonCode,
@@ -107,7 +108,10 @@ describe("claude agent registration", () => {
         .filter((state): state is AgentTurnReport => typeof state === "object" && state !== null)
         .map((report) => report.state),
     );
-    expect([...produced].sort()).toEqual(["done", "waiting", "working"]);
+    // Round-1 B3: this used to be a literal ["done", "waiting", "working"], the same three
+    // names the projector's table lists — so adding a fourth mapped state changed neither
+    // side and I13's named failure stayed green. The universe comes from the table now.
+    expect([...produced].sort()).toEqual(Object.keys(TURN_ACTIVITY).sort());
   });
 
   it("handles every registered event without erroring", async () => {
@@ -505,7 +509,7 @@ describe("claude agent registration", () => {
       expect(status).toEqual([]);
     });
 
-    it("[I16] carries the reported identity without acting on it", async () => {
+    it("carries the reported identity through the reducer — propagation only, not I16, which is about what is DONE with it", async () => {
       const { send, latest } = await reducer();
 
       await send("UserPromptSubmit", { transcript_path: "/vault/abc.jsonl" });

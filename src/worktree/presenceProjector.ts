@@ -72,7 +72,12 @@ export interface PaneActivityReading {
  * turn state needs an explicit landing place (§ 4.5). `exited` is not among
  * them: a finished turn does not close a pane.
  */
-const TURN_ACTIVITY: Record<AgentTurnReport["state"], PaneActivity> = {
+/**
+ * Exported so I13's two halves can be checked against ONE universe (round-1 B3): the
+ * reducer test asserted the three state names as a literal and this table listed the same
+ * three, so a mapped-but-unreachable state updated neither.
+ */
+export const TURN_ACTIVITY: Record<AgentTurnReport["state"], PaneActivity> = {
   working: "running",
   waiting: "waiting",
   done: "idle",

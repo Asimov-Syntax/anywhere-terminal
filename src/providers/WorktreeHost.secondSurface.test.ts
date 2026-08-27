@@ -4,15 +4,20 @@
 //
 // Literal "no work" is false: the second surface must receive and render a post. The
 // boundary the design draws is that no SOURCE-side counter moves — watcher subscriptions,
-// git invocations, and projections (which is where the registry and process-table reads
-// happen) — while fan-out and posting may. Stating the boundary is what makes the clause
-// testable instead of rhetorical.
+// git invocations, registry reads, process-table reads, projections, and polling timers —
+// while fan-out and posting may. Stating the boundary is what makes the clause testable
+// instead of rhetorical, and all six are counted here rather than three (round-1 B11).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DescendantsOutcome, ProcessTableSnapshot } from "../pty/processTableSnapshot";
+import { createPaneEvidenceStore } from "../session/PaneEvidenceStore";
 import type { ExtensionToWebViewMessage } from "../types/messages";
+import type { RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
+import { createPresenceProjectorDeps } from "../worktree/presenceDeps";
 import type { PresenceProjector } from "../worktree/presenceProjector";
+import { createPresenceProjector } from "../worktree/presenceProjector";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
@@ -58,16 +63,42 @@ function harness() {
     },
   };
 
-  const project = vi.fn(async () => ({ rowsByWorktreeId: {}, degradations: [] }));
+  // Round-1 B11: the projector used to be a stub, which made three of D4's six counters
+  // structurally unobservable — the registry read and the process-table read happen INSIDE
+  // it. Composed from the production `createPresenceProjectorDeps` now, with the spies at
+  // the real seams, so "no work" can be checked against the whole inventory.
+  const openTable = vi.fn(async () => ({ descendantsOf: () => ({ kind: "ok", pids: [] }) as DescendantsOutcome }));
+  const listRunning = vi.fn(async (): Promise<RunningSessionsOutcome> => ({ kind: "ok", sessions: [] }));
+  const store = createPaneEvidenceStore({ now: () => 1_700_000_000_000 });
+  store.create("pane-1", { viewId: "sidebar", cwd: "/a", ptyPid: 4321, shell: "claude" });
+  const inner = createPresenceProjector(
+    createPresenceProjectorDeps({
+      store,
+      table: {
+        open: openTable,
+        descendantsOf: async () => ({ kind: "ok", pids: [] }),
+      } as unknown as ProcessTableSnapshot,
+      listRunning,
+      sessionMtime: async () => 1,
+      sessionPath: async () => null,
+      now: () => 1_700_000_000_000,
+    }),
+  );
+  const project = vi.fn((ids: readonly string[], options?: never) => inner.project(ids, options));
   const projector = {
     project,
-    rank: () => undefined,
-    rankRevision: () => 0,
+    rank: (id: string) => inner.rank(id),
+    rankRevision: () => inner.rankRevision(),
   } as unknown as PresenceProjector;
 
+  // Every timer the host arms, so "and no new polling timer" is counted rather than assumed.
+  const timers = vi.fn();
   const clock: RebuildGateClock = {
     now: () => Date.now(),
-    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    setTimeout: (fn, ms) => {
+      timers(ms);
+      return setTimeout(fn, ms);
+    },
     clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   };
   const deps: WorktreeTreeDeps = {
@@ -95,6 +126,9 @@ function harness() {
     watchers: subs.length,
     gitInvocations: run.mock.calls.length,
     projections: project.mock.calls.length,
+    registryReads: listRunning.mock.calls.length,
+    processTableReads: openTable.mock.calls.length,
+    pollingTimers: timers.mock.calls.length,
   });
 
   const show = async (view: WorktreeSurface) => {
@@ -114,12 +148,17 @@ afterEach(() => {
 });
 
 describe("a second surface adds no source-side work", () => {
-  it("moves no watcher, git, or projection counter when a second surface is shown", async () => {
+  it("moves none of the six source counters when a second surface is shown", async () => {
     const { show, sourceCost } = harness();
     const first = surface();
     await show(first);
 
     const before = sourceCost();
+    // A counter that never moved for the FIRST surface is not evidence about the second.
+    // Every one of D4's six has to be live before equality means anything.
+    for (const [name, count] of Object.entries(before)) {
+      expect(count, `${name} never moved for the first surface, so holding it flat proves nothing`).toBeGreaterThan(0);
+    }
     const second = surface();
     await show(second);
 
