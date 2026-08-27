@@ -361,7 +361,7 @@ state. There is nothing to provision.
 | **Labels** | None |
 | **Notes** | Risk: this is where a status pipeline starts lying if the guards are omitted |
 | **Acceptance** | Turn state follows the documented event mapping, with boundaries, interrupts, and completions held open by working children each distinguished from an ordinary finished turn; a fresh status is authoritative over inference and decays to identity-only when stale; process reality — pty exit, a shell reclaiming the pane, a window reload — overrides anything published; nothing the agent reports can create vault state or cause a path to be opened; pane teardown leaves no status, roster, or token behind |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ---
 

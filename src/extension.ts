@@ -414,6 +414,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         {},
         {
           onStatus: (update) => {
+            // A structured turn goes to the pane's evidence, which is what the
+            // presence projection reads. It never reaches the webview status
+            // contract below — that one carries Cursor's two words only.
+            if (typeof update.state === "object" && update.state !== null) {
+              paneEvidence.reportTurn(update.sessionId, update.state);
+              return;
+            }
             // The webview status contract carries Cursor only; other agents
             // reach the panel through the presence pipeline instead.
             if (update.agent !== "cursor") {

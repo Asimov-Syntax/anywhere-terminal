@@ -8,10 +8,81 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { VaultAgentId } from "../vault/types";
 
+/** One delegation an agent reported starting, and has not reported finishing. */
+export interface AgentTurnSubagent {
+  id: string;
+  name?: string;
+  state: "working" | "idle" | "done";
+  startedAt: number;
+}
+
+/**
+ * What an agent reports about its own turn.
+ *
+ * Every timestamp here is minted locally: hook payloads carry no clock, so
+ * there is no agent time to prefer or discard.
+ */
+export interface AgentTurnReport {
+  state: "working" | "waiting" | "done";
+  /** Advances only when `state` actually changes, never on a repeat. */
+  stateStartedAt: number;
+  /** The agent's own session id — a lookup key, never authority to create one. */
+  agentSessionId?: string;
+  /** Used only when it matches the path already stored; never opened on this authority. */
+  transcriptPath?: string;
+  toolName?: string;
+  interactivePrompt?: string;
+  /** Decoded when a payload carries it; never synthesised. */
+  interrupted?: boolean;
+  /** A session start, resume, clear, or return from compaction — not a finished turn. */
+  sessionBoundary?: boolean;
+  subagents: readonly AgentTurnSubagent[];
+}
+
+/** Cursor says a word; agents with a reducer say a turn. */
+export type AgentPublishedState = string | AgentTurnReport | null;
+
 export interface AgentActivityUpdate {
   sessionId: string;
   agent: VaultAgentId;
-  state: string | null;
+  state: AgentPublishedState;
+}
+
+/**
+ * Whether two publications say the same thing.
+ *
+ * Structural rather than by reference, because a reducer that rebuilds its
+ * report from each event produces fresh objects for an unchanged turn — and
+ * republishing those is how a duplicate event becomes a visible one.
+ */
+function samePublishedState(a: AgentPublishedState, b: AgentPublishedState): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a === null || b === null || typeof a === "string" || typeof b === "string") {
+    return false;
+  }
+  return (
+    a.state === b.state &&
+    a.stateStartedAt === b.stateStartedAt &&
+    a.agentSessionId === b.agentSessionId &&
+    a.transcriptPath === b.transcriptPath &&
+    a.toolName === b.toolName &&
+    a.interactivePrompt === b.interactivePrompt &&
+    a.interrupted === b.interrupted &&
+    a.sessionBoundary === b.sessionBoundary &&
+    a.subagents.length === b.subagents.length &&
+    a.subagents.every((child, i) => {
+      const other = b.subagents[i];
+      return (
+        other !== undefined &&
+        child.id === other.id &&
+        child.name === other.name &&
+        child.state === other.state &&
+        child.startedAt === other.startedAt
+      );
+    })
+  );
 }
 
 /** Mirrors `SessionManager`'s per-session environment-contribution seam (design D6). */
@@ -37,7 +108,22 @@ export type AgentHookReasonCode =
 
 export const AGENT_HOOK_BODY_CAP_BYTES = 1_048_576;
 export const AGENT_HOOK_REQUEST_DEADLINE_MS = 5_000;
-export const AGENT_HOOK_DEDUP_TTL_MS = 5 * 60 * 1000;
+/**
+ * How long two identical bodies may be treated as copies of one event.
+ *
+ * Sized to what it correlates, not to a cache. A hook body carries no event
+ * identity — no timestamp, no sequence, no occurrence id — so identical content
+ * is evidence of one event only while the copies are close enough together to
+ * have come from one. Duplicate posts arise from two installed hooks firing on
+ * a single agent event, and each is bounded by the wrapper's own request
+ * timeout, so the pair lands milliseconds apart.
+ *
+ * Widening this loses real events: a resubmitted prompt, a retried tool call
+ * with the same input, or a second stop after the same assistant message are
+ * all byte-identical to their predecessor, and nothing in the payload can tell
+ * them apart afterwards.
+ */
+export const AGENT_HOOK_DEDUP_TTL_MS = 2_000;
 export const AGENT_HOOK_DEDUP_MAX_ENTRIES = 256;
 
 /**
@@ -55,8 +141,14 @@ export interface AgentHookChannel {
    */
   setTimer(callback: () => void | Promise<void>, ms: number): unknown;
   clearTimer(handle: unknown): void;
-  /** Publishes this agent's semantic state; repeats of the current value are dropped. */
-  publish(state: string | null): void;
+  /**
+   * Publishes this agent's semantic state; repeats of the current value are
+   * dropped, compared structurally so a rebuilt-but-unchanged turn is a repeat.
+   *
+   * This runs after the reducer, so it suppresses a redundant render — it is
+   * not what contains a duplicate event.
+   */
+  publish(state: AgentPublishedState): void;
   /** Reason-code-only diagnostics; never receives body content or parser excerpts. */
   reason(code: AgentHookReasonCode): void;
 }
@@ -102,7 +194,7 @@ interface AgentSlot {
 
 interface AgentSessionState {
   session: AgentHookSession;
-  state: string | null;
+  state: AgentPublishedState;
   /**
    * Cleared before teardown so a timer callback that was already queued when
    * its entitlement was revoked cannot publish afterwards (D5).
@@ -338,7 +430,7 @@ export class AgentHookRuntime implements SessionEnvironmentContributor {
       publish: (published) => {
         // Fails closed after rollback or teardown: a module that retained the
         // channel cannot restore status its entitlement no longer covers.
-        if (!state.active || state.state === published) {
+        if (!state.active || samePublishedState(state.state, published)) {
           return;
         }
         state.state = published;
@@ -539,8 +631,10 @@ export class AgentHookRuntime implements SessionEnvironmentContributor {
   }
 
   /**
-   * Dedups per agent — identical bytes posted to two slugs are two events —
-   * then hands the raw body to the agent module. A module that throws is
+   * Correlates duplicate posts per agent — identical bytes posted to two slugs
+   * are two events — then hands the raw body to the agent module. Correlation
+   * is by arrival as much as by content; see `AGENT_HOOK_DEDUP_TTL_MS` for why
+   * matching content alone does not prove one event. A module that throws is
    * dropped rather than allowed to reach the socket: fail-open governs, so a
    * buggy reducer must never stall the agent that posted.
    */

@@ -18,6 +18,7 @@
 //      asimov/changes/add-host-pane-evidence/design.md D1, D2, D3, D10;
 //      asimov/changes/project-worktree-agent-presence/design.md D2, D3.
 
+import type { AgentTurnReport } from "../agentHooks/AgentHookRuntime";
 import {
   type ActivityRule,
   classifyTitle,
@@ -61,7 +62,29 @@ export interface PaneEvidence {
   isAgentLaunch?: boolean;
   /** Which view holds the pane. */
   viewId?: string;
+  /** The agent's own report of its turn, if it has made one. */
+  turn?: PaneTurn;
 }
+
+/**
+ * A turn report, stamped with when it arrived here.
+ *
+ * Freshness is measured from `receivedAt` because there is nothing else to
+ * measure it from: hook payloads carry no clock of their own.
+ */
+export interface PaneTurn {
+  report: AgentTurnReport;
+  receivedAt: number;
+}
+
+/**
+ * How long a report decides a pane's activity (DESIGN.md § 15).
+ *
+ * Only its authority expires. The identity a report carried stays until a newer
+ * report supersedes it or the pane is destroyed — dropping that at the same
+ * moment would take the row's identity away along with its activity.
+ */
+export const TURN_FRESHNESS_MS = 60_000;
 
 /** Timer seam, so idle expiry is testable without waiting. */
 export interface PaneEvidenceTimers {
@@ -111,6 +134,8 @@ export interface PaneEvidenceStore {
   markOutput(paneId: string, at: number): void;
   markExited(paneId: string, exited: boolean): void;
   setSemantic(paneId: string, state: "working" | "idle" | null): void;
+  /** Records what a pane's agent reported about its own turn. No-op for an unknown pane. */
+  reportTurn(paneId: string, report: AgentTurnReport): void;
   delete(paneId: string): void;
   /** Discard every pane a closing view held, whether or not its process is still alive. */
   deleteForView(viewId: string): void;
@@ -186,6 +211,8 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
   const viewPanes = new Map<string, Set<string>>();
   /** Pending idle deadline per pane. */
   const idleTimers = new Map<string, unknown>();
+  /** Pending turn-freshness deadline per pane. */
+  const turnTimers = new Map<string, unknown>();
   /** The activity each pane was last announced as, so a no-op stays silent. */
   const announced = new Map<string, PaneActivity>();
   const timers = options.timers ?? {
@@ -228,6 +255,38 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
       timers.clearTimeout(handle);
       idleTimers.delete(paneId);
     }
+  }
+
+  function cancelTurnTimer(paneId: string): void {
+    const handle = turnTimers.get(paneId);
+    if (handle !== undefined) {
+      timers.clearTimeout(handle);
+      turnTimers.delete(paneId);
+    }
+  }
+
+  /**
+   * Schedule the moment this report stops deciding the pane's activity.
+   *
+   * A report going stale is a clock event: nothing else would ever announce it,
+   * so a row would sit on a report's authority indefinitely while every other
+   * surface had moved on. The record itself is left alone — only its authority
+   * lapses.
+   */
+  function armTurnDeadline(paneId: string, receivedAt: number): void {
+    cancelTurnTimer(paneId);
+    turnTimers.set(
+      paneId,
+      timers.setTimeout(
+        () => {
+          turnTimers.delete(paneId);
+          if (panes.has(paneId)) {
+            changed(paneId);
+          }
+        },
+        Math.max(0, receivedAt + TURN_FRESHNESS_MS - now()),
+      ),
+    );
   }
 
   function changed(paneId: string): void {
@@ -411,9 +470,21 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
       });
     },
 
+    reportTurn(paneId, report) {
+      const receivedAt = now();
+      mutate(paneId, (evidence) => {
+        evidence.turn = { report, receivedAt };
+        return true;
+      });
+      if (panes.has(paneId)) {
+        armTurnDeadline(paneId, receivedAt);
+      }
+    },
+
     delete(paneId) {
       unindex(paneId);
       cancelIdleTimer(paneId);
+      cancelTurnTimer(paneId);
       announced.delete(paneId);
       if (panes.delete(paneId)) {
         changed(paneId);
@@ -429,6 +500,7 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
       for (const paneId of held) {
         paneView.delete(paneId);
         cancelIdleTimer(paneId);
+        cancelTurnTimer(paneId);
         announced.delete(paneId);
         if (panes.delete(paneId)) {
           changed(paneId);
@@ -439,6 +511,9 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
     clear() {
       for (const paneId of [...idleTimers.keys()]) {
         cancelIdleTimer(paneId);
+      }
+      for (const paneId of [...turnTimers.keys()]) {
+        cancelTurnTimer(paneId);
       }
       panes.clear();
       paneView.clear();

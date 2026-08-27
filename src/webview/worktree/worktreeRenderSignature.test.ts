@@ -118,6 +118,7 @@ const FULL_ROW: Required<WorktreeAgentRow> = {
   agentSource: "launch",
   activity: "running",
   activitySource: "hook",
+  interactivePrompt: '{"approval":{"tool":"Bash"}}',
   entryId: "entry-1",
   startedAt: 10,
   stateStartedAt: 20,

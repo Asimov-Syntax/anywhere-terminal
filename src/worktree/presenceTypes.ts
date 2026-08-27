@@ -18,17 +18,20 @@ export interface PresenceDegradation {
 }
 
 /**
- * Delegated work, derived post-hoc from a transcript — history, not a live roster.
- * `live` stays `false` until the hook phase lands (worktree-agent-presence.md § 3.6),
- * and consumers must not draw these with the live-dot vocabulary while it is.
+ * Delegated work.
+ *
+ * `live` separates the two things that produce one of these: `false` means it
+ * was read post-hoc from a transcript — history, which consumers must not draw
+ * with the live-dot vocabulary — and `true` means the agent reported starting it
+ * and has not reported finishing it (worktree-agent-presence.md § 3.6).
  */
 export interface WorktreeSubagentRow {
   /** Agent type, or the invoking tool when the type is undeclared. */
   name: string;
   title?: string;
   status: "running" | "completed" | "failed" | "unknown";
-  live: false;
-  /** Drill-down into the vault detail. */
+  live: boolean;
+  /** Drill-down into the vault detail. Never set for a reported row: it has no vault entry. */
   entryId?: string;
 }
 
@@ -42,7 +45,18 @@ export interface WorktreeSubagentRow {
  * is the whole of what the session delegated (D5).
  */
 export type DelegationRoster =
-  | { kind: "ok"; rows: WorktreeSubagentRow[]; incomplete?: boolean }
+  | {
+      kind: "ok";
+      rows: WorktreeSubagentRow[];
+      incomplete?: boolean;
+      /**
+       * The agent's own fresh report rather than a transcript read.
+       *
+       * The host's delegation pass leaves a reported roster alone: it is not a
+       * cached claim that could have gone stale behind the row it belongs to.
+       */
+      reported?: true;
+    }
   | { kind: "failed"; reason: string };
 
 /**
@@ -76,9 +90,17 @@ export interface WorktreeAgentRow {
   model?: string;
   /** Omitted when identity is unproven; presence never invents an agent id. */
   agent?: VaultAgentId;
-  agentSource: "launch" | "process" | "registry" | "title" | "none";
+  agentSource: "launch" | "process" | "registry" | "title" | "hook" | "none";
   activity: "running" | "waiting" | "idle" | "exited";
   activitySource: "hook" | "output" | "title" | "registry" | "none";
+  /**
+   * What the agent is waiting on, as it reported it — a question or a permission
+   * request, carried as one JSON string (agent-hook-server.md § 4.4).
+   *
+   * Present only while the report deciding this row is fresh. A prompt that
+   * outlives its report is a card the user can no longer answer.
+   */
+  interactivePrompt?: string;
   /** Vault `<agent>:<sessionId>` once resolved. */
   entryId?: string;
   /** When this row's agent was first seen. */

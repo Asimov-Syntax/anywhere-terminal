@@ -5,10 +5,17 @@
 // table, a registry, or a SessionManager.
 
 import { describe, expect, it, vi } from "vitest";
+import type { AgentTurnReport } from "../agentHooks/AgentHookRuntime";
+import { TURN_FRESHNESS_MS } from "../session/PaneEvidenceStore";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import type { SessionLookup } from "./agentIdentity";
-import { createPresenceProjector, type Pane, type PresenceProjectorDeps } from "./presenceProjector";
+import {
+  createPresenceProjector,
+  type Pane,
+  type PresenceProjectorDeps,
+  type ReportedSessionEntry,
+} from "./presenceProjector";
 
 const WT = "/repo";
 const NESTED = "/repo/worktrees/feature";
@@ -27,6 +34,8 @@ function makeProjector(initial: Pane[] = []) {
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
   let snapshots = 0;
   let resolves = 0;
+  let reportedSessions: Record<string, ReportedSessionEntry> = {};
+  const reportedAsked: string[] = [];
 
   const deps: PresenceProjectorDeps = {
     panes: () => panes,
@@ -43,6 +52,10 @@ function makeProjector(initial: Pane[] = []) {
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
+    resolveReportedSession: async (sessionId) => {
+      reportedAsked.push(sessionId);
+      return reportedSessions[sessionId] ?? null;
+    },
     now: () => clock,
   };
 
@@ -63,6 +76,10 @@ function makeProjector(initial: Pane[] = []) {
     setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
       vaultTitle = next;
     },
+    setReportedSessions(next: Record<string, ReportedSessionEntry>) {
+      reportedSessions = next;
+    },
+    reportedAsked: () => reportedAsked,
     counts: () => ({ snapshots, resolves }),
   };
 }
@@ -1048,5 +1065,219 @@ describe("the rank revision the cache acknowledges", () => {
     await h.projector.project([WT]);
 
     expect(h.projector.rankRevision()).toBe(moved);
+  });
+});
+
+// ─── WT-006.3 — a reported turn against the inference path ──────────
+
+describe("a reported turn decides activity", () => {
+  const turn = (over: Partial<AgentTurnReport> = {}): AgentTurnReport => ({
+    state: "working",
+    stateStartedAt: clock,
+    agentSessionId: "sess-1",
+    subagents: [],
+    ...over,
+  });
+  const reported = (over: Partial<AgentTurnReport> = {}, receivedAt = clock): Pane["turn"] => ({
+    report: turn(over),
+    receivedAt,
+  });
+
+  it("outranks the output evidence that contradicts it", async () => {
+    const h = makeProjector([pane({ paneId: "a", turn: reported() })]);
+    h.setActivity("a", "idle", "quiet");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ activity: "running", activitySource: "hook" });
+  });
+
+  it("lands each turn state on the activity the table names", async () => {
+    for (const [state, activity] of [
+      ["working", "running"],
+      ["waiting", "waiting"],
+      ["done", "idle"],
+    ] as const) {
+      const h = makeProjector([pane({ paneId: "a", turn: reported({ state }) })]);
+      h.setActivity("a", "running", "working");
+
+      const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+      expect(row).toMatchObject({ activity, activitySource: "hook" });
+    }
+  });
+
+  it("never produces exited, and yields to a pty that did exit", async () => {
+    const h = makeProjector([pane({ paneId: "a", exited: true, turn: reported({ state: "working" }) })]);
+    h.setActivity("a", "exited", "quiet");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ activity: "exited" });
+    expect(row.activitySource).not.toBe("hook");
+  });
+
+  it("yields to a shell that has reclaimed the pane", async () => {
+    // The agent published `working` and then died without a Stop; the title is
+    // the only evidence that anything changed.
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ state: "working" }) })]);
+    h.setActivity("a", "idle", "shell-title");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ activity: "idle", activitySource: "title" });
+  });
+
+  it("falls back to inference once stale, keeping the identity it carried", async () => {
+    const h = makeProjector([
+      pane({ paneId: "a", turn: reported({ state: "working" }, clock - TURN_FRESHNESS_MS - 1) }),
+    ]);
+    h.setActivity("a", "idle", "quiet");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ activity: "idle", activitySource: "output" });
+  });
+
+  it("clears the prompt a stale report was still carrying", async () => {
+    const asking = { state: "waiting" as const, interactivePrompt: '{"approval":{"tool":"Bash"}}' };
+    const fresh = makeProjector([pane({ paneId: "a", turn: reported(asking) })]);
+    const stale = makeProjector([pane({ paneId: "a", turn: reported(asking, clock - TURN_FRESHNESS_MS - 1) })]);
+
+    const [live] = (await fresh.projector.project([WT])).rowsByWorktreeId[WT];
+    const [expired] = (await stale.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(live.interactivePrompt).toBe('{"approval":{"tool":"Bash"}}');
+    // A question card outliving the question is the bug this guard exists for.
+    expect(expired.interactivePrompt).toBeUndefined();
+  });
+
+  it("turns a fresh report's delegations into live rows", async () => {
+    const h = makeProjector([
+      pane({
+        paneId: "a",
+        turn: reported({
+          subagents: [
+            { id: "c1", name: "code-reviewer", state: "working", startedAt: clock },
+            { id: "c2", state: "done", startedAt: clock },
+          ],
+        }),
+      }),
+    ]);
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.delegations).toEqual({
+      kind: "ok",
+      reported: true,
+      rows: [
+        { name: "code-reviewer", status: "running", live: true },
+        // A child with no reported type still needs a name to render as.
+        { name: "subagent", status: "completed", live: true },
+      ],
+    });
+  });
+
+  it("leaves no live child behind once the parent's report is stale", async () => {
+    const h = makeProjector([
+      pane({
+        paneId: "a",
+        turn: reported(
+          { subagents: [{ id: "c1", name: "code-reviewer", state: "working", startedAt: clock }] },
+          clock - TURN_FRESHNESS_MS - 1,
+        ),
+      }),
+    ]);
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.delegations).toBeUndefined();
+  });
+
+  it("says nothing about delegations for a report that listed none", async () => {
+    // Absent means "never read", which is the truth: an empty report is not
+    // evidence that the session's transcript holds no history either.
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ subagents: [] }) })]);
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.delegations).toBeUndefined();
+  });
+
+  it("takes its identity from a reported session the vault already holds", async () => {
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ agentSessionId: "sess-1" }) })]);
+    h.setReportedSessions({
+      "sess-1": { entryId: "claude:sess-1", agent: "claude", transcriptPath: "/vault/sess-1.jsonl" },
+    });
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ entryId: "claude:sess-1", agent: "claude", agentSource: "hook" });
+  });
+
+  it("creates nothing for a reported session that resolves to nothing", async () => {
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ agentSessionId: "ghost" }) })]);
+    h.setReportedSessions({});
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBeUndefined();
+    expect(row.agentSource).toBe("none");
+  });
+
+  it("falls back to the heuristics for a pane whose report resolves to nothing", async () => {
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ agentSessionId: "ghost" }) })]);
+    h.setReportedSessions({});
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "heuristic-1" }));
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBe("claude:heuristic-1");
+    expect(row.agentSource).not.toBe("hook");
+  });
+
+  it("never hands a reported path to the resolver, and never opens one", async () => {
+    const h = makeProjector([
+      pane({
+        paneId: "a",
+        turn: reported({ agentSessionId: "sess-1", transcriptPath: "/etc/passwd" }),
+      }),
+    ]);
+    h.setReportedSessions({
+      "sess-1": { entryId: "claude:sess-1", agent: "claude", transcriptPath: "/vault/sess-1.jsonl" },
+    });
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    // Resolution is by id alone: a reported path is compared at most, and is
+    // never the thing that decides what gets opened.
+    expect(h.reportedAsked()).toEqual(["sess-1"]);
+    expect(row.entryId).toBe("claude:sess-1");
+  });
+
+  it("keeps a stale report's identity while its activity falls back to inference", async () => {
+    // § 4.5: a stale status is identity-only. The pane is still that session —
+    // what expired is the claim about what it is doing.
+    const h = makeProjector([
+      pane({ paneId: "a", turn: reported({ agentSessionId: "sess-1" }, clock - TURN_FRESHNESS_MS - 1) }),
+    ]);
+    h.setReportedSessions({
+      "sess-1": { entryId: "claude:sess-1", agent: "claude", transcriptPath: "/vault/sess-1.jsonl" },
+    });
+    h.setActivity("a", "idle", "quiet");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ entryId: "claude:sess-1", agentSource: "hook" });
+    expect(row.activitySource).toBe("output");
+  });
+
+  it("leaves a pane that reported nothing on the inference path", async () => {
+    const h = makeProjector([pane({ paneId: "a" })]);
+    h.setActivity("a", "running", "working");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ activity: "running", activitySource: "output" });
   });
 });

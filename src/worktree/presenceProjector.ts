@@ -14,13 +14,20 @@
 // See: docs/design/worktree-agent-presence.md § 2, § 3.1–3.4;
 //      asimov/changes/project-worktree-agent-presence/design.md D8, D10–D13.
 
-import type { PaneEvidence } from "../session/PaneEvidenceStore";
+import type { AgentTurnReport, AgentTurnSubagent } from "../agentHooks/AgentHookRuntime";
+import { type PaneEvidence, TURN_FRESHNESS_MS } from "../session/PaneEvidenceStore";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import { isPathInside } from "../utils/pathBoundary";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import { formatEntryId, type VaultAgentId } from "../vault/types";
 import { resolveAgentIdentity, type SessionLookup } from "./agentIdentity";
-import type { PresenceDegradation, WorktreeAgentRow, WorktreePresence } from "./presenceTypes";
+import type {
+  DelegationRoster,
+  PresenceDegradation,
+  WorktreeAgentRow,
+  WorktreePresence,
+  WorktreeSubagentRow,
+} from "./presenceTypes";
 
 /** One pane as the store hands it over. */
 export type Pane = PaneEvidence & { paneId: string };
@@ -49,6 +56,53 @@ export interface PaneActivityReading {
   rule: ActivityRule;
 }
 
+/**
+ * A turn describes a conversation and activity describes a terminal, so every
+ * turn state needs an explicit landing place (§ 4.5). `exited` is not among
+ * them: a finished turn does not close a pane.
+ */
+const TURN_ACTIVITY: Record<AgentTurnReport["state"], PaneActivity> = {
+  working: "running",
+  waiting: "waiting",
+  done: "idle",
+};
+
+/** What the row shows and which evidence chose it. */
+interface Reported {
+  activitySource: WorktreeAgentRow["activitySource"];
+  interactivePrompt?: string;
+  delegations?: DelegationRoster;
+}
+
+/** A reported child's own state, in the vocabulary a delegation row speaks. */
+const SUBAGENT_STATUS: Record<AgentTurnSubagent["state"], WorktreeSubagentRow["status"]> = {
+  working: "running",
+  done: "completed",
+  idle: "unknown",
+};
+
+/**
+ * A fresh report's roster as delegation rows.
+ *
+ * `undefined` for a report that listed nothing: absent means "never read",
+ * which is true — an agent reporting no delegation right now is not evidence
+ * that its transcript holds no history either.
+ */
+function reportedDelegations(report: AgentTurnReport): DelegationRoster | undefined {
+  if (report.subagents.length === 0) {
+    return undefined;
+  }
+  return {
+    kind: "ok",
+    reported: true,
+    rows: report.subagents.map((child) => ({
+      name: child.name ?? "subagent",
+      status: SUBAGENT_STATUS[child.state],
+      live: true,
+    })),
+  };
+}
+
 export interface PresenceProjectorDeps {
   /** The evidence store's pane set — the pane LIFETIME, not the session map's. */
   panes(): readonly Pane[];
@@ -67,7 +121,30 @@ export interface PresenceProjectorDeps {
    * own tests need no vault.
    */
   sessionTitle?(entryId: string): Promise<string | undefined>;
+  /**
+   * Point-resolve a session id an agent reported, against the store that
+   * already holds it (§ 4.6).
+   *
+   * Takes an id and nothing else, deliberately. A reported value must never be
+   * able to steer a read, so the reported transcript path is not an argument
+   * here — the entry's own recorded path comes back instead, and comparing the
+   * two is all the reported one is ever used for. Resolving to `null` is
+   * conclusive: nothing is created for a session the store does not know.
+   */
+  resolveReportedSession?(sessionId: string): Promise<ReportedSessionEntry | null>;
   now?(): number;
+}
+
+/**
+ * A reported session that turned out to exist, and where the store keeps it.
+ *
+ * The agent comes from the store rather than from the report: which agent owns
+ * a session is a fact about the entry, not a claim the reporter gets to make.
+ */
+export interface ReportedSessionEntry {
+  entryId: string;
+  agent: VaultAgentId;
+  transcriptPath: string;
 }
 
 /** How much of the projection to run. */
@@ -362,6 +439,74 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     return rule === "shell-title" ? "title" : "output";
   }
 
+  /**
+   * What the pane's own agent said about its turn, while that still counts.
+   *
+   * Measured from when the window received the report, which is the only clock
+   * available: hook payloads carry none of their own.
+   */
+  /**
+   * The identity a pane's own agent reported, if the store already holds it.
+   *
+   * Read at any age: § 4.5 keeps a stale report's identity and drops only its
+   * claim about activity — the pane is still that session, whatever it was last
+   * seen doing. A session the store cannot resolve produces nothing at all;
+   * nothing here creates an entry, and no reported path is ever opened.
+   */
+  async function reportedIdentity(pane: Pane): Promise<ProvenIdentity | undefined> {
+    const sessionId = pane.turn?.report.agentSessionId;
+    if (sessionId === undefined || deps.resolveReportedSession === undefined) {
+      return undefined;
+    }
+    const entry = await deps.resolveReportedSession(sessionId);
+    if (entry === null) {
+      return undefined;
+    }
+    return { agent: entry.agent, source: "hook", entryId: entry.entryId };
+  }
+
+  function freshTurn(pane: Pane, now: number): AgentTurnReport | undefined {
+    const turn = pane.turn;
+    if (turn === undefined || now - turn.receivedAt >= TURN_FRESHNESS_MS) {
+      return undefined;
+    }
+    return turn.report;
+  }
+
+  /**
+   * The § 4.5 precedence: a fresh report beats inference, and process reality
+   * beats the report.
+   *
+   * The two exceptions are the whole point. A pane whose pty is gone is not
+   * `working` whatever it last published, and a shell prompt sitting in the pane
+   * means the agent is no longer there to correct itself — in both cases the
+   * report describes a process that has stopped reporting.
+   */
+  function readActivity(pane: Pane, reading: PaneActivityReading, now: number): PaneActivityReading & Reported {
+    const inferred = {
+      activity: reading.activity,
+      activitySource: activitySourceFor(reading.rule),
+      rule: reading.rule,
+    };
+    // An exited pty reports rule `quiet`, so the exit has to be read from the
+    // process itself rather than from the rule that described it.
+    if (pane.exited || reading.rule === "shell-title") {
+      return inferred;
+    }
+    const report = freshTurn(pane, now);
+    if (report === undefined) {
+      return inferred;
+    }
+    const delegations = reportedDelegations(report);
+    return {
+      activity: TURN_ACTIVITY[report.state],
+      activitySource: "hook",
+      rule: reading.rule,
+      ...(report.interactivePrompt === undefined ? {} : { interactivePrompt: report.interactivePrompt }),
+      ...(delegations === undefined ? {} : { delegations }),
+    };
+  }
+
   function stamp(
     state: PaneState,
     identity: ProvenIdentity | undefined,
@@ -489,7 +634,10 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // is unknown, or which no worktree contains, produces no row — but it is
       // still a pane in this window, and the session it holds must not be free
       // for the external pass to claim.
-      const identity = await identify(pane, state, snapshot, failures);
+      // A pane that reports its own session does not need to be guessed at;
+      // the heuristics stay as the fallback for panes that do not (§ 4.6).
+      const inferred = await identify(pane, state, snapshot, failures);
+      const identity = (await reportedIdentity(pane)) ?? inferred;
       if (identity?.entryId !== undefined) {
         claimed.add(identity.entryId);
       }
@@ -502,7 +650,8 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       }
 
       const reading = deps.activityFor(pane.paneId, now) ?? { activity: "idle" as const, rule: "quiet" as const };
-      const activity = reading.activity;
+      const reported = readActivity(pane, reading, now);
+      const activity = reported.activity;
       stamp(state, identity, activity, pane, now);
 
       const row: WorktreeAgentRow = {
@@ -516,7 +665,9 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         agent: identity?.agent,
         agentSource: identity?.source ?? "none",
         activity,
-        activitySource: activitySourceFor(reading.rule),
+        activitySource: reported.activitySource,
+        ...(reported.interactivePrompt === undefined ? {} : { interactivePrompt: reported.interactivePrompt }),
+        ...(reported.delegations === undefined ? {} : { delegations: reported.delegations }),
         entryId: identity?.entryId,
         startedAt: state.startedAt,
         stateStartedAt: state.stateStartedAt,

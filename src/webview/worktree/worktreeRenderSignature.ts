@@ -91,6 +91,9 @@ export function worktreeSignature(tree: WorktreeTree | null, presence: WorktreeP
               r.agentSource,
               r.activity,
               r.activitySource,
+              // A prompt that changed while the activity did not is still a
+              // different question in front of the user.
+              r.interactivePrompt ?? "",
               r.entryId ?? "",
               // Every clock `ageTimestamp` can fall back to, or a row whose only
               // moving timestamp is a fallback renders a frozen age.

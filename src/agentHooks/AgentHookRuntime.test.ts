@@ -18,6 +18,7 @@ import {
   type AgentHookRegistration,
   type AgentHookRuntimeDependencies,
   type AgentHookRuntimeOptions,
+  type AgentTurnReport,
   createAgentHookRuntime,
 } from "./AgentHookRuntime";
 import {
@@ -157,7 +158,7 @@ describe("AgentHookRuntime", () => {
     expect(AGENT_HOOK_REQUEST_DEADLINE_MS).toBe(5_000);
     expect(CURSOR_HOOK_QUIET_WINDOW_MS).toBe(1_500);
     expect(CURSOR_HOOK_FRESHNESS_MS).toBe(30 * 60 * 1000);
-    expect(AGENT_HOOK_DEDUP_TTL_MS).toBe(5 * 60 * 1000);
+    expect(AGENT_HOOK_DEDUP_TTL_MS).toBe(2_000);
     expect(AGENT_HOOK_DEDUP_MAX_ENTRIES).toBe(256);
   });
 
@@ -633,6 +634,65 @@ describe("AgentHookRuntime", () => {
     });
   });
 
+  describe("structured turn publication", () => {
+    function turn(overrides: Partial<AgentTurnReport> = {}): AgentTurnReport {
+      return { state: "working", stateStartedAt: 1_000, subagents: [], ...overrides };
+    }
+
+    it("publishes a structured turn and drops a repeat of the same one", async () => {
+      let next = turn();
+      const { runtime, status } = await fixture({
+        extraAgents: [fakeAgent("claude", { onHandle: (_body, channel) => channel.publish(next) })],
+      });
+      runtime.setAgentEnabled("claude", true);
+      const env = runtime.create("s");
+      const url = `${env.ANYWHERE_TERMINAL_CLAUDE_URL}/claude`;
+
+      await postRaw(url, eventBody("Stop", { n: 1 }));
+      // A distinct body — so the transport delivers it — carrying the same turn.
+      await postRaw(url, eventBody("Stop", { n: 2 }));
+      expect(status).toEqual([{ sessionId: "s", agent: "claude", state: turn() }]);
+
+      next = turn({ state: "done", stateStartedAt: 2_000 });
+      await postRaw(url, eventBody("Stop", { n: 3 }));
+      expect(status).toHaveLength(2);
+    });
+
+    it("compares a turn's roster structurally, not by reference", async () => {
+      let next = turn({ subagents: [{ id: "c1", state: "working", startedAt: 5 }] });
+      const { runtime, status } = await fixture({
+        extraAgents: [fakeAgent("claude", { onHandle: (_body, channel) => channel.publish(next) })],
+      });
+      runtime.setAgentEnabled("claude", true);
+      const env = runtime.create("s");
+      const url = `${env.ANYWHERE_TERMINAL_CLAUDE_URL}/claude`;
+
+      await postRaw(url, eventBody("SubagentStart", { n: 1 }));
+      // Same content, fresh objects: a repeat, however it was built.
+      next = turn({ subagents: [{ id: "c1", state: "working", startedAt: 5 }] });
+      await postRaw(url, eventBody("SubagentStart", { n: 2 }));
+      expect(status).toHaveLength(1);
+
+      next = turn({ subagents: [{ id: "c1", state: "done", startedAt: 5 }] });
+      await postRaw(url, eventBody("SubagentStop", { n: 3 }));
+      expect(status).toHaveLength(2);
+    });
+
+    it("still refuses to publish once the entitlement is revoked", async () => {
+      let captured: AgentHookChannel | undefined;
+      const { runtime, status } = await fixture({
+        extraAgents: [fakeAgent("claude", { onCreate: (channel) => (captured = channel) })],
+      });
+      runtime.setAgentEnabled("claude", true);
+      runtime.create("s");
+      runtime.release("s");
+      status.length = 0;
+
+      captured?.publish(turn());
+      expect(status).toEqual([]);
+    });
+  });
+
   describe("per-session dedup LRU", () => {
     it("suppresses an exact duplicate delivery and processes it again once TTL elapses", async () => {
       let now = 1_000;
@@ -652,6 +712,33 @@ describe("AgentHookRuntime", () => {
       await postRaw(url, body); // now treated as fresh again, not a duplicate
       expect(reasons.filter((r) => r.reason === "duplicate-event")).toHaveLength(1);
       expect(reasons).toHaveLength(reasonCountBefore); // no new duplicate-event recorded
+    });
+
+    it("correlates a twin fired from one event, and delivers a genuine repeat after the window", async () => {
+      // A hook body carries no event identity — no timestamp, no sequence, no
+      // occurrence id — so matching content only proves one event while the two
+      // copies are close enough together to have come from one (D1).
+      let now = 1_000;
+      const { runtime, reasons } = await fixture({ now: () => now });
+      const env = runtime.create("s");
+      const url = `${env[CURSOR_HOOK_ENV_VAR]}/cursor`;
+      const body = eventBody("preToolUse", { fixed: true });
+
+      await postRaw(url, body);
+      now += 200; // a D21 twin: both posts bounded by the wrapper's --max-time 1.5
+      await postRaw(url, body);
+      expect(reasons).toContainEqual({ reason: "duplicate-event", sessionSuffix: "s" });
+
+      reasons.length = 0;
+      now += 5_000; // a genuine repeat: the user resubmits the same prompt
+      await postRaw(url, body);
+      expect(reasons.some((r) => r.reason === "duplicate-event")).toBe(false);
+    });
+
+    it("keeps the correlation window inside the wrapper's own request timeout", () => {
+      // Sized to what it correlates. Widen this and legitimate repeats are lost;
+      // the payload has nothing that could tell them apart afterwards.
+      expect(AGENT_HOOK_DEDUP_TTL_MS).toBeLessThanOrEqual(2_000);
     });
 
     it("evicts the oldest digest once the per-session cap is exceeded", async () => {

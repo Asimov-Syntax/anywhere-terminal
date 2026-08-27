@@ -589,6 +589,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (key === undefined || roster === undefined) {
           return row;
         }
+        // A roster the agent reported for itself is the better evidence and is
+        // already gone if its report went stale. Overwriting it with a cached
+        // transcript read would replace live work with its own history.
+        if (row.delegations?.kind === "ok" && row.delegations.reported) {
+          kept.add(key);
+          return row;
+        }
         kept.add(key);
         return { ...row, delegations: decay(roster, row, degraded) };
       });

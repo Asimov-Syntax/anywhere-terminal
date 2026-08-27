@@ -516,3 +516,55 @@ describe("a child's running does not outlive its parent's freshness", () => {
     expect(lastRoster(h.view)).toEqual({ kind: "failed", reason: "ENOENT" });
   });
 });
+
+// ─── WT-006.3 — a roster the agent reported itself ──────────────────
+
+describe("a reported roster outranks the transcript's", () => {
+  const reportedRoster = (): DelegationRoster => ({
+    kind: "ok",
+    reported: true,
+    rows: [{ name: "code-reviewer", status: "running", live: true }],
+  });
+
+  it("survives the host's delegation pass instead of being overwritten by history", async () => {
+    const h = await builtHost();
+    // The transcript read happened and is cached, exactly as it would be for a
+    // row the user had expanded.
+    h.expand();
+    h.reader.pending[0]?.resolve({ kind: "ok", rows: [{ name: "code-reviewer", status: "completed", live: false }] });
+    await settle();
+
+    h.projector.setPresence(presenceOf([agentRow({ delegations: reportedRoster() })]));
+    h.rebuild();
+    await settle();
+
+    expect(lastRoster(h.view)).toEqual(reportedRoster());
+  });
+
+  it("still lets the transcript answer for a row whose agent reported nothing", async () => {
+    const h = await builtHost();
+    h.expand();
+    h.reader.pending[0]?.resolve({ kind: "ok", rows: [{ name: "explorer", status: "completed", live: false }] });
+    await settle();
+
+    expect(lastRoster(h.view)).toMatchObject({ kind: "ok", rows: [{ name: "explorer", live: false }] });
+  });
+
+  it("does not decay a reported roster against the parent's inferred freshness", async () => {
+    // Decay exists because a transcript's `running` is a stale claim once the
+    // parent stops looking live. A reported roster is not a stale claim — the
+    // projector already dropped it if the report went stale.
+    const h = await builtHost();
+    h.expand();
+    h.reader.pending[0]?.resolve({ kind: "ok", rows: [{ name: "code-reviewer", status: "running", live: false }] });
+    await settle();
+
+    h.projector.setPresence(
+      presenceOf([agentRow({ activity: "idle", activitySource: "none", delegations: reportedRoster() })]),
+    );
+    h.rebuild();
+    await settle();
+
+    expect(lastRoster(h.view)).toEqual(reportedRoster());
+  });
+});

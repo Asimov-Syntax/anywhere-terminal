@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import type { AgentTurnReport } from "../agentHooks/AgentHookRuntime";
 import type { PaneEvidenceMessage } from "../types/messages";
-import { createPaneEvidenceStore } from "./PaneEvidenceStore";
+import { createPaneEvidenceStore, TURN_FRESHNESS_MS } from "./PaneEvidenceStore";
 
 function report(paneId: string, fields: Omit<PaneEvidenceMessage, "type" | "paneId">): PaneEvidenceMessage {
   return { type: "paneEvidence", paneId, ...fields };
@@ -605,5 +606,90 @@ describe("explainActivityFor", () => {
 
   it("answers nothing for a pane it does not hold", () => {
     expect(createPaneEvidenceStore().explainActivityFor("ghost")).toBeUndefined();
+  });
+});
+
+// ─── WT-006.3 — the agent's own report of its turn ──────────────────
+
+describe("a reported turn", () => {
+  const aTurn = (overrides: Partial<AgentTurnReport> = {}): AgentTurnReport => ({
+    state: "working",
+    stateStartedAt: 10_000,
+    agentSessionId: "sess-1",
+    subagents: [],
+    ...overrides,
+  });
+
+  it("is held against the pane with the time WE received it", () => {
+    const { store } = harness();
+    store.create("p1");
+
+    store.reportTurn("p1", aTurn());
+
+    expect(store.read("p1")?.turn).toEqual({ report: aTurn(), receivedAt: 10_000 });
+  });
+
+  it("announces a change when a report arrives", () => {
+    const { store, changes } = harness();
+    store.create("p1");
+    changes.length = 0;
+
+    store.reportTurn("p1", aTurn());
+
+    expect(changes).toEqual(["p1"]);
+  });
+
+  it("announces when the report stops being fresh, and keeps it anyway", () => {
+    const { store, changes, advance } = harness();
+    store.create("p1");
+    store.reportTurn("p1", aTurn());
+    changes.length = 0;
+
+    advance(TURN_FRESHNESS_MS + 1);
+
+    // The row has to re-render — its activity just fell back to inference — but
+    // the identity the report carried outlives its authority over activity.
+    expect(changes).toEqual(["p1"]);
+    expect(store.read("p1")?.turn?.report.agentSessionId).toBe("sess-1");
+  });
+
+  it("re-arms expiry on the newest report, not the first", () => {
+    const { store, changes, advance } = harness();
+    store.create("p1");
+    store.reportTurn("p1", aTurn());
+
+    advance(TURN_FRESHNESS_MS - 1);
+    store.reportTurn("p1", aTurn({ state: "done" }));
+    changes.length = 0;
+    advance(2);
+
+    expect(changes).toEqual([]);
+  });
+
+  it("leaves nothing behind on any pane-destruction path", () => {
+    for (const destroy of [
+      (s: ReturnType<typeof harness>["store"]) => s.delete("p1"),
+      (s: ReturnType<typeof harness>["store"]) => s.deleteForView("v"),
+      (s: ReturnType<typeof harness>["store"]) => s.clear(),
+    ]) {
+      const { store, pending } = harness();
+      store.create("p1", { viewId: "v" });
+      store.reportTurn("p1", aTurn());
+
+      destroy(store);
+
+      expect(store.read("p1")).toBeUndefined();
+      // The expiry deadline goes with it — a timer outliving its pane is how a
+      // destroyed pane announces itself back into a projection.
+      expect(pending()).toBe(0);
+    }
+  });
+
+  it("holds no report for a pane it does not know", () => {
+    const { store } = harness();
+
+    store.reportTurn("ghost", aTurn());
+
+    expect(store.read("ghost")).toBeUndefined();
   });
 });

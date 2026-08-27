@@ -17,14 +17,15 @@ import {
 } from "../pty/processTableSnapshot";
 import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { resolveClaudeSession } from "../session/resolveClaudeSession";
-import { claudeSessionMtime } from "../vault/readers/claudePaths";
+import { claudeSessionMtime, resolveClaudeSessionPath } from "../vault/readers/claudePaths";
 import {
   indexRunningSessionsOrEmpty,
   listRunningClaudeSessions,
   type RunningSessionsOutcome,
 } from "../vault/readers/runningSessions";
+import { formatEntryId } from "../vault/types";
 import type { SessionLookup } from "./agentIdentity";
-import type { PresenceProjectorDeps, ResolutionSnapshot } from "./presenceProjector";
+import type { PresenceProjectorDeps, ReportedSessionEntry, ResolutionSnapshot } from "./presenceProjector";
 
 export interface PresenceDepsOptions {
   /** The window's pane registry — the pane set AND the pane facts (design.md D2). */
@@ -35,6 +36,8 @@ export interface PresenceDepsOptions {
   sessionMtime?(sessionId: string): Promise<number | undefined>;
   /** Vault title for a session the registry did not name; see `PresenceProjectorDeps`. */
   sessionTitle?(entryId: string): Promise<string | undefined>;
+  /** Where the vault keeps a session, by id. Injected only so tests need no vault on disk. */
+  sessionPath?(sessionId: string): Promise<string | null>;
   now?(): number;
 }
 
@@ -43,6 +46,9 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
   const table = options.table ?? createProcessTableSnapshot();
   const listRunning = options.listRunning ?? (() => listRunningClaudeSessions());
   const sessionMtime = options.sessionMtime ?? claudeSessionMtime;
+  const sessionPath = options.sessionPath ?? ((sessionId: string) => resolveClaudeSessionPath(sessionId));
+  /** Window-lifetime, because where a session lives does not move while it runs. */
+  const reportedSessions = new Map<string, Promise<string | null>>();
 
   return {
     panes: () => store.panes(),
@@ -55,6 +61,25 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
     normalize: (p) => path.resolve(p),
 
     ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),
+
+    /**
+     * Resolve by id, and only by id.
+     *
+     * `resolveClaudeSessionPath` scans project directories for a file NAMED by
+     * the id and containment-checks the candidate before returning it, so a
+     * reported value can select an entry that exists but can never point the
+     * read anywhere — which is the whole of § 4.6's constraint. Memoized per
+     * session for the window's life, like `sessionTitle`, because the scan is
+     * filesystem work on the 150 ms projection path.
+     */
+    async resolveReportedSession(sessionId: string): Promise<ReportedSessionEntry | null> {
+      const pending = reportedSessions.get(sessionId) ?? sessionPath(sessionId);
+      reportedSessions.set(sessionId, pending);
+      const transcriptPath = await pending;
+      return transcriptPath === null
+        ? null
+        : { entryId: formatEntryId("claude", sessionId), agent: "claude", transcriptPath };
+    },
 
     now: options.now,
 

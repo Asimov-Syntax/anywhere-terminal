@@ -19,7 +19,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentHookRuntime } from "./agentHooks/AgentHookRuntime";
 import type { WorktreeHost, WorktreeSurface } from "./providers/WorktreeHost";
+import type { PaneEvidenceStore } from "./session/PaneEvidenceStore";
 import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "./types/messages";
 import type { VaultSessionEntry } from "./vault/types";
 import type { CreateSessionOptions } from "./vault/VaultLauncher";
@@ -133,7 +135,37 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
   };
 });
 
-const captured: { host?: WorktreeHost } = {};
+const captured: { host?: WorktreeHost; runtime?: AgentHookRuntime; paneEvidence?: PaneEvidenceStore } = {};
+
+/**
+ * The real runtime and the real pane store, captured on the way past.
+ *
+ * Neither is replaced: a hook turn reaching a row is a claim about the callback
+ * `activate` installs between them, and a stub on either side would assert the
+ * stub instead. The loopback socket is a process boundary, so the post below is
+ * a real one.
+ */
+vi.mock("./agentHooks/AgentHookRuntime", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./agentHooks/AgentHookRuntime")>();
+  return {
+    ...real,
+    createAgentHookRuntime: async (...args: Parameters<typeof real.createAgentHookRuntime>) => {
+      captured.runtime = await real.createAgentHookRuntime(...args);
+      return captured.runtime;
+    },
+  };
+});
+
+vi.mock("./session/PaneEvidenceStore", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./session/PaneEvidenceStore")>();
+  return {
+    ...real,
+    createPaneEvidenceStore: (options: never) => {
+      captured.paneEvidence = real.createPaneEvidenceStore(options);
+      return captured.paneEvidence;
+    },
+  };
+});
 
 /** Session options the surface was handed, i.e. what a launch actually became. */
 let launched: CreateSessionOptions[] = [];
@@ -241,6 +273,8 @@ beforeEach(() => {
   registered = [LINKED];
   fs.mkdirSync(LINKED, { recursive: true });
   captured.host = undefined;
+  captured.runtime = undefined;
+  captured.paneEvidence = undefined;
   document.body.replaceChildren();
   vi.resetModules();
 });
@@ -666,5 +700,70 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // Absent, not disabled: an offered prune that drops nothing is a claim the
     // repository has stale registrations (worktree-actions.md § 3.5).
     expect(labels.some((l) => /prune/i.test(l))).toBe(false);
+  });
+});
+
+// ─── WT-006.3 — a hook turn reaching the pane it describes ──────────
+
+describe("a Claude turn reaches the pane's evidence through the real assembly", () => {
+  /** Mint coordinates for a pane the store knows, then post as the wrapper does. */
+  async function reportingPane(paneId = "pane-1") {
+    await assemble();
+    await settle();
+    const runtime = captured.runtime;
+    const store = captured.paneEvidence;
+    if (runtime === undefined || store === undefined) {
+      throw new Error("activate built no hook runtime or no pane store");
+    }
+    runtime.setAgentEnabled("claude", true);
+    store.create(paneId);
+    const env = runtime.create(paneId);
+    const url = env.ANYWHERE_TERMINAL_CLAUDE_URL;
+    if (url === undefined) {
+      throw new Error("no claude coordinates were minted");
+    }
+    return {
+      store,
+      runtime,
+      paneId,
+      post: (body: unknown) =>
+        fetch(`${url}/claude`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+    };
+  }
+
+  it("carries a published turn onto the pane the report names", async () => {
+    const h = await reportingPane();
+
+    await h.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
+
+    expect(h.store.read(h.paneId)?.turn?.report).toMatchObject({ state: "working", agentSessionId: "sess-1" });
+  });
+
+  it("leaves the pane on inference when the agent's entitlement is revoked", async () => {
+    const h = await reportingPane();
+    await h.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
+
+    h.runtime.release(h.paneId);
+    await h.post({ hook_event_name: "Stop", session_id: "sess-1" });
+
+    // Released coordinates publish nothing, so the row cannot be moved by a
+    // process whose authority is gone.
+    expect(h.store.read(h.paneId)?.turn?.report.state).toBe("working");
+  });
+
+  it("gives a restored pane no turn to inherit", async () => {
+    const h = await reportingPane();
+    await h.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
+
+    // What a window reload is, from the store's side: every pane torn down and
+    // recreated. Hook status is not persisted across it.
+    h.store.delete(h.paneId);
+    h.store.create(h.paneId);
+
+    expect(h.store.read(h.paneId)?.turn).toBeUndefined();
   });
 });
