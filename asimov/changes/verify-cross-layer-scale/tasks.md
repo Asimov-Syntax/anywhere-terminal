@@ -72,7 +72,7 @@
     2. Pace the stream above `DEBOUNCE_MS` and below `REBUILD_FLOOR_MS`, so it reaches the floor instead of being swallowed by the trailing debounce
     3. Assert all five counts from D3 as exact equality, including zero commands for sibling repos
 
-- [ ] 3_3 Prove a second surface adds no source-side work
+- [x] 3_3 Prove a second surface adds no source-side work — verified: pnpm exec vitest run 'src/providers/WorktreeHost.secondSurface.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D4
   - **Acceptance**:
