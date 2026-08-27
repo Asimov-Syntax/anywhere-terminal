@@ -332,7 +332,7 @@ state. There is nothing to provision.
 | **Labels** | security-privacy, re-review |
 | **Notes** | Changes a shipped security-relevant component rather than adding a new one. Reuse pressure is the point of the task: a new listener beside the existing one is the failure mode |
 | **Acceptance** | One runtime serves every hook-capable agent, with the agent already shipping on it migrated and behaviourally unchanged; a token is bound to its pane and stops working the moment that pane or the feature does; the endpoint is unreachable off-host and cannot be made to change state, error, or stall the agent by any malformed request; coordinates reach a pane only through its own environment, whole or not at all, with nothing written to disk; a runtime that cannot start leaves every pane on inference |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-006.2] Claude Hook Installation
 

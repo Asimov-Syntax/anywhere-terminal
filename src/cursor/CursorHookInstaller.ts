@@ -1,22 +1,12 @@
 import { spawn } from "node:child_process";
 import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
+import { CURSOR_HOOK_ENV_VAR, CURSOR_HOOK_EVENTS, CURSOR_HOOK_SLUG } from "../agentHooks/agents/cursor";
 import { posixShellQuote } from "../utils/posixShellQuote";
 
-export const CURSOR_HOOK_EVENTS = [
-  "sessionStart",
-  "beforeSubmitPrompt",
-  "preToolUse",
-  "postToolUse",
-  "postToolUseFailure",
-  "beforeShellExecution",
-  "afterShellExecution",
-  "beforeMCPExecution",
-  "afterMCPExecution",
-  "afterAgentResponse",
-  "stop",
-  "sessionEnd",
-] as const;
+// The agent module owns the hook contract (slug, env var, event vocabulary);
+// the installer is one of its two consumers and must not restate it.
+export { CURSOR_HOOK_EVENTS } from "../agentHooks/agents/cursor";
 
 type JsonObject = Record<string, unknown>;
 
@@ -336,15 +326,18 @@ function isEmptyJson(stdout: string): boolean {
 }
 
 function posixWrapper(): string {
-  const url = "$" + "{ANYWHERE_TERMINAL_CURSOR_URL}";
-  const optionalUrl = "$" + "{ANYWHERE_TERMINAL_CURSOR_URL:-}";
+  // Kept out of one template so the emitted `${VAR}` is shell syntax, never
+  // interpolated here. Do not let a lint autofix collapse these.
+  const dollar = "$";
+  const url = `${dollar}{${CURSOR_HOOK_ENV_VAR}}`;
+  const optionalUrl = `${dollar}{${CURSOR_HOOK_ENV_VAR}:-}`;
   return `${[
     "#!/bin/sh",
     "# Managed by AnyWhere Terminal. This observer is intentionally fail-open.",
     `if [ -n "${optionalUrl}" ] && command -v curl >/dev/null 2>&1; then`,
     "  curl --silent --output /dev/null --connect-timeout 0.5 --max-time 1.5 \\",
     '    --request POST --header "content-type: application/json" \\',
-    `    --data-binary @- "${url}/cursor" || true`,
+    `    --data-binary @- "${url}/${CURSOR_HOOK_SLUG}" || true`,
     "fi",
     "cat >/dev/null 2>&1 || true",
     'printf "{}\\n"',
@@ -354,8 +347,8 @@ function posixWrapper(): string {
 function windowsWrapper(): string {
   return `@echo off
 setlocal
-if not defined ANYWHERE_TERMINAL_CURSOR_URL goto output
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$body=[Console]::In.ReadToEnd(); try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -TimeoutSec 2 -Body $body ($env:ANYWHERE_TERMINAL_CURSOR_URL + '/cursor') ^| Out-Null } catch {}"
+if not defined ${CURSOR_HOOK_ENV_VAR} goto output
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$body=[Console]::In.ReadToEnd(); try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -TimeoutSec 2 -Body $body ($env:${CURSOR_HOOK_ENV_VAR} + '/${CURSOR_HOOK_SLUG}') ^| Out-Null } catch {}"
 :output
 more >nul 2>nul
 echo {}

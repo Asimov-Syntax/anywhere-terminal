@@ -282,6 +282,9 @@ script that no longer exists.
 | Bad / missing / cross-pane token | 204, dropped, not counted as an error the user sees |
 | Body over 1 MB | Truncated read, request dropped |
 | Runtime cannot bind | Feature disabled for the session, logged once; every pane falls back to inference |
+| Agent module fails | Contained by the core and reported as `agent-error`, whether it throws while constructing a session, while decoding, or from a timer — synchronously or as a rejected promise. A module that fails while constructing is omitted from that pane: no entitlement, no environment variable. Other agents and pane creation are unaffected |
+| Agent module publishes after revocation | Dropped. A module that retains its channel past rollback, release, disable, or disposal cannot restore a status its entitlement no longer covers, and cannot schedule new timer work |
+| Minting coordinates throws | The pane still opens. Authority is released best-effort and the shell spawns with no hook environment at all — observability never decides whether a terminal exists |
 | Agent config file unreadable / unwritable | Install fails with a typed reason and a clear message; nothing else is affected |
 | Config lock held by another process | Install reports `lock-unavailable` and retries at the next reconcile; never forces the lock |
 | Agent config file has user hooks | Preserved — a failure to preserve them is a data-loss bug |
@@ -309,7 +312,7 @@ script that no longer exists.
 | Surface | Control |
 |---------|---------|
 | Network exposure | Loopback bind only; ephemeral port |
-| Authentication | Per-session token, constant-time compared, re-validated against live registration at use time, invalidated on pane teardown and on disable |
+| Authentication | Per-session token, constant-time compared, re-validated against live registration at use time, invalidated on pane teardown and on disable. One token per pane; which agents it speaks for is a per-session entitlement set fixed at spawn, so disabling an agent strikes it from every live pane permanently — coordinates already sitting in an environment cannot be revived by re-enabling, only by a fresh spawn |
 | Coordinate distribution | Process environment only. No shared on-disk artifact exists to read, race on, or leak between windows (§ 2.1) |
 | Config mutation | Opt-in setting, off by default; cross-process lock; atomic rename; unknown keys preserved; symlinked destination refused; managed entries only; uninstall command provided |
 | Script path | Absolute and extension-owned, reconciled on update. A relative path would resolve against the agent's cwd and execute whatever happened to be there (`07-orchestration-teams.md` § 2) |

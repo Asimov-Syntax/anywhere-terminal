@@ -3,10 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { AgentHookController } from "./agentHooks/AgentHookController";
+import { createAgentHookRuntime } from "./agentHooks/AgentHookRuntime";
+import { cursorAgentRegistration } from "./agentHooks/agents/cursor";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
-import { CursorHookController } from "./cursor/CursorHookController";
 import { CursorHookInstaller } from "./cursor/CursorHookInstaller";
-import { createCursorHookRuntime } from "./cursor/CursorHookRuntime";
 import { createWatcherPool } from "./providers/fsWatcherPool";
 import { createGitDecorationProvider } from "./providers/gitDecorationProvider";
 import { resolveRenameTargetTabId } from "./providers/resolveRenameTarget";
@@ -110,22 +111,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Allow late deactivate() to find this singleton without re-routing.
   _activeSessionManager = sessionManager;
 
-  // Cursor Agent hook authority is granted only after the machine hook file
-  // reconciles successfully. The controller serializes config ownership and
-  // runtime/contributor state so stale async transitions cannot restore access.
+  // Per-agent hook authority is granted only after that agent's machine hook
+  // file reconciles successfully. The controller serializes config ownership
+  // and runtime/contributor state so stale async transitions cannot restore
+  // access. One runtime serves every hook-capable agent
+  // (generalize-agent-hook-runtime D1, D6).
   const readCursorHooksEnabled = (): boolean =>
     vscode.workspace.getConfiguration("anywhereTerminal").get<boolean>("cursorAgent.hooks.enabled") ?? false;
-  const cursorHookController = new CursorHookController({
-    initialEnabled: readCursorHooksEnabled(),
-    installer: new CursorHookInstaller({
-      configPath: path.join(os.homedir(), ".cursor", "hooks.json"),
-      storagePath: path.join(context.globalStorageUri.fsPath, "cursor-hooks"),
-    }),
+  const agentHookController = new AgentHookController({
+    agents: [
+      {
+        agent: "cursor",
+        initialEnabled: readCursorHooksEnabled(),
+        installer: new CursorHookInstaller({
+          configPath: path.join(os.homedir(), ".cursor", "hooks.json"),
+          storagePath: path.join(context.globalStorageUri.fsPath, "cursor-hooks"),
+        }),
+      },
+    ],
     createRuntime: () =>
-      createCursorHookRuntime(
-        { enabled: false },
+      createAgentHookRuntime(
+        [cursorAgentRegistration()],
+        {},
         {
           onStatus: (update) => {
+            // The webview status contract carries Cursor only; other agents
+            // reach the panel through the presence pipeline instead.
+            if (update.agent !== "cursor") {
+              return;
+            }
             const session = sessionManager.getSession(update.sessionId);
             if (session?.state !== "live") {
               return;
@@ -134,37 +148,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               type: "agentActivityStatus",
               tabId: update.sessionId,
               agent: update.agent,
-              state: update.state,
+              state: update.state === "working" || update.state === "idle" ? update.state : null,
             });
           },
           onReasonCode: (reason, sessionSuffix) => {
-            console.warn(`[AnyWhere Terminal] Cursor hook ${reason}${sessionSuffix ? ` (…${sessionSuffix})` : ""}`);
+            console.warn(`[AnyWhere Terminal] Agent hook ${reason}${sessionSuffix ? ` (…${sessionSuffix})` : ""}`);
           },
         },
       ),
-    setContributor: (contributor) => sessionManager.setCursorHookContributor(contributor),
-    onWarning: (operation, reason) => {
+    setContributor: (contributor) => sessionManager.setAgentHookContributor(contributor),
+    onWarning: (agent, operation, reason) => {
       if (operation === "runtime") {
         console.warn(
-          `[AnyWhere Terminal] Cursor hook runtime unavailable — continuing without hook observability: ${reason}`,
+          `[AnyWhere Terminal] Agent hook runtime unavailable — continuing without hook observability: ${reason}`,
         );
         return;
       }
-      console.warn(`[AnyWhere Terminal] Cursor hook ${operation} reconciliation failed: ${reason}`);
+      console.warn(`[AnyWhere Terminal] ${agent} hook ${operation} reconciliation failed: ${reason}`);
     },
   });
-  _activeCursorHookController = cursorHookController;
+  _activeAgentHookController = agentHookController;
 
   // Register before runtime binding awaits so changes during activation enter
   // the same serialized controller and the latest desired setting wins.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("anywhereTerminal.cursorAgent.hooks.enabled")) {
-        void cursorHookController.setDesiredEnabled(readCursorHooksEnabled());
+        void agentHookController.setDesiredEnabled("cursor", readCursorHooksEnabled());
       }
     }),
   );
-  await cursorHookController.start();
+  await agentHookController.start();
 
   // Shared GitDecorationProvider — one singleton, threaded through every
   // FileTreeHost so the three webviews (sidebar / panel / editor) see one
@@ -834,21 +848,21 @@ function safePostMessage(webview: vscode.Webview | MessageSender, message: unkno
  */
 let _activeSessionManager: SessionManager | null = null;
 
-/** Singleton Cursor hook lifecycle owner — detached and disposed before PTYs. */
-let _activeCursorHookController: CursorHookController | null = null;
+/** Singleton agent hook lifecycle owner — detached and disposed before PTYs. */
+let _activeAgentHookController: AgentHookController | null = null;
 
 export async function deactivate(): Promise<void> {
   const sm = _activeSessionManager;
-  const cursorHookController = _activeCursorHookController;
-  _activeCursorHookController = null;
+  const agentHookController = _activeAgentHookController;
+  _activeAgentHookController = null;
 
   // Controller disposal detaches the contributor before disabling and
   // disposing the runtime, so SessionManager cannot retain stale authority.
-  if (cursorHookController) {
+  if (agentHookController) {
     try {
-      cursorHookController.dispose();
+      agentHookController.dispose();
     } catch (err) {
-      console.error("[AnyWhere Terminal] CursorHookController.dispose failed during deactivate:", err);
+      console.error("[AnyWhere Terminal] AgentHookController.dispose failed during deactivate:", err);
     }
   }
 

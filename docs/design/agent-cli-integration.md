@@ -40,7 +40,7 @@ mechanism. Each is independently disableable and independently useless without t
 graph TD
     subgraph SPAWN["PTY spawn — SessionManager.createSession"]
         SI["injectAtSpawn<br>ShellIntegrationCoordinator.ts:55"]
-        HK["cursorHooks.create(sessionId)<br>SessionManager.ts:476-478"]
+        HK["agentHooks.create(sessionId)<br>SessionManager.ts:479-481"]
     end
 
     SI -->|"args + env (VSCODE_NONCE)"| PTY["node-pty"]
@@ -51,7 +51,7 @@ graph TD
     SINK -->|cwd| CWD["session.currentCwd"]
     SINK -->|"A / B / C / D / E"| CT["CommandTracker"]
 
-    AGENT["cursor-agent process"] -->|"POST loopback"| RT["CursorHookRuntime<br>127.0.0.1 only"]
+    AGENT["cursor-agent process"] -->|"POST loopback"| RT["AgentHookRuntime<br>127.0.0.1 only, slug-routed"]
     RT -->|onStatus| EXT["extension.ts:128-139"]
     EXT -->|agentActivityStatus| WV["TerminalActivityTracker<br>idle | running | waiting"]
 
@@ -177,22 +177,24 @@ subscribes to configuration changes, and awaits `start()`.
 ```mermaid
 sequenceDiagram
     participant Cfg as setting
-    participant Ctl as CursorHookController
+    participant Ctl as AgentHookController
     participant Ins as CursorHookInstaller
     participant SM as SessionManager
-    Cfg->>Ctl: setDesiredEnabled(true) (:41)
+    Cfg->>Ctl: setDesiredEnabled("cursor", true) (:84)
     Ctl->>Ins: install() (:93)
     Ins->>Ins: write observer wrapper, chmod 0o700 (:149)
     Ins->>Ins: withLock → reconcile hooks.json (:169, :209)
     Ins-->>Ctl: result
-    Ctl->>Ctl: applyReconciledAuthority() (:149)
+    Ctl->>Ctl: applyReconciledAuthority() (:205)
     Ctl->>SM: setContributor(runtime)
     Note over Ctl: authority only when the revision matches,<br>the setting is still on,<br>and reconcile succeeded
 ```
 
-`CursorHookController` serializes every transition (`CursorHookController.ts:98,149`), so a
-stale async result can never restore access after the setting was turned back off;
-`revokeAuthority` (`:166`) is the inverse.
+`AgentHookController` serializes every transition per agent (`AgentHookController.ts:132,205`),
+so a stale async result can never restore access after the setting was turned back off;
+`revokeAgent` (`:226`) is the inverse. The contributor itself is an aggregate: it detaches only
+when the last authoritative agent goes away, so disabling one agent never revokes another's
+live panes (generalize-agent-hook-runtime D6).
 
 ### 6.1 What is written to disk
 
@@ -218,8 +220,9 @@ stopped extension, a closed port, or a network error never blocks the agent.
 
 ## 7. Cursor Hooks — Runtime
 
-`CursorHookRuntime` binds an HTTP server to `127.0.0.1` on an OS-assigned ephemeral port
-(`:138`, port `0` by default `:63`).
+`AgentHookRuntime` binds one HTTP server to `127.0.0.1` on an OS-assigned ephemeral port
+(`:161`, port `0` by default `:134`), shared by every registered agent and routed by the
+third path segment to that agent's module in `src/agentHooks/agents/`.
 
 ### 7.1 Per-session authority
 
@@ -315,13 +318,13 @@ null agent or on exit (`main.ts:100,511,515,520`).
 | `hooks.json` unreadable or unsupported | left byte-identical; warning reason code, hooks stay off (`CursorHookInstaller.ts:308`) |
 | Lock unavailable within the ceiling | reconcile reports failure; authority **not** granted (`:169`) |
 | Wrapper probe fails on Windows | `probe-failed`; authority not granted (`:149`) |
-| Runtime cannot bind | a warning; the extension continues without hook observability (`extension.ts:146-152`) |
+| Runtime cannot bind | a warning; every pane continues without hook observability (`extension.ts:167-174`) |
 | Extension stopped while the agent runs | the POST fails, the wrapper still prints `{}`, the agent proceeds (`CursorHookInstaller.ts:338,354`) |
-| Bad path, bad token, oversized body, stale session | reason code, no state change (`CursorHookRuntime.ts:23-34`) |
-| Duplicate body within the dedup TTL | ignored (`CursorHookRuntime.ts:340`) |
-| No hook event for 30 min | state cleared; the pane falls back to output-derived activity (`:39`) |
-| Setting toggled while sessions are live | every tracked session is released through the old contributor first (`SessionManager.ts:253-264`) |
-| Two panes running Cursor | distinct id + token; a status update reaches only its own pane (`CursorHookRuntime.ts:175`) |
+| Bad path, bad token, oversized body, stale session | reason code, no state change (`AgentHookRuntime.ts:23-36`) |
+| Duplicate body within the dedup TTL | ignored (`AgentHookRuntime.ts:480`) |
+| No hook event for 30 min | state cleared; the pane falls back to output-derived activity (`agents/cursor.ts:11`) |
+| Setting toggled while sessions are live | that agent loses its entitlement in every live session and a fresh spawn is required (`AgentHookRuntime.ts:193`); the contributor detaches, releasing every tracked session, only when no agent remains authoritative (`SessionManager.ts:255-266`) |
+| Two panes running Cursor | distinct id + token; a status update reaches only its own pane (`AgentHookRuntime.ts:225`) |
 | Approval dialog in a non-Cursor pane | ignored — the identity gate fails (`CursorApprovalDetector.ts:52`) |
 | Shell unrecognised or opt-out flags present | injection returns `null`; the shell spawns exactly as configured (`ShellIntegrationInjector.ts:76,90,107`) |
 | Nested VS Code shells | `scrubLeakedEnv` prevents double injection (`:130`) |
@@ -339,7 +342,7 @@ null agent or on exit (`main.ts:100,511,515,520`).
 |-----------|-------------|-------|
 | OSC parsing | PTY throughput | streaming; ≤ 4096 bytes carried (`oscParser.ts:21`) |
 | `ps` invocations | detection calls | 1 per call, no cache, 500 ms cap (`processTree.ts:79`) |
-| Hook requests | agent activity | 1 MiB body, 5 s deadline, 256 dedup entries (`CursorHookRuntime.ts:36,37,41`) |
+| Hook requests | agent activity | 1 MiB body, 5 s deadline, 256 dedup entries (`AgentHookRuntime.ts:38,39,41`) |
 | Status posts and re-renders | hook events, PTY output | only on a real transition (`:412`); one per 1500 ms idle window (`TerminalActivityTracker.ts:30`) |
 | Approval scan | screen size | last 8 non-blank rows (`CursorApprovalDetector.ts:20`) |
 | Reconcile attempts | contention on `hooks.json` | 3 (`CursorHookInstaller.ts:53-57`) |
@@ -399,7 +402,7 @@ detection.
 | Metric | Target | How to measure |
 |--------|--------|----------------|
 | Hook request handling | never blocks the agent | the wrapper prints `{}` on every failure path |
-| Hook payload in logs | zero | reason codes only (`CursorHookRuntime.ts:23-34`) |
+| Hook payload in logs | zero | reason codes only (`AgentHookRuntime.ts:23-36`) |
 | Listener exposure | loopback only | bind address asserted `127.0.0.1` (`:138`) |
 | Detection cost per pane | ≤ 1 `ps` + ≤ 1 `lsof`, each ≤ 500 ms | spy on the deps |
 

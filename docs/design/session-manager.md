@@ -434,8 +434,8 @@ Providers drain what was staged on their `ready` handshake (`:328`, `:332`,
 the design: **synchronous** buffer + sidecar writes first (`:295`) because they
 survive the host being killed mid-shutdown; then the awaited index flush (`:303`),
 which VS Code often cancels — degraded but correct, since step one's sidecar is
-authoritative; then PTY teardown (`:1212`). `CursorHookController.dispose` runs
-before all three (`extension.ts:847`).
+authoritative; then PTY teardown (`:1212`). `AgentHookController.dispose` runs
+before all three (`extension.ts:861`).
 
 ---
 
