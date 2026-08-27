@@ -143,3 +143,15 @@
     2. `src/worktree/presenceDeps.ts` — cache cleanup deletes only the entry it installed (W7)
     3. `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/worktreePanel.css` — the section label follows reported provenance, and a live row gets its own rail and status glyph (W3)
     4. `src/agentHooks/agents/claude.test.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/worktree/presenceDeps.test.ts` — the three B4 paths the scalar got wrong, the duplicate-start prompt case, DOM cases for an empty and a non-empty reported roster, and how the cache treats a miss, a hit, and an eviction (B6, W7)
+
+- [x] 5_3 Close review round 3 — the last duplicate-start path, and a status a screen reader can hear — verified: pnpm exec vitest run src/agentHooks/agents/claude.test.ts src/webview/worktree/WorktreeView.test.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_2
+  - **Refs**: .reviews/round-3.md, docs/design/agent-hook-server.md#44-event--turn-state
+  - **Boundary**: no blockers remain — these are the two accepted nits and nothing else travels with them
+  - **Acceptance**:
+    - Outcome: a repeated start past the identity overflow publishes nothing, and a running delegation announces itself as running
+    - Verify: command pnpm exec vitest run src/agentHooks/agents/claude.test.ts src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. `src/agentHooks/agents/claude.ts` — only the transition into the sticky unknown state is a change; every later untracked start publishes nothing (W8)
+    2. `src/webview/worktree/worktreeTreeView.ts` — a live running glyph carries the same role and label the activity dot already uses, rather than being hidden (W3)
+    3. `src/agentHooks/agents/claude.test.ts`, `src/webview/worktree/WorktreeView.test.ts` — the double-cap-plus-one prompt case, and the accessible name of a running delegation

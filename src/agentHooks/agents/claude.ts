@@ -387,6 +387,15 @@ class ClaudeHookAgentSession implements AgentHookSession {
           // Identity itself has now overflowed. Holding open on a sticky flag is
           // the honest answer: the turn cannot say which children remain, and
           // guessing is what makes a status pipeline lie.
+          //
+          // Only the move INTO that state is a change. Past it no id is retained,
+          // so a repeat is indistinguishable from a new child — and reporting
+          // either as a transition would clear the question a waiting row is
+          // still asking, for a state that already says everything it can
+          // (.reviews/round-3.md W8).
+          if (this.overflowUnknown) {
+            return false;
+          }
           this.overflowUnknown = true;
           return true;
         }

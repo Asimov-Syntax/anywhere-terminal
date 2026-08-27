@@ -502,10 +502,17 @@ export function renderSubagentSection(
       : running
         ? "wt-outcome wt-outcome--live"
         : "wt-outcome wt-outcome--done";
-    outcome.setAttribute("aria-hidden", "true");
     outcome.textContent = failed ? "✕" : sub.status === "running" ? "…" : "✓";
     if (running) {
       row.dataset.live = "true";
+      // Colour and a glyph are the whole distinction between running work and a
+      // recorded outcome, and neither reaches a screen reader. This is the same
+      // role/label the activity dot uses when it carries meaning rather than
+      // decoration (.reviews/round-3.md W3).
+      outcome.setAttribute("role", "img");
+      outcome.setAttribute("aria-label", "running");
+    } else {
+      outcome.setAttribute("aria-hidden", "true");
     }
 
     const text = document.createElement("span");

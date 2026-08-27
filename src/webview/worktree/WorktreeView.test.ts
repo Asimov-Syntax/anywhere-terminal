@@ -430,6 +430,11 @@ describe("subagent rows", () => {
     expect(hist?.querySelector(".wt-outcome--live")).not.toBeNull();
     expect(hist?.querySelector(".wt-outcome--done")).toBeNull();
     expect(hist?.querySelector<HTMLElement>(".wt-srow")?.dataset.live).toBe("true");
+    // Colour and glyph are the whole visual distinction, and neither reaches a
+    // screen reader — so running work must say so (.reviews/round-3.md W3).
+    const glyph = hist?.querySelector(".wt-outcome--live");
+    expect(glyph?.getAttribute("aria-label")).toBe("running");
+    expect(glyph?.hasAttribute("aria-hidden")).toBe(false);
   });
 
   it("calls a reported roster with no delegations live, not past", () => {

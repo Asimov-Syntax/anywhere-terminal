@@ -347,6 +347,26 @@ describe("claude agent registration", () => {
       expect(latest()?.interactivePrompt).toContain("Ship it?");
     });
 
+    it("keeps a waiting row's question once identity itself has overflowed", async () => {
+      // Past the second cap no id is retained, so a repeat cannot be told from a
+      // new child — and only the move into that state is a change (round-3 W8).
+      const { send, latest } = await reducer();
+
+      for (let i = 0; i < CLAUDE_ROSTER_CAP * 2 + 1; i++) {
+        await send("SubagentStart", { agent_id: `a${i}`, agent_type: "explorer" });
+      }
+      await send("PreToolUse", {
+        tool_name: "AskUserQuestion",
+        tool_input: { questions: [{ question: "Ship it?" }] },
+      });
+      const waiting = latest();
+      await send("SubagentStart", { agent_id: `a${CLAUDE_ROSTER_CAP * 2}`, agent_type: "explorer" });
+      await send("SubagentStart", { agent_id: "brand-new", agent_type: "explorer" });
+
+      expect(latest()).toEqual(waiting);
+      expect(latest()?.interactivePrompt).toContain("Ship it?");
+    });
+
     it("never reports a finished turn while a child the cap displaced is working", async () => {
       // The cap bounds what the roster remembers; it must not bound what the
       // turn admits is running, or the overflow reads as completion (round-1 B4).
