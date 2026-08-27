@@ -12,6 +12,14 @@ copy:
   # rebuilds them — so there is no install to double-pay for here.
   - .opencode/package.json
   - .opencode/node_modules
+  # opencode slash commands. The auto-link phase covers .opencode/agents and
+  # .opencode/plugins but NOT .opencode/command, so /asimov-debug would be
+  # missing in a worktree opened in opencode. Globbed, not the directory:
+  # .gitignore ignores the individual command files, and the container dir
+  # itself is not ignored, so a `.opencode/command` entry is refused.
+  # These are relative symlinks into .agents/skills/, which the auto-link
+  # phase places — so the copies resolve inside the worktree.
+  - .opencode/command/*.md
   # Claude permission allowlist for this project.
   - .claude/settings.local.json
   # code-review-graph cache. Written by build_or_update_graph_tool, so it can

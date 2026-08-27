@@ -106,6 +106,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; m=$(cd \"$d\" 2>/dev/null && cd \"$(git rev-parse --git-common-dir 2>/dev/null)/..\" 2>/dev/null && pwd) || exit 0; s=\"$m/.agents/skills/asimov/claude/hooks/worktree-link-session.sh\"; [ -f \"$s\" ] && bash \"$s\" || true",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionEnd": [
