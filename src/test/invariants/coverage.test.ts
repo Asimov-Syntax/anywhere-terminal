@@ -134,6 +134,15 @@ describe("truthfulness invariants — registry", () => {
     const deferred = INVARIANTS.filter((row) => row.status === "deferred").map((row) => row.id);
     expect(deferred).toEqual([...DEFERRED_BY_WT_006_2]);
   });
+
+  // Assertion 6 (design.md D1). `uncovered` is the audit's backlog, not a
+  // resting state: once the change that opened it closes, an invariant may only
+  // be covered or deferred against the frozen set above. Leaving this to a
+  // reviewer is what let the backlog become permanent last time.
+  it("leaves no invariant merely recorded as unproven", () => {
+    const uncovered = INVARIANTS.filter((row) => row.status === "uncovered").map((row) => row.id);
+    expect(uncovered).toEqual([]);
+  });
 });
 
 describe("truthfulness invariants — coverage", () => {

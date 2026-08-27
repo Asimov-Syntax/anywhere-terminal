@@ -27,6 +27,7 @@ import type { VaultSessionEntry } from "./vault/types";
 import type { CreateSessionOptions } from "./vault/VaultLauncher";
 import { createMessageRouter, type MessageHandlers } from "./webview/messaging/MessageRouter";
 import { WorktreeController } from "./webview/worktree/WorktreeController";
+import { agentRow } from "./webview/worktree/worktreeFixtures";
 import type { WorktreeAgentRow } from "./webview/worktree/worktreeViewTypes";
 
 // A REAL directory: the create-path probe asks the filesystem, and a fake root
@@ -50,6 +51,14 @@ let lockedRow = false;
 let prunableRow = false;
 /** Set by a test that needs the repository's listing to stop being readable. */
 let listingFails = false;
+/** Set by a test that needs the worktree to carry something a confirmation must name. */
+let dirtyPaths: string[] = [];
+/** Set by a test that needs git to be killed part-way through a removal. */
+let removeTimesOut = false;
+
+/** Every envelope the host posted to the surface, and every message the webview sent back. */
+let posted: ExtensionToWebViewMessage[] = [];
+let outbound: WebViewToExtensionMessage[] = [];
 
 function listing(): string {
   const record = (path: string, head: string, branch: string, extra: string[] = []): string[] => [
@@ -85,7 +94,8 @@ const SCRIPT: Record<string, { code?: number; stdout?: string; stderr?: string }
   // Filled per test from `registered` — a removal really does drop the row, so
   // the outcome is `ok` rather than the indeterminate a static listing forces.
   [`${REPO}|worktree list --porcelain`]: { stdout: "" },
-  // Clean: nothing at risk, so an unforced removal is not blocked.
+  // Clean by default: nothing at risk, so an unforced removal is not blocked.
+  // `dirtyPaths` overrides it for the tests that need a blocker set to exist.
   [`${LINKED}|status --porcelain`]: { stdout: "" },
   [`${REPO}|worktree prune --dry-run --verbose`]: { stderr: "" },
 };
@@ -116,7 +126,21 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
           };
         }
         const scripted = SCRIPT[key] ?? {};
-        const stdout = key === `${REPO}|worktree list --porcelain` ? listing() : (scripted.stdout ?? "");
+        if (removeTimesOut && args[0] === "worktree" && args[1] === "remove") {
+          // A git killed part-way: no exit status to read, and the state it had
+          // already moved stays moved. This is the shape I15 exists for.
+          return {
+            code: -1,
+            stdout: Buffer.from(""),
+            stderr: "",
+            timedOut: true,
+            failedToSpawn: false,
+          };
+        }
+        let stdout = key === `${REPO}|worktree list --porcelain` ? listing() : (scripted.stdout ?? "");
+        if (key === `${LINKED}|status --porcelain` && dirtyPaths.length > 0) {
+          stdout = dirtyPaths.map((p) => ` M ${p}\n`).join("");
+        }
         // The dry run has to agree with what the listing flagged, or the
         // service refuses the confirmed count — as it should.
         const stderr =
@@ -270,6 +294,10 @@ beforeEach(() => {
   lockedRow = false;
   prunableRow = false;
   listingFails = false;
+  dirtyPaths = [];
+  removeTimesOut = false;
+  posted = [];
+  outbound = [];
   registered = [LINKED];
   fs.mkdirSync(LINKED, { recursive: true });
   captured.host = undefined;
@@ -332,7 +360,10 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   const route = createMessageRouter(worktreeHandlers as MessageHandlers);
   const surface: WorktreeSurface = {
     isReady: () => true,
-    post: (msg: ExtensionToWebViewMessage) => route(msg),
+    post: (msg: ExtensionToWebViewMessage) => {
+      posted.push(msg);
+      return route(msg);
+    },
     // The provider's half of a launch, recorded rather than opened: a pane needs
     // a webview, and what this walk is about is WHAT would run and WHERE.
     launchAgent: async (options: CreateSessionOptions) => {
@@ -344,6 +375,7 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   controller = WorktreeController.mount({
     host: document.body,
     postMessage: (msg: WebViewToExtensionMessage) => {
+      outbound.push(msg);
       // The provider owns this one, not the host: answered here with a fixed set
       // so the walk does not depend on which agents this machine has installed.
       if (msg.type === "requestVaultLaunchTargets") {
@@ -417,6 +449,17 @@ function openMenu(rowText: string): HTMLElement[] {
     throw new Error("the context menu rendered no items");
   }
   return items;
+}
+
+/** Open a worktree card so the agent rows it holds collapsed are on screen. */
+function expandCard(rowText: string): void {
+  const card = [...document.querySelectorAll<HTMLElement>('[role="treeitem"]')].find((r) =>
+    (r.textContent ?? "").includes(rowText),
+  );
+  if (card === undefined) {
+    throw new Error(`no rendered card matching ${rowText}`);
+  }
+  card.click();
 }
 
 /** Click a menu item by its visible label. Absence IS the failure. */
@@ -795,3 +838,120 @@ describe("a Claude turn reaches the pane's evidence through the real assembly", 
     expect(h.store.read(h.paneId)?.turn).toBeUndefined();
   });
 });
+
+// ── Cross-layer invariants (design.md D5) ────────────────────────────────
+//
+// Each of these spans the host and the webview. A unit test at either end can
+// pass while the composition is broken, which is what docs/PLAN.md WT-007.1
+// means by "cross-layer verification cannot live inside any single feature
+// task". They live in this file rather than a second harness because standing
+// up this composition twice would be the duplication the invariants argue against.
+
+describe("the invariants that span the host and the webview", () => {
+  /** Every worktree id the tree in this envelope actually contains. */
+  function treeIds(msg: ExtensionToWebViewMessage): string[] {
+    if (msg.type !== "worktreeTreeResponse") {
+      return [];
+    }
+    return msg.tree.repos.flatMap((repo) => repo.worktrees.map((w) => w.id));
+  }
+
+  it("[I9] does not re-render, and sends nothing, for a spinner-only title change", async () => {
+    publishedRow = { ...agentRowFixture(), title: "⠋ building" };
+    const { host } = await assemble();
+    // The card holds its agents collapsed until it is opened — the same click a
+    // user makes before the row is on screen at all.
+    expandCard("feature");
+    await settle();
+    await settleUntil(() => document.body.textContent?.includes("building") === true, "the agent row to render");
+
+    const before = document.querySelector("[data-row-id]");
+    const sentBefore = outbound.length;
+
+    // The frame advances. Nothing about the session did.
+    publishedRow = { ...publishedRow, title: "⠙ building" };
+    await host.mutationBindings().forceRebuild(REPO_ID);
+    await settle();
+
+    const after = document.querySelector("[data-row-id]");
+    // Same node, not merely equal markup: a replaced element is a re-render.
+    expect(after).toBe(before);
+    expect(outbound.length).toBe(sentBefore);
+  });
+
+  it("[I14] re-prompts instead of removing when a blocker appears after the confirmation", async () => {
+    dirtyPaths = ["a.txt"];
+    await assemble();
+
+    // An unforced remove against a non-empty blocker set does not run: it comes
+    // back as a notice offering the confirmation, which is what opens the dialog.
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+    expect(gitCalls("remove")).toEqual([]);
+    const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
+      /force remove/i.test(b.textContent ?? ""),
+    );
+    expect(force, "the blocked removal offered no way to confirm").toBeDefined();
+    force?.click();
+    await settle();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+
+    // A second file appears between the confirmation being shown and being answered.
+    dirtyPaths = ["a.txt", "b.txt"];
+    const confirm = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find((b) =>
+      /remove/i.test(b.textContent ?? ""),
+    );
+    expect(confirm, "the dialog offered no confirm button").toBeDefined();
+    confirm?.click();
+    await settle();
+
+    // The force the user authorized was for the set they were SHOWN. It is not
+    // spent on a set that grew underneath it — and the user is told why, rather
+    // than watching the action silently do nothing.
+    expect(gitCalls("remove").filter((a) => a.includes("--force"))).toEqual([]);
+    expect(document.body.textContent).toContain("changed since you confirmed");
+  });
+
+  it("[I15] reports a killed removal as indeterminate, and still rebuilds", async () => {
+    removeTimesOut = true;
+    await assemble();
+    const listsBefore = gitCalls("list").length;
+
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    // Not "Couldn't remove": git never reported an outcome, so a clean failure
+    // would be a claim nobody made. Asserted on the reason the TIMEOUT leg
+    // produces, not on the shared "partly applied" title — three other branches
+    // reach that title, and an assertion on it passes with this leg deleted.
+    expect(document.body.textContent).toContain("partly applied");
+    expect(document.body.textContent).toContain("stopped before git reported an outcome");
+    expect(document.body.textContent).not.toContain("Couldn't remove");
+    // The rebuild happens on the failure path too, or the tree keeps showing a
+    // row whose folder may be half-gone.
+    expect(gitCalls("list").length).toBeGreaterThan(listsBefore);
+  });
+
+  it("never posts presence for a worktree the paired tree does not carry", async () => {
+    publishedRow = agentRowFixture();
+    await assemble();
+    await settleUntil(() => posted.some((m) => m.type === "worktreeTreeResponse"), "a tree envelope");
+
+    const envelopes = posted.filter((m) => m.type === "worktreeTreeResponse");
+    expect(envelopes.length).toBeGreaterThan(0);
+    for (const envelope of envelopes) {
+      const ids = new Set(treeIds(envelope));
+      const named = Object.keys(
+        (envelope as Extract<ExtensionToWebViewMessage, { type: "worktreeTreeResponse" }>).presence.rowsByWorktreeId,
+      );
+      // Atomicity is structural here — one message carries both — and this is
+      // what asserts the structure has not been split behind the invariant.
+      expect(named.filter((id) => !ids.has(id))).toEqual([]);
+    }
+  });
+});
+
+/** A window-scoped agent row under the linked worktree, built by the shipped fixture. */
+function agentRowFixture(): WorktreeAgentRow {
+  return agentRow({ rowId: "row-1", paneId: "pane-1", viewId: "view-1", title: "worktree walk", agent: "claude" });
+}

@@ -37,7 +37,7 @@
 
 ## 2. Cross-layer composition
 
-- [ ] 2_1 Prove the invariants that no single layer can prove
+- [x] 2_1 Prove the invariants that no single layer can prove — verified: pnpm run test:unit && pnpm run check-types exit 0
   - **Deps**: 1_3
   - **Refs**: design.md D5, D9
   - **Acceptance**:
@@ -45,7 +45,8 @@
     - Verify: command pnpm run test:unit
   - **Boundary**: no test may live in or modify src/agentHooks/install/ or AgentHookController.ts
   - **Plan**:
-    1. Write src/extension.crossLayer.test.ts covering the six scenarios in D5, each traversing the production composition rather than a pair of unit seams
+    1. Write src/extension.crossLayer.test.ts for the hook-pipeline scenarios (I6, I7), each traversing the production composition rather than a pair of unit seams
+    1b. Add the host/webview scenarios (I9, I14, I15, tree-presence atomicity) to src/extension.worktreeAssembly.test.ts, which already stands up that composition — a second copy of it would be the duplication D5 is arguing against
     2. Demonstrate each red by breaking its pipeline at a different layer than the assertion reads
     3. Flip those rows to covered in src/test/invariants/registry.ts, and add assertion 6 to src/test/invariants/coverage.test.ts: no row is left uncovered
 

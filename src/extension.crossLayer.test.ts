@@ -102,7 +102,7 @@ async function pipeline() {
 }
 
 describe("[I6] a resumed or cleared session lands idle without claiming a completed turn", () => {
-  it("stamps no finish for a session boundary, though the pane does read idle", async () => {
+  it("[I6] stamps no finish for a session boundary, though the pane does read idle", async () => {
     const p = await pipeline();
     await p.send("UserPromptSubmit");
     // Projected between the events: the finish rule is a TRANSITION (running → idle),
@@ -117,7 +117,7 @@ describe("[I6] a resumed or cleared session lands idle without claiming a comple
     expect(row?.finishedAt, "a boundary was recorded as a finished turn").toBeUndefined();
   });
 
-  it("does stamp a finish for a turn that actually ended, so the check above is not vacuous", async () => {
+  it("[I6] does stamp a finish for a turn that actually ended, so the check above is not vacuous", async () => {
     const p = await pipeline();
     await p.send("UserPromptSubmit");
     expect((await p.row())?.activity).toBe("running");
@@ -131,7 +131,7 @@ describe("[I6] a resumed or cleared session lands idle without claiming a comple
 });
 
 describe("[I7] hook status is never carried across a window reload", () => {
-  it("returns the pane to inference when the source that published it goes away", async () => {
+  it("[I7] returns the pane to inference when the source that published it goes away", async () => {
     const p = await pipeline();
     await p.send("UserPromptSubmit");
     expect((await p.row())?.activitySource).toBe("hook");
