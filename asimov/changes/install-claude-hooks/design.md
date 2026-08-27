@@ -310,6 +310,11 @@ installation's writes visible to the first.
 
 ### D17: A write is reserved before it happens, and the reservation is the record
 
+**Superseded by D21 and D22 (round 11).** Reserving before writing was right and survives in D22.
+What failed is everything it kept: the collection it bounded still admitted keys through the
+session fold, so B10 reappeared for the third time. Retained here as the record of why the
+reservation itself is not the missing property — the admission monopoly is.
+
 **Amends D13's pending list and D12's command history.** One agent entry holds one collection:
 the writes this extension has made, each keyed by the pair a write actually is — the canonical
 configuration path, and the exact command put there.
@@ -342,6 +347,10 @@ clean because cleaning a path that has none of our entries is already a no-op.
 
 ### D18: A write is claimed by installations, not by a flag
 
+**Superseded by D20 (round 11).** The claim set was an unbounded axis (B23) resting on a minted
+identity that was never durably written (B22), and it still let the last writer sweep a peer at a
+shared path (B19). D20 replaces coordination between installations with exclusion between them.
+
 D16 made one ledger serve every VS Code installation for this user, and two installations may
 legitimately point `claudeConfigDir` at different files. A single active/inactive flag cannot
 express that: one host's previous destination, which it may clean, is indistinguishable from
@@ -363,6 +372,12 @@ a change of installation. The ceiling counts claims as well as records, so the c
 become a new unbounded axis.
 
 ### D19: Ownership is a path and a command, and unprovable history says so
+
+**Superseded by D20 and D23 (round 11).** Its two halves failed differently. The pair as
+*deletion* identity was right and is kept by D20 — but the implementation passed only a command
+to the ownership test, so a command recorded at one path authorised removal at another (B20), and
+pair identity alone never excluded two commands competing for one file (B19). The honest-migration
+half was right in intent and lost its evidence in practice (B21); D23 makes it a contract.
 
 Ownership answers `isOwned(path, command)`. The command-only fallback it replaces claimed
 `seedCommand` whenever nothing was recorded, which is a condition an entry re-enters every time
@@ -386,6 +401,164 @@ Activation reads authoritatively before anything reconciles. Installing first an
 let the initial install record against an empty view, overwriting the last record naming the file
 the previous session wrote (B14). `load()` is best-effort and swallows read failures, so it is
 not that authority on its own; the pre-write reservation is, and it takes the ledger lock.
+
+### D20: A destination has one owner, and the owner is a place rather than an identity
+
+**Replaces D18, and the ownership half of D19.** Five cycles tried to let two installations share
+a configuration file safely, and each attempt moved the defect rather than closing it. This
+decision stops trying. Exclusion is cheaper than coordination and it is the property the user
+actually needs, because the failure being prevented — one installation deleting another's live
+hook — is irreversible.
+
+Two keys, deliberately different:
+
+- **Deletion identity** is the exact `(canonical configuration path, command bytes)` pair. Every
+  ownership check receives both. A command recorded at one path never authorises removal at
+  another, which is B20.
+- **Exclusivity** is keyed by `(agent, canonical configuration path)`. Pair identity alone is not
+  enough: two *different* commands can still compete for one user file and the later one sweeps
+  the earlier, which is B19. The destination is what has to be exclusive.
+
+A record carries one scalar `owner`, never a claim set. One owner holds at most one lifecycle
+record per agent — a second destination is a move (D21), not a second claim. No implicit takeover:
+another owner may neither replace nor remove a record. There is no stale-owner reclamation, on any
+timeout or heuristic — an abandoned owner keeps blocking until it is cleared exactly, because every
+rule that decides someone else is "probably gone" is a rule that eventually deletes a live hook.
+`AGENT_HOOK_UNINSTALL_COMMAND` (D9) stays the one deliberate exception and removes by exact
+recorded pairs regardless of owner, because that is precisely what the user asked for.
+
+**The owner is the canonical extension storage root** from `context.globalStorageUri.fsPath`,
+stored directly or as a deterministic digest. Nothing is minted and nothing is kept in
+`globalState`, which is what B22 was: an identity used before the write that created it had
+settled, so two first activations could mint and use different ids. A physical root cannot be
+lost between minting and use because it is never minted. This deliberately does **not** claim to
+identify a VS Code profile — the API documents no such guarantee, and D18 assumed one. It
+identifies the wrapper domain actually doing the managing, which is the thing that matters.
+
+What this gives up, stated plainly rather than discovered later:
+
+- Two installations cannot independently manage one configuration path. The second receives
+  `destination-owned` and mutates nothing.
+- Profiles sharing a storage root share one owner domain. Independent enable/disable between them
+  is unsupported, and is documented as shared behaviour rather than left to surprise someone.
+- A storage-root change is a new owner, not a transparent relocation: it yields `transfer-required`
+  and the previous registration stays recorded and removable.
+
+A refusal the user cannot act on is not a refusal, it is a dead end — the same reasoning that put
+`blockedBy` on `at-capacity` in D17. So `destination-owned` names the holder and the route to
+clear it. Without that, "no stale-owner reclamation" would strand a destination forever.
+
+### D21: A record is a lifecycle state, not a history
+
+**Replaces D17's collection and what remained of D13's pending list.** Every incarnation of this
+model stored *what happened* and then tried to bound it. History has no natural bound, which is
+why the ceiling had to be re-derived at every merge and why B10 survived rounds 7, 9 and 11.
+Current recoverable state does have one: it is a single value.
+
+Each owner record is exactly one of `prepared(target)`, `installed(current)`,
+`moving(current, target)`, `removing(current)`, or a bounded `legacy` obligation (D23). A move
+durably enters `moving` before either configuration is touched; the target is installed first and
+the previous pair cleaned afterwards. If that cleanup fails the record stays `moving` and both
+paths are surfaced; no further move is admitted until it resolves.
+
+That window can leave two live hooks, and the agent then posts every event twice. This is
+deliberate — bounded duplication is recoverable and silent forgetting is not — but it is a real
+consequence, not a footnote: **WT-006.3 consumes these events, so its turn-state reducer must treat
+a duplicate post as idempotent rather than as two turns.** The recovery set is fixed at two exact
+pairs, so the duplication cannot compound.
+
+**The session fold is deleted outright.** A durable reservation already contains everything needed
+after a crash, so post-write processing may only advance an existing state. The fold was the hole
+every bound leaked through.
+
+Serialization reuses the accepted authorities and adds none: `createKeyedSerialQueue`
+(`src/utils/keyedSerialQueue.ts`) keyed by agent for same-process work, then the ledger's
+`LockedFile` (`src/agentHooks/install/lockedJsonFile.ts`) as the cross-process transition
+authority, then configuration `LockedFile` locks taken in canonical path order while the ledger
+transition is held. Path ordering is what keeps two agents touching two files from deadlocking.
+
+### D22: Capacity is admission-only, and exactly two operations may create a record
+
+**Keeps D17's reserve-before-write and drops everything it could not bound.** The bound is stated
+as numbers rather than as a principle, because three rounds proved a principle is not checkable:
+
+- 16 lifecycle records per agent.
+- At most two exact pairs per record, and only while `moving` — so at most 32 pair slots per agent.
+- A `legacy` obligation holds at most the shipped pre-D17 ceiling of 8 candidate commands, and
+  consumes the same 16-record budget rather than forming a second collection to be merged.
+
+`AGENT_HOOK_REGISTRY` (`src/agentHooks/install/agentHookRegistry.ts`) has two entries, so the whole
+ledger holds at most 32 records.
+
+**Exactly two operations may create a record**: the ordinary prepare/reserve transaction under the
+ledger lock, and the one-time all-or-nothing migration of D23, which must prove its complete output
+fits every bound before it writes anything. No catch path, session fallback, fold, finalizer,
+reconciliation repair, or compatibility shim may introduce one. That monopoly is the property
+missing from all three B10 appearances — each time, one more path could add a key.
+
+Ordinary admission succeeds only when the operation is an idempotent retry, the owner has no
+unresolved earlier lifecycle state, the destination is not held by another owner, and there is room
+under the ceiling. At the ceiling, `at-capacity` carries the occupied paths and nothing is written.
+A shared-path conflict returns `destination-owned` instead — capacity is not what is wrong, and
+offering more of it would mislead.
+
+### D23: Migration is lossless or it is refused whole
+
+**Replaces the migration half of D19.** D19 said unprovable history should say so; the
+implementation then dropped the candidate evidence and let a `not-installed` sweep report the path
+clean, which is B21 — the user is told there was nothing to remove while our hooks keep firing.
+
+Migration runs under the ledger lock and does not rewrite the previous bytes until the complete
+conversion has been validated against every D22 bound. Where it is malformed, oversized, or over
+capacity, the previous bytes are left untouched, the activation reports `migration-overflow` or
+`migration-unresolved`, and **no user configuration is reconciled in that activation**. Refusing to
+act is the only honest response to not knowing what we wrote.
+
+Conversion rules, in order of what can be proven:
+
+- Every non-empty exact `(path, command)` is preserved as positive evidence.
+- `claims[]` is ignored. B22 makes those identities unreliable, and an unreliable identity is worse
+  than none.
+- `candidates[]` is preserved exactly within the 8 bound; a source exceeding it refuses the whole
+  migration rather than truncating, since a truncated candidate list is indistinguishable from a
+  complete one afterwards.
+- For pre-D17 records the old `destination` plus the newest command is the only positive relation
+  available; pending paths keep whatever commands survive as candidates.
+- A path with no surviving command becomes an unresolved `legacy` obligation. It consumes capacity
+  and is **never** cleared by `not-installed`, because that is the expected answer when the real
+  command is the one we lost.
+- Two live exact commands at one path produce `migration-conflict`. No winner is chosen
+  automatically.
+- The bootstrap-consumed marker is materialized and persisted whether or not the deterministic seed
+  is found. D19 consumed it only on success, so an absent seed left the fallback armed to re-arm —
+  the second half of B20.
+
+A current owner may adopt a legacy record only when its own generated pair is byte-identical to the
+recorded one and that exact entry is present at that path. Anything less is a guess.
+
+What the user is told when we cannot prove it: that Anywhere Terminal can no longer prove which
+command it previously wrote in that file, that nothing in the file was changed, that the hook may
+still be active, and that it needs inspecting before automatic installation resumes. Any
+acknowledge/forget affordance may discard the obligation after confirmation and must never mutate
+the configuration.
+
+### D24: A refusal keeps its detail all the way to the surface that can act on it
+
+**Amends D13's transition contract.** The vocabulary already existed and was thrown away one layer
+above where it was produced: `AgentHookController` reduced every installer result to
+`{success, reason}`, discarding the `blockedBy` paths D17 added precisely so a refusal could be
+acted on, and the transition then reported `reconciled: true` whether or not anything settled. A
+move could therefore remove the old hook, fail to install the new one, and report success (B24).
+
+The existing outcome union in `src/agentHooks/install/types.ts` is extended — not replaced, and not
+joined by a second reporting mechanism — with `destination-owned`, `transfer-required`,
+`migration-unresolved`, `migration-overflow` and `ledger-unavailable` alongside `at-capacity`. The
+controller preserves the structured result, and `reconciled` is derived from the settled outcome
+rather than from calls having been attempted.
+
+Uninstall carries the same discipline in the other direction: it must require that the caller owns
+the exact record before removing anything (B14), and `not-installed` is no longer folded into
+success when an unresolved obligation remains (B21).
 
 ### Guarantee this design can honestly claim
 
@@ -427,7 +600,9 @@ export interface AgentConfigAdapter {
 ```
 
 `ManagedConfigInstaller` keeps `install()` and `uninstall()` returning the existing
-`HookInstallOutcome` / `HookRemoveOutcome` shapes, so `AgentHookController` needs no change.
+`HookInstallOutcome` / `HookRemoveOutcome` shapes. D24 widens their reason vocabulary and requires
+`AgentHookController` to stop narrowing them — the shapes are reused, the pass-through is not
+optional.
 
 ## Risk Map
 
@@ -441,4 +616,7 @@ export interface AgentConfigAdapter {
 | Wrapper mode window (D11) | A hook firing mid-install finds a non-executable script | chmod before rename; the canonical path only ever appears complete |
 | Managed entries per event | Entry count grows with the registered event set, bounded by D7's eight events; re-append after filter keeps it at one per event | Idempotence test: installing three times leaves exactly one managed entry per event |
 | Config file size | Read whole, parsed, rewritten whole on every reconcile | Bounded by the agent's own settings file, which is user-authored and small; no growth axis this change introduces |
+| Abandoned owner blocks a destination (D20) | An installation that vanished without clearing its record leaves a configuration no other installation can manage | Accepted deliberately: guessing staleness is how a live hook gets deleted. Mitigated by making it clearable — `destination-owned` names the holder and the route out, and the uninstall-everything command removes by exact pair regardless of owner; a test pins that the refusal carries both |
+| Duplicate hooks during `moving` (D21) | A failed cleanup leaves old and new entries installed, so the agent posts every event twice | Bounded to two exact pairs and recoverable, which silent forgetting is not; the reducer WT-006.3 builds must be idempotent per event, and a test pins that a retried reconcile clears the previous pair rather than adding a third |
+| Migration refusal blocks installation (D23) | An unprovable prior record stops hooks installing at all until the user intervenes | Fail-closed is the intended behaviour where we cannot prove what we wrote; mitigated by telling the user exactly what to inspect and asserting the configuration is byte-identical after a refused activation |
 | Wiring (D8, D9) | A wrong settings key or an unregistered command fails silently at runtime | Manifest test asserts the declared keys match the ones read, both registrations reach the runtime, and the uninstall command is contributed and registered |

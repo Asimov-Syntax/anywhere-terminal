@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -70,6 +70,18 @@ drops candidate evidence), B23 (claims unbounded while only writes are counted),
 reservation never cancelled). Round 3's chair recommended exactly this handback for the same
 family; four amendments later it is still open, so a fifth patch-level or amendment-level pass is
 not a new hypothesis. Escalated to the user rather than opening cycle 6. No fixes edited.
+
+The user chose replacement over a fifth amendment and asked for oracle advice first. Its
+recommendation was triaged in full and accepted with two modifications, both now carried by the
+decisions rather than left as review commentary: `destination-owned` must name the holder and the
+route to clear it, since D20 forbids stale-owner reclamation and a refusal nobody can act on
+strands the destination (D20); and the failed-cleanup window under `moving` leaves two live hooks,
+so WT-006.3's reducer has to treat a duplicate post as idempotent (D21). The oracle also corrected
+the hypothesis this session took into it — exclusivity has to key on the destination, because pair
+identity alone still lets two different commands compete for one user file, which is B19. D20-D24
+replace D17-D19, which are retained as superseded rather than edited so the round history stays
+readable. Round-11 W7 rides along as 9_9: verified currently unreachable (every child.kill is
+inside leaderOnly(), which sets the flag first), so it is latent-hazard cleanup, not a blocker.
 
 What breaks it: a DISCOVERY round is not blocked by an amendment in its range — round 9
 adjudicated fine with 435d911 inside it. So cycle 5 opens with a discovery round over the

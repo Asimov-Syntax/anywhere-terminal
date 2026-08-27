@@ -349,3 +349,106 @@
   - **Plan**:
     1. Order activation in src/extension.ts so the ledger is read before any agent reconciles, behind a named seam in src/agentHooks/install/activation.ts that a test can reach without VS Code
     2. Cover in src/agentHooks/install/activation.test.ts that the read precedes the controller's first install, and that a location changed while the extension was closed leaves the previous path still recorded and cleanable
+
+## 9. Cycle-5 replacement
+
+- [ ] 9_1 Make a record one lifecycle state
+  - **Deps**: none
+  - **Refs**: .reviews/round-11.md#b10, .reviews/round-11.md#b23, design.md#d21-a-record-is-a-lifecycle-state-not-a-history, design.md#d22-capacity-is-admission-only-and-exactly-two-operations-may-create-a-record
+  - **Acceptance**:
+    - Outcome: No path other than an admitted reservation can introduce a record
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Replace the write collection and its claim set in src/agentHooks/install/managedEntryLedger.ts with the single lifecycle state design.md#d21-a-record-is-a-lifecycle-state-not-a-history defines, deleting the session fold rather than bounding it
+    2. Enforce the ceilings design.md#d22-capacity-is-admission-only-and-exactly-two-operations-may-create-a-record states at admission only, and express the refusals in src/agentHooks/install/types.ts
+    3. Cover in src/agentHooks/install/managedEntryLedger.test.ts: a post-write failure advancing its own record rather than adding one; admission refused at the ceiling naming the occupied paths; a record holding two pairs only while moving; and the absence of any other create path, asserted by driving every failure branch and reading the record count
+
+- [ ] 9_2 Own a destination from where the extension lives
+  - **Deps**: 9_1
+  - **Refs**: .reviews/round-11.md#b22, design.md#d20-a-destination-has-one-owner-and-the-owner-is-a-place-rather-than-an-identity
+  - **Acceptance**:
+    - Outcome: Ownership survives an activation that never completed a write to extension state
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Derive the owner in src/extension.ts from the canonical storage root design.md#d20-a-destination-has-one-owner-and-the-owner-is-a-place-rather-than-an-identity names, deleting the minted identifier and its store
+    2. Hold and compare owners in src/agentHooks/install/managedEntryLedger.ts by that value, and report a changed root as its own refusal rather than as a relocation
+    3. Cover in src/agentHooks/install/managedEntryLedger.test.ts: two concurrent first activations under one root resolving to one owner; a different root refusing rather than adopting; and no identifier written anywhere
+
+- [ ] 9_3 Refuse a destination another installation holds
+  - **Deps**: 9_2
+  - **Refs**: .reviews/round-11.md#b19, .reviews/round-11.md#b20, design.md#d20-a-destination-has-one-owner-and-the-owner-is-a-place-rather-than-an-identity, specs/agent-hook-installation/spec.md#one-installation-owns-a-configuration-destination
+  - **Acceptance**:
+    - Outcome: A second installation targeting a held configuration changes no bytes in it
+    - Verify: unit src/agentHooks/install/ManagedConfigInstaller.test.ts
+  - **Plan**:
+    1. Key exclusivity on the destination and pass both the path and the command to every ownership check in src/agentHooks/install/managedEntryLedger.ts
+    2. Refuse from src/agentHooks/install/ManagedConfigInstaller.ts before the configuration is opened, carrying the holder and the route to clear it as design.md#d20-a-destination-has-one-owner-and-the-owner-is-a-place-rather-than-an-identity requires, with the reason added in src/agentHooks/install/types.ts
+    3. Cover in src/agentHooks/install/ManagedConfigInstaller.test.ts: a second owner refused with the file byte-identical; a refusal naming the holder and the route out; and a command recorded at one path refusing to authorise removal at another
+
+- [ ] 9_4 Move a registration in one durable step
+  - **Deps**: 9_3
+  - **Refs**: .reviews/round-11.md#b25, design.md#d21-a-record-is-a-lifecycle-state-not-a-history, specs/agent-hook-installation/spec.md#a-relocation-is-one-durable-move
+  - **Acceptance**:
+    - Outcome: A move whose cleanup fails leaves both paths recorded and retryable
+    - Verify: unit src/agentHooks/install/ManagedConfigInstaller.test.ts
+  - **Plan**:
+    1. Enter the moving state durably before either configuration changes in src/agentHooks/install/ManagedConfigInstaller.ts, installing the target before cleaning the previous pair
+    2. Take the locks in the order design.md#d21-a-record-is-a-lifecycle-state-not-a-history sets, reusing src/utils/keyedSerialQueue.ts and src/agentHooks/install/lockedJsonFile.ts rather than adding a serialisation authority
+    3. Admit no further move while one is unresolved, and surface both paths from src/agentHooks/install/agentHookTransitions.ts
+    4. Cover in src/agentHooks/install/ManagedConfigInstaller.test.ts: a failed cleanup retaining both paths; the retry clearing the previous pair rather than adding a third; and a second move refused while the first is open
+
+- [ ] 9_5 Remove only what this owner recorded
+  - **Deps**: 9_4
+  - **Refs**: .reviews/round-11.md#b14, design.md#d24-a-refusal-keeps-its-detail-all-the-way-to-the-surface-that-can-act-on-it, specs/agent-hook-installation/spec.md#an-abandoned-registration-is-not-reclaimed
+  - **Acceptance**:
+    - Outcome: Uninstalling one installation leaves another installation's registration installed
+    - Verify: unit src/agentHooks/install/ManagedConfigInstaller.test.ts
+  - **Plan**:
+    1. Require the caller to own the exact record before removing anything in src/agentHooks/install/ManagedConfigInstaller.ts, releasing the record before the configuration is rewritten
+    2. Keep the uninstall-everything command the one exception, removing by exact recorded pair regardless of owner
+    3. Cover in src/agentHooks/install/ManagedConfigInstaller.test.ts: a targeted uninstall leaving a peer's entry and record intact; and remove-everything clearing both
+
+- [ ] 9_6 Convert old records losslessly or refuse the activation
+  - **Deps**: 9_3
+  - **Refs**: .reviews/round-11.md#b21, .reviews/round-11.md#b20, design.md#d23-migration-is-lossless-or-it-is-refused-whole, specs/agent-hook-installation/spec.md#an-unprovable-prior-installation-is-reported-never-guessed, specs/agent-hook-installation/spec.md#converting-earlier-records-is-all-or-nothing
+  - **Acceptance**:
+    - Outcome: A record that cannot be converted leaves the previous bytes and every configuration untouched
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Replace the sanitising conversion in src/agentHooks/install/managedEntryLedger.ts with the all-or-nothing contract design.md#d23-migration-is-lossless-or-it-is-refused-whole defines, validating the whole output against the bounds before writing
+    2. Persist the bootstrap marker whether or not the seed was found, and add the refusal reasons in src/agentHooks/install/types.ts
+    3. Keep an unresolved obligation through a sweep that reported nothing installed, and reconcile no configuration in a refused activation
+    4. Cover in src/agentHooks/install/managedEntryLedger.test.ts: candidates preserved to the bound and a source past it refusing whole; an unresolved obligation surviving a not-installed sweep; two live commands at one path refusing to pick a winner; and an absent seed still consuming the marker
+
+- [ ] 9_7 Carry a refusal to the surface that can act on it
+  - **Deps**: 9_4
+  - **Refs**: .reviews/round-11.md#b24, design.md#d24-a-refusal-keeps-its-detail-all-the-way-to-the-surface-that-can-act-on-it
+  - **Acceptance**:
+    - Outcome: A reconciliation whose install never settled is not reported as reconciled
+    - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
+  - **Plan**:
+    1. Stop narrowing the installer result in src/agentHooks/AgentHookController.ts, preserving the structured outcome the installer returned
+    2. Derive the reconciled answer in src/agentHooks/install/agentHookTransitions.ts from the settled outcome rather than from calls having been attempted
+    3. Stop folding a not-installed answer into success where an unresolved obligation remains
+    4. Cover in src/agentHooks/install/agentHookTransitions.test.ts: a move that removes the old entry and fails to install the new one reporting unreconciled with both paths; and a refusal reaching the caller with its detail intact
+
+- [ ] 9_8 Resolve an unfinished operation before starting another
+  - **Deps**: 9_5, 9_6
+  - **Refs**: .reviews/round-11.md#b25, design.md#d21-a-record-is-a-lifecycle-state-not-a-history
+  - **Acceptance**:
+    - Outcome: A reservation left by a failed write is resolved rather than left holding capacity
+    - Verify: unit src/agentHooks/install/activation.test.ts
+  - **Plan**:
+    1. Process every prepared and moving record before any current-path filtering or new operation in src/agentHooks/install/activation.ts
+    2. Revert the state on a known pre-write failure in src/agentHooks/install/ManagedConfigInstaller.ts, and inspect the exact pair on restart where that revert did not persist
+    3. Cover in src/agentHooks/install/activation.test.ts: a prepared record at the current path resolved while disabled rather than filtered out; and a reverted failure freeing its slot
+
+- [ ] 9_9 Settle a probe error through the termination gate
+  - **Deps**: none
+  - **Refs**: .reviews/round-11.md#w7, design.md#d14-one-process-runner-contract-absolute-and-cancellable
+  - **Acceptance**:
+    - Outcome: A child error after the deadline waits for the termination outcome like a close does
+    - Verify: unit src/agentHooks/install/probeRunner.test.ts
+  - **Plan**:
+    1. Route the post-deadline error path in src/agentHooks/install/probeRunner.ts through the same gate the close path uses, keeping the pre-deadline failure immediate
+    2. Cover in src/agentHooks/install/probeRunner.test.ts: an error arriving after the deadline with the terminator still pending, asserting the probe waits and reports incomplete termination
