@@ -146,6 +146,58 @@ export function affectsSessionRestoreEnabled(e: vscode.ConfigurationChangeEvent)
   return e.affectsConfiguration("anywhereTerminal.sessionRestore.enabled");
 }
 
+/** What activating an agent row in the worktree panel does. */
+export type WorktreeRowActivation = "focus" | "preview";
+
+/**
+ * Read the worktree row-activation setting. Default `"focus"`.
+ *
+ * Read host-side because the webview has no `workspace.getConfiguration`, and
+ * defaulted rather than trusted: a stored value that is neither of the two
+ * (hand-edited settings.json, a downgrade) falls back rather than travelling to
+ * the view as a mode it cannot render.
+ */
+export function readWorktreeRowActivation(): WorktreeRowActivation {
+  const config = vscode.workspace.getConfiguration("anywhereTerminal");
+  const value = config.get<string>("worktree.rowActivation");
+  return value === "preview" || value === "focus" ? value : "focus";
+}
+
+/** The configured create root, and whether the user actually stated it. */
+export interface WorktreeCreateRootSetting {
+  value: string | undefined;
+  explicitlySet: boolean;
+}
+
+/**
+ * Read the worktree create-root setting.
+ *
+ * `explicitlySet` comes from the configuration's own resolution, not from
+ * comparing the value against the declared default: a user who deliberately
+ * sets the default has still stated a preference, and must outrank the
+ * layout detected from the repository (design.md D7).
+ */
+export function readWorktreeCreateRoot(): WorktreeCreateRootSetting {
+  const config = vscode.workspace.getConfiguration("anywhereTerminal");
+  const inspected = config.inspect<string>("worktree.createRoot");
+  const stated = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue ?? undefined;
+  const trimmed = typeof stated === "string" ? stated.trim() : undefined;
+  return {
+    value: trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined,
+    explicitlySet: trimmed !== undefined && trimmed.length > 0,
+  };
+}
+
+/** Check whether a configuration change event affects the create root. */
+export function affectsWorktreeCreateRoot(e: vscode.ConfigurationChangeEvent): boolean {
+  return e.affectsConfiguration("anywhereTerminal.worktree.createRoot");
+}
+
+/** Check whether a configuration change event affects row activation. */
+export function affectsWorktreeRowActivation(e: vscode.ConfigurationChangeEvent): boolean {
+  return e.affectsConfiguration("anywhereTerminal.worktree.rowActivation");
+}
+
 // ─── Private: Resolution Chains ─────────────────────────────────────
 
 /**

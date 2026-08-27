@@ -1,22 +1,33 @@
-import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import { descendantPids } from "../pty/processTree";
+import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { type ResolveClaudeSessionDeps, resolveClaudeSession } from "../session/resolveClaudeSession";
 import type { SessionManager } from "../session/SessionManager";
-import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
-import type { ThemeChangedMessage, VaultContinueSessionMessage, WebViewToExtensionMessage } from "../types/messages";
+import {
+  affectsWorktreeRowActivation,
+  readTerminalConfig,
+  readTerminalSettings,
+  readWorktreeRowActivation,
+} from "../settings/SettingsReader";
+import type {
+  ThemeChangedMessage,
+  VaultContinueSessionMessage,
+  VaultLaunchCapability,
+  WebViewToExtensionMessage,
+} from "../types/messages";
+import { isWorktreeMessage } from "../types/messages";
 import { buildContinuationPrompt } from "../vault/ContinuationPrompt";
 import type { VaultRefreshHint } from "../vault/cacheTypes";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { ContinuationTarget, LaunchMode } from "../vault/LaunchBuilder";
 import { resolveAssistantMessageRef } from "../vault/messageText";
-import { readClaudeSessions, resolveClaudeSessionPath } from "../vault/readers/claudeReader";
-import { listRunningClaudeSessions } from "../vault/readers/runningSessions";
+import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
+import { indexRunningSessionsOrEmpty, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
-import { agentKindForExecutable, detectContinuationTargets } from "../vault/registry";
+import { agentKindForExecutable, detectLaunchTargets } from "../vault/registry";
 import { parseEntryId, type VaultSessionEntry } from "../vault/types";
 import { normalizeVaultCustomName } from "../vault/VaultCustomNameRegistry";
-import type { VaultLauncher } from "../vault/VaultLauncher";
+import type { CreateSessionOptions, VaultLauncher } from "../vault/VaultLauncher";
 import type { VaultService } from "../vault/VaultService";
 import { handlePasteClipboardImage, handlePasteOsClipboardImage, readImageFromOsClipboard } from "./clipboardImageSync";
 import { FileTreeHost } from "./fileTreeHost";
@@ -29,6 +40,7 @@ import { previewFileLink } from "./previewFileLink";
 import { isValidPreviewRequest } from "./previewValidation";
 import { readBytesBounded } from "./readBytesBounded";
 import type { VaultWatchClient, VaultWatchCoordinator } from "./VaultWatchCoordinator";
+import type { WorktreeHost, WorktreeSurface } from "./WorktreeHost";
 import { getTerminalHtml } from "./webviewHtml";
 
 /**
@@ -138,6 +150,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     private readonly vaultService: VaultService | null = null,
     private readonly vaultLauncher: VaultLauncher | null = null,
     private readonly vaultWatchCoordinator: VaultWatchCoordinator | null = null,
+    /** Window-scoped worktree tree — null in contexts where it is not wired (tests). */
+    private readonly worktreeHost: WorktreeHost | null = null,
+    /**
+     * Window-scoped pane evidence — null in contexts where it is not wired
+     * (tests). Reports flow here whatever body this surface is showing.
+     */
+    private readonly paneEvidence: PaneEvidenceStore | null = null,
   ) {
     this.fileTreeHost = new FileTreeHost(gitDecorationProvider, watcherPool);
   }
@@ -162,9 +181,28 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     const disposables: vscode.Disposable[] = [];
     let vaultWatchClient: VaultWatchClient | undefined;
 
+    // This surface's identity to the worktree host: it carries the visibility
+    // flag, so the object must be the same one across attach and every message.
+    const worktreeSurface: WorktreeSurface = {
+      isReady: () => this._ready,
+      post: (msg) => this.safePostMessage(webviewView.webview, msg),
+      // A pane can only be created by the provider that owns the view, so this
+      // capability lives on the surface rather than among the host's injected
+      // ones. The cwd arrives already resolved by the host — it is a worktree's
+      // own path, never an id the webview sent (design.md D2).
+      openTerminal: async (cwd) => {
+        this.newTerminalAt(webviewView.webview, cwd);
+      },
+      // Same reason as `openTerminal`: the host resolves WHAT to run and where,
+      // and only the provider owning this view can hold the pane it runs in.
+      launchAgent: async (options) => {
+        this.openSessionTab(options, webviewView.webview);
+      },
+    };
+
     disposables.push(
       webviewView.webview.onDidReceiveMessage((msg: unknown) => {
-        this.handleMessage(msg, webviewView, vaultWatchClient);
+        this.handleMessage(msg, webviewView, vaultWatchClient, worktreeSurface);
       }),
     );
 
@@ -200,6 +238,21 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       }),
     );
 
+    // 4a-quater. Worktree row-activation bridge — the panel's neighbours are all
+    // live on configuration change, so this one is too rather than asking for a
+    // reload (design.md D5).
+    disposables.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!affectsWorktreeRowActivation(event) || !this._ready) {
+          return;
+        }
+        this.safePostMessage(webviewView.webview, {
+          type: "worktreeRowActivation",
+          activation: readWorktreeRowActivation(),
+        });
+      }),
+    );
+
     // 4a-ter. Workspace-folder bridge — delegated to fileTreeHost so the
     // sidebar / panel / editor providers stay in lockstep.
     disposables.push(
@@ -209,10 +262,24 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       }),
     );
 
+    // 4a-quater. Worktree tree — one host per window, broadcast to every
+    // surface that says it is showing the view. Attaching costs no git call.
+    const worktreeAttachment = this.worktreeHost?.attach(worktreeSurface);
+    if (worktreeAttachment) {
+      // Seeded rather than left to the first change: a view resolved while
+      // already on screen never fires a visibility event, and would sit silent.
+      worktreeAttachment.setDisplayed(webviewView.visible);
+      disposables.push(worktreeAttachment);
+    }
+
     // 4b. Wire visibility handler (for deferred resize on re-show + output pause/resume)
     disposables.push(
       webviewView.onDidChangeVisibility(() => {
         const viewId = this.getViewId();
+        // The worktree host pushes only to a surface the window is displaying;
+        // `retainContextWhenHidden` means the webview's own declaration cannot
+        // tell it that (audit B1).
+        worktreeAttachment?.setDisplayed(webviewView.visible);
         if (webviewView.visible) {
           // Resume output flushing when view becomes visible
           this.sessionManager.resumeOutputForView(viewId);
@@ -450,7 +517,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     if (!this.vaultLauncher) {
       return;
     }
-    const opts = await this.vaultLauncher.resolve(entryId, mode, prompt, target);
+    this.openSessionTab(await this.vaultLauncher.resolve(entryId, mode, prompt, target), webview);
+  }
+
+  /**
+   * Open resolved session options as a new tab.
+   *
+   * Shared by every launch this provider performs — a continuation, and the
+   * worktree surface's own launches — so a fresh agent lands in a pane the same
+   * way a resumed one does rather than in a second, similar-looking one.
+   */
+  private openSessionTab(opts: CreateSessionOptions, webview: vscode.Webview): void {
     const newSessionId = this.sessionManager.createSession(this.getViewId(), webview, {
       shell: opts.shell,
       shellArgs: opts.shellArgs,
@@ -548,7 +625,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         webview,
         detail
           ? { type: "vaultSessionDetailResponse", entryId, detail, ...echo }
-          : { type: "vaultSessionDetailResponse", entryId, error: "Session not found.", ...echo },
+          : // Two outcomes the reader cannot tell apart here: a session that is
+            // not in the store, and one whose read could not be completed (a
+            // bounded query whose proof failed returns nothing rather than
+            // guessing). Asserting the first states what this branch never
+            // established, and the preview shows the words verbatim.
+            {
+              type: "vaultSessionDetailResponse",
+              entryId,
+              error: "Session not found or could not be read.",
+              ...echo,
+            },
       );
     } catch (err) {
       void this.safeSendWithRetry(webview, {
@@ -565,11 +652,19 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    * (improve-vault-transcript-messages D5). Both failure modes reply with an
    * error rather than silence, so the webview can decline to confirm the copy.
    */
-  /** Which agents this host can continue into (D11) — probed, not assumed, so the
-   *  dialog cannot offer an agent that would fail at spawn. */
-  private async handleRequestVaultLaunchTargets(webview: vscode.Webview): Promise<void> {
-    const targets = await detectContinuationTargets();
-    void this.safeSendWithRetry(webview, { type: "vaultLaunchTargets", targets });
+  /**
+   * Which agents this host can launch into (D11) — probed, not assumed, so a
+   * dialog cannot offer an agent that would fail at spawn.
+   *
+   * The reply echoes the capability it answers: continuing and starting return
+   * different agent sets, and two dialogs listen on this one message.
+   */
+  private async handleRequestVaultLaunchTargets(
+    webview: vscode.Webview,
+    capability: VaultLaunchCapability = "continue",
+  ): Promise<void> {
+    const targets = await detectLaunchTargets(capability);
+    void this.safeSendWithRetry(webview, { type: "vaultLaunchTargets", capability, targets });
   }
 
   private async handleRequestVaultMessageRecord(
@@ -768,19 +863,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         (await this.sessionManager.getLiveCwd(id)) ??
         this.sessionManager.getCurrentCwd(id) ??
         this.sessionManager.getInitialCwd(id),
-      listRunning: () => listRunningClaudeSessions(),
+      runningIndex: () => indexRunningSessionsOrEmpty(listRunningClaudeSessions()),
       descendantPids: (pid) => descendantPids(pid),
-      sessionMtime: async (sessionId) => {
-        const filePath = await resolveClaudeSessionPath(sessionId);
-        if (!filePath) {
-          return undefined;
-        }
-        try {
-          return (await fs.stat(filePath)).mtimeMs;
-        } catch {
-          return undefined;
-        }
-      },
+      sessionMtime: (sessionId) => claudeSessionMtime(sessionId),
       newestSessionUnderCwd: async (cwd) => {
         const { entries } = await readClaudeSessions({});
         let best: { sessionId: string; cwd: string } | null = null;
@@ -871,7 +956,45 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    *
    * See: docs/design/webview-provider.md#§8, docs/design/message-protocol.md#§10
    */
-  private handleMessage(msg: unknown, webviewView: vscode.WebviewView, vaultWatchClient?: VaultWatchClient): void {
+  /**
+   * One new terminal tab in this view. `cwd` overrides the configured working
+   * directory — the worktree panel's "Open Terminal Here" passes a path the
+   * HOST resolved, and everything else takes the setting.
+   */
+  private newTerminalAt(webview: vscode.Webview, cwd?: string): void {
+    const viewId = this.getViewId();
+    const settings = readTerminalSettings();
+    try {
+      const newSessionId = this.sessionManager.createSession(viewId, webview, {
+        shell: settings.shell,
+        shellArgs: settings.shellArgs,
+        cwd: cwd ?? settings.cwd,
+      });
+      const newSession = this.sessionManager.getSession(newSessionId);
+      if (newSession) {
+        void this.safeSendWithRetry(webview, {
+          type: "tabCreated",
+          tabId: newSessionId,
+          name: newSession.name,
+          customName: newSession.customName,
+        });
+      }
+    } catch (err) {
+      console.error("[AnyWhere Terminal] Failed to create tab:", err);
+      void this.safeSendWithRetry(webview, {
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to create new terminal tab",
+        severity: "error",
+      });
+    }
+  }
+
+  private handleMessage(
+    msg: unknown,
+    webviewView: vscode.WebviewView,
+    vaultWatchClient?: VaultWatchClient,
+    worktreeSurface?: WorktreeSurface,
+  ): void {
     // Basic shape validation
     if (!msg || typeof msg !== "object" || !("type" in msg) || typeof (msg as { type: unknown }).type !== "string") {
       console.warn("[AnyWhere Terminal] Invalid message from webview:", msg);
@@ -882,6 +1005,19 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
     // Notify that this provider received user interaction
     this._onDidReceiveInteraction?.();
+
+    // Every worktree message, by membership rather than by a list kept here.
+    // The switch below used to name them one by one, and the list already
+    // failed once: a declared, posted, handled type reached neither provider
+    // and its feature shipped inert (design.md D1).
+    if (isWorktreeMessage(message)) {
+      if (worktreeSurface) {
+        // Window-scoped, so the host answers and broadcasts; this provider only
+        // names which surface the message came from.
+        this.worktreeHost?.handleMessage(worktreeSurface, message);
+      }
+      return;
+    }
 
     try {
       switch (message.type) {
@@ -988,31 +1124,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case "createTab": {
-          const viewId = this.getViewId();
-          const settings = readTerminalSettings();
-          try {
-            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
-              shell: settings.shell,
-              shellArgs: settings.shellArgs,
-              cwd: settings.cwd,
-            });
-            const newSession = this.sessionManager.getSession(newSessionId);
-            if (newSession) {
-              void this.safeSendWithRetry(webviewView.webview, {
-                type: "tabCreated",
-                tabId: newSessionId,
-                name: newSession.name,
-                customName: newSession.customName,
-              });
-            }
-          } catch (err) {
-            console.error("[AnyWhere Terminal] Failed to create tab:", err);
-            void this.safeSendWithRetry(webviewView.webview, {
-              type: "error",
-              message: err instanceof Error ? err.message : "Failed to create new terminal tab",
-              severity: "error",
-            });
-          }
+          this.newTerminalAt(webviewView.webview);
           break;
         }
 
@@ -1062,7 +1174,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case "requestVaultLaunchTargets":
-          void this.handleRequestVaultLaunchTargets(webviewView.webview);
+          // Untrusted like every other inbound field: anything but the one known
+          // alternative falls back to continue, which is what an older webview
+          // (sending no capability at all) means.
+          void this.handleRequestVaultLaunchTargets(
+            webviewView.webview,
+            message.capability === "start" ? "start" : "continue",
+          );
           break;
 
         case "requestVaultMessageRecord":
@@ -1255,6 +1373,15 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           this.fileTreeHost.handleMessage(message, (response) => this.safePostMessage(webviewView.webview, response));
           break;
 
+        case "paneEvidence":
+          // Deliberately NOT gated on worktree-view visibility: presence is
+          // window state, and evidence about a pane is just as true while the
+          // user is looking at the sessions body. The store validates the
+          // payload and ignores ids it holds no pane for, so the surface it
+          // arrived from stops mattering here.
+          this.paneEvidence?.report(message);
+          break;
+
         case "updateHoverPreviewSetting":
           // Webview-driven setting update (e.g. footer toggle). Persist into
           // vscode's user-scope configuration; the change fires
@@ -1292,6 +1419,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    * See: specs/ipc-wiring/spec.md#Ready-Handshake-Wiring
    * See: specs/view-lifecycle-resilience/spec.md#Scrollback-Cache-Replay-on-Webview-Re-creation
    */
+  /**
+   * Re-send the row-activation setting after `init` went out. `_ready` flips
+   * before init is delivered and the webview builds its worktree controller only
+   * when init arrives, so a configuration change landing in between is posted to
+   * a controller that does not exist yet and then overwritten by the value init
+   * captured earlier. Re-sending closes that window; the message is idempotent.
+   */
+  private postRowActivation(webview: vscode.Webview): void {
+    this.safePostMessage(webview, { type: "worktreeRowActivation", activation: readWorktreeRowActivation() });
+  }
+
   private async onReady(webviewView: vscode.WebviewView): Promise<void> {
     // Mark webview as ready — gates outbound messages
     this._ready = true;
@@ -1339,7 +1477,15 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           tabs: existingSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
+          // Read here, not in the host: this is VS Code configuration, and the
+          // host deliberately holds no window API. Initial value only — a later
+          // change arrives as its own message, and one that raced this send is
+          // re-sent below rather than lost (design.md D5, round-1 W2).
+          worktreeRowActivation: readWorktreeRowActivation(),
+          vaultActionsAvailable: true,
         });
+        this.postRowActivation(webviewView.webview);
         if (!initDelivered) {
           console.error("[AnyWhere Terminal] init delivery failed during reload — skipping restore posts.");
           this.sessionManager.resumeOutputForView(viewId);
@@ -1385,7 +1531,15 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           tabs: restoredSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
+          // Read here, not in the host: this is VS Code configuration, and the
+          // host deliberately holds no window API. Initial value only — a later
+          // change arrives as its own message, and one that raced this send is
+          // re-sent below rather than lost (design.md D5, round-1 W2).
+          worktreeRowActivation: readWorktreeRowActivation(),
+          vaultActionsAvailable: true,
         });
+        this.postRowActivation(webviewView.webview);
         if (!initDelivered) {
           // All retries failed — the webview channel is unhealthy. Posting
           // restoreFromSnapshot now would arrive at a webview that never
@@ -1429,12 +1583,30 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         const tabs = this.sessionManager.getTabsForView(viewId);
 
         // Send 'init' message to the webview with resolved config (with retry)
-        void this.safeSendWithRetry(webviewView.webview, {
+        // Await delivery before the activation post: an activation that overtakes
+        // init reaches a webview with no controller yet and is dropped, and the
+        // reloaded and restored branches already await for exactly that reason
+        // (.reviews/round-2.md W2).
+        const initDelivered = await this.safeSendWithRetry(webviewView.webview, {
           type: "init",
           tabs,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
+          // Read here, not in the host: this is VS Code configuration, and the
+          // host deliberately holds no window API. Initial value only — a later
+          // change arrives as its own message, and one that raced this send is
+          // re-sent below rather than lost (design.md D5, round-1 W2).
+          worktreeRowActivation: readWorktreeRowActivation(),
+          vaultActionsAvailable: true,
         });
+        // Await delivery before the activation post, as the reloaded and restored
+        // branches already do. An activation that overtakes init reaches a webview
+        // with no controller yet and is dropped, and the retried init then settles
+        // the surface on a value read before it (.reviews/round-2.md W2).
+        if (initDelivered) {
+          this.postRowActivation(webviewView.webview);
+        }
       }
     } catch (err) {
       // Spawn failure: send error message (with retry for transient failures)

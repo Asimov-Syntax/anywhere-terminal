@@ -46,15 +46,18 @@ asimov/memory.db*
 .claude/settings.local.json
 .opencode/agents/asimov
 .code-review-graph/
+asimov/worktrees/
+.env.worktree
 
 # asimov
 .opencode/plugins/asimov.ts
+.opencode/package.json
 
 .claude/worktrees
 .claude/scheduled_tasks.lock
 
 # Vendored third-party clones used for local research only — not built or shipped.
-third_party/
+third_party
 
 # asimov
 .claude/commands/asimov-review-start.md
@@ -68,3 +71,4 @@ asimov/debug/*/state.json*
 .claude/commands/asimov-debug.md
 .opencode/command/asimov-debug.md
 .opencode/plugins/asimov-debug.ts
+asimov/changes/active

@@ -1,16 +1,23 @@
 import * as crypto from "node:crypto";
-import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import { descendantPids } from "../pty/processTree";
+import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { type ResolveClaudeSessionDeps, resolveClaudeSession } from "../session/resolveClaudeSession";
 import type { SessionManager } from "../session/SessionManager";
 import type { PendingSnapshot } from "../session/SessionSnapshot";
-import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
+import {
+  affectsWorktreeRowActivation,
+  readTerminalConfig,
+  readTerminalSettings,
+  readWorktreeRowActivation,
+} from "../settings/SettingsReader";
 import type { SetPanelIdMessage, ThemeChangedMessage, WebViewToExtensionMessage } from "../types/messages";
-import { readClaudeSessions, resolveClaudeSessionPath } from "../vault/readers/claudeReader";
-import { listRunningClaudeSessions } from "../vault/readers/runningSessions";
+import { isWorktreeMessage } from "../types/messages";
+import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
+import { indexRunningSessionsOrEmpty, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
 import { agentKindForExecutable } from "../vault/registry";
+import type { VaultService } from "../vault/VaultService";
 import { handlePasteClipboardImage, handlePasteOsClipboardImage, readImageFromOsClipboard } from "./clipboardImageSync";
 import { FileTreeHost } from "./fileTreeHost";
 import type { WatcherPool } from "./fsWatcherPool";
@@ -22,6 +29,7 @@ import { previewFileLink } from "./previewFileLink";
 import { isValidPreviewRequest } from "./previewValidation";
 import { readBytesBounded } from "./readBytesBounded";
 import { themeKindFor } from "./TerminalViewProvider";
+import type { WorktreeAttachment, WorktreeHost, WorktreeSurface } from "./WorktreeHost";
 import { getTerminalHtml } from "./webviewHtml";
 
 /**
@@ -101,6 +109,11 @@ export class TerminalEditorProvider {
    * See: providers/fileTreeHost.ts; design.md D10.
    */
   private readonly fileTreeHost: FileTreeHost;
+  /** Monotonic token per vault-list refresh; a superseded refresh is dropped. */
+  private _vaultRefreshSeq = 0;
+
+  /** This panel's identity to the worktree host; carries its visibility flag. */
+  private worktreeSurface: WorktreeSurface | undefined;
 
   /** Public accessor for `extension.ts` ctx command routing. */
   get rootGeneration(): number {
@@ -165,6 +178,18 @@ export class TerminalEditorProvider {
     watcherPool: WatcherPool | null = null,
     panelId: string = crypto.randomUUID(),
     restoreSnapshots: PendingSnapshot[] = [],
+    private readonly worktreeHost: WorktreeHost | null = null,
+    /**
+     * Window-scoped pane evidence — null in contexts where it is not wired
+     * (tests). Reports flow here whatever body this surface is showing.
+     */
+    private readonly paneEvidence: PaneEvidenceStore | null = null,
+    /**
+     * AI coding vault. Present so the session-preview overlay works on an editor
+     * surface too: the worktree panel offers preview on every surface, and the
+     * overlay is fed entirely by the two READS below (round-1 B1).
+     */
+    private readonly vaultService: VaultService | null = null,
   ) {
     this._panel = panel;
     this._panelId = panelId;
@@ -185,6 +210,9 @@ export class TerminalEditorProvider {
     sessionManager: SessionManager,
     gitDecorationProvider: GitDecorationProvider | null = null,
     watcherPool: WatcherPool | null = null,
+    worktreeHost: WorktreeHost | null = null,
+    paneEvidence: PaneEvidenceStore | null = null,
+    vaultService: VaultService | null = null,
   ): vscode.Disposable {
     const panel = vscode.window.createWebviewPanel(
       TerminalEditorProvider.viewType,
@@ -205,6 +233,9 @@ export class TerminalEditorProvider {
       watcherPool,
       crypto.randomUUID(),
       [],
+      worktreeHost,
+      paneEvidence,
+      vaultService,
     );
 
     // Track this panel for config updates + the provider instance for host-side
@@ -236,6 +267,9 @@ export class TerminalEditorProvider {
     restoreSnapshots: PendingSnapshot[],
     gitDecorationProvider: GitDecorationProvider | null = null,
     watcherPool: WatcherPool | null = null,
+    worktreeHost: WorktreeHost | null = null,
+    paneEvidence: PaneEvidenceStore | null = null,
+    vaultService: VaultService | null = null,
   ): TerminalEditorProvider {
     const provider = new TerminalEditorProvider(
       context.extensionUri,
@@ -245,6 +279,9 @@ export class TerminalEditorProvider {
       watcherPool,
       panelId,
       restoreSnapshots,
+      worktreeHost,
+      paneEvidence,
+      vaultService,
     );
     TerminalEditorProvider._activePanels.add(panel);
     TerminalEditorProvider._instances.set(panel, provider);
@@ -295,9 +332,28 @@ export class TerminalEditorProvider {
       }),
     );
 
+    // 3a-ter. Worktree row-activation bridge — live like every neighbour (D5).
+    disposables.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!affectsWorktreeRowActivation(event) || !this._ready) {
+          return;
+        }
+        this.safePostMessage({
+          type: "worktreeRowActivation",
+          activation: readWorktreeRowActivation(),
+        });
+      }),
+    );
+
     // 3b. Wire visibility handler (for deferred resize on tab switch)
+    // Assigned by 3d below; this subscription only reads it at event time, which
+    // is always after the attach.
+    let worktreeAttachment: WorktreeAttachment | undefined;
     disposables.push(
       this._panel.onDidChangeViewState((e) => {
+        // The worktree host pushes only to a surface the window is displaying —
+        // this panel retains its context when hidden, so nothing else says so.
+        worktreeAttachment?.setDisplayed(e.webviewPanel.visible);
         if (e.webviewPanel.visible && this._ready) {
           this.safePostMessage({ type: "viewShow" });
         }
@@ -312,6 +368,24 @@ export class TerminalEditorProvider {
         post: (msg) => this.safePostMessage(msg),
       }),
     );
+
+    // 3d. Worktree tree — the editor panel mounts the same webview document as
+    // the sidebar and panel, so it is a live surface of the window's host.
+    this.worktreeSurface = {
+      isReady: () => this._ready,
+      post: (msg) => this.safePostMessage(msg),
+      // See TerminalViewProvider: only the provider owning the view can create a
+      // pane, and the cwd arrives already resolved by the host (design.md D2).
+      openTerminal: async (cwd) => {
+        this.newTerminalAt(cwd);
+      },
+    };
+    worktreeAttachment = this.worktreeHost?.attach(this.worktreeSurface);
+    if (worktreeAttachment) {
+      // Seeded: a panel resolved while already active fires no view-state event.
+      worktreeAttachment.setDisplayed(this._panel.visible);
+      disposables.push(worktreeAttachment);
+    }
 
     // 4. Wire dispose handler — clean up all subscriptions and sessions.
     //    NOTE: PTY destruction is DEFERRED via scheduleDestroyForView so a
@@ -417,6 +491,30 @@ export class TerminalEditorProvider {
    *
    * See: docs/design/webview-provider.md#§8, docs/design/message-protocol.md#§10
    */
+  /**
+   * One new terminal tab in this panel. `cwd` overrides the configured working
+   * directory — the worktree panel's "Open Terminal Here" passes a path the
+   * HOST resolved, and everything else takes the setting.
+   */
+  private newTerminalAt(cwd?: string): void {
+    const createSettings = readTerminalSettings();
+    const newSessionId = this.sessionManager.createSession(this._viewId, this._panel.webview, {
+      shell: createSettings.shell,
+      shellArgs: createSettings.shellArgs,
+      cwd: cwd ?? createSettings.cwd,
+    });
+    this.sessionManager.attachSessionToPanel(this._panelId, newSessionId);
+    const newSession = this.sessionManager.getSession(newSessionId);
+    if (newSession) {
+      this.safePostMessage({
+        type: "tabCreated",
+        tabId: newSessionId,
+        name: newSession.name,
+        customName: newSession.customName,
+      });
+    }
+  }
+
   private handleMessage(msg: unknown): void {
     // Basic shape validation
     if (!msg || typeof msg !== "object" || !("type" in msg) || typeof (msg as { type: unknown }).type !== "string") {
@@ -425,6 +523,15 @@ export class TerminalEditorProvider {
     }
 
     const message = msg as WebViewToExtensionMessage;
+
+    // See TerminalViewProvider: one membership test, not a list per provider
+    // (design.md D1).
+    if (isWorktreeMessage(message)) {
+      if (this.worktreeSurface) {
+        this.worktreeHost?.handleMessage(this.worktreeSurface, message);
+      }
+      return;
+    }
 
     try {
       switch (message.type) {
@@ -527,22 +634,7 @@ export class TerminalEditorProvider {
           break;
 
         case "createTab": {
-          const createSettings = readTerminalSettings();
-          const newSessionId = this.sessionManager.createSession(this._viewId, this._panel.webview, {
-            shell: createSettings.shell,
-            shellArgs: createSettings.shellArgs,
-            cwd: createSettings.cwd,
-          });
-          this.sessionManager.attachSessionToPanel(this._panelId, newSessionId);
-          const newSession = this.sessionManager.getSession(newSessionId);
-          if (newSession) {
-            this.safePostMessage({
-              type: "tabCreated",
-              tabId: newSessionId,
-              name: newSession.name,
-              customName: newSession.customName,
-            });
-          }
+          this.newTerminalAt();
           break;
         }
 
@@ -602,6 +694,14 @@ export class TerminalEditorProvider {
           this.fileTreeHost.handleMessage(message, (response) => this.safePostMessage(response));
           break;
 
+        case "paneEvidence":
+          // Ungated by worktree-view visibility on purpose: presence is window
+          // state, so a surface showing the sessions body still owns the only
+          // view of its panes' titles. The store validates and drops unknown
+          // ids, so no surface identity is needed here.
+          this.paneEvidence?.report(message);
+          break;
+
         case "openLink":
           if (typeof message.url === "string") {
             void openExternalLink(message.url);
@@ -633,6 +733,20 @@ export class TerminalEditorProvider {
         case "requestFilePreview":
           if (isValidPreviewRequest(message)) {
             void this.handleRequestFilePreview(message);
+          }
+          break;
+
+        case "requestVaultSessions":
+          void this.handleRequestVaultSessions();
+          break;
+
+        case "requestVaultSessionDetail":
+          if (typeof message.entryId === "string") {
+            void this.handleRequestVaultSessionDetail(
+              message.entryId,
+              typeof message.limit === "number" ? message.limit : undefined,
+              typeof message.requestId === "string" ? message.requestId : undefined,
+            );
           }
           break;
 
@@ -671,6 +785,72 @@ export class TerminalEditorProvider {
    * webview. A missing session / no match / read error becomes an `error` marker —
    * it never throws (design.md D3).
    */
+  /**
+   * The vault list, so the preview overlay has the entry it opens ON. Mirrors
+   * `TerminalViewProvider.handleRequestVaultSessions`; the sequence token drops a
+   * refresh a newer request has already superseded, including across the retry
+   * sleep, so a stale list can never overwrite a newer one.
+   */
+  private async handleRequestVaultSessions(): Promise<void> {
+    if (!this.vaultService) {
+      return;
+    }
+    const token = ++this._vaultRefreshSeq;
+    const cached = this.vaultService.listCached();
+    if (cached) {
+      this.safePostMessage({ type: "vaultSessionsResponse", result: cached, fromCache: true });
+    }
+    try {
+      const result = await this.vaultService.refresh();
+      if (token !== this._vaultRefreshSeq) {
+        return;
+      }
+      void this.safeSendWithRetry(
+        { type: "vaultSessionsResponse", result, fromCache: false },
+        2,
+        () => token !== this._vaultRefreshSeq,
+      );
+    } catch (err) {
+      console.error("[AnyWhere Terminal] Failed to list vault sessions (editor):", err);
+      if (!cached) {
+        void this.safeSendWithRetry({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to list AI vault sessions",
+          severity: "error",
+        });
+      }
+    }
+  }
+
+  /** The overlay's own content. `requestId` is echoed on every reply path — reads
+   *  complete out of order, so the webview correlates by that token, not by entry id. */
+  private async handleRequestVaultSessionDetail(entryId: string, limit?: number, requestId?: string): Promise<void> {
+    if (!this.vaultService) {
+      return;
+    }
+    const echo = requestId !== undefined ? { requestId } : {};
+    try {
+      const detail = await this.vaultService.getDetail(entryId, limit);
+      void this.safeSendWithRetry(
+        detail
+          ? { type: "vaultSessionDetailResponse", entryId, detail, ...echo }
+          : {
+              type: "vaultSessionDetailResponse",
+              entryId,
+              error: "Session not found or could not be read.",
+              ...echo,
+            },
+      );
+    } catch (err) {
+      void this.safeSendWithRetry({
+        type: "vaultSessionDetailResponse",
+        entryId,
+        error: err instanceof Error ? err.message : "Failed to read session detail",
+        ...echo,
+      });
+    }
+  }
+
   private async handleRequestSubagentPreview(
     message: Extract<WebViewToExtensionMessage, { type: "requestSubagentPreview" }>,
   ): Promise<void> {
@@ -717,19 +897,9 @@ export class TerminalEditorProvider {
         (await this.sessionManager.getLiveCwd(id)) ??
         this.sessionManager.getCurrentCwd(id) ??
         this.sessionManager.getInitialCwd(id),
-      listRunning: () => listRunningClaudeSessions(),
+      runningIndex: () => indexRunningSessionsOrEmpty(listRunningClaudeSessions()),
       descendantPids: (pid) => descendantPids(pid),
-      sessionMtime: async (sessionId) => {
-        const filePath = await resolveClaudeSessionPath(sessionId);
-        if (!filePath) {
-          return undefined;
-        }
-        try {
-          return (await fs.stat(filePath)).mtimeMs;
-        } catch {
-          return undefined;
-        }
-      },
+      sessionMtime: (sessionId) => claudeSessionMtime(sessionId),
       newestSessionUnderCwd: async (cwd) => {
         const { entries } = await readClaudeSessions({});
         let best: { sessionId: string; cwd: string } | null = null;
@@ -756,6 +926,11 @@ export class TerminalEditorProvider {
    * webview that hasn't processed init, triggering the `deferOpen`
    * mis-wrap with a default-config terminal. See .reviews/round-4.md [W1].
    */
+  /** See TerminalViewProvider.postRowActivation — same race, same close (W2). */
+  private postRowActivation(): void {
+    this.safePostMessage({ type: "worktreeRowActivation", activation: readWorktreeRowActivation() });
+  }
+
   private async onReady(): Promise<void> {
     this._ready = true;
 
@@ -792,7 +967,15 @@ export class TerminalEditorProvider {
           tabs: existingSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
+          // Read here, not in the host: this is VS Code configuration, and the
+          // host deliberately holds no window API. Initial value only — a later
+          // change arrives as its own message, and one that raced this send is
+          // re-sent below rather than lost (design.md D5, round-1 W2).
+          worktreeRowActivation: readWorktreeRowActivation(),
+          vaultActionsAvailable: false,
         });
+        this.postRowActivation();
         if (!initDelivered) {
           console.error("[AnyWhere Terminal] init delivery failed during editor reload — skipping scrollback restore.");
           this.sessionManager.resumeOutputForView(this._viewId);
@@ -827,7 +1010,15 @@ export class TerminalEditorProvider {
           tabs: restoredSessions,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
+          // Read here, not in the host: this is VS Code configuration, and the
+          // host deliberately holds no window API. Initial value only — a later
+          // change arrives as its own message, and one that raced this send is
+          // re-sent below rather than lost (design.md D5, round-1 W2).
+          worktreeRowActivation: readWorktreeRowActivation(),
+          vaultActionsAvailable: false,
         });
+        this.postRowActivation();
         if (!initDelivered) {
           console.error(
             "[AnyWhere Terminal] init delivery failed during editor restore — skipping restoreFromSnapshot posts.",
@@ -861,12 +1052,28 @@ export class TerminalEditorProvider {
         });
         this.sessionManager.attachSessionToPanel(this._panelId, newSessionId);
         const tabs = this.sessionManager.getTabsForView(this._viewId);
-        void this.safeSendWithRetry({
+        // Await delivery before the activation post: an activation that overtakes
+        // init reaches a webview with no controller yet and is dropped, and the
+        // reloaded and restored branches already await for exactly that reason
+        // (.reviews/round-2.md W2).
+        const initDelivered = await this.safeSendWithRetry({
           type: "init",
           tabs,
           config: readTerminalConfig(),
           ...this.fileTreeHost.initPayload(),
+          ...(this.worktreeHost?.initPayload() ?? { worktreeHasRepo: false }),
+          // Read here, not in the host: this is VS Code configuration, and the
+          // host deliberately holds no window API. Initial value only — a later
+          // change arrives as its own message, and one that raced this send is
+          // re-sent below rather than lost (design.md D5, round-1 W2).
+          worktreeRowActivation: readWorktreeRowActivation(),
+          vaultActionsAvailable: false,
         });
+        // Same ordering as the reloaded and restored branches — see W2 in
+        // TerminalViewProvider.
+        if (initDelivered) {
+          this.postRowActivation();
+        }
       }
     } catch (err) {
       console.error("[AnyWhere Terminal] Failed to initialize editor terminal:", err);
@@ -899,8 +1106,13 @@ export class TerminalEditorProvider {
    * implementation in TerminalViewProvider so editor + sidebar/panel
    * providers share the same delivery guarantee. See .reviews/round-4.md [W1].
    */
-  private async safeSendWithRetry(message: unknown, maxRetries = 2): Promise<boolean> {
+  private async safeSendWithRetry(message: unknown, maxRetries = 2, shouldAbort?: () => boolean): Promise<boolean> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // Bail before every attempt, including before a retry: a late retry must
+      // not overwrite newer data the caller has since posted.
+      if (shouldAbort?.()) {
+        return false;
+      }
       try {
         const result = await (this._panel.webview.postMessage(message) as Thenable<boolean>);
         if (result) {

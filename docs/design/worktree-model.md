@@ -103,6 +103,12 @@ a symlinked root shows zero agents.
 one worktree, so no composite id and no separator-escaping problem exists. `repoId` is the
 normalized git common dir by the same rule.
 
+Containment — "is this folder inside that worktree / repo root?" — is a second comparison
+and is **not** `startsWith(root + separator)`, which builds `//` at a filesystem root and
+matches nothing. It goes through the shared boundary helper (`src/utils/pathBoundary.ts`,
+extracted from the git decoration provider), which handles root-terminated roots, Windows
+separator drift, and drive-letter case.
+
 ### 3.2 Repo root resolution
 
 1. Read `vscode.workspace.workspaceFolders`. Empty → empty tree, `gitAvailable` untouched.
@@ -114,7 +120,11 @@ normalized git common dir by the same rule.
    `unreadable` reason — "not a git repo" is normal).
 4. For each resolved root, run `git rev-parse --path-format=absolute --git-common-dir`.
    Normalize the result → `repoId`. On git < 2.31 `--path-format` is unsupported; fall back
-   to the bare `--git-common-dir` and resolve a relative answer against the root.
+   to the bare `--git-common-dir` and resolve a relative answer against the root. An old git
+   does not *fail* on the flag — it exits **zero** and echoes the flag back as an output
+   line, so only an exit-zero echo marks the capability unsupported. A non-zero exit is that
+   repository's own failure and must not change the shared capability, whatever its stderr
+   happens to mention.
 5. **Dedupe by `repoId`.** A workspace that has both a repo and one of its own linked
    worktrees open as separate folders resolves to a single `repoId` and therefore a single
    group — not two. This is why grouping keys on the common dir and never on `rootUri`.
@@ -132,8 +142,10 @@ Per unique `repoId`, run in the main worktree path:
 | Fallback | `git worktree list --porcelain` | any |
 
 The `-z` form is preferred because a path containing a newline corrupts the line-delimited
-form. Detect the unsupported-`-z` failure once per repo, remember it, and stop retrying —
-the same capability-cache shape orca uses (`orca/src/relay/git-handler-worktree-list.ts:19`).
+form. Detect the unsupported-`-z` failure by **exit code 129** — the message text is
+locale-dependent and is only a backup signal — then remember it process-wide and stop
+retrying, the same capability-cache shape orca uses
+(`orca/src/relay/git-handler-worktree-list.ts:19`).
 
 The fallback exists for `-z` alone. **Everything else in this document assumes git ≥ 2.31**
 (released 2021), which is what supplies the `locked` and `prunable` annotations. A separate
@@ -153,12 +165,31 @@ Porcelain records are separated by a blank record (`\0\0` under `-z`) and carry:
 | `locked [<reason>]` | `locked`, `lockReason` | git ≥ 2.31 |
 | `prunable [<reason>]` | `prunable` | git ≥ 2.31 |
 
+**Record splitting and decoding.** Records split on the delimiter *byte*, before anything is
+decoded. Only `worktree <path>` decodes strictly: it is the sole identity-bearing field, and
+bytes UTF-8 cannot represent must be reported rather than substituted into a path naming a
+different directory. `HEAD`, `branch` and the lock/prunable reasons decode leniently — they
+are labels, and a replacement character in one costs less than dropping a worktree that
+really exists. `kind` follows the record's **ordinal in git's output**, not the number of
+records accepted so far, so a skipped leading record cannot promote a linked worktree to
+main.
+
+In the line-delimited form only, a record carrying a field matching no token above is
+skipped: git emits paths **unquoted**, so an embedded newline is indistinguishable from a
+field break and can be detected but never decoded. Every skipped record increments
+`unreadable.count` while `unreadable.reasons` is deduplicated for display — the two numbers
+differ by design.
+
 **Missing-directory probe.** `missing` is set from a cheap `stat` of the *linked, unlocked*
 worktrees git already flagged `prunable`, with concurrency 8, so the UI can say "missing"
 instead of the vaguer "prunable". Never probe the main worktree or a locked one: a lock
 shields a registration whose directory is intentionally absent (removable media, unmounted
 volume). The concurrency bound mirrors
 `orca/src/relay/git-handler-worktree-list.ts:42`.
+
+`missing` means *absent*, so only `ENOENT` and `ENOTDIR` set it. A probe that fails for any
+other reason — `EACCES`, a descriptor limit, a network-filesystem blip — leaves the worktree
+as the `prunable` git already called it, which is the weaker and safer claim.
 
 ### 3.4 Ordering within a group
 
@@ -177,13 +208,23 @@ Every comparison ends in an `id` tie-break so the order never depends on readdir
 
 | Signal | Watch target | Invalidates |
 |--------|--------------|-------------|
-| Worktree added / removed | `<repoId>/worktrees` — **non-recursive**, create + delete only | That repo's listing |
-| Linked worktree switched branch | `<repoId>/worktrees/*/HEAD` — change events included | That repo's listing |
-| Main worktree switched branch | `<repoId>/HEAD` — change events included | That repo's listing |
+| Worktree added / removed | base `<repoId>`, glob `worktrees/*` — one path segment, create + delete only | That repo's listing |
+| Linked worktree switched branch | base `<repoId>`, glob `worktrees/*/HEAD` — change events included | That repo's listing |
+| Main worktree switched branch | base `<repoId>`, glob `HEAD` — change events included | That repo's listing |
 | Repo state changed (open repos) | git API `onDidChangeState` on the matching repository | That repo's listing |
-| Workspace folders changed | `workspace.onDidChangeWorkspaceFolders` | Whole tree (re-resolve roots) |
+| Workspace folders changed | `workspace.onDidChangeWorkspaceFolders` | Whole tree, forced (re-resolve roots) |
 | Repo opened / closed in VS Code | git API `onDidOpenRepository` / `onDidCloseRepository` | Whole tree |
 | User pressed refresh | — | Whole tree, forced |
+
+All three watches are based at the common dir itself rather than at `<repoId>/worktrees`: a
+repository with no linked worktrees has no `worktrees/` directory yet, and a watcher based on
+a directory that does not exist never sees it appear.
+
+The two git-API rows are **not wired** as of WT-001.2. The extension acquires no `vscode.git`
+API handle of its own today — the only acquisition pipeline is fused into
+`createGitDecorationProvider` — so those signals wait on a change that extracts it. The three
+filesystem watches plus the workspace-folder event cover everything except `git init` inside a
+folder that was already open.
 
 Watching uses `subscribePattern` on the shared watcher pool
 (`src/providers/fsWatcherPool.ts:89`), which debounces each event kind at
@@ -233,18 +274,18 @@ Two watcher caveats to honour:
 - The common dir of a repo opened *as* a linked worktree lives outside every workspace
   folder. Watch it with an absolute-base `RelativePattern`, and when the watcher cannot be
   created, fall back to re-reading on view-show only, recording `degraded` on that repo.
-- **The pool cannot currently report that failure.** `subscribePattern` catches watcher
-  creation errors internally and hands back an inert `Disposable`
-  (`fsWatcherPool.ts:298-398`), so a caller cannot distinguish a working subscription from a
-  dead one and would silently believe it is receiving events. Extending it with a typed
-  outcome is part of this work; without it the degraded path above can never trigger.
+- **The pool reports that failure.** `subscribePattern` returns a `PatternSubscription`
+  carrying `active` and, when false, a `failureReason` — so a caller can tell a working
+  subscription from a dead one instead of silently believing it is receiving events. A
+  repository whose watch did not come up in full is marked `degraded` with that reason on
+  every rebuild, and stays reachable by a forced refresh.
 
 ### 3.6 Caching
 
 | Cache | Key | Lifetime | Invalidation |
 |-------|-----|----------|--------------|
 | Per-repo worktree listing | `repoId` | Process (in-memory only) | § 3.5 signals |
-| Git capability (`-z` supported) | `repoId` | Process | Never — a git downgrade mid-session is not modelled |
+| Git capability (`-z`, `--path-format`) | Capability name, process-wide | Positive: process. Negative: 30 min | Negative results expire, so the user we just told to upgrade git is not stranded on the fallback for the rest of the session |
 | Resolved repo roots | — | Process | Workspace-folder / repo open-close events |
 
 Nothing is persisted to disk. A cold window rebuilds the tree from git on first show; the
@@ -257,7 +298,8 @@ cost is one `rev-parse` plus one `worktree list` per repo, which is milliseconds
 | Operation | Identifier | Summary |
 |-----------|-----------|---------|
 | Read tree | `requestWorktreeTree` | Webview asks for the current tree |
-| Push tree | `worktreeTreeResponse` | Host pushes a rebuilt tree (request reply *and* watcher-driven) |
+| Push tree | `worktreeTreeResponse` | Host pushes a rebuilt tree and its presence projection in one envelope (request reply *and* watcher-driven) |
+| Declare visibility | `worktreeViewVisibility` | One surface says whether it is showing the view; gates every push to it |
 
 > **Full contracts**: [worktree-rpc.md](worktree-rpc.md) § 2
 
@@ -315,7 +357,7 @@ research calls out (`docs/research/20260822-orca-deep-dive/01-agent-detection.md
 | Rebuild frequency | watcher events | Debounced 150 ms **and** floored at one rebuild per second per repo. Watchers keep running while the window is unfocused — the pool does not pause |
 | Existence probes | per worktree git flagged prunable | Concurrency 8 |
 | Tree payload | per worktree | Metadata only — no file lists, no diffs |
-| Repos per window | workspace folders | Rebuilds are per-repo, so one slow repo cannot stall the others |
+| Repos per window | workspace folders | Listings run concurrently, bounded at 8, assembled in workspace-folder order — so one repo hitting the 10 s command timeout cannot stall its siblings |
 
 Rebuilds are per-`repoId` and merged into the pushed tree, so a watcher event in repo A does
 not re-shell into repo B.

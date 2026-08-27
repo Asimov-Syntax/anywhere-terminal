@@ -12,14 +12,15 @@ let close: (() => void) | undefined;
 
 const targets: VaultLaunchTarget[] = [
   {
+    canSeedPrompt: true,
     agent: "claude",
     displayName: "Claude Code",
     permissionChoices: [
-      { id: "default", label: "Ask for permission", args: [] },
-      { id: "bypassPermissions", label: "Bypass permission checks", dangerous: true, args: [] },
+      { id: "default", label: "Ask for permission" },
+      { id: "bypassPermissions", label: "Bypass permission checks", dangerous: true },
     ],
   },
-  { agent: "opencode", displayName: "OpenCode", permissionChoices: [] },
+  { canSeedPrompt: true, agent: "opencode", displayName: "OpenCode", permissionChoices: [] },
 ];
 
 function open(over: Partial<Parameters<typeof openContinueDialog>[1]> = {}): ReturnType<typeof vi.fn> {

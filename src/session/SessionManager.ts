@@ -22,6 +22,7 @@ import { CustomNameRegistry, type CustomNameStorage, noopCustomNameStorage } fro
 import { EditorPanelRegistry } from "./EditorPanelRegistry";
 import type { MessageSender } from "./OutputBuffer";
 import { OutputBuffer } from "./OutputBuffer";
+import type { PaneEvidenceStore } from "./PaneEvidenceStore";
 import { ScrollbackDumpCoordinator, type ScrollbackDumpPayload } from "./ScrollbackDumpCoordinator";
 import type {
   LiveEditorPanelsRecord,
@@ -88,6 +89,15 @@ export interface SessionManagerOptions {
    * See: asimov/changes/export-terminal-session/design.md D3.
    */
   shellIntegrationContext?: InjectionContext;
+  /**
+   * Window-scoped pane evidence for the Worktree view's presence projection.
+   * Written, never read, by this class: it is the registry of what the host
+   * knows about each pane, and this is the only place that knows when a pane
+   * comes into existence, produces output, exits, or closes.
+   *
+   * See: asimov/changes/add-host-pane-evidence/design.md D2, D6.
+   */
+  paneEvidence?: PaneEvidenceStore;
   /**
    * Optional per-session environment contributor for renewable agent-hook
    * authority (design D6, integrate-cursor-agent 2_3). One contributor serves
@@ -173,6 +183,9 @@ export class SessionManager {
    */
   private agentHooks: SessionEnvironmentContributor | undefined;
 
+  /** See `SessionManagerOptions.paneEvidence`. Absent in tests that don't need it. */
+  private readonly paneEvidence: PaneEvidenceStore | undefined;
+
   /**
    * Hook fired internally when a session's shell exits — schedules an
    * immediate snapshot so the exit state survives a sudden window close.
@@ -184,6 +197,7 @@ export class SessionManager {
     this.customNames = new CustomNameRegistry(customNameStorage);
     this.storage = options.storage ?? null;
     this.agentHooks = options.agentHookContributor;
+    this.paneEvidence = options.paneEvidence;
     this.defaultGracePeriodMs = options.gracePeriodMs ?? DEFAULT_GRACE_DESTROY_MS;
     this.shellIntegration = new ShellIntegrationCoordinator({
       ctx: options.shellIntegrationContext,
@@ -489,7 +503,7 @@ export class SessionManager {
       pty.setShellIntegrationSink(this.shellIntegration.makeSink(id));
     }
 
-    const outputBuffer = new OutputBuffer(id, webview, pty);
+    const outputBuffer = new OutputBuffer(id, webview, pty, (tabId, at) => this.paneEvidence?.markOutput(tabId, at));
 
     // Hydrate custom name: restore wins (persisted metadata), then the
     // per-number custom-names record (root tabs only; see add-tab-rename D3).
@@ -577,6 +591,24 @@ export class SessionManager {
     // subsequent serializes include the prior session's history.
     this.snapshots.attachSession(session, restoreFrom);
 
+    // The pane now exists as far as presence is concerned. Seeded from
+    // `restoringExited` rather than defaulted live: a read-only tab restored
+    // from a snapshot has no running process, and claiming otherwise would be
+    // the presence view's first lie about it.
+    this.paneEvidence?.create(id, {
+      exited: restoringExited,
+      viewId,
+      // The pane facts a presence projection needs, seeded here because this is
+      // the only place that knows them at birth. The store outlives the session
+      // map, so these must live beside the evidence rather than be read back
+      // from `sessions` — which drops a naturally-exited pane while its tab is
+      // still on screen (project-worktree-agent-presence design.md D2).
+      cwd,
+      ptyPid: pty.pid,
+      shell: resolvedShell,
+      isAgentLaunch,
+    });
+
     // Wire PTY events (extracted so respawnFallbackShell can re-wire a fresh PTY).
     this.wirePty(session, pty, webview);
 
@@ -636,6 +668,11 @@ export class SessionManager {
       // exited-preserved BEFORE cleanupSession so its dispatch picks
       // releaseMirror (D13 preserve). See design.md D14.
       this.transitionState(id, "live", "exited-preserved");
+      // Before cleanupSession, which drops this session from `this.sessions`
+      // while the tab stays on screen. The pane outlives its process, and its
+      // evidence has to outlive it too — the tab shows "[Process exited]" until
+      // the user closes it, and the worktree row must say the same thing.
+      this.paneEvidence?.markExited(id, true);
       this.cleanupSession(id);
       this.safePostMessage(webview, { type: "exit", tabId: id, code });
     };
@@ -699,17 +736,25 @@ export class SessionManager {
     const wasOutputPaused = session.outputBuffer.isOutputPaused;
     session.outputBuffer.dispose(wasOutputPaused ? { flush: false } : undefined);
     session.pty = pty;
-    const nextBuffer = new OutputBuffer(id, webview, pty);
+    const nextBuffer = new OutputBuffer(id, webview, pty, (tabId, at) => this.paneEvidence?.markOutput(tabId, at));
     if (wasOutputPaused) {
       nextBuffer.pauseOutput();
     }
     session.outputBuffer = nextBuffer;
+    // A live process is back in this pane. Cleared here, at the swap, rather
+    // than in `wirePty`: that runs for a restored read-only tab too, where
+    // clearing it would resurrect a pane whose process is genuinely gone.
+    this.paneEvidence?.markExited(id, false);
     // Flip the persisted identity (+ cwd) so a reload restores THIS shell, not
     // the agent the user already quit.
     session.shell = shell;
     session.shellArgs = args;
     session.initialCwd = cwd;
     session.isAgentLaunch = undefined;
+    // Identity rank 1 reads these, so a shell that reclaimed the pane must stop
+    // it claiming the agent that used to be here (D4).
+    this.paneEvidence?.markProcess(id, { ptyPid: pty.pid, shell, isAgentLaunch: false });
+    this.paneEvidence?.markCwd(id, cwd);
     this.wirePty(session, pty, webview);
     // Persist the flip now so a crash/quit before the next debounced flush can't
     // resurrect the agent identity (clean reload is covered by the deactivate
@@ -843,6 +888,9 @@ export class SessionManager {
       return;
     }
     session.currentCwd = cwd;
+    // The store's copy has exactly one writer — this class — at the same sites
+    // that set the session's own fields, so the two cannot diverge (D2).
+    this.paneEvidence?.markCwd(sessionId, cwd);
     this.snapshots.schedulePersist(sessionId);
   }
 
@@ -1108,6 +1156,13 @@ export class SessionManager {
 
   /** Destroy a session (queued, serialized via operation queue). */
   destroySession(sessionId: string): void {
+    // The pane is going away, so its evidence goes with it. Here rather than in
+    // `cleanupSession`, which also runs on a natural exit that leaves the tab
+    // open — and unconditionally, because a naturally-exited pane has already
+    // left `this.sessions` and would otherwise leak its evidence for the life
+    // of the window. See: add-host-pane-evidence design.md D2.
+    this.paneEvidence?.delete(sessionId);
+
     // Record destructive intent SYNCHRONOUSLY before enqueueing — the queue
     // microtask hasn't run yet. dispose() and cleanupSession() branch on
     // session.state to choose detachSession (drop snapshot — user wanted it
@@ -1167,6 +1222,13 @@ export class SessionManager {
 
   /** Destroy all sessions for a specific view (queued, serialized). */
   destroyAllForView(viewId: string): void {
+    // The whole view is closing, so every pane it held is closing with it.
+    // Synchronous, like the intent record below, and routed through the store's
+    // own pane-to-view index rather than `viewSessions`: a pane whose process
+    // exited naturally has already left that map while its tab stayed open, so
+    // no walk of it could reach the evidence. See .reviews/round-1.md B1.
+    this.paneEvidence?.deleteForView(viewId);
+
     // Capture the doomed session ids + record destructive intent SYNC.
     // Re-reading viewSessions inside the queued drain would sweep up
     // sessions created between sync-enqueue and async-execute — see
@@ -1274,6 +1336,10 @@ export class SessionManager {
     // Run any remaining shell-integration cleanups (sessions that disposed
     // without going through cleanupSession — rare but possible during dispose).
     this.shellIntegration.cleanupAll();
+
+    // `dispose` empties `this.sessions` directly and never routes through
+    // `cleanupSession`, so nothing else here would drop the evidence.
+    this.paneEvidence?.clear();
 
     this.sessions.clear();
     this.viewSessions.clear();
@@ -1454,6 +1520,10 @@ export class SessionManager {
     } catch {
       /* best-effort */
     }
+    // The host's own copy of the semantic state is cleared on the same event
+    // that revokes the webview's, so the two cannot disagree about whether an
+    // agent is still reporting itself as working.
+    this.paneEvidence?.setSemantic(sessionId, null);
     const session = this.sessions.get(sessionId);
     if (session) {
       this.safePostMessage(session.webview, {

@@ -1,0 +1,18 @@
+# Orca defers all worktree provisioning to asm.
+#
+# asimov/worktree.yaml is the single source of truth for what a worktree gets
+# (copy / link / ports / setup). Orca only creates the worktree, then hands it
+# to asm to fill in.
+#
+# Deliberately absent: `worktree.sharedDirectories` and a `.worktreeinclude`
+# file. If either placed a path, asm would report that destination as a
+# conflict and skip it — two owners, one directory. Leave them out.
+
+scripts:
+  # `cd "$ORCA_ROOT_PATH"` is required: Orca runs setup with the worktree as
+  # cwd, and asm resolves the main checkout from cwd.
+  setup: |
+    set -e
+    cd "$ORCA_ROOT_PATH"
+    bun run asm worktree link "$ORCA_WORKTREE_PATH"
+    bun run asm worktree setup --path "$ORCA_WORKTREE_PATH"

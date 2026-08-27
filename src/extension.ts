@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
@@ -22,8 +23,10 @@ import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalPanelSerializer } from "./providers/TerminalPanelSerializer";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
 import { VaultWatchCoordinator } from "./providers/VaultWatchCoordinator";
+import { createWorktreeHost, type WorktreeActions } from "./providers/WorktreeHost";
 import { loadNodePty } from "./pty/PtyManager";
 import type { MessageSender } from "./session/OutputBuffer";
+import { createPaneEvidenceStore } from "./session/PaneEvidenceStore";
 import { SessionManager } from "./session/SessionManager";
 import { SessionStorage } from "./session/SessionStorage";
 import {
@@ -32,13 +35,214 @@ import {
   readSessionRestoreEnabled,
   readTerminalConfig,
   readTerminalSettings,
+  readWorktreeCreateRoot,
 } from "./settings/SettingsReader";
 import { PtyLoadError } from "./types/errors";
+import type {
+  ExtensionToWebViewMessage,
+  WorktreeMutationResultMessage,
+  WorktreeRemoveBlockerPayload,
+} from "./types/messages";
+import { isPathInside } from "./utils/pathBoundary";
 import { escapePathForShell } from "./utils/shellEscape";
+import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
+import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
+import { rosterFromDetail } from "./worktree/delegations";
+import { addToGitExclude } from "./worktree/gitExclude";
+import { normalizeWorktreePath } from "./worktree/normalizePath";
+import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
+import { createPresenceProjector } from "./worktree/presenceProjector";
+import type { DelegationRoster } from "./worktree/presenceTypes";
+import type { RemovalAssessment } from "./worktree/worktreeBlockers";
+import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
+import type { MutationOutcome } from "./worktree/worktreeMutationService";
+import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
+
+/**
+ * What the worktree panel's read-only actions need from the world, injected so
+ * the resolution above them can be tested without a window.
+ *
+ * Every path and id here has ALREADY been resolved by the host against its own
+ * tree and presence — nothing in this seam looks anything up, and nothing here
+ * may be handed a value the webview supplied.
+ *
+ * See: asimov/changes/wire-worktree-navigation-actions/design.md D2, D4.
+ */
+export interface WorktreeActionDeps {
+  executeCommand(command: string, ...args: unknown[]): Thenable<unknown>;
+  writeClipboard(text: string): Thenable<void>;
+  fileUri(path: string): unknown;
+  workspaceFolderCount(): number;
+  addWorkspaceFolder(at: number, uri: unknown): void;
+  /** The editor panel with this view id, if the id names one at all. */
+  editorForView(viewId: string): { reveal(): void; post(msg: ExtensionToWebViewMessage): void } | undefined;
+  /** Post to the sidebar or bottom-panel view with this id. */
+  postToView(viewId: string, msg: ExtensionToWebViewMessage): void;
+  resumeCommand(entryId: string): Promise<string>;
+  /** The working directory the vault recorded for a session, if it has one. */
+  sessionCwd(entryId: string): Promise<string | undefined>;
+}
+
+/**
+ * The panel's read-only capabilities.
+ *
+ * Opening a terminal is deliberately absent: creating a pane needs a view id and
+ * a webview, which only the provider owning the surface holds, so that one
+ * capability lives on `WorktreeSurface` instead (D2).
+ */
+export function createWorktreeActions(deps: WorktreeActionDeps): WorktreeActions {
+  /** Reveal the surface that HOLDS a pane, then activate the pane inside it. */
+  async function focusPane(paneId: string, viewId: string): Promise<void> {
+    const activate: ExtensionToWebViewMessage = { type: "worktreeActivatePane", paneId };
+    // An editor panel is revealed through its own panel object; a view is
+    // revealed by its focus command. Revealing the surface that ASKED would
+    // focus a pane the user cannot see whenever the panel is open twice (D4).
+    const editor = deps.editorForView(viewId);
+    if (editor) {
+      editor.reveal();
+      editor.post(activate);
+      return;
+    }
+    if (viewId.startsWith("editor-")) {
+      // An editor view id whose panel is gone: there is nothing to reveal, and
+      // the sidebar is not a substitute for it.
+      return;
+    }
+    await deps.executeCommand(
+      viewId === TerminalViewProvider.panelViewType ? "anywhereTerminal.panel.focus" : "anywhereTerminal.sidebar.focus",
+    );
+    deps.postToView(viewId, activate);
+  }
+
+  return {
+    openFolder: async (path, mode) => {
+      if (mode === "newWindow") {
+        await deps.executeCommand("vscode.openFolder", deps.fileUri(path), { forceNewWindow: true });
+        return;
+      }
+      // Appended, never replacing: adding a worktree to the workspace must not
+      // remove the folders the user already had open.
+      deps.addWorkspaceFolder(deps.workspaceFolderCount(), deps.fileUri(path));
+    },
+    revealInOS: async (path) => {
+      await deps.executeCommand("revealFileInOS", deps.fileUri(path));
+    },
+    copyText: async (text) => {
+      await deps.writeClipboard(text);
+    },
+    focusPane,
+    copyResumeCommand: async (entryId) => {
+      // Built through the launcher, so a copy cannot hand out a command the
+      // launcher itself would refuse to run.
+      await deps.writeClipboard(await deps.resumeCommand(entryId));
+    },
+    revealSessionCwd: async (entryId) => {
+      const cwd = await deps.sessionCwd(entryId);
+      if (cwd !== undefined) {
+        await deps.executeCommand("revealFileInOS", deps.fileUri(cwd));
+      }
+    },
+    copySessionCwd: async (entryId) => {
+      const cwd = await deps.sessionCwd(entryId);
+      if (cwd !== undefined) {
+        await deps.writeClipboard(cwd);
+      }
+    },
+  };
+}
+
+/**
+ * The worktree host's delegation reader, backed by the vault.
+ *
+ * Asks for `MAX_DETAIL_LIMIT` rather than a page: the roster's incompleteness
+ * claim rests on there being no larger limit left to ask for, so a smaller
+ * bound here would make a truncated read report omission that a second, wider
+ * read could have recovered (design.md D5, D6).
+ *
+ * A null detail is a read that did not produce a transcript, which is a failure
+ * to report — never a session that delegated nothing.
+ */
+export function createDelegationReader(
+  vault: Pick<VaultService, "getDetail">,
+): (entryId: string) => Promise<DelegationRoster> {
+  return async (entryId: string) => {
+    const detail = await vault.getDetail(entryId, MAX_DETAIL_LIMIT);
+    return detail === null
+      ? { kind: "failed", reason: "this session's transcript could not be read" }
+      : rosterFromDetail(detail);
+  };
+}
+
+/** One outcome, as the union member the webview can actually route (D17). */
+/**
+ * The assessment as the panel renders it. A refusal and a confirmable set are
+ * the same shape here on purpose: the panel decides what to offer from the
+ * fields, and a refusal is exactly a set whose refusing fields are non-zero.
+ */
+function toBlockerPayload(
+  assessment: Exclude<RemovalAssessment, { kind: "unavailable" }>,
+): WorktreeRemoveBlockerPayload {
+  if (assessment.kind === "refused") {
+    return {
+      dirty: false,
+      untracked: 0,
+      idlePanes: 0,
+      busyAgents: assessment.busyAgents,
+      externalAgents: 0,
+      locked: false,
+      isMain: assessment.isMain,
+      containsWorktrees: assessment.containsWorktrees,
+    };
+  }
+  const e = assessment.evidence;
+  return {
+    dirty: e.dirtyPaths.length > 0,
+    untracked: e.untrackedPaths.length,
+    idlePanes: e.paneIds.length,
+    busyAgents: 0,
+    externalAgents: e.externalSessionIds.length,
+    locked: e.locked,
+    isMain: false,
+    containsWorktrees: [],
+  };
+}
+
+function toResultMessage(outcome: MutationOutcome): WorktreeMutationResultMessage {
+  const head = {
+    type: "worktreeMutationResult" as const,
+    verb: outcome.verb,
+    repoId: outcome.repoId,
+    ...(outcome.kind === "blocked" ? {} : { worktreeId: outcome.worktreeId }),
+  };
+  switch (outcome.kind) {
+    case "ok":
+      return {
+        ...head,
+        result: { kind: "ok", ...(outcome.openFailed === undefined ? {} : { openFailed: outcome.openFailed }) },
+      };
+    case "indeterminate":
+      return { ...head, result: { kind: "indeterminate", observed: outcome.observed } };
+    case "unavailable":
+      return { ...head, result: { kind: "unavailable", unreadable: outcome.unreadable } };
+    case "blocked":
+      return {
+        ...head,
+        verb: "remove",
+        result: {
+          kind: "blocked",
+          worktreeId: outcome.worktreeId,
+          fingerprint: outcome.fingerprint,
+          blocker: toBlockerPayload(outcome.assessment),
+        },
+      };
+    default:
+      return { ...head, result: { kind: "error", message: outcome.message } };
+  }
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Validate node-pty availability early — show user-facing error if missing
@@ -86,12 +290,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   };
 
+  // Pane evidence — one store per window, written by the session lifecycle, the
+  // output flush, the Cursor hook, and the three webview surfaces, and read by
+  // the presence projection below.
+  //
+  // The forwarder exists because the store is built before the host that
+  // subscribes to it: sessions must be able to record evidence from the moment
+  // they exist, and the host needs a built tree to attribute panes to.
+  // See: asimov/changes/add-host-pane-evidence/design.md D1.
+  let onPaneEvidenceChange: (() => void) | undefined;
+  const paneEvidence = createPaneEvidenceStore({ onChange: () => onPaneEvidenceChange?.() });
+
   // Create shared SessionManager (singleton). workspaceState backs the per-workspace
   // custom-tab-name persistence (anywhereTerminal.tabCustomNames); see design.md D3 of add-tab-rename.
   const sessionManager = new SessionManager(context.workspaceState, {
     restoreEnabled,
     storage: sessionStorage,
     shellIntegrationContext,
+    paneEvidence,
   });
 
   // Hydrate restore state BEFORE registering any view provider so the
@@ -157,6 +373,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (session?.state !== "live") {
               return;
             }
+            // Read at the source rather than round-tripping through the
+            // webview: the host already has this, and the surface that would
+            // echo it back sees only its own panes.
+            paneEvidence.setSemantic(update.sessionId, update.state);
             safePostMessage(session.webview, {
               type: "agentActivityStatus",
               tabId: update.sessionId,
@@ -253,7 +473,229 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // like the cache, and applied as a serve-time overlay — it NEVER writes agent files.
   const vaultCustomNames = new VaultCustomNameRegistry(context.globalState);
   const vaultService = new VaultService({ cacheStore: vaultCacheStore, customNames: vaultCustomNames });
+
+  // Worktree tree — one host per window, shared by the sidebar / panel / editor
+  // surfaces so freshness costs one set of git calls and watchers regardless of
+  // how many surfaces show it. See: cache-and-broadcast-worktree-tree design.md D1.
+  // Constructed before the host, which needs it for the resume-command capability.
   const vaultLauncher = new VaultLauncher(vaultService);
+
+  const worktreeActions = createWorktreeActions({
+    executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
+    writeClipboard: (text) => vscode.env.clipboard.writeText(text),
+    fileUri: (path) => vscode.Uri.file(path),
+    workspaceFolderCount: () => (vscode.workspace.workspaceFolders ?? []).length,
+    addWorkspaceFolder: (at, uri) => vscode.workspace.updateWorkspaceFolders(at, null, { uri: uri as vscode.Uri }),
+    editorForView: (viewId) => {
+      const provider = TerminalEditorProvider.findByViewId(viewId);
+      if (!provider) {
+        return undefined;
+      }
+      return {
+        reveal: () => provider.panel.reveal(provider.panel.viewColumn, false),
+        post: (msg) => void provider.panel.webview.postMessage(msg),
+      };
+    },
+    postToView: (viewId, msg) => {
+      const provider = viewId === TerminalViewProvider.panelViewType ? panelProvider : sidebarProvider;
+      const view = provider?.view;
+      if (view) {
+        void view.webview.postMessage(msg);
+      }
+    },
+    resumeCommand: (entryId) => vaultLauncher.buildResumeCommand(entryId),
+    sessionCwd: async (entryId) => (await vaultService.getEntry(entryId))?.cwd,
+  });
+
+  /**
+   * The five mutating capabilities, built on first use.
+   *
+   * Lazy because the service reads `worktreeHost.mutationBindings()` and the
+   * host is what these capabilities are passed INTO — a value here would be a
+   * use-before-declaration. Nothing calls it until a message arrives, which is
+   * long after construction. Round-1 B1 was that this assembly did not exist at
+   * all, so the host declared five optional capabilities and production
+   * supplied none of them.
+   */
+  let worktreeMutations: ReturnType<typeof createWorktreeMutationService> | undefined;
+  function mutations(): ReturnType<typeof createWorktreeMutationService> {
+    if (worktreeMutations === undefined) {
+      const bindings = worktreeHost.mutationBindings();
+      worktreeMutations = createWorktreeMutationService({
+        runner: worktreeTreeDeps.runner,
+        forceRebuild: bindings.forceRebuild,
+        resolve: bindings.resolve,
+        repoPath: bindings.repoPath,
+        assessRemoval: bindings.assessRemoval,
+        observeAfter: async (target, journalledPath) => {
+          // Two INDEPENDENT readings. The previous version inferred "directory
+          // gone" from a null registration lookup, which is the one thing D11
+          // forbids: the comparison exists precisely because registration and
+          // filesystem can disagree, and deriving one from the other deletes
+          // the disagreement it is meant to detect (round-2 B7).
+          if (bindings.isDegraded(target.repoId)) {
+            // A listing we cannot trust is not evidence of anything. Null is
+            // what `classifyRemoval` reads as indeterminate.
+            return null;
+          }
+          // The JOURNALLED path, always — the path recorded before the spawn
+          // is the only one still meaningful once the registration is gone.
+          const existsOnDisk = await fsp.stat(journalledPath).then(
+            () => true,
+            (error: NodeJS.ErrnoException) => existenceFromStatError(error),
+          );
+          if (existsOnDisk === null) {
+            return null;
+          }
+          return { isRegistered: bindings.resolve(target) !== null, existsOnDisk };
+        },
+        createContext: bindings.createContext,
+        pathDeps: {
+          platform: process.platform,
+          lstat: (p) => fsp.lstat(p).catch(() => null),
+          readdir: (p) => fsp.readdir(p).catch(() => null),
+          normalize: (raw) => normalizeWorktreePath(raw),
+        },
+        // D8: a create under a root INSIDE the main worktree would otherwise
+        // show up as an untracked directory in the parent's status.
+        gitExcludeDirFor: (repoPath, createdPath) => {
+          if (!isPathInside(createdPath, repoPath)) {
+            return null;
+          }
+          // The create ROOT, not the leaf: every worktree made under it needs
+          // the same entry, and one pattern per worktree grew `info/exclude`
+          // without bound (round-4 B10). `addToGitExclude` is idempotent, so
+          // the second create under a root writes nothing.
+          const root = path.dirname(createdPath);
+          // Unless the root IS the repository — excluding that hides everything.
+          const dir = isPathInside(root, repoPath) ? root : createdPath;
+          return { gitDir: path.join(repoPath, ".git"), relativePath: path.relative(repoPath, dir) };
+        },
+        addToGitExclude: async (gitDir, entry) => {
+          // Reported, never fatal: the worktree exists either way, and failing
+          // the create over a hygiene write would be the worse outcome.
+          const outcome = await addToGitExclude(gitDir, entry);
+          if ("failed" in outcome) {
+            console.warn(`[AnyWhere Terminal] could not update info/exclude: ${outcome.failed}`);
+          }
+        },
+        report: (outcome, origin) => {
+          // The HOST delivers it — it owns attachment, and only a surface can
+          // open a terminal (D17). Posting straight at two providers is what
+          // missed every editor surface.
+          worktreeHost.reportMutation({
+            origin: origin ?? null,
+            message: toResultMessage(outcome),
+            ...(outcome.kind === "ok" && outcome.openTerminalAt !== undefined
+              ? { openTerminalAt: outcome.openTerminalAt }
+              : {}),
+          });
+        },
+        afterCreate: async (createdPath, openAfter, launch, origin) => {
+          if (openAfter === "newWindow" || openAfter === "addToWorkspace") {
+            await worktreeActions.openFolder(createdPath, openAfter);
+            return;
+          }
+          // The same two halves the menu's launch uses — resolve the argv here,
+          // open the pane on the surface that asked. Throwing is the contract:
+          // the service reports it as an agent that did not start, and the
+          // worktree it was created in stays.
+          if (openAfter === "agent" && launch !== undefined) {
+            const open = origin?.launchAgent;
+            if (!open) {
+              throw new Error("This view cannot start an agent.");
+            }
+            await open.call(
+              origin,
+              await vaultLauncher.startAgent(launch.agent, createdPath, {
+                ...(launch.permissionChoiceId === undefined ? {} : { permissionChoiceId: launch.permissionChoiceId }),
+                ...(launch.prompt === undefined ? {} : { prompt: launch.prompt }),
+              }),
+            );
+          }
+          // `terminal` needs a view id and a webview, which only a surface
+          // holds, and `none` is the no-op it says it is.
+        },
+        now: () => Date.now(),
+      });
+    }
+    return worktreeMutations;
+  }
+
+  // Held rather than inlined: the mutation service runs git through the SAME
+  // runner discovery uses, so a capability probe or a timeout setting cannot
+  // differ between reading the tree and changing it.
+  const worktreeTreeDeps = createWorktreeTreeDeps();
+
+  const worktreeHost = createWorktreeHost({
+    deps: worktreeTreeDeps,
+    // The two evidence sources a removal blocker set needs and the tree does
+    // not carry, from the same store and registry the projector reads.
+    removalFacts: {
+      panes: () =>
+        paneEvidence.panes().map((pane) => ({
+          paneId: pane.paneId,
+          cwd: pane.cwd === undefined ? undefined : path.resolve(pane.cwd),
+          activity: paneEvidence.activityFor(pane.paneId),
+        })),
+      externalSessions: async () => {
+        const outcome = await listRunningClaudeSessions();
+        // The FAILURE is carried, not flattened to an empty list. An unreadable
+        // registry is not "no external sessions", and on a forced removal that
+        // difference is a session nobody was warned about (round-2 B6).
+        return outcome.kind === "ok"
+          ? {
+              ok: true,
+              value: outcome.sessions.map((s) => ({ sessionId: s.sessionId, cwd: path.resolve(s.cwd) })),
+            }
+          : { ok: false };
+      },
+    },
+    workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+    // Read at each request rather than captured: the setting is live, and D7
+    // says an explicit one outranks the layout detected from the repository.
+    // It existed and was never supplied here, so the setting the spec's own
+    // scenario names did nothing in production (round-3 B12).
+    createRoot: () => readWorktreeCreateRoot(),
+    // B12 shipped twice: the host has probed the filesystem since round 3 and
+    // nothing here supplied the probe, so in production an unregistered
+    // occupied directory still read as free.
+    exists: (p) => fs.existsSync(p),
+    pool: fsWatcherPool,
+    onDidChangeWorkspaceFolders: (listener) => vscode.workspace.onDidChangeWorkspaceFolders(listener),
+    // This window's panes, as agent rows under the worktree each one is inside.
+    projector: createPresenceProjector(createPresenceProjectorDeps({ store: paneEvidence })),
+    onPaneChange: (listener) => {
+      onPaneEvidenceChange = listener;
+      return {
+        dispose: () => {
+          onPaneEvidenceChange = undefined;
+        },
+      };
+    },
+    // What an expanded row's session delegated, read from the vault on demand.
+    readDelegations: createDelegationReader(vaultService),
+    // The panel's read-only actions. Every one receives a value the host looked
+    // up; none of them takes an id (worktree-navigation design.md D2).
+    actions: {
+      ...worktreeActions,
+      // The mutating half. Every one re-resolves its own target on the far side
+      // of a forced rebuild, so none of them takes a path (round-1 B1, B2).
+      createWorktree: (request) => mutations().createWorktree(request),
+      // Resolution only — the surface that asked owns the pane it opens in.
+      startAgent: (agent, cwd, opts) => vaultLauncher.startAgent(agent, cwd, opts),
+      resumeSessionAt: (entryId, cwd) => vaultLauncher.resolve(entryId, "resume", undefined, undefined, cwd),
+      removeWorktree: (target, force, fingerprint) => mutations().removeWorktree(target, force, fingerprint),
+      lockWorktree: (target, reason) => mutations().lockWorktree(target, reason),
+      unlockWorktree: (target) => mutations().unlockWorktree(target),
+      pruneRepo: (repoId, confirmedCount, origin) => mutations().pruneRepo(repoId, confirmedCount, origin),
+      // Called after every authoritative rebuild, so a worktree that vanished
+      // by any route drops whatever confirmation it was holding (D15).
+      reconcileFingerprints: (present) => mutations().reconcileFingerprints(present),
+    },
+  });
+  context.subscriptions.push(worktreeHost);
+
   const vaultWatchCoordinator = new VaultWatchCoordinator({ watcherPool: fsWatcherPool, vaultService });
   context.subscriptions.push(vaultWatchCoordinator);
 
@@ -267,6 +709,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultService,
     vaultLauncher,
     vaultWatchCoordinator,
+    worktreeHost,
+    paneEvidence,
   );
 
   context.subscriptions.push(
@@ -285,6 +729,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultService,
     vaultLauncher,
     vaultWatchCoordinator,
+    worktreeHost,
+    paneEvidence,
   );
 
   context.subscriptions.push(
@@ -301,6 +747,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sessionManager,
         gitDecorationProvider,
         fsWatcherPool,
+        worktreeHost,
+        paneEvidence,
+        vaultService,
       );
       context.subscriptions.push(panelDisposable);
     }),
@@ -312,7 +761,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.window.registerWebviewPanelSerializer(
       TerminalEditorProvider.viewType,
-      new TerminalPanelSerializer(context, sessionManager, gitDecorationProvider, fsWatcherPool),
+      new TerminalPanelSerializer(
+        context,
+        sessionManager,
+        gitDecorationProvider,
+        fsWatcherPool,
+        worktreeHost,
+        paneEvidence,
+        vaultService,
+      ),
     ),
   );
 

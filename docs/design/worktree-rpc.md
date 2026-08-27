@@ -42,6 +42,19 @@ Two invariants carried over from the vault protocol:
   all render the same window-scoped truth. A surface whose Worktree view is not the active
   segment is skipped: all three retain their DOM while hidden, so an unfiltered broadcast
   pays render cost in panels nobody is looking at.
+
+  Being skipped takes **two independent facts**, and neither stands for the other. The
+  webview declares which body it is showing, via `worktreeViewVisibility` (§ 2.1). The window
+  reports whether it is displaying that surface at all, which the webview cannot know:
+  `retainContextWhenHidden` means a hidden surface keeps its DOM *and* its last declaration,
+  so the declaration alone would stay true forever. The worktree body can be the shown body
+  inside a panel the user has hidden, and a fully visible panel can be showing the sessions
+  body — so a push goes only to a surface where both hold.
+
+  Because a surface stops receiving while it is away, the moment it is displayed again is the
+  moment it has to be current: that transition serves it **from the cache**, alone, without a
+  rebuild. The watches keep running while it is away, so the cache already holds the answer
+  a rebuild would go and re-read.
 - **Actions on existing objects name ids, never paths.** Every action against a worktree that
   already exists names a `worktreeId` / `repoId` the host previously issued; the host
   re-resolves the path server-side from its own cache before touching git. A path in such a
@@ -62,6 +75,7 @@ Two invariants carried over from the vault protocol:
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `requestWorktreeTree` | `{ force?: boolean }` | Ask for the tree. `force` bypasses the per-repo cache |
+| `worktreeViewVisibility` | `{ visible: boolean }` | Declare whether this surface is showing the Worktree view. Gates every push to it (§ 1) |
 | `requestWorktreeSubagents` | `{ rowId, entryId }` | Lazy subagent rows for one expanded agent row |
 | `worktreeFocusPane` | `{ paneId }` | Reveal a window-scope pane. Rejected for external rows |
 | `worktreeOpenFolder` | `{ worktreeId, mode: "newWindow" \| "addToWorkspace" }` | Open the worktree as a folder |
@@ -72,20 +86,20 @@ Two invariants carried over from the vault protocol:
 | `worktreeResumeHere` | `{ worktreeId, entryId }` | Resume an existing session with cwd overridden to this worktree |
 | `worktreeCopyResumeCommand` | `{ entryId, worktreeId? }` | Copy the resume command; the worktree scopes the cwd override when present |
 | `worktreeLaunchAgent` | `{ worktreeId, agent, permissionChoiceId?, prompt? }` | Launch an agent in the worktree |
-| `worktreeCreate` | `{ repoId, branchName, baseRef?, path?, createBranch: boolean, openAfter?: WorktreeOpenAfter, agent?, permissionChoiceId?, prompt? }` | Create a worktree, optionally launching an agent in it |
-| `worktreeRemove` | `{ worktreeId, force: boolean }` | Remove a worktree |
-| `worktreeLock` | `{ worktreeId, locked: boolean, reason?: string }` | Lock / unlock |
-| `worktreePrune` | `{ repoId }` | Prune stale registrations for one repo |
-| `requestWorktreeCreateDefaults` | `{ repoId }` | Suggested branch name + path for the create form |
+| `worktreeCreate` | `{ repoId, path, branch?, baseRef?, detach?: boolean, openAfter: WorktreeOpenAfterMode }` | Create a worktree. The three branch modes are mutually exclusive shapes, not flags: a new branch sends `branch` + `baseRef`, an existing one sends `branch` alone, and a detached create sends `detach` with an optional `baseRef`. Agent launch is WT-005.3 and is not sent yet |
+| `worktreeRemove` | `{ worktreeId, force: boolean, fingerprint?: string }` | Remove a worktree. `force` and `fingerprint` travel together or not at all — a force carrying no fingerprint authorizes nothing, and an unforced call carrying one is a payload the host never issued |
+| `worktreeLock` | `{ worktreeId, reason?: string }` | Lock a worktree |
+| `worktreeUnlock` | `{ worktreeId }` | Unlock a worktree. Two messages rather than one `locked` flag: the verbs take different arguments and a boolean made the payload lie about which |
+| `worktreePrune` | `{ repoId, confirmedCount: number }` | Prune stale registrations. `confirmedCount` is the number the user actually confirmed; the host re-counts before running and abandons the prune when the answer has moved |
+| `requestWorktreeCreateDefaults` | `{ repoId, branch? }` | The destination this repo would use. Sent again whenever the branch settles, because the path is derived from it |
 
 ### 2.2 Extension → WebView
 
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `worktreeTreeResponse` | `{ tree: WorktreeTree, presence: WorktreePresence }` | The whole view state, always both halves together |
-| `worktreeSubagentsResponse` | `{ rowId, subagents: WorktreeSubagentRow[], error?: string }` | Reply to a lazy expansion |
-| `worktreeActionResult` | `{ action, worktreeId?, repoId?, outcome: "ok" \| "error" \| "indeterminate", error?: string, observed?: string, needsConfirm?: WorktreeRemoveBlocker }` | Outcome of any mutating action |
-| `worktreeCreateDefaultsResponse` | `{ repoId, branchName, path, pathIsWritable: boolean }` | Prefill for the create form |
+| `worktreeMutationResult` | `{ verb, repoId, worktreeId?, result }` where `result` is `{ kind: "ok", openFailed? }`, `{ kind: "error", message }`, `{ kind: "indeterminate", observed }`, `{ kind: "unavailable", unreadable }` or `{ kind: "blocked", worktreeId, fingerprint, blocker }` | Outcome of any mutating action, delivered to the SURFACE that started it. `unavailable` is not a failure — nothing was attempted, because what the action would affect could not be read. `openFailed` rides on a success: the worktree exists and the window did not open |
+| `worktreeCreateDefaults` | `{ repoId, root, prefix, path, branch?, collidedWith? }` | The destination the create will actually use. `path` is free against BOTH the registry and the filesystem; `collidedWith` names the unsuffixed candidate when it was taken. `branch` echoes the question, so a form can tell a current answer from one it has typed past |
 
 ```
 WorktreeOpenAfter = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspace"
@@ -97,10 +111,17 @@ a field to ignore. The launch runs **after** the create succeeds and reuses the 
 `worktreeLaunchAgent`; a launch failure is reported without rolling back the create
 (see [worktree-actions.md](worktree-actions.md) § 3.2).
 
-`WorktreeTree`, `WorktreePresence`, `WorktreeAgentRow`, `WorktreeSubagentRow` are defined in
+`WorktreeTree`, `WorktreePresence`, `WorktreeAgentRow`, `DelegationRoster`, `WorktreeSubagentRow` are defined in
 [worktree-model.md](worktree-model.md) § 2 and
 [worktree-agent-presence.md](worktree-agent-presence.md) § 2. This document does not restate
 their fields.
+
+**A delegation roster has no message of its own.** `requestWorktreeSubagents` is answered by
+the next `worktreeTreeResponse`, whose presence half carries the roster on the row it belongs
+to (`WorktreeAgentRow.delegations`). A separate reply would reintroduce exactly the split this
+section's next paragraph forbids — a roster arriving for a row the webview's current presence
+no longer holds, or holds under a different session. It also gives the host one publish path
+instead of two, so a roster and the row it decorates cannot disagree.
 
 **Tree and presence always ship together.** Two separate messages would let the webview
 render an agent row whose `worktreeId` is not in the tree it currently holds. One message
@@ -178,7 +199,7 @@ Applied host-side on every inbound message, before any git or shell work:
 | `entryId` | Must resolve in the vault store; never used to open a path the webview supplied |
 | `branchName` | Non-empty; passes `git check-ref-format --branch`; rejected if it starts with `-` |
 | `baseRef` | Rejected if it starts with `-`; passed as a single argv token |
-| `path` | Must be absolute after normalization; must not exist, or must be an empty directory; must not be inside any existing worktree of the same repo |
+| `path` | Must be absolute after normalization; must not exist, or must be an empty directory; must not be inside any **linked** worktree of the same repo. A path inside the **main** worktree is allowed — that is where the default root lives ([worktree-actions.md](worktree-actions.md) § 3.2) — and must not be the main worktree itself |
 | `openAfter` | One of the documented modes. `agent` requires the launch fields; every other mode rejects them |
 | `agent` | Must be a known `VaultAgentId` |
 | `permissionChoiceId` | Must be one the registry declares for that agent |
@@ -213,14 +234,17 @@ thing we can show, and hiding them would make the failure unactionable.
 | Condition | Behavior |
 |-----------|----------|
 | Two `requestWorktreeTree` in flight | Coalesced; one rebuild, one push |
+| Window hides a surface that is showing the view | Pushes stop; the cache is served to it alone when the window displays it again |
+| That re-show delivery is skipped or throws | The transition is not consumed, so the next report serves it |
 | Action arrives during a rebuild | Queued behind it, then re-resolves against the new tree |
 | `worktreeCreate` with a path that exists and is non-empty | Rejected in validation, before git |
 | `worktreeCreate` for a branch already checked out elsewhere | Git refuses; its message is surfaced verbatim |
 | `worktreeRemove` on a `missing` worktree | Runs `git worktree remove`; git prunes the registration |
 | `worktreePrune` with nothing to prune | Succeeds, no-op |
 | `worktreeLaunchAgent` for an agent not installed | Fails with the launcher's existing not-found error |
-| `requestWorktreeSubagents` for a row with no `entryId` | Reply with an empty list, no error |
-| Duplicate `requestWorktreeSubagents` for one `rowId` | Last reply wins; the webview keys on `rowId` |
+| `requestWorktreeSubagents` for a row with no `entryId` | Ignored. An empty list would say the session delegated nothing, which is not what a row with no session to read means |
+| `requestWorktreeSubagents` naming a session the row no longer has | Ignored — the host matches the request against the published row's own `entryId` |
+| Duplicate `requestWorktreeSubagents` for one `(rowId, entryId)` | Ignored while a read is in flight and after one has landed; the roster is held under that pair, not under `rowId` |
 
 ## 7. Testing
 
@@ -238,7 +262,7 @@ thing we can show, and hiding them would make the failure unactionable.
 - [ ] Mutation that fails or times out → a rebuild is still pushed; a disagreeing state reports `indeterminate` with `observed`
 - [ ] `worktreeRemove` on the main worktree with `force: true` → refused, `isMain: true`
 - [ ] `branchName` of `-x` → rejected in validation
-- [ ] `path` inside an existing worktree of the same repo → rejected
+- [ ] `path` inside a linked worktree of the same repo → rejected; a path under the default root inside the main worktree → accepted
 - [ ] `worktreeFocusPane` for an external row's identity → rejected
 - [ ] Git exits non-zero → stderr reaches the webview, bounded
 - [ ] `openAfter: "agent"` without the launch fields → rejected; launch fields with any other mode → rejected

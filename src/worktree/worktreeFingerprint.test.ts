@@ -1,0 +1,162 @@
+import { describe, expect, it } from "vitest";
+import type { RemovalEvidence } from "./worktreeBlockers";
+import { createFingerprintStore, FINGERPRINT_TTL_MS } from "./worktreeFingerprint";
+
+/** The same worktree, same incarnation — what every pre-existing case assumed. */
+const WT = { worktreeId: "wt" };
+
+function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
+  return {
+    dirtyPaths: [],
+    untrackedPaths: [],
+    paneIds: [],
+    externalSessionIds: [],
+    locked: false,
+    lockReason: null,
+    ...over,
+  };
+}
+
+describe("createFingerprintStore", () => {
+  it("proceeds when nothing changed", () => {
+    const store = createFingerprintStore();
+    const e = evidence({ dirtyPaths: ["a.ts"], paneIds: ["p1"] });
+    const fp = store.issue(WT, e, 0);
+    expect(store.redeem(WT, fp, e, 1_000)).toBe("proceed");
+  });
+
+  it("proceeds when strictly less is at risk than was approved", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence({ dirtyPaths: ["a.ts", "b.ts"], paneIds: ["p1", "p2"] }), 0);
+    expect(store.redeem(WT, fp, evidence({ dirtyPaths: ["a.ts"], paneIds: ["p1"] }), 1_000)).toBe("proceed");
+  });
+
+  it("re-prompts when one dirty file is swapped for another at equal count", () => {
+    // THE case counts cannot see: `dirty: true` and `untracked: 1` are both
+    // unchanged while the actual files at risk are entirely different ones.
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence({ dirtyPaths: ["README.md"] }), 0);
+    expect(store.redeem(WT, fp, evidence({ dirtyPaths: [".env"] }), 1_000)).toBe("reprompt");
+  });
+
+  it("re-prompts when one pane closes and another opens", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence({ paneIds: ["A"] }), 0);
+    expect(store.redeem(WT, fp, evidence({ paneIds: ["B"] }), 1_000)).toBe("reprompt");
+  });
+
+  it("re-prompts when an external session is substituted", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence({ externalSessionIds: ["s1"] }), 0);
+    expect(store.redeem(WT, fp, evidence({ externalSessionIds: ["s2"] }), 1_000)).toBe("reprompt");
+  });
+
+  it("re-prompts when a blocker appears that was not there", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence(), 0);
+    expect(store.redeem(WT, fp, evidence({ untrackedPaths: ["new.txt"] }), 1_000)).toBe("reprompt");
+  });
+
+  it("re-prompts when the worktree became locked after the confirmation", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence(), 0);
+    expect(store.redeem(WT, fp, evidence({ locked: true }), 1_000)).toBe("reprompt");
+  });
+
+  it("proceeds when a lock was released after the confirmation", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence({ locked: true }), 0);
+    expect(store.redeem(WT, fp, evidence({ locked: false }), 1_000)).toBe("proceed");
+  });
+
+  it("authorizes nothing with a fingerprint this host never issued", () => {
+    const store = createFingerprintStore();
+    store.issue(WT, evidence(), 0);
+    expect(store.redeem(WT, "not-a-real-fingerprint", evidence(), 1_000)).toBe("reprompt");
+  });
+
+  it("authorizes nothing once the fingerprint has expired", () => {
+    // A fingerprint recovered from stale webview state must not remove a
+    // worktree minutes after the user saw what was at risk.
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence(), 0);
+    expect(store.redeem(WT, fp, evidence(), FINGERPRINT_TTL_MS + 1)).toBe("reprompt");
+  });
+
+  it("does not let one worktree's fingerprint authorize another's removal", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue({ worktreeId: "wt-a" }, evidence(), 0);
+    expect(store.redeem({ worktreeId: "wt-b" }, fp, evidence(), 1_000)).toBe("reprompt");
+  });
+
+  it("replaces a worktree's issued entry rather than accumulating them", () => {
+    // Bounded by replacement, not only by expiry: one entry per worktree.
+    const store = createFingerprintStore();
+    const first = store.issue(WT, evidence({ dirtyPaths: ["a.ts"] }), 0);
+    store.issue(WT, evidence({ dirtyPaths: ["b.ts"] }), 10);
+    // Measured BEFORE the redeem: redeeming now spends the record (B5), so a
+    // count taken afterwards would read 0 whether or not the second issue had
+    // replaced the first, and would stop testing replacement at all.
+    expect(store.size()).toBe(1);
+    expect(store.redeem(WT, first, evidence({ dirtyPaths: ["a.ts"] }), 20)).toBe("reprompt");
+    expect(store.size()).toBe(0);
+  });
+
+  it("gives different evidence different fingerprints", () => {
+    const store = createFingerprintStore();
+    const a = store.issue(WT, evidence({ dirtyPaths: ["a.ts"] }), 0);
+    const b = store.issue(WT, evidence({ dirtyPaths: ["b.ts"] }), 0);
+    expect(a).not.toBe(b);
+  });
+
+  it("spends the confirmation, so the same token cannot authorize a second attempt", () => {
+    // The first attempt may have half-run: a killed `git worktree remove`
+    // leaves the registration and some of the directory, and the evidence the
+    // user read is exactly what it was in the middle of changing. Re-asking is
+    // the only honest move, so the token must not survive being spent
+    // (round-1 B5).
+    const store = createFingerprintStore();
+    const e = evidence({ dirtyPaths: ["a.ts"] });
+    const fp = store.issue(WT, e, 0);
+    expect(store.redeem(WT, fp, e, 1_000)).toBe("proceed");
+    expect(store.redeem(WT, fp, e, 1_100)).toBe("reprompt");
+  });
+
+  it("spends it even when it refused, so a refusal is not a free retry", () => {
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence({ dirtyPaths: ["a.ts"] }), 0);
+    expect(store.redeem(WT, fp, evidence({ dirtyPaths: [".env"] }), 10)).toBe("reprompt");
+    // The original evidence would have satisfied it. The token is gone anyway.
+    expect(store.redeem(WT, fp, evidence({ dirtyPaths: ["a.ts"] }), 20)).toBe("reprompt");
+  });
+
+  it("refuses a confirmation for a worktree that was observed to disappear", () => {
+    // Remove `feat-a`, create `feat-a` again: same id, same empty evidence, so
+    // the digest compares equal. What separates them is that the host SAW the
+    // worktree go — and that observation is what destroys the token (D15).
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, evidence(), 0);
+    store.forget("wt");
+    expect(store.redeem(WT, fp, evidence(), 1_000)).toBe("reprompt");
+  });
+
+  it("forgets only the worktree that vanished", () => {
+    const store = createFingerprintStore();
+    const a = store.issue({ worktreeId: "wt-a" }, evidence(), 0);
+    store.issue({ worktreeId: "wt-b" }, evidence(), 0);
+    store.forget("wt-b");
+    expect(store.redeem({ worktreeId: "wt-a" }, a, evidence(), 10)).toBe("proceed");
+  });
+
+  it("releases an expired record rather than holding it and refusing it", () => {
+    // Refusing is not releasing: the store lives as long as the host, so a
+    // record kept past its TTL is a leak the TTL appears to have prevented
+    // (round-1 W2).
+    const store = createFingerprintStore();
+    store.issue({ worktreeId: "wt-a" }, evidence({ dirtyPaths: ["a.ts"] }), 0);
+    store.issue({ worktreeId: "wt-b" }, evidence(), 0);
+    expect(store.size()).toBe(2);
+    store.issue({ worktreeId: "wt-c" }, evidence(), FINGERPRINT_TTL_MS + 1);
+    expect(store.size()).toBe(1);
+  });
+});

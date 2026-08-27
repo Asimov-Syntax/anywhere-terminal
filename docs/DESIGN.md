@@ -305,7 +305,7 @@ there.
 | Concern | Owner | Design |
 |---------|-------|--------|
 | Repo roots, worktree enumeration, identity, cache, watch | Extension host, new worktree module | [worktree-model.md](design/worktree-model.md) |
-| Per-pane title and waiting evidence reaching the host | Each webview surface reports; the host aggregates by pane id | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.3 + § 13.6 below |
+| Per-pane title and waiting evidence reaching the host | Each webview surface reports; the host aggregates by pane id | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.3 + § 8.6 below |
 | Pane→worktree mapping, agent identity, activity, external rows, subagents | Extension host, new presence module | [worktree-agent-presence.md](design/worktree-agent-presence.md) |
 | Message contract and validation | `src/types/messages.ts` + the view provider | [worktree-rpc.md](design/worktree-rpc.md) |
 | The fourth segment, tree rendering, states, keyboard | WebView, alongside `VaultPanel` | [worktree-panel-ui.md](design/worktree-panel-ui.md) |
@@ -317,6 +317,7 @@ there.
 | Existing capability | Location | Used for |
 |---------------------|----------|----------|
 | `vscode.git` API types + repository state events | `src/providers/git.ts` | Repo roots without re-implementing repo detection; branch changes for repos VS Code already has open |
+| Root-aware path containment | `src/utils/pathBoundary.ts` | "Is this folder inside that worktree / repo root?" — extracted from `gitDecorationProvider.ts`, which had the only correct implementation of filesystem-root, separator-drift and drive-case handling |
 | Watcher pool with per-event-kind debounce | `src/providers/fsWatcherPool.ts` | Watching `.git/worktrees` and `HEAD` — via `subscribePattern` only, since `subscribe()` ignores change events. The pool does **not** pause on window blur, and it currently cannot report a watcher-creation failure to its caller |
 | Loopback hook runtime with per-session tokens | `src/agentHooks/AgentHookRuntime.ts` | **The** agent hook endpoint, serving every registered agent. Constant-time token compare, liveness re-check at use time, and a per-session entitlement set a disable strikes permanently |
 | Per-agent event vocabulary and state machine | `src/agentHooks/agents/*.ts` | Decode plus semantics per agent; the runtime core owns only transport, auth, dedup, and containment |
@@ -324,7 +325,7 @@ there.
 | Hook enable/disable controller | `src/agentHooks/AgentHookController.ts` | Settings-driven lifecycle with one slot per agent; the contributor is an aggregate, so disabling one agent never revokes another's panes |
 | Pty env contributor seam | `SessionEnvironmentContributor`, `SessionManager.ts:103` | Reaching every enabled agent at spawn through one contributor, so coordinates arrive whole or not at all |
 | Shared watch coordinator with attached clients | `src/providers/VaultWatchCoordinator.ts` | The pattern for owning discovery once per window rather than once per webview surface |
-| Per-pane activity projection **rules** | `src/webview/terminal/TerminalActivityTracker.ts` | The projection logic only. The tracker instance itself is webview-side and sees just its own surface's panes, so presence cannot consume it — see § 13.6 |
+| Per-pane activity projection **rules** | `src/webview/terminal/TerminalActivityTracker.ts` | The projection logic only. The tracker instance itself is webview-side and sees just its own surface's panes, so presence cannot consume it — see § 8.6 |
 | Live Claude session registry | `src/vault/readers/runningSessions.ts` | External rows, with headless runs excluded |
 | Pane→session resolution | `src/session/resolveClaudeSession.ts` | Linking a pane to a vault entry |
 | Agent registry, argv builder, launcher | `src/vault/registry.ts`, `LaunchBuilder.ts`, `VaultLauncher.ts` | Launching an agent into a worktree |
@@ -381,7 +382,7 @@ its own `VaultPanel` instance over its own state. Three consequences the design 
 | Consequence | Rule |
 |-------------|------|
 | There is no single "the webview" | The host **broadcasts** the tree to every live webview. A reply to one surface's request still goes to all, because they render the same window-scoped truth |
-| Every surface retains its DOM while hidden | All three are registered with `retainContextWhenHidden: true` (`src/extension.ts:198-231`, `src/providers/TerminalEditorProvider.ts:189-197`). A hidden surface's tree still costs DOM work on push, so pushes are skipped for surfaces whose Worktree view is not the active segment, and the render-signature guard catches the rest |
+| Every surface retains its DOM while hidden | All three are registered with `retainContextWhenHidden: true` (`src/extension.ts:198-231`, `src/providers/TerminalEditorProvider.ts:189-197`). A hidden surface's tree still costs DOM work on push, so a push goes only to a surface whose Worktree view is the active segment *and* which the window reports it is displaying (`worktree-rpc.md` § 1) — neither fact implies the other, and the declaration alone survives hiding. The render-signature guard catches the rest |
 | Per-surface state is not window state | Anything scoped to the window — which panes exist, what each is doing — must be projected **host-side**. Anything genuinely per-surface — scroll, collapse, expansion — stays in that surface's own persisted state |
 
 The last row is why the agent-activity projection lives in the host rather than reusing the
@@ -455,8 +456,8 @@ one definition; every other document references it.
 | Hook env var — **shipped** Cursor agent | `ANYWHERE_TERMINAL_CURSOR_URL = http://127.0.0.1:<port>/<sessionId>/<token>/`; the wrapper appends the agent's slug. Unlike the planned server it **does** write on-disk artefacts: an observer wrapper script plus entries in `~/.cursor/hooks.json` | `src/agentHooks/agents/cursor.ts:14`, minted at `AgentHookRuntime.ts:232`; artefacts at `CursorHookInstaller.ts:280,293` | [agent-cli-integration.md](design/agent-cli-integration.md) |
 | Hook settings keys | `anywhereTerminal.agentHooks.claude.enabled`, `anywhereTerminal.agentHooks.claudeConfigDir`, and the pre-existing `anywhereTerminal.cursorAgent.hooks.enabled` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
 | Hook uninstall command | `anywhereTerminal.agentHooks.uninstall` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
-| Persisted view keys | `vaultView`, `vaultGroupMode`, `worktreeCollapsed`, `worktreeExpandedRows` — per **surface**, not per window | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.1 | — |
-| Worktree settings keys | `anywhereTerminal.worktree.createRoot` (string, default empty = sibling of the main worktree), `anywhereTerminal.worktree.rowActivation` (`focus` \| `preview`, default `focus`) | [worktree-actions.md](design/worktree-actions.md) § 3.2, [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6 | — |
+| Persisted view keys | `vaultView`, `vaultGroupMode`, `worktreeCollapsed`, `worktreeExpandedRows` — per **surface**, not per window. An absent collapse array means "never saved" (seed defaults); `[]` means "everything expanded" (seed nothing) | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.1 | — |
+| Worktree settings keys | `anywhereTerminal.worktree.createRoot` (string, default `.claude/worktrees`; relative resolves against the main worktree, absolute used as-is; set explicitly it outranks detection, unset the repo's own layout wins), `anywhereTerminal.worktree.rowActivation` (`focus` \| `preview`, default `focus`) | [worktree-actions.md](design/worktree-actions.md) § 3.2, [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6 | — |
 | `WorktreeOpenAfter` | `none` / `terminal` / `agent` / `newWindow` / `addToWorkspace` | [worktree-rpc.md](design/worktree-rpc.md) § 2.2 | actions § 3.2 |
 | Worktree row state precedence | `waiting` > `running` > `idle` > `exited` | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.2 | ui § 8 |
 

@@ -21,6 +21,12 @@ export interface TerminalInstance {
   /** Auto-derived name (default "Terminal N"; mutated by xterm.js onTitleChange). */
   name: string;
   /**
+   * The host-assigned `Terminal N` this pane started with. `name` is the only
+   * field xterm rewrites, so this is what a cleared title falls back to — kept
+   * separately because by then the original is gone.
+   */
+  defaultName: string;
+  /**
    * User-supplied display name. When non-null, the tab label renders this verbatim
    * instead of `name`. Null = use auto-name. Mirrored from the host's `customName`
    * via `tabRenamed` / `init` / `tabCreated` messages. See add-tab-rename design.md D1.

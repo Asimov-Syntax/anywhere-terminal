@@ -4049,3 +4049,151 @@ describe("VaultPanel fresh-update flash", () => {
     expect(flashed[0].textContent).toContain("second reply");
   });
 });
+
+describe("worktree segment", () => {
+  function worktreeBody(): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "wt-tree";
+    return el;
+  }
+
+  it("never fires the sessions refresh protocol from the worktree view", () => {
+    // The refresh button posts requestVaultSessions. In the worktree view that
+    // is a real host operation against data the user cannot see, so with no
+    // worktree refresh supplied the control is hidden rather than misfiring.
+    const posted: { type: string }[] = [];
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: (m) => posted.push(m), worktreeBody: worktreeBody() });
+    const btn = host.querySelector<HTMLButtonElement>(".vault-header__refresh-btn");
+    posted.length = 0;
+
+    panel.setView("worktree");
+    expect(btn?.hidden).toBe(true);
+    btn?.click();
+    expect(posted.filter((m) => m.type === "requestVaultSessions")).toHaveLength(0);
+
+    panel.setView("sessions");
+    expect(btn?.hidden).toBe(false);
+    expect(btn?.getAttribute("aria-label")).toBe("Refresh sessions");
+  });
+
+  it("routes refresh to the worktree owner when one is supplied", () => {
+    const posted: { type: string }[] = [];
+    const refreshed: number[] = [];
+    const host = createHost();
+    const panel = new VaultPanel({
+      host,
+      postMessage: (m) => posted.push(m),
+      worktreeBody: worktreeBody(),
+      onWorktreeRefresh: () => refreshed.push(1),
+    });
+    panel.setView("worktree");
+    const btn = host.querySelector<HTMLButtonElement>(".vault-header__refresh-btn");
+    expect(btn?.hidden).toBe(false);
+    expect(btn?.getAttribute("aria-label")).toBe("Refresh worktrees");
+    posted.length = 0;
+    btn?.click();
+    expect(refreshed).toHaveLength(1);
+    expect(posted.filter((m) => m.type === "requestVaultSessions")).toHaveLength(0);
+  });
+
+  it("is absent until a worktree body is supplied", () => {
+    const host = createHost();
+    new VaultPanel({ host, postMessage: () => {} });
+    expect(host.querySelectorAll(".vault-segmented button")).toHaveLength(3);
+    expect(host.querySelector('.vault-segmented button[data-view="worktree"]')).toBeNull();
+  });
+
+  it("appears as a fourth segment and swaps the body", () => {
+    const host = createHost();
+    const body = worktreeBody();
+    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body });
+    const worktreeBtn = host.querySelector<HTMLButtonElement>('.vault-segmented button[data-view="worktree"]');
+    expect(worktreeBtn).not.toBeNull();
+    expect(host.querySelectorAll(".vault-segmented button")).toHaveLength(4);
+
+    worktreeBtn?.click();
+    expect(panel.getView()).toBe("worktree");
+    expect(host.querySelector<HTMLElement>(".vault-list")?.style.display).toBe("none");
+    expect(body.style.display).toBe("");
+    expect(worktreeBtn?.getAttribute("aria-selected")).toBe("true");
+    // The grouping segments deselect: one tablist, four segments, one selection.
+    expect(host.querySelector('.vault-segmented button[data-mode="recent"]')?.getAttribute("aria-selected")).toBe(
+      "false",
+    );
+  });
+
+  it("hides the folder filter in the worktree view — the tree is already folder-scoped", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: worktreeBody() });
+    const toggle = host.querySelector<HTMLElement>(".vault-folder-toggle");
+    expect(toggle?.hidden).toBe(false);
+    panel.setView("worktree");
+    expect(toggle?.hidden).toBe(true);
+  });
+
+  it("leaves groupEntries untouched — the grouping survives a round trip", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: worktreeBody() });
+    panel.setGroupMode("agent");
+    panel.setView("worktree");
+    host.querySelector<HTMLButtonElement>('.vault-segmented button[data-mode="folder"]')?.click();
+    expect(panel.getView()).toBe("sessions");
+    expect(host.querySelector('.vault-segmented button[data-mode="folder"]')?.getAttribute("aria-selected")).toBe(
+      "true",
+    );
+  });
+
+  it("shows the create affordance only while the worktree view is up", () => {
+    const host = createHost();
+    const created: number[] = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: worktreeBody(),
+      onCreateWorktree: () => created.push(1),
+    });
+    const createBtn = host.querySelector<HTMLButtonElement>('.vault-toolbar button[aria-label="Create worktree"]');
+    expect(createBtn?.hidden).toBe(true);
+    panel.setView("worktree");
+    expect(createBtn?.hidden).toBe(false);
+    createBtn?.click();
+    expect(created).toHaveLength(1);
+  });
+
+  it("routes the search box to the worktree body too", () => {
+    const host = createHost();
+    const queries: string[] = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: worktreeBody(),
+      onWorktreeQuery: (q) => queries.push(q),
+    });
+    panel.setView("worktree");
+    const input = host.querySelector<HTMLInputElement>(".vault-search-input");
+    if (!input) {
+      throw new Error("search input missing");
+    }
+    expect(input.placeholder).toBe("Search worktrees…");
+    input.value = "Feat";
+    input.dispatchEvent(new Event("input"));
+    expect(queries).toEqual(["feat"]);
+  });
+
+  it("honours a persisted view and persists a change", () => {
+    const host = createHost();
+    const persisted: string[] = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: worktreeBody(),
+      getInitialView: () => "worktree",
+      persistView: (v) => persisted.push(v),
+    });
+    expect(panel.getView()).toBe("worktree");
+    expect(persisted).toHaveLength(0); // seeding never persists
+    panel.setView("sessions");
+    expect(persisted).toEqual(["sessions"]);
+  });
+});

@@ -54,6 +54,27 @@ path, and copy resume command already have host implementations
 (`src/providers/TerminalViewProvider.ts:808`, `:843`, `:861`). The worktree variants re-resolve
 the path from a `worktreeId` and then call the same code.
 
+**An offered action must be performable on the surface offering it.** Absent, never present and
+inert — the same rule the panel applies to a row that cannot act. Two consequences fall out of it,
+both of which cost a review round to find:
+
+- **Some rows cannot perform some actions.** Preview, resume, copy-resume, and the two
+  agent-cwd items all need a session; a window row without one falls back to focusing its pane
+  rather than offering an item that resolves to nothing.
+- **Some surfaces cannot perform any of them.** The panel renders identically in the sidebar, the
+  panel, and an editor tab, but an editor surface answers only the two vault READS a preview
+  needs, and none of the vault action messages. It therefore declares that in the init payload
+  (`vaultActionsAvailable`) and every control that would post an action is absent there — the row
+  Resume button, the whole row context menu, the rename editor, and the preview overlay's own
+  Resume, Continue, and Raw controls. The overlay itself still opens, because opening it is a read.
+
+  `vaultWatchSession` is deliberately exempt: it is automatic preview lifecycle traffic rather
+  than an offered control, so a surface that does not answer it drops it and loses live-follow,
+  with nothing on screen claiming otherwise.
+
+The declaration is one boolean rather than a capability set, because the split is all-or-nothing
+per surface today. A surface that gains a subset of the actions is when that becomes an enum.
+
 ## 3. Mutating actions
 
 ### 3.1 Shared rules
@@ -78,12 +99,35 @@ Inputs: `repoId`, `branchName`, optional `baseRef`, optional `path`, `createBran
 
 **Defaults** (`requestWorktreeCreateDefaults`):
 
-- Path: `<parent of the main worktree>/<main worktree basename>-<sanitized branch>`.
-  Configurable via a setting so a user who keeps worktrees in a dedicated directory is not
-  fighting the default on every create. When the computed path exists, append `-2`, `-3`, …
-  until free.
+- Path: `<root>/<sanitized branch>`, where `<root>` is the first of:
+
+  | # | Source | Wins because |
+  |---|--------|--------------|
+  | 1 | `anywhereTerminal.worktree.createRoot`, when the user actually set it | An explicit statement outranks a heuristic |
+  | 2 | The directory most of this repo's existing linked worktrees already live in | The repo's own convention beats ours |
+  | 3 | `.claude/worktrees`, the setting's declared default | Nothing else to go on |
+
+  Detection (2) is the mode of the parent directory of each **linked** worktree, read from the
+  listing the host already holds — no extra git work. It infers the **root only, never the
+  naming pattern**: one root can hold worktrees named two different ways, and a pattern
+  inferred from them encodes one tool's rule as the repo's.
+
+  A relative `createRoot` resolves against the main worktree; an absolute one is used as-is.
+  That is what lets the default be a plain string rather than a template needing a repo-name
+  placeholder. When the computed path exists, append `-2`, `-3`, … until free.
+
 - Branch name: empty. A suggestion is not offered — a wrong-but-plausible branch name is
   worse than a blank field.
+
+**The default root sits inside the main worktree.** The model supports that
+([worktree-model.md](worktree-model.md) § 6): both worktrees list, and longest-prefix mapping
+keeps panes attributed to the nested one. What it costs is that the new worktree is untracked
+content in the parent's working tree, so a create under a root inside the main worktree adds
+that root to the repository's `info/exclude` once, idempotently. That file is repo-local and
+uncommitted — the right home for a layout this user chose and their collaborators did not.
+`.gitignore` is never touched: it is tracked, and committing an entry on the user's behalf is
+not ours to do. A failed exclusion write is reported and does not block the create — the
+worktree is what was asked for, and a noisy `git status` is a nuisance, not a failure.
 
 **Validation** (before git): per [worktree-rpc.md](worktree-rpc.md) § 4. The branch name
 passes `git check-ref-format --branch`; the path must be absolute, non-existent or empty, and
@@ -297,10 +341,12 @@ becomes an unrecoverable one.
 |-----------|----------|
 | Create with a branch checked out elsewhere | Git refuses; its message names the other worktree |
 | Create where the computed default path exists | Suffix until free; the form shows the final path before submit |
-| Create into a path inside another worktree | Rejected in validation |
+| Create into a path inside a linked worktree | Rejected in validation |
+| Create into a path inside the main worktree | Allowed — the default root is there; the root is added to `info/exclude` |
+| Repo whose linked worktrees already live elsewhere | Detection wins over the default; the form shows the detected root |
 | Remove a worktree that is a VS Code workspace folder | Allowed after confirmation; VS Code is left showing a missing folder, and the confirmation says so |
 | Remove a `missing` worktree | Succeeds; registration pruned |
-| Remove while a pane inside it is running an agent | Blocked until confirmed; panes are left alive |
+| Remove while a pane inside it is running an agent | Refused — a running window-owned pane carries no confirmation that could authorize it; panes are left alive |
 | Lock an already-locked worktree | Git no-ops or errors; surfaced verbatim |
 | Prune with nothing prunable | Action not offered |
 | Launch an agent into a `missing` or `bare` worktree | Not offered |
@@ -328,7 +374,12 @@ becomes an unrecoverable one.
 - [ ] Create with an existing branch → `worktree add <path> <branch>`, no `-b`
 - [ ] Create with a branch already checked out → git's error surfaced verbatim
 - [ ] Create default path collides → suffixed, and the suffixed path is what the form shows
-- [ ] Create path inside an existing worktree → rejected before git runs
+- [ ] Create path inside a linked worktree → rejected before git runs
+- [ ] Default root with nothing configured and no linked worktree → `.claude/worktrees` under the main worktree
+- [ ] Repo whose linked worktrees share another parent → that parent is the suggested root; a set named two different ways still yields one root and no inferred naming pattern
+- [ ] An explicitly configured `createRoot` outranks detection; a relative value resolves against the main worktree
+- [ ] Create under a root inside the main worktree → the root is excluded once via `info/exclude`, and a second create adds no duplicate entry
+- [ ] The exclusion write fails → the create still succeeds and the failure is reported
 - [ ] Branch name `-x` / invalid ref → rejected by validation
 - [ ] Remove clean, unlocked, no panes → runs without confirmation
 - [ ] Remove dirty → `needsConfirm { dirty: true }`, no git run

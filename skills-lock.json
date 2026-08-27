@@ -4,7 +4,7 @@
     "asimov": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "7c9b3250a2a6fd1fc6cf9ec9e1e1c1d8b19418858a424da1731f236536b449c1"
+      "computedHash": "7ba40b6ef0aa9016570a93f03d6dd9fe6feb06201dfd6c5c0354c48d30e5d741"
     },
     "asimov-archive": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
@@ -19,7 +19,7 @@
     "asimov-build": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "923390355cab25c68c6d1b276588ee1a10dfd8efc0aae7b289920b7db0c634eb"
+      "computedHash": "1c730fcbad3d8bdfb1779ba2ed28ac769bf23d133f24fe28d1135c35fd75d714"
     },
     "asimov-core": {
       "source": "cyberk-dev/asimov",
@@ -30,7 +30,7 @@
     "asimov-debug": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "ea6c3787803b4138c6ff5dde01fb54ab3a1ec48bde9a94012ceafecaa8d5d0bb"
+      "computedHash": "928fde0d6c23612df7676134a94fa4e23f4f06add1f13794a9ef2e2484ec8e87"
     },
     "asimov-html-doc": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
@@ -40,7 +40,7 @@
     "asimov-plan": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "96aacfdf40be04180f22df5a1449a1a835e3fb1162ab13d8e79ecdde897a25b5"
+      "computedHash": "fed9d0b0469b4845ccd48a4a2cb556c58c8bb75cd0af929f29c93bff9bf03f9d"
     },
     "asimov-refactor": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
@@ -50,7 +50,7 @@
     "asimov-review": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "194a3f68c6960c186da7cb6b7bd588f0b67df799eada9f72746c7e69d74cffac"
+      "computedHash": "082ce0ac8be4f24140e8442c22800d14d97b952407cff663ad4b79c087986a29"
     },
     "asimov-ship": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",

@@ -111,14 +111,27 @@ export interface FlagFragment {
   valueTemplate?: string;
 }
 
+/**
+ * The prompt slot in a START template. A fresh launch may carry no prompt at
+ * all, so the slot is a fragment that DISAPPEARS rather than a `{{prompt}}`
+ * token that would expand to an empty argument — claude reads a bare `""` as an
+ * empty first turn. Continue templates keep the token: a prompt is mandatory
+ * there, so absence is not representable and need not be.
+ */
+export interface PromptFragment {
+  prompt: true;
+  /** Flag emitted ahead of the text (opencode's `--prompt`). Positional when absent. */
+  flag?: string;
+}
+
 export interface CommandTemplate {
   executable: string;
   /**
    * Static argv tokens (may contain `{{sessionId}}` / `{{sessionPath}}` /
    * `{{executable}}`) interleaved with optional flag fragments that expand
-   * only when the captured value is present.
+   * only when the captured value is present, and at most one prompt fragment.
    */
-  args: Array<string | FlagFragment>;
+  args: Array<string | FlagFragment | PromptFragment>;
 }
 
 /**
@@ -150,6 +163,12 @@ export interface AgentVaultDefinition {
   /** Starts a NEW session seeded with `{{prompt}}` (Continue in New Session).
    *  Absent → the action is unavailable for that agent. */
   continueCommand?: CommandTemplate;
+  /**
+   * Starts a BRAND-NEW session, prompt optional — the one launch that begins
+   * from no stored session at all. Absent → the agent is not offered as a start
+   * target rather than offered and failing at spawn.
+   */
+  startCommand?: CommandTemplate;
   /** Minimum agent `--version` for fork support (e.g. opencode "1.1.54"). */
   forkMinVersion?: string;
   /** MVP: always launch in the session's recorded cwd. */
@@ -161,11 +180,24 @@ export interface AgentVaultDefinition {
   permissionChoices?: AgentPermissionChoice[];
 }
 
-/** One agent the reader may continue into, as the host reports it (D11). */
+/**
+ * A posture as the WEBVIEW sees it. The argv a choice contributes stays
+ * host-side: the webview only ever sends the `id` back, and the host resolves
+ * the arguments from the registry itself, so launch mechanics do not cross the
+ * boundary at all.
+ */
+export type AgentPermissionOption = Omit<AgentPermissionChoice, "args">;
+
+/** One agent the reader may launch into, as the host reports it (D11). */
 export interface VaultLaunchTarget {
   agent: VaultAgentId;
   displayName: string;
-  permissionChoices: AgentPermissionChoice[];
+  permissionChoices: AgentPermissionOption[];
+  /**
+   * Whether this agent's template has a prompt slot at all. Derived from the
+   * declaration rather than declared twice, so it cannot contradict it.
+   */
+  canSeedPrompt: boolean;
 }
 
 export interface VaultSessionEntry {

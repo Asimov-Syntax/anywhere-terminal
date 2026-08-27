@@ -2,7 +2,10 @@
 // Used by both Extension Host and WebView code.
 // See: docs/design/message-protocol.md
 
+import type { WorktreeRowActivation } from "../settings/SettingsReader";
 import type { VaultLaunchTarget, VaultListResult, VaultSessionDetail } from "../vault/types";
+import type { WorktreePresence } from "../worktree/presenceTypes";
+import type { WorktreeTree } from "../worktree/types";
 
 // ─── Shared Types ───────────────────────────────────────────────────
 
@@ -448,7 +451,15 @@ export interface VaultContinueSessionMessage {
  */
 export interface RequestVaultLaunchTargetsMessage {
   type: "requestVaultLaunchTargets";
+  /**
+   * Which launch is being asked about. Absent means `"continue"`, so the
+   * continuation dialog's existing request keeps its meaning unchanged.
+   */
+  capability?: VaultLaunchCapability;
 }
+
+/** The two launches a target list can describe. */
+export type VaultLaunchCapability = "continue" | "start";
 
 /** Webview → Extension: reveal the session's file in the OS file manager. */
 export interface VaultRevealInOSMessage {
@@ -600,6 +611,298 @@ export interface RequestSubagentPreviewMessage {
 }
 
 /**
+ * WebView → Extension: ask for the worktree tree. `force` bypasses the per-repo
+ * cache and rebuilds before answering; without it a cached listing may answer.
+ * Two requests in flight for one scope collapse into a single rebuild.
+ *
+ * See: docs/design/worktree-rpc.md § 2.1.
+ */
+export interface RequestWorktreeTreeMessage {
+  type: "requestWorktreeTree";
+  force?: boolean;
+}
+
+/**
+ * WebView → Extension: this row was expanded — read what its session delegated.
+ *
+ * `entryId` is an expected-version token, never an argument: the host looks
+ * `rowId` up in the projection it last published and reads only when THAT row's
+ * own entry id matches, using its own value. A surface whose last envelope was
+ * skipped or threw still shows the previous session under the same stable
+ * `rowId`, and a row-id-only request would resolve the click against the new
+ * session and open the wrong transcript.
+ *
+ * There is no paired response: the roster rides the `worktreeTreeResponse`
+ * envelope that already carries presence, so a recipient can never hold a
+ * roster for a row its current presence does not contain.
+ *
+ * See: docs/design/worktree-rpc.md § 2.1;
+ *      asimov/changes/surface-subagent-history-rows/design.md D1, D2.
+ */
+export interface RequestWorktreeSubagentsMessage {
+  type: "requestWorktreeSubagents";
+  rowId: string;
+  /** The session the view believed the row had when it was expanded. */
+  entryId: string;
+}
+
+/**
+ * WebView → Extension: the panel's read-only actions.
+ *
+ * **Every id here is a lookup key, never a value to act on.** The host resolves
+ * `worktreeId` against its cached tree and `rowId` against the presence it last
+ * published, and acts on what IT holds — a request naming something the host
+ * does not currently hold performs nothing at all, rather than falling back to a
+ * nearest match, a first repository, or the workspace root. An action that "did
+ * something" against an unintended target is worse than one that did nothing.
+ *
+ * Where a request also carries a `paneId` or `entryId`, that value is an
+ * expected-version token compared against the host's own, exactly as
+ * `requestWorktreeSubagents` uses one: a surface whose last envelope was skipped
+ * still shows the previous worktree or session under a stable row id.
+ *
+ * See: docs/design/worktree-rpc.md § 2.1;
+ *      asimov/changes/wire-worktree-navigation-actions/design.md D2, D3.
+ */
+export interface WorktreeOpenFolderMessage {
+  type: "worktreeOpenFolder";
+  worktreeId: string;
+  mode: "newWindow" | "addToWorkspace";
+}
+
+/** After-creation modes create ships with. */
+export type WorktreeOpenAfterMode = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspace";
+
+/**
+ * What a launch runs: which agent, under which posture, seeded with what.
+ *
+ * `permissionChoiceId` and `prompt` are the agent's OWN vocabulary — an id it
+ * declared and text it will receive as one argument. Neither is argv; the host
+ * resolves that from the registry, so nothing here is a command fragment.
+ */
+export interface WorktreeAgentLaunchFields {
+  agent: string;
+  permissionChoiceId?: string;
+  prompt?: string;
+}
+
+/**
+ * WebView → Extension: create a worktree at a path the host will re-validate.
+ *
+ * The launch fields are required exactly when `openAfter` is `"agent"` and
+ * rejected on every other mode — a launch payload riding a non-launch mode is a
+ * caller bug, not a field to ignore (worktree-rpc.md § 2.2). The union makes
+ * that unrepresentable rather than validated.
+ */
+export type WorktreeCreateRequestMessage = WorktreeCreateRequestBase &
+  (
+    | { openAfter: "agent"; launch: WorktreeAgentLaunchFields }
+    | { openAfter: Exclude<WorktreeOpenAfterMode, "agent">; launch?: never }
+  );
+
+interface WorktreeCreateRequestBase {
+  type: "worktreeCreate";
+  repoId: string;
+  /** Untrusted: the one action with no host-issued id to re-resolve from. */
+  path: string;
+  branch?: string;
+  baseRef?: string;
+  detach?: boolean;
+}
+
+/** WebView → Extension: start a fresh agent session in a worktree. */
+export interface WorktreeLaunchAgentMessage extends WorktreeAgentLaunchFields {
+  type: "worktreeLaunchAgent";
+  worktreeId: string;
+}
+
+/**
+ * WebView → Extension: resume an existing session, in this worktree rather than
+ * the one it was recorded in.
+ *
+ * `rowId` travels with `entryId` because every agent-row action resolves through
+ * the published row rather than the id the request carried — the entry id is an
+ * expected-version token, never an argument (design.md D1).
+ */
+export interface WorktreeResumeHereMessage {
+  type: "worktreeResumeHere";
+  worktreeId: string;
+  rowId: string;
+  entryId: string;
+}
+
+/**
+ * WebView → Extension: remove a worktree.
+ *
+ * `fingerprint` is REQUIRED when `force` is true and rejected when it is not:
+ * worktree-rpc.md:90 declares only `{ worktreeId, force }`, but :196 requires the
+ * fingerprint to be validated on the way in, so the payload is amended here.
+ * A force without one authorizes nothing (design.md D3).
+ */
+/**
+ * WebView → Extension: what destination would a create in this repo take?
+ *
+ * Asked rather than computed, because the panel does not know the configured
+ * root, the repo's own layout, or which candidates are already taken.
+ */
+export interface WorktreeCreateDefaultsRequestMessage {
+  type: "requestWorktreeCreateDefaults";
+  repoId: string;
+  /**
+   * The branch the form currently holds, if any.
+   *
+   * The destination depends on it, so the host has to resolve against the
+   * branch the user actually typed. Without this the host proved one path free
+   * and the form submitted a different, branch-derived one (round-3 B12).
+   */
+  branch?: string;
+}
+
+export interface WorktreeRemoveRequestMessage {
+  type: "worktreeRemove";
+  worktreeId: string;
+  force: boolean;
+  fingerprint?: string;
+}
+
+/** WebView → Extension: lock this worktree, optionally with a reason. */
+export interface WorktreeLockMessage {
+  type: "worktreeLock";
+  worktreeId: string;
+  /** Free text from the user. Refused host-side when it would read as a flag. */
+  reason?: string;
+}
+
+/** WebView → Extension: release this worktree's lock. */
+export interface WorktreeUnlockMessage {
+  type: "worktreeUnlock";
+  worktreeId: string;
+}
+
+/**
+ * WebView → Extension: drop this repository's stale worktree registrations.
+ *
+ * `confirmedCount` is the number the confirmation named. The host re-counts
+ * before running and re-prompts when the answer moved, so the user never
+ * authorizes one number and gets another (design.md D13).
+ */
+export interface WorktreePruneMessage {
+  type: "worktreePrune";
+  repoId: string;
+  confirmedCount: number;
+}
+
+/** WebView → Extension: show this worktree in the OS file manager. */
+export interface WorktreeRevealInOSMessage {
+  type: "worktreeRevealInOS";
+  worktreeId: string;
+}
+
+/** WebView → Extension: copy this worktree's path. Offered for `missing` worktrees too. */
+export interface WorktreeCopyPathMessage {
+  type: "worktreeCopyPath";
+  worktreeId: string;
+}
+
+/** WebView → Extension: a new terminal tab whose cwd is this worktree. */
+export interface WorktreeOpenTerminalMessage {
+  type: "worktreeOpenTerminal";
+  worktreeId: string;
+}
+
+/**
+ * WebView → Extension: reveal this agent row's pane.
+ *
+ * Window-scope rows only — an external row carries no `paneId` at all
+ * (`presenceTypes.ts`), so the host cannot resolve one even if asked.
+ */
+export interface WorktreeFocusPaneMessage {
+  type: "worktreeFocusPane";
+  rowId: string;
+  /** The pane the view believed the row had. Compared, never used. */
+  paneId: string;
+}
+
+/** WebView → Extension: open this agent row's session preview. */
+export interface WorktreeOpenPreviewMessage {
+  type: "worktreeOpenPreview";
+  rowId: string;
+  /** The session the view believed the row had. Compared, never used. */
+  entryId: string;
+}
+
+/** WebView → Extension: copy the command that resumes this agent row's session. */
+export interface WorktreeCopyResumeCommandMessage {
+  type: "worktreeCopyResumeCommand";
+  rowId: string;
+  entryId: string;
+}
+
+/** WebView → Extension: show this agent's working directory in the OS file manager. */
+export interface WorktreeRevealAgentCwdMessage {
+  type: "worktreeRevealAgentCwd";
+  rowId: string;
+  entryId: string;
+}
+
+/** WebView → Extension: copy this agent's working directory. */
+export interface WorktreeCopyAgentPathMessage {
+  type: "worktreeCopyAgentPath";
+  rowId: string;
+  entryId: string;
+}
+
+/**
+ * WebView → Extension: this surface declares whether its Worktree view is being
+ * shown. A surface starts NOT visible and receives no push until it says
+ * otherwise — all three surfaces retain their DOM while hidden, so pushing to
+ * one that never showed the view pays render cost nobody asked for.
+ *
+ * See: asimov/changes/cache-and-broadcast-worktree-tree/design.md D7.
+ */
+export interface WorktreeViewVisibilityMessage {
+  type: "worktreeViewVisibility";
+  visible: boolean;
+}
+
+/**
+ * WebView → Extension: evidence about one pane that only the surface rendering
+ * it can see — its title, and whether it is waiting on the user.
+ *
+ * **Partial by contract.** Title evidence and waiting evidence change at
+ * different moments and come from different sources, so a message carries only
+ * what changed. An absent field means *unchanged*, never `false`: a pane no
+ * surface has reported yet has UNKNOWN waiting evidence, which falls through to
+ * the next identity rank rather than resolving to "not waiting". A message that
+ * required both would make the first title report invent `waiting: false` and
+ * collapse that distinction on the one field the seam exists to keep honest.
+ *
+ * `title` is the decoration-stripped signature, never the raw title — an
+ * unstripped title turns every spinner frame into a message. `decorated` is
+ * carried if and only if `title` is, because stripping destroys it and the host
+ * cannot recover it.
+ *
+ * Sent whenever the evidence changes, regardless of which body the surface is
+ * showing: presence is window state, not per-surface state, so gating this on
+ * worktree-view visibility would blind the host to exactly the panes one
+ * surface alone renders.
+ *
+ * See: docs/design/worktree-agent-presence.md § 3.3 "The host evidence seam";
+ *      asimov/changes/add-host-pane-evidence/design.md D3, D8.
+ */
+export interface PaneEvidenceMessage {
+  type: "paneEvidence";
+  /** The AT session id of the pane this evidence describes. */
+  paneId: string;
+  /** Decorative signature of the pane's title. Absent = unchanged. */
+  title?: string;
+  /** Whether the raw title carried a decorative frame. Present iff `title` is. */
+  decorated?: boolean;
+  /** Whether the pane is waiting on the user. Absent = unchanged. */
+  waiting?: boolean;
+}
+
+/**
  * All messages that can be sent from the WebView to the Extension Host.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
  */
@@ -650,7 +953,103 @@ export type WebViewToExtensionMessage =
   | RequestSubagentPreviewMessage
   | PasteClipboardImageMessage
   | RequestClipboardImagePreviewMessage
-  | PasteOsClipboardImageMessage;
+  | PasteOsClipboardImageMessage
+  | RequestWorktreeTreeMessage
+  | RequestWorktreeSubagentsMessage
+  | WorktreeOpenFolderMessage
+  | WorktreeRevealInOSMessage
+  | WorktreeCopyPathMessage
+  | WorktreeOpenTerminalMessage
+  | WorktreeFocusPaneMessage
+  | WorktreeOpenPreviewMessage
+  | WorktreeCopyResumeCommandMessage
+  | WorktreeRevealAgentCwdMessage
+  | WorktreeCopyAgentPathMessage
+  | WorktreeViewVisibilityMessage
+  | WorktreeLaunchAgentMessage
+  | WorktreeResumeHereMessage
+  | WorktreeCreateRequestMessage
+  | WorktreeCreateDefaultsRequestMessage
+  | WorktreeRemoveRequestMessage
+  | WorktreeLockMessage
+  | WorktreeUnlockMessage
+  | WorktreePruneMessage
+  | PaneEvidenceMessage;
+
+/** A `T` that is not `never` is a compile error — see {@link WORKTREE_MESSAGE_TYPES}. */
+type AssertNever<T extends never> = T;
+
+/**
+ * Every worktree message the webview sends, derived from the union itself.
+ *
+ * Derived by the shape of the type NAME rather than listed, so membership is not
+ * a second inventory somebody has to remember. `paneEvidence` is deliberately
+ * outside it: pane evidence is window state routed to its own store, not a
+ * worktree request (see the providers' `paneEvidence` case).
+ */
+export type WorktreeInboundMessage = Extract<
+  WebViewToExtensionMessage,
+  { type: `worktree${string}` | `requestWorktree${string}` }
+>;
+
+/**
+ * The routing list, and the only thing a provider consults.
+ *
+ * Both providers used to name each worktree type in a `switch` of their own, and
+ * the list already failed once in production: `requestWorktreeSubagents` was
+ * declared, posted and handled, but reached neither provider, so the feature was
+ * inert end to end with every unit test green — the host and the view are each
+ * tested alone, and nothing tested the path between them.
+ */
+export const WORKTREE_MESSAGE_TYPES = [
+  "requestWorktreeCreateDefaults",
+  "requestWorktreeTree",
+  "requestWorktreeSubagents",
+  "worktreeViewVisibility",
+  "worktreeOpenFolder",
+  "worktreeRevealInOS",
+  "worktreeCopyPath",
+  "worktreeOpenTerminal",
+  "worktreeFocusPane",
+  "worktreeOpenPreview",
+  "worktreeCopyResumeCommand",
+  "worktreeRevealAgentCwd",
+  "worktreeCopyAgentPath",
+  "worktreeLaunchAgent",
+  "worktreeResumeHere",
+  "worktreeCreate",
+  "worktreeRemove",
+  "worktreeLock",
+  "worktreeUnlock",
+  "worktreePrune",
+] as const satisfies readonly WorktreeInboundMessage["type"][];
+
+/**
+ * Fails the BUILD for a subunion member the list omits.
+ *
+ * `satisfies` above proves every listed type is real; this proves every real
+ * type is listed, which is the direction the production defect ran. Without it
+ * the routing test — driven from the same list — would only ever prove "every
+ * listed type routes", never "every worktree type is listed".
+ */
+type _NoWorktreeMessageUnrouted = AssertNever<
+  Exclude<WorktreeInboundMessage["type"], (typeof WORKTREE_MESSAGE_TYPES)[number]>
+>;
+
+/**
+ * The worktree requests that ASK FOR SOMETHING TO HAPPEN, as opposed to the
+ * three that ask for data or declare surface state. Derived, so a new action
+ * type joins it by being named `worktree*` and not being one of the three.
+ */
+export type WorktreeActionMessage = Exclude<
+  WorktreeInboundMessage,
+  RequestWorktreeTreeMessage | RequestWorktreeSubagentsMessage | WorktreeViewVisibilityMessage
+>;
+
+/** Does this message belong to the worktree host? One test, both providers. */
+export function isWorktreeMessage(msg: WebViewToExtensionMessage): msg is WorktreeInboundMessage {
+  return (WORKTREE_MESSAGE_TYPES as readonly string[]).includes(msg.type);
+}
 
 /**
  * Webview → Extension. Sent by the editor webview after it has merged the
@@ -702,6 +1101,39 @@ export interface InitMessage {
   rootGeneration: number;
   /** Absolute path of the first workspace folder, or null if no workspace open. */
   workspaceRoot: string | null;
+  /**
+   * At least one workspace folder is inside a git repository. Decides which body
+   * the vault panel opens on when the user has recorded no choice — a decision
+   * that has to be made before the first paint, and cannot wait for a tree the
+   * host only pushes once a surface says it is showing the view.
+   *
+   * See: docs/design/worktree-panel-ui.md § 2.2;
+   *      asimov/changes/wire-live-worktree-tree/design.md D1.
+   */
+  worktreeHasRepo: boolean;
+  /**
+   * What activating an agent row does. The INITIAL value only — a later change
+   * arrives as `worktreeRowActivation`, because a view already open must not
+   * need reopening to pick one up (design.md D5).
+   */
+  worktreeRowActivation: WorktreeRowActivation;
+  /**
+   * Whether this surface can perform the vault actions a user can INVOKE —
+   * resume, rename, reveal, copy, open, continue, raw record, launch. False on an
+   * editor surface, which answers `requestVaultSessions` and
+   * `requestVaultSessionDetail` and none of the action messages, so a populated
+   * list there would otherwise offer controls that silently do nothing — the
+   * absent-not-disabled defect this change exists to remove (.reviews/round-2.md B4).
+   *
+   * One flag rather than a capability enum: the split is all-or-nothing per
+   * surface today, so an enum would encode no real distinction.
+   *
+   * NOT gated: `vaultWatchSession`. It is automatic preview lifecycle traffic —
+   * posted on open and released on close, never an offered control — so a surface
+   * that does not answer it simply drops it and loses live-follow, with nothing
+   * on screen claiming otherwise (.reviews/round-3.md S1).
+   */
+  vaultActionsAvailable: boolean;
 }
 
 /**
@@ -1150,6 +1582,12 @@ export type VaultMessageRecordResponseMessage =
 /** Extension → Webview: reply to `requestVaultLaunchTargets` (D11). */
 export interface VaultLaunchTargetsMessage {
   type: "vaultLaunchTargets";
+  /**
+   * Echoes the question. The two capabilities return different agent sets, so
+   * without this a reply cannot be told from the other one's and would populate
+   * whichever dialog happened to be listening (design.md D5).
+   */
+  capability: VaultLaunchCapability;
   targets: VaultLaunchTarget[];
 }
 
@@ -1219,10 +1657,136 @@ export interface AgentActivityStatusMessage {
 }
 
 /**
+ * Extension → WebView: the whole Worktree view state.
+ *
+ * Sent both as the reply to `requestWorktreeTree` and unsolicited when the host
+ * rebuilds; a recipient handles every arrival identically and never polls.
+ *
+ * `tree` and `presence` always travel together. Two messages would let a
+ * recipient hold an agent row whose `worktreeId` is absent from the tree it
+ * currently has — one message makes that unrepresentable. `presence` carries no
+ * rows until WT-004 supplies the projection.
+ *
+ * See: docs/design/worktree-rpc.md § 2.2;
+ *      asimov/changes/cache-and-broadcast-worktree-tree/design.md D6.
+ */
+export interface WorktreeTreeResponseMessage {
+  type: "worktreeTreeResponse";
+  tree: WorktreeTree;
+  presence: WorktreePresence;
+}
+
+/**
+ * Extension → WebView: show the session preview for an entry the HOST resolved.
+ *
+ * The panel's preview overlay is entirely webview-owned — `PreviewController`
+ * builds and shows the floating shell and only then asks for detail — so the
+ * extension cannot open one. Host-side validation is still the point: the
+ * `entryId` here is the one the host's own presence carries for that row, not
+ * the one the webview asked with, so a stale request opens nothing rather than
+ * the wrong transcript.
+ *
+ * See: asimov/changes/wire-worktree-navigation-actions/design.md D2.
+ */
+export interface WorktreeShowPreviewMessage {
+  type: "worktreeShowPreview";
+  entryId: string;
+}
+
+/**
+ * Extension → WebView: make this pane the active one in the surface holding it.
+ *
+ * Revealing a VS Code surface is the extension's job; selecting a pane INSIDE
+ * that surface's webview is not. This message is delivered only to the surface
+ * whose view holds the pane, after that surface has been revealed (D2, D4).
+ */
+export interface WorktreeActivatePaneMessage {
+  type: "worktreeActivatePane";
+  paneId: string;
+}
+
+/**
+ * Extension → WebView: the row-activation setting changed.
+ *
+ * Every neighbouring UI setting here is live — terminal settings are rebroadcast
+ * on configuration change and hover-preview settings have their own listeners —
+ * so requiring a reload for this one would be worse behaviour than the panel's
+ * own neighbours already offer (design.md D5).
+ */
+export interface WorktreeRowActivationMessage {
+  type: "worktreeRowActivation";
+  activation: WorktreeRowActivation;
+}
+
+/**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
  */
+/**
+ * Extension → WebView: what a mutation did.
+ *
+ * Typed because the previous wiring posted a bare object literal that no union
+ * member described, so nothing could route it and no surface could render it
+ * (round-2 W3). `blocked` is not a failure — it is the removal declining to run
+ * until the blockers are confirmed — and `unavailable` is not a refusal, which
+ * is why only it offers a retry (design.md D16).
+ */
+/**
+ * The blocker set a removal was stopped by, as the panel renders it.
+ *
+ * Carried on the message because the confirmation the panel reopens must name
+ * exactly what the host assessed — a webview that recomputed this from the tree
+ * would be authorizing a different set than the one the fingerprint binds.
+ */
+export interface WorktreeRemoveBlockerPayload {
+  dirty: boolean;
+  untracked: number;
+  idlePanes: number;
+  busyAgents: number;
+  externalAgents: number;
+  locked: boolean;
+  isMain: boolean;
+  containsWorktrees: readonly { worktreeId: string; displayPath: string }[];
+}
+
+export interface WorktreeMutationResultMessage {
+  type: "worktreeMutationResult";
+  verb: "create" | "remove" | "lock" | "unlock" | "prune";
+  repoId: string;
+  /** The row the notice attaches to. Absent for the repo-scoped verbs. */
+  worktreeId?: string;
+  result:
+    | { kind: "ok"; openFailed?: string }
+    | { kind: "error"; message: string }
+    | { kind: "indeterminate"; observed: string }
+    | { kind: "unavailable"; unreadable: readonly string[] }
+    | { kind: "blocked"; worktreeId: string; fingerprint: string | null; blocker: WorktreeRemoveBlockerPayload };
+}
+
+/**
+ * Extension → WebView: the destination a create will actually take.
+ *
+ * The HOST resolves it. The panel cannot: `specs/worktree-panel/spec.md` says a
+ * create names the destination it will actually use, and only the host knows
+ * the configured root, the repo's own layout, and which candidates are free.
+ */
+export interface WorktreeCreateDefaultsMessage {
+  type: "worktreeCreateDefaults";
+  repoId: string;
+  /** Free, suffixed if taken. */
+  path: string;
+  root: string;
+  /** Base name a branch-derived path is appended to, e.g. `anywhere-terminal`. */
+  prefix: string;
+  /** The branch this answer was computed for, absent when none was named. */
+  branch?: string;
+  /** The unsuffixed candidate, present only when it was already taken. */
+  collidedWith?: string;
+}
+
 export type ExtensionToWebViewMessage =
+  | WorktreeMutationResultMessage
+  | WorktreeCreateDefaultsMessage
   | InitMessage
   | OutputMessage
   | ExitMessage
@@ -1264,7 +1828,11 @@ export type ExtensionToWebViewMessage =
   | ClipboardImagePreviewMessage
   | OsClipboardPasteMissMessage
   | OpenVaultMessage
-  | AgentActivityStatusMessage;
+  | AgentActivityStatusMessage
+  | WorktreeTreeResponseMessage
+  | WorktreeShowPreviewMessage
+  | WorktreeActivatePaneMessage
+  | WorktreeRowActivationMessage;
 
 /**
  * Extension → Webview. Visual feedback for title-bar "export" click — briefly

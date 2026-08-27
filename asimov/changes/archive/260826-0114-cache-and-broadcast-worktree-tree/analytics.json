@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "cache-and-broadcast-worktree-tree"
+  },
+  "sessions": [
+    {
+      "sessionId": "a44fde36-3285-4415-98f5-590981eccbe5",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787700591514,
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787700591514
+        },
+        {
+          "phase": "build",
+          "from": 1787704561555
+        },
+        {
+          "phase": "plan",
+          "from": 1787705384676
+        }
+      ],
+      "firstAt": 1787700591514,
+      "lastAt": 1787706888214,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 178,
+          "inputTokens": 356,
+          "outputTokens": 134285,
+          "reasoningTokens": 50089,
+          "cacheWriteTokens": 413142,
+          "cacheReadTokens": 42524016,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 413142,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "build",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 95,
+          "inputTokens": 190,
+          "outputTokens": 55454,
+          "reasoningTokens": 13014,
+          "cacheWriteTokens": 161480,
+          "cacheReadTokens": 14406344,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 161480,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

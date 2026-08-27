@@ -17,7 +17,8 @@ import { emptyState } from "./renderAtoms";
 export interface VaultRowCallbacks {
   onActivate: (entry: VaultSessionEntry, row: HTMLElement) => void;
   onContextMenu: (entry: VaultSessionEntry, ev: MouseEvent, row: HTMLElement) => void;
-  onResume: (entryId: string) => void;
+  /** Absent on a surface that cannot perform the resume it would offer (B4). */
+  onResume?: (entryId: string) => void;
 }
 
 export function canResumeVaultEntry(entry: VaultSessionEntry): boolean {
@@ -133,7 +134,9 @@ export function renderRow(
 
   // An explicitly unsupported resume identifier must never be offered. Legacy
   // rows without the capability field retain their established Resume action.
-  if (canResumeVaultEntry(entry)) {
+  // A surface that cannot perform resume at all supplies no handler (B4).
+  const onResume = cb.onResume;
+  if (onResume && canResumeVaultEntry(entry)) {
     const actions = document.createElement("span");
     actions.className = "vault-row-actions";
     const resumeBtn = document.createElement("button");
@@ -144,7 +147,7 @@ export function renderRow(
     resumeBtn.innerHTML = ICON_RESUME;
     resumeBtn.addEventListener("click", (ev) => {
       ev.stopPropagation(); // don't also open the preview
-      cb.onResume(entry.id);
+      onResume(entry.id);
     });
     actions.appendChild(resumeBtn);
     row.appendChild(actions);

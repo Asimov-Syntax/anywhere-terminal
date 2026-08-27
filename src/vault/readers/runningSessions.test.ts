@@ -4,7 +4,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isHeadlessSession, listRunningClaudeSessions, type RunningSessionsDeps } from "./runningSessions";
+import {
+  indexRunningSessions,
+  isHeadlessSession,
+  listRunningClaudeSessions,
+  type RunningClaudeSession,
+  type RunningSessionsDeps,
+} from "./runningSessions";
 
 let tmpRoot: string;
 let sessionsDir: string;
@@ -33,12 +39,24 @@ function aliveDeps(alivePids: number[]): RunningSessionsDeps {
   return { isAlive: vi.fn((pid: number) => alivePids.includes(pid)) };
 }
 
+/** The `ok` sessions, failing the test rather than the assertion if the read did not conclude. */
+async function liveSessions(
+  options: Parameters<typeof listRunningClaudeSessions>[0],
+  deps: RunningSessionsDeps,
+): Promise<RunningClaudeSession[]> {
+  const outcome = await listRunningClaudeSessions(options, deps);
+  if (outcome.kind !== "ok") {
+    throw new Error(`expected a readable registry, got: ${outcome.reason}`);
+  }
+  return outcome.sessions;
+}
+
 describe("listRunningClaudeSessions", () => {
   it("returns one entry per live pid file, keyed fields intact", async () => {
     await writePidFile(100, { pid: 100, sessionId: "sess-a", cwd: "/work/a", startedAt: 111 });
     await writePidFile(200, { pid: 200, sessionId: "sess-b", cwd: "/work/b", startedAt: 222 });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
 
     expect(result).toHaveLength(2);
     expect(result).toEqual(
@@ -53,7 +71,7 @@ describe("listRunningClaudeSessions", () => {
     await writePidFile(100, { pid: 100, sessionId: "live", cwd: "/work/a" });
     await writePidFile(200, { pid: 200, sessionId: "dead", cwd: "/work/b" });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100]));
+    const result = await liveSessions(opts(), aliveDeps([100]));
 
     expect(result).toHaveLength(1);
     expect(result[0].sessionId).toBe("live");
@@ -61,7 +79,7 @@ describe("listRunningClaudeSessions", () => {
 
   it("omits startedAt when absent and tolerates missing optional fields", async () => {
     await writePidFile(100, { pid: 100, sessionId: "live", cwd: "/work/a" });
-    const [entry] = await listRunningClaudeSessions(opts(), aliveDeps([100]));
+    const [entry] = await liveSessions(opts(), aliveDeps([100]));
     expect(entry).toEqual({ pid: 100, sessionId: "live", cwd: "/work/a" });
     expect("startedAt" in entry).toBe(false);
   });
@@ -76,7 +94,7 @@ describe("listRunningClaudeSessions", () => {
     );
     await fs.writeFile(path.join(sessionsDir, "999.txt"), "ignored", "utf8");
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 300, 1]));
+    const result = await liveSessions(opts(), aliveDeps([100, 300, 1]));
 
     expect(result).toHaveLength(1);
     expect(result[0].sessionId).toBe("ok");
@@ -87,7 +105,7 @@ describe("listRunningClaudeSessions", () => {
     await writePidFile(200, { pid: 200, sessionId: "no-cwd" }); // no cwd
     await writePidFile(300, { sessionId: "no-pid", cwd: "/work/c" }); // no pid
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200, 300]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200, 300]));
     expect(result).toHaveLength(0);
   });
 
@@ -95,14 +113,30 @@ describe("listRunningClaudeSessions", () => {
     await writePidFile(100, { pid: 100, sessionId: "dup", cwd: "/work/a", startedAt: 10 });
     await writePidFile(200, { pid: 200, sessionId: "dup", cwd: "/work/a2", startedAt: 99 });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ pid: 200, startedAt: 99 });
   });
 
   it("returns [] when the registry dir does not exist", async () => {
+    // A machine where the agent has never run genuinely has no sessions; calling
+    // that a failed read would degrade every such window forever.
     await fs.rm(sessionsDir, { recursive: true, force: true });
-    expect(await listRunningClaudeSessions(opts(), aliveDeps([]))).toEqual([]);
+    expect(await listRunningClaudeSessions(opts(), aliveDeps([]))).toEqual({ kind: "ok", sessions: [] });
+  });
+
+  it("reports a registry it could not read, with a reason, rather than reporting none", async () => {
+    // The silent clear this replaces: `catch { return [] }` made a permissions
+    // error indistinguishable from an empty machine.
+    await fs.rm(sessionsDir, { recursive: true, force: true });
+    await fs.writeFile(sessionsDir, "not a directory", "utf8");
+
+    const outcome = await listRunningClaudeSessions(opts(), aliveDeps([]));
+
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind === "failed") {
+      expect(outcome.reason).toMatch(/ENOTDIR|not a directory/i);
+    }
   });
 });
 
@@ -111,7 +145,7 @@ describe("headless one-shot sessions", () => {
     await writePidFile(100, { pid: 100, sessionId: "a", cwd: "/w", entrypoint: "cli" });
     await writePidFile(200, { pid: 200, sessionId: "b", cwd: "/w", entrypoint: "sdk-cli" });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
 
     expect(result.find((r) => r.sessionId === "a")?.entrypoint).toBe("cli");
     expect(result.find((r) => r.sessionId === "b")?.entrypoint).toBe("sdk-cli");
@@ -121,7 +155,7 @@ describe("headless one-shot sessions", () => {
     await writePidFile(100, { pid: 100, sessionId: "absent", cwd: "/w" });
     await writePidFile(200, { pid: 200, sessionId: "nonstring", cwd: "/w", entrypoint: 42 });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
 
     expect(result.find((r) => r.sessionId === "absent")?.entrypoint).toBeUndefined();
     expect(result.find((r) => r.sessionId === "nonstring")?.entrypoint).toBeUndefined();
@@ -153,7 +187,7 @@ describe("dedupe across two live entries sharing one sessionId", () => {
     await writePidFile(100, { pid: 100, sessionId: "shared", cwd: "/w", startedAt: 100, entrypoint: "cli" });
     await writePidFile(200, { pid: 200, sessionId: "shared", cwd: "/w", startedAt: 999, entrypoint: "sdk-cli" });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
 
     expect(result).toHaveLength(1);
     expect(result[0].pid).toBe(100);
@@ -164,7 +198,7 @@ describe("dedupe across two live entries sharing one sessionId", () => {
     await writePidFile(100, { pid: 100, sessionId: "shared", cwd: "/w", startedAt: 100, entrypoint: "cli" });
     await writePidFile(200, { pid: 200, sessionId: "shared", cwd: "/w", startedAt: 999, entrypoint: "cli" });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
 
     expect(result).toHaveLength(1);
     expect(result[0].pid).toBe(200);
@@ -176,9 +210,150 @@ describe("dedupe tie-break", () => {
     await writePidFile(100, { pid: 100, sessionId: "shared", cwd: "/w", startedAt: 500, entrypoint: "cli" });
     await writePidFile(200, { pid: 200, sessionId: "shared", cwd: "/w", startedAt: 500, entrypoint: "cli" });
 
-    const result = await listRunningClaudeSessions(opts(), aliveDeps([100, 200]));
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
 
     expect(result).toHaveLength(1);
     expect(result[0].pid).toBe(200);
+  });
+});
+
+describe("indexRunningSessions", () => {
+  const live = (sessionId: string, pid: number, cwd: string, entrypoint?: string): RunningClaudeSession => ({
+    sessionId,
+    pid,
+    cwd,
+    ...(entrypoint === undefined ? {} : { entrypoint }),
+  });
+
+  it("looks up by pid without touching the sessions it was not asked about", () => {
+    const index = indexRunningSessions([live("a", 10, "/x"), live("b", 20, "/y"), live("c", 30, "/z")]);
+    expect(index.byPid(new Set([20, 999])).map((s) => s.sessionId)).toEqual(["b"]);
+  });
+
+  it("groups every session sharing a directory", () => {
+    const index = indexRunningSessions([live("a", 10, "/x"), live("b", 20, "/x"), live("c", 30, "/y")]);
+    expect(index.byCwd("/x").map((s) => s.sessionId)).toEqual(["a", "b"]);
+    expect(index.byCwd("/nowhere")).toEqual([]);
+  });
+
+  it("drops headless runs once, so neither lookup can return one", () => {
+    // A hook-spawned `claude -p` is a descendant of the pane's pty AND shares
+    // its cwd, so it can hijack both lookups.
+    const index = indexRunningSessions([live("one-shot", 10, "/x", "sdk-cli"), live("real", 20, "/x", "cli")]);
+    expect(index.byPid(new Set([10, 20])).map((s) => s.sessionId)).toEqual(["real"]);
+    expect(index.byCwd("/x").map((s) => s.sessionId)).toEqual(["real"]);
+  });
+
+  it("keeps an entrypoint it does not recognise, rather than assuming headless", () => {
+    const index = indexRunningSessions([live("future", 10, "/x", "some-new-launcher")]);
+    expect(index.byPid(new Set([10])).map((s) => s.sessionId)).toEqual(["future"]);
+  });
+
+  it("answers an empty registry without inventing anything", () => {
+    const index = indexRunningSessions([]);
+    expect(index.byPid(new Set([1]))).toEqual([]);
+    expect(index.byCwd("/x")).toEqual([]);
+    expect(index.all()).toEqual([]);
+  });
+
+  it("exposes the same filtered set both lookups are built from", () => {
+    // `all()` is what the external-row pass reads. Handing it the reader's raw
+    // array instead would put every hook-spawned `claude -p` on screen.
+    const index = indexRunningSessions([
+      live("one-shot", 10, "/x", "sdk-cli"),
+      live("real", 20, "/x", "cli"),
+      live("other", 30, "/y"),
+    ]);
+    expect(index.all().map((s) => s.sessionId)).toEqual(["real", "other"]);
+  });
+});
+
+describe("indexRunningSessions — duplicate pids", () => {
+  it("keeps every record claiming one pid, so the tie-break still sees them", () => {
+    // The registry dedupes by sessionId and never checks that a `<pid>.json`
+    // payload agrees with its filename, so two records can claim one pid. A map
+    // keeping the last writer would decide pane identity by enumeration order.
+    const index = indexRunningSessions([
+      { sessionId: "a", pid: 10, cwd: "/x" },
+      { sessionId: "b", pid: 10, cwd: "/y" },
+    ]);
+    expect(index.byPid(new Set([10])).map((s) => s.sessionId)).toEqual(["a", "b"]);
+  });
+});
+
+describe("a record that cannot name a session is not a session", () => {
+  it("skips an entry whose sessionId is empty", async () => {
+    // An empty id would publish `external:claude:` as a row identity and
+    // `claude:` as a vault entry id — an agent handle pointing at nothing.
+    await writePidFile(100, { pid: 100, sessionId: "", cwd: "/work/a" });
+    await writePidFile(200, { pid: 200, sessionId: "real", cwd: "/work/b" });
+
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
+
+    expect(result.map((s) => s.sessionId)).toEqual(["real"]);
+  });
+
+  it("skips an entry whose cwd is not absolute", async () => {
+    // Attribution is a containment test against absolute worktree roots; a
+    // relative cwd would be resolved against this process's directory.
+    await writePidFile(100, { pid: 100, sessionId: "relative", cwd: "work/a" });
+    await writePidFile(200, { pid: 200, sessionId: "real", cwd: "/work/b" });
+
+    const result = await liveSessions(opts(), aliveDeps([100, 200]));
+
+    expect(result.map((s) => s.sessionId)).toEqual(["real"]);
+  });
+});
+
+describe("a pid file must be named after the process it describes", () => {
+  it("skips a record whose filename stem names a different live process", async () => {
+    // Claude writes `${process.pid}.json` carrying `pid: process.pid`, so two
+    // correctly written live files cannot share one pid. A mismatch is malformed
+    // by construction, and trusting the payload would let one impersonate a live
+    // process and publish a running row (.reviews/round-2.md B2).
+    await writePidFile(77777, { pid: 100, sessionId: "impostor", cwd: "/work/a" });
+    await writePidFile(100, { pid: 100, sessionId: "real", cwd: "/work/b" });
+
+    const result = await liveSessions(opts(), aliveDeps([100, 77777]));
+
+    expect(result.map((s) => s.sessionId)).toEqual(["real"]);
+  });
+
+  it("keeps a record whose filename stem agrees with its payload", async () => {
+    await writePidFile(100, { pid: 100, sessionId: "real", cwd: "/work/a" });
+    expect((await liveSessions(opts(), aliveDeps([100]))).map((s) => s.sessionId)).toEqual(["real"]);
+  });
+});
+
+describe("what a registry record has to prove about its own fields", () => {
+  it("skips a record whose session id could not name a transcript", async () => {
+    // The id becomes an `entryId` and a row identity, and every downstream
+    // Claude reader resolves a transcript by it. "Non-empty" was the wrong bar
+    // where a canonical guard already exists (.reviews/round-4.md W4).
+    await writePidFile(1, { pid: 1, sessionId: "../../etc/passwd", cwd: "/repo" });
+    expect(await liveSessions(opts(), aliveDeps([1]))).toEqual([]);
+  });
+
+  it("skips a session id carrying a path separator or a control character", async () => {
+    await writePidFile(1, { pid: 1, sessionId: "a/b", cwd: "/repo" });
+    await writePidFile(2, { pid: 2, sessionId: "a\u0000b", cwd: "/repo" });
+    expect(await liveSessions(opts(), aliveDeps([1, 2]))).toEqual([]);
+  });
+
+  it("keeps a record whose launch time is missing, but drops an impossible one", async () => {
+    // `typeof x === "number"` admits Infinity — `1e999` parses as one — and
+    // negatives, and this value both orders rows and is published as a time.
+    // Written as raw text: `1e999` is how the overflow reaches disk, and
+    // JSON.stringify cannot express the Infinity it parses back to.
+    await fs.writeFile(
+      path.join(sessionsDir, "1.json"),
+      '{"pid":1,"sessionId":"s1","cwd":"/repo","startedAt":1e999}',
+      "utf8",
+    );
+    await writePidFile(2, { pid: 2, sessionId: "s2", cwd: "/repo", startedAt: -5 });
+    await writePidFile(3, { pid: 3, sessionId: "s3", cwd: "/repo" });
+    const sessions = await liveSessions(opts(), aliveDeps([1, 2, 3]));
+    expect(sessions).toHaveLength(3);
+    expect(sessions.every((one) => one.startedAt === undefined)).toBe(true);
   });
 });

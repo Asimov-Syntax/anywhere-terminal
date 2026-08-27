@@ -62,6 +62,18 @@ worktreeExpandedRows?: string[]                // expanded agent rowIds
 Existing persisted `vaultGroupMode` values stay valid and keep their meaning; a state written
 by an older build simply has no `vaultView` and falls through to the default below.
 
+**An absent array and an empty one mean different things, and conflating them loses user
+state.** `worktreeCollapsed` absent means nothing was ever saved, so the view seeds its
+defaults — collapsed unless the worktree is a workspace folder. `worktreeCollapsed: []` means
+the user expanded everything, and seeding defaults over it would silently re-collapse what
+they opened. The set records expansion by omission, so the distinction cannot be recovered
+from its contents; only its presence carries it. Seeding is therefore one-shot, on the first
+tree a session sees, and never re-applied to a worktree already decided.
+
+A collapsed **repoId** is honoured only while a repo group header is rendered (§ 3.1 draws
+none for a single repo). Otherwise a set persisted during a two-repo session would hide the
+only repo's rows with no control left on screen to reopen them.
+
 ### 2.2 Default view
 
 The user asked for Worktree to be the default. Applied as:
@@ -117,13 +129,13 @@ model" is the follow-up.
 
 | Element | Content | Rule |
 |---------|---------|------|
-| Disclosure gutter | A chevron when the row has subagents, otherwise an empty slot of the same width | **Always occupies space.** Reserving the gutter is what keeps state dots aligned down a mixed list of rows with and without children |
+| Disclosure gutter | A chevron when the row has a **session to read**, otherwise an empty slot of the same width | **Always occupies space.** Reserving the gutter is what keeps state dots aligned down a mixed list of rows with and without children. Offered by the session, never by children already held: the roster is read lazily on expansion, so gating the chevron on children would leave nothing to click to cause the read, and the row could never get any |
 | State dot | `running` / `waiting` / `idle` / `exited` | Colour from the state, not from the agent. Fixed width, so a column of rows scans vertically |
 | Agent icon | From the existing `AGENT_ICONS` map (`src/webview/vault/agentIcons.ts`) | Absent when `agent` is unset — never a guessed icon. Also absent on subagent rows (§ 3.4) |
 | Title | Decoration-stripped pane title, else the session title | Spinner frames stripped before display |
 | Preview | The session's latest message or current tool, one line, after the title | Secondary emphasis; it is context, not identity. Truncates first when width is scarce |
 | Model | The model id, when known | Optional and monospace, bounded width. Omitted entirely when unknown — never a placeholder |
-| Child count | `+N` when the row has collapsed subagents | Disappears when expanded; the children are then visible |
+| Child count | `+N` when the row has collapsed subagents | Disappears when expanded; the children are then visible. Absent until the roster has actually been read — an unread row has no count to state, and `+0` would claim one |
 | Age | Relative time, right-aligned | Fixed-width column so titles truncate against a stable edge. Compact form (`now`, `5m`, `1h`, `3d`) |
 | Scope marker | Only on `scope: "external"` | See § 4 |
 | Confidence marker | Derived from `activitySource`, shown when that source is a fallback one | A quiet marker, not an error. Identity confidence is derived from `agentSource` separately and expressed by the icon's presence or absence, not by this marker — a row can be uncertain about one and sure of the other |
@@ -149,6 +161,19 @@ Rendered indented exactly one level under its agent row, on expansion only.
 | Activation | Focuses the **parent's** pane. A subagent has no pane of its own; sending the user to a pane that does not exist would be a dead click |
 | Freshness | Children inherit the parent's freshness. When the parent's evidence goes stale, every child decays with it, together — a stale parent cannot have provably-working children |
 
+An expanded row always renders **one of four section states**, never silence:
+
+| Roster | Section shows |
+|--------|---------------|
+| Not read yet | that it is reading |
+| Read, rows found | those rows, plus an admission if the reader dropped others |
+| Read, nothing found, reader claims it is whole | that the session delegated nothing |
+| Read, nothing found, reader admits omission — or the read failed | that it could not be read, with the reason |
+
+The last row is the one that matters. Emptiness is a claim, and the strongest one this section
+can make; a read that admits it dropped records has not earned it. Silence is the same claim
+made implicitly, which is why an expanded row is never blank.
+
 Because in this phase these are transcript-derived history and not a live roster
 (`worktree-agent-presence.md` § 3.6), they must **not** reuse the live state dot vocabulary.
 Use a distinct, visibly historical treatment and a section label that says so. A completed
@@ -165,10 +190,12 @@ that cannot express "show me this worktree's agents but not every agent's childr
 | Level | Control | Collapsed shows | Expands to |
 |-------|---------|-----------------|------------|
 | Worktree → agents | The `N agents` header row, or the collapsed pill | Grouped state dots, up to 3 icons per state, `+N` overflow | One § 3.3 row per agent |
-| Agent → subagents | A chevron in that row's own disclosure gutter | `+N` on the agent row | One § 3.4 row per subagent |
+| Agent → subagents | A chevron in that row's own disclosure gutter, on any row with a session | `+N` on the agent row, once read | The § 3.4 section — its rows, or the state that explains why there are none |
 
 Both states are persisted independently (§ 2.1): `worktreeCollapsed` for the first,
-`worktreeExpandedRows` for the second.
+`worktreeExpandedRows` for the second. Persisted expansion is reconciled against the rows
+presence actually carries, not accumulated: a row that lost its session keeps no expansion,
+because the chevron that would collapse it is offered by the session.
 
 The rest of this section describes the first level — two presentations of the same rows, both
 attached under the worktree row.
@@ -231,9 +258,9 @@ These are not stylistic preferences; each one prevents a specific false claim.
 | Input | Target | Result |
 |-------|--------|--------|
 | Click / Enter | Worktree row | Toggle expand (when it has agents), else no-op |
-| Click / Enter | Agent row, window scope | Per `anywhereTerminal.worktree.rowActivation`: focus that pane (default) or open its preview |
+| Click / Enter | Agent row, window scope | Per `anywhereTerminal.worktree.rowActivation`: focus that pane (default) or open its preview. A row with no session falls back to focus, whatever the setting says — there is no preview to open |
 | Click / Enter | Agent row, external | Open the session preview — never focus, whatever the setting says |
-| Double click | Worktree row | Open folder — the mode comes from `anywhereTerminal.worktree.rowActivation`'s companion default in [DESIGN.md](../DESIGN.md) § 15 |
+| Double click | Worktree row | Open folder in a new window. No setting governs the mode: DESIGN.md § 15 registers `rowActivation` with no companion key, and one is not invented here — the other mode stays a context-menu item |
 | Right click | Any row | Context menu, per [worktree-actions.md](worktree-actions.md) § 3 |
 | `ArrowUp` / `ArrowDown` | Tree | Move through visible rows |
 | `ArrowRight` / `ArrowLeft` | Tree | Expand / collapse, then descend / ascend |
@@ -243,13 +270,31 @@ These are not stylistic preferences; each one prevents a specific false claim.
 Keyboard model, roles, and focus handling follow the existing file-tree panel rather than
 inventing a second tree idiom in the same webview.
 
+The setting's value is delivered in the init payload and **re-sent whenever it changes**, so a
+view already open picks it up without being reopened. It is read by the providers rather than the
+worktree host, because it is VS Code configuration and the host deliberately holds no window API.
+
+Focusing a pane resolves the tab that owns it and makes the pane that tab's active one *before*
+showing the tab — otherwise the tab comes forward on whichever pane was last active in it, which
+is not the row the user clicked. A tab is reachable through any live pane it still holds, not only
+through the pane it was named after: closing a split's original root pane deletes that terminal
+while the tab keeps its layout and its remaining leaves, and keying the tab switch on the original
+pane made such a tab unreachable from the tab bar as well.
+
 ### 6.1 Re-render discipline
 
 The vault list already guards against re-rendering when nothing changed, via a render
-signature (`src/webview/vault/vaultRenderSignature.ts`). The Worktree view needs the same
+signature (`src/webview/vault/vaultRenderSignature.ts`). The Worktree view carries the same
 guard, computed over the tree plus presence with **decorative title frames stripped first**.
 Without it, a single agent's spinner repaints the whole tree at animation rate and destroys
 scroll position and expansion state.
+
+The key covers **every field of every wire shape**, not only the ones a renderer prints. A
+row's DOM listeners close over the row object they were built with, so a render the guard
+skipped hands the old value back at interaction time — which makes a routing field nobody
+displays, like the pane a row would focus, just as load-bearing as a visible one. Exclusions
+are therefore named one field at a time with a reason, never a whole shape, and the only
+standing ones are a rescan timestamp that moves on every poll and fields that cannot vary.
 
 ## 7. Visual specification
 
@@ -315,12 +360,24 @@ considered and rejected, and the rejection is recorded so it is not silently re-
 | Group-by / sort-by / filter popover | Ordering is deterministic (worktree-model § 3.4) and the counts here are tens. Recorded as deferred in PLAN.md |
 | Path shown anywhere in the list | Crowds out the branch at sidebar width — see § 3.2 |
 
-### 7.6 What the shell task still owns
+### 7.6 What the shell task settles
 
 Exact spacing values, the specific token for each emphasis step, the animated indicator, and
 the empty-state copy. These are settled by building the shell and reviewing it, not by
-specifying them further in prose. PLAN WT-002.1 remains gated on user sign-off of the rendered
-result.
+specifying them further in prose, so the built shell — not this section — is their record.
+PLAN WT-002.1 remains gated on user sign-off of the rendered result.
+
+### 7.7 Where the mockup and this document disagreed
+
+The WT-002.0 mockup is a disposable artifact and this document outranks it on behaviour. Three
+disagreements surfaced while building the shell. All three resolved in favour of this document,
+and are recorded so the mockup cannot re-introduce them.
+
+| Mockup showed | Resolution |
+|---------------|------------|
+| A count of dirty tracked files in the remove confirmation | The model carries dirty as **presence**, not a count ([worktree-actions.md](worktree-actions.md) § 5) — only untracked entries are counted. The confirmation names the condition; inventing a number it cannot know is the failure this whole view exists to avoid |
+| The external scope marker occupying the model column | § 3.3 keeps them as separate elements. Sharing a slot would silently drop the model from any external row that has one |
+| No refresh affordance during a rebuild | § 5 requires a quiet activity marker while a tree is already held. The mockup simply omitted it; the shell draws one |
 
 ## 8. Edge Cases
 

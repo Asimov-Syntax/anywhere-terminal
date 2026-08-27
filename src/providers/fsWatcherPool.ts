@@ -62,6 +62,25 @@ export interface WatcherPoolOptions {
   readonly initialWindowFocused?: boolean;
 }
 
+/**
+ * What {@link WatcherPool.subscribePattern} hands back.
+ *
+ * A caller that cannot distinguish a working subscription from a dead one
+ * silently believes it is receiving events; the worktree tree needs that
+ * distinction to mark a repository degraded rather than show it as watched.
+ * See: asimov/changes/cache-and-broadcast-worktree-tree/design.md D5.
+ *
+ * Widening — not a discriminated result — so the existing callers that store it
+ * as a plain `Disposable` are untouched, and disposing stays safe whether or
+ * not a watcher was ever created.
+ */
+export interface PatternSubscription extends vscode.Disposable {
+  /** False exactly when no underlying watcher exists, so no event can arrive. */
+  readonly active: boolean;
+  /** Present exactly when `active` is false. */
+  readonly failureReason?: string;
+}
+
 export interface WatcherPool {
   /**
    * Refcounted subscription. The returned Disposable removes ONLY this
@@ -84,7 +103,8 @@ export interface WatcherPool {
    * JSONL files and by SQLite WAL writes, both pure change events. Each handler
    * is debounced ({@link DEBOUNCE_MS}); a handler that is omitted sets the
    * corresponding `ignore*` flag so VS Code never emits it. The returned
-   * Disposable tears down this watcher (not refcounted — one watcher per call).
+   * {@link PatternSubscription} tears down this watcher (not refcounted — one
+   * watcher per call) and reports whether it is live.
    */
   subscribePattern(
     baseDir: string,
@@ -94,7 +114,7 @@ export interface WatcherPool {
       change?: (uri: vscode.Uri) => void;
       delete?: (uri: vscode.Uri) => void;
     },
-  ): vscode.Disposable;
+  ): PatternSubscription;
 
   /**
    * Fires on the window-focus rising edge (false → true). Each
@@ -303,17 +323,21 @@ export function createWatcherPool(options: WatcherPoolOptions = {}): WatcherPool
       change?: (uri: vscode.Uri) => void;
       delete?: (uri: vscode.Uri) => void;
     },
-  ): vscode.Disposable {
+  ): PatternSubscription {
     if (disposed) {
-      return { dispose: () => {} };
+      return { active: false, failureReason: "watcher pool is disposed", dispose: () => {} };
     }
     let watcher: vscode.FileSystemWatcher | null = null;
+    let failureReason: string | undefined;
     try {
       const pattern = new vscode.RelativePattern(vscode.Uri.file(baseDir), glob);
       watcher = createFileSystemWatcher(pattern, !handlers.create, !handlers.change, !handlers.delete);
     } catch (err) {
       const code = (err as { code?: string } | null)?.code ?? "<unknown>";
       console.error(`${LOG_PREFIX} subscribePattern watcher failed (${code}) for ${baseDir}/${glob}`, err);
+      // Carried to the caller, not just the log: a repository whose watch was
+      // never established must render as degraded rather than as watched.
+      failureReason = `${code}: could not watch ${baseDir}/${glob}`;
     }
 
     // Independent trailing debounce per event kind, so a burst of appends
@@ -365,7 +389,9 @@ export function createWatcherPool(options: WatcherPoolOptions = {}): WatcherPool
       }
     }
 
-    const entry = {
+    const entry: PatternSubscription = {
+      active: watcher !== null,
+      ...(failureReason === undefined ? {} : { failureReason }),
       dispose: () => {
         armed.value = false;
         for (const k of ["create", "change", "delete"] as const) {

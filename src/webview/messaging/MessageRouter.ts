@@ -46,6 +46,12 @@ import type {
   VaultSessionDetailResponseMessage,
   VaultSessionsResponseMessage,
   WorkspaceRootChangedMessage,
+  WorktreeActivatePaneMessage,
+  WorktreeCreateDefaultsMessage,
+  WorktreeMutationResultMessage,
+  WorktreeRowActivationMessage,
+  WorktreeShowPreviewMessage,
+  WorktreeTreeResponseMessage,
 } from "../../types/messages";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -103,6 +109,20 @@ export interface MessageHandlers {
   onVaultLaunchTargets?(msg: VaultLaunchTargetsMessage): void;
   onVaultContextCwd?(msg: VaultContextCwdMessage): void;
   onOpenVault?(msg: OpenVaultMessage): void;
+
+  // ── Worktree tree (wire-live-worktree-tree) ──
+  // Optional: a webview without a mounted worktree view safely ignores this.
+  onWorktreeTreeResponse?(msg: WorktreeTreeResponseMessage): void;
+  /** The row-activation setting changed after `init` carried its first value. */
+  onWorktreeRowActivation?(msg: WorktreeRowActivationMessage): void;
+  /** Halves of an action only a webview can perform, answered back to it. */
+  onWorktreeShowPreview?(msg: WorktreeShowPreviewMessage): void;
+  onWorktreeActivatePane?(msg: WorktreeActivatePaneMessage): void;
+  // ── Mutating actions (wire-worktree-mutating-actions) ──
+  /** The destination a create will actually take, resolved by the host. */
+  onWorktreeCreateDefaults?(msg: WorktreeCreateDefaultsMessage): void;
+  /** What a mutation this surface started actually did. */
+  onWorktreeMutationResult?(msg: WorktreeMutationResultMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
   // Optional: a webview with no terminal factory mounted safely ignores it.
   onSubagentPreviewResponse?(msg: SubagentPreviewResponseMessage): void;
@@ -239,6 +259,24 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "openVault":
         handlers.onOpenVault?.(msg);
+        break;
+      case "worktreeTreeResponse":
+        handlers.onWorktreeTreeResponse?.(msg);
+        break;
+      case "worktreeRowActivation":
+        handlers.onWorktreeRowActivation?.(msg);
+        break;
+      case "worktreeShowPreview":
+        handlers.onWorktreeShowPreview?.(msg);
+        break;
+      case "worktreeActivatePane":
+        handlers.onWorktreeActivatePane?.(msg);
+        break;
+      case "worktreeCreateDefaults":
+        handlers.onWorktreeCreateDefaults?.(msg);
+        break;
+      case "worktreeMutationResult":
+        handlers.onWorktreeMutationResult?.(msg);
         break;
       case "subagentPreviewResponse":
         handlers.onSubagentPreviewResponse?.(msg);

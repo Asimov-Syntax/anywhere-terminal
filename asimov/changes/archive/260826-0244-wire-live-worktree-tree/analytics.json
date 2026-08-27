@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "wire-live-worktree-tree"
+  },
+  "sessions": [
+    {
+      "sessionId": "d846d535-972e-4dd8-9d50-0b7f67ac53c3",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787709357005,
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787709357005
+        }
+      ],
+      "firstAt": 1787709357005,
+      "lastAt": 1787710635834,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 91,
+          "inputTokens": 182,
+          "outputTokens": 68270,
+          "reasoningTokens": 27706,
+          "cacheWriteTokens": 256459,
+          "cacheReadTokens": 19436015,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 256459,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "94905a1c-866e-4278-ac25-f709b3c4a490",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787710470712,
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787710470712
+        }
+      ],
+      "firstAt": 1787710470712,
+      "lastAt": 1787712264823,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 71,
+          "inputTokens": 142,
+          "outputTokens": 61897,
+          "reasoningTokens": 30717,
+          "cacheWriteTokens": 109064,
+          "cacheReadTokens": 12620687,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 109064,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "91b518fd-e669-4a37-ad43-ab2ef4c230df",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787710470712,
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787710470712
+        }
+      ],
+      "firstAt": 1787710470712,
+      "lastAt": 1787712245216,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 6,
+          "inputTokens": 12,
+          "outputTokens": 1487,
+          "reasoningTokens": 98,
+          "cacheWriteTokens": 23974,
+          "cacheReadTokens": 395148,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 23974,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

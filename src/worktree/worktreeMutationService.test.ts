@@ -1,0 +1,839 @@
+// The assembly round-1 B1 found missing, and the ordering round-1 B2 found
+// wrong. The unit tests around each component prove the component; only this
+// one proves that a message reaching the service turns into a git command
+// against the target the id names AFTER the rebuild.
+
+import { describe, expect, it, vi } from "vitest";
+import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
+import type { RemovalEvidence } from "./worktreeBlockers";
+import {
+  createWorktreeMutationService,
+  existenceFromStatError,
+  type MutationServiceDeps,
+  type ResolvedTarget,
+} from "./worktreeMutationService";
+
+const REPO = "/repo/.git";
+/** Git reports this one with a trailing slash, so id and path differ. */
+const RAW_ID = "/repo-wt/raw";
+const RAW_PATH = "/repo-wt/raw/";
+
+function ok(over: Partial<GitCommandResult> = {}): GitCommandResult {
+  return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
+}
+
+function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
+  return {
+    dirtyPaths: [],
+    untrackedPaths: [],
+    paneIds: [],
+    externalSessionIds: [],
+    locked: false,
+    lockReason: null,
+    ...over,
+  };
+}
+
+function target(over: Partial<ResolvedTarget> = {}): ResolvedTarget {
+  return {
+    repoPath: "/repo",
+    worktreePath: RAW_PATH,
+    incarnation: "adm-1",
+    locked: false,
+    wasRegistered: true,
+    existedOnDisk: true,
+    ...over,
+  };
+}
+
+function harness(over: Partial<MutationServiceDeps> = {}) {
+  const order: string[] = [];
+  const argv: string[][] = [];
+  const runner: GitCommandRunner = {
+    run: vi.fn(async (args: readonly string[]) => {
+      order.push(`git:${args[1]}`);
+      argv.push([...args]);
+      return ok();
+    }),
+  };
+  const outcomes: unknown[] = [];
+  const deps: MutationServiceDeps = {
+    runner,
+    forceRebuild: async () => {
+      order.push("rebuild");
+    },
+    resolve: () => {
+      order.push("resolve");
+      return target();
+    },
+    repoPath: () => "/repo",
+    assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence(), fingerprint: "" }),
+    observeAfter: async () => ({ isRegistered: false, existsOnDisk: false }),
+    createContext: () => ({ mainWorktree: "/repo", linkedWorktrees: [] }),
+    pathDeps: {
+      platform: "darwin",
+      lstat: async () => null,
+      readdir: async () => null,
+      normalize: async (raw) => raw,
+    },
+    report: (outcome) => outcomes.push(outcome),
+    afterCreate: async () => {},
+    gitExcludeDirFor: () => null,
+    addToGitExclude: async () => {},
+    now: () => 0,
+    ...over,
+  };
+  return { service: createWorktreeMutationService(deps), order, argv, outcomes, runner };
+}
+
+describe("a mutation reaches git through the coordinator", () => {
+  it("resolves the id AFTER the forced rebuild, not when the message arrived", async () => {
+    // The whole point of B2: a path resolved on arrival names whatever held it
+    // then. The rebuild must precede the resolve, and git must follow both.
+    const h = harness();
+    await h.service.lockWorktree({ repoId: REPO, worktreeId: RAW_ID }, "release build");
+
+    expect(h.order.slice(0, 3)).toEqual(["rebuild", "resolve", "git:lock"]);
+  });
+
+  it("runs against the path the id resolves to, not against the id", async () => {
+    // RAW's id and displayPath differ by a trailing slash. This is where the
+    // pair the host used to prove is now proved.
+    const h = harness();
+    await h.service.lockWorktree({ repoId: REPO, worktreeId: RAW_ID }, undefined);
+
+    expect(h.argv[0]).toEqual(["worktree", "lock", RAW_PATH]);
+  });
+
+  it("rebuilds again after the attempt, so the panel is not left on stale state", async () => {
+    const h = harness();
+    await h.service.lockWorktree({ repoId: REPO, worktreeId: RAW_ID }, undefined);
+
+    expect(h.order.filter((s) => s === "rebuild")).toHaveLength(2);
+    expect(h.order.at(-1)).toBe("rebuild");
+  });
+
+  it("runs no command at all when the id no longer names anything", async () => {
+    // A destructive verb against a registration that vanished while it queued
+    // is exactly the case B2 describes, and doing nothing is the only safe
+    // answer — reported, never silently dropped.
+    const h = harness({ resolve: () => null });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes).toHaveLength(1);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", verb: "remove" });
+  });
+
+  it("refuses a force whose confirmation was never issued", async () => {
+    const h = harness();
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, true, "never-issued");
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("changed since you confirmed"),
+    });
+  });
+
+  it("refuses a force carrying no confirmation at all", async () => {
+    // The host refuses this pairing too, but the service is what spawns git and
+    // must not depend on a caller having checked. Found by mutation: flipping
+    // the no-fingerprint branch to "proceed" passed every other case here.
+    const h = harness();
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, true, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", verb: "remove" });
+  });
+
+  it("refuses a force whose current evidence could not be read", async () => {
+    // Unreadable evidence is not "nothing at risk" — there is no set to
+    // compare the confirmation against, so it authorizes nothing.
+    const h = harness({ assessRemoval: async () => null });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence());
+    await h.service.removeWorktree(t, true, fp ?? "");
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+  });
+
+  it("accepts a force carrying the confirmation it issued, once", async () => {
+    const h = harness();
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence({ dirtyPaths: ["a.ts"] }));
+    expect(fp).not.toBeNull();
+
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(h.argv[0]).toEqual(["worktree", "remove", "--force", RAW_PATH]);
+
+    // Spent: the same token a second time is refused rather than replayed.
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(h.argv).toHaveLength(1);
+  });
+
+  it("abandons a prune whose count moved since the confirmation named it", async () => {
+    // The user authorized a NUMBER. Two stale registrations becoming three is
+    // not what they agreed to drop.
+    const h = harness({
+      runner: {
+        run: vi.fn(async (args: readonly string[]) =>
+          args.includes("--dry-run") ? ok({ stderr: "Removing worktrees/a\nRemoving worktrees/b\n" }) : ok(),
+        ),
+      },
+    });
+    await h.service.pruneRepo(REPO, 1);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", verb: "prune" });
+  });
+
+  it("serializes two mutations on one repository", async () => {
+    const h = harness();
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    await Promise.all([h.service.lockWorktree(t, undefined), h.service.unlockWorktree(t)]);
+
+    // Interleaving would put a second rebuild between one mutation's git call
+    // and its trailing rebuild.
+    expect(h.order).toEqual([
+      "rebuild",
+      "resolve",
+      "git:lock",
+      "rebuild",
+      "rebuild",
+      "resolve",
+      "git:unlock",
+      "rebuild",
+    ]);
+  });
+
+  it("validates the create path on BOTH sides of the queue wait", async () => {
+    // D6 wants two observations with the wait between them. One observation on
+    // the far side cannot detect a change, because it never saw the earlier
+    // state to compare against (round-2 B4).
+    const seen: string[] = [];
+    const h = harness({
+      forceRebuild: async () => {
+        seen.push("rebuild");
+      },
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => {
+          seen.push("lstat");
+          return null;
+        },
+        readdir: async () => null,
+        normalize: async (raw) => raw,
+      },
+    });
+    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", openAfter: "none", branch: "feat" });
+
+    // At least one filesystem observation before the first rebuild, and more
+    // after it.
+    expect(seen.indexOf("lstat")).toBeLessThan(seen.indexOf("rebuild"));
+    expect(seen.lastIndexOf("lstat")).toBeGreaterThan(seen.indexOf("rebuild"));
+  });
+
+  it("refuses when the validated directory is swapped during the wait", async () => {
+    // Same path, still an empty directory, different inode. Emptiness alone
+    // cannot see this, which is why the identity is carried across the wait.
+    let ino = 1;
+    const h = harness({
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: ino++ }),
+        readdir: async () => [],
+        normalize: async (raw) => raw,
+      },
+    });
+    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", openAfter: "none", branch: "feat" });
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("changed while the action was queued"),
+    });
+  });
+
+  it("refuses when the validated directory stopped being empty during the wait", async () => {
+    // `mustBeEmpty` was recorded and never asked again. A directory that gained
+    // files while queued is one git will refuse anyway — but it must be refused
+    // with the reason that is true, not with git's.
+    let calls = 0;
+    const h = harness({
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 7 }),
+        readdir: async () => {
+          calls += 1;
+          return calls > 2 ? ["surprise.txt"] : [];
+        },
+        normalize: async (raw) => raw,
+      },
+    });
+    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", openAfter: "none", branch: "feat" });
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("no longer empty") });
+  });
+
+  it("still creates when nothing moved across the wait", async () => {
+    // The negatives above only mean something if the ordinary case survives.
+    const h = harness({
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => null,
+        readdir: async () => null,
+        normalize: async (raw) => raw,
+      },
+    });
+    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", openAfter: "none", branch: "feat" });
+
+    expect(h.argv[0]?.slice(0, 2)).toEqual(["worktree", "add"]);
+  });
+
+  it("returns the blockers of an UNFORCED removal instead of running git", async () => {
+    // The hole round-2 B1 found: assessment was gated behind `force`, so an
+    // unforced removal evaluated nothing and went straight to git. Git refuses
+    // a dirty worktree itself — an idle pane it knows nothing about.
+    const h = harness({
+      assessRemoval: async () => ({
+        kind: "confirmable" as const,
+        evidence: evidence({ paneIds: ["pane-1"] }),
+      }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "blocked", verb: "remove" });
+  });
+
+  it("carries the token that authorizes exactly the blockers it just returned", async () => {
+    // And that token must actually work — issuing one nothing can redeem is
+    // the same dead end as issuing none.
+    const h = harness({
+      assessRemoval: async () => ({
+        kind: "confirmable" as const,
+        evidence: evidence({ dirtyPaths: ["a.ts"] }),
+      }),
+    });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(t, false, undefined);
+    const blocked = h.outcomes[0] as { fingerprint: string | null };
+    expect(blocked.fingerprint).not.toBeNull();
+
+    await h.service.removeWorktree(t, true, blocked.fingerprint ?? "");
+    expect(h.argv[0]).toEqual(["worktree", "remove", "--force", RAW_PATH]);
+  });
+
+  it("runs an unforced removal when nothing is at risk", async () => {
+    const h = harness({ assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }) });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.argv[0]).toEqual(["worktree", "remove", RAW_PATH]);
+  });
+
+  it("offers no token at all when the assessment refuses", async () => {
+    // A refusal that carried a fingerprint would make a force against it
+    // representable, which is the thing the three-type split exists to prevent.
+    const h = harness({
+      assessRemoval: async () => ({ kind: "refused" as const, isMain: true, busyAgents: 0, containsWorktrees: [] }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "blocked", fingerprint: null });
+  });
+
+  it("reports unreadable evidence as its own outcome, and runs nothing", async () => {
+    const h = harness({ assessRemoval: async () => ({ kind: "unavailable" as const, unreadable: ["status"] }) });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable", unreadable: ["status"] });
+  });
+
+  it("spends the token even on an exit that never reached git", async () => {
+    // The half round-2 B5 found: an unreadable assessment returned `reprompt`
+    // without redeeming, so the token stayed live and the same message could be
+    // replayed against a removal that may already have run half-way.
+    const clean = { kind: "confirmable" as const, evidence: evidence({ dirtyPaths: ["a.ts"] }) };
+    let readable = true;
+    const h = harness({
+      assessRemoval: async () => (readable ? clean : { kind: "unavailable" as const, unreadable: ["status"] }),
+    });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence({ dirtyPaths: ["a.ts"] }));
+
+    readable = false;
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(h.runner.run).not.toHaveBeenCalled();
+
+    // The read recovers — and the token is still gone.
+    readable = true;
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(h.runner.run).not.toHaveBeenCalled();
+  });
+
+  it("forgets a confirmation once the worktree is observed to be gone", async () => {
+    // Isolated from the spend-on-use rule on purpose: the first removal here is
+    // UNFORCED, so it consumes no token, and the token stays live through it.
+    // The only thing that can invalidate it afterwards is the disappearance
+    // (D15). Found by mutation — an earlier version of this test spent the
+    // token itself and passed with `forget` deleted.
+    let present = true;
+    const argv: string[][] = [];
+    const h = harness({
+      runner: {
+        run: vi.fn(async (args: readonly string[]) => {
+          argv.push([...args]);
+          if (args[1] === "remove") {
+            present = false;
+          }
+          return ok();
+        }),
+      },
+      resolve: () => (present ? target() : null),
+      // Clean now, so the unforced removal proceeds; the token was issued
+      // against a dirtier set, which a subset check would otherwise accept.
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }),
+      observeAfter: async () => ({ isRegistered: false, existsOnDisk: false }),
+    });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence({ dirtyPaths: ["a.ts"] }));
+    expect(fp).not.toBeNull();
+
+    await h.service.removeWorktree(t, false, undefined);
+    expect(argv).toHaveLength(1);
+
+    // The path comes back. The old confirmation must authorize nothing here.
+    present = true;
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(argv.filter((a) => a.includes("--force"))).toHaveLength(0);
+  });
+
+  it("reports indeterminate when the removal left the directory behind", async () => {
+    const h = harness({
+      observeAfter: async () => ({ isRegistered: false, existsOnDisk: true }),
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "indeterminate" });
+  });
+
+  it("reports indeterminate when the post-attempt listing could not be trusted", async () => {
+    const h = harness({
+      observeAfter: async () => null,
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "indeterminate" });
+  });
+
+  it("passes the journalled path to the observation", async () => {
+    const seen: string[] = [];
+    const h = harness({
+      observeAfter: async (_t, journalled) => {
+        seen.push(journalled);
+        return { isRegistered: false, existsOnDisk: false };
+      },
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    // git's own string, recorded before the spawn — not the normalized id.
+    expect(seen).toEqual([RAW_PATH]);
+  });
+});
+
+describe("a confirmation dies on every route the disappearance can take", () => {
+  it("spends the token when the target is already gone before the body runs", async () => {
+    // Round-3 B5. The coordinator threw straight past the body on this path, so
+    // neither the spend nor the forget ran — and the confirmation stayed live
+    // for whatever was created at the same location next.
+    let present = true;
+    const argv: string[][] = [];
+    const h = harness({
+      runner: {
+        run: vi.fn(async (args: readonly string[]) => {
+          argv.push([...args]);
+          return ok();
+        }),
+      },
+      resolve: () => (present ? target() : null),
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }),
+    });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence({ dirtyPaths: ["a.ts"] }));
+    expect(fp).not.toBeNull();
+
+    // It vanished — by another window, by hand, by anything.
+    present = false;
+    await h.service.removeWorktree(t, false, undefined);
+    expect(argv).toHaveLength(0);
+
+    // Recreated at the same location. The old confirmation authorizes nothing.
+    present = true;
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(argv.filter((a) => a.includes("--force"))).toHaveLength(0);
+  });
+
+  it("says the worktree is already gone rather than reporting an internal throw", async () => {
+    const h = harness({ resolve: () => null });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", verb: "remove", message: "That worktree is already gone." });
+  });
+
+  it("drops the confirmation of any worktree a rebuild no longer finds", async () => {
+    // The watcher-driven path: nobody asked for a removal, the tree simply came
+    // back without it. Until this existed, only the removal path forgot.
+    const h = harness({ assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }) });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence({ dirtyPaths: ["a.ts"] }));
+    expect(fp).not.toBeNull();
+
+    h.service.reconcileFingerprints(["/some/other/worktree"]);
+    await h.service.removeWorktree(t, true, fp ?? "");
+
+    expect(h.argv.filter((a) => a.includes("--force"))).toHaveLength(0);
+  });
+
+  it("keeps the confirmation of a worktree the rebuild still holds", async () => {
+    // The negative that gives the reconcile its meaning: it must drop what is
+    // absent, not everything it has.
+    const h = harness({ assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }) });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence());
+    expect(fp).not.toBeNull();
+
+    h.service.reconcileFingerprints([RAW_ID]);
+    await h.service.removeWorktree(t, true, fp ?? "");
+
+    expect(h.argv.filter((a) => a.includes("--force"))).toHaveLength(1);
+  });
+
+  it("forces exactly one rebuild after the attempt, not one per layer", async () => {
+    // Round-3 W5: the coordinator owned a post-attempt rebuild and the removal
+    // body ran another one to classify against.
+    const h = harness({ assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }) });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.order.filter((s) => s === "rebuild")).toHaveLength(2);
+  });
+});
+
+describe("what the create writes into info/exclude", () => {
+  it("hands the exclude an anchored repo-relative pattern, never the absolute path", async () => {
+    // Round-3 B10: an absolute path is not a valid exclude pattern, so D8 had
+    // never taken effect — and it failed silently, because a pattern matching
+    // nothing looks exactly like a pattern that was not needed.
+    const written: Array<[string, string]> = [];
+    const h = harness({
+      repoPath: () => "/repo",
+      gitExcludeDirFor: (repoPath, createdPath) => ({
+        gitDir: `${repoPath}/.git`,
+        relativePath: createdPath.slice(repoPath.length + 1),
+      }),
+      addToGitExclude: async (gitDir, entry) => {
+        written.push([gitDir, entry]);
+      },
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => null,
+        readdir: async () => null,
+        normalize: async (raw: string) => raw,
+      },
+    });
+
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo/wt/feat",
+      branch: "feat",
+      openAfter: "none",
+    });
+
+    expect(written).toEqual([["/repo/.git", "/wt/feat/"]]);
+  });
+
+  it("excludes the create ROOT once, not one leaf per worktree", async () => {
+    // Production derives the root from the created path; two creates under the
+    // same root are one entry, which is what keeps info/exclude bounded.
+    const written: [string, string][] = [];
+    const h = harness({
+      gitExcludeDirFor: (repoPath, createdPath) => {
+        const root = createdPath.slice(0, createdPath.lastIndexOf("/"));
+        return { gitDir: `${repoPath}/.git`, relativePath: root.slice(repoPath.length + 1) };
+      },
+      addToGitExclude: async (gitDir, entry) => {
+        written.push([gitDir, entry]);
+      },
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => null,
+        readdir: async () => null,
+        normalize: async (raw: string) => raw,
+      },
+    });
+
+    for (const branch of ["feat", "fix"]) {
+      await h.service.createWorktree({ repoId: REPO, path: `/repo/wt/${branch}`, branch, openAfter: "none" });
+    }
+    expect(written).toEqual([
+      ["/repo/.git", "/wt/"],
+      ["/repo/.git", "/wt/"],
+    ]);
+  });
+});
+
+describe("evidence that could not be read is not evidence of safety", () => {
+  it("reads only absence as absence when a stat is rejected", () => {
+    expect(existenceFromStatError({ code: "ENOENT" } as NodeJS.ErrnoException)).toBe(false);
+    expect(existenceFromStatError({ code: "ENOTDIR" } as NodeJS.ErrnoException)).toBe(false);
+  });
+
+  it("does not read a filesystem it could not query as an empty one", () => {
+    for (const code of ["EACCES", "EPERM", "EIO", "ELOOP", "ENAMETOOLONG", undefined]) {
+      expect(existenceFromStatError({ code } as NodeJS.ErrnoException)).toBeNull();
+    }
+  });
+
+  it("leaves a removal indeterminate when the observation could not be made", async () => {
+    const h = harness({
+      resolve: () => target({ locked: false }),
+      observeAfter: async () => null,
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+    expect(h.outcomes).toEqual([expect.objectContaining({ kind: "indeterminate", verb: "remove" })]);
+  });
+
+  it("does not run a prune whose dry run could not be read", async () => {
+    const h = harness({
+      runner: {
+        run: vi.fn(async (args: readonly string[]) =>
+          args[1] === "prune" && args.includes("--dry-run")
+            ? ok({ code: 128, stderr: "fatal: not a git repository" })
+            : ok(),
+        ),
+      },
+    });
+    await h.service.pruneRepo(REPO, 2, undefined);
+    expect(h.outcomes).toEqual([
+      expect.objectContaining({ kind: "unavailable", verb: "prune", unreadable: ["prunable"] }),
+    ]);
+    // Nothing was changed, and that is the claim the notice makes.
+    expect((h.runner.run as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).not.toContainEqual([
+      "worktree",
+      "prune",
+    ]);
+  });
+
+  it("still prunes when the dry run genuinely counts nothing and nothing was confirmed", async () => {
+    const h = harness({
+      runner: {
+        run: vi.fn(async () => ok({ stderr: "" })),
+      },
+    });
+    await h.service.pruneRepo(REPO, 0, undefined);
+    expect(h.outcomes).toEqual([expect.objectContaining({ kind: "ok", verb: "prune" })]);
+  });
+
+  it("refuses a confirmed count that is not a count", async () => {
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const h = harness();
+      await h.service.pruneRepo(REPO, bad, undefined);
+      expect(h.outcomes).toEqual([expect.objectContaining({ kind: "error", verb: "prune" })]);
+      expect(h.order).toEqual([]);
+    }
+  });
+
+  it("reports a failed open-after beside the create it did not undo", async () => {
+    const h = harness({
+      afterCreate: async () => {
+        throw new Error("no window available");
+      },
+    });
+    await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", branch: "feat", openAfter: "newWindow" });
+    // ONE outcome, and it is the success: a second notice sharing this scope
+    // would replace the very result it annotates (round-4 W7).
+    expect(h.outcomes).toEqual([
+      expect.objectContaining({ kind: "ok", verb: "create", openFailed: "no window available" }),
+    ]);
+  });
+
+  it("reports a failed AGENT launch as an agent that did not start", async () => {
+    // Same channel as any other open-after, different sentence: the user needs
+    // to read "the worktree is there, the agent is not" off one notice.
+    const h = harness({
+      afterCreate: async () => {
+        throw new Error("Claude Code cannot start a new session");
+      },
+    });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      branch: "feat",
+      openAfter: "agent",
+      launch: { agent: "claude" },
+    });
+    expect(h.outcomes).toEqual([
+      expect.objectContaining({
+        kind: "ok",
+        verb: "create",
+        openFailed: "Agent did not start: Claude Code cannot start a new session",
+      }),
+    ]);
+  });
+
+  it("hands the launch details and the asking surface to the after-create", async () => {
+    const seen: unknown[] = [];
+    const surface = { isReady: () => true, post: () => {} };
+    const h = harness({
+      afterCreate: async (path, openAfter, launch, origin) => {
+        seen.push({ path, openAfter, launch, sameSurface: origin === surface });
+      },
+    });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      branch: "feat",
+      openAfter: "agent",
+      launch: { agent: "claude", permissionChoiceId: "plan", prompt: "read the failing test" },
+      origin: surface,
+    });
+    expect(seen).toEqual([
+      {
+        path: "/repo-wt/new",
+        openAfter: "agent",
+        launch: { agent: "claude", permissionChoiceId: "plan", prompt: "read the failing test" },
+        sameSurface: true,
+      },
+    ]);
+  });
+
+  it("creates nothing when the mode and its launch details disagree", async () => {
+    // Both directions: an agent mode describing no launch, and launch details
+    // riding a mode that never asked for one.
+    for (const request of [
+      { openAfter: "agent" as const },
+      { openAfter: "terminal" as const, launch: { agent: "claude" } },
+    ]) {
+      const h = harness();
+      await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", branch: "feat", ...request });
+      expect(h.outcomes).toEqual([expect.objectContaining({ kind: "error", verb: "create" })]);
+      expect(h.order).toEqual([]);
+    }
+  });
+
+  it("says nothing extra when the open-after succeeds", async () => {
+    const h = harness();
+    await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", branch: "feat", openAfter: "newWindow" });
+    expect(h.outcomes).toEqual([expect.objectContaining({ kind: "ok", verb: "create" })]);
+    expect(h.outcomes[0]).not.toHaveProperty("openFailed");
+  });
+});
+
+describe("an invalid branch name creates nothing (round-4 W9)", () => {
+  /** A runner that refuses the name check and records everything asked of it. */
+  function withRefFormat(valid: boolean) {
+    const argv: string[][] = [];
+    const h = harness({
+      runner: {
+        run: vi.fn(async (args: readonly string[]) => {
+          argv.push([...args]);
+          return args[0] === "check-ref-format" && !valid ? ok({ code: 1, stderr: "fatal: not valid" }) : ok();
+        }),
+      },
+    });
+    return { h, argv };
+  }
+
+  it("refuses before `worktree add` runs at all", async () => {
+    const { h, argv } = withRefFormat(false);
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      branch: "feat..bad",
+      baseRef: "main",
+      openAfter: "none",
+    });
+    expect(h.outcomes).toEqual([
+      expect.objectContaining({ kind: "error", verb: "create", message: expect.stringContaining("feat..bad") }),
+    ]);
+    expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(false);
+  });
+
+  it("leaves a name git accepts untouched", async () => {
+    const { h, argv } = withRefFormat(true);
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      branch: "feat/ok",
+      baseRef: "main",
+      openAfter: "none",
+    });
+    expect(h.outcomes).toEqual([expect.objectContaining({ kind: "ok", verb: "create" })]);
+    expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(true);
+  });
+
+  it("still creates when git could not answer the question", async () => {
+    // `null` is "we could not ask", not "invalid". Treating it as a refusal
+    // would make an unavailable git block every create by name.
+    const argv: string[][] = [];
+    const h = harness({
+      runner: {
+        run: vi.fn(async (args: readonly string[]) => {
+          argv.push([...args]);
+          return args[0] === "check-ref-format" ? ok({ code: 1, timedOut: true }) : ok();
+        }),
+      },
+    });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      branch: "feat/ok",
+      baseRef: "main",
+      openAfter: "none",
+    });
+    expect(h.outcomes).toEqual([expect.objectContaining({ kind: "ok", verb: "create" })]);
+    expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(true);
+  });
+
+  it("does not check a branch it is not creating", async () => {
+    const { h, argv } = withRefFormat(true);
+    await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", detach: true, openAfter: "none" });
+    expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(true);
+    expect(argv.some((a) => a[0] === "check-ref-format")).toBe(false);
+  });
+});
+
+describe("a thrown assessment still spends its token (round-4 S1)", () => {
+  it("does not leave a forced confirmation live when the assessment throws", async () => {
+    let explode = true;
+    const h = harness({
+      resolve: () => target(),
+      assessRemoval: async () => {
+        if (explode) {
+          throw new Error("registry exploded");
+        }
+        return { kind: "confirmable" as const, evidence: evidence({ dirtyPaths: ["a.ts"] }) };
+      },
+    });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    const fp = h.service.issueFingerprint(t, evidence({ dirtyPaths: ["a.ts"] }));
+    expect(fp).not.toBeNull();
+
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(h.outcomes).toEqual([expect.objectContaining({ kind: "error", verb: "remove" })]);
+
+    // Spent. A second attempt with the same token authorizes nothing, because
+    // the first may already have run git — even though the assessment now works.
+    h.outcomes.length = 0;
+    explode = false;
+    await h.service.removeWorktree(t, true, fp ?? "");
+    expect(h.outcomes).toEqual([
+      expect.objectContaining({ kind: "error", message: expect.stringContaining("changed since you confirmed") }),
+    ]);
+  });
+});

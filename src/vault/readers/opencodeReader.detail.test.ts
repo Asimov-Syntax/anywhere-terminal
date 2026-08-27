@@ -365,8 +365,8 @@ describe("readOpenCodeDetail child sub-sessions", () => {
     );
     expect(detail).not.toBeNull();
     // 2 message windows (head ASC + tail DESC) + 2 part windows + 1 children
-    // query + 1 omission probe per table.
-    expect(readSqliteFn).toHaveBeenCalledTimes(7);
+    // query + 1 omission probe per bounded read — messages, parts, and children.
+    expect(readSqliteFn).toHaveBeenCalledTimes(8);
     expect(detail?.partial).toBeFalsy(); // complete fixture must prove it stays complete
     const childSql = readSqliteFn.mock.calls.find((c) => c[1].includes("parent_id"))?.[1] ?? "";
     expect(childSql).toContain("WHERE s.parent_id = 'ses_parent'");
@@ -401,8 +401,119 @@ describe("readOpenCodeDetail child sub-sessions", () => {
       undefined,
     );
     expect(detail).not.toBeNull();
-    expect(detail?.partial).toBeFalsy(); // a failed CHILD query is not source omission
+    // A failed child query IS source omission by `partial`'s own definition —
+    // dropped source records no larger limit recovers. It reads as "this session
+    // delegated nothing" to anything deriving a delegation roster from the
+    // timeline (surface-subagent-history-rows/design.md D5).
+    expect(detail?.partial).toBe(true);
+    expect(detail?.limitedReason).toBeTruthy();
     expect(detail?.timeline.some((i) => i.kind === "subagentSession")).toBe(false);
+  });
+
+  /** The reader's own child bound, mirrored — the probe only speaks at it. */
+  const CHILD_BOUND = 100;
+
+  /**
+   * Every window complete except the child list and its probe, both supplied.
+   * `childCount` is what the bounded query returns: below the bound it proves
+   * its own completeness and the probe is never consulted.
+   */
+  function childProbeMock(
+    probeRows: Array<Record<string, unknown>>,
+    probeStatus: SqliteResult["status"] = "ok",
+    childCount = CHILD_BOUND,
+  ) {
+    return vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
+      if (sql.includes("OFFSET")) {
+        return sql.includes("parent_id") ? { status: probeStatus, rows: probeRows } : { status: "ok", rows: [] }; // message/part windows: nothing past them
+      }
+      if (!sql.includes("parent_id") && sql.includes("FROM message")) {
+        return { status: "ok", rows: [{ id: "m1", time_created: 1, data: JSON.stringify({ role: "user" }) }] };
+      }
+      if (!sql.includes("parent_id") && sql.includes("FROM part")) {
+        return {
+          status: "ok",
+          rows: [{ id: "p1", message_id: "m1", time_created: 1, data: JSON.stringify({ type: "text", text: "hi" }) }],
+        };
+      }
+      return {
+        status: "ok",
+        rows: Array.from({ length: childCount }, (_, i) => ({
+          id: `ses_kid_${i}`,
+          title: `go review ${i}`,
+          agent: "reviewer",
+          time_created: 2 + i,
+          first_user_part: null,
+        })),
+      };
+    });
+  }
+
+  it("reports omission when a child session sits past the bound", async () => {
+    // The bound is silent by construction: the list comes back full and looks
+    // whole, so a roster built from it claims to be everything the session
+    // delegated (design.md D5). One row past the bound is the proof.
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(childProbeMock([{ id: "ses_overflow" }])) },
+      undefined,
+    );
+    expect(detail?.partial).toBe(true);
+    expect(detail?.limitedReason).toBeTruthy();
+    // Still a usable transcript: the bound dropped delegations, not the session.
+    expect(detail?.timeline.some((i) => i.kind === "subagentSession")).toBe(true);
+  });
+
+  it("declares more delegations than it handed over when the bound dropped some", async () => {
+    // The bound retained CHILD_BOUND; the probe row proves at least one more.
+    // Declaring only what survived states less than the read proved, and leaves
+    // a consumer comparing the count against its items unable to see the drop.
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(childProbeMock([{ id: "ses_overflow" }])) },
+      undefined,
+    );
+    const handed = detail?.timeline.filter((i) => i.kind === "subagentSession").length ?? 0;
+    expect(detail?.stats.subagentCount).toBeGreaterThan(handed);
+    expect(detail?.stats.subagentCount).toBeGreaterThan(CHILD_BOUND);
+  });
+
+  it("claims no omission for a child list that ends exactly at the bound", async () => {
+    // The complementary case, and the one a probe-free reader gets right by
+    // accident — without it, "always partial" would pass the test above.
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(childProbeMock([])) },
+      undefined,
+    );
+    expect(detail?.partial).toBeFalsy();
+    expect(detail?.stats.subagentCount).toBe(CHILD_BOUND);
+  });
+
+  it("ignores a failed probe on a child list short enough to prove itself whole", async () => {
+    // Under the bound there is no row for the probe to have found, so its
+    // failure says nothing. Reporting omission here would be a false claim of
+    // data loss — and the nested preview discards every partial detail, so it
+    // would cost a complete child transcript (round 2 B7).
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(childProbeMock([], "query-error", 1)) },
+      undefined,
+    );
+    expect(detail?.partial).toBeFalsy();
+    expect(detail?.timeline.some((i) => i.kind === "subagentSession")).toBe(true);
+  });
+
+  it("fails the read when a saturated child list could not be probed", async () => {
+    // The one case where the probe's answer mattered and is missing: either
+    // verdict would state something unproven, so it fails like the message and
+    // part probes rather than inventing one.
+    const detail = await readOpenCodeDetail(
+      "ses_parent",
+      { dataDir: "/x/oc", withSqliteSnapshotFn: snapshotOf(childProbeMock([], "query-error")) },
+      undefined,
+    );
+    expect(detail).toBeNull();
   });
 
   it("strips OpenCode's `(@<agent> subagent)` title suffix so the @agent chip is not duplicated", async () => {
@@ -842,5 +953,194 @@ describe("readOpenCodeMessageRecord", () => {
     expect(result.ok && JSON.parse(result.line)).toEqual({ message: messageRow, parts: [partRow] });
     expect(readSqliteFn).toHaveBeenCalledTimes(1);
     expect(readSqliteFn.mock.calls[0]?.[1]).toMatch(/CASE[\s\S]+json_group_array/i);
+  });
+});
+
+describe("a child query that failed is not a session that delegated nothing", () => {
+  it("stays complete when the child query succeeds with no children", async () => {
+    const detail = await readOpenCodeDetail("s1", {
+      dataDir: "/x/oc",
+      withSqliteSnapshotFn: snapshotOf(
+        vi.fn(async (_db: string, sql: string): Promise<SqliteResult> => {
+          if (sql.includes("OFFSET") || sql.includes("parent_id")) {
+            return { status: "ok", rows: [] };
+          }
+          if (sql.includes("FROM message")) {
+            return { status: "ok", rows: [{ id: "m1", time_created: 1, data: JSON.stringify({ role: "user" }) }] };
+          }
+          return {
+            status: "ok",
+            rows: [{ id: "p1", message_id: "m1", time_created: 1, data: JSON.stringify({ type: "text", text: "hi" }) }],
+          };
+        }),
+      ),
+    });
+    expect(detail?.partial).toBeUndefined();
+  });
+});
+
+// One delegation is one timeline item (surface-subagent-history-rows design.md D6).
+//
+// OpenCode records a delegation twice: as the `subtask` part that invoked it, and
+// as the child session it started. Part rows are head+tail windowed and the child
+// query is not, so the two lists are NOT two views of one list — measured against a
+// real store, a session with four delegations surfaced four child stubs and one
+// surviving subtask part. That is why the reader correlates them and the consumer
+// cannot: only the reader knows which of its own windows dropped what.
+
+/** A child stub as `buildChildStubs` produces one, at the position the query returns it. */
+function childStub(t: number, id: string, title: string, agent?: string) {
+  return {
+    timestamp: t,
+    item: {
+      kind: "subagentSession" as const,
+      entryId: `opencode:${id}`,
+      title,
+      ...(agent ? { agent } : {}),
+      timestamp: t,
+    },
+  };
+}
+
+function delegationsIn(out: { timeline: VaultTimelineItem[] }) {
+  return out.timeline.filter((i) => i.kind === "subagent" || i.kind === "subagentSession");
+}
+
+describe("mapOpencodeRows — one delegation, one item", () => {
+  const parent = [msg("m1", "assistant", 1)];
+
+  it("reports one delegation the source recorded both ways once, as the openable record", () => {
+    const out = mapOpencodeRows(parent, [subtaskPart("m1", 10, "librarian", "find the presence spec")], undefined, [
+      childStub(11, "c1", "find the presence spec", "librarian"),
+    ]);
+    const rows = delegationsIn(out);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind).toBe("subagentSession");
+  });
+
+  it("never lets an agent guess take a child another delegation names exactly", () => {
+    // A and B are both `reviewer`. A's child is absent; B's is present and names
+    // B exactly. Falling back per-subtask lets A consume B's child, after which
+    // B emits as a plain step: A vanishes into a session that was never its, and
+    // B appears twice (round 2 B6). Exact matches must be reserved first.
+    const out = mapOpencodeRows(
+      parent,
+      [
+        subtaskPart("m1", 10, "reviewer", "review the auth diff"),
+        subtaskPart("m1", 12, "reviewer", "review the ui diff"),
+      ],
+      undefined,
+      [childStub(13, "c_ui", "review the ui diff", "reviewer")],
+    );
+    const rows = delegationsIn(out);
+    expect(rows).toHaveLength(2);
+    // The child belongs to B, and A is the one left as a plain step.
+    const session = rows.find((r) => r.kind === "subagentSession");
+    expect(session?.kind === "subagentSession" && session.title).toBe("review the ui diff");
+    const step = rows.find((r) => r.kind === "subagent");
+    expect(step?.kind === "subagent" && step.prompt).toBe("review the auth diff");
+  });
+
+  it("still falls back to the agent for a child whose title the source rewrote", () => {
+    // The fallback is not removed, only demoted: with no exact match anywhere,
+    // it is still what pairs a renamed child to its subtask.
+    const out = mapOpencodeRows(parent, [subtaskPart("m1", 10, "reviewer", "review the diff")], undefined, [
+      childStub(11, "c1", "Renamed by the source", "reviewer"),
+    ]);
+    const rows = delegationsIn(out);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind).toBe("subagentSession");
+  });
+
+  it("counts what the correlation accounted for, not what either window held", () => {
+    // Two delegations: one recorded both ways, one only as a subtask part.
+    // Counting child sessions alone undercounts by the second; counting subtask
+    // parts alone undercounts whenever the part window dropped one (D5).
+    const out = mapOpencodeRows(
+      parent,
+      [subtaskPart("m1", 10, "librarian", "find the spec"), subtaskPart("m1", 12, "reviewer", "review the diff")],
+      undefined,
+      [childStub(11, "c1", "find the spec", "librarian")],
+    );
+    expect(delegationsIn(out)).toHaveLength(2);
+    expect(out.stats.subagentCount).toBe(2);
+  });
+
+  it("counts a child session no surviving subtask part explains", () => {
+    // The measured real-world shape: the part window is head+tail bounded while
+    // the child query is not, so the parts that recorded these calls are gone.
+    const out = mapOpencodeRows(parent, [], undefined, [
+      childStub(11, "c1", "find the spec", "librarian"),
+      childStub(12, "c2", "review the diff", "reviewer"),
+    ]);
+    expect(out.stats.subagentCount).toBe(2);
+  });
+
+  it("still reports a delegation whose child session is absent", () => {
+    // The unmatched case both readers must keep: a delegation that happened, with
+    // no transcript to open.
+    const out = mapOpencodeRows(parent, [subtaskPart("m1", 10, "librarian", "find the presence spec")], undefined, []);
+    const rows = delegationsIn(out);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind).toBe("subagent");
+  });
+
+  it("still reports a child session whose subtask part the window dropped", () => {
+    const out = mapOpencodeRows(parent, [], undefined, [childStub(11, "c1", "review round 3", "reviewer")]);
+    expect(delegationsIn(out)).toHaveLength(1);
+  });
+
+  it("does not fold two identical delegations into one", () => {
+    // Two review rounds, same agent, same description — ordinary, and the reason
+    // a matcher has to CONSUME its stub rather than just find one.
+    const out = mapOpencodeRows(
+      parent,
+      [subtaskPart("m1", 10, "reviewer", "review the change"), subtaskPart("m1", 20, "reviewer", "review the change")],
+      undefined,
+      [childStub(11, "c1", "review the change", "reviewer"), childStub(21, "c2", "review the change", "reviewer")],
+    );
+    const rows = delegationsIn(out);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.kind === "subagentSession")).toBe(true);
+  });
+
+  it("keeps a surplus subtask when there are fewer children than delegations", () => {
+    const out = mapOpencodeRows(
+      parent,
+      [subtaskPart("m1", 10, "reviewer", "review the change"), subtaskPart("m1", 20, "reviewer", "review the change")],
+      undefined,
+      [childStub(11, "c1", "review the change", "reviewer")],
+    );
+    const rows = delegationsIn(out);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.kind === "subagentSession")).toHaveLength(1);
+    expect(rows.filter((r) => r.kind === "subagent")).toHaveLength(1);
+  });
+
+  it("correlates by agent when the source rewrote the child's title", () => {
+    const out = mapOpencodeRows(parent, [subtaskPart("m1", 10, "librarian", "find the presence spec")], undefined, [
+      childStub(11, "c1", "Untitled session", "librarian"),
+    ]);
+    expect(delegationsIn(out)).toHaveLength(1);
+  });
+
+  it("correlates on the title when the source left the child's agent column empty", () => {
+    // Not hypothetical: in a real store most child rows carry a null `agent`, so
+    // the cleaned title is the only key that can match — OpenCode writes it as
+    // `<description> (@<agent> subagent)` and the stub builder strips the suffix.
+    const out = mapOpencodeRows(parent, [subtaskPart("m1", 10, "librarian", "find the presence spec")], undefined, [
+      childStub(11, "c1", "find the presence spec"),
+    ]);
+    expect(delegationsIn(out)).toHaveLength(1);
+  });
+
+  it("leaves an unrelated child session alone", () => {
+    // Not every child is a subtask delegation — workflow children arrive the same
+    // way, and correlating one to an unrelated subtask would hide a real row.
+    const out = mapOpencodeRows(parent, [subtaskPart("m1", 10, "librarian", "find the presence spec")], undefined, [
+      childStub(11, "c1", "find the presence spec", "librarian"),
+      childStub(30, "c2", "a workflow run"),
+    ]);
+    expect(delegationsIn(out)).toHaveLength(2);
   });
 });

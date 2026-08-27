@@ -1,0 +1,1355 @@
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it } from "vitest";
+import type {
+  VaultLaunchTargetsMessage,
+  WebViewToExtensionMessage,
+  WorktreeCreateDefaultsMessage,
+  WorktreeTreeResponseMessage,
+} from "../../types/messages";
+import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
+import { singleRepoPresence, singleRepoTree, worktree } from "./worktreeFixtures";
+import type {
+  WorktreeActionResult,
+  WorktreeAgentRow,
+  WorktreeCreateDefaults,
+  WorktreeInfo,
+  WorktreeRowActivation,
+} from "./worktreeViewTypes";
+
+interface Harness {
+  controller: WorktreeController;
+  posts: WebViewToExtensionMessage[];
+  state: Record<string, unknown>;
+}
+
+function mount(
+  over: {
+    workspaceRoot?: string | null;
+    rowActivation?: WorktreeRowActivation;
+    showPreview?: (entryId: string) => boolean;
+    activatePane?: (paneId: string) => boolean;
+    /** Persisted before mount — the view reads it once, at construction. */
+    expandedRows?: string[];
+  } = {},
+): Harness {
+  const posts: WebViewToExtensionMessage[] = [];
+  const state: Record<string, unknown> = over.expandedRows ? { worktreeExpandedRows: over.expandedRows } : {};
+  const controller = WorktreeController.mount({
+    host: document.body,
+    postMessage: (msg) => posts.push(msg),
+    store: {
+      getState: () => state as never,
+      updateState: (patch) => Object.assign(state, patch),
+    },
+    init: {
+      workspaceRoot: over.workspaceRoot === undefined ? "/repo" : over.workspaceRoot,
+      rowActivation: over.rowActivation ?? "focus",
+    },
+    showPreview: over.showPreview,
+    activatePane: over.activatePane,
+    now: () => 1_000_000,
+  });
+  document.body.appendChild(controller.element);
+  return { controller, posts, state };
+}
+
+/** The menu callbacks the controller actually handed the view. */
+function menuActions(h: Harness) {
+  return (h.controller as unknown as { view: { deps: { actions: Record<string, (i: WorktreeInfo) => void> } } }).view
+    .deps.actions;
+}
+
+/** The first worktree of the fixture tree — any row resolves the same repo. */
+function firstWorktree(): WorktreeInfo {
+  const first = singleRepoTree().repos[0]?.worktrees[0];
+  if (!first) {
+    throw new Error("fixture lost its worktrees");
+  }
+  return first;
+}
+
+/** A button in whatever dialog is currently mounted on the document. */
+function pruneButton(label: RegExp): HTMLButtonElement | undefined {
+  return [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => label.test(b.textContent ?? ""));
+}
+
+/** Confirm the open prune dialog. Throws when none is open — that IS the assertion. */
+function clickPruneConfirm(): void {
+  const confirm = pruneButton(/^Prune \d+$/);
+  if (!confirm) {
+    throw new Error("no prune confirmation was open");
+  }
+  confirm.click();
+}
+
+/** A response carrying the fixture tree — the shape the host really sends. */
+function response(): WorktreeTreeResponseMessage {
+  return { type: "worktreeTreeResponse", tree: singleRepoTree(), presence: singleRepoPresence(1_000_000) };
+}
+
+beforeEach(() => {
+  document.body.replaceChildren();
+});
+
+describe("visibility", () => {
+  it("declares the view visible and asks for the tree on the way in", () => {
+    const { controller, posts } = mount();
+    controller.setVisible(true);
+    // Which agents resolve is a property of the machine, so the panel asks on
+    // every way in rather than once at mount.
+    expect(posts).toEqual([
+      { type: "worktreeViewVisibility", visible: true },
+      { type: "requestWorktreeTree" },
+      { type: "requestVaultLaunchTargets", capability: "start" },
+    ]);
+  });
+
+  it("says nothing when the value has not moved", () => {
+    const { controller, posts } = mount();
+    controller.setVisible(true);
+    posts.length = 0;
+    controller.setVisible(true);
+    expect(posts).toEqual([]);
+  });
+
+  it("declares the view hidden without asking for anything", () => {
+    const { controller, posts } = mount();
+    controller.setVisible(true);
+    posts.length = 0;
+    controller.setVisible(false);
+    expect(posts).toEqual([{ type: "worktreeViewVisibility", visible: false }]);
+  });
+});
+
+describe("the tree", () => {
+  it("renders the pushed tree rather than sample data", () => {
+    const { controller } = mount();
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    const branches = Array.from(document.querySelectorAll(".wt-row")).map((r) => r.textContent);
+    expect(branches.length).toBe(singleRepoTree().repos[0]?.worktrees.length);
+  });
+
+  it("renders placeholder rows until the first push arrives", () => {
+    const { controller } = mount();
+    controller.setVisible(true);
+    expect(document.querySelector(".wt-skel")).not.toBeNull();
+    controller.handleTreeResponse(response());
+    expect(document.querySelector(".wt-skel")).toBeNull();
+  });
+
+  it("renders an unsolicited push the same as an answered one", () => {
+    const { controller } = mount();
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    const first = document.querySelectorAll(".wt-row").length;
+    controller.handleTreeResponse(response());
+    expect(document.querySelectorAll(".wt-row").length).toBe(first);
+  });
+
+  it("says the workspace has no folder instead of loading forever", () => {
+    const { controller } = mount({ workspaceRoot: null });
+    controller.setVisible(true);
+    expect(document.querySelector(".wt-skel")).toBeNull();
+    expect(document.body.textContent).toContain("No folder open");
+  });
+});
+
+describe("refresh", () => {
+  it("forces a rebuild and marks the tree as refreshing until it answers", () => {
+    const { controller, posts } = mount();
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    posts.length = 0;
+
+    controller.requestRefresh();
+    expect(posts).toEqual([{ type: "requestWorktreeTree", force: true }]);
+    expect(document.querySelector(".wt-refreshing")).not.toBeNull();
+    expect(document.querySelectorAll(".wt-row").length).toBeGreaterThan(0);
+
+    controller.handleTreeResponse(response());
+    expect(document.querySelector(".wt-refreshing")).toBeNull();
+  });
+
+  it("drops the refreshing mark when the view stops being shown", () => {
+    // The host skips pushes to a surface that stopped showing the view, so the
+    // answer to this force is never coming back.
+    const { controller } = mount();
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    controller.requestRefresh();
+    controller.setVisible(false);
+    expect(document.querySelector(".wt-refreshing")).toBeNull();
+  });
+
+  it("asks for nothing while the view is not shown", () => {
+    const { controller, posts } = mount();
+    controller.requestRefresh();
+    expect(posts).toEqual([]);
+  });
+});
+
+describe("actions it cannot perform", () => {
+  it("opens the worktree context menu, now that its actions post something", () => {
+    // This replaces the case that asserted NO menu: it encoded the state before
+    // the controller had any action path, which task 3_2 is what ends.
+    const { controller } = mount();
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    const row = document.querySelector<HTMLElement>(".wt-row");
+    row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    const items = Array.from(document.querySelectorAll(".vault-context-menu button")).map((b) => b.textContent);
+    expect(items).toContain("Copy Path");
+  });
+
+  it("opens no create form, because nothing would run it", () => {
+    const { controller } = mount();
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    expect(document.querySelector(".wt-dialog")).toBeNull();
+  });
+});
+
+describe("persisted disclosure state", () => {
+  it("writes a collapse the user made back to the store", () => {
+    const { controller, state } = mount();
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    const toggled = document.querySelector<HTMLElement>(".wt-row");
+    toggled?.click();
+    expect(Array.isArray(state.worktreeCollapsed)).toBe(true);
+  });
+
+  it("restores a persisted collapse set on mount", () => {
+    const tree = singleRepoTree();
+    const first = tree.repos[0]?.worktrees[0];
+    expect(first).toBeDefined();
+    const posts: WebViewToExtensionMessage[] = [];
+    const state: Record<string, unknown> = { worktreeCollapsed: [first?.id] };
+    const controller = WorktreeController.mount({
+      host: document.body,
+      postMessage: (msg) => posts.push(msg),
+      store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
+      init: { workspaceRoot: "/repo", rowActivation: "focus" },
+      now: () => 1_000_000,
+    });
+    document.body.appendChild(controller.element);
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    const row = document.querySelector<HTMLElement>(`.wt-row[data-worktree-id="${first?.id}"]`);
+    expect(row?.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("row activation is posted as a request the host resolves", () => {
+  /** The fixture's own rows, so paneId/entryId are the shapes the host really sends. */
+  function activateFirstAgent(rowId: string): void {
+    document.querySelector<HTMLButtonElement>(".wt-presence")?.click();
+    document.querySelector<HTMLElement>(`.wt-arow[data-row-id="${rowId}"]`)?.click();
+  }
+
+  function firstWindowRow(): WorktreeAgentRow {
+    const row = Object.values(singleRepoPresence(1_000_000).rowsByWorktreeId)
+      .flat()
+      .find((r) => r.scope === "window" && r.paneId !== undefined && r.entryId !== undefined);
+    if (!row) {
+      throw new Error("fixture lost its window row");
+    }
+    return row;
+  }
+
+  it("posts a focus request under the focus setting, and a preview request under preview", () => {
+    const row = firstWindowRow();
+    for (const [setting, expected] of [
+      ["focus", { type: "worktreeFocusPane", rowId: row.rowId, paneId: row.paneId }],
+      ["preview", { type: "worktreeOpenPreview", rowId: row.rowId, entryId: row.entryId }],
+    ] as const) {
+      document.body.replaceChildren();
+      const { controller, posts } = mount({ rowActivation: setting });
+      controller.setVisible(true);
+      controller.handleTreeResponse(response());
+      posts.length = 0;
+      activateFirstAgent(row.rowId);
+      expect(posts).toEqual([expected]);
+    }
+  });
+
+  it("follows an update that arrives after init", () => {
+    // The setting is live host-side, so a view already painted must obey the new
+    // value without being reopened.
+    const row = firstWindowRow();
+    const { controller, posts } = mount({ rowActivation: "focus" });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    controller.setRowActivation("preview");
+    posts.length = 0;
+    activateFirstAgent(row.rowId);
+    expect(posts).toEqual([{ type: "worktreeOpenPreview", rowId: row.rowId, entryId: row.entryId }]);
+  });
+});
+
+describe("the halves only a surface can perform", () => {
+  it("hands a preview to the thing that owns the overlay, and a pane to the thing that owns panes", () => {
+    const previews: string[] = [];
+    const panes: string[] = [];
+    const { controller } = mount({
+      showPreview: (entryId) => {
+        previews.push(entryId);
+        return true;
+      },
+      activatePane: (paneId) => {
+        panes.push(paneId);
+        return true;
+      },
+    });
+    controller.showPreview("claude:s1");
+    controller.activatePane("pane-1");
+    expect(previews).toEqual(["claude:s1"]);
+    expect(panes).toEqual(["pane-1"]);
+  });
+
+  it("does nothing when this surface holds neither the entry nor the pane", () => {
+    // The host sends to the surface that HOLDS the target; a surface that does
+    // not must stay silent rather than post an error the user cannot act on.
+    const { controller, posts } = mount({
+      showPreview: () => false,
+      activatePane: () => false,
+    });
+    controller.setVisible(true);
+    posts.length = 0;
+    controller.showPreview("claude:missing");
+    controller.activatePane("pane-missing");
+    expect(posts).toEqual([]);
+    expect(document.querySelector(".vault-context-menu")).toBeNull();
+  });
+
+  it("survives a surface that supplied neither capability", () => {
+    // A webview with no vault panel mounted still receives these messages.
+    const { controller } = mount();
+    expect(() => {
+      controller.showPreview("claude:s1");
+      controller.activatePane("pane-1");
+    }).not.toThrow();
+  });
+});
+
+describe("a subagent row's activation is its parent's", () => {
+  it("focuses the PARENT's pane — a subagent has none of its own", () => {
+    // Anywhere else is a dead click, and the row is presented as actionable
+    // (design.md D9).
+    const parent = Object.values(singleRepoPresence(1_000_000).rowsByWorktreeId)
+      .flat()
+      .find((r) => r.scope === "window" && r.paneId !== undefined && r.delegations?.kind === "ok");
+    if (!parent) {
+      throw new Error("fixture lost a window row carrying delegations");
+    }
+    const { controller, posts } = mount({ expandedRows: [parent.rowId] });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    document.querySelector<HTMLButtonElement>(".wt-presence")?.click();
+    posts.length = 0;
+    document.querySelector<HTMLElement>(".wt-srow")?.click();
+    expect(posts).toEqual([{ type: "worktreeFocusPane", rowId: parent.rowId, paneId: parent.paneId }]);
+  });
+});
+
+describe("the mutating capabilities WT-005.2 supplies", () => {
+  function controllerActions(repoFor?: Parameters<typeof worktreeMenuActions>[1]) {
+    const posted: WebViewToExtensionMessage[] = [];
+    const confirmed: string[] = [];
+    return {
+      actions: worktreeMenuActions(
+        (m) => posted.push(m),
+        repoFor,
+        undefined,
+        (repoId) => confirmed.push(repoId),
+      ),
+      posted,
+      confirmed,
+    };
+  }
+
+  it("offers no prune at all when nothing can answer which repository it is", () => {
+    // A prune posted against a guessed repo id is not recoverable by
+    // re-confirming, so absence is the only safe default (round-1 B1).
+    const { actions } = controllerActions();
+    expect(actions.pruneRepo).toBeUndefined();
+  });
+
+  it("asks the repository's prune to be CONFIRMED rather than posting it", () => {
+    // D13: the count is the entire content of that confirmation, so a prune
+    // that skips it is a different action, not a faster one (round-3 B9).
+    const { actions, posted, confirmed } = controllerActions(() => ({ repoId: "/repo/.git", prunableCount: 3 }));
+    actions.pruneRepo?.(worktree({ id: "/wt" }));
+    expect(confirmed).toEqual(["/repo/.git"]);
+    expect(posted).toEqual([]);
+  });
+
+  it("offers no prune at all when nothing can confirm it", () => {
+    const posted: WebViewToExtensionMessage[] = [];
+    const actions = worktreeMenuActions(
+      (m) => posted.push(m),
+      () => ({ repoId: "/repo/.git", prunableCount: 3 }),
+    );
+    expect(actions.pruneRepo).toBeUndefined();
+  });
+
+  it("confirms nothing when the count is zero, because there is nothing to confirm", () => {
+    const { actions, posted, confirmed } = controllerActions(() => ({ repoId: "/repo/.git", prunableCount: 0 }));
+    actions.pruneRepo?.(worktree({ id: "/wt" }));
+    expect(confirmed).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+
+  it("locks an unlocked worktree", () => {
+    const { actions, posted } = controllerActions();
+    actions.toggleLock?.(worktree({ id: "/wt", locked: false }));
+    expect(posted).toEqual([{ type: "worktreeLock", worktreeId: "/wt" }]);
+  });
+
+  it("unlocks a locked one — one item, two meanings", () => {
+    const { actions, posted } = controllerActions();
+    actions.toggleLock?.(worktree({ id: "/wt", locked: true }));
+    expect(posted).toEqual([{ type: "worktreeUnlock", worktreeId: "/wt" }]);
+  });
+
+  it("asks for a removal UNFORCED, so the host answers with blockers rather than acting", () => {
+    // The webview never decides a removal is safe. Posting force:true here would
+    // skip the blocker set and the fingerprint bound to it entirely.
+    const { actions, posted } = controllerActions();
+    actions.removeWorktree?.(worktree({ id: "/wt" }));
+    expect(posted).toEqual([{ type: "worktreeRemove", worktreeId: "/wt", force: false }]);
+  });
+
+  it("offers neither launch item to a caller that supplied no launch", () => {
+    // WT-005.3 supplies them, but the factory still leaves both ABSENT for a
+    // caller with nothing behind them — the controller lights them only once the
+    // host has named an agent that can start a session.
+    const { actions } = controllerActions();
+    expect(actions.resumeHere).toBeUndefined();
+    expect(actions.launchAgentHere).toBeUndefined();
+  });
+
+  it("hands the view both halves of create's entry path", () => {
+    // The submit half is round-1 B1. The OPEN half arrived with the host's
+    // defaults message: the spec says a create names the destination it will
+    // actually use, so the seed is the host's answer, never a path derived here.
+    const view = (mount().controller as unknown as { view: { deps: Record<string, unknown> } }).view;
+    expect(typeof view.deps.onCreateSubmit).toBe("function");
+    expect(typeof view.deps.createDialogDeps).toBe("function");
+  });
+
+  it("maps a new-branch draft onto the create request", () => {
+    const posted: WebViewToExtensionMessage[] = [];
+    const h = mount();
+    const view = (
+      h.controller as unknown as {
+        view: { deps: { onCreateSubmit(d: unknown): void } };
+      }
+    ).view;
+    void posted;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "main",
+      path: "/repo/.claude/worktrees/feat",
+      openAfter: "none",
+    });
+
+    expect(h.posts.filter((m) => m.type === "worktreeCreate")).toEqual([
+      {
+        type: "worktreeCreate",
+        repoId: "/repo/.git",
+        path: "/repo/.claude/worktrees/feat",
+        openAfter: "none",
+        branch: "feat",
+        baseRef: "main",
+      },
+    ]);
+  });
+
+  it("omits an optional base ref the user left blank", () => {
+    // Round-3 B11: the draft seeds `baseRef` to "", and git reads an explicit
+    // empty ref as a ref — `fatal: invalid reference:`. The DEFAULT new-branch
+    // create is the one this broke, so it is the one asserted here.
+    const h = mount();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "",
+      path: "/wt",
+      openAfter: "none",
+    });
+
+    expect(h.posts).toEqual([
+      { type: "worktreeCreate", repoId: "/repo/.git", path: "/wt", openAfter: "none", branch: "feat" },
+    ]);
+  });
+
+  it("omits a base ref that is only whitespace", () => {
+    const h = mount();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "detached",
+      branchName: "",
+      baseRef: "   ",
+      path: "/wt",
+      openAfter: "none",
+    });
+
+    expect(h.posts).toEqual([
+      { type: "worktreeCreate", repoId: "/repo/.git", path: "/wt", openAfter: "none", detach: true },
+    ]);
+  });
+
+  it("still carries a base ref the user actually typed", () => {
+    // The negative that gives the two above their meaning.
+    const h = mount();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "origin/main",
+      path: "/wt",
+      openAfter: "none",
+    });
+
+    expect(h.posts[0]).toMatchObject({ baseRef: "origin/main" });
+  });
+
+  it("posts no create for a branch name that is blank", () => {
+    // `-b ""` is a guaranteed git failure, and the form's own field is optional
+    // only for the detached mode.
+    const h = mount();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "   ",
+      baseRef: "main",
+      path: "/wt",
+      openAfter: "none",
+    });
+
+    expect(h.posts).toEqual([]);
+  });
+
+  it("posts no create for an agent mode naming no agent", () => {
+    // The mode and its launch details are one thing on the wire; a mode with no
+    // agent would ask the host for a launch it must refuse.
+    const h = mount();
+    const view = (
+      h.controller as unknown as {
+        view: { deps: { onCreateSubmit(d: unknown): void } };
+      }
+    ).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "existing",
+      branchName: "feat",
+      baseRef: "",
+      path: "/wt",
+      openAfter: "agent",
+    });
+
+    expect(h.posts.filter((m) => m.type === "worktreeCreate")).toEqual([]);
+  });
+
+  it("carries the launch details with the agent mode and with no other", () => {
+    const h = mount();
+    const view = (
+      h.controller as unknown as {
+        view: { deps: { onCreateSubmit(d: unknown): void } };
+      }
+    ).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "existing",
+      branchName: "feat",
+      baseRef: "",
+      path: "/wt",
+      openAfter: "agent",
+      agentId: "claude",
+      permissionChoiceId: "plan",
+      prompt: "read the failing test",
+    });
+
+    expect(h.posts.filter((m) => m.type === "worktreeCreate")).toEqual([
+      {
+        type: "worktreeCreate",
+        repoId: "/repo/.git",
+        path: "/wt",
+        branch: "feat",
+        openAfter: "agent",
+        launch: { agent: "claude", permissionChoiceId: "plan", prompt: "read the failing test" },
+      },
+    ]);
+  });
+});
+
+describe("the launch entry paths WT-005.3 supplies", () => {
+  const STARTABLE: VaultLaunchTargetsMessage = {
+    type: "vaultLaunchTargets",
+    capability: "start",
+    targets: [
+      {
+        agent: "claude",
+        displayName: "Claude Code",
+        canSeedPrompt: true,
+        permissionChoices: [
+          { id: "default", label: "Ask for permission" },
+          { id: "bypassPermissions", label: "Bypass permission checks", dangerous: true },
+        ],
+      },
+    ],
+  };
+
+  /** A mounted panel that has been told which agents can start a session. */
+  function launchable(): Harness {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.handleLaunchTargets(STARTABLE);
+    return h;
+  }
+
+  it("offers neither launch item until the host names an agent that can start one", () => {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    const actions = menuActions(h);
+    expect(actions.launchAgentHere).toBeUndefined();
+    expect(actions.resumeHere).toBeUndefined();
+  });
+
+  it("lights both once an agent that can start a session is reported", () => {
+    const actions = menuActions(launchable());
+    expect(actions.launchAgentHere).toBeInstanceOf(Function);
+    expect(actions.resumeHere).toBeInstanceOf(Function);
+  });
+
+  it("ignores the continuation answer — the other question, and a different set", () => {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.handleLaunchTargets({ ...STARTABLE, capability: "continue" });
+    expect(menuActions(h).launchAgentHere).toBeUndefined();
+  });
+
+  it("withdraws the items again when the host reports nothing startable", () => {
+    const h = launchable();
+    h.controller.handleLaunchTargets({ ...STARTABLE, targets: [] });
+    expect(menuActions(h).launchAgentHere).toBeUndefined();
+  });
+
+  it("posts what the dialog collected against the worktree the menu was opened on", () => {
+    const h = launchable();
+    const info = firstWorktree();
+    (menuActions(h).launchAgentHere as (i: WorktreeInfo) => void)(info);
+    const agent = document.querySelector<HTMLSelectElement>("#wt-agent");
+    expect(agent?.value).toBe("claude");
+    const prompt = document.querySelector<HTMLTextAreaElement>("#wt-prompt");
+    if (prompt) {
+      prompt.value = "look at the diff";
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    const start = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /^Start agent/.test(b.textContent ?? ""),
+    );
+    start?.click();
+
+    expect(h.posts.filter((m) => m.type === "worktreeLaunchAgent")).toEqual([
+      {
+        type: "worktreeLaunchAgent",
+        worktreeId: info.id,
+        agent: "claude",
+        permissionChoiceId: "default",
+        prompt: "look at the diff",
+      },
+    ]);
+  });
+
+  it("resumes a row's session in the worktree that row is published under", () => {
+    // The worktree is the panel's own answer, from the presence envelope — a
+    // resume can never land in a worktree the row was not published under.
+    const h = launchable();
+    const rows = singleRepoPresence(1_000_000).rowsByWorktreeId;
+    const [worktreeId, published] = Object.entries(rows)[0] as [string, WorktreeAgentRow[]];
+    const row = published.find((r) => r.entryId !== undefined);
+    if (!row) {
+      throw new Error("fixture lost its session rows");
+    }
+    (menuActions(h).resumeHere as unknown as (r: WorktreeAgentRow) => void)(row);
+
+    expect(h.posts.filter((m) => m.type === "worktreeResumeHere")).toEqual([
+      { type: "worktreeResumeHere", worktreeId, rowId: row.rowId, entryId: row.entryId },
+    ]);
+  });
+
+  it("posts no resume for a row the presence envelope never published", () => {
+    const h = launchable();
+    (menuActions(h).resumeHere as unknown as (r: WorktreeAgentRow) => void)({
+      rowId: "ghost",
+      entryId: "claude:ghost",
+    } as WorktreeAgentRow);
+    expect(h.posts.filter((m) => m.type === "worktreeResumeHere")).toEqual([]);
+  });
+});
+
+describe("the destination a create opens on", () => {
+  /** The repo the fixture tree carries, and the host's answer for it. */
+  const REPO = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+  const MAIN = "/Users/dev/Projects/ai-oss/anywhere-terminal";
+  function defaults(over: Partial<WorktreeCreateDefaultsMessage> = {}): WorktreeCreateDefaultsMessage {
+    return {
+      type: "worktreeCreateDefaults",
+      repoId: REPO,
+      root: "/trees",
+      prefix: "anywhere-terminal",
+      path: "/trees/anywhere-terminal",
+      ...over,
+    };
+  }
+  function ready() {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    h.posts.length = 0;
+    return h;
+  }
+  function seed(h: Harness) {
+    return (
+      h.controller as unknown as { view: { deps: { createDialogDeps(): { repos: WorktreeCreateDefaults[] } } } }
+    ).view.deps.createDialogDeps();
+  }
+
+  it("asks the host where the create would go rather than deriving a path", () => {
+    const h = ready();
+    const first = firstWorktree();
+    menuActions(h).createWorktree?.(first);
+
+    expect(h.posts).toEqual([{ type: "requestWorktreeCreateDefaults", repoId: REPO }]);
+  });
+
+  it("seeds the form with nothing until the host has answered", () => {
+    // An empty seed makes `openCreateDialog` a no-op, which is the point: a
+    // form open on a guessed destination is worse than one that has not opened.
+    expect(seed(ready()).repos).toEqual([]);
+  });
+
+  it("seeds the form from the host's answer, not from the tree", () => {
+    const h = ready();
+    h.controller.handleCreateDefaults(defaults());
+
+    expect(seed(h).repos).toEqual([
+      {
+        repoId: REPO,
+        repoLabel: "anywhere-terminal",
+        mainPath: MAIN,
+        pathParent: "/trees",
+        pathPrefix: "anywhere-terminal",
+        // The host's path, always — this is the destination the create takes.
+        resolvedPath: "/trees/anywhere-terminal",
+        agents: [],
+      },
+    ]);
+  });
+
+  it("names the taken candidate AND the free path only when the host collided", () => {
+    const h = ready();
+    h.controller.handleCreateDefaults(
+      defaults({ path: "/trees/anywhere-terminal-2", collidedWith: "/trees/anywhere-terminal" }),
+    );
+
+    expect(seed(h).repos[0]).toMatchObject({
+      collidedWith: "/trees/anywhere-terminal",
+      resolvedPath: "/trees/anywhere-terminal-2",
+    });
+  });
+
+  it("opens the form when the answer for the repo the user asked about arrives", () => {
+    const h = ready();
+    menuActions(h).createWorktree?.(firstWorktree());
+    h.controller.handleCreateDefaults(defaults());
+
+    expect(document.querySelector(".wt-create-dialog, dialog, .wt-dialog")).not.toBeNull();
+  });
+
+  it("does not open the form for an answer nobody asked for", () => {
+    // Defaults also arrive unsolicited when another surface asked; storing them
+    // is right, opening a dialog over this user's panel is not.
+    const h = ready();
+    h.controller.handleCreateDefaults(defaults());
+
+    expect(document.querySelector(".wt-create-dialog, dialog, .wt-dialog")).toBeNull();
+  });
+});
+
+describe("what a mutation did comes back to the panel", () => {
+  const REPO = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+  function ready() {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    h.posts.length = 0;
+    return h;
+  }
+  function results(h: Harness): WorktreeActionResult[] {
+    return (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+  }
+
+  it("attaches a worktree-scoped result to its row and keeps the repo for prune", () => {
+    const h = ready();
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "lock",
+      repoId: REPO,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+      result: { kind: "ok" },
+    });
+
+    expect(results(h)).toEqual([
+      {
+        action: "lock",
+        repoId: REPO,
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        outcome: "ok",
+      },
+    ]);
+  });
+
+  it("attaches a repo-scoped result to the repo alone", () => {
+    const h = ready();
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "prune",
+      repoId: REPO,
+      result: { kind: "error", message: "fatal: nope" },
+    });
+
+    expect(results(h)).toEqual([{ action: "prune", repoId: REPO, outcome: "error", error: "fatal: nope" }]);
+  });
+
+  it("carries the unreadable sources through, so the notice can name them", () => {
+    const h = ready();
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "remove",
+      repoId: REPO,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+      result: { kind: "unavailable", unreadable: ["status", "sessions"] },
+    });
+
+    expect(results(h)[0]).toMatchObject({ outcome: "unavailable", unreadable: ["status", "sessions"] });
+  });
+
+  it("turns a blocked removal into the confirmation the host's own set authorizes", () => {
+    // Not a failure: the host declined and handed back what it assessed, so the
+    // notice reopens the confirmation bound to that exact fingerprint.
+    const h = ready();
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "remove",
+      repoId: REPO,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+      result: {
+        kind: "blocked",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        fingerprint: "fp-1",
+        blocker: {
+          dirty: true,
+          untracked: 2,
+          idlePanes: 1,
+          busyAgents: 0,
+          externalAgents: 0,
+          locked: false,
+          isMain: false,
+          containsWorktrees: [],
+        },
+      },
+    });
+
+    expect(results(h)[0]?.needsConfirm).toMatchObject({ fingerprint: "fp-1", dirty: true, untracked: 2 });
+  });
+
+  it("gives a refusal an empty fingerprint, because nothing can authorize it", () => {
+    const h = ready();
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "remove",
+      repoId: REPO,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+      result: {
+        kind: "blocked",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        fingerprint: null,
+        blocker: {
+          dirty: false,
+          untracked: 0,
+          idlePanes: 0,
+          busyAgents: 1,
+          externalAgents: 0,
+          locked: false,
+          isMain: false,
+          containsWorktrees: [],
+        },
+      },
+    });
+
+    expect(results(h)[0]?.needsConfirm).toMatchObject({ fingerprint: "", busyAgents: 1 });
+  });
+
+  it("replaces the previous result for the same verb and scope rather than stacking", () => {
+    // The older notice no longer describes the tree, and two answers to one
+    // question read as two separate events.
+    const h = ready();
+    const base = {
+      type: "worktreeMutationResult",
+      verb: "lock",
+      repoId: REPO,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+    } as const;
+    h.controller.handleMutationResult({ ...base, result: { kind: "error", message: "first" } });
+    h.controller.handleMutationResult({ ...base, result: { kind: "ok" } });
+
+    expect(results(h)).toEqual([
+      {
+        action: "lock",
+        repoId: REPO,
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        outcome: "ok",
+      },
+    ]);
+  });
+
+  it("lets a later removal outcome replace the blocked one it answers", () => {
+    // Round-3 W8: a blocked result that dropped `repoId` did not match the
+    // replacement key of the forced removal that followed it, so the panel
+    // showed the confirmation notice and its outcome at the same time.
+    const h = ready();
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "remove",
+      repoId: REPO,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+      result: {
+        kind: "blocked",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        fingerprint: "fp-1",
+        blocker: {
+          dirty: true,
+          untracked: 0,
+          idlePanes: 0,
+          busyAgents: 0,
+          externalAgents: 0,
+          locked: false,
+          isMain: false,
+          containsWorktrees: [],
+        },
+      },
+    });
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "remove",
+      repoId: REPO,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+      result: { kind: "ok" },
+    });
+
+    expect(results(h)).toEqual([
+      {
+        action: "remove",
+        repoId: REPO,
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        outcome: "ok",
+      },
+    ]);
+  });
+
+  it("keeps results for different worktrees side by side", () => {
+    const h = ready();
+    const base = { type: "worktreeMutationResult", verb: "lock", repoId: REPO } as const;
+    h.controller.handleMutationResult({
+      ...base,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel",
+      result: { kind: "ok" },
+    });
+    h.controller.handleMutationResult({
+      ...base,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/release",
+      result: { kind: "ok" },
+    });
+
+    expect(results(h).map((r) => r.worktreeId)).toEqual([
+      "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel",
+      "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/release",
+    ]);
+  });
+
+  it("retries only the removal an unreadable assessment names, unforced", () => {
+    // Unforced: what could not be read may still be a blocker, so a retry asks
+    // the same question again rather than answering it.
+    const h = ready();
+    const view = (h.controller as unknown as { view: { deps: { onRetryAction(r: WorktreeActionResult): void } } }).view;
+    view.deps.onRetryAction({
+      action: "remove",
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+      outcome: "unavailable",
+      unreadable: ["status"],
+    });
+
+    expect(h.posts).toEqual([
+      { type: "worktreeRemove", worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator", force: false },
+    ]);
+  });
+
+  it("drops a dismissed notice and leaves the rest", () => {
+    const h = ready();
+    const base = { type: "worktreeMutationResult", verb: "lock", repoId: REPO } as const;
+    h.controller.handleMutationResult({
+      ...base,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel",
+      result: { kind: "ok" },
+    });
+    h.controller.handleMutationResult({
+      ...base,
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/release",
+      result: { kind: "ok" },
+    });
+    const view = (
+      h.controller as unknown as { view: { deps: { onDismissActionResult(r: WorktreeActionResult): void } } }
+    ).view;
+    const first = results(h)[0] as WorktreeActionResult;
+    view.deps.onDismissActionResult(first);
+
+    expect(results(h).map((r) => r.worktreeId)).toEqual(["/Users/dev/Projects/ai-oss/anywhere-terminal-wt/release"]);
+  });
+
+  it("confirms the prune the indeterminate notice offers, on the count the tree's flags produce", () => {
+    // D14: git's `prunable` rides on every worktree the panel renders, so the
+    // count needs no protocol of its own. D13: it is still confirmed first.
+    const h = ready();
+    const view = (h.controller as unknown as { view: { deps: { onPrune(repoId: string): void } } }).view;
+    view.deps.onPrune(REPO);
+    expect(h.posts).toEqual([]);
+
+    clickPruneConfirm();
+    expect(h.posts).toEqual([{ type: "worktreePrune", repoId: REPO, confirmedCount: 1 }]);
+  });
+
+  it("opens the menu's prune on the count the tree's own flags produce", () => {
+    // The controller's own `repoFor`, not an injected one: D14 says the count
+    // is `prunable` on the rendered tree, and the fixture carries exactly one.
+    const h = ready();
+    menuActions(h).pruneRepo?.(firstWorktree());
+    expect(h.posts).toEqual([]);
+
+    clickPruneConfirm();
+    expect(h.posts).toEqual([{ type: "worktreePrune", repoId: REPO, confirmedCount: 1 }]);
+  });
+
+  it("posts nothing when the prune confirmation is cancelled", () => {
+    const h = ready();
+    menuActions(h).pruneRepo?.(firstWorktree());
+    pruneButton(/^Cancel$/)?.click();
+
+    expect(h.posts).toEqual([]);
+  });
+
+  it("forces a removal with the fingerprint the user was actually shown", () => {
+    const h = ready();
+    const view = (h.controller as unknown as { view: { deps: { onForceRemove(i: { id: string }, fp: string): void } } })
+      .view;
+    view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, "fp-9");
+
+    expect(h.posts).toEqual([
+      {
+        type: "worktreeRemove",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        force: true,
+        fingerprint: "fp-9",
+      },
+    ]);
+  });
+});
+
+describe("the destination follows the branch the user typed", () => {
+  const REPO = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+  /** The branch an answer was computed for, forwarded so a form can tell stale from current. */
+  it("forwards the branch an answer was computed for", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    h.controller.handleCreateDefaults({
+      type: "worktreeCreateDefaults",
+      repoId: REPO,
+      root: "/trees",
+      prefix: "anywhere-terminal",
+      path: "/trees/anywhere-terminal-feat-a",
+      branch: "feat/a",
+    });
+    const seeded = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { repos: { repoId: string; answersBranch?: string }[] } } };
+      }
+    ).view.deps
+      .createDialogDeps()
+      .repos.find((r) => r.repoId === REPO);
+    expect(seeded?.answersBranch).toBe("feat/a");
+  });
+
+  function ready() {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    h.posts.length = 0;
+    return h;
+  }
+  function dialogDeps(h: Harness) {
+    return (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            createDialogDeps(): {
+              repos: WorktreeCreateDefaults[];
+              onBranchChange(repoId: string, branch: string): void;
+              bindDefaults(apply: (next: WorktreeCreateDefaults) => void): void;
+            };
+          };
+        };
+      }
+    ).view.deps.createDialogDeps();
+  }
+
+  it("asks the host again, naming the branch, when the branch changes", () => {
+    // Round-3 B12: the host proved `<root>/<label>` free while the form
+    // submitted `<parent>/<prefix>-<branch>` — a different path nobody checked.
+    const h = ready();
+    dialogDeps(h).onBranchChange(REPO, "feat/login");
+
+    expect(h.posts).toEqual([{ type: "requestWorktreeCreateDefaults", repoId: REPO, branch: "feat/login" }]);
+  });
+
+  it("pushes an unsolicited answer into the form the user already has open", () => {
+    const h = ready();
+    const applied: WorktreeCreateDefaults[] = [];
+    dialogDeps(h).bindDefaults((next) => applied.push(next));
+
+    h.controller.handleCreateDefaults({
+      type: "worktreeCreateDefaults",
+      repoId: REPO,
+      root: "/trees",
+      prefix: "anywhere-terminal",
+      path: "/trees/anywhere-terminal-feat-login",
+    });
+
+    expect(applied.map((d) => d.resolvedPath)).toEqual(["/trees/anywhere-terminal-feat-login"]);
+  });
+
+  it("marks the collided candidate without ever presenting it as the destination", () => {
+    const h = ready();
+    h.controller.handleCreateDefaults({
+      type: "worktreeCreateDefaults",
+      repoId: REPO,
+      root: "/trees",
+      prefix: "anywhere-terminal",
+      path: "/trees/anywhere-terminal-2",
+      collidedWith: "/trees/anywhere-terminal",
+    });
+    const seeded = dialogDeps(h).repos[0];
+
+    expect(seeded).toMatchObject({
+      resolvedPath: "/trees/anywhere-terminal-2",
+      collidedWith: "/trees/anywhere-terminal",
+    });
+  });
+});
+
+describe("a notice outlives the row it was about", () => {
+  /** The fixture tree minus one worktree — what a successful removal leaves. */
+  function without(worktreeId: string): WorktreeTreeResponseMessage {
+    const tree = singleRepoTree();
+    const repo = tree.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    repo.worktrees = repo.worktrees.filter((w) => w.id !== worktreeId);
+    return { type: "worktreeTreeResponse", tree, presence: singleRepoPresence(1_000_000) };
+  }
+
+  const GONE = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel";
+
+  function removedNotice(h: Harness): void {
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "remove",
+      repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      worktreeId: GONE,
+      result: { kind: "ok" },
+    });
+  }
+
+  it("reports a removal in the order production produces — tree first, result second", () => {
+    // The coordinator awaits `settle()` in a `finally`, so the rebuilt tree
+    // reaches the surface BEFORE the promise resolves and `report()` runs. A
+    // test that pushes the result first is testing an order production never
+    // produces, which is how round 3's fix passed and still shipped broken.
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    h.controller.handleTreeResponse(without(GONE));
+    removedNotice(h);
+    expect(document.body.textContent).toContain("Remove done.");
+    expect(document.body.textContent).toContain("worktree-panel");
+  });
+
+  it("does not orphan a result that arrives before the first tree does", () => {
+    // No tree is not an empty tree — the same distinction B13 turned on. Every
+    // notice would otherwise be re-scoped before the first rebuild lands.
+    const h = mount();
+    h.controller.setVisible(true);
+    removedNotice(h);
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(results[0]?.worktreeId).toBe(GONE);
+    expect(results[0]?.orphanedLabel).toBeUndefined();
+  });
+
+  it("bounds orphan notices, which answer to no row that could retire them", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    const repo = singleRepoTree().repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    // One removal per row, all of them orphaned by the next rebuild.
+    for (const w of repo.worktrees) {
+      h.controller.handleMutationResult({
+        type: "worktreeMutationResult",
+        verb: "remove",
+        repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+        worktreeId: w.id,
+        result: { kind: "ok" },
+      });
+    }
+    for (let i = 0; i < 4; i++) {
+      h.controller.handleTreeResponse({
+        type: "worktreeTreeResponse",
+        tree: { ...singleRepoTree(), repos: [{ ...repo, worktrees: [] }] },
+        presence: singleRepoPresence(1_000_000),
+      });
+    }
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    // Six rows removed; the bound is what stops this growing with history.
+    expect(results.length).toBeLessThan(repo.worktrees.length);
+    expect(results.every((r) => r.orphanedLabel !== undefined)).toBe(true);
+  });
+
+  it("names the departed row by the path git showed, not the resolved id", () => {
+    // `id` is symlink-resolved and `displayPath` is git's own string, so a
+    // notice falling back to the id would name a path the user never saw.
+    const h = mount();
+    h.controller.setVisible(true);
+    const seeded = singleRepoTree();
+    const repo = seeded.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    repo.worktrees = [
+      ...repo.worktrees,
+      worktree({ id: "/private/var/wt/linked", displayPath: "/var/wt/linked", branch: "feat/sym" }),
+    ];
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+    h.controller.handleTreeResponse(response());
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "remove",
+      repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      worktreeId: "/private/var/wt/linked",
+      result: { kind: "ok" },
+    });
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(results[0]?.orphanedLabel).toBe("/var/wt/linked");
+  });
+
+  it("still reports a removal after the row it removed has gone", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    removedNotice(h);
+    // While the row is still there the notice hangs on it, unlabelled.
+    expect(document.body.textContent).toContain("Remove done.");
+
+    h.controller.handleTreeResponse(without(GONE));
+    expect(document.body.textContent).toContain("Remove done.");
+    // Re-scoped to the repo, it names what it was about.
+    expect(document.body.textContent).toContain("worktree-panel");
+  });
+
+  it("does not hand a recreated row someone else's result", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    removedNotice(h);
+    h.controller.handleTreeResponse(without(GONE));
+    // Recreated at the same id. The old notice must not climb back onto it.
+    h.controller.handleTreeResponse(response());
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(results).toEqual([expect.objectContaining({ action: "remove", orphanedLabel: expect.any(String) })]);
+    expect(results[0]?.worktreeId).toBeUndefined();
+  });
+
+  it("drops a result whose repository left the workspace", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    removedNotice(h);
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: { gitAvailable: true, unreadable: { count: 0, reasons: [] }, repos: [] },
+      presence: singleRepoPresence(1_000_000),
+    });
+    expect((h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults).toEqual([]);
+    expect(document.body.textContent).not.toContain("Remove done.");
+  });
+
+  it("forgets a create default for a repository that is no longer there", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    const defaults: WorktreeCreateDefaultsMessage = {
+      type: "worktreeCreateDefaults",
+      repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      root: "/trees",
+      prefix: "anywhere-terminal",
+      path: "/trees/anywhere-terminal",
+    };
+    h.controller.handleCreateDefaults(defaults);
+    const held = (h.controller as unknown as { createDefaults: Map<string, unknown> }).createDefaults;
+    expect(held.size).toBe(1);
+
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: { gitAvailable: true, unreadable: { count: 0, reasons: [] }, repos: [] },
+      presence: singleRepoPresence(1_000_000),
+    });
+    expect(held.size).toBe(0);
+  });
+
+  it("keeps a still-present row's notice on its row", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    removedNotice(h);
+    h.controller.handleTreeResponse(response());
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(results).toEqual([expect.objectContaining({ worktreeId: GONE })]);
+    expect(results[0]?.orphanedLabel).toBeUndefined();
+  });
+});

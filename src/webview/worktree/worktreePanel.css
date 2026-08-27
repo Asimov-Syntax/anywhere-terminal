@@ -1,0 +1,940 @@
+/* src/webview/worktree/worktreePanel.css — Styles for the Worktree view.
+ *
+ * Inlined into the webview <style> block at HTML-generation time by
+ * src/providers/webviewHtml.ts, after vaultPanel.css — the Worktree view is a
+ * fourth segment that swaps the vault panel's BODY, so it reuses that panel's
+ * shell (`.vault-panel`, `.vault-toolbar`, `.vault-body`, `.vault-empty`,
+ * `.vault-badge`, `.vault-context-menu`) and adds only its own `.wt-*` rules.
+ *
+ * Lifted from docs/ui/worktree.html (the reviewed shell), which settles the
+ * spacing, state shapes, and emphasis ladder that docs/design/worktree-panel-ui.md
+ * § 7.6 left to this task.
+ *
+ * Density: every row is one line. One fixed leading slot per level; indentation
+ * steps 18px (worktree 8 → agent 30 → subagent 48) so labels align down the tree.
+ * Emphasis ladder, four steps only: repo → branch → preview → age.
+ */
+
+/* Four segments no longer fit at sidebar width with icon + label, so unselected
+   segments keep the icon only. The selected one always shows its label — the
+   control has to answer "which view am I in" without a hover. */
+.vault-toolbar {
+  container-type: inline-size;
+  container-name: vaultbar;
+}
+.vault-segmented-label {
+  display: inline;
+}
+@container vaultbar (max-width: 400px) {
+  .vault-segmented button[aria-selected="false"] .vault-segmented-label {
+    display: none;
+  }
+}
+
+.wt-tree {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0 8px;
+}
+
+/* ── Repo group header (only when > 1 repo) ─────────────────────────────── */
+/* Strongest emphasis, no leading glyph slot: reads as a separator, not a row.
+   The disclosure chevron sits on the trailing edge so the label stays flush. */
+.wt-repo {
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  user-select: none;
+}
+.wt-repo:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.wt-repo:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.wt-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wt-repo-count {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+}
+.wt-chev {
+  display: inline-flex;
+  color: var(--vscode-descriptionForeground);
+  transition: transform 120ms ease-out;
+}
+.is-collapsed > .wt-chev,
+.wt-repo.is-collapsed .wt-chev {
+  transform: rotate(-90deg);
+}
+
+/* ── Worktree row ───────────────────────────────────────────────────────── */
+.wt-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 10px 3px 8px;
+  margin: 0 4px;
+  border-radius: 3px;
+  position: relative;
+  cursor: pointer;
+}
+.wt-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.wt-row:focus-visible,
+.wt-row.is-focused {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.wt-glyph {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground);
+  flex: 0 0 auto;
+}
+.wt-branch {
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-foreground);
+}
+.wt-branch--sha,
+.wt-branch--bare {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+.wt-row.is-missing .wt-branch {
+  color: var(--vscode-descriptionForeground);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent);
+}
+.wt-marks {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* Pills name WHICH worktree; badges say HOW it is. Two vocabularies, never mixed. */
+.wt-pill {
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
+  white-space: nowrap;
+}
+.wt-pill--here {
+  color: var(--vscode-charts-blue);
+  background: color-mix(in srgb, var(--vscode-charts-blue) 16%, transparent);
+}
+.wt-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 15px;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+}
+.wt-badge svg {
+  width: 9px;
+  height: 9px;
+}
+.wt-badge--missing {
+  color: var(--vscode-editorError-foreground);
+  border-color: color-mix(in srgb, var(--vscode-editorError-foreground) 45%, transparent);
+}
+.wt-badge--prunable {
+  opacity: 0.85;
+}
+
+/* ── Active worktree card (§ 7.3) ───────────────────────────────────────── */
+/* Wraps the branch row together with its agent rows, so ownership stays legible
+   when several worktrees are expanded at once. */
+.wt-card {
+  margin: 3px 4px;
+  padding: 1px 0 3px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+.wt-card > .wt-row {
+  margin: 0 1px;
+}
+
+/* ── State vocabulary (§ 7.2): one shape per state, colour only reinforces ── */
+.wt-state {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  justify-self: center;
+  position: relative;
+  box-sizing: border-box;
+}
+.wt-state--idle {
+  border-radius: 50%;
+  border: 1.5px solid var(--vscode-descriptionForeground);
+  opacity: 0.8;
+}
+.wt-state--running {
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--vscode-charts-blue) 28%, transparent);
+  border-top-color: var(--vscode-charts-blue);
+  animation: wt-spin 0.9s linear infinite;
+}
+.wt-state--waiting {
+  border-radius: 50%;
+  background: var(--vscode-charts-yellow);
+}
+.wt-state--waiting::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--vscode-charts-yellow);
+  opacity: 0.55;
+  animation: wt-pulse 1.6s ease-out infinite;
+}
+.wt-state--exited {
+  height: 0;
+  border-top: 1.5px solid var(--vscode-disabledForeground);
+  align-self: center;
+}
+@keyframes wt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes wt-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.6;
+  }
+  70% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wt-state--running {
+    animation: none;
+  }
+  .wt-state--waiting::after {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+/* The worktree row's glyph slot takes the same shapes when any agent inside is
+   active — one glyph slot, never two. */
+.wt-glyph .wt-state {
+  width: 10px;
+  height: 10px;
+}
+
+/* ── Collapsed presence pill (§ 3.5) ────────────────────────────────────── */
+/* Grouped by state, then identity; overflow is a count, so nine agents are the
+   same height as two. */
+.wt-presence {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  gap: 8px;
+  align-items: center;
+  margin: 1px 4px 2px 30px;
+  padding: 1px 5px 1px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  cursor: pointer;
+  max-width: calc(100% - 38px);
+}
+.wt-presence:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
+}
+.wt-presence:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.wt-presence-groups {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.wt-pgroup {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.wt-pgroup-icons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.wt-pgroup-icons .vault-badge {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+.wt-pgroup-icons .vault-badge svg {
+  width: 9px;
+  height: 9px;
+}
+.wt-pgroup-more {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Expanded presence: header row + one row per agent ──────────────────── */
+.wt-agents {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 2px 10px 2px 30px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+.wt-agents:hover {
+  color: var(--vscode-foreground);
+}
+.wt-agents:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+/* ── Agent row (§ 3.3) ──────────────────────────────────────────────────── */
+/* Gutter | state | icon | title | preview | model | +N | age.
+   The gutter always occupies space, so state dots align down a mixed list.
+   Preview is minmax(0,1fr) and title minmax(0,auto): the preview gives way first. */
+.wt-arow {
+  display: grid;
+  grid-template-columns: 13px 9px 14px minmax(0, auto) minmax(0, 1fr) auto auto 32px;
+  gap: 5px;
+  align-items: center;
+  padding: 2px 10px 2px 30px;
+  cursor: pointer;
+  position: relative;
+}
+.wt-arow:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.wt-arow:focus-visible,
+.wt-arow.is-focused {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.wt-arow.is-selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+.wt-gutter {
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground);
+  flex: 0 0 auto;
+}
+.wt-gutter svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease-out;
+}
+.wt-arow.is-open .wt-gutter svg {
+  transform: rotate(0);
+}
+.wt-arow:not(.is-open) .wt-gutter svg {
+  transform: rotate(-90deg);
+}
+.wt-aicon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+}
+.wt-aicon svg {
+  width: 12px;
+  height: 12px;
+}
+.wt-atitle {
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-foreground);
+}
+.wt-apreview {
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-descriptionForeground);
+}
+/* A 1-2 character preview is noise, not context: below 380px the preview COLLAPSES
+   ITS TRACK and keeps its grid item. Never `display:none` on a cell here — removing
+   the item re-flows auto-placement and drags the fixed age column off the right edge. */
+@container vault (max-width: 380px) {
+  .wt-arow {
+    grid-template-columns: 13px 9px 14px minmax(0, 1fr) 0 auto auto 32px;
+  }
+  .wt-apreview {
+    visibility: hidden;
+    overflow: hidden;
+  }
+}
+.wt-model {
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+}
+.wt-count {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+.wt-age {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Runs outside this window: labelled, and no focus is ever offered. */
+.wt-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 14px;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  white-space: nowrap;
+}
+/* Activity came from a fallback source — quiet, not an error. */
+.wt-confidence {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  cursor: help;
+}
+
+/* ── Subagent rows: history, deliberately NOT the live dot vocabulary ───── */
+.wt-hist {
+  margin: 0 4px 2px 42px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+/* Section state — reading, empty, unreadable, or "not all of it". Muted and
+   un-rowed, so it is never read as a delegation that happened. */
+.wt-hist-note {
+  padding: 2px 0 3px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+}
+.wt-hist-label {
+  padding: 2px 0 1px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+}
+.wt-srow {
+  display: grid;
+  grid-template-columns: 11px minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+  padding: 1px 6px 1px 0;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+}
+.wt-srow:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.wt-srow:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.wt-outcome {
+  width: 11px;
+  height: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.85;
+}
+.wt-outcome--done {
+  color: var(--vscode-descriptionForeground);
+}
+.wt-outcome--failed {
+  color: color-mix(in srgb, var(--vscode-editorError-foreground) 80%, var(--vscode-descriptionForeground));
+}
+.wt-stext {
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Notices: degraded, error, indeterminate ────────────────────────────── */
+.wt-notice {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: start;
+  margin: 2px 6px 4px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+}
+.wt-notice svg {
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+}
+.wt-notice b {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+.wt-notice--warn {
+  border-left-color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 10%, transparent);
+}
+.wt-notice--warn svg {
+  color: var(--vscode-editorWarning-foreground);
+}
+.wt-notice--error {
+  border-left-color: var(--vscode-editorError-foreground);
+  background: color-mix(in srgb, var(--vscode-editorError-foreground) 10%, transparent);
+}
+.wt-notice--error svg {
+  color: var(--vscode-editorError-foreground);
+}
+.wt-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wt-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+.wt-link:hover {
+  text-decoration: underline;
+}
+.wt-dismiss {
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  line-height: 1;
+}
+.wt-dismiss:hover {
+  color: var(--vscode-foreground);
+}
+.wt-reason {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  opacity: 0.9;
+  display: block;
+  margin-top: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── Loading skeleton (first load only; a refresh keeps the tree) ───────── */
+.wt-skel {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px 4px 8px;
+  margin: 0 4px;
+}
+.wt-skel span {
+  height: 9px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  animation: wt-shimmer 1.5s ease-in-out infinite;
+}
+.wt-skel span:first-child {
+  height: 11px;
+  width: 11px;
+  border-radius: 3px;
+  justify-self: center;
+}
+.wt-skel--agent {
+  padding-left: 30px;
+  grid-template-columns: 9px minmax(0, 1fr);
+}
+@keyframes wt-shimmer {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wt-skel span {
+    animation: none;
+  }
+}
+
+/* A quiet activity marker for a refresh that KEEPS the tree (§ 5). */
+.wt-refreshing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* "Show all" cap rather than silent truncation. */
+.wt-showall {
+  display: block;
+  width: calc(100% - 8px);
+  margin: 2px 4px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--vscode-textLink-foreground);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.wt-showall:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* ── Dialogs: create worktree (§ 3.2) and remove confirmation (§ 3.3) ───── */
+/* A sidebar is too narrow for a six-field form, so the dialog is viewport-fixed
+   and extends over the terminal rather than being clipped to the panel. This
+   works because `.vault-panel` deliberately establishes no containing block —
+   `container-type` lives on `.vault-body` instead, for the same reason the
+   session preview can overlay the terminal. Above `.vault-preview` (1000) and
+   `.vault-continue` (1100): a modal that renders behind either reads as a click
+   that did nothing. */
+.wt-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.5);
+}
+.wt-dialog {
+  position: fixed;
+  z-index: 1210;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  font-size: 12px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 6px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+/* The create form carries six fields and a path that must stay readable
+   unwrapped; the confirmation is one paragraph and stays narrow. */
+.wt-dialog--wide {
+  width: min(640px, calc(100vw - 32px));
+}
+.wt-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.wt-dialog-subject {
+  font-weight: 400;
+}
+.wt-dialog-title .wt-dismiss {
+  margin-left: auto;
+}
+.wt-dialog-path {
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  overflow-wrap: anywhere;
+}
+.wt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.wt-flabel {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.wt-flabel-opt {
+  opacity: 0.7;
+}
+.wt-input,
+.wt-select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.wt-input:focus,
+.wt-select:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.wt-input::placeholder {
+  color: var(--vscode-input-placeholderForeground);
+}
+.wt-input--mono {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+.wt-input.is-invalid {
+  border-color: var(--vscode-inputValidation-errorBorder);
+}
+.wt-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 46px;
+  resize: vertical;
+  padding: 5px 8px;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.wt-fhint {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow-wrap: anywhere;
+}
+.wt-fhint b {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+.wt-ferror {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--vscode-editorError-foreground);
+}
+.wt-dialog .vault-segmented button {
+  font-size: 11px;
+  padding: 3px 7px;
+}
+/* A dangerous permission choice is labelled and never preselected. */
+.wt-danger-tag {
+  margin: 0 5px 0 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 16%, transparent);
+}
+.wt-agentbox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+.wt-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+/* Blockers are named together, so one confirmation covers the whole risk. */
+.wt-blockers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.wt-blockers li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.wt-blockers svg {
+  width: 11px;
+  height: 11px;
+  margin-top: 2px;
+  color: var(--vscode-descriptionForeground);
+}
+.wt-warnbox,
+.wt-refusebox {
+  padding: 7px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.wt-warnbox {
+  border-left: 2px solid var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 10%, transparent);
+}
+.wt-refusebox {
+  border-left: 2px solid var(--vscode-editorError-foreground);
+  background: color-mix(in srgb, var(--vscode-editorError-foreground) 10%, transparent);
+}
+.wt-warnbox b,
+.wt-refusebox b {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+.wt-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.wt-btn {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+.wt-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+.wt-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.wt-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.wt-btn--primary {
+  margin-left: auto;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.wt-btn--primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+.wt-btn--danger {
+  margin-left: auto;
+  background: color-mix(in srgb, var(--vscode-editorError-foreground) 78%, #000);
+  color: #fff;
+}
+.wt-btn--danger:hover {
+  background: var(--vscode-editorError-foreground);
+}
+.wt-kbd {
+  margin-left: 6px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  opacity: 0.65;
+}

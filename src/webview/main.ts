@@ -40,16 +40,20 @@ import { createMessageRouter } from "./messaging/MessageRouter";
 import { createScrollbackDumpHandler } from "./messaging/scrollbackDumpHandler";
 import { ResizeCoordinator } from "./resize/ResizeCoordinator";
 import { SplitTreeRenderer } from "./split/SplitTreeRenderer";
+import { resolveTabDisplayPane } from "./split/tabDisplay";
 import { WebviewStateStore } from "./state/WebviewStateStore";
 import { buildTabBarData, handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 import { hideRenameOverlay, repositionRenameOverlay, showRenameOverlay } from "./tabRenameOverlay";
 import { hasCurrentCursorApproval, hasStrictCursorTitle } from "./terminal/CursorApprovalDetector";
+import { createPaneEvidenceReporter } from "./terminal/paneEvidenceReporter";
 import { formatRestoreDivider } from "./terminal/restoreDivider";
 import { TerminalActivityTracker } from "./terminal/TerminalActivityTracker";
 import { TerminalFactory } from "./terminal/TerminalFactory";
 import { ThemeManager } from "./theme/ThemeManager";
 import { showBanner } from "./ui/BannerService";
 import { VaultPanel } from "./vault/VaultPanel";
+import { activatePane } from "./worktree/activatePane";
+import { resolveInitialView, WorktreeController } from "./worktree/WorktreeController";
 
 // Inject the vendored Seti icon-font @font-face rule (with the woff embedded
 // as a data URL) into the document. Lives in the webview bundle because
@@ -93,9 +97,19 @@ const vscode = acquireVsCodeApi();
 const store = new WebviewStateStore(vscode);
 const themeManager = new ThemeManager("sidebar");
 let isComposing = false;
+/**
+ * Pane title + waiting evidence for the extension host's window-wide presence
+ * view. Ungated by which body this surface is showing: presence is window
+ * state, and a surface that only reported while the Worktree view was open
+ * would blind the host to exactly the panes it alone renders.
+ *
+ * See: asimov/changes/add-host-pane-evidence/design.md D7, D8.
+ */
+const paneEvidenceReporter = createPaneEvidenceReporter((msg) => vscode.postMessage(msg));
 const activityTracker = new TerminalActivityTracker({
   getTerminal: (sessionId) => store.terminals.get(sessionId),
   onStatusChange: () => updateTabBar(),
+  onWaitingChange: (sessionId, waiting) => paneEvidenceReporter.reportWaiting(sessionId, waiting),
 });
 const cursorHookIdentity = new Set<string>();
 
@@ -111,6 +125,12 @@ const factory = new TerminalFactory({
   store,
   postMessage: (msg) => vscode.postMessage(msg),
   onTabBarUpdate: () => updateTabBar(),
+  onTitleEvidence: (sessionId, rawTitle) => {
+    paneEvidenceReporter.reportTitle(sessionId, rawTitle);
+    // The tab classifies the same title the host does, from the same site, so
+    // the two can never come to different answers about one pane.
+    activityTracker.setTitle(sessionId, rawTitle);
+  },
   getIsComposing: () => isComposing,
   getHoverPreviewTheme: () => themeStore.kind,
   getHoverPreviewSettings: () => hoverPreviewSettingsStore.settings,
@@ -328,6 +348,7 @@ let fileTreeController: FileTreeController | null = null;
 // stacked directly above the file tree inside `#aux-region`. Fed by
 // `vaultSessionsResponse`. See: webview/vault/VaultPanel.ts.
 let vaultPanel: VaultPanel | null = null;
+let worktreeController: WorktreeController | null = null;
 
 // ─── Orchestration ──────────────────────────────────────────────────
 
@@ -383,10 +404,18 @@ function startInlineRename(tabId: string, tabEl: HTMLElement, tabBarEl: HTMLElem
 }
 
 function switchTab(newTabId: string): void {
-  const next = store.terminals.get(newTabId);
-  if (!next) {
+  // Not `terminals.get(newTabId)`: a tab is keyed by the pane it was created
+  // from, and closing that particular pane leaves the tab alive with its other
+  // leaves. Gating on the original pane made such a tab unreachable from the tab
+  // bar and from a worktree row alike (round-2 B2).
+  const displayPaneId = resolveTabDisplayPane(newTabId, {
+    tabLayouts: store.tabLayouts,
+    hasTerminal: (sessionId) => store.terminals.has(sessionId),
+  });
+  if (displayPaneId === null) {
     return;
   }
+  const next = store.terminals.get(newTabId);
 
   // A keyboard-driven tab switch would otherwise leave the body-mounted subagent
   // popup overlaying the newly active tab (mouse switches dismiss it via the
@@ -405,20 +434,40 @@ function switchTab(newTabId: string): void {
   // Show new tab
   store.activeTabId = newTabId;
   splitRenderer.showTabContainer(newTabId);
-  next.container.style.display = "block";
+  if (next) {
+    next.container.style.display = "block";
+  }
 
   // Fit after display change
   requestAnimationFrame(() => {
-    if (!store.terminals.has(newTabId)) {
+    const instance = store.terminals.get(displayPaneId);
+    if (!instance) {
       return;
     }
-    factory.fitAllAndFocus(newTabId, next);
+    factory.fitAllAndFocus(newTabId, instance);
   });
 
   splitRenderer.updateActivePaneVisual(newTabId);
   updateTabBar();
   syncVaultToActivePane();
   vscode.postMessage({ type: "switchTab", tabId: newTabId });
+}
+
+/** Bring a pane forward; the resolution itself lives in worktree/activatePane.ts. */
+function activatePaneById(paneId: string): boolean {
+  return activatePane(paneId, {
+    tabLayouts: store.tabLayouts,
+    canDisplayTab: (tabId) =>
+      resolveTabDisplayPane(tabId, {
+        tabLayouts: store.tabLayouts,
+        hasTerminal: (sessionId) => store.terminals.has(sessionId),
+      }) !== null,
+    setActivePane: (tabId, id) => store.tabActivePaneIds.set(tabId, id),
+    persist: () => store.persist(),
+    showTab: (tabId) => switchTab(tabId),
+    updateActivePaneVisual: (tabId) => splitRenderer.updateActivePaneVisual(tabId),
+    focusPane: (id) => store.terminals.get(id)?.terminal.focus(),
+  });
 }
 
 function removeTerminal(id: string): void {
@@ -442,6 +491,7 @@ function removeTerminal(id: string): void {
   store.terminals.delete(id);
   cursorHookIdentity.delete(id);
   activityTracker.delete(id);
+  paneEvidenceReporter.forget(id);
   flowControl.delete(id);
 
   // Delegate split cleanup to renderer; dispose the hover-preview controller of
@@ -451,6 +501,7 @@ function removeTerminal(id: string): void {
   for (const splitId of splitRenderer.removeTab(id)) {
     cursorHookIdentity.delete(splitId);
     activityTracker.delete(splitId);
+    paneEvidenceReporter.forget(splitId);
     factory.disposeHoverController(splitId);
   }
   store.persist();
@@ -519,6 +570,7 @@ const routeMessage = createMessageRouter({
   onExit(msg) {
     cursorHookIdentity.delete(msg.tabId);
     activityTracker.delete(msg.tabId);
+    paneEvidenceReporter.forget(msg.tabId);
     const instance = store.terminals.get(msg.tabId);
     if (instance) {
       instance.exited = true;
@@ -589,6 +641,7 @@ const routeMessage = createMessageRouter({
     const closed = splitRenderer.closeSplitPaneById(store.tabActivePaneIds.get(store.activeTabId) ?? store.activeTabId);
     if (closed) {
       activityTracker.delete(closed);
+      paneEvidenceReporter.forget(closed);
       factory.disposeHoverController(closed);
     }
     factory.disposeSubagentPopup(); // closing any pane dismisses the singleton popup (D7)
@@ -598,6 +651,7 @@ const routeMessage = createMessageRouter({
       const closed = splitRenderer.closeSplitPaneById(msg.sessionId);
       if (closed) {
         activityTracker.delete(closed);
+        paneEvidenceReporter.forget(closed);
         factory.disposeHoverController(closed);
       }
       factory.disposeSubagentPopup(); // closing any pane dismisses the singleton popup (D7)
@@ -712,6 +766,13 @@ const routeMessage = createMessageRouter({
     vaultPanel?.handleMessageRecordResponse(msg);
   },
   onVaultLaunchTargets(msg) {
+    // Two dialogs ask the same question with different capabilities, and the
+    // answers are different agent sets — so the reply is routed by what it says
+    // it answers, never broadcast to both.
+    if (msg.capability === "start") {
+      worktreeController?.handleLaunchTargets(msg);
+      return;
+    }
     vaultPanel?.handleLaunchTargets(msg);
   },
   onSubagentPreviewResponse(msg) {
@@ -734,6 +795,24 @@ const routeMessage = createMessageRouter({
   onOsClipboardPasteMiss(_msg) {
     // Empty-paste host probe found no image. Text paste never reaches here
     // (it stays on the native paste path); nothing to restore.
+  },
+  onWorktreeTreeResponse(msg) {
+    worktreeController?.handleTreeResponse(msg);
+  },
+  onWorktreeRowActivation(msg) {
+    worktreeController?.setRowActivation(msg.activation);
+  },
+  onWorktreeShowPreview(msg) {
+    worktreeController?.showPreview(msg.entryId);
+  },
+  onWorktreeActivatePane(msg) {
+    worktreeController?.activatePane(msg.paneId);
+  },
+  onWorktreeCreateDefaults(msg) {
+    worktreeController?.handleCreateDefaults(msg);
+  },
+  onWorktreeMutationResult(msg) {
+    worktreeController?.handleMutationResult(msg);
   },
   onVaultContextCwd(msg) {
     // Drop a reply for a pane that is no longer active (stale-guard): the user
@@ -954,8 +1033,27 @@ function handleInit(msg: InitMessage): void {
   // persists across reloads. See: add-ai-coding-vault/design.md D11.
   const vaultHost = document.getElementById("vault-panel");
   if (vaultHost) {
+    // Worktree segment — the window's own tree, pushed by the host and gated on
+    // this surface declaring the view visible. See: worktree/WorktreeController.ts.
+    worktreeController = WorktreeController.mount({
+      host: vaultHost,
+      postMessage: (m) => vscode.postMessage(m),
+      store,
+      init: { workspaceRoot: msg.workspaceRoot, rowActivation: msg.worktreeRowActivation },
+      // The overlay and the panes belong to the surfaces that hold them; the
+      // controller only forwards, so neither is rebuilt here (D2).
+      showPreview: (entryId) => vaultPanel?.openPreviewById(entryId) ?? false,
+      activatePane: (paneId) => activatePaneById(paneId),
+    });
     vaultPanel = new VaultPanel({
       host: vaultHost,
+      actionsAvailable: msg.vaultActionsAvailable,
+      worktreeBody: worktreeController.element,
+      onWorktreeQuery: (query) => worktreeController?.setQuery(query),
+      onWorktreeRefresh: () => worktreeController?.requestRefresh(),
+      onWorktreeVisibility: (visible) => worktreeController?.setVisible(visible),
+      getInitialView: () => resolveInitialView(store.getState().vaultView, msg.worktreeHasRepo),
+      persistView: (view) => store.updateState({ vaultView: view }),
       postMessage: (m) => vscode.postMessage(m),
       getActiveSessionId: () => {
         const tabId = store.activeTabId;

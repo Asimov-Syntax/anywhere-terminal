@@ -240,8 +240,11 @@ record type to match (`claudeReader.ts:268`).
 | Root filter | null-or-empty parent | `:70` |
 | Titles | placeholder titles treated as untitled; subtask suffixes split into title + agent | `:118,140` |
 | Detail windows | messages 100/2000, parts 1000/4000, children 100 | `:46-51` |
-| Omission | proven by `OFFSET` probes, not inferred from counts | `:690-691` |
-| Snapshot economy | all seven detail queries share **one** snapshot | `:703` |
+| Omission | proven by `OFFSET` probes, not inferred from counts — one per bounded read, children included | `:690-691` |
+| An unproven bound | a probe is consulted only when its query came back saturated; below the bound the result proves itself and the probe is ignored. Saturated with no proof either way fails the read rather than claiming a verdict | `:786-795` |
+| Delegation identity | a subtask part and a child session can record the same invocation, and the source carries no id linking them. Every exact title match is reserved before any agent-only fallback runs, so a guess can never take a child another subtask can prove is its own | `:583-604` |
+| Declared delegations | the count the correlation accounted for, raised to the bound's lower bound when overflow is proven — never merely what survived a window | `:615,781` |
+| Snapshot economy | all eight detail queries share **one** snapshot | `:703` |
 | Ordering | timestamp with a reversed id tie-break, so head and tail can neither overlap nor skip | `:679-682` |
 | Record read | JSON assembled and size-capped **inside** SQL, so an oversized record never enters the host | `:599` |
 | Point lookup | no parent filter, so a child session resolves by id | `:282` |
@@ -334,6 +337,8 @@ alive now* for [agent-cli-integration.md](agent-cli-integration.md) § 5.
 | Board agent with no transcript | leaf carries no id and renders non-clickable (`claudeChildren.ts:143`) |
 | Subagent meta missing | stub still listed from the transcript alone (`claudeChildren.ts:459`) |
 | Source omitted content | `partial` + a reason, never a silently short timeline (`detail.ts:181,198`) |
+| A bound that dropped nothing | not `partial`. A false one is not cosmetic: the nested preview discards every partial detail (`PreviewController.ts:449`) |
+| One invocation recorded twice | one timeline item, the openable one (`opencodeReader.ts:583`, `detail.ts:785`) |
 
 ## 12. Scale
 

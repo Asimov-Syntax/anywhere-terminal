@@ -187,7 +187,9 @@ async function readDirectoryViaHost(host: FileTreeHost, dirPath: string): Promis
     },
     (m) => posted.push(m as ReadDirectoryResponseMessage),
   );
-  for (let i = 0; i < 100 && posted.length === 0; i++) {
+  // 5 s, not 1 s: the response lands in well under 100 ms unloaded, but a 1 s
+  // budget makes this fail whenever the suite shares a CPU with a type-check.
+  for (let i = 0; i < 500 && posted.length === 0; i++) {
     await new Promise((r) => setTimeout(r, 10));
   }
   expect(posted.length).toBe(1);

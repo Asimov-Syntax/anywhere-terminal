@@ -582,6 +582,37 @@ describe("buildTabBarData", () => {
     expect(buildTabBarData(idle).get("tab-1")?.activityStatus).toBe("idle");
   });
 
+  it("falls back to the default name when a program cleared the title", () => {
+    const store = source({
+      tabLayouts: new Map([["tab-1", createLeaf("tab-1")]]),
+      terminals: new Map([["tab-1", { name: "", defaultName: "Terminal 3", customName: null }]]) as never,
+    });
+
+    expect(buildTabBarData(store).get("tab-1")?.name).toBe("Terminal 3");
+  });
+
+  it("keeps a user's name over the fallback when the title is cleared", () => {
+    const store = source({
+      tabLayouts: new Map([["tab-1", createLeaf("tab-1")]]),
+      terminals: new Map([["tab-1", { name: "", defaultName: "Terminal 3", customName: "build" }]]) as never,
+    });
+
+    expect(buildTabBarData(store).get("tab-1")?.customName).toBe("build");
+  });
+
+  it("falls back for the active pane of a split tab too", () => {
+    const store = source({
+      tabLayouts: new Map([["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-b"))]]),
+      tabActivePaneIds: new Map([["tab-1", "pane-b"]]),
+      terminals: new Map([
+        ["tab-1", { name: "Shell", defaultName: "Terminal 1", exited: false, activityStatus: "idle" }],
+        ["pane-b", { name: "", defaultName: "Terminal 2", exited: false, activityStatus: "idle" }],
+      ]) as never,
+    });
+
+    expect(buildTabBarData(store).get("tab-1")?.name).toBe("Terminal 2");
+  });
+
   it("shows action-required when any non-exited split pane is waiting", () => {
     const store = source({
       tabLayouts: new Map([["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-b"))]]),

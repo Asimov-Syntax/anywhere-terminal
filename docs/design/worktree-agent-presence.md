@@ -65,8 +65,12 @@ WorktreeAgentRow {
   finishedAt?:     number        // when the last turn ended; set only while `idle` after work
   lastActivityAt?: number        // newest evidence timestamp — the worktree ordering key
   pid?:         number           // external rows only
-  subagents?:   WorktreeSubagentRow[]
+  delegations?: DelegationRoster  // absent = never read — see § 3.6
 }
+
+DelegationRoster =
+  | { kind: "ok", rows: WorktreeSubagentRow[], incomplete?: boolean }
+  | { kind: "failed", reason: string }
 
 WorktreeSubagentRow {
   name:     string               // agent type, or the invoking tool when undeclared
@@ -152,11 +156,17 @@ by title or not at all. That is stated as a limitation in the UI, not papered ov
 | `exited` | The pty exited **while the pane is still open** | `output` |
 | `waiting` | Waiting evidence is set for the pane | `output` |
 | `running` | Output seen within the idle window, or semantic working evidence | `output` |
+| `idle` | A shell name in the title overruled live work | `title` |
 | `idle` | None of the above | `output` |
 
-These are the same rules `TerminalActivityTracker` applies
-(`src/webview/terminal/TerminalActivityTracker.ts:112-127`), but **presence cannot consume
-that tracker**, and assuming it can is a mistake worth stating plainly:
+`activitySource` names the rule that **decided**, not the state it landed in. `idle` is reached
+three ways, so an idle pane that merely happens to carry a shell title is `output` — crediting the
+title there reports a cause that was not one. The projection therefore returns the winning rule
+alongside the activity rather than letting each consumer re-derive it.
+
+These are the same rules `TerminalActivityTracker` applies — literally the same, since both
+sides now call the projection extracted into `src/shared/paneEvidence.ts` — but **presence
+cannot consume that tracker**, and assuming it can is a mistake worth stating plainly:
 
 - The tracker is **webview-side**. It is constructed in the webview entry point and reads
   that webview's own terminal store (`src/webview/main.ts:96`). Presence is projected in the
@@ -166,8 +176,10 @@ that tracker**, and assuming it can is a mistake worth stating plainly:
   in the editor. Since this view's scope is *the window*, a per-surface tracker is
   structurally the wrong source.
 
-So the host projects activity itself. The projection **rules** are shared with the tracker —
-extracted as pure logic used by both — so the two cannot drift into disagreeing about what
+So the host projects activity itself, from evidence held per pane in a window-scoped registry
+(`src/session/PaneEvidenceStore.ts`) that surfaces report into and the host writes directly.
+The projection **rules** are shared with the tracker — extracted as pure logic used by both
+(`src/shared/paneEvidence.ts`) — so the two cannot drift into disagreeing about what
 `running` means. Duplicating the rules instead of sharing them is how the tab bar and the
 worktree row end up showing different states for the same pane.
 
@@ -181,10 +193,10 @@ detail to be discovered during the task.
 |--------|----------------------|----------------------|
 | Pane exists / destroyed / cwd | Yes — `SessionManager` is the registry | Direct read, plus lifecycle events it must now emit |
 | Pty exit | Yes | Existing exit path |
-| Output seen | Yes — the host buffers and flushes every pane's output | Tap the same flush point; a timestamp per pane, not the bytes |
+| Output seen | Yes — the host buffers and flushes every pane's output | Tap the same flush point; a timestamp per pane, not the bytes — recorded when the surface takes delivery, so host and tab count the same output |
 | Semantic agent status | Yes — the host **sends** these to the webview (`SessionManager.ts:1444`) | Read at the source instead of round-tripping |
 | Pane title | **No** — the title is xterm state, known only inside the webview | Each surface reports its panes' decoration-stripped titles to the host |
-| Waiting evidence | **No** — derived in the webview tracker today | Either report it alongside the title, or move its derivation host-side with the shared rules |
+| Waiting evidence | **No** — derived in the webview tracker today | Reported by the surface, on its own message — the derivation stays where the xterm state it reads lives |
 
 Two of those six flow the wrong way today, so the seam needs a webview→host direction that
 does not currently exist. Its contract:
@@ -196,8 +208,18 @@ does not currently exist. Its contract:
 - **The host deduplicates by pane id, not by surface.** The same pane can be reported by more
   than one surface; last write wins, and they agree because the value is normalized.
 - **A surface's disposal retracts nothing.** Panes outlive the surfaces that render them, so
-  a closed sidebar must not blank the titles it was reporting. Only `SessionManager` removing
-  a session removes its evidence.
+  a closed sidebar must not blank the titles it was reporting.
+- **Evidence lives as long as the pane, which is not as long as its session.** A pty exiting
+  naturally removes the session from `SessionManager` while the tab is still on screen showing
+  `[Process exited]`, and that tab must keep reading `exited`. Evidence is therefore discarded
+  by pane closure — one pane closing, or a whole view closing and taking its panes with it —
+  never by the session leaving the map. Closing a pane and closing a view are two distinct
+  paths in `SessionManager`, and both must discard.
+- **Title and waiting evidence travel independently.** A message carries the fields that
+  changed and no others, so reporting a title never restates a waiting value the call did not
+  observe. An empty title is a reported value, not the absence of one: a program that clears
+  its title has stopped claiming to be anything, which is different from a pane no surface has
+  reported yet.
 - **Absence is not `none`.** A pane no surface has reported yet has *unknown* title evidence,
   which falls through to the next identity rank — it does not resolve to "no agent".
 
@@ -227,23 +249,36 @@ worktree with a live agent started from another window or a bare terminal must n
 "nobody is working here" — a worktree view that under-reports is worse than one that says
 "external".
 
-1. `listRunningClaudeSessions()` (`src/vault/readers/runningSessions.ts:115`), already
-   liveness-probed and deduped — but it **never throws and maps an unreadable registry to an
-   empty list**. Presence therefore cannot tell "no agents are running" from "the registry
-   could not be read", and would silently clear every external row on a permissions error.
-   Extending it with a typed outcome that distinguishes the two is part of this work; without
-   that distinction the degraded-stickiness rule below has nothing to trigger on.
+1. `listRunningClaudeSessions()`, liveness-probed, deduped, and returning a **typed outcome**:
+   a registry directory that does not exist is `ok` with no sessions — a machine where Claude
+   never ran genuinely has none — while any other read failure is `failed` and carries its
+   reason. Mapping both to an empty list is what would silently clear every external row on a
+   permissions error, and it is what the degraded-stickiness rule below triggers on. A record
+   earns its place: the numeric filename stem must equal the payload pid (Claude writes
+   `${process.pid}.json` carrying `pid: process.pid`, so a mismatch is malformed by
+   construction and could otherwise impersonate whatever live process it names), the session id
+   must pass the same canonical guard every Claude reader uses, the cwd must be absolute, and a
+   launch time is honoured only when finite and non-negative.
 2. Drop headless one-shots via `isHeadlessSession` — `claude -p` hook subprocesses are the
    single largest source of phantom "an agent is running" rows (`01-agent-detection.md`
    § 3.3).
 3. Normalize each session's `cwd`, map to a worktree by § 3.1.
 4. **Dedupe against window panes**: resolve each window pane's session id (the existing
-   `resolveClaudeSession` path). A registry session already claimed by a pane is that pane's
-   row — never a second, external row.
+   `resolveClaudeSession` path) — every pane this rebuild resolved, not merely the panes that
+   produced rows. A registry session already claimed by a pane is that pane's row — never a
+   second, external row. The limit is deliberate: a pane inside no worktree emits no row, so
+   its session can still surface as external under the registry's own cwd.
 5. What survives becomes `scope: "external"`, `agentSource: "registry"`,
    `activitySource: "registry"` — authoritative for identity by the § 2 derivation — with
    `activity: "running"` only while the pid is alive. There is no turn-level state without
    hooks, so an external row reports `running` (a live agent process) and never `waiting`.
+
+**A failed read retains, it does not clear.** The last successfully indexed session list is
+re-attributed against the current worktrees and the scope is marked degraded with the reason,
+so an unreadable registry leaves the rows standing rather than emptying them. Pane identity is
+told the registry failed rather than handed that retained list: resolving a pane against a list
+the failed read did not produce would manufacture identity evidence, where retaining what the
+pane last proved is both honest and cheaper.
 
 **External rows are non-focusable by contract.** There is no pane in this window to reveal.
 Their affordances are: open that worktree's folder, resume the session in a new terminal
@@ -269,6 +304,18 @@ Therefore:
   watcher event.
 - The UI must render them as history, not as live workers (see
   [worktree-panel-ui.md](worktree-panel-ui.md) § 4).
+- **A roster that could not be read is not an empty one.** The outcome is typed
+  (`DelegationRoster`), because an optional array collapses three different answers — not
+  asked yet, asked and none found, could not be read — into one shape, and the last two are
+  the pair a view must never confuse. `incomplete` is the reader's own admission that it
+  dropped records; nothing at this seam ever proves a roster is the whole of what the session
+  delegated, so completeness is only ever the absence of evidence of omission.
+- **A delegation is one row, whatever the source recorded.** A transcript may hold a
+  delegation twice — once as the invocation step, once as the child session it produced — and
+  the reader owes one timeline item per invocation, the openable one where both exist. This is
+  the vault reader's job, not presence's: only the reader knows which of its own bounded
+  windows dropped what, and de-duplicating downstream by name would fold genuinely repeated
+  delegations into one.
 
 Two structural rules hold in both this phase and the hook phase, because they follow from what
 a subagent *is* rather than from where the data came from:
@@ -306,8 +353,14 @@ their worktree.
 The external scan is the one polled source, because the PID registry emits no events. **Poll
 it at a flat 5 s while the Worktree view is the active segment on at least one surface, and
 not at all otherwise.** The scan is a readdir, a JSON parse per entry, and a `kill(0)` — low
-single-digit milliseconds. Tiered cadences with jitter would be more machinery than the thing
-being paced, and the cost of getting the tiers wrong exceeds anything they save.
+single-digit milliseconds. It is priced that way only because the poll runs an **external-only
+projection**: the pane pass is skipped and the last full pass's window rows, ranks and pane
+degradation are replayed, so a poll costs no process-table read. Replay is refused — and a full
+pass runs — when the worktree MEMBERSHIP has moved, never merely its order, since presence
+re-ranks the tree and a positional test would reject the replay after every ranking change. A
+poll also runs the full pass while pane evidence is outstanding, which it is until a full pass
+that read the panes completes and says so. Tiered cadences with jitter would be more machinery
+than the thing being paced, and the cost of getting the tiers wrong exceeds anything they save.
 
 "Active on at least one surface" is a window-level fact assembled from per-surface reports:
 three surfaces render this view independently, so the scan pauses only when none of them is
@@ -316,8 +369,14 @@ showing it.
 **Worktree ordering by presence is owned here**, not by the tree. The listing in
 [worktree-model.md](worktree-model.md) § 3.4 ranks worktrees with live panes above the rest,
 newest activity first; the ranking key is `max(lastActivityAt)` over that worktree's rows,
-supplied by this projection. Before presence has resolved, every worktree ranks as having
-none, so the order stabilizes on the next push rather than reshuffling mid-render.
+supplied by this projection. Order is baked into the cache when a repo is assembled, so
+presence-only work re-ranks the cached tree in place — but only while the cache has not yet
+applied the ranking the projection holds. That is tracked as a revision the CACHE
+acknowledges, never as "did the last projection differ": a projection the host discarded
+still advances the projector, and an assembly that writes one repo, or retains a degraded
+repo's existing rows, has not established a cache-wide order it could acknowledge. Before
+presence has resolved, every worktree ranks as having none, so the order stabilizes on the next
+push rather than reshuffling mid-render.
 
 ## 4. Interface
 
@@ -368,7 +427,7 @@ graph LR
 | Registry entry with a dead pid | Filtered by the existing liveness probe |
 | `claude -p` hook subprocess | Excluded by `isHeadlessSession` |
 | Title flips to `zsh` / `bash` / `pwsh` | Strong evidence the agent ended: force `idle`. A *neutral* title (`Terminal`) is not such proof |
-| Spinner-only title | Feeds `activity`, never `agent` |
+| Spinner-only title | Never `agent`, and never `activity` either. Decoration is stripped before a title reaches the host, so the host sees one report and cannot tell a spinner still animating from one frozen at the moment its process hung — deriving `running` from it would make a hung agent read as working forever. The evidence an agent is working is the **output** a live spinner produces, not the title it left behind |
 | Hundreds of panes | Mapping is O(panes × worktrees) with a small worktree count; bounded by § 7 |
 
 ## 7. Scale & Performance

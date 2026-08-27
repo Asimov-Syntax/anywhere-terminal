@@ -77,12 +77,31 @@ describe("applyTitleChange", () => {
     expect(instance.name).toBe("⠹ Run build");
   });
 
-  it("ignores an empty title without touching name or render", () => {
+  it("assigns a cleared title and re-renders, so the tab stops showing a title the pane dropped", () => {
+    // Was "ignores an empty title": the guard had no authority behind it — the
+    // spec says the instance takes the new title — and it left the tab showing
+    // a title the program had cleared. `buildTabBarData` supplies the visible
+    // fallback. See .reviews/round-2.md B2.
+    const instance = makeInstance();
+    const render = vi.fn();
+    applyTitleChange(instance, "Fix tests", render);
+    render.mockClear();
+
+    applyTitleChange(instance, "", render);
+
+    expect(instance.name).toBe("");
+    expect(render).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-render a title that was already empty", () => {
     const instance = makeInstance();
     const render = vi.fn();
     applyTitleChange(instance, "", render);
+    render.mockClear();
+
+    applyTitleChange(instance, "", render);
+
     expect(render).not.toHaveBeenCalled();
-    expect(instance.name).toBe("Terminal 1");
   });
 
   it("re-renders when the spinner disappears, so no frozen glyph is left on the tab", () => {

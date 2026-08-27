@@ -49,6 +49,13 @@ function terminalTabBarBottom(): number {
 
 export interface PreviewControllerDeps {
   postMessage: VaultPanelPostMessage;
+  /**
+   * Whether this surface can perform vault actions. The overlay itself is a READ
+   * and opens either way; its Resume, rename, Continue and Raw controls post
+   * messages an editor surface does not handle, so they are absent there rather
+   * than present and inert (.reviews/round-2.md B4). Default true.
+   */
+  actionsAvailable?: boolean;
   /** Whether the row context menu is open (Esc layering — one Esc shouldn't close both). */
   isContextMenuOpen: () => boolean;
   /** Close the context menu when a preview opens. */
@@ -65,6 +72,8 @@ export interface PreviewControllerDeps {
 
 export class PreviewController {
   private readonly deps: PreviewControllerDeps;
+  /** Cached from deps — see `PreviewControllerDeps.actionsAvailable`. */
+  private readonly actionsAvailable: boolean;
   /** Window chrome (card + FloatingWindow + scroll FABs + close-listeners + tooltips). */
   private readonly shell: FloatingPreviewShell;
   private readonly timelineBag: PreviewTimelineBag;
@@ -142,6 +151,7 @@ export class PreviewController {
   private followPillCount = 0;
 
   constructor(deps: PreviewControllerDeps) {
+    this.actionsAvailable = deps.actionsAvailable ?? true;
     this.deps = deps;
     this.shell = new FloatingPreviewShell({
       ariaLabel: "Session preview",
@@ -651,7 +661,7 @@ export class PreviewController {
       {
         isMaximized: () => this.shell.floatingWindow.isMaximized(),
         onMovePointerDown: (ev) => this.shell.floatingWindow.startMove(ev),
-        ...(canResumeVaultEntry(entry)
+        ...(this.actionsAvailable && canResumeVaultEntry(entry)
           ? {
               onResume: () => {
                 this.deps.postMessage({ type: "vaultResume", entryId: entry.id });
@@ -661,7 +671,7 @@ export class PreviewController {
           : {}),
         onToggleMaximize: () => this.shell.floatingWindow.toggleMaximize(),
         onClose: () => this.closePreview(),
-        onRenameTitle: (titleEl) => this.renameTitle(entry, titleEl),
+        ...(this.actionsAvailable ? { onRenameTitle: (titleEl: HTMLElement) => this.renameTitle(entry, titleEl) } : {}),
       },
     );
     this.shell.trackTooltips([...disposers, ...meta.disposers]);
@@ -800,7 +810,7 @@ export class PreviewController {
       body.appendChild(notice);
     }
 
-    if (metadataOnly) {
+    if (metadataOnly && this.actionsAvailable) {
       // Limited metadata has no transcript or message anchor. Continue starts an
       // independent session, so it deliberately carries no fork point.
       const continueBtn = document.createElement("button");
@@ -809,7 +819,7 @@ export class PreviewController {
       continueBtn.textContent = "Continue in New Session";
       continueBtn.addEventListener("click", () => this.continueFromMessage(entry.id, {}));
       body.appendChild(continueBtn);
-    } else {
+    } else if (!metadataOnly) {
       // Full chronological transcript, run-grouped + capped. The same renderer is
       // reused for nested transcripts so capping + pinned conclusions match (D14).
       renderTimelineInto(body, detail.timeline ?? [], "root", this.timelineBag);
@@ -819,11 +829,18 @@ export class PreviewController {
     // anchored continuation controls.
     this.disposeCurrentMessageActions();
     if (!metadataOnly) {
+      // `copy` is clipboard-local and works anywhere. Raw and Continue are not:
+      // they post `requestVaultMessageRecord` / `vaultContinueSession`, so they
+      // are omitted on a surface that answers neither (B4).
       this.disposeMessageActions = mountMessageActions(body, {
         copy: (text) => this.copyText(text),
-        copyRaw: (msgRef) => this.requestMessageRecord(entry.id, msgRef),
         timeline: () => this.activePreviewDetail?.timeline ?? [],
-        continueFrom: (fork) => this.continueFromMessage(entry.id, fork),
+        ...(this.actionsAvailable
+          ? {
+              copyRaw: (msgRef: string) => this.requestMessageRecord(entry.id, msgRef),
+              continueFrom: (fork: ForkPoint) => this.continueFromMessage(entry.id, fork),
+            }
+          : {}),
       });
     }
 

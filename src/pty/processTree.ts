@@ -12,7 +12,27 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 /** Hard cap on the `ps` shell-out so a hung/slow ps can't stall a click. */
-const PS_TIMEOUT_MS = 500;
+export const PS_TIMEOUT_MS = 500;
+
+/**
+ * The header-less two-column `pid ppid` invocation for this platform, or
+ * `undefined` where no process table is reachable (Windows and anything else).
+ *
+ *   macOS (BSD ps): `ps -axo pid=,ppid=`   Linux (procps): `ps -eo pid=,ppid=`
+ *
+ * Exported so `processTableSnapshot.ts` shares one platform matrix with
+ * `descendantPids`; two copies would drift the moment a platform is added.
+ */
+export function psTableArgs(platform: NodeJS.Platform): string[] | undefined {
+  switch (platform) {
+    case "darwin":
+      return ["-axo", "pid=,ppid="];
+    case "linux":
+      return ["-eo", "pid=,ppid="];
+    default:
+      return undefined; // Windows / unsupported → no subtree
+  }
+}
 
 /** Parse whitespace-separated `pid ppid` lines into a parent→children map. Pure. */
 export function parseProcessTable(text: string): Map<number, number[]> {
@@ -62,7 +82,8 @@ export interface ProcessTreeDeps {
   platform: NodeJS.Platform;
 }
 
-const defaultDeps: ProcessTreeDeps = {
+/** The real `ps` binding, shared with `processTableSnapshot.ts`. */
+export const defaultProcessTreeDeps: ProcessTreeDeps = {
   exec: (file, args, options) =>
     execFileAsync(file, args, options).then(({ stdout, stderr }) => ({
       stdout: stdout.toString(),
@@ -76,22 +97,16 @@ const defaultDeps: ProcessTreeDeps = {
  * invalid pid, an unsupported platform (e.g. Windows), or any `ps` failure —
  * never throws (the caller degrades to the cwd fallbacks).
  */
-export async function descendantPids(rootPid: number, deps: ProcessTreeDeps = defaultDeps): Promise<number[]> {
+export async function descendantPids(
+  rootPid: number,
+  deps: ProcessTreeDeps = defaultProcessTreeDeps,
+): Promise<number[]> {
   if (!Number.isInteger(rootPid) || rootPid <= 0) {
     return [];
   }
-  // Both invocations print a header-less two-column `pid ppid` table:
-  //   macOS (BSD ps): `ps -axo pid=,ppid=`   Linux (procps): `ps -eo pid=,ppid=`
-  let args: string[];
-  switch (deps.platform) {
-    case "darwin":
-      args = ["-axo", "pid=,ppid="];
-      break;
-    case "linux":
-      args = ["-eo", "pid=,ppid="];
-      break;
-    default:
-      return []; // Windows / unsupported → no subtree; cwd fallbacks take over
+  const args = psTableArgs(deps.platform);
+  if (args === undefined) {
+    return []; // Windows / unsupported → no subtree; cwd fallbacks take over
   }
   let stdout: string;
   try {

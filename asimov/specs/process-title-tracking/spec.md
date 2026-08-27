@@ -7,9 +7,13 @@ TBD
 ### Requirement: OSC Title Change Handling
 
 The webview SHALL listen for xterm.js `onTitleChange` events on each terminal instance and
-update the `TerminalInstance.name` property with the new title. The tab bar re-render
-SHALL be triggered only when the new title's **decorative signature** OR its
-**decoration-presence** differs from the previous title's.
+update the `TerminalInstance.name` property with the new title, including when that title is
+empty. The tab bar re-render SHALL be triggered only when the new title's **decorative
+signature** OR its **decoration-presence** differs from the previous title's.
+
+Where the resolved label would be empty — the title was cleared and no user-supplied name
+applies — the tab SHALL display the terminal's default `Terminal N` name instead, so clearing a
+title returns the tab to its original label rather than blanking it.
 
 Decoration-presence is part of the compared state because the tab label is rendered from
 the raw `name`: dropping the spinner glyph changes what the tab displays even when the
@@ -49,6 +53,12 @@ last wrote.
 - **WHEN** an instance's title changes from `⠙ Fix tests` to `Fix tests`
 - **THEN** the tab bar re-render MUST be triggered, so the tab does not keep displaying a
   spinner glyph for an agent that has stopped working.
+
+#### Scenario: A program clears the title
+
+- **WHEN** an instance whose title is `Fix tests` emits an empty title, and the user has not
+  renamed the tab
+- **THEN** the tab MUST display its default `Terminal N` name.
 
 ### Requirement: Tab Bar Process Name Display
 

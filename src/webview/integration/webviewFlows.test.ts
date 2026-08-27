@@ -91,6 +91,7 @@ describe("Integration: tab lifecycle with WebviewStateStore", () => {
     store.terminals.set("tab-1", {
       id: "tab-1",
       name: "Terminal 1",
+      defaultName: "Terminal 1",
       customName: null,
       terminal: t1 as unknown as Terminal,
       container: document.createElement("div"),
@@ -101,6 +102,7 @@ describe("Integration: tab lifecycle with WebviewStateStore", () => {
     store.terminals.set("tab-2", {
       id: "tab-2",
       name: "Terminal 2",
+      defaultName: "Terminal 2",
       customName: null,
       terminal: t2 as unknown as Terminal,
       container: document.createElement("div"),
@@ -180,6 +182,7 @@ describe("Integration: config update applied to terminals via store", () => {
     store.terminals.set("tab-1", {
       id: "tab-1",
       name: "Terminal 1",
+      defaultName: "Terminal 1",
       customName: null,
       terminal: t1 as unknown as Terminal,
       container: document.createElement("div"),
@@ -189,6 +192,7 @@ describe("Integration: config update applied to terminals via store", () => {
     store.terminals.set("tab-2", {
       id: "tab-2",
       name: "Terminal 2",
+      defaultName: "Terminal 2",
       customName: null,
       terminal: t2 as unknown as Terminal,
       container: document.createElement("div"),
