@@ -359,9 +359,9 @@ state. There is nothing to provision.
 | **Stage** | 4 |
 | **Size** | M |
 | **Labels** | None |
-| **Notes** | Risk: this is where a status pipeline starts lying if the guards are omitted |
+| **Notes** | Risk: this is where a status pipeline starts lying if the guards are omitted. Delivered except the interrupt clause — the field that would prove an interrupt is not sent on the events this build registers, so an interrupted turn reads as an ordinary finished one; see Deferred and agent-hook-server.md § 4.4 |
 | **Acceptance** | Turn state follows the documented event mapping, with boundaries, interrupts, and completions held open by working children each distinguished from an ordinary finished turn; a fresh status is authoritative over inference and decays to identity-only when stale; process reality — pty exit, a shell reclaiming the pane, a window reload — overrides anything published; nothing the agent reports can create vault state or cause a path to be opened; pane teardown leaves no status, roster, or token behind |
-| **Status** | in_progress |
+| **Status** | done |
 
 ---
 
@@ -400,6 +400,8 @@ state. There is nothing to provision.
 - ~~Cross-window agent focus~~ — not planned. External rows are labelled and non-focusable by design (DESIGN.md § 14 D6).
 - ~~Filtering the launch environment~~ — deferred to its own change, per DESIGN.md § 14 D24. Agent launches currently inherit the extension host's entire `process.env`, including credentials, because the agent allowlist merges over that clone rather than replacing it. This predates the feature and affects every vault launch; fixing it inside a worktree change would bury a security change in an unrelated diff. Recorded in DESIGN.md § 13.5 so it is not mistaken for a property the feature provides.
 - ~~Pty-write prompt delivery for agents without native seeding~~ — deferred at WT-005.3. Every agent this view offers declares native seeding, so the pty writer and the readiness signal it needs (worktree-actions.md § 4) would ship unused and untestable. An agent that cannot be seeded is offered no prompt field instead. Build it with the first agent that needs it.
+- ~~Distinguishing an interrupted turn from a finished one~~ — deferred at WT-006.3. The design mapped it to `is_interrupt` on `Stop` / `StopFailure`, but that field belongs to `PostToolUseFailure`, which this build does not register, so the flag would never have been set. The reducer reads `interrupted` only where a payload carries it and never synthesizes it. Needs an event Claude does not currently send, or keystroke inference, which is deferred separately.
+- ~~Reading a session's return from compaction as a state change~~ — deferred at WT-006.3. `SessionStart` with `source: "compact"` already lands the pane idle as a boundary, which is the half that matters for truthfulness. `PreCompact` — the half that would show the pane working while it compacts — exists in the payload schema but is not a registered event, and adding one is its own change with its own spec delta.
 - ~~Per-launch `--settings` hook injection~~ — considered and rejected at the 2026-08-25 triage. It would avoid writing to the user's agent config, but it duplicates a registration seam the extension already owns, loses coverage for agents the user starts by hand in an AT terminal, and the reference implementation explicitly tests that it does *not* take this route. Revisit only if config writes prove problematic in practice.
 
 ---

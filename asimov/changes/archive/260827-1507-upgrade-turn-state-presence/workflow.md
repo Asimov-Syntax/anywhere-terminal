@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-006.3`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-006.3`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -38,3 +38,4 @@ Sequencing: `src/extension.ts` is being rewritten by the WORKTREE-PHASE6 session
 Verify gate: project.md defines Lint as `biome check --write --unsafe`, so running it rewrote `ASCII_FRAME` in src/webview/worktree/worktreeFormat.ts (a file outside this change), dropping `\\` from the character class and with it the backslash spinner frame. Reverted; the gate was then observed with `biome check src/` (exit 0, 13 pre-existing CSS specificity warnings).
 Verify gate (round 1 fixes): tsc exit 0; `biome check src/` exit 0 (13 pre-existing CSS warnings + a pre-existing `noUselessEscapeInRegex` warning on src/webview/worktree/worktreeFormat.ts:23, identical at HEAD~1 and untouched by this change — its FIXABLE suggestion is the unsafe rewrite noted above and must not be applied); test:unit 4685 pass / 0 fail.
 Flake, recorded not hidden: src/extension.worktreeAssembly.test.ts intermittently fails 2-3 of its worktree create/launch/resume cases with `PTY_LOAD_FAILED` when the whole suite runs. Seen three times this change (two verify-task retries, once at the round-2 gate); each time it passes alone and on re-run, and the cases sit in menu/pty territory this change never touches. Not diagnosed here — flagged as pre-existing suite instability worth its own change.
+Approval taken under fastlane (Mode: fastlane in the build prompt) rather than by a user answering the gate; recorded here because the gate tick alone does not say who took it. Review closed at cycle 1 round 3: 0 blockers, 16 findings accepted across three rounds, 0 rebutted.

@@ -188,16 +188,25 @@ Minimum viable Claude event set for this phase:
 | `PreToolUse` (ordinary tool) | `working` | |
 | `PreToolUse` (ask-user-question tool) | `waiting` | The tool name decides, not the event name |
 | `PermissionRequest` | `waiting` | |
-| `Stop` / `StopFailure` | `done` | `is_interrupt` → `interrupted` |
+| `Stop` / `StopFailure` | `done` | See the interrupt note below |
 | `SubagentStart` / `SubagentStop` | roster change only | Re-emits the **cached** lead state — never fabricates lead completion |
 
 Pane state is the lead's state, with one gate: `done` is held at `working` while any roster
 child is still working. A lead that finished while its subagents run has not finished.
 
+**Interrupts are not detected.** An earlier revision of this table mapped `is_interrupt` on
+`Stop` / `StopFailure` to an `interrupted` turn. That field does not exist on those events —
+it belongs to `PostToolUseFailure`, which this build does not register — so nothing would
+ever have set it. The reducer therefore reads `interrupted` only where a payload actually
+carries it and never synthesizes it, and an interrupted turn is currently indistinguishable
+from an ordinary finished one. Detecting it needs an event Claude does not send; see the
+Deferred row in PLAN.md.
+
 `interactivePrompt` is one JSON string in one of two shapes — `{questions: …}` for a
 question, `{approval: {tool, summary}}` for a permission request — and is **never inherited
 across events**. Inheriting it is how a stale question card survives into the next turn
-(`03-interactive-prompts.md` § 3).
+(`03-interactive-prompts.md` § 3). No payload carries an approval `summary` either, so it is
+derived from the request's own `tool_input` rather than reported.
 
 Deferred to a later phase: Codex and OpenCode installers, answering questions from the panel,
 keystroke-inferred interrupt and answer detection, and notifications. The reducer's shape
