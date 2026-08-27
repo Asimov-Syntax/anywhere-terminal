@@ -525,13 +525,33 @@ describe("registration generation", () => {
     expect(genOf(cache, "/a/.git")).not.toBe(before);
   });
 
-  it("advances a degraded repository, whose retained listing was never re-observed", () => {
+  it("publishes NO generation for a repository whose listing was retained, not observed", () => {
+    // Both halves at once: an intent quoting the old number stops matching, and
+    // a new one has nothing to quote. Advancing instead would do only the first
+    // and mint authority over registrations nobody looked at (round-5 B7).
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    expect(genOf(cache, "/a/.git")).toEqual(expect.any(Number));
+    cache.applyRepo("/a/.git", listing([], { degraded: "`git worktree list` timed out." }));
+    // The listing is still shown — dropping to zero would read as a deletion.
+    expect(cache.read().repos[0]?.worktrees).toHaveLength(1);
+    expect(genOf(cache, "/a/.git")).toBeUndefined();
+    // And a listing that succeeds again publishes a fresh one.
+    cache.applyRepo("/a/.git", listing([worktree("/a", { kind: "main" })]));
+    expect(genOf(cache, "/a/.git")).toEqual(expect.any(Number));
+  });
+
+  it("keeps the generation when a repository is only annotated", () => {
+    // "Not being watched" is true ABOUT a repository, not a report of what it
+    // contains: its worktrees were observed by the rebuild that just ran, and
+    // withdrawing their token would refuse every launch on a host without file
+    // watching — which is what the assembly harness is.
     const cache = createWorktreeCache();
     cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
     const before = genOf(cache, "/a/.git");
-    cache.applyRepo("/a/.git", listing([], { degraded: "`git worktree list` timed out." }));
-    expect(cache.read().repos[0]?.worktrees).toHaveLength(1);
-    expect(genOf(cache, "/a/.git")).not.toBe(before);
+    cache.markDegraded("/a/.git", "not watched");
+    expect(cache.read().repos[0]?.degraded).toBe("not watched");
+    expect(genOf(cache, "/a/.git")).toBe(before);
   });
 
   it("advances every repository a whole-tree build re-listed", () => {

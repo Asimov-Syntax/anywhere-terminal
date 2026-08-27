@@ -521,11 +521,15 @@ export class WorktreeController {
     if (row.entryId === undefined || worktreeId === undefined) {
       return;
     }
+    const generation = this.generationOf(worktreeId);
     this.deps.postMessage({
       type: "worktreeResumeHere",
       worktreeId,
       rowId: row.rowId,
       entryId: row.entryId,
+      // Read at the click, from the tree the row was rendered from — the same
+      // freeze a dialog does, over a much shorter window (round-5 B5).
+      ...(generation === undefined ? {} : { generation }),
     });
   }
 

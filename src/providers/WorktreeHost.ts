@@ -64,6 +64,23 @@ export const EXTERNAL_SCAN_INTERVAL_MS = 5_000;
 /** The gate scope that rebuilds every repository; any other scope is a repoId. */
 export const WHOLE_TREE_SCOPE = "*";
 
+/** Where a launch would run, and which observation of it that answer came from. */
+interface LaunchTargetRecord {
+  path: string;
+  generation: number;
+}
+
+/**
+ * One admission's whole answer.
+ *
+ * Returned instead of a boolean so a caller cannot check one value and act on
+ * another — the shape `matchedRow` already uses for session rows, and the shape
+ * rounds 1-4 kept finding defects for the lack of (design.md D10).
+ */
+interface AdmittedLaunch extends LaunchTargetRecord {
+  worktreeId: string;
+}
+
 export interface WorktreeSurface {
   isReady(): boolean;
   post(message: ExtensionToWebViewMessage): void;
@@ -642,12 +659,32 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * Per repository, never the global `treeVersion`: a sibling repository
    * rebuilding must not refuse this launch.
    */
-  function generationOf(worktreeId: string): number | undefined {
-    for (const repo of cache.read().repos) {
+  function launchTarget(worktreeId: string): LaunchTargetRecord | undefined {
+    const tree = cache.read();
+    // A retained listing is not an observation. The cache keeps the last-good
+    // worktrees when a listing fails, which is right for DISPLAY — showing three
+    // worktrees marked degraded beats showing none — and wrong for authority: it
+    // advances the generation because it re-observed nothing, and admitting on
+    // that number would mint fresh authority over registrations discovery just
+    // failed to verify (round-5 B7).
+    if (!tree.gitAvailable) {
+      return undefined;
+    }
+    for (const repo of tree.repos) {
       const found = repo.worktrees.find((wt) => wt.id === worktreeId);
-      if (found) {
-        return found.missing === true ? undefined : repo.generation;
+      if (found === undefined) {
+        continue;
       }
+      // No registration published means the cache RETAINED this repository
+      // rather than observing it — see WorktreeCache. A repository that is
+      // merely unwatched still carries one: its listing WAS read, it just may
+      // go stale unnoticed, and refusing there would refuse every launch on a
+      // host whose file watching is unavailable.
+      if (found.missing === true || repo.generation === undefined) {
+        return undefined;
+      }
+      // git's own display string, never the normalized id.
+      return { path: found.displayPath, generation: repo.generation };
     }
     return undefined;
   }
@@ -697,9 +734,6 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return false;
     }
     const { agent, permissionChoiceId, prompt, offerId } = fields as Record<string, unknown>;
-    if (!admissibleGeneration(fields)) {
-      return false;
-    }
     if (typeof agent !== "string" || !admissiblePrompt(prompt)) {
       return false;
     }
@@ -727,18 +761,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   /**
-   * Whether a launch quotes the registration the host currently publishes.
+   * The target a request named, only if it quoted the registration the host
+   * currently publishes for it.
    *
-   * Only checked where a worktree already exists — a create names no worktree
-   * yet, and its generation is the one the created record carries afterwards
-   * (design.md D10).
+   * Only reached where a worktree already exists — a create names no worktree
+   * yet, and stays outside this guard by design (design.md D10).
    */
-  function admissibleGeneration(fields: unknown): boolean {
+  function admittedTarget(fields: unknown): AdmittedLaunch | undefined {
     const { worktreeId, generation } = fields as Record<string, unknown>;
     if (typeof worktreeId !== "string") {
-      return true;
+      return undefined;
     }
-    return typeof generation === "number" && generation === generationOf(worktreeId);
+    const target = launchTarget(worktreeId);
+    if (target === undefined || generation !== target.generation) {
+      return undefined;
+    }
+    return { worktreeId, ...target };
   }
 
   /** Resolve the start-capable targets for `surface`, remember them, and answer. */
@@ -993,11 +1031,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
       case "worktreeLaunchAgent": {
         const start = actions.startAgent;
-        const path = actionPath(msg.worktreeId, false);
-        if (!start || path === undefined) {
+        const { type: _type, ...fields } = msg;
+        const admitted = admittedTarget(fields);
+        if (!start || admitted === undefined) {
           return;
         }
-        const { type: _type, ...fields } = msg;
         // Admission first, and it is the HOST's own answer being checked, not
         // the registry's: an agent that resolves on this machine but was never
         // advertised for a fresh start is still not what the panel offered.
@@ -1009,25 +1047,23 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (!admissibleLaunch(surface, fields)) {
           return;
         }
-        launch(
-          surface,
-          msg.worktreeId,
-          () => start(fields.agent, path, launchOpts(fields)),
-          generationOf(msg.worktreeId),
-        );
+        launch(surface, admitted, (target) => start(fields.agent, target.path, launchOpts(fields)));
         return;
       }
       case "worktreeResumeHere": {
         const resume = actions.resumeSessionAt;
         // BOTH doors: the row must still hold this session, and the worktree
-        // must still be in the tree. Either half going stale launches nothing.
+        // must still be the registration the row was published under. A resume
+        // is raised on a rendered row like a launch is chosen from a rendered
+        // list, so it quotes its registration for the same reason and is
+        // refused on the same terms (round-5 B5).
         const row = matchedRow(msg.rowId, "entryId", msg.entryId);
-        const path = actionPath(msg.worktreeId, false);
-        if (!resume || row?.entryId === undefined || path === undefined) {
+        const admitted = admittedTarget(msg);
+        if (!resume || row?.entryId === undefined || admitted === undefined) {
           return;
         }
         const entryId = row.entryId;
-        launch(surface, msg.worktreeId, () => resume(entryId, path));
+        launch(surface, admitted, (target) => resume(entryId, target.path));
         return;
       }
     }
@@ -1043,24 +1079,25 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   function launch(
     surface: WorktreeSurface,
-    worktreeId: string,
-    resolve: () => Promise<CreateSessionOptions>,
-    /** The generation the caller established before any await. */
-    asked: number | undefined = generationOf(worktreeId),
+    admitted: AdmittedLaunch,
+    resolve: (target: AdmittedLaunch) => Promise<CreateSessionOptions>,
   ): void {
     const open = surface.launchAgent;
     if (!open) {
       return;
     }
-    void resolve()
+    void resolve(admitted)
       .then((launchOptions) => {
         // Asked again at the handoff, not only at the request: executable
         // resolution awaits, and neither a worktree removed while it ran nor a
-        // different one recreated at the same id may receive the session.
-        const path = actionPath(worktreeId, false);
-        if (asked === undefined || path === undefined || generationOf(worktreeId) !== asked) {
+        // different one recreated at the same id may receive the session. One
+        // lookup answers both halves, so the path used is always the path the
+        // compared registration belongs to.
+        const now = launchTarget(admitted.worktreeId);
+        if (now === undefined || now.generation !== admitted.generation) {
           return undefined;
         }
+        const path = now.path;
         // Re-resolved rather than reusing the pre-await path: git's own display
         // string for the registration that is there now.
         return { ...launchOptions, cwd: path };
@@ -1486,12 +1523,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       // watch means the listing it produced can go stale unnoticed. Saying so
       // is the difference between a stale tree and a tree known to be stale.
       if (watch.failureReason !== undefined) {
-        cache.applyRepo(repoId, {
-          worktrees: [],
-          reasons: [],
-          skipped: 0,
-          degraded: `This repository is not being watched, so its worktrees may be out of date: ${watch.failureReason}`,
-        });
+        // Annotated, not re-listed: an unwatched repository's worktrees were
+        // still observed by the rebuild that just ran, so this must not travel
+        // through the retain path and withdraw their registration token.
+        cache.markDegraded(
+          repoId,
+          `This repository is not being watched, so its worktrees may be out of date: ${watch.failureReason}`,
+        );
         // A cache write is a tree move, wherever it comes from. Delivery waits
         // for the projection that describes it.
         treeVersion += 1;

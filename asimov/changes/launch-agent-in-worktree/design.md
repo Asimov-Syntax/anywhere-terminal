@@ -198,10 +198,22 @@ moments when refusing is the wanted answer, the exposed window is admission plus
 resolution, and the user retries immediately. Scoped per repository, never the global
 `treeVersion`: an unrelated repository rebuilding must not refuse this launch.
 
+**A retained listing carries no token at all.** The cache keeps the last-good worktrees when a
+listing fails, because dropping to zero would read as "the user deleted these". That is right
+for display and no basis for authority: those registrations were not observed. So a retained
+apply publishes NO generation, which does both halves of the job — an intent quoting the old
+number stops matching, and a new one has nothing to quote. Advancing the number instead would
+have done only the first while minting fresh authority over registrations nobody looked at
+(round-5 B7). Being unwatched is different: that listing WAS read, it may merely go stale
+unnoticed, so it is an annotation on the repository rather than a re-listing of it, and it
+keeps its token.
+
 **One seam owns the sequence.** `admitLaunch` becomes synchronous — it performs no I/O today
 despite being `async`, and that gratuitous promise boundary is B5 — and returns the admitted
 intent rather than a boolean, so a caller cannot check one value and act on another. This is
-the shape `matchedRow` already uses for session rows. Immediately before the surface handoff
+the shape `matchedRow` already uses for session rows — and a resume quotes its registration for the same
+reason a launch does: it is raised on a rendered row, and the row can outlive the worktree
+under it (round-5 B5). Immediately before the surface handoff
 the worktree is re-resolved and the generation required to match; the path used is the one that
 re-resolution returned, never one captured earlier.
 

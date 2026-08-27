@@ -747,6 +747,14 @@ export interface WorktreeResumeHereMessage {
   worktreeId: string;
   rowId: string;
   entryId: string;
+  /**
+   * The registration the worktree carried when this row was rendered.
+   *
+   * Same rule as a launch's: the row the user acted on is an answer the host
+   * published, and a replacement landing between the click and the receipt must
+   * not inherit it (design.md D10). Absent is refused, never assumed current.
+   */
+  generation?: number;
 }
 
 /**

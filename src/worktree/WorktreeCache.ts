@@ -14,8 +14,11 @@ import { orderWorktrees, type WorktreeActivityRank } from "./worktreeOrder";
 
 interface CachedRepo {
   repo: WorktreeRepo;
-  /** See `WorktreeRepo.generation` — advanced by every apply that touches this repo. */
-  generation: number;
+  /**
+   * See `WorktreeRepo.generation`. Absent when this repo's latest apply RETAINED
+   * its worktrees instead of observing them.
+   */
+  generation: number | undefined;
   /** This repo's own share of the tree's `unreadable`, replaced per rebuild. */
   reasons: string[];
   skipped: number;
@@ -26,6 +29,15 @@ export interface WorktreeCache {
   applyBuild(build: WorktreeTreeBuild): void;
   /** Update one repository. A repoId outside the resolved roots is ignored. */
   applyRepo(repoId: string, listing: RepoListing, rank?: WorktreeActivityRank): void;
+  /**
+   * Annotate a stored repository with a reason, leaving its listing alone.
+   *
+   * For things that are true ABOUT a repository rather than reports of what it
+   * contains — "this one is not being watched" is not an observation of its
+   * registrations, so it neither replaces them nor withdraws the registration
+   * token they were published under.
+   */
+  markDegraded(repoId: string, reason: string): void;
   /**
    * Re-sort every stored group against a rank taken now — no git read.
    *
@@ -49,12 +61,20 @@ export function createWorktreeCache(): WorktreeCache {
    * generation and a request quoting only the number cannot be read against the
    * wrong one.
    *
-   * Every apply takes a fresh number for the repository it touched, including
-   * one whose listing came back identical and one that came back degraded: both
-   * are moments the cache stopped being able to prove the registrations it holds
-   * are the ones it last reported. Neither `reorder` nor `read` takes one —
-   * neither re-reads git, so neither can have missed a replacement, and
-   * advancing there would refuse launches for nothing (design.md D10).
+   * Every apply that OBSERVED a repository takes a fresh number for it,
+   * including one whose listing came back identical: an identical listing is not
+   * proof of continuity, only proof that git says the same thing.
+   *
+   * An apply that RETAINED — a degraded listing, where the stored worktrees are
+   * kept because dropping to zero would read as "the user deleted these" —
+   * publishes no number at all. Absence does both halves of the job at once: an
+   * intent quoting the old number no longer matches, and a new one has nothing
+   * to quote. Advancing instead would invalidate the first while minting
+   * authority over registrations nobody looked at (round-5 B7).
+   *
+   * Neither `reorder` nor `read` takes a number — neither re-reads git, so
+   * neither can have missed a replacement, and advancing there would refuse
+   * launches for nothing (design.md D10).
    */
   let generationSeq = 0;
   const nextGeneration = (): number => (generationSeq += 1);
@@ -79,7 +99,7 @@ export function createWorktreeCache(): WorktreeCache {
     if (listing.degraded !== undefined && stored) {
       return {
         repo: { ...incoming, worktrees: stored.repo.worktrees, degraded: listing.degraded },
-        generation: nextGeneration(),
+        generation: undefined,
         reasons: stored.reasons,
         skipped: stored.skipped,
       };
@@ -119,8 +139,10 @@ export function createWorktreeCache(): WorktreeCache {
           resolved = remembered;
         } else if (remembered && stored) {
           next.set(remembered.repoId, {
+            // Retained for the same reason and on the same terms: this folder
+            // failed to resolve, so nothing here was observed either.
             repo: { ...stored.repo, degraded: outcome.reason },
-            generation: nextGeneration(),
+            generation: undefined,
             reasons: stored.reasons,
             skipped: stored.skipped,
           });
@@ -160,6 +182,14 @@ export function createWorktreeCache(): WorktreeCache {
     repos.set(repoId, merge(repoId, assembleRepo(root, listing, folders, rank), listing));
   }
 
+  function markDegraded(repoId: string, reason: string): void {
+    const cached = repos.get(repoId);
+    if (!cached) {
+      return;
+    }
+    repos.set(repoId, { ...cached, repo: { ...cached.repo, degraded: reason } });
+  }
+
   function reorder(rank?: WorktreeActivityRank): void {
     for (const cached of repos.values()) {
       cached.repo = { ...cached.repo, worktrees: orderWorktrees(cached.repo.worktrees, rank) };
@@ -179,7 +209,11 @@ export function createWorktreeCache(): WorktreeCache {
       // broadcast, and a consumer that mutates what it was handed must not be
       // able to edit the cache. The `WorktreeInfo` records inside stay shared —
       // copying each one per read costs with worktree count for no caller.
-      out.push({ ...cached.repo, generation: cached.generation, worktrees: [...cached.repo.worktrees] });
+      out.push({
+        ...cached.repo,
+        ...(cached.generation === undefined ? {} : { generation: cached.generation }),
+        worktrees: [...cached.repo.worktrees],
+      });
       count += cached.skipped;
       for (const reason of cached.reasons) {
         reasons.add(reason);
@@ -211,6 +245,7 @@ export function createWorktreeCache(): WorktreeCache {
   return {
     applyBuild,
     applyRepo,
+    markDegraded,
     reorder,
     read,
     roots: () => order,

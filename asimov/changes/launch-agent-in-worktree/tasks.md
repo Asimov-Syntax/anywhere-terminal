@@ -219,3 +219,21 @@
     - Verify: unit src/extension.worktreeAssembly.test.ts
   - **Plan**:
     1. `src/extension.worktreeAssembly.test.ts` — walk the menu launch through the replacement boundary at the assembly level, and hold create-then-launch to starting the agent it asked for (round-4 W6)
+
+## 8. Review round 5 fixes
+
+- [x] 8_1 Make the admitted intent the only thing a launch acts on — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 7_4
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-acts-on-the-registration-it-was-chosen-against, the-registration-token-is-not-derived-from-git-state, a-launch-resolves-its-own-target}, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
+  - **Boundary**: no launch path may read the tree twice for one decision
+  - **Acceptance**:
+    - Outcome: every launch path acts only on values one admission returned
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    0. `src/worktree/WorktreeCache.test.ts` — a retained apply publishes no registration; an observed one does
+    1. `src/worktree/WorktreeCache.ts` — a repository whose apply RETAINED rather than observed carries no registration at all, so the same absence both invalidates intents in flight and denies new ones; a repository merely unwatched keeps its own, because its listing was observed (round-5 B7)
+    2. `src/providers/WorktreeHost.ts` — one lookup returns the admitted intent (path, registration, normalized fields) or nothing; an unusable git admits nothing (round-5 B7, W7)
+    3. `src/types/messages.ts` — a resume quotes the registration it was published under, as a launch does
+    4. `src/webview/worktree/WorktreeController.ts` — quote it from the row the action was raised on (round-5 B5)
+    5. `src/providers/WorktreeHost.actions.test.ts` — resume across a replacement, a degraded repository admitting nothing, and an unrelated repository rebuilding refusing nothing
+    6. `src/webview/worktree/WorktreeController.test.ts` — the create form submits the offer it was opened against (round-5 W6)

@@ -280,11 +280,16 @@ async function builtHost(
   const head = { now: "def" };
   // Mutable, so a test can make the worktree disappear while a launch resolves.
   const missing = { now: gone };
+  /** Flipped by `degrade()`: `git worktree list` starts failing. */
+  const listingFails = { now: false };
   const isGone = () => missing.now;
   const base = runner(isGone, over.extra ?? [], head);
   const shared: GitCommandRunner = {
     run: async (args, cwd) => {
       argv.push([...args]);
+      if (listingFails.now && args[0] === "worktree") {
+        return res({ code: 128, stderr: "fatal: could not read the index" });
+      }
       return base.run(args, cwd);
     },
   };
@@ -338,6 +343,16 @@ async function builtHost(
      * commit produces, which no value git returns can distinguish (round-4 B6).
      */
     relist: async () => {
+      host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+      await settle();
+      noteTree(view);
+    },
+    /**
+     * Make the repository's listing fail, so the cache RETAINS what it holds
+     * rather than observing it.
+     */
+    degrade: async () => {
+      listingFails.now = true;
       host.handleMessage(view, { type: "requestWorktreeTree", force: true });
       await settle();
       noteTree(view);
@@ -1401,6 +1416,56 @@ describe("launching an agent", () => {
     dispose();
   });
 
+  it("admits nothing while the repository's listing is retained rather than observed", async () => {
+    // The cache keeps the last-good worktrees when a listing fails — right for
+    // display, and no basis at all for authority. A dialog opened now has no
+    // registration to quote, and one opened before quotes a number that is
+    // gone; both refuse (round-5 B7).
+    const startAgent = ok();
+    const { host, view, dispose, degrade } = await builtHost([windowRow()], false, { startAgent });
+    const stale = gen();
+    await degrade();
+    // Still displayed, so this is a refusal of authority, not of existence.
+    expect(view.posts.filter((m) => m.type === "worktreeTreeResponse").length).toBeGreaterThan(0);
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: stale,
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("refuses a launch quoting the registration a re-list has already replaced", async () => {
+    // Refused at ADMISSION, before the launcher is asked to resolve anything:
+    // a stale quote is not a request to check later, it is already wrong.
+    const startAgent = ok();
+    const { host, view, dispose, relist } = await builtHost([windowRow()], false, { startAgent });
+    const stale = gen();
+    await relist();
+    expect(gen()).not.toBe(stale);
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: stale,
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("refuses a prompt past the published bound rather than truncating it", async () => {
     const startAgent = ok();
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
@@ -1477,6 +1542,7 @@ describe("resuming a session into a worktree", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { resumeSessionAt });
     host.handleMessage(view, {
       type: "worktreeResumeHere",
+      generation: gen(),
       worktreeId: FEAT_PATH,
       rowId: "window:a",
       entryId: SESSION,
@@ -1484,6 +1550,27 @@ describe("resuming a session into a worktree", () => {
     await settle();
     expect(resumeSessionAt).toHaveBeenCalledWith(SESSION, FEAT_PATH);
     expect(view.launches).toEqual([OPTS]);
+    dispose();
+  });
+
+  it("refuses a RESUME quoting the registration the row was rendered under, once replaced", async () => {
+    // A resume is raised on a rendered row, so it inherits the same rule as a
+    // choice made from a rendered list: the row can survive a replacement — the
+    // session is still that session — while the worktree under it does not
+    // (round-5 B5).
+    const resumeSessionAt = vi.fn(async () => OPTS);
+    const { host, view, dispose, relist } = await builtHost([windowRow()], false, { resumeSessionAt });
+    const stale = gen();
+    await relist();
+    host.handleMessage(view, {
+      type: "worktreeResumeHere",
+      generation: stale,
+      worktreeId: FEAT_PATH,
+      rowId: "window:a",
+      entryId: SESSION,
+    });
+    await settle();
+    expect(resumeSessionAt).not.toHaveBeenCalled();
     dispose();
   });
 
@@ -1500,6 +1587,7 @@ describe("resuming a session into a worktree", () => {
     const { host, view, dispose, vanish } = await builtHost([windowRow()], false, { resumeSessionAt });
     host.handleMessage(view, {
       type: "worktreeResumeHere",
+      generation: gen(),
       worktreeId: FEAT_PATH,
       rowId: "window:a",
       entryId: SESSION,
@@ -1520,6 +1608,7 @@ describe("resuming a session into a worktree", () => {
     });
     host.handleMessage(view, {
       type: "worktreeResumeHere",
+      generation: gen(),
       worktreeId: FEAT_PATH,
       rowId: "window:a",
       entryId: SESSION,
@@ -1534,6 +1623,7 @@ describe("resuming a session into a worktree", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { resumeSessionAt });
     host.handleMessage(view, {
       type: "worktreeResumeHere",
+      generation: gen(),
       worktreeId: "/gone",
       rowId: "window:a",
       entryId: SESSION,

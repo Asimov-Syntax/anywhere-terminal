@@ -724,6 +724,39 @@ describe("the launch entry paths WT-005.3 supplies", () => {
     expect(posted?.generation).toBe(4);
   });
 
+  const CREATE_REPO = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+
+  it("submits the create against the offer the FORM was opened under", () => {
+    // The create form has the same shape of exposure as the launch dialog and
+    // was left out of the first freeze: it too renders one offer and is
+    // answered later (round-5 W6).
+    const h = launchable();
+    h.controller.handleLaunchTargets({ ...STARTABLE, offerId: "offer-1" });
+    (menuActions(h).createWorktree as (i: WorktreeInfo) => void)(firstWorktree());
+    h.controller.handleCreateDefaults({
+      type: "worktreeCreateDefaults",
+      repoId: CREATE_REPO,
+      root: "/trees",
+      prefix: "anywhere-terminal",
+      path: "/trees/anywhere-terminal",
+    });
+    h.controller.handleLaunchTargets({ ...STARTABLE, offerId: "offer-2" });
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: CREATE_REPO,
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "",
+      path: "/wt",
+      openAfter: "agent",
+      agentId: "claude",
+    });
+    const created = h.posts.filter((m) => m.type === "worktreeCreate")[0] as
+      | { launch?: { offerId?: string } }
+      | undefined;
+    expect(created?.launch?.offerId).toBe("offer-1");
+  });
+
   it("resumes a row's session in the worktree that row is published under", () => {
     // The worktree is the panel's own answer, from the presence envelope — a
     // resume can never land in a worktree the row was not published under.
