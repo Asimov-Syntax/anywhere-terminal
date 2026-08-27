@@ -10,11 +10,12 @@ import {
   AGENT_HOOK_REGISTRY,
   AGENT_HOOK_UNINSTALL_COMMAND,
   isAgentHookEnabled,
-  migrateAgentDestination,
   type SettingsReader,
 } from "./agentHooks/install/agentHookRegistry";
-import { ManagedConfigInstaller } from "./agentHooks/install/ManagedConfigInstaller";
-import { summarizeUninstall, uninstallAllAgents } from "./agentHooks/install/uninstallAllAgents";
+import { AgentHookTransitions, summarizeUninstall } from "./agentHooks/install/agentHookTransitions";
+import { ManagedConfigInstaller, managedWrapperCommand } from "./agentHooks/install/ManagedConfigInstaller";
+import { ManagedEntryLedger } from "./agentHooks/install/managedEntryLedger";
+import type { AgentConfigAdapter } from "./agentHooks/install/types";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
 import { createWatcherPool } from "./providers/fsWatcherPool";
 import { createGitDecorationProvider } from "./providers/gitDecorationProvider";
@@ -47,6 +48,7 @@ import { isPathInside } from "./utils/pathBoundary";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
+import type { VaultAgentId } from "./vault/types";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
@@ -344,19 +346,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // storageRoot, not the wrapper directory: each adapter appends its own
   // sub-directory, so cursor's on-disk location is unchanged.
   const agentHookStorageRoot = context.globalStorageUri.fsPath;
-  // Where each agent's entries currently live. A location setting that moves
-  // mid-session must clean the file it left behind, which the adapter can no
-  // longer resolve (install-claude-hooks round-1 B1).
-  const agentHookDestinations = new Map<string, string>(
-    AGENT_HOOK_REGISTRY.map((entry) => [entry.agent, entry.createAdapter(readAgentHookSetting).configPath()]),
-  );
+  // What this extension has recorded writing, and where. Persisted in
+  // globalState so a destination a previous session could not clean is still
+  // reachable after a restart (install-claude-hooks D12, D13).
+  const agentHookLedger = new ManagedEntryLedger(context.globalState);
+  const agentHookInstaller = (adapter: AgentConfigAdapter, agent: VaultAgentId) =>
+    new ManagedConfigInstaller(adapter, {
+      storageRoot: agentHookStorageRoot,
+      ownership: agentHookLedger.ownership(
+        agent,
+        managedWrapperCommand(adapter, { storageRoot: agentHookStorageRoot }),
+      ),
+    });
   const agentHookController = new AgentHookController({
     agents: AGENT_HOOK_REGISTRY.map((entry) => ({
       agent: entry.agent,
       initialEnabled: isAgentHookEnabled(entry, readAgentHookSetting),
-      installer: new ManagedConfigInstaller(entry.createAdapter(readAgentHookSetting), {
-        storageRoot: agentHookStorageRoot,
-      }),
+      installer: agentHookInstaller(entry.createAdapter(readAgentHookSetting), entry.agent),
     })),
     createRuntime: () =>
       createAgentHookRuntime(
@@ -403,51 +409,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   _activeAgentHookController = agentHookController;
 
+  const agentHookTransitions = new AgentHookTransitions({
+    registry: AGENT_HOOK_REGISTRY,
+    settings: readAgentHookSetting,
+    ledger: agentHookLedger,
+    createUninstaller: (adapter, agent) => agentHookInstaller(adapter, agent),
+    setDesiredEnabled: (agent, enabled) => agentHookController.setDesiredEnabled(agent, enabled),
+    onWarning: (agent, message) => console.warn(`[AnyWhere Terminal] ${agent} ${message}`),
+  });
+
   // Register before runtime binding awaits so changes during activation enter
-  // the same serialized controller and the latest desired setting wins.
+  // the same serialized queue and the latest desired setting wins.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      void (async () => {
-        for (const entry of AGENT_HOOK_REGISTRY) {
-          const enabled = isAgentHookEnabled(entry, readAgentHookSetting);
-          const previous = agentHookDestinations.get(entry.agent);
-          const current = entry.createAdapter(readAgentHookSetting).configPath();
-          let reconcile = event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`);
-          if (previous !== undefined && previous !== current) {
-            const migration = await migrateAgentDestination({
-              entry,
-              previous,
-              current,
-              storageRoot: agentHookStorageRoot,
-              uninstall: (adapter) =>
-                new ManagedConfigInstaller(adapter, { storageRoot: agentHookStorageRoot }).uninstall(),
-            });
-            agentHookDestinations.set(entry.agent, migration.destination);
-            if (!migration.cleaned) {
-              console.warn(`[AnyWhere Terminal] ${entry.agent} hooks left behind in ${previous}`);
-            }
-            reconcile = reconcile || migration.reconcile;
-          }
-          if (!reconcile) {
-            continue;
-          }
-          // Forced rather than assumed: the desired value is often unchanged by
-          // a location-only edit, and a no-op there would leave the agent
-          // installed nowhere (round-2 B1).
-          await agentHookController.setDesiredEnabled(entry.agent, false);
-          await agentHookController.setDesiredEnabled(entry.agent, enabled);
-        }
-      })();
+      for (const entry of AGENT_HOOK_REGISTRY) {
+        void agentHookTransitions.submit(
+          entry,
+          event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`),
+        );
+      }
     }),
     vscode.commands.registerCommand(AGENT_HOOK_UNINSTALL_COMMAND, async () => {
-      const results = await uninstallAllAgents({
-        storageRoot: agentHookStorageRoot,
-        settings: readAgentHookSetting,
-      });
+      const results = await agentHookTransitions.uninstallEverything();
       void vscode.window.showInformationMessage(`AnyWhere Terminal agent hooks — ${summarizeUninstall(results)}`);
     }),
   );
   await agentHookController.start();
+  // Retries anything a previous session recorded but could not clean (D13).
+  void agentHookTransitions.reconcileAll();
 
   // Shared GitDecorationProvider — one singleton, threaded through every
   // FileTreeHost so the three webviews (sidebar / panel / editor) see one

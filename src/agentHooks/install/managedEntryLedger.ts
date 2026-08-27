@@ -6,7 +6,7 @@
 /** The slice of VS Code's `Memento` the ledger needs; injected so this never imports vscode. */
 export interface LedgerStore {
   get<T>(key: string): T | undefined;
-  update(key: string, value: unknown): Promise<void>;
+  update(key: string, value: unknown): Thenable<void>;
 }
 
 export interface AgentLedgerEntry {

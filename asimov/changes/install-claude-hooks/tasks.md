@@ -112,7 +112,7 @@
     5. Update src/agentHooks/install/cursorConfigAdapter.ts and src/agentHooks/install/claudeConfigAdapter.ts to take ownership from the ledger, and drop the lookalike cases those suites assert through the old predicate
     6. Restate what src/agentHooks/install/types.ts says wrapper location is for, now that it no longer decides ownership
 
-- [ ] 4_2 Serialize each agent's hook transitions
+- [x] 4_2 Serialize each agent's hook transitions — verified: bun test 'src/agentHooks/install/agentHookTransitions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md#d13-one-serialized-transition-owner-per-agent, specs/agent-hook-installation/spec.md#{per-agent-opt-in-hook-installation, uninstall-command-clears-every-managed-entry}
   - **Acceptance**:
@@ -123,7 +123,7 @@
     2. Retry every destination left pending cleanup on the next transition and at activation
     3. Reduce the listener in src/extension.ts to submitting a transition, removing the per-event async run and the destination map
     4. Create src/agentHooks/install/agentHookTransitions.test.ts covering: interleaved enable and disable settling on the latest, two rapid destination moves leaving one active destination, a failed cleanup retried rather than forgotten, and cleanup surviving a restart
-    5. Have the uninstall command clear every pending destination as well as the active one
+    5. Have the uninstall command clear every pending destination as well as the active one, moving the summary out of src/agentHooks/install/uninstallAllAgents.ts and deleting what the single owner replaces there and in src/agentHooks/install/agentHookRegistry.ts, with src/agentHooks/install/agentHookWiring.test.ts following
 
 - [x] 4_3 One trusted, cancellable process runner — verified: bun test 'src/agentHooks/install/probeRunner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1

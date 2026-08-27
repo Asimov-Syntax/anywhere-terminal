@@ -70,38 +70,3 @@ export const AGENT_HOOK_REGISTRY: readonly AgentHookRegistryEntry[] = [
 export function isAgentHookEnabled(entry: AgentHookRegistryEntry, settings: SettingsReader): boolean {
   return settings<boolean>(entry.enabledSettingKey) ?? false;
 }
-
-export interface DestinationMigration {
-  /** What the map should record afterwards — unchanged when cleanup failed. */
-  destination: string;
-  cleaned: boolean;
-  /** True when the caller must reconcile the new destination. */
-  reconcile: boolean;
-}
-
-/**
- * One awaited operation for a config destination that moved mid-session
- * (round-2 B1). Cleanup runs first and is *awaited*; the recorded destination
- * advances only when it succeeded, so a failure is retried on the next change
- * rather than stranding entries in a file nothing remembers. Either way the new
- * destination is reconciled — leaving the agent installed nowhere is worse than
- * leaving a stale entry behind.
- */
-export async function migrateAgentDestination(options: {
-  entry: AgentHookRegistryEntry;
-  previous: string;
-  current: string;
-  storageRoot: string;
-  uninstall: (adapter: AgentConfigAdapter) => Promise<{ removed: boolean; reason?: string }>;
-}): Promise<DestinationMigration> {
-  const { entry, previous, current } = options;
-  if (previous === current) {
-    return { destination: current, cleaned: true, reconcile: false };
-  }
-  const outcome = await options
-    .uninstall(entry.createAdapterForPath(previous))
-    .catch(() => ({ removed: false, reason: "write-failed" }));
-  // "Nothing was there" is a clean outcome, not a failure.
-  const cleaned = outcome.removed || outcome.reason === "not-installed";
-  return { destination: cleaned ? current : previous, cleaned, reconcile: true };
-}
