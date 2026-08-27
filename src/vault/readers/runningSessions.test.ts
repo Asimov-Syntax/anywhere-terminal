@@ -8,6 +8,7 @@ import {
   indexRunningSessions,
   isHeadlessSession,
   listRunningClaudeSessions,
+  MAX_SESSION_NAME_CHARS,
   type RunningClaudeSession,
   type RunningSessionsDeps,
 } from "./runningSessions";
@@ -265,6 +266,55 @@ describe("indexRunningSessions", () => {
       live("other", 30, "/y"),
     ]);
     expect(index.all().map((s) => s.sessionId)).toEqual(["real", "other"]);
+  });
+});
+
+describe("the session's own name", () => {
+  it("carries the registry's `name` through, so a presence row can be titled", async () => {
+    await writePidFile(100, { pid: 100, sessionId: "sess-a", cwd: "/work/a", name: "hadern-analysis-a7" });
+
+    const [session] = await liveSessions(opts(), aliveDeps([100]));
+
+    expect(session.name).toBe("hadern-analysis-a7");
+  });
+
+  it("leaves a registry written without one absent, never an empty title", async () => {
+    // A claude old enough not to publish `name` must stay distinguishable from
+    // one that named the session nothing — the row falls back to the vault.
+    await writePidFile(100, { pid: 100, sessionId: "sess-a", cwd: "/work/a" });
+    await writePidFile(200, { pid: 200, sessionId: "sess-b", cwd: "/work/b", name: "   " });
+    await writePidFile(300, { pid: 300, sessionId: "sess-c", cwd: "/work/c", name: 42 });
+
+    const sessions = await liveSessions(opts(), aliveDeps([100, 200, 300]));
+
+    expect(sessions.map((s) => s.name)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("bounds a name the registry made arbitrarily long", async () => {
+    // Another product's format on a shared filesystem, rendered into a row and
+    // folded into the tree's render signature.
+    await writePidFile(100, { pid: 100, sessionId: "sess-a", cwd: "/work/a", name: "n".repeat(5_000) });
+
+    const [session] = await liveSessions(opts(), aliveDeps([100]));
+
+    expect(session.name).toHaveLength(MAX_SESSION_NAME_CHARS);
+  });
+
+  it("resolves one record by the id a pane resolution returned", () => {
+    const index = indexRunningSessions([
+      { sessionId: "a", pid: 10, cwd: "/x", name: "docs-54" },
+      { sessionId: "b", pid: 20, cwd: "/y" },
+    ]);
+
+    expect(index.bySessionId("a")?.name).toBe("docs-54");
+    expect(index.bySessionId("b")?.name).toBeUndefined();
+    expect(index.bySessionId("nope")).toBeUndefined();
+  });
+
+  it("cannot resolve a headless run, which the index dropped before keying it", () => {
+    const index = indexRunningSessions([{ sessionId: "one-shot", pid: 10, cwd: "/x", entrypoint: "sdk-cli" }]);
+
+    expect(index.bySessionId("one-shot")).toBeUndefined();
   });
 });
 

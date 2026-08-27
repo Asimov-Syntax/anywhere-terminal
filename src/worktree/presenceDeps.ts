@@ -33,6 +33,8 @@ export interface PresenceDepsOptions {
   table?: ProcessTableSnapshot;
   listRunning?(): Promise<RunningSessionsOutcome>;
   sessionMtime?(sessionId: string): Promise<number | undefined>;
+  /** Vault title for a session the registry did not name; see `PresenceProjectorDeps`. */
+  sessionTitle?(entryId: string): Promise<string | undefined>;
   now?(): number;
 }
 
@@ -51,6 +53,8 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
     // reports a symlinked cwd where git reported the physical path is the one
     // case this misses.
     normalize: (p) => path.resolve(p),
+
+    ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),
 
     now: options.now,
 
@@ -127,9 +131,18 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
             newestSessionUnderCwd: async () => null,
           });
 
-          return session === null
-            ? { kind: "absent" }
-            : { kind: "resolved", agent: "claude", sessionId: session.sessionId };
+          if (session === null) {
+            return { kind: "absent" };
+          }
+          // The name comes from the index the resolution already consulted, so a
+          // titled pane costs no read of its own.
+          const named = (await running).bySessionId(session.sessionId)?.name;
+          return {
+            kind: "resolved",
+            agent: "claude",
+            sessionId: session.sessionId,
+            ...(named !== undefined ? { name: named } : {}),
+          };
         },
       };
     },

@@ -603,7 +603,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     pool: fsWatcherPool,
     onDidChangeWorkspaceFolders: (listener) => vscode.workspace.onDidChangeWorkspaceFolders(listener),
     // This window's panes, as agent rows under the worktree each one is inside.
-    projector: createPresenceProjector(createPresenceProjectorDeps({ store: paneEvidence })),
+    projector: createPresenceProjector(
+      createPresenceProjectorDeps({
+        store: paneEvidence,
+        // Fallback only — the projector asks about a session the registry left
+        // unnamed. A user rename outranks the derived title here for the same
+        // reason it does in the vault list (enhance-vault-sessions D1).
+        sessionTitle: async (entryId) => {
+          const entry = await vaultService.getEntry(entryId);
+          return entry?.customName || entry?.title || undefined;
+        },
+      }),
+    ),
     onPaneChange: (listener) => {
       onPaneEvidenceChange = listener;
       return {

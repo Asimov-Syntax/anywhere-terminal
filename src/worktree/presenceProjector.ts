@@ -57,6 +57,16 @@ export interface PresenceProjectorDeps {
   openSnapshot(): Promise<ResolutionSnapshot>;
   /** Fold a pane cwd into the same form `WorktreeInfo.id` is in. */
   normalize(p: string): string;
+  /**
+   * The vault's name for a resolved session — the FALLBACK title, consulted only
+   * for a row the registry did not name.
+   *
+   * Separate from `openSnapshot` because it is not a per-rebuild read: it opens a
+   * transcript, so it is memoized per session for the life of the window and a
+   * pass that resolves nothing new costs nothing. Optional, so the projector's
+   * own tests need no vault.
+   */
+  sessionTitle?(entryId: string): Promise<string | undefined>;
   now?(): number;
 }
 
@@ -100,6 +110,8 @@ interface ProvenIdentity {
   agent: VaultAgentId;
   source: WorktreeAgentRow["agentSource"];
   entryId?: string;
+  /** The session's own published name, when the registry carried one. */
+  name?: string;
 }
 
 /**
@@ -226,8 +238,61 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       }
     | undefined;
 
+  /**
+   * One vault title read per session, for the life of the window.
+   *
+   * The promise is memoized, not its value: a second pass joins the first read
+   * rather than starting its own, and a read that resolved to `undefined` is
+   * still an answer — re-asking every pass would open a transcript every five
+   * seconds for a session the vault genuinely cannot title. The cost of that is
+   * a rename made after the first read not reaching the row until the window
+   * reopens, which is the trade a registry-named row never has to make.
+   */
+  const vaultTitles = new Map<string, Promise<string | undefined>>();
+
   function clock(): number {
     return deps.now?.() ?? Date.now();
+  }
+
+  /**
+   * Fill in a title for every row the registry left unnamed, from the vault.
+   *
+   * Rows are REPLACED rather than written through: a replayed window row is the
+   * retained pass's own object, and titling it in place would edit what the next
+   * replay hands back.
+   */
+  async function titleFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>): Promise<void> {
+    const read = deps.sessionTitle;
+    if (!read) {
+      return;
+    }
+    const alive = new Set<string>();
+    for (const rows of Object.values(rowsByWorktreeId)) {
+      for (const row of rows) {
+        if (row.entryId !== undefined) {
+          alive.add(row.entryId);
+        }
+      }
+    }
+    for (const entryId of vaultTitles.keys()) {
+      if (!alive.has(entryId)) {
+        vaultTitles.delete(entryId);
+      }
+    }
+    for (const [worktreeId, rows] of Object.entries(rowsByWorktreeId)) {
+      rowsByWorktreeId[worktreeId] = await Promise.all(
+        rows.map(async (row) => {
+          const entryId = row.entryId;
+          if (row.title !== undefined || entryId === undefined) {
+            return row;
+          }
+          const pending = vaultTitles.get(entryId) ?? read(entryId).catch(() => undefined);
+          vaultTitles.set(entryId, pending);
+          const title = await pending;
+          return title === undefined ? row : { ...row, title };
+        }),
+      );
+    }
   }
 
   /**
@@ -259,7 +324,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     });
 
     if (outcome.kind === "proven") {
-      state.proven = { agent: outcome.agent, source: outcome.source, entryId: outcome.entryId };
+      state.proven = { agent: outcome.agent, source: outcome.source, entryId: outcome.entryId, name: outcome.name };
       state.provenPtyPid = pane.ptyPid;
       state.provenCwd = pane.cwd;
       return state.proven;
@@ -365,6 +430,10 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         row: {
           rowId,
           scope: "external",
+          // The registry's own name for the session. An external row has no pane
+          // and therefore no terminal title, so without this it had no title
+          // source at all and rendered the placeholder unconditionally.
+          ...(session.name !== undefined ? { title: session.name } : {}),
           agent: REGISTRY_AGENT,
           agentSource: "registry",
           activity: "running",
@@ -441,7 +510,9 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         scope: "window",
         paneId: pane.paneId,
         viewId: pane.viewId,
-        title: pane.title,
+        // The session's own name outranks the pane's terminal title: claude sets
+        // no OSC title at all, so a shell-set one is what would show otherwise.
+        title: identity?.name ?? pane.title,
         agent: identity?.agent,
         agentSource: identity?.source ?? "none",
         activity,
@@ -553,6 +624,8 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
           nextRanks.set(worktreeId, Math.max(nextRanks.get(worktreeId) ?? 0, at));
         }
       }
+
+      await titleFromVault(rowsByWorktreeId);
 
       // A source that answered this rebuild clears its entry; one still failing
       // keeps the epoch of the FIRST failure in the run, so the affordance can

@@ -24,6 +24,7 @@ function makeProjector(initial: Pane[] = []) {
   const activity = new Map<string, { activity: PaneActivity; rule: ActivityRule }>();
   let lookup: (paneId: string) => SessionLookup = () => ({ kind: "absent" });
   let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
+  let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
   let snapshots = 0;
   let resolves = 0;
 
@@ -41,6 +42,7 @@ function makeProjector(initial: Pane[] = []) {
       };
     },
     normalize: (p) => p,
+    sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
     now: () => clock,
   };
 
@@ -57,6 +59,9 @@ function makeProjector(initial: Pane[] = []) {
     },
     setRegistry(next: RunningSessionsOutcome) {
       registry = next;
+    },
+    setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
+      vaultTitle = next;
     },
     counts: () => ({ snapshots, resolves }),
   };
@@ -608,6 +613,100 @@ describe("external rows — agents running outside this window", () => {
     h.setRegistry({ kind: "ok", sessions: [] });
 
     expect((await h.projector.project([WT])).rowsByWorktreeId).toEqual({});
+  });
+});
+
+describe("what a row is called", () => {
+  // Claude sets no OSC title at all, so a row sourced only from the pane's
+  // terminal title renders the placeholder for every claude session on screen.
+  const named = (over: Partial<RunningClaudeSession> = {}): RunningClaudeSession => ({
+    sessionId: "s1",
+    cwd: WT,
+    pid: 4242,
+    startedAt: 1_600_000_000_000,
+    name: "hadern-analysis-a7",
+    ...over,
+  });
+
+  it("titles an external row from the name the registry published", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named()] });
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.title).toBe("hadern-analysis-a7");
+  });
+
+  it("titles a pane from its session's name, not from the title its shell left behind", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+    h.setRegistry({ kind: "ok", sessions: [named({ name: "cyberk-skills-f9" })] });
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", name: "cyberk-skills-f9" }));
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.title).toBe("cyberk-skills-f9");
+  });
+
+  it("keeps the pane's own title when no session named it", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "npm run watch" })]);
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.title).toBe("npm run watch");
+  });
+
+  it("falls back to the vault for a session the registry left unnamed", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named({ name: undefined })] });
+    h.setVaultTitle(async (entryId) => (entryId === "claude:s1" ? "fix the worktree rows" : undefined));
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.title).toBe("fix the worktree rows");
+  });
+
+  it("never asks the vault about a session the registry already named", async () => {
+    // The fallback opens a transcript, so a registry-named row must not pay for
+    // it — and the poll re-runs the external pass every five seconds.
+    const asked: string[] = [];
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named()] });
+    h.setVaultTitle(async (entryId) => {
+      asked.push(entryId);
+      return "should never be read";
+    });
+
+    await h.projector.project([WT]);
+
+    expect(asked).toEqual([]);
+  });
+
+  it("reads the vault once per session however many passes run", async () => {
+    let reads = 0;
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named({ name: undefined })] });
+    h.setVaultTitle(async () => {
+      reads += 1;
+      return "fix the worktree rows";
+    });
+
+    await h.projector.project([WT]);
+    await h.projector.project([WT]);
+    await h.projector.project([WT], { external: true });
+
+    expect(reads).toBe(1);
+  });
+
+  it("survives a vault read that throws, leaving the row untitled rather than the pass dead", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named({ name: undefined })] });
+    h.setVaultTitle(async () => {
+      throw new Error("transcript unreadable");
+    });
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.title).toBeUndefined();
   });
 });
 

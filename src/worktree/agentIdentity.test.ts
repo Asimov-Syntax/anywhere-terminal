@@ -76,6 +76,26 @@ describe("rank 2 — session registry", () => {
       ),
     ).toEqual({ kind: "proven", agent: "claude", source: "launch", entryId: "claude:z" });
   });
+
+  it("carries the session's own name whichever rank won, since the name is the session's", () => {
+    expect(
+      resolveAgentIdentity(
+        input({
+          isAgentLaunch: true,
+          shell: "claude",
+          session: { kind: "resolved", agent: "claude", sessionId: "z", name: "docs-54" },
+        }),
+      ),
+    ).toEqual({ kind: "proven", agent: "claude", source: "launch", entryId: "claude:z", name: "docs-54" });
+  });
+
+  it("omits the name entirely when the registry did not publish one", () => {
+    // Absent, never "": the row falls through to the vault, and an empty string
+    // would title it with nothing and stop the fallback from ever running.
+    expect(
+      resolveAgentIdentity(input({ session: { kind: "resolved", agent: "claude", sessionId: "abc" } })),
+    ).not.toHaveProperty("name");
+  });
 });
 
 describe("rank 4 — committed title", () => {
