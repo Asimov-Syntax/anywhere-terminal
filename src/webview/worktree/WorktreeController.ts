@@ -220,10 +220,20 @@ export class WorktreeController {
   /** True between asking which agents can start a session and being told. */
   private awaitingLaunchTargets = false;
 
-  /** Which answer `launchAgents` came from, quoted back on every launch. */
+  /** Which answer `launchAgents` came from. Never read at submit — see `frozen`. */
   private launchOfferId: string | undefined;
-  /** Which worktree the open launch dialog is for. */
-  private launchTarget: string | null = null;
+  /**
+   * What the open dialog was RENDERED against, frozen when it opened.
+   *
+   * A dialog shows one offer and one worktree, and the user answers it minutes
+   * later. Reading the panel's current offer at submit — which is what this
+   * used to do — lets an answer that arrived under the open dialog relabel that
+   * old choice as a choice made from the new list (round-4 B1). Frozen here,
+   * a superseded choice is refused by the host instead of admitted.
+   */
+  private frozenLaunch: { worktreeId: string; offerId?: string; generation?: number } | null = null;
+  /** The offer the open create form was rendered against. Same rule. */
+  private frozenCreateOffer: { offerId?: string } | null = null;
   /**
    * Display paths of rows that have LEFT the tree, so a result arriving after
    * the rebuild that removed its row can still say what it was about.
@@ -287,16 +297,18 @@ export class WorktreeController {
         },
       }),
       onLaunchSubmit: (request) => {
-        if (this.launchTarget === null) {
+        const frozen = this.frozenLaunch;
+        if (frozen === null) {
           return;
         }
         deps.postMessage({
           type: "worktreeLaunchAgent",
-          worktreeId: this.launchTarget,
+          worktreeId: frozen.worktreeId,
           ...request,
-          ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }),
+          ...(frozen.offerId === undefined ? {} : { offerId: frozen.offerId }),
+          ...(frozen.generation === undefined ? {} : { generation: frozen.generation }),
         });
-        this.launchTarget = null;
+        this.frozenLaunch = null;
       },
       onDismissActionResult: (result) => {
         this.actionResults = this.actionResults.filter((r) => r !== result);
@@ -343,7 +355,7 @@ export class WorktreeController {
                   agent: draft.agentId,
                   ...(draft.permissionChoiceId === undefined ? {} : { permissionChoiceId: draft.permissionChoiceId }),
                   ...(draft.prompt === undefined ? {} : { prompt: draft.prompt }),
-                  ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }),
+                  ...(this.frozenCreateOffer?.offerId === undefined ? {} : { offerId: this.frozenCreateOffer.offerId }),
                 },
               }
             : { openAfter: draft.openAfter as Exclude<WorktreeOpenAfter, "agent"> }),
@@ -486,8 +498,21 @@ export class WorktreeController {
    * mismatch between the two is not representable.
    */
   private openLaunchFor(info: WorktreeInfo): void {
-    this.launchTarget = info.id;
+    // Captured together with the list the dialog is about to render: the offer,
+    // the worktree, and the registration of that worktree are one answer to one
+    // question, and reading any of them again later would be reading a
+    // different question's answer (design.md D10).
+    this.frozenLaunch = {
+      worktreeId: info.id,
+      ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }),
+      ...(this.generationOf(info.id) === undefined ? {} : { generation: this.generationOf(info.id) }),
+    };
     this.view.openLaunchDialog(info.branch ?? info.displayPath, this.launchAgents);
+  }
+
+  /** The registration token the tree currently publishes for this worktree. */
+  private generationOf(worktreeId: string): number | undefined {
+    return this.tree?.repos.find((repo) => repo.worktrees.some((wt) => wt.id === worktreeId))?.generation;
   }
 
   /** Resume a row's session in the worktree that row is published under. */
@@ -591,6 +616,7 @@ export class WorktreeController {
       return;
     }
     this.pendingCreate = null;
+    this.frozenCreateOffer = { ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }) };
     this.view.openCreateDialog(msg.repoId);
   }
 

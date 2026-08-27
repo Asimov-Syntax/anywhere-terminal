@@ -541,6 +541,26 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     ]);
   });
 
+  it("refuses the assembled launch when the worktree is re-observed under the open dialog", async () => {
+    // The whole assembly, against the boundary rounds 1-4 kept finding defects
+    // at: the dialog renders one registration, something re-lists the repository
+    // while the user is answering, and the submit must not be admitted against
+    // whatever occupies that path now (design.md D10, round-4 B1/B5/B6).
+    const { host } = await assemble();
+    clickItem(openMenu("feature"), /start an agent here/i);
+    await settle();
+    // A forced re-list is what a git structural change, a refresh or a
+    // concurrent mutation produces. It advances the registration token.
+    await host.mutationBindings().forceRebuild(path.join(REPO, ".git"));
+    await settle();
+    const start = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /^Start agent/.test(b.textContent ?? ""),
+    );
+    start?.click();
+    await settle();
+    expect(launched).toEqual([]);
+  });
+
   it("offers no launch items at all when nothing on this host can start a session", async () => {
     noStartableAgents = true;
     await assemble();

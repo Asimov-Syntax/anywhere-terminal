@@ -19,6 +19,7 @@ import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
+import type { WorktreeTree } from "../worktree/types";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import { createWorktreeHost, type WorktreeActions, type WorktreeHost, type WorktreeSurface } from "./WorktreeHost";
 
@@ -105,6 +106,25 @@ const clock: RebuildGateClock = { now: () => 0, setTimeout: () => 0, clearTimeou
  */
 let currentOffer: string | undefined;
 const offer = (): string | undefined => currentOffer;
+
+/**
+ * The registration token the host last published for the feat worktree.
+ *
+ * A launch quotes the one its dialog rendered, so every request here quotes the
+ * current one — the tests that care about a STALE quote say so explicitly.
+ */
+let currentGeneration: number | undefined;
+const gen = (): number | undefined => currentGeneration;
+
+/** Remember the generation from the most recent tree this surface was posted. */
+function noteTree(view: ReturnType<typeof surface>): void {
+  const trees = view.posts.filter((m) => m.type === "worktreeTreeResponse");
+  const last = trees[trees.length - 1] as { tree?: WorktreeTree } | undefined;
+  const repo = last?.tree?.repos.find((r) => r.worktrees.some((w) => w.id === FEAT_PATH));
+  if (repo !== undefined) {
+    currentGeneration = repo.generation;
+  }
+}
 
 /** Publish targets to `view` and remember the offer id the answer carried. */
 async function publishTo(host: WorktreeHost, view: ReturnType<typeof surface>): Promise<void> {
@@ -296,6 +316,7 @@ async function builtHost(
   // a host that was never asked has offered nothing and admits nothing.
   await publishTo(host, view);
   await settle();
+  noteTree(view);
   view.posts.length = 0;
   return {
     host,
@@ -309,12 +330,24 @@ async function builtHost(
       head.now = "0123456789abcdef0123456789abcdef01234567";
       host.handleMessage(view, { type: "requestWorktreeTree", force: true });
       await settle();
+      noteTree(view);
+    },
+    /**
+     * Re-list the repository with git reporting exactly what it reported
+     * before — the shape a remove-and-recreate onto the same branch at the same
+     * commit produces, which no value git returns can distinguish (round-4 B6).
+     */
+    relist: async () => {
+      host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+      await settle();
+      noteTree(view);
     },
     /** Make the feat worktree vanish and let the host see that it did. */
     vanish: async () => {
       missing.now = true;
       host.handleMessage(view, { type: "requestWorktreeTree", force: true });
       await settle();
+      noteTree(view);
     },
     dispose: () => host.dispose(),
   };
@@ -1004,7 +1037,13 @@ describe("launching an agent", () => {
   it("resolves the worktree from its own tree and opens the pane on the asking surface", async () => {
     const startAgent = ok();
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
-    host.handleMessage(view, { type: "worktreeLaunchAgent", offerId: offer(), worktreeId: FEAT_PATH, agent: "claude" });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
     await settle();
     expect(startAgent).toHaveBeenCalledWith("claude", FEAT_PATH, {});
     expect(view.launches).toEqual([OPTS]);
@@ -1014,7 +1053,13 @@ describe("launching an agent", () => {
   it("passes the display path git reported, never the normalized id", async () => {
     const startAgent = ok();
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
-    host.handleMessage(view, { type: "worktreeLaunchAgent", offerId: offer(), worktreeId: RAW_ID, agent: "claude" });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: RAW_ID,
+      agent: "claude",
+    });
     await settle();
     expect(startAgent).toHaveBeenCalledWith("claude", RAW_DISPLAY, {});
     dispose();
@@ -1025,6 +1070,7 @@ describe("launching an agent", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: "/somewhere/else",
       agent: "claude",
@@ -1040,6 +1086,7 @@ describe("launching an agent", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "claude",
@@ -1060,7 +1107,13 @@ describe("launching an agent", () => {
     // come from — a stale list or a forged message is not a second opinion.
     const startAgent = ok();
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
-    host.handleMessage(view, { type: "worktreeLaunchAgent", offerId: offer(), worktreeId: FEAT_PATH, agent: "codex" });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "codex",
+    });
     await settle();
     expect(startAgent).not.toHaveBeenCalled();
     expect(view.launches).toEqual([]);
@@ -1073,6 +1126,7 @@ describe("launching an agent", () => {
     for (const permissionChoiceId of ["bypassPermissions", "read-only"]) {
       host.handleMessage(view, {
         type: "worktreeLaunchAgent",
+        generation: gen(),
         offerId: offer(),
         worktreeId: FEAT_PATH,
         agent: "claude",
@@ -1082,6 +1136,7 @@ describe("launching an agent", () => {
     // And one the agent declares no postures at all for.
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "opencode",
@@ -1097,6 +1152,7 @@ describe("launching an agent", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "opencode",
@@ -1107,6 +1163,7 @@ describe("launching an agent", () => {
     // The same agent WITHOUT one is fine — seeding is the part it cannot do.
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "opencode",
@@ -1122,7 +1179,13 @@ describe("launching an agent", () => {
       startAgent,
       launchTargets: async () => [],
     });
-    host.handleMessage(view, { type: "worktreeLaunchAgent", offerId: offer(), worktreeId: FEAT_PATH, agent: "claude" });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
     await settle();
     expect(startAgent).not.toHaveBeenCalled();
     dispose();
@@ -1137,6 +1200,7 @@ describe("launching an agent", () => {
       expect(() =>
         host.handleMessage(view, {
           type: "worktreeLaunchAgent",
+          generation: gen(),
           offerId: offer(),
           worktreeId: FEAT_PATH,
           agent: "claude",
@@ -1162,6 +1226,7 @@ describe("launching an agent", () => {
     answer = [...LAUNCH_TARGETS];
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "opencode",
@@ -1172,6 +1237,7 @@ describe("launching an agent", () => {
     await publishTo(host, view);
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "opencode",
@@ -1192,6 +1258,7 @@ describe("launching an agent", () => {
     expect(offer()).not.toBe(stale);
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       worktreeId: FEAT_PATH,
       agent: "claude",
       offerId: stale,
@@ -1204,7 +1271,12 @@ describe("launching an agent", () => {
   it("refuses a launch that quotes no answer at all", async () => {
     const startAgent = ok();
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
-    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "claude" });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
     await settle();
     expect(startAgent).not.toHaveBeenCalled();
     dispose();
@@ -1218,6 +1290,7 @@ describe("launching an agent", () => {
     host.attach(other).setDisplayed(true);
     host.handleMessage(other, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "claude",
@@ -1238,7 +1311,13 @@ describe("launching an agent", () => {
         }),
     );
     const { host, view, dispose, vanish } = await builtHost([windowRow()], false, { startAgent });
-    host.handleMessage(view, { type: "worktreeLaunchAgent", offerId: offer(), worktreeId: FEAT_PATH, agent: "claude" });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
     await settle();
     expect(startAgent).toHaveBeenCalled();
     // The worktree disappears mid-resolution, then the launcher answers.
@@ -1262,6 +1341,7 @@ describe("launching an agent", () => {
     const { host, view, dispose, recreate } = await builtHost([windowRow()], false, { startAgent });
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       worktreeId: FEAT_PATH,
       agent: "claude",
       offerId: offer(),
@@ -1274,11 +1354,59 @@ describe("launching an agent", () => {
     dispose();
   });
 
+  it("does not hand over a launch across a re-list that reported the very same worktree", async () => {
+    // The one git cannot answer: removed and recreated at the same path, on the
+    // same branch, at the same commit lists identically. `head:branch` admitted
+    // it (round-4 B6); the host's own registration token does not, because the
+    // token says "I re-observed" rather than "nothing changed".
+    let release: (() => void) | undefined;
+    const startAgent = vi.fn(
+      async () =>
+        new Promise<CreateSessionOptions>((resolve) => {
+          release = () => resolve(OPTS);
+        }),
+    );
+    const { host, view, dispose, relist } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
+    await settle();
+    expect(startAgent).toHaveBeenCalled();
+    await relist();
+    release?.();
+    await settle();
+    expect(view.launches).toEqual([]);
+    dispose();
+  });
+
+  it("hands over a launch that no rebuild interrupted", async () => {
+    // The other half of the guard: refusing is only correct if the ordinary
+    // path still goes through. A token that refused everything would pass every
+    // staleness test and ship a dead feature.
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
+    await settle();
+    expect(view.launches).toHaveLength(1);
+    dispose();
+  });
+
   it("refuses a prompt past the published bound rather than truncating it", async () => {
     const startAgent = ok();
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
     host.handleMessage(view, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "claude",
@@ -1298,7 +1426,13 @@ describe("launching an agent", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       startAgent: startAgent as unknown as WorktreeActions["startAgent"],
     });
-    host.handleMessage(view, { type: "worktreeLaunchAgent", offerId: offer(), worktreeId: FEAT_PATH, agent: "claude" });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      generation: gen(),
+      offerId: offer(),
+      worktreeId: FEAT_PATH,
+      agent: "claude",
+    });
     await settle();
     expect(view.launches).toEqual([]);
     expect(view.posts).toContainEqual({
@@ -1318,6 +1452,7 @@ describe("launching an agent", () => {
     await settle();
     host.handleMessage(paneless, {
       type: "worktreeLaunchAgent",
+      generation: gen(),
       offerId: offer(),
       worktreeId: FEAT_PATH,
       agent: "claude",

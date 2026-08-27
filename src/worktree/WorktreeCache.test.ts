@@ -474,3 +474,89 @@ describe("WorktreeCache — re-ranking without re-reading git", () => {
     expect(cache.read().repos[0]?.worktrees.map((w) => w.id)).toEqual(["/a/one", "/a/two"]);
   });
 });
+
+describe("registration generation", () => {
+  // The launch guard's whole point: the token says "I can no longer prove
+  // these are the registrations I last reported", so it must move on every
+  // authoritative apply and never be derived from what git reported.
+  const genOf = (cache: ReturnType<typeof createWorktreeCache>, repoId: string): number | undefined =>
+    cache.read().repos.find((r) => r.repoId === repoId)?.generation;
+
+  it("stamps every repository with a generation", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A, REPO_B], {
+        "/a/.git": listing([worktree("/a", { kind: "main" })]),
+        "/b/.git": listing([worktree("/b", { kind: "main" })]),
+      }),
+    );
+    expect(genOf(cache, "/a/.git")).toEqual(expect.any(Number));
+    expect(genOf(cache, "/b/.git")).toEqual(expect.any(Number));
+    // Distinct repositories never share a token, so one cannot be mistaken
+    // for the other by a request that quotes only the number.
+    expect(genOf(cache, "/a/.git")).not.toBe(genOf(cache, "/b/.git"));
+  });
+
+  it("advances the touched repository and leaves its sibling alone", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A, REPO_B], {
+        "/a/.git": listing([worktree("/a", { kind: "main" })]),
+        "/b/.git": listing([worktree("/b", { kind: "main" })]),
+      }),
+    );
+    const beforeA = genOf(cache, "/a/.git");
+    const beforeB = genOf(cache, "/b/.git");
+    cache.applyRepo("/a/.git", listing([worktree("/a", { kind: "main" })]));
+    expect(genOf(cache, "/a/.git")).not.toBe(beforeA);
+    // A launch into /b must not be refused because /a rebuilt.
+    expect(genOf(cache, "/b/.git")).toBe(beforeB);
+  });
+
+  it("advances even when the listing came back identical", () => {
+    // An identical listing is not proof of continuity — a worktree removed
+    // and recreated at the same path, branch and commit lists the same
+    // (round-4 B6). The cache advances because it cannot tell.
+    const cache = createWorktreeCache();
+    const same = (): RepoListing => listing([worktree("/a", { kind: "main", head: "abc", branch: "main" })]);
+    cache.applyBuild(build([REPO_A], { "/a/.git": same() }));
+    const before = genOf(cache, "/a/.git");
+    cache.applyRepo("/a/.git", same());
+    expect(genOf(cache, "/a/.git")).not.toBe(before);
+  });
+
+  it("advances a degraded repository, whose retained listing was never re-observed", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    const before = genOf(cache, "/a/.git");
+    cache.applyRepo("/a/.git", listing([], { degraded: "`git worktree list` timed out." }));
+    expect(cache.read().repos[0]?.worktrees).toHaveLength(1);
+    expect(genOf(cache, "/a/.git")).not.toBe(before);
+  });
+
+  it("advances every repository a whole-tree build re-listed", () => {
+    const cache = createWorktreeCache();
+    const both = (): WorktreeTreeBuild =>
+      build([REPO_A, REPO_B], {
+        "/a/.git": listing([worktree("/a", { kind: "main" })]),
+        "/b/.git": listing([worktree("/b", { kind: "main" })]),
+      });
+    cache.applyBuild(both());
+    const beforeA = genOf(cache, "/a/.git");
+    const beforeB = genOf(cache, "/b/.git");
+    cache.applyBuild(both());
+    expect(genOf(cache, "/a/.git")).not.toBe(beforeA);
+    expect(genOf(cache, "/b/.git")).not.toBe(beforeB);
+  });
+
+  it("does not move a generation on a reorder or a read", () => {
+    // Neither re-reads git, so neither is an observation that could have
+    // missed a replacement. Advancing there would refuse launches for free.
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    const before = genOf(cache, "/a/.git");
+    cache.reorder();
+    expect(genOf(cache, "/a/.git")).toBe(before);
+    expect(genOf(cache, "/a/.git")).toBe(before);
+  });
+});

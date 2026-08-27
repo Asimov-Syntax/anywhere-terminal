@@ -164,6 +164,70 @@ every repo. Availability is host-global today, but the type, the fixtures and th
 repo-switch rebuild all already assume per-repo, and flattening them buys nothing this change
 needs.
 
+### D10: A launch is one immutable intent, minted by the host and re-checked at handoff
+
+Rounds 1-4 fixed three symptoms of one defect: a value read on one side of an `await` and
+trusted on the other. Round 1 added admission, round 3 added an offer id, round 3's extension
+moved where the incarnation is read — and round 4 still found the offer read from live state
+(B1), the incarnation read after admission (B5), and the incarnation not being an identity at
+all (B6). Patching the next occurrence is not converging, so the launch becomes one object
+instead of a sequence of independent reads.
+
+**What the intent contains** — `{ offerId, worktreeId, generation, agent, permissionChoiceId?, prompt? }`.
+The host mints `offerId` and `generation`; the webview mints nothing and quotes both back.
+
+**Where each half is captured.** The offer id and the generation are captured together with the
+agent list and the worktree row the dialog RENDERS, at the moment it opens, as one frozen
+object. Submission reads only that object. Capturing at submit — or reading the controller's
+current field, as the code does now — is what lets a refresh landing under an open dialog
+relabel an old choice as current.
+
+**What `generation` is.** A monotonic counter per repository, owned by `WorktreeCache` and
+advanced on every authoritative apply of that repository. It is not derived from git state:
+`head:branch` collides across a remove-and-recreate onto the same commit (round-4 B6), and the
+admin directory is no better — git reuses `.git/worktrees/<name>` after deletion, as
+`worktreeFingerprint.ts` already documents. The cache advances the counter because it cannot
+prove an entry is the same registration, which is exactly the honest claim.
+
+**The cost, and why it is accepted.** A launch spanning an authoritative rebuild of its own
+repository is refused. Rebuilds are not driven by working-tree watches — `worktreeWatchTargets.ts`
+watches main `HEAD`, the `worktrees` admin directory, linked admin entries and linked `HEAD`
+only — so ordinary editing never triggers one. What does: a git structural change, a
+checkout/reset, an explicit refresh, or a concurrent worktree mutation. Those are precisely the
+moments when refusing is the wanted answer, the exposed window is admission plus executable
+resolution, and the user retries immediately. Scoped per repository, never the global
+`treeVersion`: an unrelated repository rebuilding must not refuse this launch.
+
+**One seam owns the sequence.** `admitLaunch` becomes synchronous — it performs no I/O today
+despite being `async`, and that gratuitous promise boundary is B5 — and returns the admitted
+intent rather than a boolean, so a caller cannot check one value and act on another. This is
+the shape `matchedRow` already uses for session rows. Immediately before the surface handoff
+the worktree is re-resolved and the generation required to match; the path used is the one that
+re-resolution returned, never one captured earlier.
+
+**Create-then-launch is deliberately outside the generation guard.** The offer is validated
+before git runs, as it is today, and no registration token is required for the worktree —
+because there is nothing to quote: the create names a path that does not exist yet, and the
+launch is handed over inside the same mutation body as the `git worktree add` that made it.
+
+Gating it on the created record's generation was implemented and withdrawn: the host only
+learns a new registration from a rebuild, and the rebuild that follows a create does not
+reliably report the worktree the create just made — settling it before the launch still left
+the created path absent from the tree, so the guard refused real launches. A guard that refuses
+the ordinary path is worse than the exposure it closes, and that exposure is one executable
+resolution over a directory the user just asked to be created. What protects this path instead
+is the pairing rule and the pre-create offer admission that already exist. The menu and
+resume paths, where the user picks an existing worktree from a rendered list, are what rounds
+1-4 found defects in, and they are guarded.
+
+Rejected: a persisted per-worktree UUID (orca's `instanceId`,
+`orca/src/shared/worktree/meta-types.ts:16-20`) is stronger lineage, but it is authoritative
+only if its lifecycle is inseparable from the git registration — persisted in extension state
+it cannot see an external delete-and-recreate between observations, and writing a marker into
+git's admin directory is intrusive for a launch guard. Inode plus birth time was rejected as a
+first implementation: platform-varying, inodes are reused, and it still needs the generation as
+its fallback.
+
 ## Interfaces
 
 ```ts

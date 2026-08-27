@@ -628,20 +628,28 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * path that is not there (design.md D3).
    */
   /**
-   * Which registration currently occupies `worktreeId`, or `undefined` for none.
+   * Which observation of this worktree's registration the host currently holds,
+   * or `undefined` when it holds none.
    *
    * "Something is there" and "the same thing is there" are different questions,
    * and remove-then-recreate at the same normalized id answers yes to the first.
-   * The same string the mutation bindings bind a confirmation to answers the
-   * second — a recreate onto the same commit and branch repeats it, which is the
-   * strongest a listing can do (round-3 B5).
+   * Nothing git reports answers the second: the same branch at the same commit
+   * lists identically, and git reuses `.git/worktrees/<name>` after a deletion
+   * (`worktreeFingerprint.ts`). So the answer is the cache's own — it advances
+   * the number whenever it re-observes a repository, because re-observing is
+   * exactly when it stops being able to prove continuity (design.md D10).
+   *
+   * Per repository, never the global `treeVersion`: a sibling repository
+   * rebuilding must not refuse this launch.
    */
-  function incarnationOf(worktreeId: string): string | undefined {
-    const wt = cachedWorktree(worktreeId);
-    if (!wt || wt.missing === true) {
-      return undefined;
+  function generationOf(worktreeId: string): number | undefined {
+    for (const repo of cache.read().repos) {
+      const found = repo.worktrees.find((wt) => wt.id === worktreeId);
+      if (found) {
+        return found.missing === true ? undefined : repo.generation;
+      }
     }
-    return `${wt.head ?? ""}:${wt.branch ?? ""}`;
+    return undefined;
   }
 
   function actionPath(worktreeId: string, allowMissing: boolean): string | undefined {
@@ -684,11 +692,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * the router asserts a name, not a payload, so a field that is null or a
    * number reaches this function exactly as a well-formed one does.
    */
-  async function admissibleLaunch(surface: WorktreeSurface, fields: unknown): Promise<boolean> {
+  function admissibleLaunch(surface: WorktreeSurface, fields: unknown): boolean {
     if (typeof fields !== "object" || fields === null) {
       return false;
     }
     const { agent, permissionChoiceId, prompt, offerId } = fields as Record<string, unknown>;
+    if (!admissibleGeneration(fields)) {
+      return false;
+    }
     if (typeof agent !== "string" || !admissiblePrompt(prompt)) {
       return false;
     }
@@ -713,6 +724,21 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return false;
     }
     return permissionChoiceId === undefined || target.permissionChoices.some((c) => c.id === permissionChoiceId);
+  }
+
+  /**
+   * Whether a launch quotes the registration the host currently publishes.
+   *
+   * Only checked where a worktree already exists — a create names no worktree
+   * yet, and its generation is the one the created record carries afterwards
+   * (design.md D10).
+   */
+  function admissibleGeneration(fields: unknown): boolean {
+    const { worktreeId, generation } = fields as Record<string, unknown>;
+    if (typeof worktreeId !== "string") {
+      return true;
+    }
+    return typeof generation === "number" && generation === generationOf(worktreeId);
   }
 
   /** Resolve the start-capable targets for `surface`, remember them, and answer. */
@@ -799,11 +825,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // Admitted BEFORE git runs: a create that made a worktree and then
           // refused its launch would leave the user a directory they did not
           // ask for on its own.
-          perform(async () => {
-            if (await admissibleLaunch(surface, asked)) {
-              await create({ ...request, launch: asked });
-            }
-          });
+          if (admissibleLaunch(surface, asked)) {
+            perform(() => create({ ...request, launch: asked }));
+          }
         }
         return;
       }
@@ -973,16 +997,24 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (!start || path === undefined) {
           return;
         }
-        const { worktreeId: _id, type: _type, ...fields } = msg;
+        const { type: _type, ...fields } = msg;
         // Admission first, and it is the HOST's own answer being checked, not
         // the registry's: an agent that resolves on this machine but was never
         // advertised for a fresh start is still not what the panel offered.
-        void admissibleLaunch(surface, fields).then((admitted) => {
-          if (!admitted) {
-            return;
-          }
-          launch(surface, msg.worktreeId, () => start(fields.agent, path, launchOpts(fields)));
-        });
+        //
+        // Synchronous, and the generation is read in the same turn as the
+        // message: an admission that awaited would let a rebuild land between
+        // "which worktree was asked for" and "which one was recorded", and
+        // record the replacement as the one the user aimed at (round-4 B5).
+        if (!admissibleLaunch(surface, fields)) {
+          return;
+        }
+        launch(
+          surface,
+          msg.worktreeId,
+          () => start(fields.agent, path, launchOpts(fields)),
+          generationOf(msg.worktreeId),
+        );
         return;
       }
       case "worktreeResumeHere": {
@@ -1009,22 +1041,24 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * did not get has to say so — "agent executable not found" is the whole error
    * surface this action has (worktree-actions.md § 5).
    */
-  function launch(surface: WorktreeSurface, worktreeId: string, resolve: () => Promise<CreateSessionOptions>): void {
+  function launch(
+    surface: WorktreeSurface,
+    worktreeId: string,
+    resolve: () => Promise<CreateSessionOptions>,
+    /** The generation the caller established before any await. */
+    asked: number | undefined = generationOf(worktreeId),
+  ): void {
     const open = surface.launchAgent;
     if (!open) {
       return;
     }
-    // Read BEFORE the awaits and compared after: this is the version the user's
-    // action was aimed at.
-    const asked = incarnationOf(worktreeId);
     void resolve()
       .then((launchOptions) => {
-        // Asked again at the handoff, not only at the request: admission and
-        // executable resolution both await, and neither a worktree removed while
-        // they ran nor a different one recreated at the same id may receive the
-        // session.
+        // Asked again at the handoff, not only at the request: executable
+        // resolution awaits, and neither a worktree removed while it ran nor a
+        // different one recreated at the same id may receive the session.
         const path = actionPath(worktreeId, false);
-        if (asked === undefined || path === undefined || incarnationOf(worktreeId) !== asked) {
+        if (asked === undefined || path === undefined || generationOf(worktreeId) !== asked) {
           return undefined;
         }
         // Re-resolved rather than reusing the pre-await path: git's own display

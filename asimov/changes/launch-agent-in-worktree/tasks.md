@@ -170,3 +170,52 @@
     2. `src/providers/WorktreeHost.ts` — mint an offer id per published answer, admit only a launch quoting the current one, and require the worktree's incarnation unchanged at the handoff (round-3 B1, B5)
     3. `src/webview/worktree/WorktreeController.ts` — keep the offer id the answer arrived with and quote it on both entry paths
     4. `src/webview/worktree/WorktreeView.ts` — cover the dialog supersession at its own owner
+
+## 7. Review round 4 rework — one launch intent
+
+- [x] 7_1 Give a repository a token that says when its registrations stopped being provable — verified: pnpm exec vitest run 'src/worktree/WorktreeCache.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 6_3
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-acts-on-the-registration-it-was-chosen-against, the-registration-token-is-not-derived-from-git-state}, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
+  - **Boundary**: no git state may feed the token — not head, not branch, not the admin directory
+  - **Acceptance**:
+    - Outcome: a repository's token advances on every authoritative apply of that repository and on no other repository's
+    - Verify: unit src/worktree/WorktreeCache.test.ts
+  - **Plan**:
+    1. `src/worktree/types.ts` — `WorktreeRepo` carries `generation: number`, mirrored to the webview with the rest of the tree
+    2. `src/worktree/WorktreeCache.ts` — own the counter per repo, advance it on `applyBuild` and on `applyRepo`, and preserve it for repositories that apply did not touch
+    3. `src/worktree/WorktreeCache.test.ts` — the touched repo advances, an untouched sibling does not, and a repo re-listed with an identical listing still advances
+    4. `src/webview/worktree/worktreeRenderSignature.test.ts` — the exhaustive tree fixture gains the field, and asserts the guard ignores it: the token moves on every rebuild, so signing it would repaint the whole tree at rebuild rate
+
+- [x] 7_2 Admit a launch as one intent and re-check it at the handoff — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 7_1
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-acts-on-the-registration-it-was-chosen-against, a-launch-resolves-its-own-target, a-launch-is-admitted-only-on-values-the-host-declared}, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
+  - **Boundary**: admission stays synchronous — no `await` between reading the quoted values and returning the intent
+  - **Acceptance**:
+    - Outcome: a launch whose worktree was replaced before the handoff starts nothing
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts` — replace `incarnationOf` with the published generation, make `admissibleLaunch` synchronous and return the admitted intent instead of a boolean, and re-resolve the worktree at the handoff requiring the same generation, using the path that re-resolution returned (round-4 B5, B6)
+    2. `src/providers/WorktreeHost.actions.test.ts` — recreate at the same commit and branch is refused, a sibling repo's rebuild is not, and both guards are proven RED by disabling each one
+
+- [x] 7_3 Submit the launch the dialog was opened against — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 7_2
+  - **Refs**: specs/worktree-panel/spec.md#a-launch-is-submitted-as-the-offer-it-was-shown, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
+  - **Boundary**: the dialog reads no controller-owned mutable field on submit
+  - **Acceptance**:
+    - Outcome: a submit quotes what the dialog rendered, not what the panel now holds
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/types/messages.ts` — a launch quotes the repository generation beside the offer id; both stay optional on the wire and required by admission
+    2. `src/providers/WorktreeHost.ts` — admission requires the quoted generation to be the one the host currently publishes for that worktree
+    3. `src/webview/worktree/WorktreeController.ts` — freeze `{offerId, worktreeId, generation, agents}` when a launch or create dialog opens and submit from that object alone (round-4 B1)
+    4. `src/webview/worktree/worktreeViewTypes.ts` — carry the repository generation on the row the dialog is opened from
+    5. `src/webview/worktree/WorktreeController.test.ts` — a republish under an open dialog does not change what the submit quotes
+
+- [x] 7_4 Let a create hand its own generation to the launch that follows it — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 7_3
+  - **Refs**: specs/worktree-tree-protocol/spec.md#a-launch-acts-on-the-registration-it-was-chosen-against, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
+  - **Acceptance**:
+    - Outcome: the assembled menu launch is refused when its worktree is replaced mid-flight
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts` — walk the menu launch through the replacement boundary at the assembly level, and hold create-then-launch to starting the agent it asked for (round-4 W6)

@@ -693,6 +693,15 @@ export interface WorktreeAgentLaunchFields {
    * makes that checkable — absent or stale is refused, never assumed current.
    */
   offerId?: string;
+  /**
+   * The registration the chosen worktree carried when the dialog rendered it.
+   *
+   * Same rule as `offerId`, for the other half of the choice: the host advances
+   * this whenever it re-observes the repository, so a launch quoting a
+   * superseded one is refused rather than handed to whatever now occupies that
+   * path (design.md D10). Absent is refused, never assumed current.
+   */
+  generation?: number;
 }
 
 /**

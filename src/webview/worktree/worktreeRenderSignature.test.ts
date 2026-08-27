@@ -161,6 +161,7 @@ const FULL_REPO: Required<WorktreeRepo> = {
   label: "repo",
   mainPath: "/repo",
   worktrees: [FULL_WORKTREE],
+  generation: 7,
   degraded: "exit 128",
 };
 
@@ -178,6 +179,8 @@ const NOT_RENDERED: Record<string, string> = {
   "WorktreePresence.scannedAt": "moves on every rescan; keying it would make the guard buy nothing",
   "WorktreeAgentRow.pid": "no renderer reads it",
   "WorktreeSubagentRow.live": "typed as the constant false, so it can never move",
+  "WorktreeRepo.generation":
+    "the token a launch quotes, rendered nowhere; it moves on every rebuild, so keying it would repaint the tree at rebuild rate (design.md D10)",
 };
 
 /** A different value of the same shape, so the change is the field, not its type. */
@@ -283,5 +286,13 @@ describe("roster states are distinguishable in the signature", () => {
     const other = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "failed", reason: "ENOENT" } })]);
     expect(failed).not.toBe(empty);
     expect(failed).not.toBe(other);
+  });
+
+  it("ignores the registration generation, which moves on every rebuild", () => {
+    // The generation is not rendered anywhere — it is the token a launch quotes
+    // (design.md D10). Signing it would repaint the whole tree at rebuild rate,
+    // which is the exact cost this guard exists to avoid.
+    const moved: WorktreeTree = { ...FULL_TREE, repos: [{ ...FULL_REPO, generation: FULL_REPO.generation + 1 }] };
+    expect(worktreeSignature(moved, null)).toBe(worktreeSignature(FULL_TREE, null));
   });
 });

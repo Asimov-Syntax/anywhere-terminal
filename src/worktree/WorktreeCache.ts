@@ -14,6 +14,8 @@ import { orderWorktrees, type WorktreeActivityRank } from "./worktreeOrder";
 
 interface CachedRepo {
   repo: WorktreeRepo;
+  /** See `WorktreeRepo.generation` — advanced by every apply that touches this repo. */
+  generation: number;
   /** This repo's own share of the tree's `unreadable`, replaced per rebuild. */
   reasons: string[];
   skipped: number;
@@ -43,6 +45,20 @@ export interface WorktreeCache {
 export function createWorktreeCache(): WorktreeCache {
   const repos = new Map<string, CachedRepo>();
   /**
+   * Monotonic across the whole cache, so two repositories never hold the same
+   * generation and a request quoting only the number cannot be read against the
+   * wrong one.
+   *
+   * Every apply takes a fresh number for the repository it touched, including
+   * one whose listing came back identical and one that came back degraded: both
+   * are moments the cache stopped being able to prove the registrations it holds
+   * are the ones it last reported. Neither `reorder` nor `read` takes one —
+   * neither re-reads git, so neither can have missed a replacement, and
+   * advancing there would refuse launches for nothing (design.md D10).
+   */
+  let generationSeq = 0;
+  const nextGeneration = (): number => (generationSeq += 1);
+  /**
    * Which repository each workspace folder resolved to, last time it did. A
    * failed resolution never learns the `repoId` — the `repoId` IS the common dir
    * it failed to read — so the folder path is the only key available to tell a
@@ -63,18 +79,22 @@ export function createWorktreeCache(): WorktreeCache {
     if (listing.degraded !== undefined && stored) {
       return {
         repo: { ...incoming, worktrees: stored.repo.worktrees, degraded: listing.degraded },
+        generation: nextGeneration(),
         reasons: stored.reasons,
         skipped: stored.skipped,
       };
     }
-    return { repo: incoming, reasons: listing.reasons, skipped: listing.skipped };
+    return { repo: incoming, generation: nextGeneration(), reasons: listing.reasons, skipped: listing.skipped };
   }
 
   function applyBuild(build: WorktreeTreeBuild): void {
     const next = new Map<string, CachedRepo>();
     for (const repo of build.tree.repos) {
       const listing = build.listings.get(repo.repoId);
-      next.set(repo.repoId, listing ? merge(repo.repoId, repo, listing) : { repo, reasons: [], skipped: 0 });
+      next.set(
+        repo.repoId,
+        listing ? merge(repo.repoId, repo, listing) : { repo, generation: nextGeneration(), reasons: [], skipped: 0 },
+      );
     }
 
     // Walk the folders rather than the roots: only a folder can say whether a
@@ -100,6 +120,7 @@ export function createWorktreeCache(): WorktreeCache {
         } else if (remembered && stored) {
           next.set(remembered.repoId, {
             repo: { ...stored.repo, degraded: outcome.reason },
+            generation: nextGeneration(),
             reasons: stored.reasons,
             skipped: stored.skipped,
           });
@@ -158,7 +179,7 @@ export function createWorktreeCache(): WorktreeCache {
       // broadcast, and a consumer that mutates what it was handed must not be
       // able to edit the cache. The `WorktreeInfo` records inside stay shared —
       // copying each one per read costs with worktree count for no caller.
-      out.push({ ...cached.repo, worktrees: [...cached.repo.worktrees] });
+      out.push({ ...cached.repo, generation: cached.generation, worktrees: [...cached.repo.worktrees] });
       count += cached.skipped;
       for (const reason of cached.reasons) {
         reasons.add(reason);

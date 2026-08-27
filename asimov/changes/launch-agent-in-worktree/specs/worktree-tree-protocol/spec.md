@@ -24,6 +24,32 @@ from its own current tree rather than from anything the request supplied.
 - **WHEN** a launch names a worktree that has since left the tree
 - **THEN** no agent is started, and no other worktree is used in its place
 
+### Requirement: A launch acts on the registration it was chosen against
+
+The host SHALL publish, per repository, a token that changes whenever it can no longer prove
+its worktree registrations are the ones it last reported. A launch SHALL quote the token its
+row carried, and SHALL be refused unless that token is still current at handoff.
+
+### Requirement: The registration token is not derived from git state
+
+The token SHALL NOT be derived from the branch or commit a worktree is on, and SHALL be scoped
+to one repository so an unrelated repository moving refuses nothing.
+
+- WHERE a create is followed by a launch, no token SHALL be required: the worktree is the one
+  the create just made, handed over in the same operation.
+
+#### Scenario: A worktree recreated at the same identifier launches nothing
+
+- **WHEN** a launch is requested, and before the session is handed over the worktree is removed
+  and recreated at the same path, on the same branch, at the same commit
+- **THEN** no agent is started
+
+#### Scenario: An unrelated repository moving does not refuse a launch
+
+- **WHEN** a launch is requested and another repository in the tree rebuilds before the session
+  is handed over
+- **THEN** the agent is started as asked
+
 ### Requirement: A launch is admitted only on values the host declared
 
 The host SHALL reject an agent absent from its own launch-target answer, a permission posture

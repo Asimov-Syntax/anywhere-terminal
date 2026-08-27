@@ -687,6 +687,43 @@ describe("the launch entry paths WT-005.3 supplies", () => {
     ]);
   });
 
+  it("submits the offer the dialog rendered, not the one that landed while it was open", () => {
+    // A dialog is open for as long as the user takes to answer it. An answer
+    // arriving in that window used to relabel the earlier choice as a choice
+    // made from the new list, because the submit read the panel's current
+    // offer rather than the dialog's own (round-4 B1).
+    const h = launchable();
+    h.controller.handleLaunchTargets({ ...STARTABLE, offerId: "offer-1" });
+    (menuActions(h).launchAgentHere as (i: WorktreeInfo) => void)(firstWorktree());
+    h.controller.handleLaunchTargets({ ...STARTABLE, offerId: "offer-2" });
+    const start = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /^Start agent/.test(b.textContent ?? ""),
+    );
+    start?.click();
+    const posted = h.posts.filter((m) => m.type === "worktreeLaunchAgent")[0] as { offerId?: string } | undefined;
+    expect(posted?.offerId).toBe("offer-1");
+  });
+
+  it("submits the registration the dialog rendered, not the one the tree now holds", () => {
+    // The other half of the same freeze: a rebuild landing under an open dialog
+    // must not let the choice be admitted against whatever now occupies the
+    // path (design.md D10).
+    const h = launchable();
+    const stamped = (generation: number): WorktreeTreeResponseMessage => {
+      const base = response();
+      return { ...base, tree: { ...base.tree, repos: base.tree.repos.map((r) => ({ ...r, generation })) } };
+    };
+    h.controller.handleTreeResponse(stamped(4));
+    (menuActions(h).launchAgentHere as (i: WorktreeInfo) => void)(firstWorktree());
+    h.controller.handleTreeResponse(stamped(5));
+    const start = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /^Start agent/.test(b.textContent ?? ""),
+    );
+    start?.click();
+    const posted = h.posts.filter((m) => m.type === "worktreeLaunchAgent")[0] as { generation?: number } | undefined;
+    expect(posted?.generation).toBe(4);
+  });
+
   it("resumes a row's session in the worktree that row is published under", () => {
     // The worktree is the panel's own answer, from the presence envelope — a
     // resume can never land in a worktree the row was not published under.

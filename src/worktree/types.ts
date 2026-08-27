@@ -36,6 +36,19 @@ export interface WorktreeRepo {
   /** Normalized path of the main worktree. */
   mainPath: string;
   worktrees: WorktreeInfo[];
+  /**
+   * Which observation of this repository's registrations the tree is reporting.
+   *
+   * Stamped by `WorktreeCache`, never by discovery: git can say what is
+   * registered now, and cannot say whether it is the same registration it
+   * reported a moment ago. A worktree removed and recreated on the same branch
+   * at the same commit lists identically, and git reuses `.git/worktrees/<name>`
+   * after a deletion, so no value git reports can carry this (design.md D10).
+   *
+   * Optional because discovery assembles the group before the cache stamps it.
+   * A launch quoting no generation is refused, never assumed current.
+   */
+  generation?: number;
   /** This repo's listing failed; the reason is surfaced on the group. */
   degraded?: string;
 }
