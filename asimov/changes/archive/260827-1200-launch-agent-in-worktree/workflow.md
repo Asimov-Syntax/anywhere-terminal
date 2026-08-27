@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -45,3 +45,5 @@ Round 8: SUPERSEDED — same structural fault as round 6, and this time it caugh
 Gate 2 re-earned (fastlane auto): D12 makes the removal boundary explicit and mints the claim once. `WorktreeCache` now withdraws every repository's registration while git is unusable — the same reasoning it already applied to the degraded mark — so `observationOf` is the single question launch admission and both removal readers ask. Removal loses its incidental watcher veto and gains a real one on an unusable git.
 Round 9 (cycle 4 discovery): BLOCK — 1 blocker, 1 warning, 1 suggestion, all three accepted, none rebutted. B8 is the change's recurring shape at the boundary the fix never reached: `assessRemoval` and `observeAfter` each read their observation once and trusted it across an await. Both now re-ask it, as D10 already made a launch do. W9's coverage gap is closed in the assembly walk; the same walk's passing removal is also the proof that an unwatched repository is not refused. Fixed in 11_1.
 Round 10 (cycle 4 verification): BLOCK — 1 blocker, accepted, W9 and S3 verified fixed. B8 survived because my round-9 impact manifest enumerated the reads inside each boundary and never the gap between them, where the coordinator resumes from an `await` a queued rebuild continuation can beat. Fixed in 12_1: the observation is taken before the assessment and re-asked with nothing between it and the command.
+Round 11 (cycle 4, third and last): WARN — 0 blockers, B8 verified fixed at every boundary. W10 accepted and fixed in 13_1: the regression now advances the observation from inside the assessment, so it fails an implementation that compares on the wrong side of the await. Cycle 4 exits clean; four cycles, eleven rounds, no residual accepted risk.
+Gate: implementation approved (fastlane auto) — 13/13 tasks, 4404 tests, types clean, lint's 13 findings all pre-existing in files this change never touched.

@@ -300,3 +300,13 @@
     2. `src/extension.ts` — supply the binding to the service
     3. `src/worktree/worktreeMutationService.test.ts` — a rebuild landing after the assessment resolves issues no argv
     4. `src/extension.worktreeMutations.test.ts` — production supplies the capability, not just the interface
+
+- [x] 13_1 Make the regression fail an implementation that checks too early — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 12_1
+  - **Refs**: .reviews/round-11.md
+  - **Boundary**: test-only — the production check is verified fixed and does not move
+  - **Acceptance**:
+    - Outcome: the observation advances after the assessment resolves, not before it is called
+    - Verify: unit src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.test.ts` — advance the observation from inside the assessment, so a pre-assessment comparison passes it and issues the command

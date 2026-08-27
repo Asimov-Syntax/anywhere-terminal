@@ -360,10 +360,20 @@ describe("a mutation reaches git through the coordinator", () => {
     // queued behind that one lands first. The evidence then describes a tree
     // the command would no longer be issued against — at the same path, that is
     // how a replacement gets removed on a predecessor's evidence.
-    const observations = [1, 2];
+    //
+    // The movement happens from INSIDE the assessment, after it resolves and
+    // before the coordinator resumes — the position a queued rebuild
+    // continuation really occupies. An implementation that compared before the
+    // await would see no movement here, issue the command, and fail (W10).
+    let observation = 1;
     const h = harness({
-      observation: () => observations.shift() ?? 2,
-      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }),
+      observation: () => observation,
+      assessRemoval: async () => {
+        queueMicrotask(() => {
+          observation = 2;
+        });
+        return { kind: "confirmable" as const, evidence: evidence() };
+      },
     });
 
     await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);

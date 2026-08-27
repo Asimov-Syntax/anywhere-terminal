@@ -225,6 +225,19 @@ Two rules follow, and they are the reason this is a safety model rather than a w
   first. An idle pane remains a confirmable blocker — a terminal sitting at a prompt is a
   different risk from a turn in flight.
 
+**Removal asks the same observation a launch does.** A repository publishes that observation
+only when its own listing was read: withheld when the cache retained a listing it could not
+re-read, withheld for every repository while git itself is unusable, and kept for a repository
+nobody can watch — an unwatched listing was still read, it may just go stale unnoticed, and
+refusing there would disable removal on every host without file watching. Like a launch, the
+claim is re-asked rather than remembered: across the assessment's status and session reads,
+immediately before the destructive command with no `await` in between, and again across the
+post-attempt filesystem read. Evidence gathered under one observation never authorizes a
+command issued under another — at the same path, that is how a replacement would be removed on
+its predecessor's evidence. A mismatch reports the listing as unreadable, which is
+indeterminate, not a refusal: a refusal is an answer, and nobody could read the listing it
+would be derived from.
+
 **Panes are not killed.** Removing a worktree with idle panes inside it leaves those panes
 running in a deleted directory — which is what a terminal does, and what the user asked for
 by confirming. The confirmation says so.
@@ -286,8 +299,7 @@ So the registry gains a **start** capability alongside the resume family:
 | Element | Contract |
 |---------|----------|
 | Start command | The agent's argv for a brand-new session, prompt optional. Declared per agent, like the resume templates, so no caller assembles it |
-| Prompt delivery | Declares whether the agent supports native prefill; the launcher uses it when present and falls back to the pty-write path in § 4's rules when not |
-| Readiness | Declares how the launcher knows the composer is ready, for agents that need the pty-write path. Without this the "separate writes" rule has no signal to wait on |
+| Prompt delivery | Declares whether the agent can be seeded at launch. An agent that cannot is offered no prompt field, rather than being seeded by a mechanism it does not support |
 | cwd composition | An explicit override that wins over the session's recorded cwd, so resume-into-a-different-worktree is expressible rather than an accident of ordering |
 
 An agent that declares no start capability is simply not offered in this view. Leaving the
@@ -308,7 +320,24 @@ Two rules carried from the research:
   (`docs/research/20260822-orca-deep-dive/05-prompt-injection.md` § 5.9).
 - **Never send text and Enter in one write.** If a prompt must be delivered by writing to the
   pty, the submit is a separate write after the composer is provably ready. Combining them
-  leaves the prompt editable and unsent (`05-prompt-injection.md` § 1).
+  leaves the prompt editable and unsent (`05-prompt-injection.md` § 1). No agent takes this
+  path today: every agent this view offers declares native seeding, so the pty writer and the
+  readiness signal it would need are deferred rather than built unused (PLAN.md § Deferred).
+
+**Which launch this is.** A launch is one immutable intent, minted where the user picks the
+worktree and re-checked where it is acted on. The intent quotes the observation the panel
+rendered — a per-repository number the tree cache advances whenever it re-reads that
+repository — and the host admits the launch only against the same number. Nothing git reports
+can carry this: a worktree removed and recreated on the same branch at the same commit at the
+same path lists identically, and git reuses `.git/worktrees/<name>` after a deletion. The
+number is therefore the cache's own claim about what it observed, not a fact derived from
+repository state.
+
+The claim is re-asked, never remembered, at every point where reading and acting are separated
+by an `await` — dialog open, menu build, submit, and again after the launch options resolve. A
+launch that spans two observations is refused rather than aimed at whatever occupies that path
+now. The one deliberate exception is create-then-launch: the worktree the create just made is
+not yet in the host's tree, so requiring an observation there would refuse the ordinary path.
 
 Resume-into-worktree is the same path with the vault's existing resume command, with the cwd
 overridden to the worktree instead of the session's recorded cwd.

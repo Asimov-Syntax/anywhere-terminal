@@ -82,7 +82,9 @@ A remove confirmation SHALL name every blocker that applies, SHALL state what th
 
 ### Requirement: A dangerous posture is offered but never preselected
 
-WHERE the create form offers permission postures, a posture that skips prompts SHALL be labelled as dangerous and SHALL NOT be the initial selection.
+WHEREVER the panel offers permission postures — in the create form or when starting an agent
+in an existing worktree — a posture that skips prompts SHALL be labelled as dangerous and
+SHALL NOT be the initial selection.
 
 ### Requirement: A destination is named only once it is known
 
@@ -212,23 +214,44 @@ WHEN a removal is refused, the panel SHALL state the reason that applies to that
 
 The panel SHALL confirm a prune before it runs, and the confirmation SHALL state the number of registrations that will be dropped, as counted by the host. A prune offered as recovery from an indeterminate result is exempt, because the observation report it accompanies already states what was found.
 
-### Requirement: A deferred mode is absent from the create form
+### Requirement: A worktree offers to start an agent in it
 
-The create form SHALL NOT offer an after-creation mode the host will reject. WHEN starting an agent is not yet supported, that option SHALL be absent from the form rather than present and refused on submit.
+The panel SHALL offer, on a worktree, an action that starts a chosen agent in that worktree,
+and SHALL offer, on an agent row that has a session, an action that resumes that session in
+that worktree.
 
-#### Scenario: No agent option is offered even where agents resolve
+- Both SHALL be absent on a surface that cannot start a terminal session, rather than present
+  and inert.
+- The agents offered SHALL be only those the host reported as able to start a fresh session.
 
-- **WHEN** the create form is opened for a repository whose agents resolve
-- **THEN** the form offers no option to start an agent
+#### Scenario: Nothing to launch means nothing to offer
 
-### The panel states the outcome of every mutation it started
+- **WHEN** the host reports no agent able to start a fresh session
+- **THEN** the worktree offers no start-an-agent action
 
-Each create, removal, lock, unlock and prune reports back to the surface that started it, as one
-of: succeeded, failed with git's own message, unclear, or could not be checked. "Unclear" and
-"could not be checked" are distinct from failure, and only the latter offers a retry.
+### Requirement: A launch is described by the agent it will run
 
-### A create that asked for a terminal gets one
+WHERE the panel collects a launch, the permission postures it offers SHALL be the chosen
+agent's own, and changing the chosen agent SHALL change them.
 
-When a create requests a terminal and succeeds, a terminal opens in the new worktree on the
-surface that asked for it.
+- An agent that declares no postures SHALL be offered without a posture control.
+- A prompt SHALL be offered only for an agent the host reported as seedable, and SHALL be
+  optional for those — a launch SHALL be offerable with the prompt left empty.
+
+### Requirement: A launch that fails after a create says the worktree was made
+
+WHEN a create succeeds and the agent it asked for does not start, the panel SHALL report the
+worktree as created and the agent as not started, and the worktree SHALL remain.
+
+### Requirement: A launch is submitted as the offer it was shown
+
+WHERE the panel collects a launch in a dialog, the values it submits SHALL be the ones the
+dialog was opened against — the offered agents, and the worktree registration — rather than
+whatever the panel holds when the dialog is submitted.
+
+#### Scenario: A refresh under an open dialog does not relabel the choice
+
+- **WHEN** a launch dialog is open and the host publishes a new set of launch targets before the
+  dialog is submitted
+- **THEN** the submission is refused rather than admitted as a choice made from the new set
 

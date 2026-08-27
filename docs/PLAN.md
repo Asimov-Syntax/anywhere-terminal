@@ -311,7 +311,7 @@ state. There is nothing to provision.
 | **Labels** | new-api-contract |
 | **Notes** | The registry has resume, fork, and continue — all of which start from an existing session — so a fresh-launch contract must be added, not merely reused. `continue` also requires a prompt where this view allows none. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The create form's agent picker, permission postures, and seed-prompt field are drawn, with the dangerous posture offered but never preselected; which agents the list may contain is a host answer this task supplies |
 | **Acceptance** | Starting a fresh session is a declared registry capability, so an agent that cannot start one is simply not offered; a launch runs in the chosen worktree, with a permission posture the user picked and a dangerous one never preselected; a seeded prompt arrives submitted, never left editable and never through a shell string; create-then-launch is the same path as a standalone launch, and a failed launch leaves the created worktree in place |
-| **Status** | in_progress |
+| **Status** | done |
 
 ---
 
@@ -399,6 +399,7 @@ state. There is nothing to provision.
 - ~~Process-recognition table for non-Claude running detection~~ — deferred. Until it lands, Codex and OpenCode panes resolve identity by title or not at all, which the UI states rather than hides.
 - ~~Cross-window agent focus~~ — not planned. External rows are labelled and non-focusable by design (DESIGN.md § 14 D6).
 - ~~Filtering the launch environment~~ — deferred to its own change, per DESIGN.md § 14 D24. Agent launches currently inherit the extension host's entire `process.env`, including credentials, because the agent allowlist merges over that clone rather than replacing it. This predates the feature and affects every vault launch; fixing it inside a worktree change would bury a security change in an unrelated diff. Recorded in DESIGN.md § 13.5 so it is not mistaken for a property the feature provides.
+- ~~Pty-write prompt delivery for agents without native seeding~~ — deferred at WT-005.3. Every agent this view offers declares native seeding, so the pty writer and the readiness signal it needs (worktree-actions.md § 4) would ship unused and untestable. An agent that cannot be seeded is offered no prompt field instead. Build it with the first agent that needs it.
 - ~~Per-launch `--settings` hook injection~~ — considered and rejected at the 2026-08-25 triage. It would avoid writing to the user's agent config, but it duplicates a registration seam the extension already owns, loses coverage for agents the user starts by hand in an AT terminal, and the reference implementation explicitly tests that it does *not* take this route. Revisit only if config writes prove problematic in practice.
 
 ---

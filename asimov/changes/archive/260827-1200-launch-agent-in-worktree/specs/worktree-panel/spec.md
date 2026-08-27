@@ -29,6 +29,18 @@ agent's own, and changing the chosen agent SHALL change them.
 WHEN a create succeeds and the agent it asked for does not start, the panel SHALL report the
 worktree as created and the agent as not started, and the worktree SHALL remain.
 
+### Requirement: A launch is submitted as the offer it was shown
+
+WHERE the panel collects a launch in a dialog, the values it submits SHALL be the ones the
+dialog was opened against — the offered agents, and the worktree registration — rather than
+whatever the panel holds when the dialog is submitted.
+
+#### Scenario: A refresh under an open dialog does not relabel the choice
+
+- **WHEN** a launch dialog is open and the host publishes a new set of launch targets before the
+  dialog is submitted
+- **THEN** the submission is refused rather than admitted as a choice made from the new set
+
 ## MODIFIED Requirements
 
 ### Requirement: A dangerous posture is offered but never preselected
@@ -48,15 +60,3 @@ opposite of the shipped behavior.
 **Migration**: The general rule it stood in for — the form offers no mode the host would
 reject — is already carried by "A row is never offered an action it cannot perform", and the
 agents offered are now bounded by "A worktree offers to start an agent in it".
-
-### Requirement: A launch is submitted as the offer it was shown
-
-WHERE the panel collects a launch in a dialog, the values it submits SHALL be the ones the
-dialog was opened against — the offered agents, and the worktree registration — rather than
-whatever the panel holds when the dialog is submitted.
-
-#### Scenario: A refresh under an open dialog does not relabel the choice
-
-- **WHEN** a launch dialog is open and the host publishes a new set of launch targets before the
-  dialog is submitted
-- **THEN** the submission is refused rather than admitted as a choice made from the new set
