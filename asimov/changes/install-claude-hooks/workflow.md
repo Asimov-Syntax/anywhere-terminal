@@ -52,6 +52,19 @@ migrates as an unresolved obligation rather than as an invented pair. Tasks 8_1,
 were rewritten: three of them named outcome fields that do not exist, and 8_2 and 8_4 could not
 have caught the defects they target from the seam they tested.
 
+Round 10 closed cycle 4 as SUPERSEDED on the same trigger as round 8: the design amendment
+answering the discovery round's blockers (86126b7) lands inside the range the verification
+round reads. That is a loop by construction — a discovery round finds a blocker needing
+design, the amendment lands, the next round refuses to adjudicate, and the fixes are never
+verified. Rounds 8 and 10 both cost a full round and produced no adjudication at all.
+
+What breaks it: a DISCOVERY round is not blocked by an amendment in its range — round 9
+adjudicated fine with 435d911 inside it. So cycle 5 opens with a discovery round over the
+whole change, per the chair's own instruction. The durable fix, for the next verification
+round to work at all, is that an artifact-only amendment commit must be excluded from a
+verification range: accepted design is the premise a fix is reviewed against, not part of
+the diff under review.
+
 Cycle-4 fixes landed as 8_1..8_8. Three of them found defects round 9 had not named: a
 post-write persistence failure released the claim on a file we had just written, losing the
 destination; `unresolved` had to be narrowed to migrated records, since a compat-shim record
