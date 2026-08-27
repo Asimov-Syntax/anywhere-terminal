@@ -210,9 +210,19 @@ export class ManagedConfigInstaller {
     const wrapper = this.wrapperPath();
     // Same write-temp, set-mode, rename, clean-up-on-failure sequence the
     // configuration takes, so there is one implementation of it rather than two
-    // that can drift (round-7 reuse). No lock: nothing else writes this path.
+    // that can drift (round-7 reuse) — and under the same lock, because the
+    // earlier claim that nothing else writes this path was wrong: every
+    // extension host shares it, and two activating in the same millisecond
+    // pick the same temporary name and one of them fails an install for no
+    // reason at all (round-9 B18).
     const executable = this.platform === "win32" ? undefined : 0o700;
-    if (!(await this.locked(wrapper).atomicReplace(this.adapter.wrapperScript(this.platform), executable))) {
+    const locked = this.locked(wrapper);
+    const written = await locked.withLock(
+      () => locked.atomicReplace(this.adapter.wrapperScript(this.platform), executable),
+      false,
+      false,
+    );
+    if (!written) {
       return "failed";
     }
     if (this.platform !== "win32") {

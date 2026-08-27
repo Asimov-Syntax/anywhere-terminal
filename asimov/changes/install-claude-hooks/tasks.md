@@ -318,7 +318,7 @@
     3. Report every agent's uninstall result even when one of them fails
     4. Cover in src/agentHooks/install/agentHookTransitions.test.ts: a transition after a failed read running normally, the failed one carrying its own outcome, and an uninstall summary naming every agent when one read fails
 
-- [ ] 8_6 Take the shared lock for the wrapper too
+- [x] 8_6 Take the shared lock for the wrapper too — verified: bun test 'src/agentHooks/install/ManagedConfigInstaller.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_5
   - **Refs**: .reviews/round-9.md#b18, design.md#d11-the-wrapper-is-executable-before-it-is-visible
   - **Acceptance**:

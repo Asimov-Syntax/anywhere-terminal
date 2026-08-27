@@ -766,3 +766,25 @@ describe("an install that would change nothing (round-7 W6)", () => {
     expect((await stat(paths.configPath)).mtimeMs).toBeGreaterThan(past.getTime());
   });
 });
+
+describe("two hosts creating the wrapper at once (round-9 B18)", () => {
+  it("produces one complete executable wrapper, and fails neither install", async () => {
+    const paths = await fixture();
+    // Both hosts pick their temporary name from the clock, so a frozen one is
+    // the collision that actually happens when two windows activate together.
+    const frozen = { now: () => 1_700_000_000_000 };
+    const second = await fixture();
+    const shared = { ...second, storageRoot: paths.storageRoot, wrapperDirectory: paths.wrapperDirectory };
+
+    const [first, other] = await Promise.all([
+      installerFor(paths, frozen).install(),
+      installerFor(shared, frozen).install(),
+    ]);
+
+    expect(first).toEqual({ installed: true });
+    expect(other).toEqual({ installed: true });
+    const wrapper = join(paths.wrapperDirectory, "cursor-hook-observer.sh");
+    expect(await readFile(wrapper, "utf8")).toBe(cursorWrapperScripts().posix);
+    expect((await stat(wrapper)).mode & 0o777).toBe(0o700);
+  });
+});
