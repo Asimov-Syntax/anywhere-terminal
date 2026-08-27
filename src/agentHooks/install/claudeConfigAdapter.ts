@@ -156,7 +156,7 @@ function isExtensionCreatedGroup(group: JsonObject): boolean {
   return keys.length === 2 && keys[0] === "hooks" && keys[1] === "matcher" && group.matcher === "*";
 }
 
-/** The managed shape *and* extension-owned ownership, exactly as cursor's is (D3). */
+/** The managed shape *and* a command the ledger recorded, exactly as cursor's is (D12). */
 function isManagedHandler(handler: JsonObject, isOwned: OwnershipTest): boolean {
   const keys = Object.keys(handler).sort();
   return (

@@ -245,21 +245,21 @@ describe("claudeConfigAdapter through the shared reconciler", () => {
     }
   });
 
-  it("rewrites a managed entry whose script path drifted, and leaves a lookalike alone", async () => {
+  it("leaves entries it has no record of writing alone, and appends its own group (D12)", async () => {
     const paths = await fixture();
-    const stale = {
+    const staleLooking = {
       type: "command",
       command: `'/old/root/${CLAUDE_WRAPPER_DIRECTORY}/claude-hook-observer.sh'`,
       timeout: 2,
     };
     const foreign = { type: "command", command: "'/home/alice/scripts/claude-hook-observer.sh'", timeout: 2 };
-    await writeFile(paths.configPath, JSON.stringify({ hooks: { Stop: [{ hooks: [stale, foreign] }] } }));
+    await writeFile(paths.configPath, JSON.stringify({ hooks: { Stop: [{ hooks: [staleLooking, foreign] }] } }));
 
     expect((await installerFor(paths).install()).installed).toBe(true);
 
     const groups = groupsFor(await settings(paths.configPath), "Stop");
     expect(groups).toHaveLength(2);
-    expect(groups[0]?.hooks).toEqual([foreign]);
+    expect(groups[0]?.hooks).toEqual([staleLooking, foreign]);
     expect((groups[1]?.hooks as Array<Record<string, unknown>>)[0]?.command).toContain(paths.storageRoot);
   });
 

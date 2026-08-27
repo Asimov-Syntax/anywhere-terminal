@@ -98,7 +98,7 @@
 
 ## 4. Cycle-1 redesign
 
-- [ ] 4_1 Replace command parsing with a written-command ledger
+- [x] 4_1 Replace command parsing with a written-command ledger — verified: bun test 'src/agentHooks/install/managedEntryLedger.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: design.md#d12-ownership-is-exact-equality-against-a-ledger-of-what-we-wrote-never-a-parse-of-the-users-string, specs/agent-hook-installation/spec.md#{user-authored-configuration-is-preserved, a-moved-managed-script-is-reconciled-not-duplicated}
   - **Acceptance**:
@@ -110,6 +110,7 @@
     3. Seed the ledger for an installation that predates it by constructing the command the shipped build emitted for the current storage root
     4. Create src/agentHooks/install/managedEntryLedger.test.ts covering: every lookalike from rounds 1 to 3 refused, a recorded command removed, a hand-edited command left alone and reported, a moved storage root still matched, and the seed matching what the shipped build wrote
     5. Update src/agentHooks/install/cursorConfigAdapter.ts and src/agentHooks/install/claudeConfigAdapter.ts to take ownership from the ledger, and drop the lookalike cases those suites assert through the old predicate
+    6. Restate what src/agentHooks/install/types.ts says wrapper location is for, now that it no longer decides ownership
 
 - [ ] 4_2 Serialize each agent's hook transitions
   - **Deps**: 4_1

@@ -22,9 +22,8 @@ export interface AgentConfigAdapter {
   /** Absolute path to the agent's configuration file. */
   configPath(): string;
   /**
-   * The extension-owned directory name and wrapper filename. Together they are
-   * managed-entry identity (D3): ownership is the directory pair, not the bare
-   * filename, so a user's same-named script elsewhere is never swept.
+   * The extension-owned directory name and wrapper filename. They locate the
+   * script; they do not decide ownership — the ledger does (D12).
    */
   wrapperLocation(platform: Platform): { directoryName: string; fileName: string };
   /** Rejects a document this agent's installer must not merge into (D2). */

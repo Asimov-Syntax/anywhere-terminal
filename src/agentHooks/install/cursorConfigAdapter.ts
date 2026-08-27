@@ -1,8 +1,8 @@
 // src/agentHooks/install/cursorConfigAdapter.ts — Cursor's document shape for
 // the shared reconciler. Behaviour is the shipped CursorHookInstaller's, with
-// two deliberate changes: managed-entry ownership is the extension-owned
-// directory pair rather than an exact command string (D3), and the initial
-// document for a missing file is adapter-owned (D10).
+// two deliberate changes: managed-entry ownership is byte equality against a
+// command the ledger recorded writing (D12), and the initial document for a
+// missing file is adapter-owned (D10).
 
 import { CURSOR_HOOK_ENV_VAR, CURSOR_HOOK_EVENTS, CURSOR_HOOK_SLUG } from "../agents/cursor";
 import { type AgentConfigAdapter, isJsonObject, type JsonObject, type OwnershipTest } from "./types";

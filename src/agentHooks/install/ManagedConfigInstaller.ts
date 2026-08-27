@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
 import { posixShellQuote } from "../../utils/posixShellQuote";
+import { ManagedEntryLedger, type ManagedEntryOwnership, memoryLedgerStore } from "./managedEntryLedger";
 import {
   type AgentConfigAdapter,
   type ConfigRead,
@@ -16,7 +17,6 @@ import {
   type HookRemoveOutcome,
   isJsonObject,
   type JsonObject,
-  type OwnershipTest,
   type Platform,
 } from "./types";
 
@@ -29,6 +29,12 @@ export interface ManagedConfigInstallerOptions {
   /** Root the extension owns; the adapter names the sub-directory inside it. */
   storageRoot: string;
   platform?: Platform;
+  /**
+   * What this extension has recorded writing (D12). Omitted, the installer owns
+   * exactly the command it would write itself and remembers it only for the
+   * lifetime of this object — enough for a test, never for a restart.
+   */
+  ownership?: ManagedEntryOwnership;
 }
 
 export interface ManagedConfigInstallerDependencies {
@@ -55,6 +61,7 @@ export class ManagedConfigInstaller {
   private readonly replace: (oldPath: string, newPath: string) => Promise<void>;
   private readonly beforeReplace: () => Promise<void>;
   private readonly platform: Platform;
+  private readonly ownership: ManagedEntryOwnership;
 
   public constructor(
     private readonly adapter: AgentConfigAdapter,
@@ -67,8 +74,9 @@ export class ManagedConfigInstaller {
     this.run = dependencies.run ?? runCommand;
     this.replace = dependencies.rename ?? this.fs.rename;
     this.beforeReplace = dependencies.beforeReplace ?? (async () => undefined);
-    this.platform =
-      options.platform ?? (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
+    this.platform = options.platform ?? hostPlatform();
+    this.ownership =
+      options.ownership ?? new ManagedEntryLedger(memoryLedgerStore()).ownership("ephemeral", this.command());
   }
 
   public async install(): Promise<HookInstallOutcome> {
@@ -99,11 +107,15 @@ export class ManagedConfigInstaller {
       configPath,
       async (): Promise<HookInstallOutcome> => {
         const reconciled = await this.reconcile(configPath, (document, command) =>
-          this.adapter.applyManagedEntries(document, command, this.ownershipTest()),
+          this.adapter.applyManagedEntries(document, command, (entry) => this.ownership.isOwned(entry)),
         );
-        return reconciled === "success"
-          ? { installed: true }
-          : { installed: false, reason: reconciled === "unsupported" ? "unsupported-config" : "write-failed" };
+        if (reconciled !== "success") {
+          return { installed: false, reason: reconciled === "unsupported" ? "unsupported-config" : "write-failed" };
+        }
+        // Recorded only once the file holds it: the ledger is a claim about what
+        // is out there, so a failed write must not leave one behind.
+        await this.ownership.recordInstalled(configPath, this.command());
+        return { installed: true };
       },
       { installed: false, reason: "lock-unavailable" },
       { installed: false, reason: "write-failed" },
@@ -125,36 +137,21 @@ export class ManagedConfigInstaller {
       async (): Promise<HookRemoveOutcome> => {
         let removed = false;
         const reconciled = await this.reconcile(configPath, (document) => {
-          removed = this.adapter.removeManagedEntries(document, this.ownershipTest());
+          removed = this.adapter.removeManagedEntries(document, (entry) => this.ownership.isOwned(entry));
           return removed;
         });
         if (reconciled !== "success") {
           return { removed: false, reason: reconciled === "unsupported" ? "unsupported-config" : "write-failed" };
         }
-        return removed ? { removed: true } : { removed: false, reason: "not-installed" };
+        if (!removed) {
+          return { removed: false, reason: "not-installed" };
+        }
+        await this.ownership.recordRemoved(configPath);
+        return { removed: true };
       },
       { removed: false, reason: "lock-unavailable" },
       { removed: false, reason: "write-failed" },
     );
-  }
-
-  /**
-   * Ownership is the extension-owned directory plus the wrapper filename as the
-   * final two path components of the *invoked* command (D3). A substring test
-   * would claim `not-cursor-hooks/cursor-hook-observer.sh`, a `.backup` suffix,
-   * or the text appearing as somebody else's argument (round-1 B2).
-   */
-  private ownershipTest(): OwnershipTest {
-    const { directoryName, fileName } = this.adapter.wrapperLocation(this.platform);
-    return (command: unknown) => {
-      if (typeof command !== "string") {
-        return false;
-      }
-      const segments = normalizeSeparators(invokedPath(command, this.platform))
-        .split("/")
-        .filter((segment) => segment !== "");
-      return segments.at(-1) === fileName && segments.at(-2) === directoryName;
-    };
   }
 
   /**
@@ -355,13 +352,24 @@ export class ManagedConfigInstaller {
   }
 
   private command(): string {
-    const wrapper = this.wrapperPath();
-    return this.platform === "win32" ? `"${wrapper.replaceAll('"', '""')}"` : posixShellQuote(wrapper);
+    return managedWrapperCommand(this.adapter, { ...this.options, platform: this.platform });
   }
 }
 
-function normalizeSeparators(value: string): string {
-  return value.replaceAll("\\", "/");
+/**
+ * The exact command this build writes for an agent. Exported because the ledger
+ * has to be seeded with it before an installer exists (D12) — the installer
+ * takes its ownership as an input, so it cannot also be the source of the seed.
+ */
+export function managedWrapperCommand(adapter: AgentConfigAdapter, options: ManagedConfigInstallerOptions): string {
+  const platform = options.platform ?? hostPlatform();
+  const { directoryName, fileName } = adapter.wrapperLocation(platform);
+  const wrapper = join(options.storageRoot, directoryName, fileName);
+  return platform === "win32" ? `"${wrapper.replaceAll('"', '""')}"` : posixShellQuote(wrapper);
+}
+
+function hostPlatform(): Platform {
+  return process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
 }
 
 function isAlreadyExists(error: unknown): boolean {
@@ -459,83 +467,4 @@ function withDeadline<T>(promise: Promise<T>, milliseconds: number, fallback: T)
       },
     );
   });
-}
-
-/**
- * The path a stored hook command actually invokes: its first shell word, with
- * quoting resolved the way the shell resolves it. Adjacent runs concatenate, so
- * `'/x/claude-hooks/observer.sh'.bak` yields the `.bak` path the shell would
- * really execute rather than the owned-looking prefix (round-2 B2). An
- * unterminated quote yields nothing, which fails the ownership test — the safe
- * direction, since we decline to claim a command instead of sweeping it.
- */
-function invokedPath(command: string, platform: Platform): string {
-  return platform === "win32" ? firstWindowsToken(command) : firstPosixWord(command);
-}
-
-function firstPosixWord(command: string): string {
-  let word = "";
-  let index = 0;
-  while (index < command.length && isBlank(command[index])) {
-    index += 1;
-  }
-  while (index < command.length) {
-    const character = command[index];
-    if (isBlank(character)) {
-      break;
-    }
-    if (character === "\\") {
-      if (index + 1 >= command.length) {
-        return "";
-      }
-      word += command[index + 1];
-      index += 2;
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      const closing = command.indexOf(character, index + 1);
-      if (closing === -1) {
-        return "";
-      }
-      word += command.slice(index + 1, closing);
-      index = closing + 1;
-      continue;
-    }
-    word += character;
-    index += 1;
-  }
-  return word;
-}
-
-/** cmd.exe: `"` toggles quoting and `""` inside quotes is one literal quote. */
-function firstWindowsToken(command: string): string {
-  let token = "";
-  let index = 0;
-  let quoted = false;
-  while (index < command.length && isBlank(command[index])) {
-    index += 1;
-  }
-  while (index < command.length) {
-    const character = command[index];
-    if (character === '"') {
-      if (quoted && command[index + 1] === '"') {
-        token += '"';
-        index += 2;
-        continue;
-      }
-      quoted = !quoted;
-      index += 1;
-      continue;
-    }
-    if (!quoted && isBlank(character)) {
-      break;
-    }
-    token += character;
-    index += 1;
-  }
-  return quoted ? "" : token;
-}
-
-function isBlank(character: string | undefined): boolean {
-  return character === " " || character === "\t" || character === "\n" || character === "\r";
 }

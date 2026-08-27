@@ -376,12 +376,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             // Read at the source rather than round-tripping through the
             // webview: the host already has this, and the surface that would
             // echo it back sees only its own panes.
-            paneEvidence.setSemantic(update.sessionId, update.state);
+            const semantic = update.state === "working" || update.state === "idle" ? update.state : null;
+            paneEvidence.setSemantic(update.sessionId, semantic);
             safePostMessage(session.webview, {
               type: "agentActivityStatus",
               tabId: update.sessionId,
               agent: update.agent,
-              state: update.state === "working" || update.state === "idle" ? update.state : null,
+              state: semantic,
             });
           },
           onReasonCode: (reason, sessionSuffix) => {

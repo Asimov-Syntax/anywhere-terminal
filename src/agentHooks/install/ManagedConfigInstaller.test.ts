@@ -2,7 +2,7 @@
 // src/cursor/CursorHookInstaller.test.ts with its assertions intact, plus the
 // behaviours install-claude-hooks adds to the shared layer: classified reads
 // (D10), symlink refusal ahead of the lock (D5), directory-scoped managed-entry
-// ownership (D3), and chmod-before-rename wrapper creation (D11).
+// ownership (D12), and chmod-before-rename wrapper creation (D11).
 
 import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
@@ -11,7 +11,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CURSOR_HOOK_EVENTS } from "../agents/cursor";
 import { CURSOR_WRAPPER_DIRECTORY, cursorConfigAdapter, cursorWrapperScripts } from "./cursorConfigAdapter";
-import { ManagedConfigInstaller, type ManagedConfigInstallerDependencies, runCommand } from "./ManagedConfigInstaller";
+import {
+  ManagedConfigInstaller,
+  type ManagedConfigInstallerDependencies,
+  managedWrapperCommand,
+  runCommand,
+} from "./ManagedConfigInstaller";
+import { ManagedEntryLedger, memoryLedgerStore } from "./managedEntryLedger";
 
 const tempDirectories: string[] = [];
 
@@ -34,12 +40,17 @@ async function fixture(platform: "linux" | "win32" = "linux"): Promise<Paths> {
   };
 }
 
-function installerFor(paths: Paths, dependencies: ManagedConfigInstallerDependencies = {}) {
-  return new ManagedConfigInstaller(
-    cursorConfigAdapter(paths.configPath),
-    { storageRoot: paths.storageRoot, platform: paths.platform },
-    dependencies,
-  );
+type Hooks = Record<string, Array<Record<string, unknown>>>;
+
+function installerFor(
+  paths: Paths,
+  dependencies: ManagedConfigInstallerDependencies = {},
+  ledger?: ManagedEntryLedger,
+) {
+  const adapter = cursorConfigAdapter(paths.configPath);
+  const options = { storageRoot: paths.storageRoot, platform: paths.platform };
+  const ownership = ledger?.ownership("cursor", managedWrapperCommand(adapter, options));
+  return new ManagedConfigInstaller(adapter, { ...options, ownership }, dependencies);
 }
 
 async function config(path: string) {
@@ -190,21 +201,33 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
     });
   });
 
-  describe("managed-entry ownership (D3)", () => {
-    it("sweeps and rewrites an entry left behind when the storage root moved", async () => {
+  describe("managed-entry ownership (D12)", () => {
+    it("sweeps and rewrites an entry it recorded writing at a storage root that has since moved", async () => {
       const paths = await fixture();
       await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
-      const stale = `'/somewhere/else/${CURSOR_WRAPPER_DIRECTORY}/cursor-hook-observer.sh'`;
-      await writeFile(
-        paths.configPath,
-        JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: stale, timeout: 2 }] } }),
-      );
+      const ledger = new ManagedEntryLedger(memoryLedgerStore());
+      const moved = { ...paths, storageRoot: join(paths.storageRoot, "..", "moved-storage") };
+
+      expect((await installerFor(paths, {}, ledger).install()).installed).toBe(true);
+      const before = ((await config(paths.configPath)).hooks as Hooks).sessionStart[0]?.command;
+      expect((await installerFor(moved, {}, ledger).install()).installed).toBe(true);
+
+      const { sessionStart } = (await config(paths.configPath)).hooks as Hooks;
+      expect(sessionStart).toHaveLength(1);
+      expect(sessionStart[0]?.command).not.toBe(before);
+      expect(sessionStart[0]?.command).toContain("moved-storage");
+    });
+
+    it("leaves an entry at another storage root alone when it never recorded writing one", async () => {
+      const paths = await fixture();
+      const stale = { command: `'/somewhere/else/${CURSOR_WRAPPER_DIRECTORY}/cursor-hook-observer.sh'`, timeout: 2 };
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: { sessionStart: [{ ...stale }] } }));
 
       expect((await installerFor(paths).install()).installed).toBe(true);
-      const hooks = (await config(paths.configPath)).hooks as Record<string, Array<Record<string, unknown>>>;
-      expect(hooks.sessionStart).toHaveLength(1);
-      expect(hooks.sessionStart[0]?.command).toContain(paths.storageRoot);
-      expect(hooks.sessionStart[0]?.command).not.toBe(stale);
+
+      // The cost of exact equality, taken deliberately: an entry we cannot prove
+      // is ours is another program's until the ledger says otherwise.
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [stale, { timeout: 2 }] });
     });
 
     it.each([
@@ -252,22 +275,32 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
       expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [foreign] });
     });
 
-    it("claims a command whose quoting differs but whose resolved path is ours", async () => {
+    it("leaves a re-quoted equivalent of its own path alone rather than resolving it", async () => {
       const paths = await fixture();
       const wrapper = join(paths.wrapperDirectory, "cursor-hook-observer.sh");
-      // Same path the shell would resolve, written three other ways.
+      // Every one of these resolves to our wrapper. Three rounds of review
+      // established that no parser deciding so can be trusted, so none is ours.
       const equivalents = [wrapper, `"${wrapper}"`, `'${wrapper.slice(0, 5)}'${wrapper.slice(5)}`];
-      await writeFile(
-        paths.configPath,
-        JSON.stringify({
-          version: 1,
-          hooks: { sessionStart: equivalents.map((command) => ({ command, timeout: 2 })) },
-        }),
-      );
+      const entries = equivalents.map((command) => ({ command, timeout: 2 }));
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: { sessionStart: entries } }));
 
       expect((await installerFor(paths).install()).installed).toBe(true);
-      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [{ timeout: 2 }] });
-      expect(((await config(paths.configPath)).hooks as Record<string, unknown[]>).sessionStart).toHaveLength(1);
+
+      const { sessionStart } = (await config(paths.configPath)).hooks as Hooks;
+      expect(sessionStart).toHaveLength(entries.length + 1);
+      expect(sessionStart.slice(0, entries.length)).toEqual(entries);
+    });
+
+    it("claims the byte-exact command the shipped build wrote before any ledger existed", async () => {
+      const paths = await fixture();
+      const shipped = `'${join(paths.wrapperDirectory, "cursor-hook-observer.sh")}'`;
+      await writeFile(
+        paths.configPath,
+        JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: shipped, timeout: 2 }] } }),
+      );
+
+      expect((await installerFor(paths).uninstall()).removed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [] });
     });
 
     it("leaves a same-named script the extension does not own untouched", async () => {
