@@ -19,7 +19,7 @@ function credentials(): SessionEnvironmentContributor & { released: string[] } {
 
 describe("what a terminal is told", () => {
   it("carries the credential and the configuration directory together", () => {
-    const composed = withHookEnvironment(credentials(), { OPENCODE_CONFIG_DIR: "/storage/opencode-config" });
+    const composed = withHookEnvironment(credentials(), () => ({ OPENCODE_CONFIG_DIR: "/storage/opencode-config" }));
 
     expect(composed.create("t1")).toEqual({
       ANYWHERE_TERMINAL_AGENT_HOOK_URL: "http://127.0.0.1/t1/tok",
@@ -28,16 +28,40 @@ describe("what a terminal is told", () => {
   });
 
   it("carries the credential alone while reporting is off", () => {
-    const composed = withHookEnvironment(credentials(), {});
+    const composed = withHookEnvironment(credentials(), () => ({}));
 
     expect(composed.create("t1")).toEqual({ ANYWHERE_TERMINAL_AGENT_HOOK_URL: "http://127.0.0.1/t1/tok" });
   });
 
   it("still revokes the credential, which is the only part that expires", () => {
     const issuer = credentials();
-    withHookEnvironment(issuer, { OPENCODE_CONFIG_DIR: "/d" }).release("t1");
+    withHookEnvironment(issuer, () => ({ OPENCODE_CONFIG_DIR: "/d" })).release("t1");
 
     expect(issuer.released).toEqual(["t1"]);
+  });
+
+  // The setting can flip long after the contributor was installed, and the
+  // controller has no reason to reinstall it — Cursor may be holding the
+  // receiver up on its own (.reviews/round-1.md B5).
+  it("carries the directory chosen after the contributor was installed", () => {
+    let current: Record<string, string> = {};
+    const composed = withHookEnvironment(credentials(), () => current);
+
+    current = { OPENCODE_CONFIG_DIR: "/storage/opencode-config" };
+
+    expect(composed.create("t1").OPENCODE_CONFIG_DIR).toBe("/storage/opencode-config");
+  });
+
+  // The spec forfeits the report for a terminal that already selects its own
+  // directory; that selection is per terminal, not per extension host
+  // (spec.md "Reporting preserves the user's own OpenCode configuration").
+  it("yields to the directory the terminal is already being spawned with", () => {
+    const composed = withHookEnvironment(credentials(), () => ({ OPENCODE_CONFIG_DIR: "/storage/opencode-config" }));
+
+    const contributed = composed.create("t1", { OPENCODE_CONFIG_DIR: "/home/u/my-opencode" });
+
+    expect(contributed.OPENCODE_CONFIG_DIR).toBeUndefined();
+    expect(contributed.ANYWHERE_TERMINAL_AGENT_HOOK_URL).toBe("http://127.0.0.1/t1/tok");
   });
 });
 

@@ -18,7 +18,12 @@ export interface CursorActivityUpdate {
 
 /** Mirrors `SessionManager`'s per-session environment-contribution seam (design D6). */
 export interface SessionEnvironmentContributor {
-  create(sessionId: string): Record<string, string>;
+  /**
+   * @param spawnEnv the environment the terminal is about to be spawned with,
+   * so a contribution can yield to a value the terminal already carries. The
+   * credential itself never yields — it is issued per run and must win.
+   */
+  create(sessionId: string, spawnEnv?: Readonly<Record<string, string>>): Record<string, string>;
   release(sessionId: string): void;
 }
 

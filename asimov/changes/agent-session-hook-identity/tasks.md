@@ -97,3 +97,20 @@
   - **Acceptance**:
     - Outcome: a live OpenCode run reports an id the vault reader resolves to that same session
     - Verify: manual open a terminal with OpenCode reporting enabled, run OpenCode once, then confirm the id its row carries is the `session.id` row `sqlite3 ~/.local/share/opencode/opencode.db` holds for that directory
+
+## 6. Review round 1
+
+- [x] 6_1 Make the report reach the row, and only ever a real session id — verified: bun test 'src/worktree/presenceProjector.test.ts' && bun run check-types && bun run test:unit exit 0
+  - **Deps**: 4_2
+  - **Refs**: specs/agent-hook-identity/spec.md#{an-agent-reports-the-session-it-is-running, reporting-preserves-the-user-s-own-opencode-configuration, identity-observers-fail-open}, design.md#{d4-a-report-is-a-fourth-kind-of-evidence-ranked-above-the-rest, d6-the-plugin-reports-identity-only}, .reviews/round-1.md#{b1, b2, b3, b4, b5, b6, b7, w2}
+  - **Acceptance**:
+    - Outcome: a report that arrives after a pane is already proven still becomes that row's session, and only a root session's id can ever be reported
+    - Verify: unit src/worktree/presenceProjector.test.ts
+  - **Plan**:
+    1. `src/worktree/presenceProjector.ts` — read the report before the proven cache short-circuits, and upgrade a cached identity the report disagrees with (B1)
+    2. `src/agentHooks/opencodePlugin.ts` — report only a parentless session from a `session.*` event, under a client timeout (B2, B4, W2)
+    3. `src/cursor/CursorHookRuntime.ts` — the contributor sees the environment a terminal is being spawned with (B3)
+    4. `src/session/SessionManager.ts` — hand that environment to the contributor (B3)
+    5. `src/agentHooks/hookEnvironment.ts` — resolve the fixed environment per terminal, and yield a variable the terminal already carries (B3, B5)
+    6. `src/extension.ts` — serialize reconciliation, project when a report arrives, and bound the vault read to one per projection (B5, B6, B7)
+    7. `src/agentHooks/opencodePlugin.test.ts`, `src/agentHooks/hookEnvironment.test.ts`, `src/worktree/presenceProjector.test.ts`, `src/session/SessionManager.cursorHooks.test.ts` — the cases above

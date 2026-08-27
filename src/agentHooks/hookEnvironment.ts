@@ -10,17 +10,34 @@
 import type { SessionEnvironmentContributor } from "../cursor/CursorHookRuntime";
 
 /**
- * Add a fixed set of variables to whatever the credential issuer contributes.
+ * Add a set of variables to whatever the credential issuer contributes.
+ *
+ * `fixed` is read per terminal, not captured: the setting behind it can flip
+ * long after this wrapper was installed, and the controller has no reason to
+ * reinstall a contributor Cursor may be holding up on its own
+ * (.reviews/round-1.md B5).
+ *
+ * A variable the terminal is already being spawned with is left alone — the
+ * user's own selection is what the spec preserves, and it is per terminal
+ * rather than per extension host (.reviews/round-1.md B3).
  *
  * `release` still reaches the issuer: the credential is what expires, and the
  * directory has nothing to revoke.
  */
 export function withHookEnvironment(
   credentials: SessionEnvironmentContributor,
-  fixed: Record<string, string>,
+  fixed: () => Record<string, string>,
 ): SessionEnvironmentContributor {
   return {
-    create: (sessionId) => ({ ...credentials.create(sessionId), ...fixed }),
+    create: (sessionId, spawnEnv) => {
+      const contributed = { ...credentials.create(sessionId, spawnEnv) };
+      for (const [key, value] of Object.entries(fixed())) {
+        if (spawnEnv?.[key] === undefined || spawnEnv[key] === "") {
+          contributed[key] = value;
+        }
+      }
+      return contributed;
+    },
     release: (sessionId) => credentials.release(sessionId),
   };
 }

@@ -143,9 +143,25 @@ describe("SessionManager Cursor-hook authority — initial spawn", () => {
     const id = sm.createSession("sidebar", mockWebview());
 
     expect(contributor.create).toHaveBeenCalledTimes(1);
-    expect(contributor.create).toHaveBeenCalledWith(id);
+    expect(contributor.create).toHaveBeenCalledWith(id, expect.any(Object));
     const spawnCall = mockSpawnCalls.find((c) => c.id === id);
     expect(spawnCall?.env.ANYWHERE_TERMINAL_CURSOR_URL).toContain(id);
+    sm.dispose();
+  });
+
+  // The contribution merges last so a credential can never be shadowed — which
+  // is also how it would silently replace a configuration directory the user
+  // chose for this terminal, if it were not shown what it is merging into
+  // (.reviews/round-1.md B3).
+  it("shows the contributor the environment it is merging into", () => {
+    const contributor = fakeContributor();
+    const sm = newSM(contributor);
+    const id = sm.createSession("sidebar", mockWebview(), { env: { OPENCODE_CONFIG_DIR: "/home/u/my-opencode" } });
+
+    expect(contributor.create).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ OPENCODE_CONFIG_DIR: "/home/u/my-opencode" }),
+    );
     sm.dispose();
   });
 
@@ -225,7 +241,7 @@ describe("SessionManager Cursor-hook authority — failed spawn", () => {
     expect(() => sm.createSession("sidebar", mockWebview())).toThrow();
 
     const id = mockPtySessions[0]!.id;
-    expect(contributor.create).toHaveBeenCalledWith(id);
+    expect(contributor.create).toHaveBeenCalledWith(id, expect.any(Object));
     expect(contributor.release).toHaveBeenCalledWith(id);
     sm.dispose();
   });
@@ -256,7 +272,7 @@ describe("SessionManager Cursor-hook authority — attach/detach toggle", () => 
 
     const id1 = sm.createSession("sidebar", mockWebview());
     expect(contributor.create).toHaveBeenCalledTimes(1);
-    expect(contributor.create).toHaveBeenCalledWith(id1);
+    expect(contributor.create).toHaveBeenCalledWith(id1, expect.any(Object));
 
     sm.setCursorHookContributor(undefined);
     sm.createSession("sidebar", mockWebview());
@@ -265,7 +281,7 @@ describe("SessionManager Cursor-hook authority — attach/detach toggle", () => 
     sm.setCursorHookContributor(contributor);
     const id3 = sm.createSession("sidebar", mockWebview());
     expect(contributor.create).toHaveBeenCalledTimes(2);
-    expect(contributor.create).toHaveBeenNthCalledWith(2, id3);
+    expect(contributor.create).toHaveBeenNthCalledWith(2, id3, expect.any(Object));
     sm.dispose();
   });
 
@@ -304,7 +320,7 @@ describe("SessionManager Cursor-hook authority — attach/detach toggle", () => 
     expect(contributorB.release).not.toHaveBeenCalled();
 
     const id2 = sm.createSession("sidebar", mockWebview());
-    expect(contributorB.create).toHaveBeenCalledWith(id2);
+    expect(contributorB.create).toHaveBeenCalledWith(id2, expect.any(Object));
     expect(contributorA.create).toHaveBeenCalledTimes(1); // never asked to mint id2's token
     sm.dispose();
   });

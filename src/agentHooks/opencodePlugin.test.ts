@@ -108,12 +108,54 @@ describe("the plugin OpenCode loads", () => {
 
     await plugin.event({
       event: {
-        type: "message.part.updated",
-        properties: { sessionID: "ses_abc123", part: { type: "text", text: "the user's private prompt" } },
+        type: "session.updated",
+        properties: { info: { id: "ses_abc123", title: "the user's private prompt", directory: "/w" } },
       },
     });
 
     expect(hook.received[0]?.body).toEqual({ sessionID: "ses_abc123" });
+  });
+
+  // `message.updated.properties.info` is a Message, not a Session: its `id` is
+  // `msg_…`, and reporting that would name a vault entry that does not exist
+  // (opencode packages/sdk/js/src/gen/types.gen.ts, .reviews/round-1.md B2).
+  it("never mistakes a message id for a session id", async () => {
+    const plugin = await loadPlugin(dir);
+
+    await plugin.event({
+      event: { type: "message.updated", properties: { info: { id: "msg_x", sessionID: "ses_real", role: "user" } } },
+    });
+
+    expect(hook.received).toEqual([]);
+  });
+
+  // A task tool runs in a child session of the one the terminal is on. The row
+  // is about the terminal, so the child is not its identity.
+  it("never reports a task's child session", async () => {
+    const plugin = await loadPlugin(dir);
+
+    await plugin.event({
+      event: { type: "session.created", properties: { info: { id: "ses_child", parentID: "ses_root" } } },
+    });
+
+    expect(hook.received).toEqual([]);
+  });
+
+  it("gives up on a receiver that accepts the connection and never answers", async () => {
+    const stalled: Server = createServer(() => {
+      // Deliberately no response: the socket stays open until the test ends.
+    });
+    await new Promise<void>((resolve) => stalled.listen(0, "127.0.0.1", resolve));
+    const address = stalled.address();
+    const port = typeof address === "object" && address !== null ? address.port : 0;
+    process.env.ANYWHERE_TERMINAL_AGENT_HOOK_URL = `http://127.0.0.1:${port}/t1/tok`;
+    const plugin = await loadPlugin(dir);
+
+    await expect(
+      plugin.event({ event: { type: "session.created", properties: { info: { id: "ses_abc123" } } } }),
+    ).resolves.toBeUndefined();
+
+    await new Promise<void>((resolve) => stalled.close(() => resolve()));
   });
 
   it("stays quiet when no credential is in the environment", async () => {

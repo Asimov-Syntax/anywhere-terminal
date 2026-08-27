@@ -488,7 +488,10 @@ export class SessionManager {
       // Every live PTY incarnation gets fresh renewable Cursor-hook authority
       // (design D6) — merged last so it can never be shadowed by an override.
       if (this.cursorHooks) {
-        spawnEnv = { ...spawnEnv, ...this.cursorHooks.create(id) };
+        // Handed the env it is merging into: the credential must win, but a
+        // configuration directory the terminal already carries is the user's
+        // own and is preserved (.reviews/round-1.md B3).
+        spawnEnv = { ...spawnEnv, ...this.cursorHooks.create(id, spawnEnv) };
       }
       try {
         pty.spawn(nodePty, resolvedShell, [...spawnArgs], { cwd, env: spawnEnv });

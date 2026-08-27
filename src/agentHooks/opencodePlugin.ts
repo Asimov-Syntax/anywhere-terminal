@@ -12,7 +12,16 @@
 // See: asimov/changes/agent-session-hook-identity/design.md D2, D6.
 
 /** Bumped whenever the source changes, so a stale file on disk is replaced. */
-export const OPENCODE_PLUGIN_VERSION = 1;
+export const OPENCODE_PLUGIN_VERSION = 2;
+
+/**
+ * How long a report may take before the plugin abandons it.
+ *
+ * The receiver is on loopback, so this is not latency budgeting — it is the
+ * one case that would otherwise hang OpenCode's event handler: a peer that
+ * accepts the connection and never answers.
+ */
+export const OPENCODE_REPORT_TIMEOUT_MS = 1000;
 
 export const OPENCODE_PLUGIN_FILE = "anywhere-terminal-identity.ts";
 
@@ -30,6 +39,16 @@ export function buildOpenCodePluginSource(): string {
 
 const reported = new Set()
 
+// Only a session event names a session. \`message.updated.properties.info\` is a
+// Message, whose \`id\` is a message id — and a session carrying a parentID is a
+// task's child, not the session this terminal is on.
+function sessionOf(event) {
+  if (event?.type !== "session.created" && event?.type !== "session.updated") return undefined
+  const info = event.properties?.info
+  if (info === undefined || info === null) return event.properties?.sessionID
+  return info.parentID === undefined || info.parentID === null ? info.id : undefined
+}
+
 async function report(sessionID) {
   const base = process.env.ANYWHERE_TERMINAL_AGENT_HOOK_URL
   if (!base || typeof sessionID !== "string" || sessionID === "" || reported.has(sessionID)) return
@@ -39,16 +58,19 @@ async function report(sessionID) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionID }),
+      signal: AbortSignal.timeout(${OPENCODE_REPORT_TIMEOUT_MS}),
     })
   } catch {
-    // Fail open: the receiver being gone must never disturb the session.
+    // Fail open: a receiver that is gone, or that never answers, must never
+    // disturb the session. Forgetting the id leaves the next event free to
+    // retry.
     reported.delete(sessionID)
   }
 }
 
 export const server = async () => ({
   event: async ({ event }) => {
-    await report(event?.properties?.sessionID ?? event?.properties?.info?.id)
+    await report(sessionOf(event))
   },
 })
 `;

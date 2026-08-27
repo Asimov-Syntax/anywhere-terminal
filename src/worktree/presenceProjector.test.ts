@@ -814,6 +814,35 @@ describe("the agent said which session it is on", () => {
     expect(rows.find((r) => r.paneId === "reporter")?.entryId).toBe("opencode:ses_live");
     expect(rows.find((r) => r.paneId === "bystander")?.entryId).toBeUndefined();
   });
+
+  // The report cannot arrive before the pane is proven: the agent has to start
+  // before it can say anything, and nothing about the pane moves in between —
+  // same pty, same directory — so a cache keyed on those two would answer from
+  // the guess forever (.reviews/round-1.md B1).
+  it("takes the report that arrives after the pane was already proven", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setVaultUnderCwd(async () => "opencode:ses_stale");
+    h.setVaultTitle(async (entryId) => (entryId === "opencode:ses_live" ? "Port the pty layer to bun" : "An old one"));
+
+    const first = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+    h.setReportedSession(() => "opencode:ses_live");
+    const second = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    expect(first.entryId).toBe("opencode:ses_stale");
+    expect(second.entryId).toBe("opencode:ses_live");
+    expect(second.title).toBe("Port the pty layer to bun");
+  });
+
+  it("moves to the second session the same terminal reports", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setReportedSession(() => "opencode:ses_one");
+    await h.projector.project([WT]);
+
+    h.setReportedSession(() => "opencode:ses_two");
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBe("opencode:ses_two");
+  });
 });
 
 describe("two panes, one session", () => {

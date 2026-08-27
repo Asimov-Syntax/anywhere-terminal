@@ -42,7 +42,7 @@ import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
-import { formatEntryId, type VaultSessionEntry } from "./vault/types";
+import { formatEntryId, type VaultListResult, type VaultSessionEntry } from "./vault/types";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
@@ -368,6 +368,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               state: update.state,
             });
           },
+          // A report changes what a row is called, and nothing else about the
+          // pane moves when one arrives — so without this the new name waits
+          // for whatever happens to schedule the next projection
+          // (.reviews/round-1.md B1).
+          onReport: () => onPaneEvidenceChange?.(),
           onReasonCode: (reason, sessionSuffix) => {
             console.warn(`[AnyWhere Terminal] Cursor hook ${reason}${sessionSuffix ? ` (…${sessionSuffix})` : ""}`);
           },
@@ -376,7 +381,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     setContributor: (contributor) => {
       hookReceiver = contributor;
       sessionManager.setCursorHookContributor(
-        contributor === undefined ? undefined : withHookEnvironment(contributor, opencodeEnvironment),
+        contributor === undefined ? undefined : withHookEnvironment(contributor, () => opencodeEnvironment),
       );
     },
     onWarning: (operation, reason) => {
@@ -406,9 +411,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // The plugin is written before the receiver is asked for, so a terminal that
   // opens the moment the setting flips already has a directory to point at.
+  // The revision is what makes two flips in flight at once safe: an older
+  // install finishing late must not restore the state the user just left
+  // (.reviews/round-1.md B6).
+  let opencodeRevision = 0;
   async function applyOpencodeHooks(): Promise<void> {
+    const revision = ++opencodeRevision;
     const enabled = readOpencodeHooksEnabled();
-    opencodeEnvironment = enabled ? await installOpenCodePlugin({ storagePath: context.globalStorageUri.fsPath }) : {};
+    const environment = enabled ? await installOpenCodePlugin({ storagePath: context.globalStorageUri.fsPath }) : {};
+    if (revision !== opencodeRevision) {
+      return;
+    }
+    opencodeEnvironment = environment;
     cursorHookController.setDesiredReceiverEnabled(enabled);
   }
   await applyOpencodeHooks();
@@ -593,6 +607,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // differ between reading the tree and changing it.
   const worktreeTreeDeps = createWorktreeTreeDeps();
 
+  // `VaultService.list()` is a full read of every agent's store, and the panes
+  // that need it need it at the same moment — one rebuild, N panes with no
+  // session id yet. Sharing the read in flight bounds that to one, which is the
+  // same per-rebuild bound `openSnapshot` already keeps (.reviews/round-1.md B7).
+  let sessionsInFlight: Promise<VaultListResult> | undefined;
+  function listSessionsOnce(): Promise<VaultListResult> {
+    if (sessionsInFlight !== undefined) {
+      return sessionsInFlight;
+    }
+    const pending = vaultService.list();
+    sessionsInFlight = pending;
+    const clear = (): void => {
+      if (sessionsInFlight === pending) {
+        sessionsInFlight = undefined;
+      }
+    };
+    pending.then(clear, clear);
+    return pending;
+  }
+
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
     // The two evidence sources a removal blocker set needs and the tree does
@@ -651,7 +685,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // claude. Newest wins, since the transcript being written now is the
         // session the proven-running agent is in.
         sessionUnderCwd: async (agent, cwd) => {
-          const { entries } = await vaultService.list();
+          const { entries } = await listSessionsOnce();
           let best: VaultSessionEntry | undefined;
           for (const entry of entries) {
             if (entry.agent !== agent || path.resolve(entry.cwd) !== cwd) {

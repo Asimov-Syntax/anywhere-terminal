@@ -444,6 +444,16 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     failures: Map<PresenceDegradation["source"], string>,
   ): Promise<ProvenIdentity | undefined> {
     if (state.proven && state.provenPtyPid === pane.ptyPid && state.provenCwd === pane.cwd) {
+      // The one thing the cache key cannot see. An agent has to start before it
+      // can report, so the report always lands on an already-proven pane, and
+      // neither the pty nor the directory moves when it does — cached on those
+      // two alone, the row would keep the guess for the life of the pane
+      // (.reviews/round-1.md B1).
+      const reported = deps.reportedSession?.(pane.paneId, state.proven.agent);
+      if (reported === undefined || reported === state.proven.entryId) {
+        return state.proven;
+      }
+      state.proven = { ...state.proven, entryId: reported, evidence: "reported" };
       return state.proven;
     }
 
