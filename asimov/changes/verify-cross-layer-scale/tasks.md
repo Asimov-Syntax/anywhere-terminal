@@ -61,7 +61,7 @@
     1. In src/worktree/presenceProjector.scale.test.ts, compose the production `createPresenceProjectorDeps` so the spies sit at the real seam, not on a hand-built projector
     2. Assert each read count as exact equality, and that unchanged pane keys trigger no re-resolution
 
-- [ ] 3_2 Hold the burst and stream bounds on one joined path
+- [x] 3_2 Hold the burst and stream bounds on one joined path — verified: pnpm exec vitest run 'src/providers/WorktreeHost.scale.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D3
   - **Acceptance**:
