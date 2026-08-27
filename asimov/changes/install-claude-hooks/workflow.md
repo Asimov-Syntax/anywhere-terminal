@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -40,6 +40,7 @@ docs/research/20260827-claude-code-hooks-settings-schema.md was produced during 
 Cycle-1 remediation landed as tasks 4_1 (D12 ledger), 4_2 (D13 single transition owner) and 4_3 (D14 probe runner). The parser, `migrateAgentDestination` and `uninstallAllAgents` are deleted rather than patched — the three defects each had the same root, which is why patching them individually thrashed.
 `main` was merged in mid-cycle (b405735): 24 commits carrying phases 4 and 5, including WT-004.3. Two conflicts, both resolved toward this branch's contract — `SessionManager`'s `cursorHooks` field is `agentHooks` here since WT-006.1, and `paneEvidence` from main is threaded alongside it. The pnpm lockfile was regenerated rather than hand-merged.
 Lint reports 13 warnings, all pre-existing on main and none in files this change touches; `biome check` exits 0. `pnpm run lint` runs Biome's auto-fix form and would silently rewrite `src/webview/worktree/worktreeFormat.ts`'s spinner regex, dropping backslash from the frame set — reverted, and the gate was taken from check mode.
+Cycle-3 fixes landed as 7_1..7_5. Two of them found defects the report had not: the ledger's held-back write re-decided the pending ceiling against this host's own view, admitting an obligation the merged list had no room for; and the probe reported a clean kill whenever the reap grace expired before the terminator answered, so silence read as success. Both are covered.
 B9 is answered as D16: the ledger moves to `~/.anywhere-terminal/agent-hooks-ledger.json` and only the wrappers stay under the storage root, because a record of what we wrote must outlive every location it describes. Relocating the wrapper too was rejected — the registered executable path is the reviewed security surface, and outside the extension's own storage nothing reclaims it at uninstall. One ledger now serves every VS Code installation for this user, which is right: they already share the config files they write into. Tasks 7_1..7_5.
 Round 7 (cycle 3 discovery) returned REJECT with seven blockers; B8, W5 and A1 were independently confirmed fixed. All accepted, none rebutted. B9 is the handback: `globalStorageUri` roots BOTH the wrapper command and the ledger file (`extension.ts:348-357`), so relocating the root takes the ownership history with it and the old entry becomes unownable — never swept, and re-appended beside the new one. D3 established that root as stable across extension UPDATES; the design never separated that from profile, portable-mode, or remote-vs-local moves. The relocation test that appeared to cover this passes one ledger object across both roots, which production cannot do — it proved the command-history mechanism, not relocation.
 B11 is a security defect older than this cycle: the Windows Cursor wrapper invokes bare `powershell` while the same template qualifies `more.com` and Claude's qualifies `curl.exe`. Task 2_3 fixed that class for `more`/`curl` and missed the PowerShell branch, so a repo-local `powershell.*` executes on every Cursor hook. Not eligible for risk acceptance, same ruling as round-3 B4.

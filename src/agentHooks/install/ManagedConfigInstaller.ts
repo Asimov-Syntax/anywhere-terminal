@@ -203,16 +203,11 @@ export class ManagedConfigInstaller {
    */
   private async createWrapper(): Promise<"ready" | "probe-failed" | "failed"> {
     const wrapper = this.wrapperPath();
-    const temporaryPath = `${wrapper}.${this.now()}.tmp`;
-    try {
-      await this.fs.mkdir(this.wrapperDirectory(), { recursive: true });
-      await this.fs.writeFile(temporaryPath, this.adapter.wrapperScript(this.platform), "utf8");
-      if (this.platform !== "win32") {
-        await this.fs.chmod(temporaryPath, 0o700);
-      }
-      await this.replace(temporaryPath, wrapper);
-    } catch {
-      await this.fs.unlink(temporaryPath).catch(() => undefined);
+    // Same write-temp, set-mode, rename, clean-up-on-failure sequence the
+    // configuration takes, so there is one implementation of it rather than two
+    // that can drift (round-7 reuse). No lock: nothing else writes this path.
+    const executable = this.platform === "win32" ? undefined : 0o700;
+    if (!(await this.locked(wrapper).atomicReplace(this.adapter.wrapperScript(this.platform), executable))) {
       return "failed";
     }
     if (this.platform !== "win32") {
@@ -259,6 +254,14 @@ export class ManagedConfigInstaller {
         return "success";
       }
       const serialized = `${JSON.stringify(desired, null, 2)}\n`;
+      // An install over an installation already in the desired shape changes
+      // nothing, and writing anyway costs the user's file a rewrite plus an
+      // mtime bump — and hands a concurrent editor something to collide with
+      // for no reason (round-7 W6). The adapters report "changed" after every
+      // sweep-and-append, so the bytes are the only honest comparison.
+      if (serialized === contents) {
+        return "success";
+      }
       await this.beforeReplace();
       if (!(await this.matches(configPath, contents))) {
         continue;

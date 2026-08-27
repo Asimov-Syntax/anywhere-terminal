@@ -727,3 +727,42 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("an install that would change nothing (round-7 W6)", () => {
+  it("leaves the file untouched rather than rewriting identical bytes", async () => {
+    const paths = await fixture();
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+    await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+    expect((await installerFor(paths, {}, ledger).install()).installed).toBe(true);
+
+    const first = await readFile(paths.configPath, "utf8");
+    // Backdated so any rewrite is visible even at coarse timestamp resolution.
+    const past = new Date(Date.now() - 60_000);
+    await utimes(paths.configPath, past, past);
+
+    expect((await installerFor(paths, {}, ledger).install()).installed).toBe(true);
+
+    expect(await readFile(paths.configPath, "utf8")).toBe(first);
+    // Rounded: the filesystem stores sub-millisecond precision the Date does not.
+    expect(Math.round((await stat(paths.configPath)).mtimeMs)).toBe(past.getTime());
+  });
+
+  it("still replaces the file when the desired shape differs", async () => {
+    const paths = await fixture();
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+    await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
+    await installerFor(paths, {}, ledger).install();
+    const past = new Date(Date.now() - 60_000);
+    await utimes(paths.configPath, past, past);
+
+    // A hand-edit the reconciler has to undo.
+    const edited = JSON.parse(await readFile(paths.configPath, "utf8")) as { hooks: Hooks };
+    edited.hooks[CURSOR_HOOK_EVENTS[0]] = [];
+    await writeFile(paths.configPath, `${JSON.stringify(edited, null, 2)}\n`);
+    await utimes(paths.configPath, past, past);
+
+    expect((await installerFor(paths, {}, ledger).install()).installed).toBe(true);
+
+    expect((await stat(paths.configPath)).mtimeMs).toBeGreaterThan(past.getTime());
+  });
+});

@@ -245,7 +245,7 @@
     1. In src/agentHooks/install/probeRunner.ts observe the terminator's exit status as well as its spawn failure, fall back to killing the leader on a nonzero exit, and settle only once the termination outcome is known
     2. Cover in src/agentHooks/install/probeRunner.test.ts: a terminator that starts and exits nonzero reporting incomplete termination and still killing the leader
 
-- [ ] 7_5 Write the user's configuration only when it would change
+- [x] 7_5 Write the user's configuration only when it would change — verified: pnpm exec vitest run 'src/agentHooks/install/ManagedConfigInstaller.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_1, 7_3
   - **Refs**: .reviews/round-7.md#w6
   - **Acceptance**:
