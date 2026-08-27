@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { tsFiles } from "./sourceSources";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SRC = path.join(REPO_ROOT, "src");
@@ -29,19 +30,6 @@ const FIRST_PRINTABLE = 0x20;
 /** Tab, LF and CR are ordinary source bytes; every other byte below 0x20 is not. */
 function hasControlByte(bytes: Buffer): boolean {
   return bytes.some((byte) => byte < FIRST_PRINTABLE && byte !== TAB && byte !== LF && byte !== CR);
-}
-
-function tsFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...tsFiles(full));
-    } else if (entry.name.endsWith(".ts")) {
-      out.push(full);
-    }
-  }
-  return out;
 }
 
 function offenders(): string[] {

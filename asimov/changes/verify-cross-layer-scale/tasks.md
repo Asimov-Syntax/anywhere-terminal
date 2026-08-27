@@ -131,3 +131,21 @@
   - **Plan**:
     1. Reproduce src/extension.worktreeAssembly.test.ts under repeated full-suite runs and record the failure shape
     2. Fix it where the cause is ours; otherwise skip the affected cases naming the reason, and add a Deferred entry to docs/PLAN.md
+
+## 6. Review fixes (cycle 1)
+
+- [ ] 6_1 Make the verification prove what it names — round-1 blockers
+  - **Deps**: 2_1, 3_4, 4_1
+  - **Refs**: .reviews/round-1.md; design.md D1, D2, D3, D4, D5
+  - **Acceptance**:
+    - Outcome: Every accepted round-1 blocker's named failure makes a test go red
+    - Verify: command pnpm run test:unit
+  - **Boundary**: no test may live in or modify src/agentHooks/install/ or AgentHookController.ts; no bound and no published fixture size moves
+  - **Plan**:
+    1. B1: strip comments before the declaration scan, and invert the fixture that asserted a commented `it(` counts (src/test/invariants/coverage.test.ts, src/test/invariants/sourceSources.ts)
+    2. B8, B7, B5, B6: repair the assertions that pass on empty or unstimulated input in src/extension.worktreeAssembly.test.ts
+    3. B4: drive I7 through runtime disposal in src/extension.crossLayer.test.ts
+    4. B3: take I13's state universe from the production table (src/agentHooks/agents/claude.test.ts)
+    5. B2, B5: retag against the assertions that actually prove each invariant, including src/webview/integration/paneEvidenceReporting.test.ts and src/worktree/presenceProjector.test.ts
+    6. B9, B10, B11: complete the D2/D3/D4 inventories in src/worktree/presenceProjector.scale.test.ts, src/providers/WorktreeHost.scale.test.ts, src/providers/WorktreeHost.secondSurface.test.ts
+    7. W1: build the published fixture size in src/test/bench/scale.bench.ts

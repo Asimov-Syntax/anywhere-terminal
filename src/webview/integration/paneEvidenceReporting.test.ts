@@ -143,7 +143,7 @@ describe("title evidence reaches the host through the factory", () => {
     expect(posted).toEqual([{ type: "paneEvidence", paneId: "pane-1", title: "Fix tests", decorated: false }]);
   });
 
-  it("sends nothing for a spinner frame advancing behind an unchanged title", () => {
+  it("[I9] sends nothing for a spinner frame advancing behind an unchanged title", () => {
     const { posted, factory, emitTitle } = wireSurface();
     const instance = factory.createTerminal("pane-1", "Terminal 1", CONFIG as any, false, null);
 

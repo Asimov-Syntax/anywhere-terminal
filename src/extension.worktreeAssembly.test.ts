@@ -55,6 +55,8 @@ let listingFails = false;
 let dirtyPaths: string[] = [];
 /** Set by a test that needs git to be killed part-way through a removal. */
 let removeTimesOut = false;
+/** Set by a test that needs git and the filesystem to DISAGREE after a removal. */
+let removeLeavesRegistration = false;
 
 /** Every envelope the host posted to the surface, and every message the webview sent back. */
 let posted: ExtensionToWebViewMessage[] = [];
@@ -107,7 +109,7 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
     createGitCommandRunner: () => ({
       run: async (args: readonly string[], cwd: string) => {
         argv.push({ args: [...args], cwd });
-        if (args[0] === "worktree" && args[1] === "remove") {
+        if (args[0] === "worktree" && args[1] === "remove" && !removeLeavesRegistration) {
           // Real git drops the registration AND the directory; the host reads
           // both independently, so a fake that moved only one would leave every
           // removal indeterminate.
@@ -296,6 +298,7 @@ beforeEach(() => {
   listingFails = false;
   dirtyPaths = [];
   removeTimesOut = false;
+  removeLeavesRegistration = false;
   posted = [];
   outbound = [];
   registered = [LINKED];
@@ -856,7 +859,12 @@ describe("the invariants that span the host and the webview", () => {
     return msg.tree.repos.flatMap((repo) => repo.worktrees.map((w) => w.id));
   }
 
-  it("[I9] does not re-render, and sends nothing, for a spinner-only title change", async () => {
+  // Round-1 B5: this used to claim "and sends nothing", counting webview→host traffic after
+  // mutating an already-published host row — it never stimulated the webview boundary where
+  // the strip happens, so the no-message half was not proven here. That half is proven at
+  // its own source in paneEvidenceReporting.test.ts, tagged [I9] there. What THIS test owns
+  // is the far end: a spinner frame that did reach the host must not repaint the tree.
+  it("[I9] does not repaint the tree for a spinner-only title change", async () => {
     publishedRow = { ...agentRowFixture(), title: "⠋ building" };
     const { host } = await assemble();
     // The card holds its agents collapsed until it is opened — the same click a
@@ -874,6 +882,7 @@ describe("the invariants that span the host and the webview", () => {
     await settle();
 
     const after = document.querySelector("[data-row-id]");
+    expect(before, "the agent row never rendered, so sameness proves nothing").not.toBeNull();
     // Same node, not merely equal markup: a replaced element is a re-render.
     expect(after).toBe(before);
     expect(outbound.length).toBe(sentBefore);
@@ -912,6 +921,52 @@ describe("the invariants that span the host and the webview", () => {
     expect(document.body.textContent).toContain("changed since you confirmed");
   });
 
+  it("[I14] refuses to force-remove a worktree whose agent became working", async () => {
+    // Round-1 B6: D5's I14 row has two clauses and only the blocker-set-changed one was
+    // covered. This is the other: a confirmation cannot authorize removing a folder out
+    // from under an agent that is mid-turn, so the dialog must offer no confirm button at
+    // all rather than a disabled one.
+    //
+    // The running row is published rather than driven from a hook event: this harness
+    // stubs the projector (an assembly with no panes cannot project one), and the
+    // hook-event → running-row link is what extension.crossLayer.test.ts owns. What THIS
+    // test owns is presence → blocker assessment → dialog, which no unit test spans.
+    dirtyPaths = ["a.txt"];
+    publishedRow = agentRow({
+      rowId: "row-busy",
+      paneId: "pane-busy",
+      viewId: "view-1",
+      title: "mid turn",
+      agent: "claude",
+      activity: "running",
+      activitySource: "hook",
+    });
+    await assemble();
+
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    // The notice offers the same "Force remove…" it offers any blocked removal — the
+    // refusal is not in the button, it is in what the button opens. Walking that click is
+    // the point: asserting only that git was never called would pass on a dialog that
+    // never opened at all.
+    const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
+      /force remove/i.test(b.textContent ?? ""),
+    );
+    expect(force, "the blocked removal offered no way through to the dialog").toBeDefined();
+    force?.click();
+    await settle();
+
+    // A refusal dialog, not a confirmation: it names why, and carries NO confirm button —
+    // absent rather than disabled, because a disabled one claims the action exists here.
+    expect(document.body.textContent).toContain("out from under a working agent");
+    const confirms = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
+      /^remove/i.test((b.textContent ?? "").trim()),
+    );
+    expect(confirms).toEqual([]);
+    expect(gitCalls("remove")).toEqual([]);
+  });
+
   it("[I15] reports a killed removal as indeterminate, and still rebuilds", async () => {
     removeTimesOut = true;
     await assemble();
@@ -932,6 +987,24 @@ describe("the invariants that span the host and the webview", () => {
     expect(gitCalls("list").length).toBeGreaterThan(listsBefore);
   });
 
+  it("[I15] reports a success git and the filesystem disagree about as indeterminate", async () => {
+    // Round-1 B7: the timeout fixture moved BOTH sources together, so I15's second clause —
+    // "a state git and the filesystem disagree about is reported as indeterminate, never as
+    // a clean failure" — had no test at all. Here git exits 0 and the registration survives.
+    removeLeavesRegistration = true;
+    await assemble();
+
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
+    expect(document.body.textContent).toContain("partly applied");
+    expect(document.body.textContent).toContain("is still registered");
+    // Not the success the exit code claimed, and not a clean failure either.
+    expect(document.body.textContent).not.toContain("Remove done.");
+    expect(document.body.textContent).not.toContain("Couldn't remove");
+  });
+
   it("never posts presence for a worktree the paired tree does not carry", async () => {
     publishedRow = agentRowFixture();
     await assemble();
@@ -939,6 +1012,10 @@ describe("the invariants that span the host and the webview", () => {
 
     const envelopes = posted.filter((m) => m.type === "worktreeTreeResponse");
     expect(envelopes.length).toBeGreaterThan(0);
+    // Round-1 B8: the subset relation is satisfied by an empty presence map, so dropping
+    // every row passed this test. Both halves have to be populated before the relation
+    // says anything, and at least one envelope has to carry the row we seeded.
+    let paired = 0;
     for (const envelope of envelopes) {
       const ids = new Set(treeIds(envelope));
       const named = Object.keys(
@@ -947,7 +1024,11 @@ describe("the invariants that span the host and the webview", () => {
       // Atomicity is structural here — one message carries both — and this is
       // what asserts the structure has not been split behind the invariant.
       expect(named.filter((id) => !ids.has(id))).toEqual([]);
+      if (ids.has(LINKED) && named.includes(LINKED)) {
+        paired++;
+      }
     }
+    expect(paired, "no envelope carried both the worktree and its presence row").toBeGreaterThan(0);
   });
 });
 

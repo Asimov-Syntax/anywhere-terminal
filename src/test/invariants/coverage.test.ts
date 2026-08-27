@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { MAX_WORKTREES_PER_REPO } from "../../webview/worktree/WorktreeView";
 import { DEFERRED_BY_WT_006_2, INVARIANTS } from "./registry";
+import { tsFiles, withoutComments } from "./sourceSources";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SRC = path.join(REPO_ROOT, "src");
@@ -30,19 +31,6 @@ function documentedInvariants(): Map<string, string> {
     }
   }
   return rows;
-}
-
-function tsFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...tsFiles(full));
-    } else if (entry.name.endsWith(".ts")) {
-      out.push(full);
-    }
-  }
-  return out;
 }
 
 /** Every task id the blueprint declares, so an `owners` entry cannot point at nothing. */
@@ -67,7 +55,9 @@ interface Declaration {
 
 function declarationsIn(source: string): Declaration[] {
   const found: Declaration[] = [];
-  for (const match of source.matchAll(DECLARATION)) {
+  // Comments blanked FIRST (round-1 B1): a commented-out declaration is not coverage, and
+  // the regex alone cannot tell the difference.
+  for (const match of withoutComments(source).matchAll(DECLARATION)) {
     found.push({ title: match[3], active: !INERT.test(match[1]) });
   }
   return found;
@@ -148,16 +138,21 @@ describe("truthfulness invariants — registry", () => {
 describe("truthfulness invariants — coverage", () => {
   it("finds a tag only where a test actually declares one", () => {
     const source = [
-      '// it("[I1] a tag in a comment is not coverage", () => {});',
+      '// it("[I1] a line comment is not coverage", () => {});',
       'it("[I2] a real one", () => {});',
       'it.skip("[I3] a disabled one", () => {});',
-      'const fixture = "[I4] a tag inside a fixture string";',
+      '/* it("[I5] a block comment is not coverage either", () => {}); */',
+      'it("[I6] a real one after a block comment", () => {});',
+      'const notAComment = "// it(\\"[I7] this lives inside a string\\", () => {});";',
     ].join("\n");
+    // Round-1 B1: this expectation used to LIST the commented declaration, so the scan's own
+    // regression test certified the defect. Both comment forms are excluded now, and a
+    // comment-looking run inside a string literal is still code.
     expect(
       declarationsIn(source)
         .filter((d) => d.active)
         .map((d) => d.title),
-    ).toEqual(["[I1] a tag in a comment is not coverage", "[I2] a real one"]);
+    ).toEqual(["[I2] a real one", "[I6] a real one after a block comment"]);
   });
 
   it("treats a disabled declaration as inert, so it cannot hold an invariant open", () => {
