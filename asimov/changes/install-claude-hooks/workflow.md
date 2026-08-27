@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -51,6 +51,16 @@ old three-list shape cannot be converted faithfully, so a pending path whose com
 migrates as an unresolved obligation rather than as an invented pair. Tasks 8_1, 8_2, 8_4 and 8_5
 were rewritten: three of them named outcome fields that do not exist, and 8_2 and 8_4 could not
 have caught the defects they target from the seam they tested.
+
+Cycle-4 fixes landed as 8_1..8_8. Three of them found defects round 9 had not named: a
+post-write persistence failure released the claim on a file we had just written, losing the
+destination; `unresolved` had to be narrowed to migrated records, since a compat-shim record
+carrying it could never be cleared; and the wrapper's temporary name collides on a frozen
+clock, which is what made B18 reproducible at all. Two seams were extracted because the
+defects lived at a boundary nothing could test — the configuration-event decision (B15) and
+the activation ordering (B14). A capacity guard at the transition level is NOT restored: it
+now lives in the reservation inside install, and the transition tests stub the installer, so
+that seam is uncovered and named here rather than assumed.
 
 Round 9 (cycle 4 discovery) REJECTED with 7 blockers and confirmed B5, B6, B9, B11, B13
 and W6 fixed. Three of the seven are one design contradiction, so the thrash stop was taken
