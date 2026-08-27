@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -40,6 +40,10 @@ docs/research/20260827-claude-code-hooks-settings-schema.md was produced during 
 Cycle-1 remediation landed as tasks 4_1 (D12 ledger), 4_2 (D13 single transition owner) and 4_3 (D14 probe runner). The parser, `migrateAgentDestination` and `uninstallAllAgents` are deleted rather than patched — the three defects each had the same root, which is why patching them individually thrashed.
 `main` was merged in mid-cycle (b405735): 24 commits carrying phases 4 and 5, including WT-004.3. Two conflicts, both resolved toward this branch's contract — `SessionManager`'s `cursorHooks` field is `agentHooks` here since WT-006.1, and `paneEvidence` from main is threaded alongside it. The pnpm lockfile was regenerated rather than hand-merged.
 Lint reports 13 warnings, all pre-existing on main and none in files this change touches; `biome check` exits 0. `pnpm run lint` runs Biome's auto-fix form and would silently rewrite `src/webview/worktree/worktreeFormat.ts`'s spinner regex, dropping backslash from the frame set — reverted, and the gate was taken from check mode.
+Round 7 (cycle 3 discovery) returned REJECT with seven blockers; B8, W5 and A1 were independently confirmed fixed. All accepted, none rebutted. B9 is the handback: `globalStorageUri` roots BOTH the wrapper command and the ledger file (`extension.ts:348-357`), so relocating the root takes the ownership history with it and the old entry becomes unownable — never swept, and re-appended beside the new one. D3 established that root as stable across extension UPDATES; the design never separated that from profile, portable-mode, or remote-vs-local moves. The relocation test that appeared to cover this passes one ledger object across both roots, which production cannot do — it proved the command-history mechanism, not relocation.
+B11 is a security defect older than this cycle: the Windows Cursor wrapper invokes bare `powershell` while the same template qualifies `more.com` and Claude's qualifies `curl.exe`. Task 2_3 fixed that class for `more`/`curl` and missed the PowerShell branch, so a repo-local `powershell.*` executes on every Cursor hook. Not eligible for risk acceptance, same ruling as round-3 B4.
+An oracle consult run in parallel settled the question under all of this: ownership CANNOT be derived from the hook document — Claude closes `hookMatcher` and every `hookCommand` branch with `additionalProperties: false`, and a self-identifying command still cannot say where a moved `claudeConfigDir` went. So the ledger stays; B9 moves where it lives. The oracle also corrected the claimable guarantee: never removing a non-identical lookalike or a command-edited entry, NOT per-occurrence provenance — a byte-identical copy a user wrote is indistinguishable. Owed to design.md.
+An oracle sub-agent overwrote `docs/research/20260827-claude-code-hooks-settings-schema.md` despite a read-only instruction, cutting 103 lines; reverted with `git checkout --`.
 Round 6 closed cycle 2 as SUPERSEDED at the scope lock rather than reviewing the fixes: D15 amended D12 mid-cycle, and a verification round cannot adjudicate a design the discovery round never saw. That restarts the round cap — cycle 3 opens with a discovery round (round 7) over the whole change, carrying B5, B8, W5 and audit-backlog A1 forward as fixed-but-unverified. Not a thrash stop; no blocker survived a third round.
 Round-5 fixes landed as 6_1 and 6_2. The lock and atomic replacement moved out of `ManagedConfigInstaller` into `src/agentHooks/install/lockedJsonFile.ts`, so the ledger takes the same authority instead of a second one; the round-5 audit-backlog item (a raw path compared against canonicalized ledger paths) was fixed in the same seam 6_2 already held.
 Round 5 (cycle 2) handed back to planning: B5 overturns where D12 puts the ledger. `context.globalState` is a per-window cache flushed on update, not a store two extension hosts share, so the ledger cannot hold the invariant D13 depends on — amended as D15, a lock-protected file under `globalStorageUri`. Round 5 also overturned my round-4 modification of B7: a pending ceiling that refuses to track while letting the transition continue loses a file we modified, because the next `recordInstalled` overwrites the record naming it. D13 now stops the move instead. Tasks 6_1 and 6_2 carry both, plus W5 (a finalization failure records the written path as pending). Round 6 is cycle 2's last available round.
