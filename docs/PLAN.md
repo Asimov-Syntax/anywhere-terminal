@@ -383,7 +383,7 @@ state. There is nothing to provision.
 | **Labels** | re-review |
 | **Notes** | Cross-layer verification cannot live inside any single feature task |
 | **Acceptance** | Every truthfulness invariant is covered by a test that fails when violated, and each is traceable to the task that owns it; the documented latency and per-rebuild cost budgets hold at realistic worktree and pane counts; event bursts and sustained streams both collapse to the documented rebuild bounds; a second surface adds no work, and a repo past the render budget caps visibly rather than truncating silently |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ---
 
