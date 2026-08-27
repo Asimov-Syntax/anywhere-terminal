@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -40,6 +40,19 @@ docs/research/20260827-claude-code-hooks-settings-schema.md was produced during 
 Cycle-1 remediation landed as tasks 4_1 (D12 ledger), 4_2 (D13 single transition owner) and 4_3 (D14 probe runner). The parser, `migrateAgentDestination` and `uninstallAllAgents` are deleted rather than patched — the three defects each had the same root, which is why patching them individually thrashed.
 `main` was merged in mid-cycle (b405735): 24 commits carrying phases 4 and 5, including WT-004.3. Two conflicts, both resolved toward this branch's contract — `SessionManager`'s `cursorHooks` field is `agentHooks` here since WT-006.1, and `paneEvidence` from main is threaded alongside it. The pnpm lockfile was regenerated rather than hand-merged.
 Lint reports 13 warnings, all pre-existing on main and none in files this change touches; `biome check` exits 0. `pnpm run lint` runs Biome's auto-fix form and would silently rewrite `src/webview/worktree/worktreeFormat.ts`'s spinner regex, dropping backslash from the frame set — reverted, and the gate was taken from check mode.
+Round 9 (cycle 4 discovery) REJECTED with 7 blockers and confirmed B5, B6, B9, B11, B13
+and W6 fixed. Three of the seven are one design contradiction, so the thrash stop was taken
+as a handback rather than a fourth patch: B10 (a pending list cannot both retain every host's
+cleanup obligations and stay bounded), B14 (D16 made the ledger machine-scoped while
+`destination` stays a single string, so two installations with different `claudeConfigDir`
+cannot both be represented), and B17 (8 remembered commands against 16 pending destinations —
+an evicted command makes its own pending configuration unrecognisable, and cleanup then drops
+the pointer to a file that still fires hooks). Gate 2, All tasks done and Verify gate are
+unticked; the round-9 blockers B12, B15, B16 and B18 are ordinary implementation defects and
+are planned alongside the amendment. The user did not answer the thrash-stop question within
+the wait, so option 1 was auto-chosen under fastlane; option 2 was not available without them,
+since risk-accepting B17 means accepting that an uninstall can leave live hooks behind.
+
 Cycle 3 closed as SUPERSEDED at round 8: D16 (commit 435d911) amends accepted storage,
 ownership, durability and bounding contracts, so the round-7 fixes cannot be verified inside
 the cycle they changed the premises of. Round 9 opens cycle 4 as a discovery round over the
