@@ -879,6 +879,19 @@ describe("dialogs", () => {
     expect(host.querySelector(".wt-dialog")?.getAttribute("aria-label")).toBe("Create worktree");
   });
 
+  it("supersedes an open launch dialog rather than stacking one over it", () => {
+    // An untracked modal stays mounted under the next one, holding a focus trap
+    // and a document listener nothing releases (round-1 W4).
+    const { view, host } = mount({ createDialogDeps: () => ({ repos: [createDefaults()] }) });
+    view.setData(populated());
+    const agents = [{ id: "claude", label: "Claude Code", canSeedPrompt: true, permissionChoices: [] }];
+    view.openLaunchDialog("feat/login", agents);
+    expect(host.querySelectorAll(".wt-dialog").length).toBe(1);
+    view.openCreateDialog();
+    expect(host.querySelectorAll(".wt-dialog").length).toBe(1);
+    expect(host.querySelector(".wt-dialog")?.getAttribute("aria-label")).toBe("Create worktree");
+  });
+
   it("opens the remove confirmation with every blocker named", () => {
     const { view, host } = mount();
     view.setData(populated());

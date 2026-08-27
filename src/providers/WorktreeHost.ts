@@ -403,7 +403,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * detached one takes its answer with it. Admission checks THIS, not a fresh
    * probe: the offer is what the request has to have come from.
    */
-  const publishedTargets = new WeakMap<WorktreeSurface, readonly VaultLaunchTarget[]>();
+  const publishedTargets = new WeakMap<WorktreeSurface, { offerId: string; targets: readonly VaultLaunchTarget[] }>();
+
+  /** Monotonic, so a re-published answer supersedes the one in flight. */
+  let offerSeq = 0;
   /**
    * Bumped by every write to the cached tree — never by a delivery attempt.
    *
@@ -624,6 +627,23 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * gone, but opening, revealing or spawning a terminal in one would act on a
    * path that is not there (design.md D3).
    */
+  /**
+   * Which registration currently occupies `worktreeId`, or `undefined` for none.
+   *
+   * "Something is there" and "the same thing is there" are different questions,
+   * and remove-then-recreate at the same normalized id answers yes to the first.
+   * The same string the mutation bindings bind a confirmation to answers the
+   * second — a recreate onto the same commit and branch repeats it, which is the
+   * strongest a listing can do (round-3 B5).
+   */
+  function incarnationOf(worktreeId: string): string | undefined {
+    const wt = cachedWorktree(worktreeId);
+    if (!wt || wt.missing === true) {
+      return undefined;
+    }
+    return `${wt.head ?? ""}:${wt.branch ?? ""}`;
+  }
+
   function actionPath(worktreeId: string, allowMissing: boolean): string | undefined {
     const wt = cachedWorktree(worktreeId);
     if (!wt || (wt.missing && !allowMissing)) {
@@ -668,14 +688,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (typeof fields !== "object" || fields === null) {
       return false;
     }
-    const { agent, permissionChoiceId, prompt } = fields as Record<string, unknown>;
+    const { agent, permissionChoiceId, prompt, offerId } = fields as Record<string, unknown>;
     if (typeof agent !== "string" || !admissiblePrompt(prompt)) {
       return false;
     }
     if (permissionChoiceId !== undefined && typeof permissionChoiceId !== "string") {
       return false;
     }
-    const target = (publishedTargets.get(surface) ?? []).find((t) => t.agent === agent);
+    const offer = publishedTargets.get(surface);
+    // The answer this request was chosen from must be the answer this surface
+    // currently holds. A post that never arrived leaves the panel quoting an id
+    // the host has replaced, and refusing that is the safe direction: the user
+    // sees an action do nothing rather than one act on a list nobody rendered.
+    if (offer === undefined || offerId !== offer.offerId) {
+      return false;
+    }
+    const target = offer.targets.find((t) => t.agent === agent);
     if (target === undefined) {
       return false;
     }
@@ -690,8 +718,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   /** Resolve the start-capable targets for `surface`, remember them, and answer. */
   async function publishLaunchTargets(surface: WorktreeSurface): Promise<void> {
     const targets = (await options.actions?.launchTargets?.()) ?? [];
-    publishedTargets.set(surface, targets);
-    surface.post({ type: "vaultLaunchTargets", capability: "start", targets: [...targets] });
+    offerSeq += 1;
+    const offerId = `offer-${offerSeq}`;
+    publishedTargets.set(surface, { offerId, targets });
+    surface.post({ type: "vaultLaunchTargets", capability: "start", targets: [...targets], offerId });
   }
 
   /** The launcher's option bag, with absent fields absent rather than undefined. */
@@ -984,15 +1014,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (!open) {
       return;
     }
+    // Read BEFORE the awaits and compared after: this is the version the user's
+    // action was aimed at.
+    const asked = incarnationOf(worktreeId);
     void resolve()
-      .then((options) => {
+      .then((launchOptions) => {
         // Asked again at the handoff, not only at the request: admission and
-        // executable resolution both await, and a worktree removed while they
-        // ran would otherwise still receive the session.
-        if (actionPath(worktreeId, false) === undefined) {
+        // executable resolution both await, and neither a worktree removed while
+        // they ran nor a different one recreated at the same id may receive the
+        // session.
+        const path = actionPath(worktreeId, false);
+        if (asked === undefined || path === undefined || incarnationOf(worktreeId) !== asked) {
           return undefined;
         }
-        return options;
+        // Re-resolved rather than reusing the pre-await path: git's own display
+        // string for the registration that is there now.
+        return { ...launchOptions, cwd: path };
       })
       .then((options) => (options === undefined ? undefined : open.call(surface, options)))
       .catch((err: unknown) => {

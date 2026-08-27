@@ -219,6 +219,9 @@ export class WorktreeController {
 
   /** True between asking which agents can start a session and being told. */
   private awaitingLaunchTargets = false;
+
+  /** Which answer `launchAgents` came from, quoted back on every launch. */
+  private launchOfferId: string | undefined;
   /** Which worktree the open launch dialog is for. */
   private launchTarget: string | null = null;
   /**
@@ -287,7 +290,12 @@ export class WorktreeController {
         if (this.launchTarget === null) {
           return;
         }
-        deps.postMessage({ type: "worktreeLaunchAgent", worktreeId: this.launchTarget, ...request });
+        deps.postMessage({
+          type: "worktreeLaunchAgent",
+          worktreeId: this.launchTarget,
+          ...request,
+          ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }),
+        });
         this.launchTarget = null;
       },
       onDismissActionResult: (result) => {
@@ -335,6 +343,7 @@ export class WorktreeController {
                   agent: draft.agentId,
                   ...(draft.permissionChoiceId === undefined ? {} : { permissionChoiceId: draft.permissionChoiceId }),
                   ...(draft.prompt === undefined ? {} : { prompt: draft.prompt }),
+                  ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }),
                 },
               }
             : { openAfter: draft.openAfter as Exclude<WorktreeOpenAfter, "agent"> }),
@@ -513,6 +522,9 @@ export class WorktreeController {
       return;
     }
     this.awaitingLaunchTargets = false;
+    // Kept with the list it came with: the host admits a launch only against the
+    // answer this panel actually received, and quoting it is the proof.
+    this.launchOfferId = msg.offerId;
     this.launchAgents = msg.targets.map((t) => ({
       id: t.agent,
       label: t.displayName,

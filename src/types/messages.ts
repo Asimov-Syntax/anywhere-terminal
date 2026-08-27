@@ -684,6 +684,15 @@ export interface WorktreeAgentLaunchFields {
   agent: string;
   permissionChoiceId?: string;
   prompt?: string;
+  /**
+   * The answer this launch was chosen from, quoted back.
+   *
+   * The host admits a launch against the agents it OFFERED, and "offered" has
+   * to mean delivered: a reply the surface never received, or one a refresh has
+   * already replaced, is not a list the user chose from. Quoting the id is what
+   * makes that checkable — absent or stale is refused, never assumed current.
+   */
+  offerId?: string;
 }
 
 /**
@@ -1589,6 +1598,8 @@ export interface VaultLaunchTargetsMessage {
    */
   capability: VaultLaunchCapability;
   targets: VaultLaunchTarget[];
+  /** Identifies this answer, for a launch to quote back. Start capability only. */
+  offerId?: string;
 }
 
 /**

@@ -158,3 +158,15 @@
     1. `src/providers/WorktreeHost.ts` — answer the start-capability request from the host, keep the published set per surface, admit against that snapshot, and re-resolve the worktree at the surface handoff (round-2 B1, B5)
     2. `src/providers/TerminalViewProvider.ts` — route a start-capability request to the host and keep the continuation one where it is
     3. `src/providers/TerminalViewProvider.vaultContinue.test.ts` — the start capability moves owner, so its two provider-answers-it cases move with it
+
+- [x] 6_3 Carry identity across the awaits, not facts — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 6_2
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-is-admitted-only-on-values-the-host-declared, a-launch-resolves-its-own-target}
+  - **Acceptance**:
+    - Outcome: a launch quoting a superseded offer, or a worktree recreated at the same id, launches nothing
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/types/messages.ts` — the launch-target answer carries an offer id and a launch echoes it
+    2. `src/providers/WorktreeHost.ts` — mint an offer id per published answer, admit only a launch quoting the current one, and require the worktree's incarnation unchanged at the handoff (round-3 B1, B5)
+    3. `src/webview/worktree/WorktreeController.ts` — keep the offer id the answer arrived with and quote it on both entry paths
+    4. `src/webview/worktree/WorktreeView.ts` — cover the dialog supersession at its own owner
