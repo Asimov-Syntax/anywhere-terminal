@@ -606,9 +606,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     projector: createPresenceProjector(
       createPresenceProjectorDeps({
         store: paneEvidence,
-        // Fallback only — the projector asks about a session the registry left
-        // unnamed. A user rename outranks the derived title here for the same
-        // reason it does in the vault list (enhance-vault-sessions D1).
+        // What a row is called. `entry.title` already carries claude's own
+        // display precedence (claudeReader.ts) — the name the user gave the
+        // session, then the title Claude generated, then its last prompt — and a
+        // rename in THIS app outranks all of it (enhance-vault-sessions D1).
         sessionTitle: async (entryId) => {
           const entry = await vaultService.getEntry(entryId);
           return entry?.customName || entry?.title || undefined;

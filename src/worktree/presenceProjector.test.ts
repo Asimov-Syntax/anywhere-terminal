@@ -628,26 +628,40 @@ describe("what a row is called", () => {
     ...over,
   });
 
-  it("titles an external row from the name the registry published", async () => {
+  it("titles a row from the vault, not from the slug the registry derived", async () => {
+    // `nameSource: "derived"` is a slug off the directory: every session in one
+    // repo gets the same one, which is what the reporter was looking at.
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named({ name: "cyberk-skills-f9" })] });
+    h.setVaultTitle(async (entryId) => (entryId === "claude:s1" ? "Hadern attribution analysis" : undefined));
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.title).toBe("Hadern attribution analysis");
+  });
+
+  it("titles a pane from its session, not from the title its shell left behind", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+    h.setRegistry({ kind: "ok", sessions: [named()] });
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", name: "cyberk-skills-f9" }));
+    h.setVaultTitle(async () => "Fix the worktree row titles");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.title).toBe("Fix the worktree row titles");
+  });
+
+  it("falls back to the registry name when the vault cannot title the session", async () => {
     const h = makeProjector();
     h.setRegistry({ kind: "ok", sessions: [named()] });
+    h.setVaultTitle(async () => undefined);
 
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
     expect(row.title).toBe("hadern-analysis-a7");
   });
 
-  it("titles a pane from its session's name, not from the title its shell left behind", async () => {
-    const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
-    h.setRegistry({ kind: "ok", sessions: [named({ name: "cyberk-skills-f9" })] });
-    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", name: "cyberk-skills-f9" }));
-
-    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
-
-    expect(row.title).toBe("cyberk-skills-f9");
-  });
-
-  it("keeps the pane's own title when no session named it", async () => {
+  it("keeps the pane's own title when nothing else named the session", async () => {
     const h = makeProjector([pane({ paneId: "a", title: "npm run watch" })]);
 
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
@@ -655,58 +669,64 @@ describe("what a row is called", () => {
     expect(row.title).toBe("npm run watch");
   });
 
-  it("falls back to the vault for a session the registry left unnamed", async () => {
-    const h = makeProjector();
-    h.setRegistry({ kind: "ok", sessions: [named({ name: undefined })] });
-    h.setVaultTitle(async (entryId) => (entryId === "claude:s1" ? "fix the worktree rows" : undefined));
-
-    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
-
-    expect(row.title).toBe("fix the worktree rows");
-  });
-
-  it("never asks the vault about a session the registry already named", async () => {
-    // The fallback opens a transcript, so a registry-named row must not pay for
-    // it — and the poll re-runs the external pass every five seconds.
-    const asked: string[] = [];
-    const h = makeProjector();
-    h.setRegistry({ kind: "ok", sessions: [named()] });
-    h.setVaultTitle(async (entryId) => {
-      asked.push(entryId);
-      return "should never be read";
-    });
-
-    await h.projector.project([WT]);
-
-    expect(asked).toEqual([]);
-  });
-
-  it("reads the vault once per session however many passes run", async () => {
+  it("reads the vault once per session across passes inside the refresh window", async () => {
+    // The read opens a transcript and the poll runs every five seconds.
     let reads = 0;
     const h = makeProjector();
-    h.setRegistry({ kind: "ok", sessions: [named({ name: undefined })] });
+    h.setRegistry({ kind: "ok", sessions: [named()] });
+    h.setVaultTitle(async () => `title ${(reads += 1)}`);
+
+    await h.projector.project([WT]);
+    await h.projector.project([WT]);
+    const [row] = (await h.projector.project([WT], { external: true })).rowsByWorktreeId[WT];
+
+    expect(reads).toBe(1);
+    expect(row.title).toBe("title 1");
+  });
+
+  it("re-reads once the cached title has aged out, so a rename reaches the row", async () => {
+    let reads = 0;
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named()] });
+    h.setVaultTitle(async () => `title ${(reads += 1)}`);
+
+    await h.projector.project([WT]);
+    clock += 61_000;
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(reads).toBe(2);
+    expect(row.title).toBe("title 2");
+  });
+
+  it("keeps the last title it read when a later read fails, rather than demoting the row", async () => {
+    // An unreadable transcript is not a session that lost its name.
+    let reads = 0;
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [named()] });
     h.setVaultTitle(async () => {
-      reads += 1;
-      return "fix the worktree rows";
+      if ((reads += 1) === 1) {
+        return "Hadern attribution analysis";
+      }
+      throw new Error("transcript unreadable");
     });
 
     await h.projector.project([WT]);
-    await h.projector.project([WT]);
-    await h.projector.project([WT], { external: true });
+    clock += 61_000;
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
-    expect(reads).toBe(1);
+    expect(row.title).toBe("Hadern attribution analysis");
   });
 
-  it("survives a vault read that throws, leaving the row untitled rather than the pass dead", async () => {
+  it("survives a vault read that throws with nothing cached, leaving the fallback in place", async () => {
     const h = makeProjector();
-    h.setRegistry({ kind: "ok", sessions: [named({ name: undefined })] });
+    h.setRegistry({ kind: "ok", sessions: [named()] });
     h.setVaultTitle(async () => {
       throw new Error("transcript unreadable");
     });
 
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
-    expect(row.title).toBeUndefined();
+    expect(row.title).toBe("hadern-analysis-a7");
   });
 });
 

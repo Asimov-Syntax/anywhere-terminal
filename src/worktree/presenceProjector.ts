@@ -58,13 +58,17 @@ export interface PresenceProjectorDeps {
   /** Fold a pane cwd into the same form `WorktreeInfo.id` is in. */
   normalize(p: string): string;
   /**
-   * The vault's name for a resolved session — the FALLBACK title, consulted only
-   * for a row the registry did not name.
+   * What the vault calls a resolved session — the PREFERRED title.
+   *
+   * Claude's own display precedence (`claudeReader.ts`): the name the user gave
+   * the session, then the title Claude generated for it, then its last prompt.
+   * The pid registry's `name` loses to all three because it is usually
+   * `nameSource: "derived"` — a slug off the directory, identical for every
+   * session in one repo.
    *
    * Separate from `openSnapshot` because it is not a per-rebuild read: it opens a
-   * transcript, so it is memoized per session for the life of the window and a
-   * pass that resolves nothing new costs nothing. Optional, so the projector's
-   * own tests need no vault.
+   * transcript, so it is cached per session and re-read no more often than
+   * `TITLE_REFRESH_MS`. Optional, so the projector's own tests need no vault.
    */
   sessionTitle?(entryId: string): Promise<string | undefined>;
   now?(): number;
@@ -143,6 +147,15 @@ interface PaneState {
  * and no other CLI publishes a registry to read.
  */
 const REGISTRY_AGENT: VaultAgentId = "claude";
+
+/**
+ * How long a vault-read title is trusted before it is read again.
+ *
+ * Longer than the 5-second poll by two orders of magnitude, because the read
+ * opens a transcript; short enough that a rename, or the title Claude generates
+ * a few turns in, reaches the row while the user is still looking at it.
+ */
+const TITLE_REFRESH_MS = 60_000;
 
 /** The one owner of an external row's identity: row creation and eviction share it. */
 function externalRowId(sessionId: string): string {
@@ -238,30 +251,46 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       }
     | undefined;
 
-  /**
-   * One vault title read per session, for the life of the window.
-   *
-   * The promise is memoized, not its value: a second pass joins the first read
-   * rather than starting its own, and a read that resolved to `undefined` is
-   * still an answer — re-asking every pass would open a transcript every five
-   * seconds for a session the vault genuinely cannot title. The cost of that is
-   * a rename made after the first read not reaching the row until the window
-   * reopens, which is the trade a registry-named row never has to make.
-   */
-  const vaultTitles = new Map<string, Promise<string | undefined>>();
+  /** One vault title read per session, per `TITLE_REFRESH_MS`. */
+  const vaultTitles = new Map<string, { at: number; title: Promise<string | undefined> }>();
 
   function clock(): number {
     return deps.now?.() ?? Date.now();
   }
 
   /**
-   * Fill in a title for every row the registry left unnamed, from the vault.
+   * This session's vault title, re-read only once the cached one has aged out.
+   *
+   * A title is not static — Claude generates one a few turns in, and the user can
+   * rename a session at any point — so a read cached for the life of the window
+   * would pin a row to whatever it was called first. Re-reading every pass is the
+   * other extreme: this opens a transcript, and the poll runs every five seconds.
+   *
+   * A read that fails or answers nothing keeps the previous answer rather than
+   * dropping the row back to its fallback: an unreadable transcript is not a
+   * session that lost its name.
+   */
+  function vaultTitle(entryId: string, read: (id: string) => Promise<string | undefined>, now: number) {
+    const cached = vaultTitles.get(entryId);
+    if (cached && now - cached.at < TITLE_REFRESH_MS) {
+      return cached.title;
+    }
+    const previous = cached?.title;
+    const title = read(entryId)
+      .catch(() => undefined)
+      .then(async (next) => next ?? (previous === undefined ? undefined : await previous));
+    vaultTitles.set(entryId, { at: now, title });
+    return title;
+  }
+
+  /**
+   * Retitle every row whose session the vault can name.
    *
    * Rows are REPLACED rather than written through: a replayed window row is the
    * retained pass's own object, and titling it in place would edit what the next
    * replay hands back.
    */
-  async function titleFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>): Promise<void> {
+  async function titleFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>, now: number): Promise<void> {
     const read = deps.sessionTitle;
     if (!read) {
       return;
@@ -283,12 +312,10 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       rowsByWorktreeId[worktreeId] = await Promise.all(
         rows.map(async (row) => {
           const entryId = row.entryId;
-          if (row.title !== undefined || entryId === undefined) {
+          if (entryId === undefined) {
             return row;
           }
-          const pending = vaultTitles.get(entryId) ?? read(entryId).catch(() => undefined);
-          vaultTitles.set(entryId, pending);
-          const title = await pending;
+          const title = await vaultTitle(entryId, read, now);
           return title === undefined ? row : { ...row, title };
         }),
       );
@@ -430,9 +457,8 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         row: {
           rowId,
           scope: "external",
-          // The registry's own name for the session. An external row has no pane
-          // and therefore no terminal title, so without this it had no title
-          // source at all and rendered the placeholder unconditionally.
+          // Last resort, overridden by the vault pass. An external row has no
+          // pane and therefore not even a terminal title to fall back to.
           ...(session.name !== undefined ? { title: session.name } : {}),
           agent: REGISTRY_AGENT,
           agentSource: "registry",
@@ -510,8 +536,9 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         scope: "window",
         paneId: pane.paneId,
         viewId: pane.viewId,
-        // The session's own name outranks the pane's terminal title: claude sets
-        // no OSC title at all, so a shell-set one is what would show otherwise.
+        // Both are fallbacks the vault pass overrides. The registry name leads
+        // only because claude sets no OSC title at all, so a pane title here is
+        // whatever the shell left behind.
         title: identity?.name ?? pane.title,
         agent: identity?.agent,
         agentSource: identity?.source ?? "none",
@@ -625,7 +652,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         }
       }
 
-      await titleFromVault(rowsByWorktreeId);
+      await titleFromVault(rowsByWorktreeId, now);
 
       // A source that answered this rebuild clears its entry; one still failing
       // keeps the epoch of the FIRST failure in the run, so the affordance can

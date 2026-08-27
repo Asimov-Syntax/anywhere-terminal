@@ -62,12 +62,16 @@ export interface WorktreeAgentRow {
   /** Which webview hosts the pane; window scope only. */
   viewId?: string;
   /**
-   * What the row is called: the session's registry name, else the vault's title
-   * for it, else the pane's decoration-stripped terminal title (§ 3.4).
+   * What the row is called: the vault's title for the session, else the name
+   * the pid registry published for it, else the pane's decoration-stripped
+   * terminal title (§ 3.4).
    *
-   * The terminal title is last, not first, because an agent CLI is not obliged
-   * to set one — claude sets none at all — so the pane title is whatever the
-   * shell happened to leave behind.
+   * The vault leads because its title is what the session is ABOUT — claude's
+   * own precedence of user name, generated title, last prompt. The other two
+   * are what is available when there is no transcript to read: a registry name
+   * is usually a slug off the directory, identical for every session in one
+   * repo, and a pane title is whatever the shell left behind, since an agent
+   * CLI is not obliged to set one and claude sets none at all.
    */
   title?: string;
   /** Last meaningful line; rendered after the title. */
