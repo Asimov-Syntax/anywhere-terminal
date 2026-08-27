@@ -33,13 +33,26 @@ export interface LedgerStore {
   load(): Promise<void>;
 }
 
+/**
+ * One write this extension made: where it went and what exactly it put there.
+ * The pair is the key — a path without its command is a cleanup obligation we
+ * can no longer recognise, which is how a capped command list used to revoke
+ * ownership of a configuration still listed as pending (round-9 B17).
+ *
+ * `claims` names the installations that still want this write in place (D18).
+ * Empty means cleanup is owed. `unresolved` marks a record migrated from a
+ * shape that never held the relationship, so its command is unknown rather than
+ * absent (D19).
+ */
+export interface LedgerWrite {
+  path: string;
+  command: string;
+  claims: string[];
+  unresolved?: boolean;
+}
+
 export interface AgentLedgerEntry {
-  /** Config file our entries were last written into. */
-  destination?: string;
-  /** Exact command strings this extension has written, newest last. */
-  commands: string[];
-  /** Destinations whose cleanup has not succeeded yet (D13). */
-  pending: string[];
+  writes: LedgerWrite[];
 }
 
 /** The ownership half of the ledger, bound to one agent. */
@@ -52,10 +65,11 @@ export interface ManagedEntryOwnership {
    */
   refresh(): Promise<void>;
   /**
-   * Recorded BEFORE the configuration is written (round-4 B6). False means the
-   * record reached only this session, which is not enough to write on (round-7 B6).
+   * Reserved BEFORE the configuration is written (round-4 B6, D17). Anything but
+   * `ok` means the caller must not write: a record reaching only this session is
+   * not enough (round-7 B6), and a refusal at the ceiling is not either.
    */
-  recordCommand(command: string): Promise<boolean>;
+  reserve(destination: string, command: string): Promise<Reservation>;
   recordInstalled(destination: string, command: string): Promise<void>;
   recordRemoved(destination: string): Promise<void>;
 }
@@ -71,19 +85,30 @@ export const MANAGED_ENTRY_LEDGER_DIRECTORY = ".anywhere-terminal";
 export const MANAGED_ENTRY_LEDGER_FILE = "agent-hooks-ledger.json";
 
 /**
- * Only a destination move writes a new command, so this holds many moves' worth.
- * Beyond it the oldest is dropped: an entry written at a path we no longer
- * remember is left alone rather than swept, which is the safe direction.
+ * A ceiling on tracked writes (round-4 B7). It governs RESERVATIONS, not the
+ * collection: a new write may be reserved only while there is room, and nothing
+ * enters the collection except through a reservation. Two earlier attempts capped
+ * the collection itself — insertion in round 4, the session/durable merge in
+ * round 7 — and both had to choose between staying bounded and keeping every
+ * obligation. A refusal has no such dilemma (D17).
  */
-const MAX_REMEMBERED_COMMANDS = 8;
+export const MAX_TRACKED_WRITES = 16;
 
 /**
- * A ceiling on destinations awaiting cleanup (round-4 B7). Reached, the ledger
- * refuses to track a NEW one and says so — dropping the oldest instead would
- * orphan exactly what D13 exists to retry. The caller stops the move rather than
- * continuing without it (round-5 B8).
+ * @deprecated Reserved writes replaced the pending list; kept until the
+ * transition owner moves onto claims (task 8_2).
  */
-export const MAX_PENDING_DESTINATIONS = 16;
+export const MAX_PENDING_DESTINATIONS = MAX_TRACKED_WRITES;
+
+/**
+ * Stands in for the installation scope until 8_2 threads the real one through.
+ * Every claim in this build is the same installation, which is exactly the
+ * single-`destination` behaviour it replaces — no better, and no worse.
+ */
+export const DEFAULT_INSTALLATION_SCOPE = "default";
+
+/** Why a reservation was refused, and what the caller can tell the user. */
+export type Reservation = { ok: true } | { ok: false; reason: "at-capacity" | "not-durable"; blockedBy: string[] };
 
 export class ManagedEntryLedger {
   /**
@@ -126,47 +151,75 @@ export class ManagedEntryLedger {
    * construct ourselves, so seeding claims exactly one byte-exact string.
    */
   public ownership(agent: string, seedCommand: string): ManagedEntryOwnership {
-    const remember = (entry: AgentLedgerEntry, command: string): string[] =>
-      [...entry.commands.filter((known) => known !== command), command].slice(-MAX_REMEMBERED_COMMANDS);
-
     return {
       isOwned: (command) => {
         if (typeof command !== "string") {
           return false;
         }
-        const recorded = this.entry(agent).commands;
-        return recorded.length === 0 ? command === seedCommand : recorded.includes(command);
+        const writes = this.entry(agent).writes;
+        return writes.length === 0 ? command === seedCommand : writes.some((write) => write.command === command);
       },
       refresh: async () => {
         await this.refresh(agent);
       },
-      recordCommand: (command) => this.mutate(agent, (entry) => ({ ...entry, commands: remember(entry, command) })),
+      // The reservation IS the record (D17): a command reaching the user's file
+      // without one is the unowned entry the whole ledger exists to prevent, so
+      // the caller may not write until this resolves durably.
+      reserve: (destination, command) => this.reserve(agent, destination, command),
       recordInstalled: async (destination, command) => {
-        const persisted = await this.mutate(agent, (entry) => ({
-          destination: canonical(destination),
-          commands: remember(entry, command),
-          pending: without(entry.pending, destination),
-        }));
-        if (!persisted) {
-          // The configuration was already replaced by the time we got here, so a
-          // destination we cannot record is exactly what `pending` is for
-          // (round-5 W5). The retry may persist what the first attempt could not.
-          await this.recordPending(agent, destination);
-        }
+        const persisted = await this.mutate(agent, (entry) =>
+          claim(reserved(entry, canonical(destination), command), canonical(destination), command),
+        );
+        // A finalization that did not persist needs nothing further: the claimed
+        // write is held in the session entry and folds into the next successful
+        // transaction (round-5 W5). Marking it owed as well — which is what the
+        // pending list used to require — would release the claim on a file we
+        // have just written, and lose the destination this host is using.
+        void persisted;
       },
       recordRemoved: async (destination) => {
         await this.mutate(agent, (entry) => ({
-          destination: entry.destination === canonical(destination) ? undefined : entry.destination,
-          commands: entry.commands,
-          pending: without(entry.pending, destination),
+          writes: entry.writes.filter((write) => write.path !== canonical(destination)),
         }));
       },
     };
   }
 
-  /** Destinations still holding our entries after a failed cleanup (D13). */
+  /**
+   * Reserves a write before it happens. Refused at the ceiling, naming what is
+   * holding it; refused when it could not be persisted, because a record only
+   * this session holds cannot authorize cleanup after the window closes.
+   */
+  public async reserve(agent: string, destination: string, command: string): Promise<Reservation> {
+    const path = canonical(destination);
+    let blockedBy: string[] = [];
+    let room = true;
+    const persisted = await this.mutate(agent, (entry) => {
+      const known = entry.writes.some((write) => write.path === path && write.command === command);
+      room = known || entry.writes.length < MAX_TRACKED_WRITES;
+      if (!room) {
+        blockedBy = entry.writes.filter((write) => write.claims.length === 0).map((write) => write.path);
+        return entry;
+      }
+      return reserved(entry, path, command);
+    });
+    if (!room) {
+      return { ok: false, reason: "at-capacity", blockedBy };
+    }
+    return persisted ? { ok: true } : { ok: false, reason: "not-durable", blockedBy: [] };
+  }
+
+  /** The writes nobody claims any more — cleanup this extension still owes (D13, D18). */
   public pending(agent: string): string[] {
-    return this.entry(agent).pending;
+    // By path: two reserved commands at one destination are one cleanup, and a
+    // caller sweeping the same file twice would report the second as untouched.
+    return [
+      ...new Set(
+        this.entry(agent)
+          .writes.filter((write) => write.claims.length === 0)
+          .map((write) => write.path),
+      ),
+    ];
   }
 
   /**
@@ -180,18 +233,29 @@ export class ManagedEntryLedger {
     const path = canonical(destination);
     let tracked = true;
     const persisted = await this.mutate(agent, (entry) => {
-      tracked = entry.pending.includes(path) || entry.pending.length < MAX_PENDING_DESTINATIONS;
-      return tracked && !entry.pending.includes(path) ? { ...entry, pending: [...entry.pending, path] } : entry;
+      const known = entry.writes.some((write) => write.path === path);
+      tracked = known || entry.writes.length < MAX_TRACKED_WRITES;
+      if (!tracked) {
+        return entry;
+      }
+      // Releasing every claim is what makes a write owed. A path we never
+      // recorded arrives here only from a pre-D17 record, so it is tracked with
+      // its command unknown rather than silently dropped (D19).
+      return known
+        ? { writes: entry.writes.map((write) => (write.path === path ? { ...write, claims: [] } : write)) }
+        : { writes: [...entry.writes, { path, command: "", claims: [], unresolved: true }] };
     });
     return tracked && persisted;
   }
 
   public async clearPending(agent: string, destination: string): Promise<void> {
-    await this.mutate(agent, (entry) => ({ ...entry, pending: without(entry.pending, destination) }));
+    await this.mutate(agent, (entry) => ({
+      writes: entry.writes.filter((write) => write.path !== canonical(destination) || write.claims.length > 0),
+    }));
   }
 
   public destination(agent: string): string | undefined {
-    return this.entry(agent).destination;
+    return [...this.entry(agent).writes].reverse().find((write) => write.claims.length > 0)?.path;
   }
 
   /** True when the result reached the store; false when only this session holds it. */
@@ -304,30 +368,65 @@ export function fileLedgerStore(file: LockedFile): LedgerStore {
  * one is what every host managed to. Both are true, so both survive — except the
  * destination, where the unpersisted write is the more recent fact.
  */
+/**
+ * Merged by the write's own key — path and command together. A record differing
+ * only in its claims is the SAME write, so it merges rather than duplicating;
+ * the session state wins, because this host's unpersisted change is the more
+ * recent fact about a write it made. Nothing is trimmed here: the bound lives on
+ * the reservation, which is the only thing that can add a key at all (D17).
+ */
 function fold(stored: AgentLedgerEntry, held: AgentLedgerEntry | undefined): AgentLedgerEntry {
   if (!held) {
     return stored;
   }
-  return {
-    destination: held.destination,
-    commands: [...stored.commands.filter((command) => !held.commands.includes(command)), ...held.commands].slice(
-      -MAX_REMEMBERED_COMMANDS,
-    ),
-    // Unioned, never trimmed: both lists are cleanup this extension still owes,
-    // and dropping either is the orphaning the ceiling exists to prevent. The
-    // ceiling instead governs what may be ADDED — `recordPending` measures the
-    // merged list, so the union can only exceed the bound by obligations that
-    // were already real, and never by new ones (round-7 B10).
-    pending: [...stored.pending, ...held.pending.filter((path) => !stored.pending.includes(path))],
-  };
+  const merged = new Map(stored.writes.map((write) => [key(write), write]));
+  for (const write of held.writes) {
+    merged.set(key(write), write);
+  }
+  return { writes: [...merged.values()] };
+}
+
+function key(write: LedgerWrite): string {
+  return `${write.path} ${write.command}`;
+}
+
+/** Adds the write if it is new, leaving an existing one's claims alone. */
+function reserved(entry: AgentLedgerEntry, path: string, command: string): AgentLedgerEntry {
+  return entry.writes.some((write) => write.path === path && write.command === command)
+    ? entry
+    : { writes: [...entry.writes, { path, command, claims: [] }] };
+}
+
+/**
+ * Claims the write this install just made. A successful install sweeps our own
+ * older entries out of that file and re-appends one, so any other command
+ * recorded at the SAME path is no longer in it and stops being an obligation —
+ * which is what keeps repeated moves from accumulating records. Writes at other
+ * paths are untouched: their entries are still there, and only a cleanup that
+ * ran may say otherwise. The claimed write goes last, so `destination` reads the
+ * most recent one. 8_2 scopes this to the calling installation.
+ */
+function claim(entry: AgentLedgerEntry, path: string, command: string): AgentLedgerEntry {
+  const claimed: LedgerWrite = { path, command, claims: [DEFAULT_INSTALLATION_SCOPE] };
+  return { writes: [...entry.writes.filter((write) => write.path !== path), claimed] };
 }
 
 function sanitize(value: unknown): AgentLedgerEntry {
   const record = isRecord(value) ? value : {};
+  const writes = Array.isArray(record.writes) ? record.writes : [];
   return {
-    destination: typeof record.destination === "string" ? record.destination : undefined,
-    commands: strings(record.commands),
-    pending: strings(record.pending),
+    writes: writes.filter(isRecord).flatMap((write) =>
+      typeof write.path === "string" && typeof write.command === "string"
+        ? [
+            {
+              path: write.path,
+              command: write.command,
+              claims: strings(write.claims),
+              ...(write.unresolved === true ? { unresolved: true as const } : {}),
+            },
+          ]
+        : [],
+    ),
   };
 }
 
@@ -338,11 +437,6 @@ function sanitize(value: unknown): AgentLedgerEntry {
  */
 function canonical(destination: string): string {
   return resolve(destination);
-}
-
-function without(pending: readonly string[], destination: string): string[] {
-  const path = canonical(destination);
-  return pending.filter((candidate) => candidate !== path && candidate !== destination);
 }
 
 function strings(value: unknown): string[] {

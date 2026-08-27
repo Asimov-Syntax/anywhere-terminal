@@ -406,15 +406,16 @@ describe("a destination the ledger cannot track (round-5 B8)", () => {
     };
   }
 
-  it("stops the move rather than forgetting the file it could not clean", async () => {
-    const { entry, previous, ledger, forced, movedEntry, transitions, adapter } = await ceilingReached();
+  it("never forgets the file it could not clean, however full the record is", async () => {
+    const { entry, previous, ledger, movedEntry, transitions, adapter } = await ceilingReached();
 
-    const outcome = await transitions.submit(movedEntry);
+    await transitions.submit(movedEntry);
 
-    expect(outcome).toMatchObject({ destination: previous, reconciled: false, blockedBy: previous });
-    // The record still names it, which is the only way anything finds it again.
-    expect(ledger.destination(entry.agent)).toBe(resolve(previous));
-    expect(forced).toEqual([]);
+    // Round 5 had to STOP the move here, because remembering `previous` meant
+    // appending to a list that could refuse. A write is recorded once, when it
+    // is reserved, so failing to clean it only releases its claim — there is
+    // nothing left to refuse, and nothing that can drop it (D17).
+    expect(ledger.pending(entry.agent)).toContain(resolve(previous));
     expect(await readFile(previous, "utf8")).toContain(adapter.wrapperLocation("linux").directoryName);
   });
 
@@ -434,21 +435,5 @@ describe("a destination the ledger cannot track (round-5 B8)", () => {
 
     expect(results[0]).toMatchObject({ agent: entry.agent, removed: true });
     expect(await readFile(previous, "utf8")).not.toContain(adapter.wrapperLocation("linux").directoryName);
-  });
-
-  it("moves once a slot frees, whether or not the cleanup succeeds", async () => {
-    const { entry, previous, ledger, forced, movedEntry, transitions, storageRoot } = await ceilingReached();
-    await transitions.submit(movedEntry);
-
-    await ledger.clearPending(entry.agent, join(storageRoot, "stranded-0.json"));
-    const outcome = await transitions.submit(movedEntry);
-
-    expect(outcome.reconciled).toBe(true);
-    expect(outcome.blockedBy).toBeUndefined();
-    expect(ledger.pending(entry.agent)).toContain(resolve(previous));
-    expect(forced).toEqual([
-      [entry.agent, false],
-      [entry.agent, false],
-    ]);
   });
 });

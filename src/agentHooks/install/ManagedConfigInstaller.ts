@@ -113,8 +113,13 @@ export class ManagedConfigInstaller {
         // A record that reached only this session is not enough: the window can
         // close, and the command in the user's file would then be unrecognisable
         // to every later session (round-7 B6).
-        if (!(await this.ownership.recordCommand(this.command()))) {
-          return { installed: false, reason: "write-failed" };
+        // Reserved against the destination it is about to be written to, so the
+        // record names a write rather than a command adrift from its path (D17).
+        const reservation = await this.ownership.reserve(configPath, this.command());
+        if (!reservation.ok) {
+          return reservation.reason === "at-capacity"
+            ? { installed: false, reason: "at-capacity", blockedBy: reservation.blockedBy }
+            : { installed: false, reason: "write-failed" };
         }
         const reconciled = await this.reconcile(configPath, (document, command) =>
           this.adapter.applyManagedEntries(document, command, (entry) => this.ownership.isOwned(entry)),

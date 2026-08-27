@@ -43,7 +43,13 @@ export type OwnershipTest = (command: unknown) => boolean;
 
 export interface HookInstallOutcome {
   installed: boolean;
-  reason?: "unsupported-config" | "lock-unavailable" | "write-failed" | "windows-probe-failed";
+  reason?: "unsupported-config" | "lock-unavailable" | "write-failed" | "windows-probe-failed" | "at-capacity";
+  /**
+   * The configurations still owed cleanup when `at-capacity` refused this one.
+   * A scalar reason cannot say which paths are holding the queue, and a refusal
+   * the user cannot act on is a refusal they cannot clear (round-9 B10, D17).
+   */
+  blockedBy?: readonly string[];
 }
 
 export interface HookRemoveOutcome {

@@ -259,7 +259,7 @@
 
 ## 8. Cycle-4 round-9 fixes
 
-- [ ] 8_1 Reserve a write before making it
+- [x] 8_1 Reserve a write before making it — verified: bun test 'src/agentHooks/install/managedEntryLedger.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_1
   - **Refs**: .reviews/round-9.md#b10, .reviews/round-9.md#b17, design.md#d17-a-write-is-reserved-before-it-happens-and-the-reservation-is-the-record
   - **Acceptance**:
@@ -269,6 +269,8 @@
     1. Replace the entry's three collections in src/agentHooks/install/managedEntryLedger.ts with the keyed collection design.md#d17-a-write-is-reserved-before-it-happens-and-the-reservation-is-the-record defines, and expose the reserve-then-finalize pair it requires
     2. Merge by the record's key when folding a session entry into a stored one, never trimming, and let session state update an existing record without introducing one
     3. Refuse a reservation at the ceiling with a result carrying the paths holding it, adding that shape to src/agentHooks/install/types.ts, which today can express only a scalar reason
+    3a. Reserve from src/agentHooks/install/ManagedConfigInstaller.ts, which is where the destination and the command are both known, and report a refusal through the outcome
+    3b. Re-express the round-5 B8 ceiling tests in src/agentHooks/install/agentHookTransitions.test.ts at the boundary that now refuses: a destination with no room to be recorded, rather than a claim being released on one already recorded
     4. Cover in src/agentHooks/install/managedEntryLedger.test.ts: a write whose command precedes many later ones staying owned; a refused reservation naming the paths; two hosts' records both surviving a fold with session state winning on the shared key; and a post-write failure updating its reserved record rather than adding one
 
 - [ ] 8_2 Claim a write per installation
