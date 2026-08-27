@@ -116,6 +116,33 @@ describe("runProbe", () => {
     expect(killed).toEqual([-pid]);
   });
 
+  it("reports leader-only termination when the absolute taskkill cannot start (round-4 W4)", async () => {
+    let leader: number | undefined;
+    const spawnOrFail = ((file: string, args: string[], options: object) => {
+      if (file.endsWith("taskkill.exe")) {
+        // A taskkill that never starts: on Windows the fallback reaches cmd.exe
+        // and not the curl it spawned, so the result must say so.
+        return spawn(join(tmpdir(), "no-such-taskkill"), [], options);
+      }
+      const child = spawn(file, args, options);
+      leader = child.pid;
+      return child;
+    }) as never;
+
+    const result = await runProbe("/bin/sh", ["-c", "sleep 5"], {
+      deadlineMs: 50,
+      reapGraceMs: 400,
+      platform: "win32",
+      spawn: spawnOrFail,
+    });
+
+    expect(result).toEqual({ exitCode: 1, stdout: "", leaderOnlyTermination: true });
+    expect(leader).toBeGreaterThan(0);
+    await settle(50);
+    // The leader is still killed — the fallback is partial, not absent.
+    expect(() => process.kill(leader as number, 0)).toThrow();
+  });
+
   it("kills on Windows through an absolute System32 path", async () => {
     const spawned: string[] = [];
     const recording = ((file: string, args: string[], options: object) => {
@@ -132,6 +159,7 @@ describe("runProbe", () => {
 
     // A bare `taskkill` would resolve against the working directory first.
     expect(spawned[1]).toBe(windowsSystemPath("taskkill.exe"));
+    expect(spawned[1]?.startsWith("C:\\") || spawned[1]?.includes(":\\")).toBe(true);
     expect(spawned[1]?.endsWith("\\System32\\taskkill.exe")).toBe(true);
   });
 });

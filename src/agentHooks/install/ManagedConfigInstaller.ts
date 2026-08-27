@@ -110,14 +110,16 @@ export class ManagedConfigInstaller {
     return this.withLock<HookInstallOutcome>(
       configPath,
       async (): Promise<HookInstallOutcome> => {
+        // The command is recorded BEFORE the file changes (round-4 B6). Owning a
+        // command we never wrote costs nothing — there is nothing to remove —
+        // while writing one we never recorded puts it beyond our own reach.
+        await this.ownership.recordCommand(this.command());
         const reconciled = await this.reconcile(configPath, (document, command) =>
           this.adapter.applyManagedEntries(document, command, (entry) => this.ownership.isOwned(entry)),
         );
         if (reconciled !== "success") {
           return { installed: false, reason: reconciled === "unsupported" ? "unsupported-config" : "write-failed" };
         }
-        // Recorded only once the file holds it: the ledger is a claim about what
-        // is out there, so a failed write must not leave one behind.
         await this.ownership.recordInstalled(configPath, this.command());
         return { installed: true };
       },

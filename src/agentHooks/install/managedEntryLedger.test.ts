@@ -2,13 +2,19 @@
 // three parsers with: a stored command is ours only when it is byte-equal to one
 // we recorded writing. Every lookalike below defeated one of those parsers.
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CURSOR_WRAPPER_DIRECTORY, cursorConfigAdapter } from "./cursorConfigAdapter";
 import { ManagedConfigInstaller, managedWrapperCommand } from "./ManagedConfigInstaller";
-import { MANAGED_ENTRY_LEDGER_KEY, ManagedEntryLedger, memoryLedgerStore } from "./managedEntryLedger";
+import {
+  type LedgerStore,
+  MANAGED_ENTRY_LEDGER_KEY,
+  MAX_PENDING_DESTINATIONS,
+  ManagedEntryLedger,
+  memoryLedgerStore,
+} from "./managedEntryLedger";
 
 const tempDirectories: string[] = [];
 
@@ -200,7 +206,7 @@ describe("ManagedEntryLedger state", () => {
 
   it("survives a stored value of the wrong shape rather than throwing", () => {
     const ledger = new ManagedEntryLedger(
-      memoryLedgerStore({ [MANAGED_ENTRY_LEDGER_KEY]: { cursor: { commands: "not-an-array", pending: 7 } } }),
+      memoryLedgerStore({ [`${MANAGED_ENTRY_LEDGER_KEY}.cursor`]: { commands: "not-an-array", pending: 7 } }),
     );
 
     expect(ledger.entry("cursor")).toEqual({ destination: undefined, commands: [], pending: [] });
@@ -208,7 +214,7 @@ describe("ManagedEntryLedger state", () => {
   });
 
   it.each([null, "text", [1, 2]])("survives a stored root of %s", (stored) => {
-    const ledger = new ManagedEntryLedger(memoryLedgerStore({ [MANAGED_ENTRY_LEDGER_KEY]: stored }));
+    const ledger = new ManagedEntryLedger(memoryLedgerStore({ [`${MANAGED_ENTRY_LEDGER_KEY}.cursor`]: stored }));
 
     expect(ledger.entry("cursor").commands).toEqual([]);
   });
@@ -221,5 +227,113 @@ describe("ManagedEntryLedger state", () => {
 
     expect(reopened.destination("cursor")).toBe("/a/hooks.json");
     expect(reopened.ownership("cursor", "seed").isOwned("command")).toBe(true);
+  });
+});
+
+/** A store whose reads lag its writes — the Memento contract the tests had assumed away. */
+function laggingLedgerStore(): LedgerStore {
+  const values = new Map<string, unknown>();
+  return {
+    get: <T>(key: string) => values.get(key) as T | undefined,
+    update: (key, value) =>
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          values.set(key, value);
+          resolve();
+        }, 1);
+      }),
+  };
+}
+
+describe("ManagedEntryLedger durability (round-4 B5, B6, B7)", () => {
+  it("keeps both agents' records when their writes overlap on a store that lags", async () => {
+    const ledger = new ManagedEntryLedger(laggingLedgerStore());
+
+    await Promise.all([
+      ledger.ownership("cursor", "seed").recordInstalled("/a/hooks.json", "cursor-command"),
+      ledger.ownership("claude", "seed").recordInstalled("/b/settings.json", "claude-command"),
+    ]);
+
+    // One shared root plus a lagging read is how the later write erased the earlier.
+    expect(ledger.entry("cursor").commands).toEqual(["cursor-command"]);
+    expect(ledger.entry("claude").commands).toEqual(["claude-command"]);
+  });
+
+  it("keeps every write for one agent when they overlap on a store that lags", async () => {
+    const ledger = new ManagedEntryLedger(laggingLedgerStore());
+    const ownership = ledger.ownership("cursor", "seed");
+
+    await Promise.all([
+      ownership.recordCommand("first"),
+      ownership.recordCommand("second"),
+      ledger.recordPending("cursor", "/old/hooks.json"),
+    ]);
+
+    expect(ledger.entry("cursor").commands).toEqual(["first", "second"]);
+    expect(ledger.pending("cursor")).toEqual([resolve("/old/hooks.json")]);
+  });
+
+  it("owns a command recorded before a write that then failed", async () => {
+    const fields = await fixture();
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+    await writeFile(fields.configPath, JSON.stringify({ version: 1, hooks: {} }));
+    // A previous storage root, so the seed no longer covers the new command.
+    await ledger.ownership("cursor", "seed").recordInstalled("/old/hooks.json", "'/old/root/observer.sh'");
+
+    const failing = new ManagedConfigInstaller(
+      fields.adapter,
+      {
+        ...fields.options,
+        ownership: ledger.ownership("cursor", managedWrapperCommand(fields.adapter, fields.options)),
+      },
+      {
+        // Only the config replacement fails, so the wrapper is created and the
+        // failure lands exactly where B6 said the ledger was still behind.
+        rename: async (from, to) => {
+          if (to === fields.configPath) {
+            throw new Error("disk full");
+          }
+          await rename(from, to);
+        },
+      },
+    );
+    expect((await failing.install()).installed).toBe(false);
+
+    // The command reached the ledger before the file was touched, so a write
+    // that DID land would still be reachable.
+    expect(ledger.ownership("cursor", "seed").isOwned(fields.command)).toBe(true);
+  });
+
+  it("treats equivalent spellings of a destination as one pending entry", async () => {
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+
+    await ledger.recordPending("cursor", "/a/b/../hooks.json");
+    await ledger.recordPending("cursor", "/a/hooks.json");
+
+    expect(ledger.pending("cursor")).toEqual([resolve("/a/hooks.json")]);
+    await ledger.clearPending("cursor", "/a/b/../hooks.json");
+    expect(ledger.pending("cursor")).toEqual([]);
+  });
+
+  it("refuses to track past the ceiling and keeps what it already tracks", async () => {
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+    for (let index = 0; index < MAX_PENDING_DESTINATIONS; index += 1) {
+      expect(await ledger.recordPending("cursor", `/failed/${index}/hooks.json`)).toBe(true);
+    }
+
+    expect(await ledger.recordPending("cursor", "/one/too/many/hooks.json")).toBe(false);
+
+    // Dropping the oldest is the orphaning D13 exists to prevent.
+    expect(ledger.pending("cursor")).toHaveLength(MAX_PENDING_DESTINATIONS);
+    expect(ledger.pending("cursor")[0]).toBe(resolve("/failed/0/hooks.json"));
+  });
+
+  it("reports an already-tracked destination as tracked even at the ceiling", async () => {
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+    for (let index = 0; index < MAX_PENDING_DESTINATIONS; index += 1) {
+      await ledger.recordPending("cursor", `/failed/${index}/hooks.json`);
+    }
+
+    expect(await ledger.recordPending("cursor", "/failed/0/hooks.json")).toBe(true);
   });
 });

@@ -3,6 +3,8 @@
 // byte equality against a command we recorded writing; nothing is parsed, so no
 // lookalike a shell would resolve differently can be claimed.
 
+import { resolve } from "node:path";
+
 /** The slice of VS Code's `Memento` the ledger needs; injected so this never imports vscode. */
 export interface LedgerStore {
   get<T>(key: string): T | undefined;
@@ -21,6 +23,8 @@ export interface AgentLedgerEntry {
 /** The ownership half of the ledger, bound to one agent. */
 export interface ManagedEntryOwnership {
   isOwned(command: unknown): boolean;
+  /** Recorded BEFORE the configuration is written (round-4 B6). */
+  recordCommand(command: string): Promise<void>;
   recordInstalled(destination: string, command: string): Promise<void>;
   recordRemoved(destination: string): Promise<void>;
 }
@@ -34,21 +38,34 @@ export const MANAGED_ENTRY_LEDGER_KEY = "anywhereTerminal.agentHooks.ledger";
  */
 const MAX_REMEMBERED_COMMANDS = 8;
 
-type LedgerState = Record<string, AgentLedgerEntry>;
+/**
+ * A ceiling on destinations awaiting cleanup (round-4 B7). Reached, the ledger
+ * refuses to track a NEW one and says so — dropping the oldest instead would
+ * orphan exactly what D13 exists to retry.
+ */
+export const MAX_PENDING_DESTINATIONS = 16;
 
 export class ManagedEntryLedger {
+  /**
+   * Every mutation this instance makes, in order. A store whose reads lag its
+   * writes would otherwise let two overlapping load-modify-updates for one agent
+   * both derive from the same snapshot (round-4 B5).
+   */
+  private writes: Promise<unknown> = Promise.resolve();
+
   public constructor(
     private readonly store: LedgerStore,
-    private readonly key: string = MANAGED_ENTRY_LEDGER_KEY,
+    private readonly keyPrefix: string = MANAGED_ENTRY_LEDGER_KEY,
   ) {}
 
   /** Sanitized read — a hand-edited or older-shaped value degrades to empty, never throws. */
   public entry(agent: string): AgentLedgerEntry {
-    const found = this.state()[agent];
+    const found = this.store.get<unknown>(this.key(agent));
+    const record = isRecord(found) ? found : {};
     return {
-      destination: typeof found?.destination === "string" ? found.destination : undefined,
-      commands: strings(found?.commands),
-      pending: strings(found?.pending),
+      destination: typeof record.destination === "string" ? record.destination : undefined,
+      commands: strings(record.commands),
+      pending: strings(record.pending),
     };
   }
 
@@ -59,6 +76,9 @@ export class ManagedEntryLedger {
    * construct ourselves, so seeding claims exactly one byte-exact string.
    */
   public ownership(agent: string, seedCommand: string): ManagedEntryOwnership {
+    const remember = (entry: AgentLedgerEntry, command: string): string[] =>
+      [...entry.commands.filter((known) => known !== command), command].slice(-MAX_REMEMBERED_COMMANDS);
+
     return {
       isOwned: (command) => {
         if (typeof command !== "string") {
@@ -67,17 +87,18 @@ export class ManagedEntryLedger {
         const recorded = this.entry(agent).commands;
         return recorded.length === 0 ? command === seedCommand : recorded.includes(command);
       },
+      recordCommand: (command) => this.mutate(agent, (entry) => ({ ...entry, commands: remember(entry, command) })),
       recordInstalled: (destination, command) =>
         this.mutate(agent, (entry) => ({
-          destination,
-          commands: [...entry.commands.filter((known) => known !== command), command].slice(-MAX_REMEMBERED_COMMANDS),
-          pending: entry.pending.filter((candidate) => candidate !== destination),
+          destination: canonical(destination),
+          commands: remember(entry, command),
+          pending: without(entry.pending, destination),
         })),
       recordRemoved: (destination) =>
         this.mutate(agent, (entry) => ({
-          destination: entry.destination === destination ? undefined : entry.destination,
+          destination: entry.destination === canonical(destination) ? undefined : entry.destination,
           commands: entry.commands,
-          pending: entry.pending.filter((candidate) => candidate !== destination),
+          pending: without(entry.pending, destination),
         })),
     };
   }
@@ -87,31 +108,48 @@ export class ManagedEntryLedger {
     return this.entry(agent).pending;
   }
 
-  public recordPending(agent: string, destination: string): Promise<void> {
-    return this.mutate(agent, (entry) => ({
-      ...entry,
-      pending: entry.pending.includes(destination) ? entry.pending : [...entry.pending, destination],
-    }));
+  /** False when the ceiling refused to track this destination — the caller must say so. */
+  public async recordPending(agent: string, destination: string): Promise<boolean> {
+    const path = canonical(destination);
+    let tracked = true;
+    await this.mutate(agent, (entry) => {
+      if (entry.pending.includes(path)) {
+        return entry;
+      }
+      if (entry.pending.length >= MAX_PENDING_DESTINATIONS) {
+        tracked = false;
+        return entry;
+      }
+      return { ...entry, pending: [...entry.pending, path] };
+    });
+    return tracked;
   }
 
   public clearPending(agent: string, destination: string): Promise<void> {
-    return this.mutate(agent, (entry) => ({
-      ...entry,
-      pending: entry.pending.filter((candidate) => candidate !== destination),
-    }));
+    return this.mutate(agent, (entry) => ({ ...entry, pending: without(entry.pending, destination) }));
   }
 
   public destination(agent: string): string | undefined {
     return this.entry(agent).destination;
   }
 
-  private state(): LedgerState {
-    const raw = this.store.get<unknown>(this.key);
-    return isRecord(raw) ? (raw as LedgerState) : {};
+  /** One key per agent, so no write ever reads a root another agent also writes. */
+  private key(agent: string): string {
+    return `${this.keyPrefix}.${agent}`;
   }
 
-  private async mutate(agent: string, change: (entry: AgentLedgerEntry) => AgentLedgerEntry): Promise<void> {
-    await this.store.update(this.key, { ...this.state(), [agent]: change(this.entry(agent)) });
+  private mutate(agent: string, change: (entry: AgentLedgerEntry) => AgentLedgerEntry): Promise<void> {
+    // Chained on settlement, not success: one failed persist must not stop the
+    // next from being attempted.
+    const next = this.writes.then(
+      () => this.store.update(this.key(agent), change(this.entry(agent))),
+      () => this.store.update(this.key(agent), change(this.entry(agent))),
+    );
+    this.writes = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return Promise.resolve(next);
   }
 }
 
@@ -124,6 +162,20 @@ export function memoryLedgerStore(initial: Record<string, unknown> = {}): Ledger
       values.set(key, value);
     },
   };
+}
+
+/**
+ * The same file spelled two ways is one destination — otherwise a `..` or a
+ * trailing separator in a user's path setting becomes a second pending entry
+ * for a cleanup that already happened (round-4 B7).
+ */
+function canonical(destination: string): string {
+  return resolve(destination);
+}
+
+function without(pending: readonly string[], destination: string): string[] {
+  const path = canonical(destination);
+  return pending.filter((candidate) => candidate !== path && candidate !== destination);
 }
 
 function strings(value: unknown): string[] {

@@ -10,6 +10,13 @@ import { win32 } from "node:path";
 export interface ProbeResult {
   exitCode: number;
   stdout: string;
+  /**
+   * True when termination reached only the process leader. On Windows that
+   * means descendants such as `curl` may still be running; `child.kill()` is
+   * the only fallback available once the absolute taskkill cannot start
+   * (round-4 W4), so the fact is reported rather than assumed away.
+   */
+  leaderOnlyTermination?: boolean;
 }
 
 /** How long the probe may run before it is killed. */
@@ -59,6 +66,7 @@ export function runProbe(
   return new Promise<ProbeResult>((resolve) => {
     let stdout = "";
     let settled = false;
+    let leaderOnly = false;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let reap: ReturnType<typeof setTimeout> | undefined;
     const finish = (exitCode: number) => {
@@ -68,7 +76,7 @@ export function runProbe(
       settled = true;
       clearTimeout(deadline);
       clearTimeout(reap);
-      resolve({ exitCode, stdout });
+      resolve(leaderOnly ? { exitCode, stdout, leaderOnlyTermination: true } : { exitCode, stdout });
     };
 
     let child: ReturnType<typeof spawn>;
@@ -87,7 +95,14 @@ export function runProbe(
     }
 
     deadline = setTimeout(() => {
-      terminateTree(child, { spawn, kill: dependencies.kill, platform });
+      terminateTree(child, {
+        spawn,
+        kill: dependencies.kill,
+        platform,
+        onLeaderOnly: () => {
+          leaderOnly = true;
+        },
+      });
       // Report only once the child is observed gone; the grace keeps an
       // unkillable process from holding the install open forever.
       reap = setTimeout(() => finish(1), reapGraceMs);
@@ -107,12 +122,21 @@ export function runProbe(
 
 function terminateTree(
   child: ReturnType<typeof nodeSpawn>,
-  context: { spawn: typeof nodeSpawn; kill?: (pid: number, signal: NodeJS.Signals) => void; platform: NodeJS.Platform },
+  context: {
+    spawn: typeof nodeSpawn;
+    kill?: (pid: number, signal: NodeJS.Signals) => void;
+    platform: NodeJS.Platform;
+    onLeaderOnly: () => void;
+  },
 ): void {
   if (child.pid === undefined) {
     return;
   }
   const kill = context.kill ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal));
+  const leaderOnly = () => {
+    context.onLeaderOnly();
+    child.kill("SIGKILL");
+  };
   try {
     if (context.platform === "win32") {
       context
@@ -120,13 +144,13 @@ function terminateTree(
           stdio: "ignore",
           windowsHide: true,
         })
-        .on("error", () => child.kill("SIGKILL"));
+        .on("error", leaderOnly);
       return;
     }
     // Negative pid addresses the group the detached spawn created.
     kill(-child.pid, "SIGKILL");
   } catch {
-    child.kill("SIGKILL");
+    leaderOnly();
   }
 }
 

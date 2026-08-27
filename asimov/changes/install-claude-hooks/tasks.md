@@ -135,3 +135,41 @@
     1. Create src/agentHooks/install/probeRunner.ts taking an absolute executable, containing error and close, owning one deadline, and terminating the process group through an absolute system path on each platform
     2. Move the probe off the runner embedded in src/agentHooks/install/ManagedConfigInstaller.ts and make the injected-runner bound exceed the deadline plus reap grace, relocating its two runner tests out of src/agentHooks/install/ManagedConfigInstaller.test.ts
     3. Create src/agentHooks/install/probeRunner.test.ts covering: a descendant terminated with its leader, a spawn failure contained rather than thrown, the reap awaited before reporting, and the outer bound not preempting it
+
+## 5. Cycle-2 review fixes
+
+- [x] 5_1 Make the ledger durable under concurrent and failed writes — verified: bun test 'src/agentHooks/install/managedEntryLedger.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: .reviews/round-4.md#b5, .reviews/round-4.md#b6, .reviews/round-4.md#b7, design.md#d12-ownership-is-exact-equality-against-a-ledger-of-what-we-wrote-never-a-parse-of-the-users-string
+  - **Acceptance**:
+    - Outcome: No writer loses another's ownership record, and a recorded command survives a failed persist
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Give each agent its own key in src/agentHooks/install/managedEntryLedger.ts so no write reads a root another agent also writes, and serialize the module's own writes through one tail
+    2. Canonicalize a destination before it is recorded or compared, and bound the pending list by refusing to track past a ceiling rather than dropping what is already tracked
+    3. In src/agentHooks/install/ManagedConfigInstaller.ts record the command before the configuration is replaced and the destination after, so a failed persist cannot leave a written command unrecorded
+    4. Cover in src/agentHooks/install/managedEntryLedger.test.ts: two agents writing against a store whose reads lag its writes and both records surviving, a command recorded before a replacement that then fails still owned, equivalent destination spellings collapsing to one pending entry, and the ceiling keeping the oldest entries and reporting the refusal
+
+- [x] 5_2 Report uninstall per destination, over the repository's own serial queue — verified: bun test 'src/agentHooks/install/agentHookTransitions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_2
+  - **Refs**: .reviews/round-4.md#b8, .reviews/round-4.md#s4, specs/agent-hook-installation/spec.md#uninstall-command-clears-every-managed-entry, design.md#d13-one-serialized-transition-owner-per-agent
+  - **Acceptance**:
+    - Outcome: Uninstall reports success only when every destination is clean
+    - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
+  - **Plan**:
+    1. Extract the keyed serial queue of src/worktree/mutationQueue.ts into src/utils/keyedSerialQueue.ts with its settlement chaining, uncalled-body contract and tail cleanup intact, and create src/utils/keyedSerialQueue.test.ts over it
+    2. Rebuild src/worktree/mutationQueue.ts on that primitive, keeping its depth and busy behaviour, and adjust src/worktree/mutationQueue.test.ts only where the seam moved
+    3. Replace the promise tail in src/agentHooks/install/agentHookTransitions.ts with that primitive
+    4. Make uninstall succeed only when every destination came back clean, keep each failed destination pending, and name in the summary what was left behind
+    5. Cover in src/agentHooks/install/agentHookTransitions.test.ts: one destination clean and one refused reported as not removed with the refused one still pending, and the summary naming it
+
+- [x] 5_3 Report an unreaped probe rather than implying a clean kill — verified: bun test 'src/agentHooks/install/probeRunner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_3
+  - **Refs**: .reviews/round-4.md#w4, specs/agent-hook-installation/spec.md#an-unreachable-hook-costs-the-agent-nothing
+  - **Acceptance**:
+    - Outcome: A termination that could not reach the process tree is reported, not assumed complete
+    - Verify: unit src/agentHooks/install/probeRunner.test.ts
+  - **Plan**:
+    1. In src/agentHooks/install/probeRunner.ts surface that the fallback reached only the process leader when the absolute taskkill could not start
+    2. Cover that path in src/agentHooks/install/probeRunner.test.ts with a spawn whose taskkill invocation fails, asserting the leader is still killed and the incomplete termination is reported
+

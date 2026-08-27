@@ -1,10 +1,9 @@
 // src/worktree/mutationQueue.ts — Per-repository serialization for MUTATING
-// worktree actions (design.md D1).
-//
-// Deliberately not `rebuildGate`. The gate coalesces concurrent requests, which
-// is right for rebuilds — two callers wanting a fresh tree want the same tree —
-// and wrong here: two removals must both run, in order, or the second must be
-// told the first happened. Coalescing them would silently drop one.
+// worktree actions (design.md D1). The serialization itself lives in
+// src/utils/keyedSerialQueue.ts; what is repo-specific is the depth accounting
+// `isBusy` reports.
+
+import { createKeyedSerialQueue } from "../utils/keyedSerialQueue";
 
 export interface MutationQueue {
   /** Run `body` once this repo's earlier mutations have settled. */
@@ -14,7 +13,6 @@ export interface MutationQueue {
 }
 
 export function createMutationQueue(): MutationQueue {
-  const tails = new Map<string, Promise<unknown>>();
   const depth = new Map<string, number>();
 
   function bump(repoId: string, by: number): void {
@@ -26,45 +24,16 @@ export function createMutationQueue(): MutationQueue {
     }
   }
 
-  return {
-    run<T>(repoId: string, body: () => Promise<T>): Promise<T> {
-      // Counted here rather than when the body starts: work that is merely
-      // queued is still work this repo owes, and a quarantine decision that
-      // could not see it would let a caller act as though the repo were idle.
-      bump(repoId, 1);
-      const previous = tails.get(repoId);
-      // Wait for the predecessor to SETTLE, not to succeed — a git refusal is
-      // the common case, and inheriting it would fail an action that has not
-      // run yet.
-      const after = previous ? previous.then(noop, noop) : Promise.resolve();
-      // The decrement is attached to the body, so it has already happened by
-      // the time the caller's own `await` resolves. `body` is passed in
-      // UNCALLED so that a synchronous throw happens inside the try — invoking
-      // it as an argument would skip the release entirely and pin the repo busy
-      // for the host's lifetime (round-1 W1).
-      const started = after.then(() => finallyDecrement(body, () => bump(repoId, -1)));
-      const tail = started.then(noop, noop).finally(() => {
-        if (tails.get(repoId) === tail) {
-          tails.delete(repoId);
-        }
-      });
-      tails.set(repoId, tail);
-      return started;
-    },
+  // Counted on enqueue rather than on start: work that is merely queued is
+  // still work this repo owes, and a quarantine decision that could not see it
+  // would let a caller act as though the repo were idle.
+  const queue = createKeyedSerialQueue({
+    onEnter: (repoId) => bump(repoId, 1),
+    onLeave: (repoId) => bump(repoId, -1),
+  });
 
-    isBusy(repoId: string): boolean {
-      return depth.has(repoId);
-    },
+  return {
+    run: (repoId, body) => queue.run(repoId, body),
+    isBusy: (repoId) => depth.has(repoId),
   };
 }
-
-/** `Promise.finally` without adding a tick between the callback and the result. */
-async function finallyDecrement<T>(work: () => Promise<T>, release: () => void): Promise<T> {
-  try {
-    return await work();
-  } finally {
-    release();
-  }
-}
-
-function noop(): void {}

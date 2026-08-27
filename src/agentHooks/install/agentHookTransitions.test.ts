@@ -5,7 +5,7 @@
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { VaultAgentId } from "../../vault/types";
 import {
@@ -124,7 +124,38 @@ describe("agent hook transitions", () => {
 
     expect(results[0]).toMatchObject({ agent: first.entry.agent, removed: false, reason: "write-failed" });
     expect(results[1]).toMatchObject({ agent: second.entry.agent, removed: true });
-    expect(summarizeUninstall(results)).toBe(`${first.entry.agent}: write-failed · ${second.entry.agent}: removed`);
+    expect(summarizeUninstall(results)).toBe(
+      `${first.entry.agent}: still in ${resolve(first.adapter.configPath())} (write-failed) · ${second.entry.agent}: removed`,
+    );
+  });
+
+  it("reports a partly-swept agent as not removed, naming what is left (round-4 B8)", async () => {
+    const { settings, location, storageRoot, adapters } = await agentConfigs();
+    const { entry, adapter } = adapters[0];
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+    await installerFor(adapter, storageRoot, ledger, entry.agent).install();
+    const stranded = `${adapter.configPath()}.stranded`;
+    await ledger.recordPending(entry.agent, stranded);
+
+    const [result] = await transitionsFor({
+      settings,
+      location,
+      storageRoot,
+      ledger,
+      registry: [entry],
+      createUninstaller: (target, agent) =>
+        target.configPath() === resolve(stranded)
+          ? {
+              uninstall: async () => ({ removed: false, reason: "write-failed" }) as const,
+            }
+          : installerFor(target, storageRoot, ledger, agent),
+    }).uninstallEverything();
+
+    // One destination clean and one refused is not "removed".
+    expect(result).toMatchObject({ agent: entry.agent, removed: false, reason: "write-failed" });
+    expect(result.left).toEqual([resolve(stranded)]);
+    expect(ledger.pending(entry.agent)).toEqual([resolve(stranded)]);
+    expect(summarizeUninstall([result])).toContain(`still in ${resolve(stranded)}`);
   });
 
   it("reports an agent that was never installed as nothing to remove", async () => {
