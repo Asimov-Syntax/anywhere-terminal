@@ -308,6 +308,85 @@ into, so they should share the record of what was written there. Concurrency is 
 — the file's lock is a cross-process one, and D15's per-operation read makes a second
 installation's writes visible to the first.
 
+### D17: A write is reserved before it happens, and the reservation is the record
+
+**Amends D13's pending list and D12's command history.** One agent entry holds one collection:
+the writes this extension has made, each keyed by the pair a write actually is — the canonical
+configuration path, and the exact command put there.
+
+Three round-9 blockers were three views of one defect: `destination`, `commands` and `pending`
+were bounded independently while describing one fact jointly. Commands were capped at eight and
+pending paths at sixteen, so a pending path could outlive the command identifying its entries —
+after which ownership refuses it, cleanup reads `not-installed`, and the pointer to a file we
+modified is dropped while our hooks keep firing (B17). One `destination` string cannot name two
+configurations (B14). And folding one host's list into another's re-derived a ceiling from a view
+missing whatever only the other host knew (B10).
+
+**The ceiling governs reservations, and a reservation is durable before the configuration is
+touched.** Installing takes four steps in this order: reserve the canonical `(path, command)`
+durably, refused at the ceiling with the paths currently holding it; write the configuration;
+finalize the same record; and only then report success. Session-only state may update a record
+that already exists — that is D15's post-write fallback, and all it changes is a state — but it
+may never introduce a key. So the collection has a real bound, not an admitted overflow: nothing
+can enter it except through a reservation that was already refused if there was no room.
+
+An earlier draft of this decision let the post-write fallback add records and called the result
+"bounded by this session's post-write failures". That is not a bound — neither host count nor
+failure count is limited — and it would have been the third failed attempt at this invariant
+after round 4 and round 7. The reservation is what makes the bound structural.
+
+`fold` merges by `(path, command)` identity with the session state winning, and never trims. Two
+records differing only in state are one record, not two. A reservation left behind by a crash
+before the configuration write is a prepared obligation: it consumes capacity, and it is safe to
+clean because cleaning a path that has none of our entries is already a no-op.
+
+### D18: A write is claimed by installations, not by a flag
+
+D16 made one ledger serve every VS Code installation for this user, and two installations may
+legitimately point `claudeConfigDir` at different files. A single active/inactive flag cannot
+express that: one host's previous destination, which it may clean, is indistinguishable from
+another host's current destination, which it must leave alone. Converting today's inventory
+directly — everything recorded except the caller's own path is stale — would have each
+installation sweeping the other's live registration.
+
+So each write carries the set of installation scopes claiming it. A write with no claims is
+cleanup owed. A disable or a move releases **only the calling installation's** claim, and the
+entries come out of the file only when the last claim is gone. "Remove everything" is the
+deliberate exception: it clears every claim, because that is what the user asked for.
+
+The scope id is minted once per installation and kept in `context.globalState`. Everything that
+made `globalState` wrong for the ledger (D15) makes it right here: it is per-installation and
+deliberately not shared, which is exactly what an installation identity has to be. Losing it —
+a fresh profile — correctly reads as a new installation. It must not be derived from
+`claudeConfigDir`, the wrapper root, or the ledger, since all three move for reasons that are not
+a change of installation. The ceiling counts claims as well as records, so the claim set cannot
+become a new unbounded axis.
+
+### D19: Ownership is a path and a command, and unprovable history says so
+
+Ownership answers `isOwned(path, command)`. The command-only fallback it replaces claimed
+`seedCommand` whenever nothing was recorded, which is a condition an entry re-enters every time
+it is cleaned — `recordRemoved` never consumed the seed — so the fallback re-armed permanently
+and could eventually claim a byte-identical entry the user wrote themselves. The seed exists for
+exactly one situation, an installation predating the ledger, so it is materialized once as a
+concrete `(currentPath, seedCommand)` record before any sweep, and consumed. An entry that has
+been cleaned is not an uninitialized one.
+
+Records written in the previous shape cannot be converted faithfully, and this design does not
+pretend otherwise: the old schema stored `destination`, `commands` and `pending` with no relation
+between a path and the command written there, and a pending path whose command aged out of the
+eight-command cap has no recoverable command at all. Producing every path × command pair and
+calling them writes would state as fact something we do not know. Such a path is migrated as a
+legacy obligation carrying whatever candidate commands survive, or none — and an obligation with
+no candidate is surfaced to the user rather than silently dropped. A legacy obligation consumes
+capacity and is not cleared merely because a sweep with its surviving candidates reported
+`not-installed`, since that is the expected answer when the real command is the one we lost.
+
+Activation reads authoritatively before anything reconciles. Installing first and loading after
+let the initial install record against an empty view, overwriting the last record naming the file
+the previous session wrote (B14). `load()` is best-effort and swallows read failures, so it is
+not that authority on its own; the pre-write reservation is, and it takes the ledger lock.
+
 ### Guarantee this design can honestly claim
 
 Ownership is byte equality against a command we recorded writing. That refuses every lookalike:

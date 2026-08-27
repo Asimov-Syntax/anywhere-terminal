@@ -256,3 +256,93 @@
     2. Replace the temporary-write, chmod, rename and cleanup sequence in the wrapper path with the one src/agentHooks/install/lockedJsonFile.ts already owns
     3. Cover in src/agentHooks/install/ManagedConfigInstaller.test.ts: a second install leaving the file's modification time unchanged, and an install that must change the file still replacing it
 
+
+## 8. Cycle-4 round-9 fixes
+
+- [ ] 8_1 Reserve a write before making it
+  - **Deps**: 7_1
+  - **Refs**: .reviews/round-9.md#b10, .reviews/round-9.md#b17, design.md#d17-a-write-is-reserved-before-it-happens-and-the-reservation-is-the-record
+  - **Acceptance**:
+    - Outcome: A configuration is written only after that write is durably reserved
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Replace the entry's three collections in src/agentHooks/install/managedEntryLedger.ts with the keyed collection design.md#d17-a-write-is-reserved-before-it-happens-and-the-reservation-is-the-record defines, and expose the reserve-then-finalize pair it requires
+    2. Merge by the record's key when folding a session entry into a stored one, never trimming, and let session state update an existing record without introducing one
+    3. Refuse a reservation at the ceiling with a result carrying the paths holding it, adding that shape to src/agentHooks/install/types.ts, which today can express only a scalar reason
+    4. Cover in src/agentHooks/install/managedEntryLedger.test.ts: a write whose command precedes many later ones staying owned; a refused reservation naming the paths; two hosts' records both surviving a fold with session state winning on the shared key; and a post-write failure updating its reserved record rather than adding one
+
+- [ ] 8_2 Claim a write per installation
+  - **Deps**: 8_1
+  - **Refs**: .reviews/round-9.md#b14, design.md#d18-a-write-is-claimed-by-installations-not-by-a-flag
+  - **Acceptance**:
+    - Outcome: An installation reconciling its own configuration leaves another installation's registration in place
+    - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
+  - **Plan**:
+    1. Mint and read the installation scope in src/extension.ts from the store design.md#d18-a-write-is-claimed-by-installations-not-by-a-flag names, and pass it to the transition owner
+    2. Build the transition and uninstall inventories in src/agentHooks/install/agentHookTransitions.ts from claims rather than from one destination, releasing only the caller's claim and removing entries only when the last claim is gone
+    3. Record and release claims per path in src/agentHooks/install/ManagedConfigInstaller.ts
+    4. Cover in src/agentHooks/install/agentHookTransitions.test.ts, with two transition owners holding different scopes over one file-backed ledger: one reconciling leaves the other's registration untouched; one moving cleans only its own previous path; and removing everything clears both
+
+- [ ] 8_3 Settle a probe only once the termination outcome is known
+  - **Deps**: 7_4
+  - **Refs**: .reviews/round-9.md#b12, design.md#d14-one-process-runner-contract-absolute-and-cancellable
+  - **Acceptance**:
+    - Outcome: A leader that closes before its terminator reports still reports incomplete termination
+    - Verify: unit src/agentHooks/install/probeRunner.test.ts
+  - **Plan**:
+    1. Stop the listener registered at spawn from settling the probe once the deadline has fired in src/agentHooks/install/probeRunner.ts, leaving the gated path the only one that can
+    2. Cover in src/agentHooks/install/probeRunner.test.ts: a leader closing first while the terminator fails later, asserting the reported result carries the incomplete-termination signal
+
+- [ ] 8_4 Decide from a configuration event what to reconcile
+  - **Deps**: 7_2
+  - **Refs**: .reviews/round-9.md#b15
+  - **Acceptance**:
+    - Outcome: Changing only the configuration directory moves the installation
+    - Verify: unit src/agentHooks/install/agentHookEvents.test.ts
+  - **Plan**:
+    1. Extract the decision turning one configuration event into per-agent submissions out of the listener body in src/extension.ts into src/agentHooks/install/agentHookEvents.ts, so what the listener decides can be tested without VS Code
+    2. Carry a location-only change as a forced reconciliation rather than as no reconciliation
+    3. Cover in src/agentHooks/install/agentHookEvents.test.ts: an event touching only the location submitting a forced reconciliation, an event touching only the enablement submitting an unforced one, and an unrelated event submitting nothing
+
+- [ ] 8_5 Survive a ledger read that fails
+  - **Deps**: 7_1, 7_2, 8_2, 8_4
+  - **Refs**: .reviews/round-9.md#b16, design.md#d13-one-serialized-transition-owner-per-agent
+  - **Acceptance**:
+    - Outcome: A failed ledger read leaves later transitions able to run and reports per agent
+    - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
+  - **Plan**:
+    1. Release the coalesced state however the run ends in src/agentHooks/install/agentHookTransitions.ts
+    2. Add an outcome for a ledger that could not be read, rather than reporting a read failure as a write failure or rejecting
+    3. Report every agent's uninstall result even when one of them fails
+    4. Cover in src/agentHooks/install/agentHookTransitions.test.ts: a transition after a failed read running normally, the failed one carrying its own outcome, and an uninstall summary naming every agent when one read fails
+
+- [ ] 8_6 Take the shared lock for the wrapper too
+  - **Deps**: 7_5
+  - **Refs**: .reviews/round-9.md#b18, design.md#d11-the-wrapper-is-executable-before-it-is-visible
+  - **Acceptance**:
+    - Outcome: Two hosts writing the wrapper at once cannot fail an install
+    - Verify: unit src/agentHooks/install/ManagedConfigInstaller.test.ts
+  - **Plan**:
+    1. Replace the wrapper through the same lock the configuration and ledger already take in src/agentHooks/install/ManagedConfigInstaller.ts
+    2. Cover in src/agentHooks/install/ManagedConfigInstaller.test.ts: concurrent wrapper creation with a colliding temporary name still producing one complete executable wrapper and no failed install
+
+- [ ] 8_7 Migrate a record we cannot fully reconstruct
+  - **Deps**: 8_1
+  - **Refs**: .reviews/round-9.md#b17, design.md#d19-ownership-is-a-path-and-a-command-and-unprovable-history-says-so
+  - **Acceptance**:
+    - Outcome: A configuration recorded in the previous shape is never silently dropped, even when the command that identifies it is gone
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Convert an entry written in the previous shape into the records design.md#d19-ownership-is-a-path-and-a-command-and-unprovable-history-says-so describes, without inventing a path-to-command relationship the old shape never held
+    2. Answer ownership from the path and the command together, and materialize the pre-ledger seed once as a concrete record instead of re-arming whenever nothing is recorded
+    3. Cover in src/agentHooks/install/managedEntryLedger.test.ts: a pending path whose command survived migrating with it; one whose command did not migrating as unresolved and surviving a sweep that reported nothing installed; and a cleaned entry no longer re-seeding
+
+- [ ] 8_8 Read the record before anything reconciles
+  - **Deps**: 8_2
+  - **Refs**: .reviews/round-9.md#b14, design.md#d19-ownership-is-a-path-and-a-command-and-unprovable-history-says-so
+  - **Acceptance**:
+    - Outcome: The first install of a session cannot overwrite the record naming what the last session wrote
+    - Verify: unit src/agentHooks/install/activation.test.ts
+  - **Plan**:
+    1. Order activation in src/extension.ts so the ledger is read before any agent reconciles
+    2. Cover in src/agentHooks/install/activation.test.ts that the read precedes the controller's first install, and that a location changed while the extension was closed leaves the previous path still recorded and cleanable

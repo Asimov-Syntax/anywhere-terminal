@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -40,6 +40,18 @@ docs/research/20260827-claude-code-hooks-settings-schema.md was produced during 
 Cycle-1 remediation landed as tasks 4_1 (D12 ledger), 4_2 (D13 single transition owner) and 4_3 (D14 probe runner). The parser, `migrateAgentDestination` and `uninstallAllAgents` are deleted rather than patched — the three defects each had the same root, which is why patching them individually thrashed.
 `main` was merged in mid-cycle (b405735): 24 commits carrying phases 4 and 5, including WT-004.3. Two conflicts, both resolved toward this branch's contract — `SessionManager`'s `cursorHooks` field is `agentHooks` here since WT-006.1, and `paneEvidence` from main is threaded alongside it. The pnpm lockfile was regenerated rather than hand-merged.
 Lint reports 13 warnings, all pre-existing on main and none in files this change touches; `biome check` exits 0. `pnpm run lint` runs Biome's auto-fix form and would silently rewrite `src/webview/worktree/worktreeFormat.ts`'s spinner regex, dropping backslash from the frame set — reverted, and the gate was taken from check mode.
+Oracle pass on the cycle-4 amendment rejected the first draft of D17 and all six of its
+findings were accepted: a post-write fallback that may add records is not a bound, so the write
+is durably reserved before the configuration is touched and session state may only update a
+record that already exists; an `active` flag cannot separate one installation's stale path from
+another's live one, so writes carry installation claims scoped to an id kept in `globalState` —
+the one thing that store is right for, being deliberately per-installation; the `seedCommand`
+fallback re-armed after every cleanup and is replaced by a materialized bootstrap record; and the
+old three-list shape cannot be converted faithfully, so a pending path whose command aged out
+migrates as an unresolved obligation rather than as an invented pair. Tasks 8_1, 8_2, 8_4 and 8_5
+were rewritten: three of them named outcome fields that do not exist, and 8_2 and 8_4 could not
+have caught the defects they target from the seam they tested.
+
 Round 9 (cycle 4 discovery) REJECTED with 7 blockers and confirmed B5, B6, B9, B11, B13
 and W6 fixed. Three of the seven are one design contradiction, so the thrash stop was taken
 as a handback rather than a fourth patch: B10 (a pending list cannot both retain every host's
