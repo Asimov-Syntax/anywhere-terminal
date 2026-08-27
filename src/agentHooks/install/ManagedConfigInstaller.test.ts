@@ -15,9 +15,9 @@ import {
   ManagedConfigInstaller,
   type ManagedConfigInstallerDependencies,
   managedWrapperCommand,
-  runCommand,
 } from "./ManagedConfigInstaller";
 import { ManagedEntryLedger, memoryLedgerStore } from "./managedEntryLedger";
+import { PROBE_OUTER_DEADLINE_MS } from "./probeRunner";
 
 const tempDirectories: string[] = [];
 
@@ -396,32 +396,6 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
     });
   });
 
-  it("kills a hung probe rather than only ceasing to wait for it", async () => {
-    const paths = await fixture();
-    await mkdir(paths.storageRoot, { recursive: true });
-    const marker = join(paths.storageRoot, "survived.txt");
-
-    const result = await runCommand("/bin/sh", ["-c", `sleep 0.4; : > '${marker}'`], 100);
-
-    expect(result).toEqual({ exitCode: 1, stdout: "" });
-    // Long enough that an unkilled child would have created the marker.
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("waits for the killed probe to be reaped, and takes its descendants with it", async () => {
-    const paths = await fixture();
-    await mkdir(paths.storageRoot, { recursive: true });
-    const marker = join(paths.storageRoot, "grandchild.txt");
-    // The child backgrounds a grandchild, then exits itself. Killing only the
-    // leader would leave the grandchild to create the marker (round-2 W1).
-    const result = await runCommand("/bin/sh", ["-c", `(sleep 0.4; : > '${marker}') & sleep 5`], 100);
-
-    expect(result).toEqual({ exitCode: 1, stdout: "" });
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
   it("makes the wrapper executable before it is reachable (D11)", async () => {
     const paths = await fixture();
     await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: {} }));
@@ -692,7 +666,7 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
 
       const hungInstall = installer.install();
       await started;
-      vi.advanceTimersByTime(2_000);
+      vi.advanceTimersByTime(PROBE_OUTER_DEADLINE_MS);
       await expect(hungInstall).resolves.toMatchObject({ installed: false, reason: "windows-probe-failed" });
       expect(await readFile(paths.configPath, "utf8")).toBe(original);
 

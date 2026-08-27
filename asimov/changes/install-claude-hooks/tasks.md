@@ -125,7 +125,7 @@
     4. Create src/agentHooks/install/agentHookTransitions.test.ts covering: interleaved enable and disable settling on the latest, two rapid destination moves leaving one active destination, a failed cleanup retried rather than forgotten, and cleanup surviving a restart
     5. Have the uninstall command clear every pending destination as well as the active one
 
-- [ ] 4_3 One trusted, cancellable process runner
+- [x] 4_3 One trusted, cancellable process runner — verified: bun test 'src/agentHooks/install/probeRunner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md#d14-one-process-runner-contract-absolute-and-cancellable, specs/agent-hook-installation/spec.md#an-unreachable-hook-costs-the-agent-nothing
   - **Acceptance**:
@@ -133,5 +133,5 @@
     - Verify: unit src/agentHooks/install/probeRunner.test.ts
   - **Plan**:
     1. Create src/agentHooks/install/probeRunner.ts taking an absolute executable, containing error and close, owning one deadline, and terminating the process group through an absolute system path on each platform
-    2. Move the probe off the runner embedded in src/agentHooks/install/ManagedConfigInstaller.ts and make the injected-runner bound exceed the deadline plus reap grace
+    2. Move the probe off the runner embedded in src/agentHooks/install/ManagedConfigInstaller.ts and make the injected-runner bound exceed the deadline plus reap grace, relocating its two runner tests out of src/agentHooks/install/ManagedConfigInstaller.test.ts
     3. Create src/agentHooks/install/probeRunner.test.ts covering: a descendant terminated with its leader, a spawn failure contained rather than thrown, the reap awaited before reporting, and the outer bound not preempting it

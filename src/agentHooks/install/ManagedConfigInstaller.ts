@@ -5,11 +5,17 @@
 // and the wrapper script's lifecycle. What the document looks like belongs to
 // the AgentConfigAdapter it is constructed with.
 
-import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
 import { posixShellQuote } from "../../utils/posixShellQuote";
 import { ManagedEntryLedger, type ManagedEntryOwnership, memoryLedgerStore } from "./managedEntryLedger";
+import {
+  PROBE_OUTER_DEADLINE_MS,
+  type ProbeResult,
+  runProbe,
+  windowsSystemPath,
+  withProbeDeadline,
+} from "./probeRunner";
 import {
   type AgentConfigAdapter,
   type ConfigRead,
@@ -41,7 +47,7 @@ export interface ManagedConfigInstallerDependencies {
   fs?: Partial<FileSystem>;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
-  run?: (file: string, args: string[]) => Promise<{ exitCode: number; stdout: string }>;
+  run?: (file: string, args: string[]) => Promise<ProbeResult>;
   beforeReplace?: () => Promise<void>;
   rename?: (oldPath: string, newPath: string) => Promise<void>;
 }
@@ -50,14 +56,12 @@ const LOCK_WAIT_MS = 25;
 const LOCK_MAX_WAIT_MS = 1_000;
 const STALE_LOCK_MS = 30_000;
 const MAX_RECONCILE_ATTEMPTS = 3;
-const WINDOWS_PROBE_DEADLINE_MS = 2_000;
-const REAP_GRACE_MS = 500;
 
 export class ManagedConfigInstaller {
   private readonly fs: FileSystem;
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
-  private readonly run: (file: string, args: string[]) => Promise<{ exitCode: number; stdout: string }>;
+  private readonly run: (file: string, args: string[]) => Promise<ProbeResult>;
   private readonly replace: (oldPath: string, newPath: string) => Promise<void>;
   private readonly beforeReplace: () => Promise<void>;
   private readonly platform: Platform;
@@ -71,7 +75,7 @@ export class ManagedConfigInstaller {
     this.fs = { chmod, lstat, mkdir, open, readFile, rename, stat, unlink, writeFile, ...dependencies.fs };
     this.now = dependencies.now ?? Date.now;
     this.sleep = dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
-    this.run = dependencies.run ?? runCommand;
+    this.run = dependencies.run ?? ((file, args) => runProbe(file, args));
     this.replace = dependencies.rename ?? this.fs.rename;
     this.beforeReplace = dependencies.beforeReplace ?? (async () => undefined);
     this.platform = options.platform ?? hostPlatform();
@@ -207,14 +211,13 @@ export class ManagedConfigInstaller {
     if (this.platform !== "win32") {
       return "ready";
     }
-    // Two deadlines, deliberately. `runCommand` kills and reaps its own child;
-    // this one bounds the installer against any injected runner that does not
-    // (round-1 W1 — the extraction had only the outer one, which cancels the
-    // wait without ending the process).
-    const result = await withDeadline(this.run("cmd.exe", ["/d", "/s", "/c", wrapper]), WINDOWS_PROBE_DEADLINE_MS, {
-      exitCode: 1,
-      stdout: "",
-    });
+    // Two bounds, deliberately. `runProbe` kills and reaps its own child; this
+    // one bounds the installer against an injected runner that does not, and is
+    // strictly the looser of the two so it never preempts that reap (D14).
+    const result = await withProbeDeadline(
+      this.run(windowsSystemPath("cmd.exe"), ["/d", "/s", "/c", wrapper]),
+      PROBE_OUTER_DEADLINE_MS,
+    );
     return result.exitCode === 0 && isEmptyJson(result.stdout) ? "ready" : "probe-failed";
   }
 
@@ -387,84 +390,4 @@ function isEmptyJson(stdout: string): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * The deadline lives here so a hung probe is killed and reaped rather than
- * merely stopped being waited on (round-1 W1), and the timeout path waits for
- * `close` before reporting rather than reporting on `kill` (round-2 W1).
- * Termination targets the process group: the probe runs `cmd.exe /c <wrapper>`
- * and the wrapper spawns curl, so killing only the leader leaves a descendant.
- */
-export function runCommand(
-  file: string,
-  args: string[],
-  deadlineMs: number = WINDOWS_PROBE_DEADLINE_MS,
-): Promise<{ exitCode: number; stdout: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(file, args, {
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-      detached: process.platform !== "win32",
-    });
-    let stdout = "";
-    let settled = false;
-    const finish = (exitCode: number) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(deadline);
-      clearTimeout(reapDeadline);
-      resolve({ exitCode, stdout });
-    };
-    let reapDeadline: ReturnType<typeof setTimeout> | undefined;
-    const deadline = setTimeout(() => {
-      terminateTree(child);
-      // Report only once the child is actually gone; a second deadline keeps an
-      // unkillable process from holding the install open indefinitely.
-      reapDeadline = setTimeout(() => finish(1), REAP_GRACE_MS);
-      child.once("close", () => finish(1));
-    }, deadlineMs);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.on("error", () => {
-      stdout = "";
-      finish(1);
-    });
-    child.on("close", (code) => finish(code ?? 1));
-  });
-}
-
-function terminateTree(child: ReturnType<typeof spawn>): void {
-  if (child.pid === undefined) {
-    return;
-  }
-  try {
-    if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-      return;
-    }
-    // Negative pid addresses the group the `detached` spawn created.
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    child.kill("SIGKILL");
-  }
-}
-
-function withDeadline<T>(promise: Promise<T>, milliseconds: number, fallback: T): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(fallback), milliseconds);
-    void promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
