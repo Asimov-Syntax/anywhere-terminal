@@ -20,6 +20,11 @@ const received: {
 
 /** Set by a test that needs the listing to read as trustworthy. */
 let forceUndegraded = false;
+/**
+ * Observations `observation()` hands out in order, so a test can move the tree
+ * between the two reads `observeAfter` makes. Empty means "it never moved".
+ */
+let observations: number[] = [];
 
 vi.mock("./worktree/worktreeMutationService", async (importOriginal) => {
   const real = await importOriginal<typeof import("./worktree/worktreeMutationService")>();
@@ -52,11 +57,11 @@ vi.mock("./providers/WorktreeHost", async (importOriginal) => {
         return host;
       }
       // The ONLY substitution: with no repo in the mock's tree every id reads
-      // as degraded, and `observeAfter` short-circuits before it ever stats.
+      // as unobserved, and `observeAfter` short-circuits before it ever stats.
       // Everything else below is what `activate` really supplies.
       return {
         ...host,
-        mutationBindings: () => ({ ...host.mutationBindings(), isDegraded: () => false }),
+        mutationBindings: () => ({ ...host.mutationBindings(), observation: () => observations.shift() ?? 1 }),
       };
     },
   };
@@ -67,6 +72,7 @@ beforeEach(() => {
   received.deps = undefined;
   received.reports = [];
   forceUndegraded = false;
+  observations = [];
   vi.resetModules();
 });
 
@@ -167,6 +173,15 @@ describe("what the shipped observation makes of an unreadable path", () => {
 
   it("still calls a present directory present", async () => {
     expect(await observeWith(null)).toMatchObject({ existsOnDisk: true });
+  });
+
+  it("answers nothing when the tree moves between the existence and registration reads", async () => {
+    // Round-9 B8: the two reads exist precisely because registration and
+    // filesystem can disagree. Taken from different observations they are not
+    // a disagreement, they are two unrelated facts — so the pair is discarded
+    // rather than classified.
+    observations = [7, 8];
+    expect(await observeWith(null)).toBeNull();
   });
 });
 

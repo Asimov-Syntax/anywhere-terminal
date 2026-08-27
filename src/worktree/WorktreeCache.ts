@@ -253,7 +253,7 @@ export function createWorktreeCache(): WorktreeCache {
       out.push({
         ...cached.repo,
         ...(degraded === undefined ? {} : { degraded }),
-        ...(cached.generation === undefined ? {} : { generation: cached.generation }),
+        ...(cached.generation === undefined || !gitAvailable ? {} : { generation: cached.generation }),
         worktrees: [...cached.repo.worktrees],
       });
       count += cached.skipped;
@@ -277,14 +277,13 @@ export function createWorktreeCache(): WorktreeCache {
       // away would otherwise read as fresh under a tree calling git unusable.
       // A group that already names a more specific cause keeps it.
       //
-      // The registration token goes for the same reason and to the same extent:
-      // an unusable git OBSERVED nothing, so no group may authorize a launch or
-      // a removal on a number minted before git went away (design.md D12).
-      const marked = out.map((repo) => {
-        const retained: WorktreeRepo = { ...repo };
-        delete retained.generation;
-        return reason === undefined || retained.degraded !== undefined ? retained : { ...retained, degraded: reason };
-      });
+      // The registration token is withheld for the same reason and to the same
+      // extent: an unusable git OBSERVED nothing, so no group may authorize a
+      // launch or a removal on a number minted before git went away (D12). It
+      // is withheld while the output is built rather than stripped afterwards,
+      // so an outage costs no second copy of every repository (round-9 S3).
+      const marked =
+        reason === undefined ? out : out.map((r) => (r.degraded === undefined ? { ...r, degraded: reason } : r));
       return { repos: marked, unreadable: { count, reasons: [...reasons] }, gitAvailable: false };
     }
 

@@ -472,7 +472,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           // forbids: the comparison exists precisely because registration and
           // filesystem can disagree, and deriving one from the other deletes
           // the disagreement it is meant to detect (round-2 B7).
-          if (bindings.isDegraded(target.repoId)) {
+          const observed = bindings.observation(target.repoId);
+          if (observed === undefined) {
             // A listing we cannot trust is not evidence of anything. Null is
             // what `classifyRemoval` reads as indeterminate.
             return null;
@@ -484,6 +485,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             (error: NodeJS.ErrnoException) => existenceFromStatError(error),
           );
           if (existsOnDisk === null) {
+            return null;
+          }
+          // Round-9 B8: the stat takes real time. The registration read below
+          // has to belong to the same observation the existence read was
+          // authorized under, or the two halves of the comparison come from
+          // different trees — and the disagreement between them is the whole
+          // point of reading them separately.
+          if (bindings.observation(target.repoId) !== observed) {
             return null;
           }
           return { isRegistered: bindings.resolve(target) !== null, existsOnDisk };

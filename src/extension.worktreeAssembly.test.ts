@@ -46,6 +46,8 @@ let registered: string[] = [];
 let lockedRow = false;
 /** Set by a test that needs git to report a stale registration.  */
 let prunableRow = false;
+/** Set by a test that needs the repository's listing to stop being readable. */
+let listingFails = false;
 
 function listing(): string {
   const record = (path: string, head: string, branch: string, extra: string[] = []): string[] => [
@@ -102,6 +104,15 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
           fs.rmSync(target, { recursive: true, force: true });
         }
         const key = `${cwd}|${args.join(" ")}`;
+        if (listingFails && args[0] === "worktree" && args[1] === "list") {
+          return {
+            code: 128,
+            stdout: Buffer.from(""),
+            stderr: "fatal: could not read the index",
+            timedOut: false,
+            failedToSpawn: false,
+          };
+        }
         const scripted = SCRIPT[key] ?? {};
         const stdout = key === `${REPO}|worktree list --porcelain` ? listing() : (scripted.stdout ?? "");
         // The dry run has to agree with what the listing flagged, or the
@@ -226,6 +237,7 @@ beforeEach(() => {
   noStartableAgents = false;
   lockedRow = false;
   prunableRow = false;
+  listingFails = false;
   registered = [LINKED];
   fs.mkdirSync(LINKED, { recursive: true });
   captured.host = undefined;
@@ -377,6 +389,25 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // The unforced removal the webview posts, carried all the way down. A
     // `--force` here would mean the assessment was skipped.
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
+  });
+
+  it("runs no removal command once the repository stops being observed (round-9 W9)", async () => {
+    // The binding-level tests prove `assessRemoval` refuses. What they cannot
+    // see is whether the shipped mutation service honours that refusal — this
+    // change's own round-3 finding was that module tests miss the wiring.
+    //
+    // Note also what the PASSING removal above proves: this assembly's vscode
+    // mock has no `createFileSystemWatcher`, so every repository here is
+    // unwatched — an unwatched repository is not refused a removal (D11).
+    const { host } = await assemble();
+    listingFails = true;
+    await host.mutationBindings().forceRebuild(REPO_ID);
+    await settle();
+
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    expect(gitCalls("remove")).toEqual([]);
   });
 
   it("shows the removal's outcome, in the order the coordinator really produces", async () => {

@@ -301,8 +301,16 @@ export interface WorktreeMutationBindings {
   resolve(target: WorktreeMutationTarget): ResolvedMutationTarget | null;
   /** The repository's main worktree path, for the repo-scoped verbs. */
   repoPath(repoId: string): string | null;
-  /** The listing behind the current tree is stale, failed, or absent. */
-  isDegraded(repoId: string): boolean;
+  /**
+   * The observation the current tree holds of this repository, or `undefined`
+   * when it holds none — the listing is stale, failed, absent, or git is
+   * unusable (design.md D12).
+   *
+   * The value, not a boolean: a caller that reads state on one side of an
+   * `await` and acts on it on the other has to be able to ask whether it is
+   * still the same observation (round-9 B8).
+   */
+  observation(repoId: string): number | undefined;
   /** Where a create may go in this repo, and what already occupies it. */
   createContext(repoId: string): { mainWorktree: string; linkedWorktrees: readonly string[] } | null;
   /**
@@ -655,6 +663,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   function observationOf(repo: WorktreeRepo | undefined): number | undefined {
     return repo?.generation;
+  }
+
+  function repoById(repoId: string): WorktreeRepo | undefined {
+    return cache.read().repos.find((r) => r.repoId === repoId);
   }
 
   /**
@@ -1685,10 +1697,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         };
       },
       repoPath: (repoId) => cache.read().repos.find((r) => r.repoId === repoId)?.mainPath ?? null,
-      // Whether the listing behind the current tree can be relied on — asked of
-      // `observationOf`, the same claim a launch is admitted against, and never
-      // of `degraded` (round-2 B7, round-7 W8, design.md D12).
-      isDegraded: (repoId) => observationOf(cache.read().repos.find((r) => r.repoId === repoId)) === undefined,
+      // The claim a launch is admitted against, published as its value and
+      // never derived from `degraded` (round-2 B7, round-7 W8, design.md D12).
+      observation: (repoId) => observationOf(repoById(repoId)),
       createContext: (repoId) => {
         const repo = cache.read().repos.find((r) => r.repoId === repoId);
         if (repo === undefined) {
@@ -1706,6 +1717,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (found === null || found.repo.repoId !== target.repoId || facts === undefined) {
           return null;
         }
+        const observed = observationOf(found.repo);
         // Run in the worktree itself, not the repo: `--porcelain` is what names
         // the files a force would destroy, and that is per worktree.
         //
@@ -1717,6 +1729,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           ? null
           : await options.deps.runner.run(["status", "--porcelain"], found.wt.displayPath);
         const sessions = await facts.externalSessions();
+        // Round-9 B8: those two reads take real time, and a rebuild landing in
+        // between replaces the listing everything below is derived from — the
+        // siblings, and the target itself. An assessment spanning two
+        // observations belongs to neither, so it reports the listing unreadable
+        // rather than answering from a mixture of them.
+        const stillObserved = observed !== undefined && observationOf(repoById(target.repoId)) === observed;
         return evaluateRemoval({
           target: found.wt,
           siblings: found.repo.worktrees,
@@ -1731,9 +1749,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               : status.code === 0 && !status.timedOut
                 ? { ok: true, value: status.stdout.toString("utf8") }
                 : { ok: false },
-          // The same claim `isDegraded` asks before the attempt, so a removal
+          // The same claim `observeAfter` asks after the attempt, so a removal
           // cannot be authorized under one reading and classified under another.
-          listingDegraded: observationOf(found.repo) === undefined,
+          listingDegraded: !stillObserved,
         });
       },
     }),

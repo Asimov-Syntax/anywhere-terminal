@@ -320,6 +320,8 @@ async function builtHost(
   // A supported version is believed permanently, so losing git mid-session
   // cannot be staged through the runner — it is staged here instead.
   const gitUsable = { now: true };
+  /** Run inside `assessRemoval`, between its reads — see `onAssessment`. */
+  const duringAssessment = { now: async (): Promise<void> => {} };
   const probed = createGitCapabilities(shared);
   const capabilities: GitCapabilities = {
     runWithFallback: probed.runWithFallback,
@@ -346,7 +348,13 @@ async function builtHost(
     now: () => 1000,
     // Without these `assessRemoval` returns null before it reaches git, which
     // would make every assertion about WHICH git commands it issues vacuous.
-    removalFacts: { panes: () => [], externalSessions: async () => ({ ok: true, value: [] }) },
+    removalFacts: {
+      panes: () => [],
+      externalSessions: async () => {
+        await duringAssessment.now();
+        return { ok: true, value: [] };
+      },
+    },
     ...(over.exists === undefined ? {} : { exists: over.exists }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
   });
@@ -384,6 +392,10 @@ async function builtHost(
       host.handleMessage(view, { type: "requestWorktreeTree", force: true });
       await settle();
       noteTree(view);
+    },
+    /** Do something to the tree while an assessment is mid-flight. */
+    onAssessment: (fn: () => Promise<void>) => {
+      duringAssessment.now = fn;
     },
     /**
      * Take git away entirely, so no listing anywhere can be read — the tree the
@@ -1827,7 +1839,7 @@ describe("what an unobserved repository authorizes", () => {
     // this one would be derived from.
     expect(result).toMatchObject({ kind: "unavailable" });
     expect((result as { unreadable: readonly string[] }).unreadable).toContain("listing");
-    expect(host.mutationBindings().isDegraded(REPO)).toBe(true);
+    expect(host.mutationBindings().observation(REPO)).toBeUndefined();
     dispose();
   });
 
@@ -1860,7 +1872,49 @@ describe("what an unobserved repository authorizes", () => {
     // The harness's `git status` is unreadable for reasons of its own, so the
     // claim under test is the listing one specifically, not the verdict.
     expect((result as { unreadable?: readonly string[] }).unreadable ?? []).not.toContain("listing");
-    expect(host.mutationBindings().isDegraded(REPO)).toBe(false);
+    expect(host.mutationBindings().observation(REPO)).not.toBeUndefined();
     dispose();
+  });
+});
+
+// Round-9 B8. The defect shape this whole change has been chasing, at the one
+// boundary the fix never reached: state read on one side of an await, acted on
+// from the other. A removal is where it costs the most.
+describe("an assessment that spans two observations", () => {
+  it("reports the listing unreadable when a rebuild lands mid-assessment", async () => {
+    const h = await builtHost();
+    // The reads take real time; a watcher-driven rebuild during them replaces
+    // the listing `siblings` and the target were taken from.
+    h.onAssessment(async () => {
+      await h.relist();
+    });
+
+    const result = await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect((result as { unreadable?: readonly string[] }).unreadable ?? []).toContain("listing");
+    h.dispose();
+  });
+
+  it("reports it unreadable when git goes away mid-assessment", async () => {
+    const h = await builtHost();
+    h.onAssessment(async () => {
+      await h.loseGit();
+    });
+
+    const result = await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect((result as { unreadable?: readonly string[] }).unreadable ?? []).toContain("listing");
+    h.dispose();
+  });
+
+  it("says nothing about the listing when the tree holds still", async () => {
+    // The negative that gives the two above their meaning: an assessment that
+    // spans one observation is answered from it.
+    const h = await builtHost();
+
+    const result = await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect((result as { unreadable?: readonly string[] }).unreadable ?? []).not.toContain("listing");
+    h.dispose();
   });
 });

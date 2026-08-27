@@ -270,3 +270,18 @@
     2. `src/providers/WorktreeHost.ts` — one helper answers "was this repository observed", and launch admission and both removal readers call it
     3. `src/worktree/WorktreeCache.test.ts` — the token goes when git does, and comes back when git does
     4. `src/providers/WorktreeHost.actions.test.ts` — an unusable git refuses a removal and a launch; an unwatched repository refuses neither
+
+## 11. Round 9 fixes
+
+- [x] 11_1 Re-ask the observation after every await that separates reading from acting — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 10_1
+  - **Refs**: design.md#d12-one-predicate-this-repository-was-observed-authorizes-both-a-launch-and-a-removal, .reviews/round-9.md
+  - **Boundary**: the claim stays the cache's to mint — no consumer may re-derive or cache its own copy across a rebuild
+  - **Acceptance**:
+    - Outcome: a removal is refused when the observation changes mid-assessment
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts` — `assessRemoval` re-checks its observation after the status and session reads; bindings expose the observation itself rather than a boolean
+    2. `src/extension.ts` — `observeAfter` re-checks after the stat, so the registration read belongs to the observation the existence read was authorized under
+    3. `src/worktree/WorktreeCache.ts` — build the git-unavailable output once (S3)
+    4. `src/providers/WorktreeHost.actions.test.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts` — interleaving regressions at both boundaries, and an assembly walk proving an unusable git runs no removal command (W9)

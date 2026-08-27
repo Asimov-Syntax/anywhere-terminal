@@ -323,6 +323,13 @@ means "not observed", and every authority asks exactly that.
   degradation it shows the user, now applied to the authority it grants.
 - Not withdrawn for an unwatched repository, whose listing was read (D11).
 
+**And re-asked, not remembered.** A launch already re-reads its observation after
+the await that separates admission from acting (D10); a removal does the same at both
+of its awaits — `assessRemoval` after the status and session reads, `observeAfter`
+after the stat. An assessment that spans two observations belongs to neither, and a
+registration read taken from a different observation than the existence read is not
+the disagreement those two reads exist to detect. Both fail closed to indeterminate.
+
 **What removal loses and gains.** It no longer refuses on a watcher failure, so worktrees can be
 removed on hosts without file watching. It now refuses while git is unusable, which it did only
 incidentally before, through a degradation string that a more specific reason could displace.
