@@ -58,6 +58,19 @@ round reads. That is a loop by construction — a discovery round finds a blocke
 design, the amendment lands, the next round refuses to adjudicate, and the fixes are never
 verified. Rounds 8 and 10 both cost a full round and produced no adjudication at all.
 
+THRASH STOP at round 11 (cycle 5 discovery, REJECT, 9 blockers). Trigger: the same invariant
+survived two fix attempts — B10 (pending-destination capacity) is open in rounds 7, 9 and 11,
+across cycle-3 and cycle-4 remediation. Cycle 4 did land: the chair adjudicated B12, B15, B16,
+B17 and B18 fixed at their original invariants. What did not land is the ownership/destination
+family, which has now been redesigned four times — D12 (globalState ledger), D15 (locked JSON
+under global storage), D16 (fixed per-user path), D17-D19 (reserve-before-write, installation
+claims, path+command ownership) — and re-broken each time in a new place: round 11 raises B19
+(same-path claim erasure), B20 (ownership still command-global, bootstrap re-arms), B21 (migration
+drops candidate evidence), B23 (claims unbounded while only writes are counted), B25 (prepared
+reservation never cancelled). Round 3's chair recommended exactly this handback for the same
+family; four amendments later it is still open, so a fifth patch-level or amendment-level pass is
+not a new hypothesis. Escalated to the user rather than opening cycle 6. No fixes edited.
+
 What breaks it: a DISCOVERY round is not blocked by an amendment in its range — round 9
 adjudicated fine with 435d911 inside it. So cycle 5 opens with a discovery round over the
 whole change, per the chair's own instruction. The durable fix, for the next verification
