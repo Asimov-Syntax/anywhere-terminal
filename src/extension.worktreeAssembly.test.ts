@@ -370,7 +370,10 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   // displayed, the webview says it is visible. The host pushes to neither alone.
   host.attach(surface).setDisplayed(true);
   controller.setVisible(true);
-  await settle();
+  await settleUntil(
+    () => document.querySelectorAll('[role="treeitem"]').length > 0,
+    "the first worktree tree push to render a row",
+  );
   return { controller, host };
 }
 
@@ -380,6 +383,25 @@ async function settle(): Promise<void> {
     await Promise.resolve();
     await new Promise((r) => setTimeout(r, 0));
   }
+}
+
+/**
+ * Pump until `ready` holds, then stop. A fixed pump count assumes how many event-loop
+ * turns the host's rebuild costs; under full-suite load it costs more, and the walk then
+ * reads a tree that has not been painted yet — which surfaced as `openMenu` reporting zero
+ * rendered rows, intermittently and only in a full run. Waiting on the condition drops the
+ * assumption without waiting any longer than it has to, and says what it waited for when
+ * the condition genuinely never arrives.
+ */
+async function settleUntil(ready: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    if (ready()) {
+      return;
+    }
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  throw new Error(`timed out waiting for ${what}`);
 }
 
 /** Open the row's context menu the way a user does, and return its items. */
