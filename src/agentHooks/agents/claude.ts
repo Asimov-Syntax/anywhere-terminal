@@ -47,6 +47,18 @@ const CLAUDE_HOOK_EVENT_SET: ReadonlySet<string> = new Set<string>(CLAUDE_HOOK_E
  */
 export const CLAUDE_FIELD_CAP = 4_096;
 
+/** The tool name, not the event name, is what makes a `PreToolUse` a wait (§ 4.4). */
+const CLAUDE_QUESTION_TOOL = "AskUserQuestion";
+
+/** Most questions carried from one `AskUserQuestion`; the rest are dropped. */
+export const CLAUDE_QUESTION_CAP = 8;
+
+/** One question as the panel needs it: what was asked, and nothing executable. */
+export interface ClaudeReportedQuestion {
+  question: string;
+  header?: string;
+}
+
 /** What the reducer reads. A field the payload did not supply is simply absent. */
 export interface ClaudeHookPayload {
   event: ClaudeHookEvent;
@@ -58,10 +70,80 @@ export interface ClaudeHookPayload {
   subagentId?: string;
   subagentName?: string;
   interrupted?: boolean;
+  /** `PreToolUse` for the question tool only: what the agent actually asked. */
+  questions?: readonly ClaudeReportedQuestion[];
+  /** `PermissionRequest` only: what is being approved, derived rather than reported. */
+  approvalSummary?: string;
 }
 
 function boundedString(value: unknown): string | undefined {
   return typeof value === "string" ? value.slice(0, CLAUDE_FIELD_CAP) : undefined;
+}
+
+/**
+ * An identifier the payload had to supply, or nothing.
+ *
+ * The empty string is a string, so the plain bound would let `""` through every
+ * `!== undefined` guard downstream: an empty child id would open a roster entry
+ * for a delegation that does not exist, which is invented work rather than
+ * missing work (.reviews/round-1.md W4).
+ */
+function requiredString(value: unknown): string | undefined {
+  const bounded = boundedString(value);
+  return bounded === undefined || bounded.length === 0 ? undefined : bounded;
+}
+
+/**
+ * The questions an `AskUserQuestion` asked, bounded in count and in length.
+ *
+ * Only the two human-readable fields are kept. The options carry the answers the
+ * panel cannot submit yet (§ 4.4 defers answering), and nothing else in a tool
+ * input is something this row needs to hold.
+ */
+function boundedQuestions(value: unknown): ClaudeReportedQuestion[] | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const raw = (value as Record<string, unknown>).questions;
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const questions: ClaudeReportedQuestion[] = [];
+  for (const item of raw.slice(0, CLAUDE_QUESTION_CAP)) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const question = requiredString(record.question);
+    if (question === undefined) {
+      continue;
+    }
+    const header = requiredString(record.header);
+    questions.push({ question, ...(header === undefined ? {} : { header }) });
+  }
+  return questions.length === 0 ? undefined : questions;
+}
+
+/**
+ * What a permission request is asking for, as one bounded line.
+ *
+ * § 4.4 documents a `summary` on the approval shape, but no hook payload carries
+ * one — `PermissionRequest` sends `tool_name` and `tool_input` and nothing else.
+ * So it is derived from the request that was actually made rather than left to a
+ * field that is never sent (D6's rule, applied to a smaller gap).
+ */
+function approvalSummaryOf(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return requiredString(value);
+  }
+  try {
+    return requiredString(JSON.stringify(value));
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -89,7 +171,7 @@ export function decodeClaudeHookPayload(body: Buffer): ClaudeHookPayload | null 
   }
   // Present on every event and the key everything else hangs off; a payload
   // without a usable one describes no session we could attribute it to.
-  const agentSessionId = boundedString(raw.session_id);
+  const agentSessionId = requiredString(raw.session_id);
   if (agentSessionId === undefined) {
     return null;
   }
@@ -98,8 +180,8 @@ export function decodeClaudeHookPayload(body: Buffer): ClaudeHookPayload | null 
   const transcriptPath = boundedString(raw.transcript_path);
   const toolName = boundedString(raw.tool_name);
   const source = boundedString(raw.source);
-  const subagentId = boundedString(raw.agent_id);
-  const subagentName = boundedString(raw.agent_type);
+  const subagentId = requiredString(raw.agent_id);
+  const subagentName = requiredString(raw.agent_type);
   if (transcriptPath !== undefined) {
     payload.transcriptPath = transcriptPath;
   }
@@ -120,11 +202,22 @@ export function decodeClaudeHookPayload(body: Buffer): ClaudeHookPayload | null 
   if (typeof raw.is_interrupt === "boolean") {
     payload.interrupted = raw.is_interrupt;
   }
+  // The tool input is read for exactly the two events whose prompt shape § 4.4
+  // documents, and never carried whole.
+  if (payload.event === "PreToolUse" && toolName === CLAUDE_QUESTION_TOOL) {
+    const questions = boundedQuestions(raw.tool_input);
+    if (questions !== undefined) {
+      payload.questions = questions;
+    }
+  }
+  if (payload.event === "PermissionRequest") {
+    const approvalSummary = approvalSummaryOf(raw.tool_input);
+    if (approvalSummary !== undefined) {
+      payload.approvalSummary = approvalSummary;
+    }
+  }
   return payload;
 }
-
-/** The tool name, not the event name, is what makes a `PreToolUse` a wait (§ 4.4). */
-const CLAUDE_QUESTION_TOOL = "AskUserQuestion";
 
 /**
  * Most delegations a turn will track. A `Map` stops a repeated start counting
@@ -146,6 +239,8 @@ class ClaudeHookAgentSession implements AgentHookSession {
   private stateStartedAt: number;
   private published: AgentTurnReport["state"] | null = null;
   private readonly roster = new Map<string, AgentTurnSubagent>();
+  /** Children the cap displaced while they were working; see `upsertChild`. */
+  private droppedWorking = 0;
   private agentSessionId: string | undefined;
   private transcriptPath: string | undefined;
   private toolName: string | undefined;
@@ -165,7 +260,6 @@ class ClaudeHookAgentSession implements AgentHookSession {
     if (!this.apply(payload)) {
       return;
     }
-    this.seen = true;
     this.channel.publish(this.report());
   }
 
@@ -187,6 +281,7 @@ class ClaudeHookAgentSession implements AgentHookSession {
         // boundary so nothing downstream reads it as a turn that completed.
         this.clearPerEvent();
         this.roster.clear();
+        this.droppedWorking = 0;
         this.lead = "done";
         this.sessionBoundary = true;
         return true;
@@ -199,7 +294,7 @@ class ClaudeHookAgentSession implements AgentHookSession {
         this.toolName = payload.toolName;
         if (payload.toolName === CLAUDE_QUESTION_TOOL) {
           this.lead = "waiting";
-          this.interactivePrompt = JSON.stringify({ questions: null });
+          this.interactivePrompt = JSON.stringify({ questions: payload.questions ?? null });
           return true;
         }
         this.lead = "working";
@@ -208,7 +303,12 @@ class ClaudeHookAgentSession implements AgentHookSession {
         this.clearPerEvent();
         this.toolName = payload.toolName;
         this.lead = "waiting";
-        this.interactivePrompt = JSON.stringify({ approval: { tool: payload.toolName ?? null } });
+        this.interactivePrompt = JSON.stringify({
+          approval: {
+            tool: payload.toolName ?? null,
+            ...(payload.approvalSummary === undefined ? {} : { summary: payload.approvalSummary }),
+          },
+        });
         return true;
       case "Stop":
       case "StopFailure":
@@ -224,21 +324,30 @@ class ClaudeHookAgentSession implements AgentHookSession {
         }
         this.clearPerEvent();
         this.upsertChild(payload.subagentId, payload.subagentName);
-        // A delegation running proves the pane is working even where no lead
-        // event established it — but it never fabricates lead completion.
-        if (this.lead === "done") {
-          this.lead = "working";
-        }
+        // The cached lead is left exactly as it was: § 4.4 makes this row a
+        // roster change only. `effectiveState` overlays `working` for as long as
+        // a child is running, so promoting the lead here would say the same
+        // thing once and then keep saying it after the child had stopped
+        // (.reviews/round-1.md B3).
         return true;
       }
       case "SubagentStop": {
-        // A child nothing recorded starting makes no claim about this pane.
-        if (payload.subagentId === undefined || !this.roster.has(payload.subagentId)) {
+        if (payload.subagentId === undefined) {
           return false;
         }
-        this.clearPerEvent();
-        this.roster.delete(payload.subagentId);
-        return true;
+        if (this.roster.delete(payload.subagentId)) {
+          this.clearPerEvent();
+          return true;
+        }
+        // A stop for a child the cap displaced settles that overflow rather than
+        // being discarded as unknown.
+        if (this.droppedWorking > 0) {
+          this.clearPerEvent();
+          this.droppedWorking -= 1;
+          return true;
+        }
+        // A child nothing recorded starting makes no claim about this pane.
+        return false;
       }
     }
   }
@@ -250,10 +359,17 @@ class ClaudeHookAgentSession implements AgentHookSession {
       return;
     }
     if (this.roster.size >= CLAUDE_ROSTER_CAP) {
-      const oldest = this.roster.keys().next().value;
-      if (oldest !== undefined) {
-        this.roster.delete(oldest);
+      // The cap bounds what the roster REMEMBERS, and must not bound what the
+      // turn admits is still running: dropping a working child outright would
+      // let the pane report a finished turn while that child worked on. An
+      // idle child is forgettable; otherwise the newcomer is counted instead of
+      // listed, which holds the turn open without growing (round-1.md B4).
+      const spare = [...this.roster.values()].find((child) => child.state !== "working");
+      if (spare === undefined) {
+        this.droppedWorking += 1;
+        return;
       }
+      this.roster.delete(spare.id);
     }
     this.roster.set(id, {
       id,
@@ -281,10 +397,11 @@ class ClaudeHookAgentSession implements AgentHookSession {
    * finished while a delegation is still running has not finished.
    */
   private effectiveState(): AgentTurnReport["state"] {
-    if (this.lead === "done" && [...this.roster.values()].some((child) => child.state === "working")) {
-      return "working";
+    if (this.lead !== "done") {
+      return this.lead;
     }
-    return this.lead;
+    const working = this.droppedWorking > 0 || [...this.roster.values()].some((child) => child.state === "working");
+    return working ? "working" : "done";
   }
 
   private report(): AgentTurnReport {

@@ -133,6 +133,12 @@ function delegationSignature(roster: DelegationRoster | undefined): string {
   if (roster.kind === "failed") {
     return `${roster.kind}:${roster.reason}`;
   }
-  const rows = roster.rows.map((s) => [s.name, s.title ?? "", s.status, s.entryId ?? ""].join(FIELD_SEP)).join(",");
-  return `${roster.kind}:${roster.incomplete === true ? "part" : "whole"}:${rows}`;
+  // `live` and `reported` are rendered — they decide the section label and the
+  // row styling — so a roster that changed only in provenance must not hash the
+  // same as the one it replaced (.reviews/round-1.md W3).
+  const rows = roster.rows
+    .map((s) => [s.name, s.title ?? "", s.status, s.entryId ?? "", s.live ? "live" : "past"].join(FIELD_SEP))
+    .join(",");
+  const provenance = roster.reported === true ? "reported" : "transcript";
+  return `${roster.kind}:${provenance}:${roster.incomplete === true ? "part" : "whole"}:${rows}`;
 }

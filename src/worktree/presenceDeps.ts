@@ -41,13 +41,23 @@ export interface PresenceDepsOptions {
   now?(): number;
 }
 
+/** Most resolved sessions remembered at once; the oldest is dropped past it. */
+const REPORTED_SESSION_CACHE_CAP = 128;
+
 export function createPresenceProjectorDeps(options: PresenceDepsOptions): PresenceProjectorDeps {
   const store = options.store;
   const table = options.table ?? createProcessTableSnapshot();
   const listRunning = options.listRunning ?? (() => listRunningClaudeSessions());
   const sessionMtime = options.sessionMtime ?? claudeSessionMtime;
   const sessionPath = options.sessionPath ?? ((sessionId: string) => resolveClaudeSessionPath(sessionId));
-  /** Window-lifetime, because where a session lives does not move while it runs. */
+  /**
+   * Where a resolved session lives, for as long as it is worth remembering.
+   *
+   * Bounded because the growth axis is distinct session ids the window has ever
+   * seen reported, not panes it currently holds: a long-lived window that
+   * resumes sessions all day would otherwise accumulate one entry per session
+   * forever (.reviews/round-1.md B6).
+   */
   const reportedSessions = new Map<string, Promise<string | null>>();
 
   return {
@@ -73,8 +83,28 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
      * filesystem work on the 150 ms projection path.
      */
     async resolveReportedSession(sessionId: string): Promise<ReportedSessionEntry | null> {
-      const pending = reportedSessions.get(sessionId) ?? sessionPath(sessionId);
-      reportedSessions.set(sessionId, pending);
+      let pending = reportedSessions.get(sessionId);
+      if (pending === undefined) {
+        pending = sessionPath(sessionId);
+        if (reportedSessions.size >= REPORTED_SESSION_CACHE_CAP) {
+          const oldest = reportedSessions.keys().next().value;
+          if (oldest !== undefined) {
+            reportedSessions.delete(oldest);
+          }
+        }
+        reportedSessions.set(sessionId, pending);
+        // Only a hit is durable. A pane can report its session before the
+        // transcript exists on disk, so remembering the miss would answer every
+        // later projection with the one moment the file was not there yet.
+        void pending.then(
+          (resolved) => {
+            if (resolved === null) {
+              reportedSessions.delete(sessionId);
+            }
+          },
+          () => reportedSessions.delete(sessionId),
+        );
+      }
       const transcriptPath = await pending;
       return transcriptPath === null
         ? null

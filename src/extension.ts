@@ -421,6 +421,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               paneEvidence.reportTurn(update.sessionId, update.state);
               return;
             }
+            // A source that was revoked or disabled publishes null. Waiting out
+            // the freshness deadline would leave a row running on the authority
+            // of a source that has stopped reporting, so the turn is retired
+            // now — its identity survives (.reviews/round-1.md W6).
+            if (update.state === null && update.agent !== "cursor") {
+              paneEvidence.expireTurn(update.sessionId);
+              return;
+            }
             // The webview status contract carries Cursor only; other agents
             // reach the panel through the presence pipeline instead.
             if (update.agent !== "cursor") {

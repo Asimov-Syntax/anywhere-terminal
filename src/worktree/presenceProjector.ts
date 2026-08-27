@@ -14,10 +14,11 @@
 // See: docs/design/worktree-agent-presence.md § 2, § 3.1–3.4;
 //      asimov/changes/project-worktree-agent-presence/design.md D8, D10–D13.
 
+import path from "node:path";
 import type { AgentTurnReport, AgentTurnSubagent } from "../agentHooks/AgentHookRuntime";
 import { type PaneEvidence, TURN_FRESHNESS_MS } from "../session/PaneEvidenceStore";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
-import { isPathInside } from "../utils/pathBoundary";
+import { isPathInside, normalizePathForCompare } from "../utils/pathBoundary";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import { formatEntryId, type VaultAgentId } from "../vault/types";
 import { resolveAgentIdentity, type SessionLookup } from "./agentIdentity";
@@ -50,6 +51,16 @@ export interface ResolutionSnapshot {
   sessions(): Promise<RunningSessionsOutcome>;
 }
 
+/**
+ * Do two paths name the same transcript?
+ *
+ * Resolved before comparison so a report is not rejected over a `.` segment or
+ * a separator, and case-folded only where the filesystem folds case.
+ */
+function sameTranscript(reported: string, stored: string): boolean {
+  return normalizePathForCompare(path.resolve(reported)) === normalizePathForCompare(path.resolve(stored));
+}
+
 /** A pane's activity together with the rule that produced it. */
 export interface PaneActivityReading {
   activity: PaneActivity;
@@ -72,6 +83,11 @@ interface Reported {
   activitySource: WorktreeAgentRow["activitySource"];
   interactivePrompt?: string;
   delegations?: DelegationRoster;
+  /**
+   * This activity came from a session starting rather than a turn ending, so
+   * the `idle` it lands on completed nothing (§ 4.5).
+   */
+  sessionBoundary?: true;
 }
 
 /** A reported child's own state, in the vocabulary a delegation row speaks. */
@@ -84,14 +100,12 @@ const SUBAGENT_STATUS: Record<AgentTurnSubagent["state"], WorktreeSubagentRow["s
 /**
  * A fresh report's roster as delegation rows.
  *
- * `undefined` for a report that listed nothing: absent means "never read",
- * which is true — an agent reporting no delegation right now is not evidence
- * that its transcript holds no history either.
+ * An empty roster is reported as an empty roster rather than as absence. They
+ * are not the same claim: absence lets the host fall back to the transcript's
+ * history, so a live agent saying "nothing is delegated right now" would put
+ * last hour's delegations back on the row (.reviews/round-1.md W1).
  */
-function reportedDelegations(report: AgentTurnReport): DelegationRoster | undefined {
-  if (report.subagents.length === 0) {
-    return undefined;
-  }
+function reportedDelegations(report: AgentTurnReport): DelegationRoster {
   return {
     kind: "ok",
     reported: true,
@@ -454,12 +468,21 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
    * nothing here creates an entry, and no reported path is ever opened.
    */
   async function reportedIdentity(pane: Pane): Promise<ProvenIdentity | undefined> {
-    const sessionId = pane.turn?.report.agentSessionId;
+    const report = pane.turn?.report;
+    const sessionId = report?.agentSessionId;
     if (sessionId === undefined || deps.resolveReportedSession === undefined) {
       return undefined;
     }
     const entry = await deps.resolveReportedSession(sessionId);
     if (entry === null) {
+      return undefined;
+    }
+    // § 4.6: the reported path is compared against the one the store already
+    // holds, and a mismatch is dropped. The reported path is never opened — the
+    // comparison is the only thing it is ever used for — so a report naming a
+    // session it does not live in fails to agree with itself and identifies
+    // nothing (.reviews/round-1.md B2).
+    if (report?.transcriptPath !== undefined && !sameTranscript(report.transcriptPath, entry.transcriptPath)) {
       return undefined;
     }
     return { agent: entry.agent, source: "hook", entryId: entry.entryId };
@@ -497,13 +520,13 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     if (report === undefined) {
       return inferred;
     }
-    const delegations = reportedDelegations(report);
     return {
       activity: TURN_ACTIVITY[report.state],
       activitySource: "hook",
       rule: reading.rule,
+      delegations: reportedDelegations(report),
       ...(report.interactivePrompt === undefined ? {} : { interactivePrompt: report.interactivePrompt }),
-      ...(delegations === undefined ? {} : { delegations }),
+      ...(report.sessionBoundary === true ? { sessionBoundary: true as const } : {}),
     };
   }
 
@@ -513,6 +536,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     activity: PaneActivity,
     pane: Pane,
     now: number,
+    sessionBoundary = false,
   ): void {
     if (state.seen && startsNewEpoch(state.identity, identity)) {
       // A pane outlives the agents inside it. Without this reset a fresh agent
@@ -527,7 +551,12 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     state.startedAt ??= now;
 
     if (state.activity !== activity) {
-      const settled = activity === "idle" && (state.activity === "running" || state.activity === "waiting");
+      // A session that resumed, cleared, or came back from compaction lands
+      // idle without having finished anything, so it earns no finish time —
+      // the boundary flag is the only thing that separates it from a turn that
+      // really did end (§ 4.5, .reviews/round-1.md B5).
+      const settled =
+        !sessionBoundary && activity === "idle" && (state.activity === "running" || state.activity === "waiting");
       state.finishedAt = settled ? now : undefined;
       state.activity = activity;
       state.stateStartedAt = now;
@@ -636,8 +665,11 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // for the external pass to claim.
       // A pane that reports its own session does not need to be guessed at;
       // the heuristics stay as the fallback for panes that do not (§ 4.6).
-      const inferred = await identify(pane, state, snapshot, failures);
-      const identity = (await reportedIdentity(pane)) ?? inferred;
+      // Inference runs only where the report did not settle it: resolving both
+      // would spend a process-table read on a row the report already decided,
+      // and would record that read's degradation against a row it did not
+      // choose (.reviews/round-1.md W5).
+      const identity = (await reportedIdentity(pane)) ?? (await identify(pane, state, snapshot, failures));
       if (identity?.entryId !== undefined) {
         claimed.add(identity.entryId);
       }
@@ -652,7 +684,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       const reading = deps.activityFor(pane.paneId, now) ?? { activity: "idle" as const, rule: "quiet" as const };
       const reported = readActivity(pane, reading, now);
       const activity = reported.activity;
-      stamp(state, identity, activity, pane, now);
+      stamp(state, identity, activity, pane, now, reported.sessionBoundary === true);
 
       const row: WorktreeAgentRow = {
         rowId: `window:${pane.paneId}`,

@@ -1194,14 +1194,62 @@ describe("a reported turn decides activity", () => {
     expect(row.delegations).toBeUndefined();
   });
 
-  it("says nothing about delegations for a report that listed none", async () => {
-    // Absent means "never read", which is the truth: an empty report is not
-    // evidence that the session's transcript holds no history either.
+  it("reports an empty roster as read-and-empty, not as never read", async () => {
+    // A fresh report listing no children IS a read that found none. Leaving it
+    // absent lets the host reattach the transcript's history, putting finished
+    // delegations back on a row whose agent just said it has none (round-1 W1).
     const h = makeProjector([pane({ paneId: "a", turn: reported({ subagents: [] }) })]);
 
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
-    expect(row.delegations).toBeUndefined();
+    expect(row.delegations).toEqual({ kind: "ok", reported: true, rows: [] });
+  });
+
+  it("marks no turn complete when a session boundary lands idle", async () => {
+    // § 4.5: a `sessionBoundary` done is recorded but completes nothing. A
+    // resume, clear, or return from compaction lands idle without a turn having
+    // ended, so it must not stamp a finish time (round-1 B5).
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ state: "working" }) })]);
+    await h.projector.project([WT]);
+
+    h.panes[0] = pane({ paneId: "a", turn: reported({ state: "done", sessionBoundary: true }) });
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.activity).toBe("idle");
+    expect(row.finishedAt).toBeUndefined();
+  });
+
+  it("still marks a turn complete when an ordinary turn ends", async () => {
+    // The companion to the boundary case: without this, suppressing the finish
+    // time for a boundary could just as well be suppressing it for everything.
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ state: "working" }) })]);
+    await h.projector.project([WT]);
+
+    h.panes[0] = pane({ paneId: "a", turn: reported({ state: "done" }) });
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.activity).toBe("idle");
+    expect(row.finishedAt).toBeDefined();
+  });
+
+  it("does not resolve a pane by inference once its report has identified it", async () => {
+    // Both paths resolving would spend a process-table read on a row the report
+    // already decided, and record that read's degradation against a row it did
+    // not choose (round-1 W5).
+    const h = makeProjector([pane({ paneId: "a", turn: reported({ agentSessionId: "sess-1" }) })]);
+    h.setReportedSessions({
+      "sess-1": { entryId: "claude:sess-1", agent: "claude", transcriptPath: "/vault/sess-1.jsonl" },
+    });
+    let inferred = 0;
+    h.setLookup(() => {
+      inferred += 1;
+      return { kind: "resolved", agent: "claude", sessionId: "heuristic-1" };
+    });
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBe("claude:sess-1");
+    expect(inferred).toBe(0);
   });
 
   it("takes its identity from a reported session the vault already holds", async () => {
@@ -1240,7 +1288,7 @@ describe("a reported turn decides activity", () => {
     const h = makeProjector([
       pane({
         paneId: "a",
-        turn: reported({ agentSessionId: "sess-1", transcriptPath: "/etc/passwd" }),
+        turn: reported({ agentSessionId: "sess-1", transcriptPath: "/vault/sess-1.jsonl" }),
       }),
     ]);
     h.setReportedSessions({
@@ -1252,6 +1300,44 @@ describe("a reported turn decides activity", () => {
     // Resolution is by id alone: a reported path is compared at most, and is
     // never the thing that decides what gets opened.
     expect(h.reportedAsked()).toEqual(["sess-1"]);
+    expect(row.entryId).toBe("claude:sess-1");
+  });
+
+  it("grants no identity when the reported path disagrees with the stored one", async () => {
+    // § 4.6: the reported path is compared against the path the store already
+    // holds, and a mismatch is dropped. A report that does not agree with itself
+    // identifies nothing, and the row falls back to the heuristics (round-1 B2).
+    const h = makeProjector([
+      pane({
+        paneId: "a",
+        turn: reported({ agentSessionId: "sess-1", transcriptPath: "/etc/passwd" }),
+      }),
+    ]);
+    h.setReportedSessions({
+      "sess-1": { entryId: "claude:sess-1", agent: "claude", transcriptPath: "/vault/sess-1.jsonl" },
+    });
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row.entryId).toBeUndefined();
+    expect(row.agentSource).toBe("none");
+  });
+
+  it("accepts a reported path that differs only in how it is written", async () => {
+    // The comparison is between paths, not between strings: a report that names
+    // the very file the store holds must not be rejected over a separator.
+    const h = makeProjector([
+      pane({
+        paneId: "a",
+        turn: reported({ agentSessionId: "sess-1", transcriptPath: "/vault/./sess-1.jsonl" }),
+      }),
+    ]);
+    h.setReportedSessions({
+      "sess-1": { entryId: "claude:sess-1", agent: "claude", transcriptPath: "/vault/sess-1.jsonl" },
+    });
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
     expect(row.entryId).toBe("claude:sess-1");
   });
 

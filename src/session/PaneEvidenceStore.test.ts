@@ -639,6 +639,34 @@ describe("a reported turn", () => {
     expect(changes).toEqual(["p1"]);
   });
 
+  it("retires a report's authority on demand while keeping the report", () => {
+    // A revoked source stops deciding the row now rather than at its deadline,
+    // and the identity it established survives — D2 makes expiry a change of
+    // authority, not a deletion (round-1 W6).
+    const { store, changes } = harness();
+    store.create("p1");
+    store.reportTurn("p1", aTurn());
+    changes.length = 0;
+
+    store.expireTurn("p1");
+
+    const turn = store.read("p1")?.turn;
+    expect(turn?.report).toEqual(aTurn());
+    expect(turn?.receivedAt).toBe(10_000 - TURN_FRESHNESS_MS);
+    expect(changes).toEqual(["p1"]);
+  });
+
+  it("expires a pane with no report, and an already-stale one, without announcing", () => {
+    const { store, changes } = harness();
+    store.create("p1");
+    changes.length = 0;
+
+    store.expireTurn("p1");
+    store.expireTurn("absent");
+
+    expect(changes).toEqual([]);
+  });
+
   it("announces when the report stops being fresh, and keeps it anyway", () => {
     const { store, changes, advance } = harness();
     store.create("p1");

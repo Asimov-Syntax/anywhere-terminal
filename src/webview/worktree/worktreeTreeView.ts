@@ -426,10 +426,13 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
 }
 
 /**
- * Subagent history — deliberately NOT the live dot vocabulary. These are
- * transcript-derived (`live: false`), so they get a rail, a "Past delegations"
- * label, and outcome glyphs. Activating one focuses the PARENT's pane; a subagent
- * has no pane of its own.
+ * Delegated work, in one of two vocabularies.
+ *
+ * Transcript-derived rows are history: a rail, a "Past delegations" label, and
+ * outcome glyphs. Rows an agent reported itself while they run are not history,
+ * and calling them "Past delegations" would describe running work in the past
+ * tense (.reviews/round-1.md W3). Activating either focuses the PARENT's pane;
+ * a subagent has no pane of its own.
  */
 export function renderSubagentSection(
   roster: DelegationRoster | undefined,
@@ -442,10 +445,15 @@ export function renderSubagentSection(
   wrap.setAttribute("role", "group");
   wrap.dataset.parentRowId = parent.rowId;
 
+  const live = roster !== undefined && roster.kind === "ok" && roster.rows.some((row) => row.live);
+  if (live) {
+    wrap.classList.add("wt-hist-live");
+  }
+
   const label = document.createElement("div");
   label.className = "wt-hist-label";
   label.setAttribute("role", "presentation");
-  label.textContent = "Past delegations";
+  label.textContent = live ? "Delegations" : "Past delegations";
   wrap.appendChild(label);
 
   // Four states, one per roster state (design.md D10). An expanded row always

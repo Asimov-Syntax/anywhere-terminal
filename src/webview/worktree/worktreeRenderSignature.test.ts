@@ -281,6 +281,25 @@ describe("roster states are distinguishable in the signature", () => {
     expect(complete).not.toBe(incomplete);
   });
 
+  it("separates a live delegation from the same one recorded as history", () => {
+    // `live` decides the section label and the row styling, so a roster that
+    // changed only in provenance must not hash the same as the one it replaced
+    // — it would be guarded out and never repaint (round-1 W3).
+    const past = signatureFor([
+      agentRow({
+        rowId: "window:a",
+        delegations: { kind: "ok", rows: [{ name: "librarian", status: "running", live: false }] },
+      }),
+    ]);
+    const live = signatureFor([
+      agentRow({
+        rowId: "window:a",
+        delegations: { kind: "ok", reported: true, rows: [{ name: "librarian", status: "running", live: true }] },
+      }),
+    ]);
+    expect(past).not.toBe(live);
+  });
+
   it("separates a failed roster from an empty one, and by its reason", () => {
     const empty = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "ok", rows: [] } })]);
     const failed = signatureFor([agentRow({ rowId: "window:a", delegations: { kind: "failed", reason: "EACCES" } })]);

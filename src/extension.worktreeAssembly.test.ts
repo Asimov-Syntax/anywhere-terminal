@@ -21,7 +21,7 @@ import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentHookRuntime } from "./agentHooks/AgentHookRuntime";
 import type { WorktreeHost, WorktreeSurface } from "./providers/WorktreeHost";
-import type { PaneEvidenceStore } from "./session/PaneEvidenceStore";
+import { type PaneEvidenceStore, TURN_FRESHNESS_MS } from "./session/PaneEvidenceStore";
 import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "./types/messages";
 import type { VaultSessionEntry } from "./vault/types";
 import type { CreateSessionOptions } from "./vault/VaultLauncher";
@@ -752,7 +752,13 @@ describe("a Claude turn reaches the pane's evidence through the real assembly", 
 
     // Released coordinates publish nothing, so the row cannot be moved by a
     // process whose authority is gone.
-    expect(h.store.read(h.paneId)?.turn?.report.state).toBe("working");
+    const turn = h.store.read(h.paneId)?.turn;
+    expect(turn?.report.state).toBe("working");
+    // And the turn it left behind stops deciding the row immediately rather
+    // than running out its freshness window — waiting would leave the pane
+    // reported as working on the authority of a revoked source (round-1 W6).
+    // The record itself survives, so the identity it carried is not lost.
+    expect(Date.now() - (turn?.receivedAt ?? 0)).toBeGreaterThanOrEqual(TURN_FRESHNESS_MS);
   });
 
   it("gives a restored pane no turn to inherit", async () => {

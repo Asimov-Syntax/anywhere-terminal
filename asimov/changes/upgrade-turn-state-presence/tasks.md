@@ -112,3 +112,21 @@
     1. Rebase onto the other session's activation-wiring task before editing — it rewrites this file
     2. `src/extension.ts` — the status callback learns the Claude case beside the Cursor one, and the projector deps gain the session resolver 3_3 added
     3. `src/extension.worktreeAssembly.test.ts` — a published turn reaches the row through the real assembly, not a stub; a revocation clears it; a restored pane starts on inference
+
+## 5. Review fixes
+
+- [x] 5_1 Close review round 1 — the guards the turn pipeline was missing — verified: pnpm run check-types && pnpm run test:unit && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: .reviews/round-1.md, docs/design/agent-hook-server.md#44-event--turn-state, docs/design/agent-hook-server.md#45-turn-state--presence, docs/design/agent-hook-server.md#46-reported-identity-is-a-lookup-key-never-a-path-to-open, specs/worktree-agent-presence/spec.md#a-session-that-resumes-or-clears-has-not-completed-a-turn, specs/worktree-agent-presence/spec.md#a-turn-a-delegation-is-still-working-on-is-not-a-finished-turn, specs/worktree-agent-presence/spec.md#delegated-work-is-reported-as-history-never-as-live-work
+  - **Boundary**: no new events, no installer or controller edits, no change to an accepted requirement — every fix implements one that already exists
+  - **Acceptance**:
+    - Outcome: a session boundary reports no completed turn, a mismatched reported path grants no identity, and a delegation the roster dropped never reads as completion
+    - Verify: command pnpm run check-types && pnpm run test:unit
+  - **Plan**:
+    1. `src/agentHooks/agents/claude.ts` — drop the undeclared `seen` write (B1); leave the cached lead alone on a roster change (B3); stop a capped roster reading as completion (B4); reject empty required ids (W4); carry the documented prompt content (W2)
+    2. `src/worktree/presenceProjector.ts` — a boundary `done` marks no completion (B5); a reported path that disagrees with the stored one grants no identity (B2); a fresh empty roster is reported rather than absent (W1); reported identity resolves before inference (W5)
+    3. `src/worktree/presenceDeps.ts` — bound the reported-session cache and stop remembering misses forever (B6)
+    3a. `src/session/PaneEvidenceStore.ts` — a turn can be aged out on demand, not only by its deadline (W6)
+    4. `src/webview/worktree/worktreeRenderSignature.ts`, `src/webview/worktree/worktreeTreeView.ts` — live rows render as live, and provenance takes part in the signature (W3)
+    5. `src/extension.ts` — a revoked Claude source expires the turn's authority instead of waiting out its deadline (W6)
+    6. `src/agentHooks/agents/claude.test.ts`, `src/worktree/presenceProjector.test.ts`, `src/session/PaneEvidenceStore.test.ts`, `src/extension.worktreeAssembly.test.ts`, `src/webview/worktree/worktreeRenderSignature.test.ts` — one case per finding; the 3_3 mismatch and 4_1 revocation tests move to the corrected behaviour

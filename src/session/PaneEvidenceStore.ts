@@ -136,6 +136,13 @@ export interface PaneEvidenceStore {
   setSemantic(paneId: string, state: "working" | "idle" | null): void;
   /** Records what a pane's agent reported about its own turn. No-op for an unknown pane. */
   reportTurn(paneId: string, report: AgentTurnReport): void;
+  /**
+   * Retire a report's authority now instead of at its deadline.
+   *
+   * What a revoked source last said stops deciding the row immediately; the
+   * report itself stays, so the identity it established survives (D2).
+   */
+  expireTurn(paneId: string): void;
   delete(paneId: string): void;
   /** Discard every pane a closing view held, whether or not its process is still alive. */
   deleteForView(viewId: string): void;
@@ -479,6 +486,21 @@ export function createPaneEvidenceStore(options: PaneEvidenceStoreOptions = {}):
       if (panes.has(paneId)) {
         armTurnDeadline(paneId, receivedAt);
       }
+    },
+
+    expireTurn(paneId) {
+      cancelTurnTimer(paneId);
+      const stale = now() - TURN_FRESHNESS_MS;
+      mutate(paneId, (evidence) => {
+        if (evidence.turn === undefined || evidence.turn.receivedAt <= stale) {
+          return false;
+        }
+        // Aged out rather than deleted, exactly as the deadline would have done
+        // it: authority is what lapses, and the identity the report carried is
+        // still true of the pane (design.md D2).
+        evidence.turn = { report: evidence.turn.report, receivedAt: stale };
+        return true;
+      });
     },
 
     delete(paneId) {

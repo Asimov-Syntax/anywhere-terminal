@@ -156,6 +156,49 @@ describe("claude agent registration", () => {
       ).toMatchObject({ event: "SubagentStart", subagentId: "a1", subagentName: "code-reviewer" });
     });
 
+    it("rejects an empty session id and an empty delegation id", () => {
+      // The empty string is a string, so a plain length bound lets it through
+      // every `!== undefined` guard downstream. An empty child id would open a
+      // roster entry for a delegation that does not exist (round-1 W4).
+      expect(decode({ hook_event_name: "Stop", session_id: "" })).toBeNull();
+      expect(decode({ hook_event_name: "SubagentStart", session_id: "s", agent_id: "" })?.subagentId).toBeUndefined();
+    });
+
+    it("carries the questions a question tool actually asked", () => {
+      expect(
+        decode({
+          hook_event_name: "PreToolUse",
+          session_id: "s",
+          tool_name: "AskUserQuestion",
+          tool_input: { questions: [{ question: "Ship it?", header: "Release", options: [{ label: "yes" }] }] },
+        })?.questions,
+      ).toEqual([{ question: "Ship it?", header: "Release" }]);
+    });
+
+    it("summarises what a permission request is asking for", () => {
+      // § 4.4 documents a `summary`, but no payload carries one — it is derived
+      // from the request that was actually made rather than invented (round-1 W2).
+      expect(
+        decode({
+          hook_event_name: "PermissionRequest",
+          session_id: "s",
+          tool_name: "Bash",
+          tool_input: { command: "rm -rf build" },
+        })?.approvalSummary,
+      ).toBe('{"command":"rm -rf build"}');
+    });
+
+    it("reads a tool input for no event whose prompt shape needs one", () => {
+      const payload = decode({
+        hook_event_name: "PreToolUse",
+        session_id: "s",
+        tool_name: "Bash",
+        tool_input: { command: "ls" },
+      });
+      expect(payload?.questions).toBeUndefined();
+      expect(payload?.approvalSummary).toBeUndefined();
+    });
+
     it("decodes an interrupt flag where one is present, and never invents it", () => {
       expect(decode({ hook_event_name: "Stop", session_id: "s", is_interrupt: true })).toMatchObject({
         interrupted: true,
@@ -236,6 +279,41 @@ describe("claude agent registration", () => {
 
       await send("UserPromptSubmit");
       expect(latest()?.sessionBoundary).toBeUndefined();
+    });
+
+    it("returns to the cached lead state once a child-only start has stopped", async () => {
+      // § 4.4 makes SubagentStart a roster change only. Promoting the cached
+      // lead there says the right thing once and keeps saying it after the child
+      // is gone, leaving the pane authoritatively working (round-1 B3).
+      const { send, latest } = await reducer();
+
+      await send("SubagentStart", { agent_id: "a1", agent_type: "explorer" });
+      expect(latest()?.state).toBe("working");
+
+      await send("SubagentStop", { agent_id: "a1" });
+      expect(latest()?.state).toBe("done");
+    });
+
+    it("never reports a finished turn while a child the cap displaced is working", async () => {
+      // The cap bounds what the roster remembers; it must not bound what the
+      // turn admits is running, or the overflow reads as completion (round-1 B4).
+      const { send, latest } = await reducer();
+
+      await send("UserPromptSubmit");
+      for (let i = 0; i < CLAUDE_ROSTER_CAP + 1; i++) {
+        await send("SubagentStart", { agent_id: `a${i}`, agent_type: "explorer" });
+      }
+      await send("Stop");
+      for (let i = 0; i < CLAUDE_ROSTER_CAP; i++) {
+        await send("SubagentStop", { agent_id: `a${i}` });
+      }
+
+      expect(latest()?.subagents).toEqual([]);
+      // One child started and never stopped, so the turn is not over.
+      expect(latest()?.state).toBe("working");
+
+      await send("SubagentStop", { agent_id: `a${CLAUDE_ROSTER_CAP}` });
+      expect(latest()?.state).toBe("done");
     });
 
     it("holds a finished turn open while a delegation is still working", async () => {
