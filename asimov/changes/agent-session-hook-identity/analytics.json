@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "agent-session-hook-identity"
+  },
+  "sessions": [
+    {
+      "sessionId": "64962976-fbe9-4031-86fc-49b37fb5ff64",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787832387981,
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787832387981
+        },
+        {
+          "phase": "build",
+          "from": 1787835507137
+        }
+      ],
+      "firstAt": 1787832387981,
+      "lastAt": 1787835358721,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 194,
+          "inputTokens": 388,
+          "outputTokens": 100393,
+          "reasoningTokens": 20453,
+          "cacheWriteTokens": 170614,
+          "cacheReadTokens": 51911618,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 170614,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

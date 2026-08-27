@@ -4,10 +4,12 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { withHookEnvironment } from "./agentHooks/hookEnvironment";
+import { installOpenCodePlugin } from "./agentHooks/opencodeConfigDir";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
 import { CursorHookController } from "./cursor/CursorHookController";
 import { CursorHookInstaller } from "./cursor/CursorHookInstaller";
-import { createCursorHookRuntime } from "./cursor/CursorHookRuntime";
+import { type CursorHookRuntime, createCursorHookRuntime } from "./cursor/CursorHookRuntime";
 import { createWatcherPool } from "./providers/fsWatcherPool";
 import { createGitDecorationProvider } from "./providers/gitDecorationProvider";
 import { resolveRenameTargetTabId } from "./providers/resolveRenameTarget";
@@ -40,10 +42,10 @@ import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
+import { formatEntryId, type VaultSessionEntry } from "./vault/types";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
-import type { VaultSessionEntry } from "./vault/types";
 import { VaultService } from "./vault/VaultService";
 import { rosterFromDetail } from "./worktree/delegations";
 import { addToGitExclude } from "./worktree/gitExclude";
@@ -333,8 +335,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // runtime/contributor state so stale async transitions cannot restore access.
   const readCursorHooksEnabled = (): boolean =>
     vscode.workspace.getConfiguration("anywhereTerminal").get<boolean>("cursorAgent.hooks.enabled") ?? false;
+  // OpenCode reports the session it is running; the receiver it posts to is the
+  // Cursor runtime, so that runtime must be up for either setting alone.
+  const readOpencodeHooksEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("anywhereTerminal").get<boolean>("opencode.hooks.enabled") ?? false;
+  let opencodeEnvironment: Record<string, string> = {};
+  let hookReceiver: CursorHookRuntime | undefined;
   const cursorHookController = new CursorHookController({
     initialEnabled: readCursorHooksEnabled(),
+    initialReceiverEnabled: readOpencodeHooksEnabled(),
     installer: new CursorHookInstaller({
       configPath: path.join(os.homedir(), ".cursor", "hooks.json"),
       storagePath: path.join(context.globalStorageUri.fsPath, "cursor-hooks"),
@@ -364,7 +373,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           },
         },
       ),
-    setContributor: (contributor) => sessionManager.setCursorHookContributor(contributor),
+    setContributor: (contributor) => {
+      hookReceiver = contributor;
+      sessionManager.setCursorHookContributor(
+        contributor === undefined ? undefined : withHookEnvironment(contributor, opencodeEnvironment),
+      );
+    },
     onWarning: (operation, reason) => {
       if (operation === "runtime") {
         console.warn(
@@ -384,8 +398,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (event.affectsConfiguration("anywhereTerminal.cursorAgent.hooks.enabled")) {
         void cursorHookController.setDesiredEnabled(readCursorHooksEnabled());
       }
+      if (event.affectsConfiguration("anywhereTerminal.opencode.hooks.enabled")) {
+        void applyOpencodeHooks();
+      }
     }),
   );
+
+  // The plugin is written before the receiver is asked for, so a terminal that
+  // opens the moment the setting flips already has a directory to point at.
+  async function applyOpencodeHooks(): Promise<void> {
+    const enabled = readOpencodeHooksEnabled();
+    opencodeEnvironment = enabled ? await installOpenCodePlugin({ storagePath: context.globalStorageUri.fsPath }) : {};
+    cursorHookController.setDesiredReceiverEnabled(enabled);
+  }
+  await applyOpencodeHooks();
   await cursorHookController.start();
 
   // Shared GitDecorationProvider — one singleton, threaded through every
@@ -614,6 +640,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sessionTitle: async (entryId) => {
           const entry = await vaultService.getEntry(entryId);
           return entry?.customName || entry?.title || undefined;
+        },
+        // What the agent in this pane said about itself. Trusted over the two
+        // lookups below because a report reaches exactly one terminal.
+        reportedSession: (paneId, agent) => {
+          const session = hookReceiver?.reportedSession(paneId);
+          return session === undefined || session.agent !== agent ? undefined : formatEntryId(agent, session.sessionId);
         },
         // The handle for a pane no pid registry can name — every agent but
         // claude. Newest wins, since the transcript being written now is the

@@ -6,6 +6,8 @@ type WarningOperation = "runtime" | "install" | "uninstall";
 
 export interface CursorHookControllerOptions {
   initialEnabled: boolean;
+  /** Another agent wants the receiver up, without owning Cursor's hook file. */
+  initialReceiverEnabled?: boolean;
   installer: HookInstaller;
   createRuntime: () => Promise<CursorHookRuntime>;
   setContributor: (contributor: CursorHookRuntime | undefined) => void;
@@ -15,6 +17,7 @@ export interface CursorHookControllerOptions {
 /** Owns serialized Cursor hook configuration and runtime authority as one lifecycle. */
 export class CursorHookController {
   private desiredEnabled: boolean;
+  private receiverWanted: boolean;
   private desiredRevision = 0;
   private runtime: CursorHookRuntime | null = null;
   private startPromise: Promise<void> | null = null;
@@ -28,6 +31,19 @@ export class CursorHookController {
 
   public constructor(private readonly options: CursorHookControllerOptions) {
     this.desiredEnabled = options.initialEnabled;
+    this.receiverWanted = options.initialReceiverEnabled ?? false;
+  }
+
+  /**
+   * Say whether an agent other than Cursor needs the receiver running.
+   *
+   * Cursor's authority waits on its hook file reconciling, because accepting a
+   * Cursor event means owning the config that produced it. A reporting agent
+   * installs nothing there, so its reporting must not be hostage to that file.
+   */
+  public setDesiredReceiverEnabled(enabled: boolean): void {
+    this.receiverWanted = enabled;
+    this.applyReconciledAuthority();
   }
 
   public start(): Promise<void> {
@@ -42,7 +58,7 @@ export class CursorHookController {
     this.desiredEnabled = enabled;
     this.desiredRevision += 1;
     if (!enabled) {
-      this.revokeAuthority();
+      this.dropCursorAuthority();
     }
     return this.started ? this.reconcileLatest() : Promise.resolve();
   }
@@ -101,7 +117,7 @@ export class CursorHookController {
       const enabled = this.desiredEnabled;
 
       if (!enabled) {
-        this.revokeAuthority();
+        this.dropCursorAuthority();
       }
 
       const outcome = enabled ? await this.install() : await this.uninstall();
@@ -109,7 +125,7 @@ export class CursorHookController {
         return;
       }
       if (revision !== this.desiredRevision) {
-        this.revokeAuthority();
+        this.dropCursorAuthority();
         continue;
       }
 
@@ -146,18 +162,27 @@ export class CursorHookController {
     }
   }
 
+  /** Cursor's own authority: reconciled, current, and the hook file actually written. */
+  private cursorAuthorized(): boolean {
+    return this.reconciledRevision === this.desiredRevision && this.reconciledEnabled && this.reconciledSuccessfully;
+  }
+
   private applyReconciledAuthority(): void {
-    if (
-      this.runtime &&
-      this.reconciledRevision === this.desiredRevision &&
-      this.reconciledEnabled &&
-      this.reconciledSuccessfully
-    ) {
+    if (this.runtime && (this.cursorAuthorized() || this.receiverWanted)) {
       if (!this.authorityGranted) {
         this.runtime.setEnabled(true);
         this.options.setContributor(this.runtime);
         this.authorityGranted = true;
       }
+      return;
+    }
+    this.revokeAuthority();
+  }
+
+  /** Cursor lost its claim; the receiver stays up if another agent still wants it. */
+  private dropCursorAuthority(): void {
+    this.reconciledSuccessfully = false;
+    if (this.receiverWanted) {
       return;
     }
     this.revokeAuthority();

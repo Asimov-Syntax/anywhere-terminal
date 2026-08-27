@@ -5,6 +5,8 @@
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { type ReportedSession, ReportedSessions } from "../agentHooks/reportedSessions";
+import { type AgentSessionReport, parseAgentSessionReport, type ReportingAgent } from "../agentHooks/reportTypes";
 
 export type CursorSemanticState = "working" | "idle";
 
@@ -39,6 +41,21 @@ export const CURSOR_HOOK_QUIET_WINDOW_MS = 1_500;
 export const CURSOR_HOOK_FRESHNESS_MS = 30 * 60 * 1000;
 export const CURSOR_HOOK_DEDUP_TTL_MS = 5 * 60 * 1000;
 export const CURSOR_HOOK_DEDUP_MAX_ENTRIES = 256;
+
+/**
+ * Which producer a request came from, taken from the path's last segment.
+ *
+ * Cursor reports activity; the rest report the session they are running. One
+ * receiver serves both because the credential — a per-terminal renewable token
+ * in the URL — is what authorizes either, and it does not vary by agent.
+ */
+export type HookSource = "cursor" | ReportingAgent;
+
+const REPORTING_SOURCES: readonly ReportingAgent[] = ["opencode"];
+
+function isHookSource(value: string | undefined): value is HookSource {
+  return value === "cursor" || REPORTING_SOURCES.includes(value as ReportingAgent);
+}
 
 /** Exact D7 event → effect table. No hook produces "waiting"; unknown events are ignored. */
 type CursorHookEventEffect = "clear" | "working" | "quiet";
@@ -76,6 +93,8 @@ export interface CursorHookRuntimeDependencies {
   clearTimer?: (handle: unknown) => void;
   randomToken?: () => string;
   onStatus?: (update: CursorActivityUpdate) => void;
+  /** A reporting agent named the session its terminal is running. */
+  onReport?: (report: AgentSessionReport) => void;
   /** Reason-code-only diagnostics; never receives body content, digests, or parser excerpts. */
   onReasonCode?: (reason: CursorHookReasonCode, sessionSuffix: string) => void;
 }
@@ -93,6 +112,8 @@ interface SessionState {
 export class CursorHookRuntime implements SessionEnvironmentContributor {
   private readonly server: Server;
   private readonly sessions = new Map<string, SessionState>();
+  /** Held here, not outside, so a report cannot outlive the credential that carried it. */
+  private readonly reported = new ReportedSessions();
   private enabled: boolean;
   private port: number;
 
@@ -101,6 +122,7 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
   private readonly clearTimer: (handle: unknown) => void;
   private readonly randomToken: () => string;
   private readonly onStatus: (update: CursorActivityUpdate) => void;
+  private readonly onReport: (report: AgentSessionReport) => void;
   private readonly onReasonCode: (reason: CursorHookReasonCode, sessionSuffix: string) => void;
 
   private readonly bodyCapBytes: number;
@@ -125,6 +147,7 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
     this.clearTimer = dependencies.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
     this.randomToken = dependencies.randomToken ?? (() => randomBytes(32).toString("hex"));
     this.onStatus = dependencies.onStatus ?? (() => undefined);
+    this.onReport = dependencies.onReport ?? (() => undefined);
     this.onReasonCode = dependencies.onReasonCode ?? (() => undefined);
 
     this.server = createServer((req, res) => this.handleRequest(req, res));
@@ -177,6 +200,9 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
     if (existing) {
       this.clearSessionState(sessionId, existing);
     }
+    // A re-issued credential is a new run in that pane; what the old run
+    // reported describes a session this terminal is no longer on.
+    this.reported.release(sessionId);
     const token = this.randomToken();
     this.sessions.set(sessionId, {
       token,
@@ -185,8 +211,11 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
       freshnessTimer: undefined,
       dedup: new Map(),
     });
+    // One credential, two names: Cursor's wrapper already reads the first, and
+    // a producer for another agent should not have to read a variable that
+    // says "cursor" to learn its own address. Both append their own segment.
     const url = `${this.url}/${encodeURIComponent(sessionId)}/${encodeURIComponent(token)}`;
-    return { ANYWHERE_TERMINAL_CURSOR_URL: url };
+    return { ANYWHERE_TERMINAL_CURSOR_URL: url, ANYWHERE_TERMINAL_AGENT_HOOK_URL: url };
   }
 
   /** Revokes authority for `sessionId` and clears any live status for it. */
@@ -197,6 +226,12 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
     }
     this.clearSessionState(sessionId, session);
     this.sessions.delete(sessionId);
+    this.reported.release(sessionId);
+  }
+
+  /** The session this terminal last reported, or undefined while none has. */
+  public reportedSession(sessionId: string): ReportedSession | undefined {
+    return this.reported.get(sessionId);
   }
 
   public dispose(): void {
@@ -207,6 +242,7 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
       this.clearSessionState(sessionId, session);
     }
     this.sessions.clear();
+    this.reported.clear();
     this.server.close();
   }
 
@@ -248,7 +284,7 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
       finish();
       return;
     }
-    const { sessionId, token } = parsed;
+    const { sessionId, token, source } = parsed;
 
     if (!this.enabled) {
       this.onReasonCode("disabled", sessionSuffix(sessionId));
@@ -323,7 +359,7 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
         finish();
         return;
       }
-      this.processEvent(liveSession, sessionId, Buffer.concat(chunks));
+      this.processEvent(liveSession, sessionId, source, Buffer.concat(chunks));
       finish();
     });
 
@@ -337,7 +373,7 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
     });
   }
 
-  private processEvent(session: SessionState, sessionId: string, body: Buffer): void {
+  private processEvent(session: SessionState, sessionId: string, source: HookSource, body: Buffer): void {
     let parsed: unknown;
     try {
       parsed = JSON.parse(body.toString("utf8"));
@@ -347,6 +383,18 @@ export class CursorHookRuntime implements SessionEnvironmentContributor {
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       this.onReasonCode("malformed-json", sessionSuffix(sessionId));
+      return;
+    }
+    if (source !== "cursor") {
+      // A report says which session this terminal is on, never what it is
+      // doing: it must not touch the status table Cursor's events drive.
+      const report = parseAgentSessionReport(sessionId, source, parsed);
+      if (report === null) {
+        this.onReasonCode("malformed-json", sessionSuffix(sessionId));
+        return;
+      }
+      this.reported.record(report);
+      this.onReport(report);
       return;
     }
     // D10: parse only the event name / minimum identity — never retain the body.
@@ -463,10 +511,11 @@ export async function createCursorHookRuntime(
   return runtime;
 }
 
-function parseHookPath(url: string): { sessionId: string; token: string } | undefined {
+function parseHookPath(url: string): { sessionId: string; token: string; source: HookSource } | undefined {
   const path = url.split("?")[0] ?? "";
   const segments = path.split("/").filter((segment) => segment.length > 0);
-  if (segments.length !== 3 || segments[2] !== "cursor") {
+  const source = segments[2];
+  if (segments.length !== 3 || !isHookSource(source)) {
     return undefined;
   }
   try {
@@ -475,7 +524,7 @@ function parseHookPath(url: string): { sessionId: string; token: string } | unde
     if (!sessionId || !token) {
       return undefined;
     }
-    return { sessionId, token };
+    return { sessionId, token, source };
   } catch {
     return undefined;
   }

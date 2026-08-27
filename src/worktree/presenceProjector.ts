@@ -15,7 +15,7 @@
 //      asimov/changes/project-worktree-agent-presence/design.md D8, D10–D13.
 
 import type { PaneEvidence } from "../session/PaneEvidenceStore";
-import type { ClaudeSessionEvidence } from "../session/resolveClaudeSession";
+import { type ClaudeSessionEvidence, EVIDENCE_RANK } from "../session/resolveClaudeSession";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import { isPathInside } from "../utils/pathBoundary";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
@@ -86,6 +86,13 @@ export interface PresenceProjectorDeps {
    * is settled the same way when two panes want one session.
    */
   sessionUnderCwd?(agent: VaultAgentId, cwd: string): Promise<string | undefined>;
+  /**
+   * The entry id the agent in this pane reported for itself, if any.
+   *
+   * Synchronous because it is a read of what already arrived — a report is
+   * pushed by the agent, never fetched, so a rebuild never waits on one.
+   */
+  reportedSession?(paneId: string, agent: VaultAgentId): string | undefined;
   now?(): number;
 }
 
@@ -184,15 +191,21 @@ interface ProducedRow {
  * repo came away wearing the same session — the same title, the same drill-down
  * and the same delegation list, which is what the report showed.
  *
- * A subtree match is exclusive by construction, so exactly one such claim
- * settles it. Two of them cannot both be right about one pid (nested panes), and
- * none of them means nothing here is more than a guess: either way the session
- * belongs to no row rather than to an arbitrary one. Presence never invents.
+ * So the claim that wins is the one whose evidence ranks strictly highest, and a
+ * tie at the top settles nothing: two panes reported the same session, or two
+ * subtree matches disagree about one pid (nested panes), or nothing here is more
+ * than a guess — either way the session belongs to no row rather than to an
+ * arbitrary one. Presence never invents.
  *
  * A row that loses the session keeps everything the pane itself proved. Only the
  * identity that WAS the session — `agentSource: "registry"` — goes with it,
  * because without the session there is nothing left holding it up.
  */
+/** A row that reached its session without saying how ranks below every stated kind. */
+function rankOf(evidence: ClaudeSessionEvidence | undefined): number {
+  return evidence === undefined ? -1 : EVIDENCE_RANK[evidence];
+}
+
 function settleContestedSessions(produced: readonly ProducedRow[]): readonly ProducedRow[] {
   const byEntryId = new Map<string, ProducedRow[]>();
   for (const item of produced) {
@@ -211,9 +224,10 @@ function settleContestedSessions(produced: readonly ProducedRow[]): readonly Pro
     if (sharing.length < 2) {
       continue;
     }
-    const proved = sharing.filter((item) => item.evidence === "process");
+    const best = Math.max(...sharing.map((item) => rankOf(item.evidence)));
+    const strongest = sharing.filter((item) => rankOf(item.evidence) === best);
     for (const item of sharing) {
-      if (proved.length !== 1 || item !== proved[0]) {
+      if (strongest.length !== 1 || item !== strongest[0]) {
         disowned.add(item.row);
       }
     }
@@ -445,15 +459,20 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // A proven agent with no session is every non-claude pane: no registry
       // names it, so the vault's own record under this directory is the only
       // handle there is.
-      const entryId =
-        outcome.entryId ??
-        (pane.cwd === undefined ? undefined : await deps.sessionUnderCwd?.(outcome.agent, deps.normalize(pane.cwd)));
+      // Unless the agent itself said which session it is on. A report names one
+      // terminal, so it settles what the directory could only guess at.
+      const reported = deps.reportedSession?.(pane.paneId, outcome.agent);
+      const guessed =
+        reported !== undefined || outcome.entryId !== undefined || pane.cwd === undefined
+          ? undefined
+          : await deps.sessionUnderCwd?.(outcome.agent, deps.normalize(pane.cwd));
+      const entryId = reported ?? outcome.entryId ?? guessed;
       state.proven = {
         agent: outcome.agent,
         source: outcome.source,
         entryId,
         name: outcome.name,
-        evidence: outcome.entryId === undefined && entryId !== undefined ? "directory" : outcome.evidence,
+        evidence: reported !== undefined ? "reported" : guessed !== undefined ? "directory" : outcome.evidence,
       };
       state.provenPtyPid = pane.ptyPid;
       state.provenCwd = pane.cwd;

@@ -15,12 +15,22 @@ import type { RunningClaudeSession, RunningSessionIndex } from "../vault/readers
 /**
  * Which step matched, and so how much the match is worth.
  *
- * `process` is proof — the claude pid is inside this pane's pty subtree, and no
- * other pane's. `directory` and `recent` are guesses that any pane sitting in
- * the same directory would have made, so a caller with more than one pane can
- * only settle a contested session by knowing which kind it holds.
+ * `reported` is the agent's own word, carried back over the credential issued
+ * to one terminal. `process` is this window's reading of the machine — the
+ * claude pid inside this pane's pty subtree, and no other pane's. `directory`
+ * and `recent` are guesses that any pane sitting in the same directory would
+ * have made, so a caller with more than one pane can only settle a contested
+ * session by knowing which kind it holds.
  */
-export type ClaudeSessionEvidence = "process" | "directory" | "recent";
+export type ClaudeSessionEvidence = "reported" | "process" | "directory" | "recent";
+
+/** Strongest first. A contested session goes to a strictly higher rank, never to a tie. */
+export const EVIDENCE_RANK: Record<ClaudeSessionEvidence, number> = {
+  reported: 3,
+  process: 2,
+  directory: 1,
+  recent: 0,
+};
 
 export interface ResolvedClaudeSession {
   sessionId: string;

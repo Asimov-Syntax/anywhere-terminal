@@ -6,6 +6,7 @@
 import { type ClientRequest, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentSessionReport } from "../agentHooks/reportTypes";
 import {
   CURSOR_HOOK_BODY_CAP_BYTES,
   CURSOR_HOOK_DEDUP_MAX_ENTRIES,
@@ -29,15 +30,17 @@ afterEach(() => {
 async function fixture(options: Parameters<typeof createCursorHookRuntime>[0] = {}) {
   const status: CursorActivityUpdate[] = [];
   const reasons: Array<{ reason: CursorHookReasonCode; sessionSuffix: string }> = [];
+  const reports: AgentSessionReport[] = [];
   const runtime = await createCursorHookRuntime(
     { enabled: true, ...options },
     {
       onStatus: (update) => status.push(update),
       onReasonCode: (reason, sessionSuffix) => reasons.push({ reason, sessionSuffix }),
+      onReport: (report) => reports.push(report),
     },
   );
   runtimes.push(runtime);
-  return { runtime, status, reasons };
+  return { runtime, status, reasons, reports };
 }
 
 function eventBody(hook_event_name: string, extra: Record<string, unknown> = {}) {
@@ -115,6 +118,69 @@ describe("CursorHookRuntime", () => {
     expect(base as string).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/session-1\/[0-9a-f]+$/);
     const response = await postRaw(`${base}/cursor`, eventBody("beforeSubmitPrompt"));
     expect(response.status).toBe(200);
+  });
+
+  describe("one receiver, several reporting agents", () => {
+    it("hands an OpenCode report the terminal its credential names", async () => {
+      const { runtime, reports } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+
+      const response = await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc123" }));
+
+      expect(response.status).toBe(200);
+      expect(reports).toEqual([{ terminalId: "session-1", agent: "opencode", sessionId: "ses_abc123" }]);
+    });
+
+    it("keeps a report naming no session out of the map", async () => {
+      const { runtime, reports, reasons } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+
+      await postRaw(`${base}/opencode`, JSON.stringify({ part: { text: "a message part, not an id" } }));
+
+      expect(reports).toEqual([]);
+      expect(reasons.map((entry) => entry.reason)).toContain("malformed-json");
+    });
+
+    it("refuses a report presenting another terminal's token", async () => {
+      const { runtime, reports, reasons } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL as string;
+      const forged = base.replace(/\/[0-9a-f]+$/, "/deadbeef");
+
+      await postRaw(`${forged}/opencode`, JSON.stringify({ sessionID: "ses_abc123" }));
+
+      expect(reports).toEqual([]);
+      expect(reasons.map((entry) => entry.reason)).toContain("invalid-token");
+    });
+
+    it("refuses a report once the terminal has been released", async () => {
+      const { runtime, reports, reasons } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+      runtime.release("session-1");
+
+      await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc123" }));
+
+      expect(reports).toEqual([]);
+      expect(reasons.map((entry) => entry.reason)).toContain("unknown-session");
+    });
+
+    it("leaves Cursor's status untouched — a report is identity, not activity", async () => {
+      const { runtime, status } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+
+      await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc123" }));
+
+      expect(status).toEqual([]);
+    });
+
+    it("refuses a path naming an agent that does not report", async () => {
+      const { runtime, reports, reasons } = await fixture();
+      const base = runtime.create("session-1").ANYWHERE_TERMINAL_AGENT_HOOK_URL;
+
+      await postRaw(`${base}/codex`, JSON.stringify({ sessionID: "ses_abc123" }));
+
+      expect(reports).toEqual([]);
+      expect(reasons.map((entry) => entry.reason)).toContain("bad-path");
+    });
   });
 
   describe("D7 event table", () => {

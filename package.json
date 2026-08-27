@@ -119,6 +119,12 @@
           "scope": "machine",
           "description": "Enable observational Cursor Agent hooks on this machine. Hooks are fail-open and only report terminal activity."
         },
+        "anywhereTerminal.opencode.hooks.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Let OpenCode report which session each terminal is running, so its worktree row is named. Reporting is fail-open, sends only the session id, and never touches your own OpenCode configuration."
+        },
         "anywhereTerminal.fileSearch.maxResults": {
           "type": "number",
           "default": 50,

@@ -38,6 +38,8 @@ export interface PresenceDepsOptions {
   sessionTitle?(entryId: string): Promise<string | undefined>;
   /** Newest vault session for an agent under a directory; see `PresenceProjectorDeps`. */
   sessionUnderCwd?(agent: VaultAgentId, cwd: string): Promise<string | undefined>;
+  /** What the agent in a pane reported about itself; see `PresenceProjectorDeps`. */
+  reportedSession?(paneId: string, agent: VaultAgentId): string | undefined;
   now?(): number;
 }
 
@@ -59,6 +61,7 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
 
     ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),
     ...(options.sessionUnderCwd ? { sessionUnderCwd: options.sessionUnderCwd } : {}),
+    ...(options.reportedSession ? { reportedSession: options.reportedSession } : {}),
 
     now: options.now,
 
