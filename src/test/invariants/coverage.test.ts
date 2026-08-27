@@ -11,7 +11,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DEFERRED_BY_WT_006_2, INVARIANTS } from "./registry";
 
+const SRC_PLACEHOLDER = 0;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const SRC = path.join(REPO_ROOT, "src");
 
 /** The § 8.4 table, parsed from the doc itself so the registry cannot drift away from it. */
 function documentedInvariants(): Map<string, string> {
@@ -30,10 +32,64 @@ function documentedInvariants(): Map<string, string> {
   return rows;
 }
 
+function tsFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...tsFiles(full));
+    } else if (entry.name.endsWith(".ts")) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
 /** Every task id the blueprint declares, so an `owners` entry cannot point at nothing. */
 function blueprintTaskIds(): Set<string> {
   const plan = fs.readFileSync(path.join(REPO_ROOT, "docs/PLAN.md"), "utf8");
   return new Set([...plan.matchAll(/^###\s*\[(WT-[\d.]+)\]/gm)].map((m) => m[1]));
+}
+
+/** Modifiers that mean the declaration does not run, so it cannot hold an invariant open. */
+const INERT = /(^|\.)(skip|todo|failing|concurrent\.skip)($|\.)/;
+
+/**
+ * Test declarations, found at their call sites rather than by scanning raw text — a tag inside
+ * a comment or a fixture string is not coverage. Titles may span lines, hence [\s\S].
+ */
+const DECLARATION = /\b(?:it|test)((?:\.\w+)*)\s*\(\s*(["'`])([\s\S]*?)\2/g;
+
+export interface Declaration {
+  readonly title: string;
+  readonly active: boolean;
+}
+
+export function declarationsIn(source: string): Declaration[] {
+  const found: Declaration[] = [];
+  for (const match of source.matchAll(DECLARATION)) {
+    found.push({ title: match[3], active: !INERT.test(match[1]) });
+  }
+  return found;
+}
+
+const TAG = /\[(I\d+)\]/g;
+
+/** Every invariant id tagged on a declaration that actually runs, mapped to where it was found. */
+function taggedInvariants(): Map<string, string[]> {
+  const byId = new Map<string, string[]>();
+  for (const full of tsFiles(SRC).filter((f) => f.endsWith(".test.ts"))) {
+    const rel = path.relative(REPO_ROOT, full);
+    for (const declaration of declarationsIn(fs.readFileSync(full, "utf8"))) {
+      if (!declaration.active) {
+        continue;
+      }
+      for (const [, id] of declaration.title.matchAll(TAG)) {
+        byId.set(id, [...(byId.get(id) ?? []), rel]);
+      }
+    }
+  }
+  return byId;
 }
 
 describe("truthfulness invariants — registry", () => {
@@ -77,5 +133,44 @@ describe("truthfulness invariants — registry", () => {
   it("defers only what the frozen peer-owned set names", () => {
     const deferred = INVARIANTS.filter((row) => row.status === "deferred").map((row) => row.id);
     expect(deferred).toEqual([...DEFERRED_BY_WT_006_2]);
+  });
+});
+
+describe("truthfulness invariants — coverage", () => {
+  it("finds a tag only where a test actually declares one", () => {
+    const source = [
+      '// it("[I1] a tag in a comment is not coverage", () => {});',
+      'it("[I2] a real one", () => {});',
+      'it.skip("[I3] a disabled one", () => {});',
+      'const fixture = "[I4] a tag inside a fixture string";',
+    ].join("\n");
+    expect(declarationsIn(source).filter((d) => d.active).map((d) => d.title)).toEqual([
+      "[I1] a tag in a comment is not coverage",
+      "[I2] a real one",
+    ]);
+  });
+
+  it("treats a disabled declaration as inert, so it cannot hold an invariant open", () => {
+    for (const modifier of ["skip", "todo", "failing"]) {
+      const only = declarationsIn(`it.${modifier}("[I9] x", () => {});`);
+      expect(only[0]?.active, `it.${modifier} counted as active`).toBe(false);
+    }
+    expect(declarationsIn('it.only("[I9] x", () => {});')[0]?.active).toBe(true);
+  });
+
+  it("has a running test for every invariant it claims is covered", () => {
+    const tagged = taggedInvariants();
+    for (const row of INVARIANTS) {
+      if (row.status === "covered") {
+        expect(tagged.get(row.id)?.length ?? 0, `${row.id} claims coverage but no active test tags it`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("carries no tag that names an invariant the registry does not have", () => {
+    const known = new Set(INVARIANTS.map((row) => row.id));
+    for (const id of taggedInvariants().keys()) {
+      expect(known.has(id), `tag [${id}] names no registry row`).toBe(true);
+    }
   });
 });

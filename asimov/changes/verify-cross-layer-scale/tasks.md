@@ -12,7 +12,7 @@
     3. Write src/test/invariants/budgets.ts with the four published budgets and their citations
     4. Write src/test/invariants/coverage.test.ts with assertions 1, 2 and 5 — doc equality both ways, owner resolution, and the frozen deferred set
 
-- [ ] 1_2 Tag every covering test and enforce the mapping in both directions
+- [x] 1_2 Tag every covering test and enforce the mapping in both directions — verified: bun test 'src/test/invariants/coverage.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D1
   - **Acceptance**:

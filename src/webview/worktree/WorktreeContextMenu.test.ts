@@ -142,7 +142,7 @@ describe("agent row menu", () => {
     ]);
   });
 
-  it("omits Focus Pane on an external row — there is no pane here to reveal", () => {
+  it("[I3] omits Focus Pane on an external row — there is no pane here to reveal", () => {
     const { menu, host } = setup();
     menu.openForAgent(
       agentRow({ rowId: "a", agent: "cursor", scope: "external", agentSource: "registry", entryId: "cursor:1" }),

@@ -485,7 +485,7 @@ describe("claude agent registration", () => {
       expect(status).toEqual([]);
     });
 
-    it("carries the reported identity without acting on it", async () => {
+    it("[I16] carries the reported identity without acting on it", async () => {
       const { send, latest } = await reducer();
 
       await send("UserPromptSubmit", { transcript_path: "/vault/abc.jsonl" });

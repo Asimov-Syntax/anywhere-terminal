@@ -189,7 +189,7 @@ describe("resolution", () => {
     expect(row).toMatchObject({ agent: "claude", agentSource: "registry", entryId: "claude:s1" });
   });
 
-  it("degrades rather than clearing when the process table cannot be read", async () => {
+  it("[I1] degrades rather than clearing when the process table cannot be read", async () => {
     const { store, projector } = wire({ table: table({ kind: "failed", reason: "`ps` timed out" }) });
     store.create("a", { cwd: "/repo", ptyPid: 10 });
 

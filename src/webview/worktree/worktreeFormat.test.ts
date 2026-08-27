@@ -167,7 +167,7 @@ describe("groupPresenceByActivity", () => {
 });
 
 describe("evidence sources", () => {
-  it("derives identity and activity confidence independently", () => {
+  it("[I4] derives identity and activity confidence independently", () => {
     // A row can be sure of one and uncertain about the other; one field could not
     // carry both answers, which is why the sources travel intact.
     const titleIdentityHookActivity = agentRow({

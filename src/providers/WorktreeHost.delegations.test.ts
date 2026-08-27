@@ -496,7 +496,7 @@ describe("a child's running does not outlive its parent's freshness", () => {
     expect(lastRoster(h.view)).toEqual(DECAYED);
   });
 
-  it("decays what it publishes, not what it holds — a parent going live again reports running", async () => {
+  it("[I12] decays what it publishes, not what it holds — a parent going live again reports running", async () => {
     const h = await withRunningChild({ activity: "idle", activitySource: "hook" });
     h.projector.setPresence(presenceOf([agentRow({ activity: "running", activitySource: "hook" })]));
     h.rebuild();

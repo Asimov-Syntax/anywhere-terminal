@@ -783,7 +783,7 @@ describe("mutating actions resolve their own target", () => {
 });
 
 describe("removal resolves its target and refuses an unauthorized force", () => {
-  it("removes the worktree git named, unforced", async () => {
+  it("[I10] removes the worktree git named, unforced", async () => {
     const { host, view, calls, dispose } = await builtHost();
     host.handleMessage(view, { type: "worktreeRemove", worktreeId: RAW_ID, force: false });
     await settle();

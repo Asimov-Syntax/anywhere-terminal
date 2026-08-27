@@ -124,7 +124,7 @@ describe("loading and empty states", () => {
 
   // Audit A2: the cache retains the last good listing when git goes away, and
   // the view used to hide it behind the "Git not found" empty state.
-  it("shows a retained listing under a staleness notice instead of an empty state", () => {
+  it("[I1] shows a retained listing under a staleness notice instead of an empty state", () => {
     const { view } = mount();
     view.setData({ tree: gitGoneWithRetainedTree(), presence: null });
 
@@ -336,7 +336,7 @@ describe("agent rows", () => {
     expect(rows[1]?.querySelector(".wt-gutter")?.innerHTML).toBe("");
   });
 
-  it("shows no agent icon when identity is unproven", () => {
+  it("[I2] shows no agent icon when identity is unproven", () => {
     const { view } = mount();
     view.setData(populated());
     const shell = agentRows(view).find((r) => r.querySelector(".wt-atitle")?.textContent?.startsWith("zsh"));
@@ -363,7 +363,7 @@ describe("agent rows", () => {
     expect(noModel?.querySelector(".wt-model")).toBeNull();
   });
 
-  it("labels an external row and gives it no focus affordance", () => {
+  it("[I3] labels an external row and gives it no focus affordance", () => {
     const { view } = mount();
     view.setData(populated());
     const external = agentRows(view).find((r) => r.querySelector(".wt-scope"));
@@ -401,7 +401,7 @@ describe("agent rows", () => {
 // ── § 3.4: subagents are history ──────────────────────────────────────────
 
 describe("subagent rows", () => {
-  it("render in a historical treatment, never the live dot vocabulary", () => {
+  it("[I5] render in a historical treatment, never the live dot vocabulary", () => {
     const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
     view.setData(populated());
     const hist = view.element.querySelector(".wt-hist");
@@ -466,7 +466,7 @@ describe("subagent rows", () => {
     expect(hist?.querySelector(".wt-hist")).toBeNull();
   });
 
-  it("activating one targets the parent's pane", () => {
+  it("[I11] activating one targets the parent's pane", () => {
     const activated: string[] = [];
     const { view } = mount({
       getInitialExpandedRows: () => ["main-claude"],
@@ -674,7 +674,7 @@ describe("asking the host what a row delegated", () => {
 // ── § 5: degraded data and action results ─────────────────────────────────
 
 describe("notices", () => {
-  it("names the failing source and reason for a degraded repo, and offers Retry", () => {
+  it("[I8] names the failing source and reason for a degraded repo, and offers Retry", () => {
     const retried: string[] = [];
     const { view } = mount({ onRetryRepo: (id) => retried.push(id) });
     view.setData({ tree: twoRepoTree(), presence: null });
@@ -685,7 +685,7 @@ describe("notices", () => {
     expect(retried).toEqual(["/Users/dev/Projects/cyberk-skills/.git"]);
   });
 
-  it("renders no stale affordance for a genuinely empty result", () => {
+  it("[I8] renders no stale affordance for a genuinely empty result", () => {
     const { view } = mount();
     view.setData(populated());
     expect(view.element.querySelector(".wt-notice")).toBeNull();
