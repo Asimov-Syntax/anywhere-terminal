@@ -214,14 +214,14 @@
     5. Reuse src/utils/keyedSerialQueue.ts for the store's in-process serialization instead of the second chain in src/agentHooks/install/managedEntryLedger.ts
     6. Cover in src/agentHooks/install/managedEntryLedger.test.ts: two ledgers over one file where the second writes between the first's load and its uninstall sweep; a storage root that moves while the ledger path does not, with the old command still claimed; a pre-write record that cannot persist leaving the configuration untouched; and a fold of two full pending lists staying at the ceiling
 
-- [ ] 7_2 Answer only the settings this feature owns, and let the latest desired state win
+- [x] 7_2 Answer only the settings this feature owns, and let the latest desired state win — verified: pnpm exec vitest run 'src/agentHooks/install/agentHookTransitions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_1
   - **Refs**: .reviews/round-7.md#b13, design.md#d13-one-serialized-transition-owner-per-agent
   - **Acceptance**:
     - Outcome: An unrelated settings change costs nothing; a burst settles at the latest state
     - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
   - **Plan**:
-    1. In src/extension.ts submit only for agents whose own settings the event touched
+    1. Have each entry in src/agentHooks/install/agentHookRegistry.ts declare every setting it reads, and in src/extension.ts submit only for agents whose own settings the event touched
     2. In src/agentHooks/install/agentHookTransitions.ts hold at most one running transition per agent plus one pending rerun that carries the latest desired state, so a burst collapses to the current answer without discarding the obligation to converge
     3. Cover in src/agentHooks/install/agentHookTransitions.test.ts: an unrelated settings event enqueueing nothing, a burst of relevant events running fewer transitions than events while ending at the latest state, and the forced location-only edit still reconciling
 

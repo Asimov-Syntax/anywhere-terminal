@@ -256,7 +256,74 @@ describe("agent hook transitions", () => {
       await Promise.all([transitions.submit(entry, true), transitions.submit(entry, true)]);
 
       // Never two starts in a row — the queue is what forbids it.
-      expect(order).toEqual(Array.from({ length: 4 }, () => ["start:false", "end:false"]).flat());
+      expect(order).toEqual(Array.from({ length: order.length / 2 }, () => ["start:false", "end:false"]).flat());
+      // Two submissions that had not begun are one transition's worth of work
+      // (round-7 B13); before coalescing this was four pairs.
+      expect(order).toHaveLength(4);
+    });
+
+    it("collapses a burst to the state it ended on rather than running every event", async () => {
+      const { settings, location, storageRoot, adapters } = await agentConfigs();
+      const { entry } = adapters[0];
+      let running = 0;
+      let concurrent = 0;
+      let transitions = 0;
+      const controller = transitionsFor({
+        settings,
+        location,
+        storageRoot,
+        registry: [entry],
+        setDesiredEnabled: async (_agent, enabled) => {
+          if (!enabled) {
+            transitions += 1;
+          }
+          running += 1;
+          concurrent = Math.max(concurrent, running);
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          running -= 1;
+        },
+      });
+
+      const burst = Array.from({ length: 20 }, () => controller.submit(entry, true));
+      const settled = await Promise.all(burst);
+
+      expect(transitions).toBeLessThan(20);
+      expect(concurrent).toBe(1);
+      // Every caller is answered, and answered by a run that saw its intent.
+      expect(settled).toHaveLength(20);
+      for (const outcome of settled) {
+        expect(outcome.agent).toBe(entry.agent);
+      }
+    });
+
+    it("runs again for a submission that arrives while a transition is in flight", async () => {
+      const { settings, location, storageRoot, adapters } = await agentConfigs();
+      const { entry } = adapters[0];
+      const forced: boolean[] = [];
+      let controller: ReturnType<typeof transitionsFor>;
+      let submitted = false;
+      controller = transitionsFor({
+        settings,
+        location,
+        storageRoot,
+        registry: [entry],
+        setDesiredEnabled: async (_agent, enabled) => {
+          if (!enabled) {
+            forced.push(true);
+            if (!submitted) {
+              // Arrives strictly after the first run began, so it cannot be
+              // folded into it — the rerun is what keeps it from being dropped.
+              submitted = true;
+              void controller.submit(entry, true);
+            }
+          }
+        },
+      });
+
+      await controller.submit(entry, true);
+
+      // Two transitions, and each forces the desired value through twice.
+      expect(forced).toHaveLength(4);
     });
 
     it("does not delay one agent's transition behind another's", async () => {

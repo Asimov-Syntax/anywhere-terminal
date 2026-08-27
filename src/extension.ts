@@ -437,10 +437,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       for (const entry of AGENT_HOOK_REGISTRY) {
-        void agentHookTransitions.submit(
-          entry,
-          event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`),
-        );
+        // Answered by the agents the event concerns, not by all of them: every
+        // unrelated setting change used to enqueue a full transition per agent,
+        // and each one now takes a cross-process lock (round-7 B13).
+        const enabled = event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`);
+        const moved = entry.locationSettingKeys.some((key) => event.affectsConfiguration(`anywhereTerminal.${key}`));
+        if (enabled || moved) {
+          void agentHookTransitions.submit(entry, enabled);
+        }
       }
     }),
     vscode.commands.registerCommand(AGENT_HOOK_UNINSTALL_COMMAND, async () => {

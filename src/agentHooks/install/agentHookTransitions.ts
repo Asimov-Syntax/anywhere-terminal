@@ -51,9 +51,17 @@ export interface TransitionOutcome {
   blockedBy?: string;
 }
 
+/** One running transition per agent, plus at most one rerun carrying what arrived meanwhile. */
+interface CoalescedTransitions {
+  force: boolean;
+  rerun: boolean;
+  settled: Promise<TransitionOutcome>;
+}
+
 export class AgentHookTransitions {
   /** The repository's own keyed serialization (round-4 S4) — one lane per agent. */
   private readonly queue = createKeyedSerialQueue();
+  private readonly coalesced = new Map<VaultAgentId, CoalescedTransitions>();
 
   public constructor(private readonly options: AgentHookTransitionsOptions) {}
 
@@ -61,9 +69,40 @@ export class AgentHookTransitions {
    * Queues one transition for an agent. `force` reconciles even when the desired
    * value is unchanged, which a location-only edit needs: skipping it there would
    * leave the agent installed nowhere (round-2 B1).
+   *
+   * A burst collapses to the state it ended on: while one transition runs, later
+   * submissions mark a single rerun rather than each queueing a body of their own,
+   * so N events cost at most two transitions instead of N (round-7 B13). Nothing
+   * is dropped — the rerun is the obligation to converge, and every caller is
+   * answered by the run that settles after their intent was folded in.
    */
   public submit(entry: AgentHookRegistryEntry, force = false): Promise<TransitionOutcome> {
-    return this.queue.run(entry.agent, () => this.transition(entry, force));
+    const running = this.coalesced.get(entry.agent);
+    if (running) {
+      running.force = running.force || force;
+      running.rerun = true;
+      return running.settled;
+    }
+    const state: CoalescedTransitions = { force, rerun: false, settled: Promise.resolve() as never };
+    state.settled = this.queue.run(entry.agent, () => this.converge(entry, state));
+    this.coalesced.set(entry.agent, state);
+    return state.settled;
+  }
+
+  /** Runs until nothing arrived while the last run was in flight. */
+  private async converge(entry: AgentHookRegistryEntry, state: CoalescedTransitions): Promise<TransitionOutcome> {
+    for (;;) {
+      const force = state.force;
+      state.force = false;
+      state.rerun = false;
+      const outcome = await this.transition(entry, force);
+      // Checked in the same synchronous step the await resumes in, so a
+      // submission cannot land between the check and the release and be lost.
+      if (!state.rerun) {
+        this.coalesced.delete(entry.agent);
+        return outcome;
+      }
+    }
   }
 
   /** Every agent, at activation: retries what a previous session could not clean. */
