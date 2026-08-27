@@ -216,6 +216,9 @@ export class WorktreeController {
 
   /** Held rather than passed: the two launch items appear only once one can act. */
   private readonly menuActions: WorktreeMenuActions;
+
+  /** True between asking which agents can start a session and being told. */
+  private awaitingLaunchTargets = false;
   /** Which worktree the open launch dialog is for. */
   private launchTarget: string | null = null;
   /**
@@ -397,8 +400,13 @@ export class WorktreeController {
       this.deps.postMessage({ type: "requestWorktreeTree" });
       // Asked on the way in rather than once at mount: which agents resolve is a
       // property of the machine, and one installed since the last look should
-      // appear without reloading the window.
-      this.deps.postMessage({ type: "requestVaultLaunchTargets", capability: "start" });
+      // appear without reloading the window. One at a time, though — the reply
+      // says which capability it answers and not which ASK, so two in flight can
+      // land in either order and the older one would win.
+      if (!this.awaitingLaunchTargets) {
+        this.awaitingLaunchTargets = true;
+        this.deps.postMessage({ type: "requestVaultLaunchTargets", capability: "start" });
+      }
       return;
     }
     // A force in flight across this transition is never answered — the host skips
@@ -504,6 +512,7 @@ export class WorktreeController {
     if (msg.capability !== "start") {
       return;
     }
+    this.awaitingLaunchTargets = false;
     this.launchAgents = msg.targets.map((t) => ({
       id: t.agent,
       label: t.displayName,

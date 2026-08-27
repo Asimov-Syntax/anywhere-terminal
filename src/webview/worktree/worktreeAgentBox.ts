@@ -13,6 +13,7 @@
 //  - The prompt appears only for an agent the host said can be seeded; for one
 //    that cannot, a field promising a seeded prompt would be a lie.
 
+import { MAX_CONTINUATION_INSTRUCTION } from "../../vault/continuationLimits";
 import { field, selectControl } from "./worktreeDialogShell";
 import type { WorktreeLaunchAgent } from "./worktreeViewTypes";
 
@@ -75,7 +76,18 @@ export function createWorktreeAgentBox(
   promptInput.className = "wt-textarea";
   promptInput.id = "wt-prompt";
   promptInput.placeholder = "Sent once the agent's composer is ready…";
-  promptField.appendChild(promptInput);
+  // The bound the HOST publishes, shown where it is typed: it refuses an
+  // oversized prompt rather than truncating it, and a refusal after the dialog
+  // has closed reads as the button doing nothing.
+  promptInput.maxLength = MAX_CONTINUATION_INSTRUCTION;
+  const promptCount = document.createElement("span");
+  promptCount.className = "wt-fhint";
+  const showCount = (): void => {
+    promptCount.textContent = `${promptInput.value.length} / ${MAX_CONTINUATION_INSTRUCTION}`;
+  };
+  showCount();
+  promptInput.addEventListener("input", showCount);
+  promptField.append(promptInput, promptCount);
 
   const hint = document.createElement("span");
   hint.className = "wt-fhint";
@@ -108,6 +120,7 @@ export function createWorktreeAgentBox(
     promptField.hidden = agent === undefined || !agent.canSeedPrompt;
     if (promptField.hidden) {
       promptInput.value = "";
+      showCount();
     }
   }
 

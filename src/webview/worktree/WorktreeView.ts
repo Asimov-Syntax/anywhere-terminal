@@ -270,7 +270,10 @@ export class WorktreeView {
       return;
     }
     this.closeDialog?.();
-    openWorktreeLaunchDialog(this.deps.host, {
+    // Tracked like every other modal here: an untracked one stays mounted under
+    // the next dialog, holding a focus trap and a document listener nothing
+    // will ever release.
+    this.closeDialog = openWorktreeLaunchDialog(this.deps.host, {
       worktreeLabel,
       agents,
       onConfirm: (request) => {

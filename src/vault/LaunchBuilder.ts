@@ -222,10 +222,9 @@ export interface ContinuationTarget {
  */
 function chosenPermissionArgs(def: AgentVaultDefinition, chosenId: string): string[] {
   const choices = def.permissionChoices;
-  if (!choices?.length) {
-    return [];
-  }
-  const chosen = choices.find((c) => c.id === chosenId);
+  // An agent with no vocabulary cannot be given a word from one: returning no
+  // args here would run the DEFAULT posture while the request said otherwise.
+  const chosen = choices?.find((c) => c.id === chosenId);
   if (!chosen) {
     throw new VaultLaunchError(`Unknown permission choice: ${chosenId}`, "unknown-permission-choice");
   }
@@ -304,6 +303,21 @@ export async function resolveLaunchExecutable(
     return undefined;
   }
   const template = mode === "continue" ? def.continueCommand : mode === "fork" ? def.forkCommand : def.resumeCommand;
+  return resolveProbedExecutable(def, template);
+}
+
+/**
+ * The executable a template asks to be discovered, or `undefined` for one that
+ * names its own.
+ *
+ * Every launch mode asks this the same way — a fresh start no less than a
+ * resume — so an agent whose command is fixed is never probed, and one whose
+ * probe fails fails as a launch rather than running `{{executable}}` verbatim.
+ */
+export async function resolveProbedExecutable(
+  def: AgentVaultDefinition,
+  template: CommandTemplate | undefined,
+): Promise<string | undefined> {
   if (!template?.executable.includes("{{executable}}")) {
     return undefined;
   }

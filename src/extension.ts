@@ -39,6 +39,7 @@ import { isPathInside } from "./utils/pathBoundary";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
+import { detectLaunchTargets } from "./vault/registry";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
@@ -622,6 +623,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       createWorktree: (request) => mutations().createWorktree(request),
       // Resolution only — the surface that asked owns the pane it opens in.
       startAgent: (agent, cwd, opts) => vaultLauncher.startAgent(agent, cwd, opts),
+      // The same answer the panel is given, so the host admits a launch against
+      // what it published rather than against what the registry would run.
+      launchTargets: () => detectLaunchTargets("start"),
       resumeSessionAt: (entryId, cwd) => vaultLauncher.resolve(entryId, "resume", undefined, undefined, cwd),
       removeWorktree: (target, force, fingerprint) => mutations().removeWorktree(target, force, fingerprint),
       lockWorktree: (target, reason) => mutations().lockWorktree(target, reason),

@@ -177,6 +177,23 @@ vi.mock("./vault/VaultService", async (importOriginal) => {
   return { ...real, VaultService: AssemblyVaultService };
 });
 
+/**
+ * Which agents this machine has installed is a `which`-style probe — the same
+ * kind of boundary as git — so the host's admission answer is fixed here rather
+ * than left to whatever the developer happens to have on PATH.
+ */
+vi.mock("./vault/registry", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./vault/registry")>();
+  return {
+    ...real,
+    detectLaunchTargets: async () => (noStartableAgents ? [] : STARTABLE_TARGETS),
+  };
+});
+
+const STARTABLE_TARGETS = [
+  { agent: "claude" as const, displayName: "Claude Code", permissionChoices: [], canSeedPrompt: true },
+];
+
 /** The one stored session the faked vault knows about. */
 const STORED_ENTRY: VaultSessionEntry = {
   id: "claude:sess-1",
@@ -287,9 +304,7 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
         route({
           type: "vaultLaunchTargets",
           capability: msg.capability ?? "continue",
-          targets: noStartableAgents
-            ? []
-            : [{ agent: "claude", displayName: "Claude Code", permissionChoices: [], canSeedPrompt: true }],
+          targets: noStartableAgents ? [] : STARTABLE_TARGETS,
         });
         return;
       }

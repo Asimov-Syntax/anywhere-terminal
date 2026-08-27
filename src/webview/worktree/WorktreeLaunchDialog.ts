@@ -25,12 +25,13 @@ export interface WorktreeLaunchDialogDeps {
   onCancel?: () => void;
 }
 
-export function openWorktreeLaunchDialog(root: HTMLElement, deps: WorktreeLaunchDialogDeps): void {
+/** Returns the dialog's disposer, or `null` when there was nothing to open. */
+export function openWorktreeLaunchDialog(root: HTMLElement, deps: WorktreeLaunchDialogDeps): (() => void) | null {
   // Nothing to launch means nothing to ask about. The menu item is absent in
   // that case too; this is the same rule held at the second door, because a
   // dialog offering an empty picker claims a choice that does not exist.
   if (deps.agents.length === 0) {
-    return;
+    return null;
   }
 
   const shell = openDialogShell(root, { label: "Start an agent", dismissOnScrim: true, onDismiss: deps.onCancel });
@@ -78,4 +79,6 @@ export function openWorktreeLaunchDialog(root: HTMLElement, deps: WorktreeLaunch
       submit();
     }
   });
+
+  return () => shell.dispose();
 }

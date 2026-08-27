@@ -16,6 +16,7 @@ import type {
   WorktreeOpenAfterMode,
 } from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
+import type { VaultLaunchTarget } from "../vault/types";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
@@ -169,6 +170,13 @@ export interface WorktreeActions {
   ): Promise<CreateSessionOptions>;
   /** An existing session, run in `cwd` rather than the one it was recorded in. */
   resumeSessionAt?(entryId: string, cwd: string): Promise<CreateSessionOptions>;
+  /**
+   * The agents this host would advertise as able to start a fresh session, and
+   * on what terms. The SAME answer the panel is given, asked again at the
+   * action: a request carrying values the panel never offered — a stale list, a
+   * forged message — is not admitted just because a launcher would run it.
+   */
+  launchTargets?(): Promise<readonly VaultLaunchTarget[]>;
 
   // ── Mutating (design.md D1, D12, D13) ────────────────────────────────
   // Optional, so a surface or a host wired without them offers nothing rather
@@ -627,8 +635,50 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * is not an error; oversized is not, and it is refused rather than truncated,
    * because a silently shortened first turn is a different instruction.
    */
-  function admissiblePrompt(prompt: string | undefined): boolean {
-    return prompt === undefined || prompt.length <= MAX_CONTINUATION_INSTRUCTION;
+  function admissiblePrompt(prompt: unknown): prompt is string | undefined {
+    return prompt === undefined || (typeof prompt === "string" && prompt.length <= MAX_CONTINUATION_INSTRUCTION);
+  }
+
+  /**
+   * Everything about a launch that the host itself published, re-checked here.
+   *
+   * The shapes are read as `unknown` rather than trusted from the message type:
+   * the router asserts a name, not a payload, so a field that is null or a
+   * number reaches this function exactly as a well-formed one does.
+   */
+  async function admissibleLaunch(fields: unknown): Promise<boolean> {
+    if (typeof fields !== "object" || fields === null) {
+      return false;
+    }
+    const { agent, permissionChoiceId, prompt } = fields as Record<string, unknown>;
+    if (typeof agent !== "string" || !admissiblePrompt(prompt)) {
+      return false;
+    }
+    if (permissionChoiceId !== undefined && typeof permissionChoiceId !== "string") {
+      return false;
+    }
+    const targets = options.actions?.launchTargets;
+    if (!targets) {
+      return false;
+    }
+    const target = (await targets()).find((t) => t.agent === agent);
+    if (target === undefined) {
+      return false;
+    }
+    // A prompt for an agent that cannot be seeded would be silently dropped by
+    // the builder, which is the one outcome worse than refusing it.
+    if (prompt !== undefined && prompt !== "" && !target.canSeedPrompt) {
+      return false;
+    }
+    return permissionChoiceId === undefined || target.permissionChoices.some((c) => c.id === permissionChoiceId);
+  }
+
+  /** The launcher's option bag, with absent fields absent rather than undefined. */
+  function launchOpts(fields: WorktreeAgentLaunchFields): { permissionChoiceId?: string; prompt?: string } {
+    return {
+      ...(fields.permissionChoiceId === undefined ? {} : { permissionChoiceId: fields.permissionChoiceId }),
+      ...(fields.prompt === undefined ? {} : { prompt: fields.prompt }),
+    };
   }
 
   /** Run one capability, keeping a rejection out of the message loop. */
@@ -680,22 +730,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if ((msg.openAfter === "agent") !== (msg.launch !== undefined)) {
           return;
         }
-        if (msg.launch !== undefined && !admissiblePrompt(msg.launch.prompt)) {
-          return;
-        }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
-          perform(() =>
-            create({
-              repoId: msg.repoId,
-              path: msg.path,
-              branch: msg.branch,
-              baseRef: msg.baseRef,
-              detach: msg.detach,
-              openAfter: msg.openAfter,
-              ...(msg.launch === undefined ? {} : { launch: msg.launch }),
-              origin: surface,
-            }),
-          );
+          const request = {
+            repoId: msg.repoId,
+            path: msg.path,
+            branch: msg.branch,
+            baseRef: msg.baseRef,
+            detach: msg.detach,
+            openAfter: msg.openAfter,
+            origin: surface,
+          };
+          if (msg.launch === undefined) {
+            perform(() => create(request));
+            return;
+          }
+          const asked = msg.launch;
+          // Admitted BEFORE git runs: a create that made a worktree and then
+          // refused its launch would leave the user a directory they did not
+          // ask for on its own.
+          perform(async () => {
+            if (await admissibleLaunch(asked)) {
+              await create({ ...request, launch: asked });
+            }
+          });
         }
         return;
       }
@@ -862,18 +919,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeLaunchAgent": {
         const start = actions.startAgent;
         const path = actionPath(msg.worktreeId, false);
-        if (!start || path === undefined || !admissiblePrompt(msg.prompt)) {
+        if (!start || path === undefined) {
           return;
         }
-        // The agent id and posture are NOT checked here: the launcher owns the
-        // registry and refuses anything it did not declare, so a second copy of
-        // that list would be a second thing to keep in step.
-        launch(surface, () =>
-          start(msg.agent, path, {
-            ...(msg.permissionChoiceId === undefined ? {} : { permissionChoiceId: msg.permissionChoiceId }),
-            ...(msg.prompt === undefined ? {} : { prompt: msg.prompt }),
-          }),
-        );
+        const { worktreeId: _id, type: _type, ...fields } = msg;
+        // Admission first, and it is the HOST's own answer being checked, not
+        // the registry's: an agent that resolves on this machine but was never
+        // advertised for a fresh start is still not what the panel offered.
+        void admissibleLaunch(fields).then((admitted) => {
+          if (!admitted) {
+            return;
+          }
+          launch(surface, () => start(fields.agent, path, launchOpts(fields)));
+        });
         return;
       }
       case "worktreeResumeHere": {

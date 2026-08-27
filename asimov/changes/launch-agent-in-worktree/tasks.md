@@ -128,3 +128,22 @@
     - Verify: unit src/extension.worktreeAssembly.test.ts
   - **Plan**:
     1. `src/extension.worktreeAssembly.test.ts` — drive a rendered menu launch, a create-with-agent submit, and a resume-here on an agent row through the real host, router and wiring to the session options each produces; the resume case asserts row matching and the worktree cwd override
+
+## 6. Review round 1 fixes
+
+- [x] 6_1 Admit a launch only on the values the host declared — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_1
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-is-admitted-only-on-values-the-host-declared, launch-details-belong-to-the-agent-mode-alone}, specs/worktree-panel/spec.md#a-launch-is-described-by-the-agent-it-will-run
+  - **Acceptance**:
+    - Outcome: an agent, posture or prompt the host never published launches nothing and creates nothing
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts` — take the host's own launch-target answer as a capability and admit both entry paths against it, the create one before git runs; validate the payload shapes rather than trusting the router's assertion (B1, W1)
+    2. `src/vault/LaunchBuilder.ts` — refuse an explicit posture id for an agent that declares none (B2)
+    3. `src/extension.ts` — supply the launch-target capability from the same detection the panel asks for
+    4. `src/webview/worktree/worktreeAgentBox.ts` — bound the prompt field at the limit the host publishes, with the count the Continue dialog already shows (W2)
+    5. `src/webview/worktree/WorktreeController.ts` — ask for start targets once at a time, so two answers cannot land out of order (W3)
+    6. `src/webview/worktree/WorktreeView.ts` — track the launch dialog's disposer like the create and remove dialogs' (W4)
+    6b. `src/webview/worktree/WorktreeLaunchDialog.ts` — return that disposer
+    7. `src/vault/VaultLauncher.ts` — resolve the template executable through one resolver instead of two (S2)
+    8. `src/extension.worktreeAssembly.test.ts` — fix the host's launch-target answer, now that admission asks for it

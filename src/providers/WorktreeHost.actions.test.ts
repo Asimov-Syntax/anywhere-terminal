@@ -117,6 +117,25 @@ function externalRow(over: Partial<WorktreeAgentRow> = {}): WorktreeAgentRow {
 }
 
 /** Every capability, recorded rather than performed. */
+/** The host's own launch-target answer, as the admission door sees it. */
+const LAUNCH_TARGETS = [
+  {
+    agent: "claude" as const,
+    displayName: "Claude Code",
+    canSeedPrompt: true,
+    permissionChoices: [
+      { id: "default", label: "Ask for permission" },
+      { id: "plan", label: "Plan only" },
+    ],
+  },
+  {
+    agent: "opencode" as const,
+    displayName: "opencode",
+    canSeedPrompt: false,
+    permissionChoices: [],
+  },
+];
+
 function recordingActions() {
   const calls: Array<[string, ...unknown[]]> = [];
   const reconciles: string[][] = [];
@@ -138,6 +157,10 @@ function recordingActions() {
     lockWorktree: track("lockWorktree") as NonNullable<WorktreeActions["lockWorktree"]>,
     unlockWorktree: track("unlockWorktree") as NonNullable<WorktreeActions["unlockWorktree"]>,
     pruneRepo: track("pruneRepo") as NonNullable<WorktreeActions["pruneRepo"]>,
+    // What the host published as startable, which is what it now admits a
+    // launch against. Also kept out of `calls` — it is asked per admission, not
+    // per user action.
+    launchTargets: async () => LAUNCH_TARGETS,
     // Kept OUT of `calls`: this fires on every rebuild rather than on a user
     // action, and folding it in would make every action assertion depend on
     // rebuild timing.
@@ -190,6 +213,7 @@ async function builtHost(
     exists?: (p: string) => boolean;
     startAgent?: WorktreeActions["startAgent"];
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
+    launchTargets?: WorktreeActions["launchTargets"];
   } = {},
 ) {
   const presence: WorktreePresence = { rowsByWorktreeId: { [MAIN_PATH]: rows }, scannedAt: 1, degradedSources: [] };
@@ -219,6 +243,7 @@ async function builtHost(
       ...actions,
       ...(over.startAgent === undefined ? {} : { startAgent: over.startAgent }),
       ...(over.resumeSessionAt === undefined ? {} : { resumeSessionAt: over.resumeSessionAt }),
+      ...(over.launchTargets === undefined ? {} : { launchTargets: over.launchTargets }),
     },
     now: () => 1000,
     // Without these `assessRemoval` returns null before it reaches git, which
@@ -973,6 +998,92 @@ describe("launching an agent", () => {
     dispose();
   });
 
+  it("refuses an agent the host never published as startable", async () => {
+    // The launcher would happily run any agent the registry declares. What the
+    // panel was OFFERED is a smaller set, and that is the set a request has to
+    // come from — a stale list or a forged message is not a second opinion.
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "codex" });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    expect(view.launches).toEqual([]);
+    dispose();
+  });
+
+  it("refuses a posture the chosen agent does not declare", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    for (const permissionChoiceId of ["bypassPermissions", "read-only"]) {
+      host.handleMessage(view, {
+        type: "worktreeLaunchAgent",
+        worktreeId: FEAT_PATH,
+        agent: "claude",
+        permissionChoiceId,
+      });
+    }
+    // And one the agent declares no postures at all for.
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      worktreeId: FEAT_PATH,
+      agent: "opencode",
+      permissionChoiceId: "default",
+    });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("refuses a prompt for an agent the host did not report as seedable", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, {
+      type: "worktreeLaunchAgent",
+      worktreeId: FEAT_PATH,
+      agent: "opencode",
+      prompt: "read the spec",
+    });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    // The same agent WITHOUT one is fine — seeding is the part it cannot do.
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "opencode" });
+    await settle();
+    expect(startAgent).toHaveBeenCalledWith("opencode", FEAT_PATH, {});
+    dispose();
+  });
+
+  it("launches nothing when this host publishes no launch targets at all", async () => {
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      startAgent,
+      launchTargets: async () => [],
+    });
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "claude" });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("survives a launch payload whose fields are not what the type says", async () => {
+    // The router asserts a message NAME; the payload is whatever arrived. A null
+    // prompt must be refused, not thrown on before anything can catch it.
+    const startAgent = ok();
+    const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
+    for (const bad of [{ prompt: null }, { agent: 7 }, { permissionChoiceId: {} }]) {
+      expect(() =>
+        host.handleMessage(view, {
+          type: "worktreeLaunchAgent",
+          worktreeId: FEAT_PATH,
+          agent: "claude",
+          ...bad,
+        } as never),
+      ).not.toThrow();
+    }
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("refuses a prompt past the published bound rather than truncating it", async () => {
     const startAgent = ok();
     const { host, view, dispose } = await builtHost([windowRow()], false, { startAgent });
@@ -1086,6 +1197,22 @@ describe("create with a launch", () => {
     await settle();
     expect(creates(calls)).toHaveLength(1);
     expect(creates(calls)[0]?.[1]).toMatchObject({ openAfter: "agent", launch: { agent: "claude" } });
+    dispose();
+  });
+
+  it("creates NOTHING for a launch the host would not admit", async () => {
+    // Order is the whole point: refusing after git ran would leave the user a
+    // worktree they only asked for as a place to put an agent.
+    const { host, view, calls, dispose } = await builtHost();
+    for (const launch of [
+      { agent: "codex" },
+      { agent: "claude", permissionChoiceId: "bypassPermissions" },
+      { agent: "opencode", prompt: "read the spec" },
+    ]) {
+      host.handleMessage(view, { ...REQ, openAfter: "agent", launch } as never);
+    }
+    await settle();
+    expect(creates(calls)).toHaveLength(0);
     dispose();
   });
 

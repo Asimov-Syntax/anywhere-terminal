@@ -7,7 +7,6 @@
 // the argv from LaunchBuilder). It does NOT spawn — the provider owns the
 // createSession call + the `tabCreated` post so the terminal becomes visible (D5).
 
-import { resolveAgentExecutable } from "../cursor/CursorExecutableResolver";
 import { isCursorCliResumableEntry } from "./cursorCapabilities";
 import {
   build,
@@ -17,6 +16,7 @@ import {
   type LaunchMode,
   resolveContextTag,
   resolveLaunchExecutable,
+  resolveProbedExecutable,
   VaultLaunchError,
 } from "./LaunchBuilder";
 import { getAgentDefinition } from "./registry";
@@ -93,11 +93,9 @@ export class VaultLauncher {
     if (!def) {
       throw new VaultLaunchError(`Unknown agent: ${agent}`, "unknown-agent");
     }
-    // Resolved only when the template asks for it — the same rule the entry-backed
-    // modes follow, so an agent whose executable is fixed is not probed at all.
-    const executable = def.startCommand?.executable.includes("{{executable}}")
-      ? ((await resolveAgentExecutable(def)) ?? undefined)
-      : undefined;
+    // The same resolver the entry-backed modes use, so "does this template ask
+    // for a probe" is decided in one place rather than two that can drift.
+    const executable = await resolveProbedExecutable(def, def.startCommand);
     const spec = buildStart(agent, cwd, this.hostEnv, { ...opts, ...(executable ? { executable } : {}) });
     return {
       shell: spec.file,
