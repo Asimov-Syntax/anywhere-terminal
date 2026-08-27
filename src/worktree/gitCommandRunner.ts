@@ -20,8 +20,23 @@ export interface GitCommandResult {
   failedToSpawn: boolean;
 }
 
+/** Per-call overrides. Without these a mutation cannot have its own budget. */
+export interface GitRunOptions {
+  /**
+   * Overrides the runner's construction-time timeout for THIS call.
+   *
+   * worktree-actions.md:267-269: "the 10 s timeout applies to read-only
+   * listings. Mutations get a longer budget and a cancellable path where one
+   * exists, because killing git mid-write is the thing that creates these
+   * states in the first place." A per-runner constant cannot express that.
+   */
+  timeoutMs?: number;
+  /** Kills the child when it aborts. The cancellable path the authority asks for. */
+  signal?: AbortSignal;
+}
+
 export interface GitCommandRunner {
-  run(args: readonly string[], cwd: string): Promise<GitCommandResult>;
+  run(args: readonly string[], cwd: string, runOptions?: GitRunOptions): Promise<GitCommandResult>;
 }
 
 interface ExecFileFailure extends Error {
@@ -46,11 +61,12 @@ export function createGitCommandRunner(options: GitCommandRunnerOptions = {}): G
   const maxBuffer = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
 
   return {
-    run(args, cwd) {
+    run(args, cwd, runOptions) {
       return new Promise<GitCommandResult>((resolve) => {
         const options = {
           cwd,
-          timeout,
+          timeout: runOptions?.timeoutMs ?? timeout,
+          signal: runOptions?.signal,
           maxBuffer,
           encoding: "buffer" as const,
           // `repoRoots` tells a missing repository from a git that declined to
@@ -72,7 +88,10 @@ export function createGitCommandRunner(options: GitCommandRunnerOptions = {}): G
             stdout: out,
             stderr: errText || failure.message,
             // maxBuffer overflow also kills the child; that is not a timeout.
-            timedOut: !overflowed && failure.killed === true,
+            // An abort kills it too, and reaches us as ABORT_ERR — reported as
+            // killed rather than as a clean failure, because a killed mutation
+            // has already changed an unknown amount of state (design.md D11).
+            timedOut: !overflowed && (failure.killed === true || failure.code === "ABORT_ERR"),
             failedToSpawn: failure.code === "ENOENT" || failure.code === "EACCES" || failure.code === "EPERM",
           });
         });

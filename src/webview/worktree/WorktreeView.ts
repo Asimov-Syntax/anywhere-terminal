@@ -13,6 +13,7 @@
 
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
 import { openWorktreeCreateDialog, type WorktreeCreateDialogDeps } from "./WorktreeCreateDialog";
+import { openWorktreePruneDialog, type PruneDialogDeps } from "./WorktreePruneDialog";
 import { openWorktreeRemoveDialog, type WorktreeRemoveDialogDeps } from "./WorktreeRemoveDialog";
 import {
   agentCountLabel,
@@ -90,6 +91,12 @@ export interface WorktreeViewDeps {
   onPrune?: (repoId: string) => void;
   /** Re-send a remove with `force` and the fingerprint the user was shown. */
   onForceRemove?: (info: WorktreeInfo, fingerprint: string) => void;
+  /**
+   * Ask again for an action whose risk could not be READ. Offered only there:
+   * a failure already has its answer, and an unclear outcome has state to
+   * resolve first — re-running either would be guessing.
+   */
+  onRetryAction?: (result: WorktreeActionResult) => void;
   /** Seeds the create form; absent → the create affordance does nothing. */
   createDialogDeps?: () => Omit<WorktreeCreateDialogDeps, "onSubmit" | "onCancel">;
   onCreateSubmit?: WorktreeCreateDialogDeps["onSubmit"];
@@ -167,11 +174,25 @@ export class WorktreeView {
     this.element.setAttribute("role", "tree");
     this.element.setAttribute("aria-label", "Worktrees");
     this.element.addEventListener("keydown", (ev) => this.onKeyDown(ev));
-    this.menu = deps.actions ? new WorktreeContextMenu({ host: deps.host, actions: deps.actions }) : null;
+    this.menu = deps.actions
+      ? new WorktreeContextMenu({
+          host: deps.host,
+          actions: deps.actions,
+          // Supplied, not defaulted: the menu gates its Prune item on this, and
+          // the default of `() => 0` meant the item could never render at all.
+          // Only a walk from the rendered menu could see it (round-4 W11).
+          prunableCount: (info) => this.repoOf(info)?.worktrees.filter((w) => w.prunable).length ?? 0,
+        })
+      : null;
   }
 
   private now(): number {
     return this.deps.now?.() ?? Date.now();
+  }
+
+  /** The repo holding `info`, from the tree this view last rendered. */
+  private repoOf(info: WorktreeInfo): WorktreeRepo | undefined {
+    return this.data.tree?.repos.find((r) => r.worktrees.some((w) => w.id === info.id));
   }
 
   /**
@@ -191,7 +212,7 @@ export class WorktreeView {
             // The blocker fingerprint is part of the key: it decides whether the
             // notice offers Force remove at all, and WHICH blocker set that
             // confirmation would authorize.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.outcome}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -228,6 +249,21 @@ export class WorktreeView {
       onSubmit: (draft) => {
         this.closeDialog = null;
         this.deps.onCreateSubmit?.(draft);
+      },
+      onCancel: () => {
+        this.closeDialog = null;
+      },
+    });
+  }
+
+  /** Open the prune confirmation. The count is the host's; the panel never guesses it. */
+  openPruneDialog(args: Omit<PruneDialogDeps, "onConfirm" | "onCancel">, onConfirm: (count: number) => void): void {
+    this.closeDialog?.();
+    openWorktreePruneDialog(this.deps.host, {
+      ...args,
+      onConfirm: (count) => {
+        this.closeDialog = null;
+        onConfirm(count);
       },
       onCancel: () => {
         this.closeDialog = null;
@@ -643,12 +679,9 @@ export class WorktreeView {
   }
 
   private resultsFor(worktreeId?: string, repoId?: string): WorktreeActionResult[] {
-    return (this.data.actionResults ?? []).filter((r) => {
-      if (r.outcome === "ok") {
-        return false;
-      }
-      return worktreeId !== undefined ? r.worktreeId === worktreeId : !r.worktreeId && r.repoId === repoId;
-    });
+    return (this.data.actionResults ?? []).filter((r) =>
+      worktreeId !== undefined ? r.worktreeId === worktreeId : !r.worktreeId && r.repoId === repoId,
+    );
   }
 
   /**
@@ -658,13 +691,48 @@ export class WorktreeView {
    */
   private buildActionNotice(result: WorktreeActionResult, info?: WorktreeInfo): HTMLElement {
     const dismiss = this.deps.onDismissActionResult ? () => this.deps.onDismissActionResult?.(result) : undefined;
+    // A notice re-scoped to its repository has no row above it to say what it
+    // is about, so it says so itself.
+    const about = result.orphanedLabel;
+    const withAbout = (body?: string): string | undefined =>
+      about === undefined ? body : body === undefined ? about : `${about} — ${body}`;
+    if (result.outcome === "ok") {
+      // Stated, not implied: the tree refreshing underneath is not a report,
+      // and a user who started a mutation is owed its result either way.
+      // Still a success — the worktree exists — but the notice says plainly
+      // what did not happen afterwards, rather than a second notice replacing
+      // this one (round-4 W7).
+      return renderNotice({
+        tone: result.openFailed === undefined ? "neutral" : "warn",
+        live: "status",
+        title: `${titleForAction(result.action)} done.`,
+        body: withAbout(result.openFailed === undefined ? undefined : "It could not be opened afterwards."),
+        reason: result.openFailed,
+        onDismiss: dismiss,
+      });
+    }
+    if (result.outcome === "unavailable") {
+      // NOT a failure and NOT unclear: nothing was attempted, because what the
+      // action would affect could not be read. That is the one outcome a retry
+      // can actually change, so it is the only one that offers one.
+      const retry = this.deps.onRetryAction;
+      return renderNotice({
+        tone: "warn",
+        live: "alert",
+        title: `Couldn't check what this would affect.`,
+        body: withAbout("Nothing was changed. These reads failed:"),
+        reason: (result.unreadable ?? []).join(", "),
+        actions: retry ? [{ label: "Retry", onClick: () => retry(result) }] : undefined,
+        onDismiss: dismiss,
+      });
+    }
     if (result.outcome === "indeterminate") {
       const repoId = result.repoId;
       const spec: NoticeSpec = {
         tone: "warn",
         live: "alert",
         title: `${titleForAction(result.action)} partly applied.`,
-        body: "The repository changed. Check what was observed before retrying.",
+        body: withAbout("The repository changed. Check what was observed before retrying."),
         reason: result.observed,
         onDismiss: dismiss,
         actions:
@@ -686,6 +754,7 @@ export class WorktreeView {
       tone: "error",
       live: "alert",
       title: `Couldn't ${result.action} this worktree.`,
+      body: withAbout(),
       reason: result.error,
       actions: actions.length > 0 ? actions : undefined,
       onDismiss: dismiss,

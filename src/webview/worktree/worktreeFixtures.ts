@@ -271,6 +271,7 @@ export const confirmableBlocker: WorktreeRemoveBlocker = {
   externalAgents: 1,
   locked: true,
   isMain: false,
+  containsWorktrees: [],
 };
 
 /** Mockup § 12: a mid-turn agent. No confirmation authorizes this one. */
@@ -283,6 +284,7 @@ export const refusedBlocker: WorktreeRemoveBlocker = {
   externalAgents: 0,
   locked: false,
   isMain: false,
+  containsWorktrees: [],
 };
 
 /** Mockup § 9: the default create seed. § 10 is the same seed plus `collidedWith`. */

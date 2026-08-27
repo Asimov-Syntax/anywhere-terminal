@@ -313,6 +313,10 @@ function recordingHost(): { host: WorktreeHost; routed: ReturnType<typeof vi.fn>
     initPayload: () => ({ worktreeHasRepo: false }),
     attach: () => ({ setDisplayed: () => {}, dispose: () => {} }),
     handleMessage: routed,
+    mutationBindings: () => {
+      throw new Error("this stand-in host performs no mutations");
+    },
+    reportMutation: () => {},
     dispose: () => {},
   };
   return { host, routed };
@@ -389,6 +393,7 @@ type Surface = { send: (msg: unknown) => void; dispose: () => void };
 /** A minimal well-formed message of each worktree type, keyed by type. */
 const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unknown>> = {
   requestWorktreeTree: { type: "requestWorktreeTree" },
+  requestWorktreeCreateDefaults: { type: "requestWorktreeCreateDefaults", repoId: "/repo/.git" },
   requestWorktreeSubagents: EXPANSION,
   worktreeViewVisibility: { type: "worktreeViewVisibility", visible: true },
   worktreeOpenFolder: { type: "worktreeOpenFolder", worktreeId: "/repo-wt/feat", mode: "newWindow" },
@@ -400,6 +405,11 @@ const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unk
   worktreeCopyResumeCommand: { type: "worktreeCopyResumeCommand", rowId: "window:a", entryId: "claude:s1" },
   worktreeRevealAgentCwd: { type: "worktreeRevealAgentCwd", rowId: "window:a", entryId: "claude:s1" },
   worktreeCopyAgentPath: { type: "worktreeCopyAgentPath", rowId: "window:a", entryId: "claude:s1" },
+  worktreeCreate: { type: "worktreeCreate", repoId: "/repo", path: "/trees/feat", openAfter: "none" },
+  worktreeRemove: { type: "worktreeRemove", worktreeId: "/repo-wt/feat", force: false },
+  worktreeLock: { type: "worktreeLock", worktreeId: "/repo-wt/feat", reason: "release build" },
+  worktreeUnlock: { type: "worktreeUnlock", worktreeId: "/repo-wt/feat" },
+  worktreePrune: { type: "worktreePrune", repoId: "/repo", confirmedCount: 2 },
 };
 
 describe("every worktree message type routes through every surface", () => {
@@ -574,6 +584,8 @@ describe("a terminal request creates a pane in the surface that asked", () => {
     const spy: WorktreeHost = {
       initPayload: () => host.initPayload(),
       handleMessage: (surface, msg) => host.handleMessage(surface, msg),
+      mutationBindings: () => host.mutationBindings(),
+      reportMutation: (report) => host.reportMutation(report),
       dispose: () => host.dispose(),
       attach: (surface) => {
         captured = surface;
@@ -592,6 +604,8 @@ describe("a terminal request creates a pane in the surface that asked", () => {
     const spy: WorktreeHost = {
       initPayload: () => host.initPayload(),
       handleMessage: (surface, msg) => host.handleMessage(surface, msg),
+      mutationBindings: () => host.mutationBindings(),
+      reportMutation: (report) => host.reportMutation(report),
       dispose: () => host.dispose(),
       attach: (surface) => {
         captured = surface;

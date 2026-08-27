@@ -108,6 +108,11 @@
           "default": "focus",
           "description": "What activating an agent row in the Worktree panel does. External agent rows always open their session preview, because they have no pane in this window to focus."
         },
+        "anywhereTerminal.worktree.createRoot": {
+          "type": "string",
+          "default": ".claude/worktrees",
+          "description": "Where new worktrees are created. A relative path is resolved against the repository's main worktree. Leave unset to use the layout this repository's existing worktrees already follow, falling back to .claude/worktrees when there is none."
+        },
         "anywhereTerminal.cursorAgent.hooks.enabled": {
           "type": "boolean",
           "default": false,

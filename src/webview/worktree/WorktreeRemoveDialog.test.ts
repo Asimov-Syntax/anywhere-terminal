@@ -35,11 +35,58 @@ function open(blocker: WorktreeRemoveBlocker, over: { info?: WorktreeInfo; agent
   return { host, confirmed, shown };
 }
 
+const NESTED = [{ worktreeId: "/repo-wt/spike/inner", displayPath: "/repo-wt/spike/inner" }];
+
 describe("isRemoveRefused", () => {
-  it("refuses on a busy agent or the main worktree, and nothing else", () => {
+  it("refuses on a busy agent, the main worktree, or a nested worktree, and nothing else", () => {
     expect(isRemoveRefused(refusedBlocker)).toBe(true);
     expect(isRemoveRefused({ ...refusedBlocker, busyAgents: 0, isMain: true })).toBe(true);
+    // D4: git's `remove --force` would delete the child's files and leave a
+    // prunable child record behind, and no confirmation about THIS worktree can
+    // honestly describe losing that one.
+    expect(isRemoveRefused({ ...refusedBlocker, busyAgents: 0, containsWorktrees: NESTED })).toBe(true);
     expect(isRemoveRefused(confirmableBlocker)).toBe(false);
+  });
+});
+
+describe("remove worktree — refused for containment (design.md D4)", () => {
+  function openNested(children = NESTED) {
+    return open({ ...refusedBlocker, busyAgents: 0, containsWorktrees: children });
+  }
+
+  it("offers no confirm button", () => {
+    const { host } = openNested();
+    expect(host.querySelector(".wt-dialog-confirm")).toBeNull();
+  });
+
+  it("does NOT explain the refusal as a busy agent", () => {
+    // The refusal box used to be a two-branch if/else, so a third reason fell
+    // into the agent branch and told the user to stop an agent that is not
+    // running. That is worse than saying nothing.
+    const { host } = openNested();
+    const text = host.querySelector(".wt-refusebox")?.textContent ?? "";
+    expect(text).not.toMatch(/agent/i);
+  });
+
+  it("names the worktree that would be destroyed with it", () => {
+    const { host } = openNested();
+    expect(host.querySelector(".wt-refusebox")?.textContent).toContain("/repo-wt/spike/inner");
+  });
+
+  it("names every nested worktree, not only the first", () => {
+    const { host } = openNested([
+      { worktreeId: "/repo-wt/spike/a", displayPath: "/repo-wt/spike/a" },
+      { worktreeId: "/repo-wt/spike/b", displayPath: "/repo-wt/spike/b" },
+    ]);
+    const text = host.querySelector(".wt-refusebox")?.textContent ?? "";
+    expect(text).toContain("/repo-wt/spike/a");
+    expect(text).toContain("/repo-wt/spike/b");
+  });
+
+  it("still explains the main worktree as the main worktree when both apply", () => {
+    // isMain is the more fundamental refusal and stays the headline.
+    const { host } = open({ ...refusedBlocker, busyAgents: 0, isMain: true, containsWorktrees: NESTED });
+    expect(host.querySelector(".wt-refusebox")?.textContent).toContain("main worktree");
   });
 });
 
@@ -143,5 +190,25 @@ describe("remove worktree — refused (§ 12)", () => {
     const { host } = open({ ...refusedBlocker, busyAgents: 0, isMain: true }, { info: main });
     expect(host.querySelector(".wt-refusebox")?.textContent).toContain("main worktree");
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
+  });
+});
+
+describe("the confirmation states what it destroys and what it spares", () => {
+  it("names all three consequences in one reading, not one at a time", () => {
+    // An invariant-level check: each clause is asserted elsewhere, but a user
+    // reads the box once. Losing any one of them turns the confirmation into a
+    // partial account of what force does.
+    const { host } = open({ ...confirmableBlocker, idlePanes: 2 });
+    const text = host.querySelector(".wt-warnbox")?.textContent ?? "";
+    expect(text).toMatch(/irreversibl/i);
+    expect(text).toMatch(/branch/i);
+    expect(text).toMatch(/is kept/i);
+    expect(text).toMatch(/running in a deleted directory/i);
+  });
+
+  it("does not claim the losses were reviewed, because they can still change", () => {
+    const { host } = open(confirmableBlocker);
+    const text = host.querySelector(".wt-warnbox")?.textContent ?? "";
+    expect(text).toMatch(/files written after you confirm/i);
   });
 });

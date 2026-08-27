@@ -13,6 +13,7 @@
 //  - A dangerous permission posture is labelled and never preselected.
 //  - The repo picker appears only once the workspace holds more than one repo.
 
+import { sanitizeBranchForPath } from "../../worktree/createPath";
 import { dialogTitle, field, keyHint, openDialogShell, selectControl, textButton } from "./worktreeDialogShell";
 import type {
   WorktreeBranchMode,
@@ -27,10 +28,17 @@ const BRANCH_MODES: readonly { id: WorktreeBranchMode; label: string }[] = [
   { id: "detached", label: "Detached" },
 ];
 
+/**
+ * No "Start an agent" here until WT-005.3 supplies the launch it names.
+ *
+ * The host rejects the mode too, but rejection alone would leave a selectable
+ * option that fails on submit — exactly what the absent-not-inert rule forbids.
+ * The agent box below stays wired and simply never unhides, so restoring the
+ * option is one line when the capability behind it exists (design.md D9).
+ */
 const OPEN_AFTER: readonly { value: WorktreeOpenAfter; label: string }[] = [
   { value: "none", label: "Nothing" },
   { value: "terminal", label: "Open a terminal here" },
-  { value: "agent", label: "Start an agent" },
   { value: "newWindow", label: "Open folder in a new window" },
   { value: "addToWorkspace", label: "Add folder to workspace" },
 ];
@@ -52,18 +60,25 @@ export interface WorktreeCreateDialogDeps {
    * by the owner so the form holds no git knowledge; returns the message to show.
    */
   validateBranch?: (name: string) => string | undefined;
+  /**
+   * The branch changed, so the destination has to be resolved again — only the
+   * host can say which path is free. Called on every settled edit; the owner
+   * answers by calling the function it received from `bindDefaults`.
+   */
+  onBranchChange?: (repoId: string, branch: string) => void;
+  /**
+   * Receive the function that applies a fresh answer from the host. Kept as a
+   * callback rather than a return value so the form stays a single expression
+   * for every caller that does not need to update it.
+   */
+  bindDefaults?: (apply: (next: WorktreeCreateDefaults) => void) => void;
   onSubmit: (draft: WorktreeCreateDraft) => void;
   onCancel?: () => void;
 }
 
-/** `feat/worktree ui` → `feat-worktree-ui`, the segment the default path appends. */
-export function sanitizeBranchForPath(branch: string): string {
-  return branch
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase();
-}
+// The branch→segment rule lives beside the other path rules, so the form and
+// the host cannot disagree about what a branch turns into (round-3 B12).
+export { sanitizeBranchForPath };
 
 /** Mount the create form and return its disposer. */
 export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreateDialogDeps): () => void {
@@ -281,6 +296,25 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
   }
 
+  /** The branch the last host request was made for, so edits do not re-ask. */
+  let askedFor: string | null = null;
+  /** True while a destination request has no answer yet. Submit waits for it. */
+  let outstanding = false;
+
+  /** Ask the host for the destination this branch would take, at most once each. */
+  function askForDestination(): void {
+    const detached = draft.branchMode === "detached";
+    const branch = detached ? draft.baseRef : draft.branchName;
+    if (branch === askedFor) {
+      return;
+    }
+    askedFor = branch;
+    if (deps.onBranchChange !== undefined) {
+      outstanding = true;
+      deps.onBranchChange(draft.repoId, branch);
+    }
+  }
+
   /**
    * Re-derive the path and its hint from the branch, and re-validate. The hint
    * names the collided path AND the suffixed one the create will actually use —
@@ -299,7 +333,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     draft.baseRef = baseInput.value;
 
     const slug = sanitizeBranchForPath(detached ? draft.baseRef : draft.branchName);
-    const derived = slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "";
+    // The HOST's answer wins whenever it has given one. The locally derived
+    // path is the placeholder shape only — it is what the form would guess, and
+    // guessing is exactly what the spec forbids: a create names the destination
+    // it will actually use, and only the host knows which candidates are free
+    // (round-3 B12).
+    const derived = repo.resolvedPath ?? (slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "");
     if (pathIsDerived) {
       draft.path = derived;
       pathInput.value = derived;
@@ -341,15 +380,30 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       nameInput.removeAttribute("aria-invalid");
     }
 
+    // Asked here, before the button state below reads `outstanding` — a request
+    // raised after it would leave Create enabled for one render on a path the
+    // host has not resolved yet.
+    askForDestination();
+
     // A create with no target is not offered — the button is disabled, not a
     // dialog that fails after the click.
     const named = detached ? draft.baseRef.trim().length > 0 : draft.branchName.trim().length > 0;
-    createBtn.disabled = Boolean(error) || !named || draft.path.trim().length === 0;
+    // `outstanding`: the destination on screen is not yet the one the host
+    // resolved for this branch, so submitting now submits a stale path.
+    createBtn.disabled = Boolean(error) || !named || draft.path.trim().length === 0 || outstanding;
     shell.refreshFocusTrap();
   }
 
+  // `change` rather than `input`: asking the host on every keystroke would be a
+  // request per character. `input` still re-renders locally, so the field never
+  // feels laggy — only the authoritative destination waits for the edit to settle.
+  const edited = (): void => {
+    syncDerived();
+  };
   nameInput.addEventListener("input", syncDerived);
+  nameInput.addEventListener("change", edited);
   baseInput.addEventListener("input", syncDerived);
+  baseInput.addEventListener("change", edited);
   pathInput.addEventListener("input", () => {
     pathIsDerived = false;
     draft.path = pathInput.value;
@@ -360,6 +414,25 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       ev.preventDefault();
       submit();
     }
+  });
+
+  // A fresh answer replaces the repo's seed and re-renders. Only the path the
+  // user has not typed over moves — an edited path is theirs.
+  deps.bindDefaults?.((next) => {
+    // Replies race the typing that produced them. An answer for a branch the
+    // form has already moved past would put a destination on screen that no
+    // longer matches the name beside it (round-4 B12).
+    if (next.answersBranch !== undefined && next.answersBranch !== askedFor) {
+      return;
+    }
+    const at = repos.findIndex((r) => r.repoId === next.repoId);
+    if (at >= 0) {
+      repos[at] = next;
+    } else {
+      repos.push(next);
+    }
+    outstanding = false;
+    syncDerived();
   });
 
   syncAgentBox();

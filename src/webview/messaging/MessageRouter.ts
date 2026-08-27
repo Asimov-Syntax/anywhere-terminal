@@ -47,6 +47,8 @@ import type {
   VaultSessionsResponseMessage,
   WorkspaceRootChangedMessage,
   WorktreeActivatePaneMessage,
+  WorktreeCreateDefaultsMessage,
+  WorktreeMutationResultMessage,
   WorktreeRowActivationMessage,
   WorktreeShowPreviewMessage,
   WorktreeTreeResponseMessage,
@@ -116,6 +118,11 @@ export interface MessageHandlers {
   /** Halves of an action only a webview can perform, answered back to it. */
   onWorktreeShowPreview?(msg: WorktreeShowPreviewMessage): void;
   onWorktreeActivatePane?(msg: WorktreeActivatePaneMessage): void;
+  // ── Mutating actions (wire-worktree-mutating-actions) ──
+  /** The destination a create will actually take, resolved by the host. */
+  onWorktreeCreateDefaults?(msg: WorktreeCreateDefaultsMessage): void;
+  /** What a mutation this surface started actually did. */
+  onWorktreeMutationResult?(msg: WorktreeMutationResultMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
   // Optional: a webview with no terminal factory mounted safely ignores it.
   onSubagentPreviewResponse?(msg: SubagentPreviewResponseMessage): void;
@@ -264,6 +271,12 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeActivatePane":
         handlers.onWorktreeActivatePane?.(msg);
+        break;
+      case "worktreeCreateDefaults":
+        handlers.onWorktreeCreateDefaults?.(msg);
+        break;
+      case "worktreeMutationResult":
+        handlers.onWorktreeMutationResult?.(msg);
         break;
       case "subagentPreviewResponse":
         handlers.onSubagentPreviewResponse?.(msg);

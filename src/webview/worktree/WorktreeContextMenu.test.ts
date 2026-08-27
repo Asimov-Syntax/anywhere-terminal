@@ -317,9 +317,10 @@ describe("the controller's callbacks post what each item claims", () => {
     expect(itemLabels(host)).toEqual([]);
   });
 
-  it("omits the mutating and launch items, whose capabilities nothing supplies yet", () => {
-    // Absent, not present-and-inert: WT-005.2 and WT-005.3 light them by
-    // supplying their own capabilities (design.md D10).
+  it("now builds the mutating items, and still omits the launch one", () => {
+    // This case previously asserted that the mutating items were ALSO absent.
+    // WT-005.2 supplies their capabilities, so they are built; the launch item
+    // stays absent because WT-005.3 owns what is behind it (design.md D10).
     const { menu, host } = wired();
     menu.openForWorktree(WT, EVENT, anchor());
     expect(itemLabels(host)).toEqual([
@@ -328,6 +329,8 @@ describe("the controller's callbacks post what each item claims", () => {
       "Open Terminal Here",
       "Reveal in Finder",
       "Copy Path",
+      "Lock Worktree",
+      "Remove Worktree…",
     ]);
     menu.openForAgent(ROW, EVENT, anchor());
     expect(itemLabels(host)).not.toContain("Resume Session Here");
@@ -341,13 +344,122 @@ describe("the controller's callbacks post what each item claims", () => {
   });
 });
 
-describe("the capabilities the controller does not supply", () => {
-  it("supplies no mutating or launch capability at all", () => {
-    // WT-005.2 and WT-005.3 light these by supplying their own; until then the
-    // items must not be built (design.md D10).
+describe("which capabilities the controller supplies", () => {
+  it("supplies the mutating ones WT-005.2 owns", () => {
+    // This replaces the pre-WT-005.2 case asserting that NONE of these existed.
+    // Supplying them is what this change is for; the absent-not-inert rule is
+    // still enforced below, by what stays undefined.
     const actions = worktreeMenuActions(() => {});
-    for (const key of ["toggleLock", "removeWorktree", "resumeHere", "createWorktree"] as const) {
-      expect(actions[key], key).toBeUndefined();
+    for (const key of ["toggleLock", "removeWorktree"] as const) {
+      expect(actions[key], key).toBeDefined();
     }
+  });
+
+  it("still supplies nothing for the launch WT-005.3 owns", () => {
+    // The rule has not moved — only which side of it `resumeHere` sits on.
+    const actions = worktreeMenuActions(() => {});
+    expect(actions.resumeHere).toBeUndefined();
+  });
+
+  it("supplies create only when something can open the form", () => {
+    // The form needs the host's resolved destination, so a create with nowhere
+    // to ask is absent rather than present and failing.
+    expect(worktreeMenuActions(() => {}).createWorktree).toBeUndefined();
+    expect(
+      worktreeMenuActions(
+        () => {},
+        undefined,
+        () => {},
+      ).createWorktree,
+    ).toBeDefined();
+  });
+});
+
+describe("create is reachable from the menu, not merely wired to it", () => {
+  // Round-3 B1: the capability was supplied and the menu never rendered an item
+  // for it, so the whole create path was unreachable from the UI while every
+  // unit test that called the callback directly still passed.
+  function menuWith(create?: () => void) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const calls: string[] = [];
+    const actions: WorktreeMenuActions = {
+      removeWorktree: () => calls.push("removeWorktree"),
+      ...(create === undefined ? {} : { createWorktree: () => calls.push("createWorktree") }),
+    };
+    return { host, menu: new WorktreeContextMenu({ host, actions }), calls };
+  }
+
+  function labels(host: HTMLElement): string[] {
+    return [...host.querySelectorAll(".vault-context-menu button")].map((b) => b.textContent ?? "");
+  }
+
+  it("renders a create item when the capability is supplied", () => {
+    const { host, menu } = menuWith(() => {});
+    menu.openForWorktree(worktree({ id: "/wt", branch: "feat/x" }), EVENT, document.createElement("div"));
+    expect(labels(host)).toContain("New Worktree…");
+  });
+
+  it("renders none when it is not", () => {
+    const { host, menu } = menuWith();
+    menu.openForWorktree(worktree({ id: "/wt", branch: "feat/x" }), EVENT, document.createElement("div"));
+    expect(labels(host).some((l) => /New Worktree/.test(l))).toBe(false);
+  });
+
+  it("offers it on a worktree whose directory is gone — create is repo-scoped", () => {
+    const { host, menu } = menuWith(() => {});
+    menu.openForWorktree(
+      worktree({ id: "/wt", branch: "feat/x", missing: true }),
+      EVENT,
+      document.createElement("div"),
+    );
+    expect(labels(host)).toContain("New Worktree…");
+  });
+
+  it("runs the capability when the item is clicked", () => {
+    const { host, menu, calls } = menuWith(() => {});
+    menu.openForWorktree(worktree({ id: "/wt", branch: "feat/x" }), EVENT, document.createElement("div"));
+    [...host.querySelectorAll<HTMLButtonElement>(".vault-context-menu button")]
+      .find((b) => b.textContent === "New Worktree…")
+      ?.click();
+    expect(calls).toEqual(["createWorktree"]);
+  });
+});
+
+describe("prune is offered only when there is something to prune", () => {
+  function menuWith(prunable: number) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const calls: string[] = [];
+    const actions: WorktreeMenuActions = {
+      pruneRepo: () => calls.push("pruneRepo"),
+      removeWorktree: () => calls.push("removeWorktree"),
+    };
+    const menu = new WorktreeContextMenu({ host, actions, prunableCount: () => prunable });
+    return { host, menu, calls };
+  }
+
+  function labels(host: HTMLElement): string[] {
+    return [...host.querySelectorAll(".vault-context-menu button")].map((b) => b.textContent ?? "");
+  }
+
+  it("offers no prune item when nothing is prunable", () => {
+    // worktree-actions.md:351 — "Action not offered". A disabled item would
+    // claim the action exists here.
+    const { host, menu } = menuWith(0);
+    menu.openForWorktree(worktree({ id: "/wt", branch: "feat/x" }), EVENT, document.createElement("div"));
+    expect(labels(host).some((l) => /Prune/i.test(l))).toBe(false);
+  });
+
+  it("names the count in the item when there is something to prune", () => {
+    const { host, menu } = menuWith(3);
+    menu.openForWorktree(worktree({ id: "/wt", branch: "feat/x" }), EVENT, document.createElement("div"));
+    expect(labels(host).some((l) => l.includes("Prune 3 Registrations"))).toBe(true);
+  });
+
+  it("says registration in the singular for one", () => {
+    const { host, menu } = menuWith(1);
+    menu.openForWorktree(worktree({ id: "/wt", branch: "feat/x" }), EVENT, document.createElement("div"));
+    expect(labels(host).some((l) => l.includes("Prune 1 Registration…"))).toBe(true);
   });
 });

@@ -662,6 +662,82 @@ export interface WorktreeOpenFolderMessage {
   mode: "newWindow" | "addToWorkspace";
 }
 
+/** After-creation modes create ships with. `agent` is WT-005.3's (design.md D9). */
+export type WorktreeOpenAfterMode = "none" | "terminal" | "newWindow" | "addToWorkspace";
+
+/** WebView → Extension: create a worktree at a path the host will re-validate. */
+export interface WorktreeCreateRequestMessage {
+  type: "worktreeCreate";
+  repoId: string;
+  /** Untrusted: the one action with no host-issued id to re-resolve from. */
+  path: string;
+  branch?: string;
+  baseRef?: string;
+  detach?: boolean;
+  openAfter: WorktreeOpenAfterMode;
+}
+
+/**
+ * WebView → Extension: remove a worktree.
+ *
+ * `fingerprint` is REQUIRED when `force` is true and rejected when it is not:
+ * worktree-rpc.md:90 declares only `{ worktreeId, force }`, but :196 requires the
+ * fingerprint to be validated on the way in, so the payload is amended here.
+ * A force without one authorizes nothing (design.md D3).
+ */
+/**
+ * WebView → Extension: what destination would a create in this repo take?
+ *
+ * Asked rather than computed, because the panel does not know the configured
+ * root, the repo's own layout, or which candidates are already taken.
+ */
+export interface WorktreeCreateDefaultsRequestMessage {
+  type: "requestWorktreeCreateDefaults";
+  repoId: string;
+  /**
+   * The branch the form currently holds, if any.
+   *
+   * The destination depends on it, so the host has to resolve against the
+   * branch the user actually typed. Without this the host proved one path free
+   * and the form submitted a different, branch-derived one (round-3 B12).
+   */
+  branch?: string;
+}
+
+export interface WorktreeRemoveRequestMessage {
+  type: "worktreeRemove";
+  worktreeId: string;
+  force: boolean;
+  fingerprint?: string;
+}
+
+/** WebView → Extension: lock this worktree, optionally with a reason. */
+export interface WorktreeLockMessage {
+  type: "worktreeLock";
+  worktreeId: string;
+  /** Free text from the user. Refused host-side when it would read as a flag. */
+  reason?: string;
+}
+
+/** WebView → Extension: release this worktree's lock. */
+export interface WorktreeUnlockMessage {
+  type: "worktreeUnlock";
+  worktreeId: string;
+}
+
+/**
+ * WebView → Extension: drop this repository's stale worktree registrations.
+ *
+ * `confirmedCount` is the number the confirmation named. The host re-counts
+ * before running and re-prompts when the answer moved, so the user never
+ * authorizes one number and gets another (design.md D13).
+ */
+export interface WorktreePruneMessage {
+  type: "worktreePrune";
+  repoId: string;
+  confirmedCount: number;
+}
+
 /** WebView → Extension: show this worktree in the OS file manager. */
 export interface WorktreeRevealInOSMessage {
   type: "worktreeRevealInOS";
@@ -836,6 +912,12 @@ export type WebViewToExtensionMessage =
   | WorktreeRevealAgentCwdMessage
   | WorktreeCopyAgentPathMessage
   | WorktreeViewVisibilityMessage
+  | WorktreeCreateRequestMessage
+  | WorktreeCreateDefaultsRequestMessage
+  | WorktreeRemoveRequestMessage
+  | WorktreeLockMessage
+  | WorktreeUnlockMessage
+  | WorktreePruneMessage
   | PaneEvidenceMessage;
 
 /** A `T` that is not `never` is a compile error — see {@link WORKTREE_MESSAGE_TYPES}. */
@@ -864,6 +946,7 @@ export type WorktreeInboundMessage = Extract<
  * tested alone, and nothing tested the path between them.
  */
 export const WORKTREE_MESSAGE_TYPES = [
+  "requestWorktreeCreateDefaults",
   "requestWorktreeTree",
   "requestWorktreeSubagents",
   "worktreeViewVisibility",
@@ -876,6 +959,11 @@ export const WORKTREE_MESSAGE_TYPES = [
   "worktreeCopyResumeCommand",
   "worktreeRevealAgentCwd",
   "worktreeCopyAgentPath",
+  "worktreeCreate",
+  "worktreeRemove",
+  "worktreeLock",
+  "worktreeUnlock",
+  "worktreePrune",
 ] as const satisfies readonly WorktreeInboundMessage["type"][];
 
 /**
@@ -1570,7 +1658,71 @@ export interface WorktreeRowActivationMessage {
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
  */
+/**
+ * Extension → WebView: what a mutation did.
+ *
+ * Typed because the previous wiring posted a bare object literal that no union
+ * member described, so nothing could route it and no surface could render it
+ * (round-2 W3). `blocked` is not a failure — it is the removal declining to run
+ * until the blockers are confirmed — and `unavailable` is not a refusal, which
+ * is why only it offers a retry (design.md D16).
+ */
+/**
+ * The blocker set a removal was stopped by, as the panel renders it.
+ *
+ * Carried on the message because the confirmation the panel reopens must name
+ * exactly what the host assessed — a webview that recomputed this from the tree
+ * would be authorizing a different set than the one the fingerprint binds.
+ */
+export interface WorktreeRemoveBlockerPayload {
+  dirty: boolean;
+  untracked: number;
+  idlePanes: number;
+  busyAgents: number;
+  externalAgents: number;
+  locked: boolean;
+  isMain: boolean;
+  containsWorktrees: readonly { worktreeId: string; displayPath: string }[];
+}
+
+export interface WorktreeMutationResultMessage {
+  type: "worktreeMutationResult";
+  verb: "create" | "remove" | "lock" | "unlock" | "prune";
+  repoId: string;
+  /** The row the notice attaches to. Absent for the repo-scoped verbs. */
+  worktreeId?: string;
+  result:
+    | { kind: "ok"; openFailed?: string }
+    | { kind: "error"; message: string }
+    | { kind: "indeterminate"; observed: string }
+    | { kind: "unavailable"; unreadable: readonly string[] }
+    | { kind: "blocked"; worktreeId: string; fingerprint: string | null; blocker: WorktreeRemoveBlockerPayload };
+}
+
+/**
+ * Extension → WebView: the destination a create will actually take.
+ *
+ * The HOST resolves it. The panel cannot: `specs/worktree-panel/spec.md` says a
+ * create names the destination it will actually use, and only the host knows
+ * the configured root, the repo's own layout, and which candidates are free.
+ */
+export interface WorktreeCreateDefaultsMessage {
+  type: "worktreeCreateDefaults";
+  repoId: string;
+  /** Free, suffixed if taken. */
+  path: string;
+  root: string;
+  /** Base name a branch-derived path is appended to, e.g. `anywhere-terminal`. */
+  prefix: string;
+  /** The branch this answer was computed for, absent when none was named. */
+  branch?: string;
+  /** The unsuffixed candidate, present only when it was already taken. */
+  collidedWith?: string;
+}
+
 export type ExtensionToWebViewMessage =
+  | WorktreeMutationResultMessage
+  | WorktreeCreateDefaultsMessage
   | InitMessage
   | OutputMessage
   | ExitMessage

@@ -128,13 +128,23 @@ describe("create worktree — default state (§ 9)", () => {
     expect(submitted[0]?.agentId).toBe("codex");
   });
 
-  it("keeps the agent picker hidden until After creating asks for one", () => {
+  it("offers no agent option at all, so nothing can select one", () => {
+    // This replaces the old "unhides the agent picker when After creating asks
+    // for one" case. WT-005.3 owns the launch that mode names, and its registry
+    // capability does not exist yet — so the option is ABSENT rather than
+    // present and refused on submit (design.md D9).
+    const { q } = open();
+    const after = q<HTMLSelectElement>("#wt-after");
+    expect([...after.options].map((o) => o.value)).not.toContain("agent");
+  });
+
+  it("keeps the agent picker hidden, including when a mode it does not offer is forced in", () => {
     const { host, q } = open();
     expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(true);
     const after = q<HTMLSelectElement>("#wt-after");
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
-    expect(host.querySelector<HTMLElement>(".wt-agentbox")?.hidden).toBe(false);
+    expect(host.querySelector<HTMLElement>(".wt-agentbox")?.hidden).toBe(true);
   });
 
   it("never preselects the dangerous permission posture", () => {
@@ -226,5 +236,62 @@ describe("create worktree — invalid and collided (§ 10)", () => {
     expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
     q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(submitted[0]).toMatchObject({ branchMode: "detached", baseRef: "9f2c1ab" });
+  });
+});
+
+describe("the form waits for the destination it is going to submit (round-4 B12)", () => {
+  /** Open with the host wiring the panel really supplies. */
+  function wired() {
+    const asked: { repoId: string; branch: string }[] = [];
+    let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+    const h = open({
+      onBranchChange: (repoId, branch) => asked.push({ repoId, branch }),
+      bindDefaults: (fn) => {
+        apply = fn;
+      },
+    });
+    return { ...h, asked, answer: (next: ReturnType<typeof createDefaults>) => apply?.(next) };
+  }
+
+  /** The Create button, by its label — the form gives it no id. */
+  function createButton(host: HTMLElement): HTMLButtonElement {
+    const btn = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /create worktree/i.test(b.textContent ?? ""),
+    );
+    if (!btn) {
+      throw new Error("no Create button");
+    }
+    return btn;
+  }
+
+  function commit(input: HTMLInputElement, value: string): void {
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  it("holds Create until the host has answered for the branch on screen", () => {
+    const h = wired();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/a");
+    expect(h.asked.at(-1)?.branch).toBe("feat/a");
+    // The destination shown is still the previous branch's. Submitting now
+    // would submit a path that does not belong to this name.
+    expect(createButton(h.host).disabled).toBe(true);
+
+    h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-a", answersBranch: "feat/a" }));
+    expect(createButton(h.host).disabled).toBe(false);
+  });
+
+  it("ignores an answer for a branch the form has already moved past", () => {
+    const h = wired();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/a");
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/b");
+    // The slow answer to the FIRST question arrives last.
+    h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-a", answersBranch: "feat/a" }));
+    expect(h.host.textContent ?? "").not.toContain("/trees/repo-feat-a");
+    expect(createButton(h.host).disabled).toBe(true);
+
+    h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-b", answersBranch: "feat/b" }));
+    expect(createButton(h.host).disabled).toBe(false);
   });
 });

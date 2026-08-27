@@ -1,0 +1,1770 @@
+{
+  "change": "wire-worktree-mutating-actions",
+  "leases": [],
+  "attempts": {},
+  "locked": [],
+  "verified": [
+    {
+      "task": "1_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "ac714e0eeac49eb314d2998e71238c9bd9d0aca3",
+      "at": 1787790515897,
+      "scope": [
+        "src/worktree/mutationQueue.ts",
+        "src/worktree/mutationQueue.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/mutationQueue.test.ts'"
+    },
+    {
+      "task": "1_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "c16051204ae04441c32c37099e6dd66d393cbad5",
+      "at": 1787790592058,
+      "scope": [
+        "src/worktree/mutationCoordinator.ts",
+        "src/worktree/mutationCoordinator.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/mutationCoordinator.test.ts'"
+    },
+    {
+      "task": "1_3",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "3f8545f339783fc317fa4643e33c67dda6baefab",
+      "at": 1787790739204,
+      "scope": [
+        "src/worktree/worktreeBlockers.ts",
+        "src/utils/pathBoundary.ts",
+        "src/types/messages.ts",
+        "src/worktree/worktreeBlockers.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts'"
+    },
+    {
+      "task": "3_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "a30ac87ac34c88c4b7d54c2ddca6243596163177",
+      "at": 1787790898940,
+      "scope": [
+        "src/worktree/createPath.ts",
+        "src/settings/SettingsReader.ts",
+        "package.json",
+        "src/worktree/createPath.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/createPath.test.ts'"
+    },
+    {
+      "task": "1_4",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "a3a5c0cd66d03b6dc2ceb2e316bab63d5fa7b509",
+      "at": 1787790979863,
+      "scope": [
+        "src/worktree/worktreeFingerprint.ts",
+        "src/worktree/worktreeFingerprint.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeFingerprint.test.ts'"
+    },
+    {
+      "task": "2_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "3c4604b295e017509cc76e75efcc2142c4350c46",
+      "at": 1787791311612,
+      "scope": [
+        "src/worktree/worktreeMutations.ts",
+        "src/types/messages.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/worktree/worktreeMutations.test.ts",
+        "src/providers/WorktreeHost.actions.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutations.test.ts'",
+      "testChange": {
+        "reason": "Contract moved: three mutating message types added. Both files are exhaustiveness guards that must enumerate every declared type by construction — TerminalViewProvider.worktree.test.ts keys a Record off WORKTREE_MESSAGE_TYPES and fails the BUILD when a type has no sample; WorktreeHost.actions.test.ts fakes every WorktreeActions capability. Additions only: no existing assertion deleted, weakened, or retargeted. The guards caught the exact gap they exist for — the enumerated dispatch switch routed the new types nowhere.",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.worktree.test.ts",
+          "src/providers/WorktreeHost.actions.test.ts"
+        ],
+        "assertionDelta": 7
+      }
+    },
+    {
+      "task": "1_5",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "3fd84eb5df371370c588e25efaca1d50266e11f4",
+      "at": 1787791443677,
+      "scope": [
+        "src/worktree/worktreeBlockers.ts",
+        "src/webview/worktree/worktreeViewTypes.ts",
+        "src/webview/worktree/worktreeFixtures.ts",
+        "src/webview/worktree/WorktreeRemoveDialog.ts",
+        "src/webview/worktree/WorktreeRemoveDialog.test.ts",
+        "src/worktree/worktreeBlockers.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts'",
+      "testChange": {
+        "reason": "Contract moved: D4 adds a third refusal reason (containsWorktrees), so the existing isRemoveRefused case — titled \"refuses on a busy agent or the main worktree, and nothing else\" — encoded a two-reason contract that is no longer true. Its three original assertions are unchanged; the title was corrected and a containment assertion added alongside them. Everything else is new cases.",
+        "deleted": [],
+        "modified": [
+          "src/webview/worktree/WorktreeRemoveDialog.test.ts"
+        ],
+        "assertionDelta": 7
+      }
+    },
+    {
+      "task": "2_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "cbe293946856ca56fe2eaced2258f536a6fa3723",
+      "at": 1787791699091,
+      "scope": [
+        "src/worktree/gitCommandRunner.ts",
+        "src/worktree/worktreeMutations.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/worktree/worktreeMutations.test.ts",
+        "src/providers/TerminalViewProvider.worktree.test.ts",
+        "src/providers/WorktreeHost.actions.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutations.test.ts'",
+      "testChange": {
+        "reason": "Contract moved: worktreeRemove is a new message type. Both edited files are exhaustiveness guards that must enumerate every declared type by construction — TerminalViewProvider.worktree.test.ts keys a Record off WORKTREE_MESSAGE_TYPES and fails the BUILD when a type has no sample; WorktreeHost.actions.test.ts fakes every WorktreeActions capability. Additions only: no existing assertion deleted, weakened, or retargeted.",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.worktree.test.ts",
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/worktree/worktreeMutations.test.ts"
+        ],
+        "assertionDelta": 17
+      }
+    },
+    {
+      "task": "3_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "52564c475fcc658a891b260ecc2263da3676c134",
+      "at": 1787794137828,
+      "scope": [
+        "src/worktree/worktreeMutations.ts",
+        "src/worktree/gitExclude.ts",
+        ".git/info/exclude",
+        "src/providers/WorktreeHost.ts",
+        "src/worktree/gitExclude.test.ts",
+        "src/worktree/worktreeMutations.test.ts",
+        "src/types/messages.ts",
+        "src/providers/TerminalViewProvider.worktree.test.ts",
+        "src/providers/WorktreeHost.actions.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutations.test.ts'",
+      "testChange": {
+        "reason": "Contract moved: worktreeCreate is a new message type. Both edited provider test files are exhaustiveness guards that must enumerate every declared type by construction. Additions only: no existing assertion deleted, weakened, or retargeted.",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.worktree.test.ts",
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/worktree/worktreeMutations.test.ts"
+        ],
+        "assertionDelta": 14
+      }
+    },
+    {
+      "task": "4_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "bf70807682471c90738a6638d0e382d04b1a7cd4",
+      "at": 1787794626822,
+      "scope": [
+        "src/webview/worktree/WorktreeController.ts",
+        "src/webview/worktree/WorktreeContextMenu.ts",
+        "src/webview/worktree/WorktreePruneDialog.ts",
+        "src/webview/worktree/WorktreeCreateDialog.ts",
+        "src/webview/worktree/WorktreeRemoveDialog.ts",
+        "src/webview/worktree/WorktreeController.test.ts",
+        "src/webview/worktree/WorktreePruneDialog.test.ts",
+        "src/webview/worktree/WorktreeCreateDialog.test.ts",
+        "src/webview/worktree/WorktreeRemoveDialog.test.ts",
+        "src/webview/worktree/WorktreeContextMenu.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeContextMenu.test.ts'",
+      "testChange": {
+        "reason": "Three inherited assertions encoded the PRE-WT-005.2 state and are now false by design; each is REPLACED by its positive, none deleted. (1) WorktreeCreateDialog \"keeps the agent picker hidden until After creating asks for one\" asserted the box unhides — D9 removes the mode, so it becomes: the option is absent and the box stays hidden even when the value is forced in. (2) WorktreeContextMenu \"omits the mutating and launch items, whose capabilities nothing supplies yet\" — the mutating items are now built; the assertion keeps the launch item absent and gains the two new labels. (3) WorktreeContextMenu \"supplies no mutating or launch capability at all\" splits into: the mutating ones are defined, the launch ones are still undefined. The absent-not-inert rule is unchanged — only which side of it toggleLock/removeWorktree sit on. Everything else is new cases.",
+        "deleted": [],
+        "modified": [
+          "src/webview/worktree/WorktreeContextMenu.test.ts",
+          "src/webview/worktree/WorktreeController.test.ts",
+          "src/webview/worktree/WorktreeCreateDialog.test.ts",
+          "src/webview/worktree/WorktreeRemoveDialog.test.ts"
+        ],
+        "assertionDelta": 14
+      }
+    },
+    {
+      "task": "4_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "3be471661900b49bad8b2c8e6296ddfe1f670a58",
+      "at": 1787794717149,
+      "scope": [
+        "src/webview/worktree/WorktreeView.ts",
+        "src/webview/worktree/WorktreeView.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts'",
+      "testChange": {
+        "reason": "Additions only to WorktreeView.test.ts — four new cases pinning D11 wording and the no-retry rule. No existing assertion deleted, weakened, or retargeted.",
+        "deleted": [],
+        "modified": [
+          "src/webview/worktree/WorktreeView.test.ts"
+        ],
+        "assertionDelta": 4
+      }
+    },
+    {
+      "task": "5_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "afe5bf61fc9d5f2eba95f127edd17cabb675b474",
+      "at": 1787794912093,
+      "scope": [
+        "src/worktree/worktreeMutations.integration.test.ts",
+        "src/worktree/worktreeMutations.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutations.integration.test.ts'",
+      "testChange": {
+        "reason": "One unit assertion encoded a FALSE PREMISE that real git disproved. worktreeMutations.test.ts \"counts what would be dropped without dropping it\" fed the prune report on stdout; git writes it to stderr, so countPrunable returned 0 for every repository and the D13 confirmation would always have said \"0 registrations\". The integration test caught it. The case is corrected to stderr, not weakened — it still asserts the same count from the same report. Everything else in this task is a new file.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/worktreeMutations.test.ts"
+        ],
+        "assertionDelta": 0
+      }
+    },
+    {
+      "task": "6_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "67e32f67dabe62329a944fe1440a6d6ed4e6f439",
+      "at": 1787796711871,
+      "scope": [
+        "src/worktree/mutationQueue.ts",
+        "src/worktree/worktreeFingerprint.ts",
+        "src/worktree/mutationQueue.test.ts",
+        "src/worktree/worktreeFingerprint.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/mutationQueue.test.ts'",
+      "testChange": {
+        "reason": "redeem replaces verify and now consumes the record (round-1 B5), so the size assertion in \"replaces a worktree's issued entry\" had to be taken before the redeem rather than after — moved, not weakened, and a size-0-after assertion added alongside",
+        "deleted": [],
+        "modified": [
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/webview/worktree/WorktreeContextMenu.test.ts",
+          "src/webview/worktree/WorktreeController.test.ts",
+          "src/webview/worktree/WorktreeRemoveDialog.test.ts",
+          "src/webview/worktree/WorktreeView.test.ts",
+          "src/worktree/gitExclude.test.ts",
+          "src/worktree/mutationQueue.test.ts",
+          "src/worktree/worktreeBlockers.test.ts",
+          "src/worktree/worktreeFingerprint.test.ts",
+          "src/worktree/worktreeMutations.integration.test.ts",
+          "src/worktree/worktreeMutations.test.ts"
+        ],
+        "assertionDelta": 10
+      }
+    },
+    {
+      "task": "6_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "798870c5baec9b64250d2aa776a65a4930e533e0",
+      "at": 1787796950074,
+      "scope": [
+        "src/worktree/createPath.ts",
+        "src/worktree/createPath.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/createPath.test.ts'",
+      "testChange": {
+        "reason": "fsOf gained dev/ino and a platform so the fake filesystem can express the two things round-1 B3/B4 turn on — a win32 separator and a per-path inode. Purely additive: +14 assertions, none removed or relaxed, and every pre-existing case runs unchanged on the darwin default. The four new B3/B4 cases were each mutation-checked against the pre-fix implementation and all four fail against it.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/createPath.test.ts"
+        ],
+        "assertionDelta": 14
+      }
+    },
+    {
+      "task": "6_3",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "665cdbb5dd0037676e7e3f53764b1cdc4e467037",
+      "at": 1787797882650,
+      "scope": [
+        "src/worktree/worktreeMutationService.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/extension.ts",
+        "src/providers/WorktreeHost.actions.test.ts",
+        "src/worktree/worktreeMutationService.test.ts",
+        "src/extension.worktreeMutations.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts'",
+      "testChange": {
+        "reason": "WorktreeHost.actions.test.ts: three lock/unlock/remove expectations now assert the id-bearing target instead of a pre-resolved path, because round-1 B2 moved resolution to the far side of the forced rebuild. Not weakened — the id-vs-displayPath distinction those cases existed to protect is re-proved in worktreeMutationService.test.ts (\"runs against the path the id resolves to, not against the id\"), and the three stand-in hosts in TerminalViewProvider.worktree.test.ts gained the new interface member. +18 assertions, none removed.",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.worktree.test.ts",
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/worktree/createPath.test.ts"
+        ],
+        "assertionDelta": 0
+      }
+    },
+    {
+      "task": "6_4",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "c1dc20d723da13e0d4d4caa5f8fb29cacf18b47e",
+      "at": 1787798178385,
+      "scope": [
+        "src/types/messages.ts",
+        "src/webview/worktree/WorktreeController.ts",
+        "src/webview/worktree/WorktreeController.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts'",
+      "testChange": {
+        "reason": "WorktreeController.test.ts: controllerActions() gained an optional repoFor parameter so the prune resolver can be exercised. Purely additive — the existing zero-arg calls are unchanged and no assertion was removed or relaxed; +6 assertions covering prune (absent resolver, live count, zero count) and create (submitter present, new-branch mapping, deferred agent mode posts nothing).",
+        "deleted": [],
+        "modified": [
+          "src/webview/worktree/WorktreeController.test.ts"
+        ],
+        "assertionDelta": 6
+      }
+    },
+    {
+      "task": "7_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "94e0e1de4e2fb2f7721c64b4b21a0180a5fb89f0",
+      "at": 1787799312906,
+      "scope": [
+        "src/worktree/createPath.ts",
+        "src/worktree/createPath.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/createPath.test.ts'",
+      "testChange": {
+        "reason": "createPath.test.ts: +4 assertions in a new POSIX-backslash describe block. Purely additive — no existing assertion touched, and both new cases were mutation-checked in both directions (both-separators-everywhere fails the POSIX case; posix-only-everywhere fails the two win32 cases).",
+        "deleted": [],
+        "modified": [
+          "src/worktree/createPath.test.ts"
+        ],
+        "assertionDelta": 3
+      }
+    },
+    {
+      "task": "7_3",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "82896cbdeedc28ddb64fae6e228d0d2e58e5b11b",
+      "at": 1787799533810,
+      "scope": [
+        "src/worktree/worktreeBlockers.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/worktree/worktreeBlockers.test.ts",
+        "src/providers/WorktreeHost.actions.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts'",
+      "testChange": {
+        "reason": "worktreeBlockers.test.ts: the input helper now wraps `porcelain` and `externalSessions` as SourceRead reads, because D16 makes a failed read its own outcome rather than a benign fallback. Mechanical rewrap of existing fixtures — every pre-existing assertion is unchanged and still asserts the same verdict; +6 assertions for the three unreadable sources, their combination, the refusal-from-stale-state case, and the clean-read positive. Mutation-checked: deleting the unavailable branch fails 5 of them.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/worktreeBlockers.test.ts"
+        ],
+        "assertionDelta": 6
+      }
+    },
+    {
+      "task": "7_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "7ea57f2b1801c2b88c5b3a467ee42a07cb2b29ba",
+      "at": 1787799685700,
+      "scope": [
+        "src/worktree/worktreeMutationService.ts",
+        "src/worktree/worktreeMutationService.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts'",
+      "testChange": {
+        "reason": "worktreeMutationService.test.ts: +4 additive assertions for D6 two-phase validation (ordering across the barrier, swapped-but-empty inode, emptiness lost during the wait, and the unchanged positive). No existing assertion touched. Both new guards mutation-checked: removing the emptiness recheck and neutering the identity comparison each fail exactly one.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 9
+      }
+    },
+    {
+      "task": "7_4",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "cbb214823a42656172a095a741ad59364049fbe1",
+      "at": 1787799816946,
+      "scope": [
+        "src/worktree/worktreeMutationService.ts",
+        "src/worktree/worktreeMutationService.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts'",
+      "testChange": {
+        "reason": "worktreeMutationService.test.ts: +5 additive assertions for assessment-on-every-removal (unforced with blockers returns them, the issued token actually redeems, a clean worktree still proceeds, a refusal carries no token, unreadable evidence runs nothing). No existing assertion touched. Mutation-checked: making the unforced path never block fails two of them.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 9
+      }
+    },
+    {
+      "task": "7_5",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "28cb192e9616b665c6558d267e6441254c03c06d",
+      "at": 1787800027639,
+      "scope": [
+        "src/worktree/worktreeFingerprint.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/worktree/worktreeFingerprint.test.ts",
+        "src/worktree/worktreeMutationService.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeFingerprint.test.ts'",
+      "testChange": {
+        "reason": "D15 removes `incarnation` from FingerprintTarget, so worktreeFingerprint.test.ts drops it from every target literal and its \"earlier incarnation\" case becomes the observation case it replaces (`forget`), plus a new case proving forget is per-worktree. worktreeMutationService.test.ts gains two: a token spent on an exit that never reached git, and a confirmation destroyed by disappearance. Both mutation-checked — and the disappearance test was REWRITTEN after its first version survived deleting `forget`, because the forced removal in it spent the token itself; it now uses an unforced first removal so only forget can explain the result.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/worktreeFingerprint.test.ts",
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 6
+      }
+    },
+    {
+      "task": "7_6",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "1e9047981f86e6aada7984a60a1231efd4dfb9a3",
+      "at": 1787800187104,
+      "scope": [
+        "src/extension.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/extension.worktreeMutations.test.ts",
+        "src/worktree/worktreeMutationService.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/extension.worktreeMutations.test.ts'",
+      "testChange": {
+        "reason": "worktreeMutationService.test.ts: +3 additive assertions for D11 independent observation (directory surviving a clean exit is indeterminate, a degraded listing is indeterminate, and the journalled path is what reaches the observation). No existing assertion touched. A fourth case was written and DELETED before verifying — it asserted an empty array in a scenario where nothing ran, so it would have read as a guarantee while proving nothing. Mutation-checked: replacing the observation with an optimistic constant fails all three.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 3
+      }
+    },
+    {
+      "task": "7_7",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "0cbaa05654e7b73545b22c62cf03c75ca907349d",
+      "at": 1787801030410,
+      "scope": [
+        "src/types/messages.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/extension.ts",
+        "src/providers/WorktreeHost.actions.test.ts",
+        "src/worktree/worktreeMutationService.test.ts",
+        "src/webview/worktree/WorktreeController.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts'",
+      "testChange": {
+        "reason": "WorktreeHost.actions.test.ts: seven mutating-action expectations gained `origin: view` because D17 makes the originating surface part of every mutation request — the assertions were strengthened, not relaxed. worktreeMutationService.test.ts: harness gains the two gitExclude deps the service now requires (addition only).",
+        "deleted": [],
+        "modified": [
+          "src/providers/TerminalViewProvider.worktree.test.ts",
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 12
+      }
+    },
+    {
+      "task": "7_8",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "e6685529b988a49cbe5c76020360678a7657692f",
+      "at": 1787801748993,
+      "scope": [
+        "src/webview/worktree/WorktreeController.ts",
+        "src/webview/worktree/WorktreeView.ts",
+        "src/webview/worktree/WorktreeController.test.ts",
+        "src/webview/worktree/WorktreeView.test.ts",
+        "src/types/messages.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/providers/WorktreeHost.actions.test.ts",
+        "src/extension.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/webview/worktree/worktreeViewTypes.ts",
+        "src/webview/messaging/MessageRouter.ts",
+        "src/webview/main.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts'",
+      "testChange": {
+        "reason": "WorktreeController.test.ts: \"hands the view a create submitter\" asserted the OPEN half was deliberately absent; 7_8 is that half arriving, so the test now asserts both halves are wired — its old claim is no longer true of the code. WorktreeHost.actions.test.ts: the collision test moved from the literal base \"worktree\" to the repo label, because the host now derives the create base from the repo name so the form placeholder and the destination describe one scheme; it also gained the free-path negative. All other edits are additions.",
+        "deleted": [],
+        "modified": [
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/webview/worktree/WorktreeController.test.ts",
+          "src/webview/worktree/WorktreeView.test.ts"
+        ],
+        "assertionDelta": 30
+      }
+    },
+    {
+      "task": "8_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "d1310e28cc0abc28cae2f941269feeedcd7de489",
+      "at": 1787804338688,
+      "scope": [
+        "src/webview/worktree/WorktreeContextMenu.ts",
+        "src/webview/worktree/WorktreeController.ts",
+        "src/webview/worktree/WorktreeView.ts",
+        "src/webview/worktree/WorktreeContextMenu.test.ts",
+        "src/webview/worktree/WorktreeController.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeContextMenu.test.ts'",
+      "testChange": {
+        "reason": "WorktreeController.test.ts: three prune tests asserted a click posts worktreePrune directly. Round-3 B9 established that D13 requires the confirmation first, so the contract moved and the tests now assert confirm-then-post; the count assertions they carried are unchanged and a cancel negative was added. WorktreeContextMenu.test.ts: \"still supplies nothing for the launch WT-005.3 owns\" listed createWorktree beside resumeHere; create is WT-005.2 and is now supplied when a form can open, so the case was split into the resumeHere negative plus a create positive/negative pair. All other edits are additions.",
+        "deleted": [],
+        "modified": [
+          "src/webview/worktree/WorktreeContextMenu.test.ts",
+          "src/webview/worktree/WorktreeController.test.ts"
+        ],
+        "assertionDelta": 17
+      }
+    },
+    {
+      "task": "8_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "21d9d3ddf316685209c5753676c22b26f2e418f7",
+      "at": 1787804839680,
+      "scope": [
+        "src/worktree/worktreeMutationService.ts",
+        "src/worktree/mutationCoordinator.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/extension.ts",
+        "src/worktree/worktreeMutationService.test.ts",
+        "src/providers/WorktreeHost.actions.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts'",
+      "testChange": {
+        "reason": "WorktreeHost.actions.test.ts: recordingActions gains a reconcileFingerprints recorder, deliberately kept OUT of the shared `calls` array so no existing action assertion becomes dependent on rebuild timing. Pure addition; no existing assertion changed. worktreeMutationService.test.ts: additions only.",
+        "deleted": [],
+        "modified": [
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 12
+      }
+    },
+    {
+      "task": "8_3",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "ac9cd48b66358271c860eaa1c2a8e114d87a5bd5",
+      "at": 1787805090602,
+      "scope": [
+        "src/providers/WorktreeHost.ts",
+        "src/worktree/worktreeBlockers.ts",
+        "src/worktree/worktreeBlockers.test.ts",
+        "src/providers/WorktreeHost.actions.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts'",
+      "testChange": {
+        "reason": "WorktreeHost.actions.test.ts: builtHost now supplies removalFacts and shares one runner across the host. Both are corrections to the harness, not to assertions — without removalFacts, assessRemoval returns null before reaching git, which made the first version of the new B8 test pass vacuously; the shared runner is what lets a test observe which git commands the host issued. No existing assertion changed. worktreeBlockers.test.ts: additions only.",
+        "deleted": [],
+        "modified": [
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/worktree/worktreeBlockers.test.ts"
+        ],
+        "assertionDelta": 9
+      }
+    },
+    {
+      "task": "8_4",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "4574c928272112363d25b7bde1eb620649fb63c4",
+      "at": 1787805374673,
+      "scope": [
+        "src/worktree/createPath.ts",
+        "src/worktree/gitExclude.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/extension.ts",
+        "src/worktree/gitExclude.test.ts",
+        "src/worktree/createPath.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/gitExclude.test.ts'",
+      "testChange": {
+        "reason": "createPath.test.ts and gitExclude.test.ts: additions only, plus a type-only import widened in createPath.test.ts to name CreatePathContext. No existing assertion changed.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/createPath.test.ts",
+          "src/worktree/gitExclude.test.ts",
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 14
+      }
+    },
+    {
+      "task": "8_5",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "7aac860e1a87eb42f8abccf9d5d8ee1a59cf9182",
+      "at": 1787806026496,
+      "scope": [
+        "src/extension.ts",
+        "src/types/messages.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/worktree/createPath.ts",
+        "src/webview/worktree/WorktreeController.ts",
+        "src/webview/worktree/WorktreeCreateDialog.ts",
+        "src/providers/WorktreeHost.actions.test.ts",
+        "src/webview/worktree/WorktreeController.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts'",
+      "testChange": {
+        "reason": "WorktreeController.test.ts: the seed expectation now carries resolvedPath because the host-resolved path is always the destination the form shows and submits (B12); WorktreeCreateDialog.ts no longer owns sanitizeBranchForPath — it moved to createPath.ts so host and form cannot disagree on the slug rule.",
+        "deleted": [],
+        "modified": [
+          "src/providers/WorktreeHost.actions.test.ts",
+          "src/webview/worktree/WorktreeController.test.ts"
+        ],
+        "assertionDelta": 7
+      }
+    },
+    {
+      "task": "8_6",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "87183a18d2b9657576afbde620edc2688bdcb873",
+      "at": 1787806519468,
+      "scope": [
+        "src/extension.ts",
+        "src/worktree/worktreeMutations.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/worktree/worktreeMutationService.test.ts",
+        "src/worktree/worktreeMutations.test.ts",
+        "src/worktree/worktreeMutations.integration.test.ts",
+        "src/extension.worktreeMutations.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts'",
+      "testChange": {
+        "reason": "countPrunable now returns a typed read instead of a number, so its two existing unit assertions and the two integration assertions compare {ok,count} rather than a bare count — the contract moved (W4); the old assertions encoded the fail-open behaviour the finding is about.",
+        "deleted": [],
+        "modified": [
+          "src/extension.worktreeMutations.test.ts",
+          "src/worktree/worktreeMutationService.test.ts",
+          "src/worktree/worktreeMutations.integration.test.ts",
+          "src/worktree/worktreeMutations.test.ts"
+        ],
+        "assertionDelta": 25
+      }
+    },
+    {
+      "task": "8_7",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "d2e0262821fb831ffe09fe9d2b65f1252d0cf8b2",
+      "at": 1787806934496,
+      "scope": [
+        "src/webview/worktree/WorktreeController.ts",
+        "src/webview/worktree/WorktreeView.ts",
+        "src/webview/worktree/worktreeViewTypes.ts",
+        "src/webview/worktree/WorktreeController.test.ts",
+        "src/webview/worktree/WorktreeView.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts'",
+      "testChange": {
+        "reason": "Additions only — no inherited assertion was weakened or removed. Both suites gained cases for the re-scoped notice: the controller now reconciles results and create defaults against each tree response, and the view renders orphanedLabel, neither of which had any coverage before (B1, W6).",
+        "deleted": [],
+        "modified": [
+          "src/webview/worktree/WorktreeController.test.ts",
+          "src/webview/worktree/WorktreeView.test.ts"
+        ],
+        "assertionDelta": 18
+      }
+    },
+    {
+      "task": "8_8",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "def5f9da6ff4f8ccd53c0661ffd7f3509193d00a",
+      "at": 1787807114965,
+      "scope": [
+        "src/extension.ts",
+        "src/extension.worktreeMutations.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/extension.worktreeMutations.test.ts'",
+      "testChange": {
+        "reason": "Additions only to src/extension.worktreeMutations.test.ts — nothing inherited was weakened. The mock of createWorktreeMutationService now wraps deps.report so the far end of D17 routing is observable at all; previously no test could see where an outcome went.",
+        "deleted": [],
+        "modified": [
+          "src/extension.worktreeMutations.test.ts"
+        ],
+        "assertionDelta": 6
+      }
+    },
+    {
+      "task": "8_9",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "b0df689f87bb66a6edb2edbb6bbd623034c8a7e4",
+      "at": 1787807670143,
+      "scope": [
+        "src/extension.worktreeAssembly.test.ts",
+        "src/extension.worktreeMutations.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/extension.worktreeMutations.test.ts'"
+    },
+    {
+      "task": "9_1",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "18871cd61aab6e05c75026ebc2380f597d191db1",
+      "at": 1787810663469,
+      "scope": [
+        "src/webview/worktree/WorktreeController.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/types/messages.ts",
+        "src/extension.ts",
+        "src/webview/worktree/worktreeViewTypes.ts",
+        "src/webview/worktree/WorktreeView.ts",
+        "src/webview/worktree/WorktreeController.test.ts",
+        "src/webview/worktree/WorktreeView.test.ts",
+        "src/worktree/worktreeMutationService.test.ts",
+        "src/extension.worktreeAssembly.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts'",
+      "testChange": {
+        "reason": "Two contracts moved. (1) A result naming a worktree the tree does not contain is now repo-scoped, so five WorktreeController tests that used synthetic ids (/wt, /a, /b) absent from the fixture tree were repointed at real fixture rows — they still assert what they always asserted. (2) A create whose open-after failed is ONE partial-success outcome instead of a success followed by an error, because the follow-up shared the success scope and replaced it (round-4 W7); the service test now expects one outcome carrying openFailed.",
+        "deleted": [],
+        "modified": [
+          "src/extension.worktreeAssembly.test.ts",
+          "src/extension.worktreeMutations.test.ts",
+          "src/webview/worktree/WorktreeController.test.ts",
+          "src/webview/worktree/WorktreeView.test.ts",
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 11
+      }
+    },
+    {
+      "task": "9_2",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "126f6db110e5d80b477285e19607afe310700e22",
+      "at": 1787811012710,
+      "scope": [
+        "src/extension.ts",
+        "src/providers/WorktreeHost.ts",
+        "src/types/messages.ts",
+        "src/webview/worktree/WorktreeController.ts",
+        "src/webview/worktree/worktreeViewTypes.ts",
+        "src/webview/worktree/WorktreeCreateDialog.ts",
+        "src/extension.worktreeAssembly.test.ts",
+        "src/webview/worktree/WorktreeController.test.ts",
+        "src/webview/worktree/WorktreeCreateDialog.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts'",
+      "testChange": {
+        "reason": "Additions only. The assembly test moves its fake repo onto a real temp directory because the create-path probe asks the filesystem, and a root nothing could ever occupy made the old assertion hollow — it passed whether or not the probe was wired.",
+        "deleted": [],
+        "modified": [
+          "src/extension.worktreeAssembly.test.ts",
+          "src/webview/worktree/WorktreeController.test.ts",
+          "src/webview/worktree/WorktreeCreateDialog.test.ts"
+        ],
+        "assertionDelta": 11
+      }
+    },
+    {
+      "task": "9_3",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "1779b67e6aa4132462e03a3908732b7296d03a3c",
+      "at": 1787811108842,
+      "scope": [
+        "src/worktree/gitExclude.ts",
+        "src/extension.ts",
+        "src/worktree/gitExclude.test.ts",
+        "src/worktree/worktreeMutationService.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/gitExclude.test.ts'",
+      "testChange": {
+        "reason": "Additions only.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/gitExclude.test.ts",
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 4
+      }
+    },
+    {
+      "task": "9_4",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "dab3667b32249e71942b66bfa6e36c7a401e47cb",
+      "at": 1787811236289,
+      "scope": [
+        "src/worktree/worktreeMutations.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/worktree/worktreeMutationService.test.ts",
+        "src/worktree/worktreeMutations.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts'",
+      "testChange": {
+        "reason": "Additions only.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/worktreeMutationService.test.ts",
+          "src/worktree/worktreeMutations.test.ts"
+        ],
+        "assertionDelta": 18
+      }
+    },
+    {
+      "task": "9_5",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "62b22958fce29f599d70292257e65879748fc73d",
+      "at": 1787811410929,
+      "scope": [
+        "src/worktree/mutationCoordinator.ts",
+        "src/worktree/worktreeMutationService.ts",
+        "src/worktree/mutationCoordinator.test.ts",
+        "src/worktree/worktreeMutationService.test.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/worktree/mutationCoordinator.test.ts'",
+      "testChange": {
+        "reason": "One inherited assertion moved, deliberately: \"releases the queue even when the trailing rebuild itself fails\" expected the run to REJECT when the post-mutation refresh failed. That is the same defect as W7 — a follow-up failure rewriting an outcome that already happened. The mutation ran and its result stands; only the refresh did not. The test keeps its own stated intent (the queue is released) and now also asserts the outcome survives.",
+        "deleted": [],
+        "modified": [
+          "src/worktree/mutationCoordinator.test.ts",
+          "src/worktree/worktreeMutationService.test.ts"
+        ],
+        "assertionDelta": 9
+      }
+    },
+    {
+      "task": "9_6",
+      "cmd": "pnpm run check-types && pnpm run test:unit",
+      "exit": 0,
+      "tree": "d1c6488812534f06c8bb1fe9de6a10156fb4a8f7",
+      "at": 1787811561940,
+      "scope": [
+        "src/extension.worktreeAssembly.test.ts",
+        "src/webview/worktree/WorktreeView.ts"
+      ],
+      "testCmd": "pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts'",
+      "testChange": {
+        "reason": "Additions only.",
+        "deleted": [],
+        "modified": [
+          "src/extension.worktreeAssembly.test.ts"
+        ],
+        "assertionDelta": 8
+      }
+    }
+  ],
+  "reads": 0,
+  "testBaseline": {
+    "src/extension.worktreeAssembly.test.ts": {
+      "hash": "e916347ba969e228",
+      "assertions": 21
+    },
+    "src/extension.worktreeMutations.test.ts": {
+      "hash": "399105cecfb64e93",
+      "assertions": 15
+    },
+    "src/worktree/worktreeMutationService.test.ts": {
+      "hash": "1531c5b445486b1f",
+      "assertions": 91
+    },
+    "asimov/debug/260823-session-preview-ordered-list-verified/repro.test.ts": {
+      "hash": "c2c788522d0cbe90",
+      "assertions": 1
+    },
+    "asimov/debug/260823-session-preview-ordered-list/repro.test.ts": {
+      "hash": "c2c788522d0cbe90",
+      "assertions": 1
+    },
+    "src/commands/exportCommands.test.ts": {
+      "hash": "23cb612f2dbd8909",
+      "assertions": 38
+    },
+    "src/commands/exportHelpers.test.ts": {
+      "hash": "e4b6bd763ee01762",
+      "assertions": 28
+    },
+    "src/cursor/CursorExecutableResolver.test.ts": {
+      "hash": "8885bf0f43c93b1a",
+      "assertions": 13
+    },
+    "src/cursor/CursorHookController.test.ts": {
+      "hash": "6196df6bcc945df0",
+      "assertions": 20
+    },
+    "src/cursor/CursorHookInstaller.test.ts": {
+      "hash": "a81d279549ce6c3d",
+      "assertions": 54
+    },
+    "src/cursor/CursorHookRuntime.test.ts": {
+      "hash": "6d304d861555c1e0",
+      "assertions": 86
+    },
+    "src/extension.worktreeActions.test.ts": {
+      "hash": "60bb95812e1c0852",
+      "assertions": 24
+    },
+    "src/extension.worktreeDelegations.test.ts": {
+      "hash": "8f625634f956a00f",
+      "assertions": 3
+    },
+    "src/providers/ActiveFileRevealer.test.ts": {
+      "hash": "7edc11b0e499ec36",
+      "assertions": 35
+    },
+    "src/providers/TerminalEditorProvider.onReady.test.ts": {
+      "hash": "9ca907a96e298985",
+      "assertions": 13
+    },
+    "src/providers/TerminalEditorProvider.panelId.test.ts": {
+      "hash": "c702a3d39996c7c4",
+      "assertions": 4
+    },
+    "src/providers/TerminalEditorProvider.scheduledDestroy.test.ts": {
+      "hash": "1509cd50e89a195b",
+      "assertions": 4
+    },
+    "src/providers/TerminalEditorProvider.test.ts": {
+      "hash": "006452ca747281c6",
+      "assertions": 32
+    },
+    "src/providers/TerminalEditorProvider.vault.test.ts": {
+      "hash": "0b4c3bca53bc6d71",
+      "assertions": 12
+    },
+    "src/providers/TerminalPanelSerializer.test.ts": {
+      "hash": "676c5031140957fd",
+      "assertions": 7
+    },
+    "src/providers/TerminalViewProvider.restore.test.ts": {
+      "hash": "e4dfa8678e25170d",
+      "assertions": 7
+    },
+    "src/providers/TerminalViewProvider.test.ts": {
+      "hash": "802388b7ccc04c81",
+      "assertions": 88
+    },
+    "src/providers/TerminalViewProvider.vaultContinue.test.ts": {
+      "hash": "3d8896b717b1553b",
+      "assertions": 21
+    },
+    "src/providers/TerminalViewProvider.vaultRename.test.ts": {
+      "hash": "4bb16dad68c7edd1",
+      "assertions": 14
+    },
+    "src/providers/TerminalViewProvider.worktree.test.ts": {
+      "hash": "337aec4145ca2d32",
+      "assertions": 28
+    },
+    "src/providers/VaultWatchCoordinator.test.ts": {
+      "hash": "495b17f59538d982",
+      "assertions": 47
+    },
+    "src/providers/WorktreeHost.actions.test.ts": {
+      "hash": "4fed3f624c9287aa",
+      "assertions": 69
+    },
+    "src/providers/WorktreeHost.delegations.test.ts": {
+      "hash": "02dc61eb2454f4b2",
+      "assertions": 32
+    },
+    "src/providers/WorktreeHost.invalidation.test.ts": {
+      "hash": "4759fc0dcf3ec215",
+      "assertions": 22
+    },
+    "src/providers/WorktreeHost.presence.test.ts": {
+      "hash": "5f4aa8be84cc20f5",
+      "assertions": 76
+    },
+    "src/providers/WorktreeHost.test.ts": {
+      "hash": "2270d3d018f2ac0a",
+      "assertions": 54
+    },
+    "src/providers/clipboardImageSync.test.ts": {
+      "hash": "f9a7f4755491228c",
+      "assertions": 30
+    },
+    "src/providers/fileTreeHost.test.ts": {
+      "hash": "098d26bc85a38db5",
+      "assertions": 122
+    },
+    "src/providers/fileTreeSearchHandler.test.ts": {
+      "hash": "8625dc92e6ee8a0d",
+      "assertions": 41
+    },
+    "src/providers/fsWatcherPool.test.ts": {
+      "hash": "6d6bfdcf8d7e6c6b",
+      "assertions": 62
+    },
+    "src/providers/gitDecorationProvider.test.ts": {
+      "hash": "1fc9ff688459dad0",
+      "assertions": 55
+    },
+    "src/providers/gitStatusMapping.test.ts": {
+      "hash": "ae6bd48c86f7ac67",
+      "assertions": 9
+    },
+    "src/providers/openFileLink.test.ts": {
+      "hash": "fdf11680d58cb64f",
+      "assertions": 227
+    },
+    "src/providers/paneEvidenceRouting.test.ts": {
+      "hash": "e04ab464a996d671",
+      "assertions": 5
+    },
+    "src/providers/pathPreprocess.test.ts": {
+      "hash": "252fc040a9e0af5a",
+      "assertions": 14
+    },
+    "src/providers/pathResolution.test.ts": {
+      "hash": "e2a580e312f43992",
+      "assertions": 31
+    },
+    "src/providers/previewFileLink.test.ts": {
+      "hash": "dcc959883816be11",
+      "assertions": 74
+    },
+    "src/providers/previewValidation.test.ts": {
+      "hash": "089d8a648be686b6",
+      "assertions": 10
+    },
+    "src/providers/readFileForPreview.test.ts": {
+      "hash": "c6281fa5a0d242f5",
+      "assertions": 35
+    },
+    "src/providers/resolveCwdRelative.test.ts": {
+      "hash": "f361b839d1ac923d",
+      "assertions": 4
+    },
+    "src/providers/resolveRenameTarget.test.ts": {
+      "hash": "c1c7062eab112453",
+      "assertions": 14
+    },
+    "src/providers/webviewHtml.test.ts": {
+      "hash": "5b1fc375e636ac32",
+      "assertions": 5
+    },
+    "src/pty/PtyManager.test.ts": {
+      "hash": "d9bdc93d54e3dc7c",
+      "assertions": 53
+    },
+    "src/pty/PtySession.test.ts": {
+      "hash": "7c2148e96ceb02ae",
+      "assertions": 60
+    },
+    "src/pty/ShellIntegrationInjector.test.ts": {
+      "hash": "1fac7c646a7e16e1",
+      "assertions": 46
+    },
+    "src/pty/oscParser.test.ts": {
+      "hash": "d7f1a998d8b2f3d5",
+      "assertions": 66
+    },
+    "src/pty/processCwd.test.ts": {
+      "hash": "0878688164bd23c8",
+      "assertions": 31
+    },
+    "src/pty/processTableSnapshot.test.ts": {
+      "hash": "1e33e35e2adb800b",
+      "assertions": 23
+    },
+    "src/pty/processTree.test.ts": {
+      "hash": "8a82a65909c34a3a",
+      "assertions": 20
+    },
+    "src/session/OutputBuffer.test.ts": {
+      "hash": "2813f02e18c03f7c",
+      "assertions": 105
+    },
+    "src/session/PaneEvidenceStore.test.ts": {
+      "hash": "f35a89623407745a",
+      "assertions": 88
+    },
+    "src/session/SessionManager.cursorHooks.test.ts": {
+      "hash": "0d6f3247350a5663",
+      "assertions": 35
+    },
+    "src/session/SessionManager.deactivate.test.ts": {
+      "hash": "f972ecf3ec630b1a",
+      "assertions": 10
+    },
+    "src/session/SessionManager.editorPanels.test.ts": {
+      "hash": "d206690872b4d6c0",
+      "assertions": 10
+    },
+    "src/session/SessionManager.exit.test.ts": {
+      "hash": "aed2ed2e62249765",
+      "assertions": 27
+    },
+    "src/session/SessionManager.getAllSessionsForView.test.ts": {
+      "hash": "8ebf714e58cafb7d",
+      "assertions": 11
+    },
+    "src/session/SessionManager.headlessMirror.test.ts": {
+      "hash": "5c3a9b8f520df0d6",
+      "assertions": 16
+    },
+    "src/session/SessionManager.hydrate.test.ts": {
+      "hash": "58388479aa22c2b2",
+      "assertions": 19
+    },
+    "src/session/SessionManager.paneEvidence.test.ts": {
+      "hash": "f7fb817c24d99d44",
+      "assertions": 37
+    },
+    "src/session/SessionManager.persist.test.ts": {
+      "hash": "f0ad23cecfc05cab",
+      "assertions": 19
+    },
+    "src/session/SessionManager.scheduleDestroy.test.ts": {
+      "hash": "8d8df5090b19b276",
+      "assertions": 12
+    },
+    "src/session/SessionManager.settingToggle.test.ts": {
+      "hash": "2928ba463e219059",
+      "assertions": 14
+    },
+    "src/session/SessionManager.shutdownLifecycle.test.ts": {
+      "hash": "50a0a2e5263f0566",
+      "assertions": 38
+    },
+    "src/session/SessionManager.snapshot.test.ts": {
+      "hash": "3ce234f4ce0e7f6e",
+      "assertions": 34
+    },
+    "src/session/SessionManager.test.ts": {
+      "hash": "49def830fd954038",
+      "assertions": 201
+    },
+    "src/session/SessionManager.trackedCommands.test.ts": {
+      "hash": "dc18980343a74d5f",
+      "assertions": 88
+    },
+    "src/session/SessionStorage.test.ts": {
+      "hash": "868477e5a08abd93",
+      "assertions": 50
+    },
+    "src/session/resolveClaudeSession.test.ts": {
+      "hash": "4df0a8538a95bfce",
+      "assertions": 14
+    },
+    "src/session/sessionSnapshotEviction.test.ts": {
+      "hash": "63e631a707579f0f",
+      "assertions": 27
+    },
+    "src/settings/FileTreeSettingsReader.test.ts": {
+      "hash": "65581186055e3a92",
+      "assertions": 17
+    },
+    "src/settings/SettingsReader.test.ts": {
+      "hash": "4524171dea015d3c",
+      "assertions": 41
+    },
+    "src/shared/agentNames.test.ts": {
+      "hash": "a3a21e7548baac90",
+      "assertions": 38
+    },
+    "src/shared/imagePasteTrigger.test.ts": {
+      "hash": "1b24f29e1d944c42",
+      "assertions": 9
+    },
+    "src/shared/paneEvidence.test.ts": {
+      "hash": "29d53a33a86fc648",
+      "assertions": 33
+    },
+    "src/test/extension.test.ts": {
+      "hash": "d6c11309e4451780",
+      "assertions": 2
+    },
+    "src/test/fileTreeGitDecorations.integration.test.ts": {
+      "hash": "88bfe9244fa89e67",
+      "assertions": 17
+    },
+    "src/test/fileTreeRpc.integration.test.ts": {
+      "hash": "2da110225b07115e",
+      "assertions": 24
+    },
+    "src/test/vendor-filters.test.ts": {
+      "hash": "145bfa2a6ce6c9ed",
+      "assertions": 7
+    },
+    "src/test/vendor-import.test.ts": {
+      "hash": "b3839cffed2bd495",
+      "assertions": 3
+    },
+    "src/types/errors.test.ts": {
+      "hash": "ae0e36f829a40550",
+      "assertions": 44
+    },
+    "src/utils/pathBoundary.test.ts": {
+      "hash": "dfe9d666a4e65422",
+      "assertions": 16
+    },
+    "src/utils/shellEscape.test.ts": {
+      "hash": "7e1d10daccc60ecc",
+      "assertions": 4
+    },
+    "src/vault/ContinuationPrompt.test.ts": {
+      "hash": "7f2a3da350d99d66",
+      "assertions": 37
+    },
+    "src/vault/LaunchBuilder.command.test.ts": {
+      "hash": "f36449f8c017bb8e",
+      "assertions": 12
+    },
+    "src/vault/LaunchBuilder.test.ts": {
+      "hash": "51e311ee1db69aa6",
+      "assertions": 53
+    },
+    "src/vault/VaultCacheStore.test.ts": {
+      "hash": "d1907cf890238ccd",
+      "assertions": 38
+    },
+    "src/vault/VaultCustomNameRegistry.test.ts": {
+      "hash": "b200ebaf169b796f",
+      "assertions": 14
+    },
+    "src/vault/VaultLauncher.test.ts": {
+      "hash": "624af34847f89cbb",
+      "assertions": 38
+    },
+    "src/vault/VaultService.customName.test.ts": {
+      "hash": "ad036289b84fac59",
+      "assertions": 9
+    },
+    "src/vault/VaultService.detail.test.ts": {
+      "hash": "56186bbf8f217b80",
+      "assertions": 24
+    },
+    "src/vault/VaultService.test.ts": {
+      "hash": "8329ec682ac09258",
+      "assertions": 155
+    },
+    "src/vault/VaultService.watchTargets.test.ts": {
+      "hash": "3c7c161fb08d299e",
+      "assertions": 31
+    },
+    "src/vault/VaultService.wiring.test.ts": {
+      "hash": "72c9a02c8487f285",
+      "assertions": 34
+    },
+    "src/vault/claudeContextTag.test.ts": {
+      "hash": "3e519a8ec80d322c",
+      "assertions": 31
+    },
+    "src/vault/messageText.test.ts": {
+      "hash": "7ee145429c41c72e",
+      "assertions": 19
+    },
+    "src/vault/preview.test.ts": {
+      "hash": "7b952831e378ade7",
+      "assertions": 8
+    },
+    "src/vault/readers/claudeChildIds.test.ts": {
+      "hash": "90e8f926d6e0e15c",
+      "assertions": 22
+    },
+    "src/vault/readers/claudeReader.detail.test.ts": {
+      "hash": "2420baf185b3b3ce",
+      "assertions": 34
+    },
+    "src/vault/readers/claudeReader.test.ts": {
+      "hash": "bc300582ab8f92fa",
+      "assertions": 145
+    },
+    "src/vault/readers/codexReader.detail.test.ts": {
+      "hash": "57836dcf0afd20af",
+      "assertions": 42
+    },
+    "src/vault/readers/codexReader.rename.test.ts": {
+      "hash": "e63fd0ab162eaffb",
+      "assertions": 7
+    },
+    "src/vault/readers/codexReader.test.ts": {
+      "hash": "7a10a18084f4cb4c",
+      "assertions": 61
+    },
+    "src/vault/readers/cursorIdeReader.test.ts": {
+      "hash": "61b627c1fc471a9e",
+      "assertions": 46
+    },
+    "src/vault/readers/cursorNormalization.test.ts": {
+      "hash": "ade4a72d1b785e0e",
+      "assertions": 21
+    },
+    "src/vault/readers/cursorReader.test.ts": {
+      "hash": "38a663ff530f3488",
+      "assertions": 189
+    },
+    "src/vault/readers/cursorStore.test.ts": {
+      "hash": "532be21d8e7fb1e2",
+      "assertions": 79
+    },
+    "src/vault/readers/cursorTranscript.test.ts": {
+      "hash": "d2e0cfb1a7ebd963",
+      "assertions": 45
+    },
+    "src/vault/readers/detail.test.ts": {
+      "hash": "97d2a739e57b9487",
+      "assertions": 158
+    },
+    "src/vault/readers/opencodeReader.detail.test.ts": {
+      "hash": "76da93493246c012",
+      "assertions": 127
+    },
+    "src/vault/readers/opencodeReader.rename.test.ts": {
+      "hash": "94436362174bb8ca",
+      "assertions": 6
+    },
+    "src/vault/readers/opencodeReader.test.ts": {
+      "hash": "d39db7fd41a6414c",
+      "assertions": 39
+    },
+    "src/vault/readers/recordLine.test.ts": {
+      "hash": "a1d7b97d77dc8dd5",
+      "assertions": 11
+    },
+    "src/vault/readers/runningSessions.test.ts": {
+      "hash": "55e485cca8a2d95a",
+      "assertions": 50
+    },
+    "src/vault/readers/subagentLookup.test.ts": {
+      "hash": "879655109cec54aa",
+      "assertions": 10
+    },
+    "src/vault/readers/userRecord.test.ts": {
+      "hash": "a2221365eda2bd63",
+      "assertions": 24
+    },
+    "src/vault/registry.test.ts": {
+      "hash": "41895eb252c66727",
+      "assertions": 49
+    },
+    "src/vault/sqlite.test.ts": {
+      "hash": "3f1261384723769f",
+      "assertions": 35
+    },
+    "src/vault/sqlite.write.test.ts": {
+      "hash": "ec169089f996cb61",
+      "assertions": 14
+    },
+    "src/vault/storeStamp.test.ts": {
+      "hash": "728681a58733ed4b",
+      "assertions": 8
+    },
+    "src/webview/DragDropHandler.test.ts": {
+      "hash": "ce30f7c657cb0c5e",
+      "assertions": 48
+    },
+    "src/webview/InputHandler.test.ts": {
+      "hash": "5b47da3c930abe8c",
+      "assertions": 48
+    },
+    "src/webview/SplitContainer.test.ts": {
+      "hash": "0dcd6906e842bc43",
+      "assertions": 48
+    },
+    "src/webview/SplitModel.test.ts": {
+      "hash": "9eb99311b5613379",
+      "assertions": 37
+    },
+    "src/webview/SplitResizeHandle.test.ts": {
+      "hash": "057e7a78c398649c",
+      "assertions": 20
+    },
+    "src/webview/TabBar.test.ts": {
+      "hash": "01e9d04ebba53434",
+      "assertions": 76
+    },
+    "src/webview/fileTree/FileSystemDataSource.test.ts": {
+      "hash": "bb23fc5d891cab52",
+      "assertions": 116
+    },
+    "src/webview/fileTree/FileTreeContextMenu.test.ts": {
+      "hash": "ff3400ef3ee54110",
+      "assertions": 12
+    },
+    "src/webview/fileTree/FileTreeController.test.ts": {
+      "hash": "8b7663288661add3",
+      "assertions": 7
+    },
+    "src/webview/fileTree/FileTreePanel.test.ts": {
+      "hash": "11622f8cce19f644",
+      "assertions": 86
+    },
+    "src/webview/fileTree/ReadOnlyFileRenderer.test.ts": {
+      "hash": "520f3552e0e30286",
+      "assertions": 68
+    },
+    "src/webview/fileTree/Tree.flat-list.test.ts": {
+      "hash": "d19f972080fa6422",
+      "assertions": 7
+    },
+    "src/webview/fileTree/Tree.test.ts": {
+      "hash": "9a62c32e047eb1e3",
+      "assertions": 80
+    },
+    "src/webview/fileTree/search/__tests__/FileTreeSearchController.test.ts": {
+      "hash": "330c10e553c55580",
+      "assertions": 35
+    },
+    "src/webview/fileTree/search/__tests__/matching.test.ts": {
+      "hash": "aa5f3cd3e2365d37",
+      "assertions": 25
+    },
+    "src/webview/fileTree/search/__tests__/renderHighlightedText.test.ts": {
+      "hash": "3564764f97eab38e",
+      "assertions": 7
+    },
+    "src/webview/flow/FlowControl.test.ts": {
+      "hash": "e9beb4ea8c549df6",
+      "assertions": 18
+    },
+    "src/webview/imagePasteBridge.test.ts": {
+      "hash": "87ab365bc96bb310",
+      "assertions": 29
+    },
+    "src/webview/integration/paneEvidenceReporting.test.ts": {
+      "hash": "d9817b899d0dc98c",
+      "assertions": 16
+    },
+    "src/webview/integration/webviewFlows.test.ts": {
+      "hash": "4211f57b42ef74e6",
+      "assertions": 17
+    },
+    "src/webview/links/FilePathLinkProvider.test.ts": {
+      "hash": "f00acbc48a5fc7c0",
+      "assertions": 62
+    },
+    "src/webview/links/HoverPreviewController.test.ts": {
+      "hash": "bced25279b2379a6",
+      "assertions": 54
+    },
+    "src/webview/links/HoverPreviewPopup.test.ts": {
+      "hash": "c30150d079912482",
+      "assertions": 112
+    },
+    "src/webview/links/PastedImageStore.test.ts": {
+      "hash": "f972d9cc8f6953d7",
+      "assertions": 25
+    },
+    "src/webview/links/SubagentPreviewPopup.test.ts": {
+      "hash": "d7e28fd088bd5c6a",
+      "assertions": 35
+    },
+    "src/webview/links/filePathParser.test.ts": {
+      "hash": "33ca8588ec998cf0",
+      "assertions": 131
+    },
+    "src/webview/links/imagePlaceholderParser.test.ts": {
+      "hash": "1c5651b363531cda",
+      "assertions": 7
+    },
+    "src/webview/links/markdownRenderer.test.ts": {
+      "hash": "9b6ad4812bc50508",
+      "assertions": 14
+    },
+    "src/webview/links/subagentLineParser.test.ts": {
+      "hash": "9a840693104204fe",
+      "assertions": 19
+    },
+    "src/webview/links/syntaxRenderer.test.ts": {
+      "hash": "822f88965577557a",
+      "assertions": 18
+    },
+    "src/webview/messaging/MessageRouter.test.ts": {
+      "hash": "0e87444f9f3f7873",
+      "assertions": 9
+    },
+    "src/webview/messaging/scrollbackDumpHandler.test.ts": {
+      "hash": "9d86870cce2a4d82",
+      "assertions": 29
+    },
+    "src/webview/resize/ResizeCoordinator.test.ts": {
+      "hash": "95af430d9264fe4c",
+      "assertions": 9
+    },
+    "src/webview/resize/XtermFitService.test.ts": {
+      "hash": "36ed7ab5316857cc",
+      "assertions": 9
+    },
+    "src/webview/shared/contextMenuShell.test.ts": {
+      "hash": "85f432f77da4fb5e",
+      "assertions": 20
+    },
+    "src/webview/split/tabDisplay.test.ts": {
+      "hash": "e7d6cb3310df2700",
+      "assertions": 7
+    },
+    "src/webview/splitIntegrationEdgeCases.test.ts": {
+      "hash": "29425be1ff21a4b2",
+      "assertions": 57
+    },
+    "src/webview/state/WebviewStateStore.searchMode.test.ts": {
+      "hash": "b709f78b5cc15227",
+      "assertions": 5
+    },
+    "src/webview/state/WebviewStateStore.test.ts": {
+      "hash": "05a570709f16fff8",
+      "assertions": 35
+    },
+    "src/webview/tabRenameOverlay.test.ts": {
+      "hash": "c7ee96d1b6fde4b1",
+      "assertions": 33
+    },
+    "src/webview/terminal/CursorApprovalDetector.test.ts": {
+      "hash": "7f0d0cadccf6ff5f",
+      "assertions": 15
+    },
+    "src/webview/terminal/TerminalActivityTracker.test.ts": {
+      "hash": "a153fa951cc275ff",
+      "assertions": 32
+    },
+    "src/webview/terminal/paneEvidenceReporter.test.ts": {
+      "hash": "8adb25ae08df1665",
+      "assertions": 18
+    },
+    "src/webview/terminal/restoreDivider.test.ts": {
+      "hash": "2066390c7b5d78a9",
+      "assertions": 5
+    },
+    "src/webview/terminal/titleSignature.test.ts": {
+      "hash": "f20bcf5637c55c51",
+      "assertions": 26
+    },
+    "src/webview/theme/ThemeManager.test.ts": {
+      "hash": "74c8f2cff99376dc",
+      "assertions": 23
+    },
+    "src/webview/ui/BannerService.test.ts": {
+      "hash": "0ffa313e8d5b5c7b",
+      "assertions": 14
+    },
+    "src/webview/ui/Tooltip.test.ts": {
+      "hash": "043e99f812945375",
+      "assertions": 23
+    },
+    "src/webview/vault/ContinueDialog.test.ts": {
+      "hash": "0d0cf8ee21d750f9",
+      "assertions": 51
+    },
+    "src/webview/vault/FloatingPreviewShell.test.ts": {
+      "hash": "2ae7ffc752400269",
+      "assertions": 31
+    },
+    "src/webview/vault/VaultContextMenu.test.ts": {
+      "hash": "65e9e3660e5e2086",
+      "assertions": 24
+    },
+    "src/webview/vault/VaultPanel.preview.test.ts": {
+      "hash": "80354c3892bb790f",
+      "assertions": 17
+    },
+    "src/webview/vault/VaultPanel.test.ts": {
+      "hash": "9674ca9ae21c171b",
+      "assertions": 581
+    },
+    "src/webview/vault/forkPoint.test.ts": {
+      "hash": "3a795899c09dc9bc",
+      "assertions": 9
+    },
+    "src/webview/vault/grouping.test.ts": {
+      "hash": "effedd4b8a159bf7",
+      "assertions": 17
+    },
+    "src/webview/vault/markdownLite.test.ts": {
+      "hash": "340b9aeeaafeefc1",
+      "assertions": 31
+    },
+    "src/webview/vault/messageActions.test.ts": {
+      "hash": "86ebedd9368f2f58",
+      "assertions": 49
+    },
+    "src/webview/vault/previewHeader.test.ts": {
+      "hash": "6a3cd8debb55c961",
+      "assertions": 22
+    },
+    "src/webview/vault/vaultRenderSignature.test.ts": {
+      "hash": "641d3671076dd520",
+      "assertions": 20
+    },
+    "src/webview/vault/workflowBoard.test.ts": {
+      "hash": "bd35799c3d28cfdd",
+      "assertions": 73
+    },
+    "src/webview/worktree/WorktreeContextMenu.test.ts": {
+      "hash": "aea57cd2f4fd89dc",
+      "assertions": 42
+    },
+    "src/webview/worktree/WorktreeController.state.test.ts": {
+      "hash": "63acd00430164f1f",
+      "assertions": 14
+    },
+    "src/webview/worktree/WorktreeController.test.ts": {
+      "hash": "eb8c970a95b1fc59",
+      "assertions": 93
+    },
+    "src/webview/worktree/WorktreeCreateDialog.test.ts": {
+      "hash": "ab5efe2d32038117",
+      "assertions": 46
+    },
+    "src/webview/worktree/WorktreePruneDialog.test.ts": {
+      "hash": "466117a7a63cb931",
+      "assertions": 10
+    },
+    "src/webview/worktree/WorktreeRemoveDialog.test.ts": {
+      "hash": "5fa4f12c417a06c5",
+      "assertions": 46
+    },
+    "src/webview/worktree/WorktreeView.test.ts": {
+      "hash": "8c32acadbecb8dfb",
+      "assertions": 164
+    },
+    "src/webview/worktree/activatePane.test.ts": {
+      "hash": "296b7ff28012c999",
+      "assertions": 13
+    },
+    "src/webview/worktree/worktreeFormat.test.ts": {
+      "hash": "ddb97967ea6c08a3",
+      "assertions": 39
+    },
+    "src/webview/worktree/worktreeRenderSignature.test.ts": {
+      "hash": "2641e1bd6f9e9087",
+      "assertions": 12
+    },
+    "src/worktree/WorktreeCache.test.ts": {
+      "hash": "e8c4e1e3a941dd51",
+      "assertions": 54
+    },
+    "src/worktree/WorktreeDiscovery.listRepo.test.ts": {
+      "hash": "37db8a377f032197",
+      "assertions": 32
+    },
+    "src/worktree/WorktreeDiscovery.test.ts": {
+      "hash": "b22dae89fc330ecd",
+      "assertions": 29
+    },
+    "src/worktree/agentIdentity.test.ts": {
+      "hash": "7bef08072552e3b1",
+      "assertions": 23
+    },
+    "src/worktree/createPath.test.ts": {
+      "hash": "abb4c3eac782b3ea",
+      "assertions": 41
+    },
+    "src/worktree/delegations.test.ts": {
+      "hash": "ec1a1f55c8c08da1",
+      "assertions": 16
+    },
+    "src/worktree/gitCapabilities.test.ts": {
+      "hash": "5907e7a78ff0b24a",
+      "assertions": 24
+    },
+    "src/worktree/gitCommandRunner.test.ts": {
+      "hash": "d784ccf2b9c766db",
+      "assertions": 18
+    },
+    "src/worktree/gitExclude.test.ts": {
+      "hash": "10c6ad54eb7094c7",
+      "assertions": 21
+    },
+    "src/worktree/hasGitRepo.test.ts": {
+      "hash": "ccc6001db2683888",
+      "assertions": 9
+    },
+    "src/worktree/mutationCoordinator.test.ts": {
+      "hash": "ad61ac1ec0519b93",
+      "assertions": 15
+    },
+    "src/worktree/mutationQueue.test.ts": {
+      "hash": "04a213988c5dd1ba",
+      "assertions": 15
+    },
+    "src/worktree/normalizePath.test.ts": {
+      "hash": "25c3a6ebe7a5441d",
+      "assertions": 20
+    },
+    "src/worktree/porcelainParser.test.ts": {
+      "hash": "ee3d451321875182",
+      "assertions": 55
+    },
+    "src/worktree/presenceDeps.test.ts": {
+      "hash": "c7c9f29ca89aee63",
+      "assertions": 30
+    },
+    "src/worktree/presenceProjector.test.ts": {
+      "hash": "1fc8bcbeccb6043b",
+      "assertions": 102
+    },
+    "src/worktree/rebuildGate.test.ts": {
+      "hash": "852cdd9e1d6cceb7",
+      "assertions": 22
+    },
+    "src/worktree/repoRoots.test.ts": {
+      "hash": "e93f5e0c5ab85019",
+      "assertions": 29
+    },
+    "src/worktree/worktreeBlockers.test.ts": {
+      "hash": "916c011d29427135",
+      "assertions": 36
+    },
+    "src/worktree/worktreeDeps.test.ts": {
+      "hash": "da15297e4d934f45",
+      "assertions": 9
+    },
+    "src/worktree/worktreeFingerprint.test.ts": {
+      "hash": "854fe8abdbcf106c",
+      "assertions": 23
+    },
+    "src/worktree/worktreeMutations.integration.test.ts": {
+      "hash": "b97c99dc36093640",
+      "assertions": 23
+    },
+    "src/worktree/worktreeMutations.test.ts": {
+      "hash": "5aefdbf6e9784d25",
+      "assertions": 44
+    },
+    "src/worktree/worktreeOrder.test.ts": {
+      "hash": "157da2dc09a42aa5",
+      "assertions": 10
+    },
+    "src/worktree/worktreeWatchTargets.test.ts": {
+      "hash": "3ee85793ade23cb4",
+      "assertions": 17
+    }
+  }
+}

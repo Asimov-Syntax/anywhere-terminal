@@ -163,6 +163,36 @@ export function readWorktreeRowActivation(): WorktreeRowActivation {
   return value === "preview" || value === "focus" ? value : "focus";
 }
 
+/** The configured create root, and whether the user actually stated it. */
+export interface WorktreeCreateRootSetting {
+  value: string | undefined;
+  explicitlySet: boolean;
+}
+
+/**
+ * Read the worktree create-root setting.
+ *
+ * `explicitlySet` comes from the configuration's own resolution, not from
+ * comparing the value against the declared default: a user who deliberately
+ * sets the default has still stated a preference, and must outrank the
+ * layout detected from the repository (design.md D7).
+ */
+export function readWorktreeCreateRoot(): WorktreeCreateRootSetting {
+  const config = vscode.workspace.getConfiguration("anywhereTerminal");
+  const inspected = config.inspect<string>("worktree.createRoot");
+  const stated = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue ?? undefined;
+  const trimmed = typeof stated === "string" ? stated.trim() : undefined;
+  return {
+    value: trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined,
+    explicitlySet: trimmed !== undefined && trimmed.length > 0,
+  };
+}
+
+/** Check whether a configuration change event affects the create root. */
+export function affectsWorktreeCreateRoot(e: vscode.ConfigurationChangeEvent): boolean {
+  return e.affectsConfiguration("anywhereTerminal.worktree.createRoot");
+}
+
 /** Check whether a configuration change event affects row activation. */
 export function affectsWorktreeRowActivation(e: vscode.ConfigurationChangeEvent): boolean {
   return e.affectsConfiguration("anywhereTerminal.worktree.rowActivation");

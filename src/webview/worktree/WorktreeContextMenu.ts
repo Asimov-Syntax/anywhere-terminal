@@ -25,6 +25,13 @@ export interface WorktreeMenuActions {
   toggleLock?: (info: WorktreeInfo) => void;
   removeWorktree?: (info: WorktreeInfo) => void;
   createWorktree?: (info: WorktreeInfo) => void;
+  /**
+   * Drop this repository's stale registrations. Offered ONLY when the repo has
+   * something prunable — `prunableCount` is how the menu knows, and an absent
+   * item is the truthful rendering of "nothing to prune" (worktree-actions.md
+   * § 3.5, `:351`).
+   */
+  pruneRepo?: (info: WorktreeInfo) => void;
 
   focusPane?: (row: WorktreeAgentRow) => void;
   openPreview?: (row: WorktreeAgentRow) => void;
@@ -51,10 +58,19 @@ function item<T>(
 export class WorktreeContextMenu {
   private readonly shell: ContextMenuShell;
   private readonly actions: WorktreeMenuActions;
+  /** Registrations this repo could drop right now. Read at open, never cached. */
+  private readonly prunableCount: (info: WorktreeInfo) => number;
 
-  constructor(deps: { host: HTMLElement; actions: WorktreeMenuActions }) {
+  constructor(deps: {
+    host: HTMLElement;
+    actions: WorktreeMenuActions;
+    prunableCount?: (info: WorktreeInfo) => number;
+  }) {
     this.shell = new ContextMenuShell(deps.host);
     this.actions = deps.actions;
+    // Nothing prunable is the safe default: a menu wired without this offers no
+    // prune rather than offering one it cannot count.
+    this.prunableCount = deps.prunableCount ?? (() => 0);
   }
 
   isOpen(): boolean {
@@ -63,6 +79,7 @@ export class WorktreeContextMenu {
 
   /** Items for a worktree row. `missing` and `main` change what is even offered. */
   private worktreeItems(info: WorktreeInfo): (ContextMenuItem | "sep")[] {
+    const prunableCount = this.prunableCount(info);
     const a = this.actions;
     // A directory that is gone cannot be opened, revealed, or given a terminal.
     const onDisk = !info.missing;
@@ -83,6 +100,14 @@ export class WorktreeContextMenu {
       ...item(a.toggleLock, info, info.locked ? "Unlock Worktree" : "Lock Worktree", ICON_LOCK),
       // The main worktree is never removable, so the item is absent, not disabled.
       ...(info.kind === "main" ? [] : item(a.removeWorktree, info, "Remove Worktree…", ICON_TRASH)),
+      // Create is repo-scoped, so it is offered from any row of the repo — and
+      // it is the item that makes the whole create path reachable at all.
+      ...item(a.createWorktree, info, "New Worktree…", ICON_PLUS),
+      // Absent, not disabled, when nothing is prunable: a disabled item claims
+      // the action exists here.
+      ...(prunableCount > 0
+        ? item(a.pruneRepo, info, `Prune ${prunableCount} Registration${prunableCount === 1 ? "" : "s"}…`, ICON_TRASH)
+        : []),
     ]);
   }
 

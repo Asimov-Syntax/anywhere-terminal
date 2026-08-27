@@ -31,9 +31,9 @@ export interface WorktreeRemoveDialogDeps {
   now?: number;
 }
 
-/** True when no confirmation can authorize this removal (§ 3.3). */
+/** True when no confirmation can authorize this removal (§ 3.3, design.md D4). */
 export function isRemoveRefused(blocker: WorktreeRemoveBlocker): boolean {
-  return blocker.isMain || blocker.busyAgents > 0;
+  return blocker.isMain || blocker.busyAgents > 0 || blocker.containsWorktrees.length > 0;
 }
 
 function blockerItem(icon: string, build: (span: HTMLElement) => void): HTMLLIElement {
@@ -166,9 +166,30 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     const box = document.createElement("div");
     box.className = "wt-refusebox";
     const lead = document.createElement("b");
+    // Three refusal reasons, three explanations. An if/else over two of them
+    // would render the agent copy for a containment refusal — telling the user
+    // to stop an agent that is not running (round-1 P1 / oracle O3).
     if (blocker.isMain) {
       lead.textContent = "This is the repository's main worktree.";
       box.append(lead, document.createTextNode(" It cannot be removed — no confirmation overrides it."));
+    } else if (blocker.containsWorktrees.length > 0) {
+      const n = blocker.containsWorktrees.length;
+      lead.textContent =
+        n === 1 ? "Another worktree lives inside this one." : `${n} other worktrees live inside this one.`;
+      box.append(
+        lead,
+        document.createTextNode(
+          " Removing this folder would delete them too, leaving git holding registrations for directories that are gone. Remove them first.",
+        ),
+      );
+      const nested = document.createElement("ul");
+      nested.className = "wt-blockers";
+      for (const child of blocker.containsWorktrees) {
+        const li = document.createElement("li");
+        li.textContent = child.displayPath;
+        nested.appendChild(li);
+      }
+      box.appendChild(nested);
     } else {
       lead.textContent = "An agent is mid-turn in this worktree.";
       box.append(

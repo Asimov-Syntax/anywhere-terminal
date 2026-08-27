@@ -46,6 +46,16 @@ export interface WorktreeRemoveBlocker {
   locked: boolean;
   /** Main worktree — never removable; no confirm can override it. */
   isMain: boolean;
+  /**
+   * Worktrees registered INSIDE this one. Refused, never confirmable: git's
+   * `remove --force` treats a nested registered worktree as ordinary untracked
+   * content, deleting the child's files and leaving a prunable child record,
+   * and a confirmation about worktree A cannot honestly describe losing B.
+   *
+   * An array because a parent can hold more than one child, and naming only the
+   * first would understate the loss.
+   */
+  containsWorktrees: readonly { worktreeId: string; displayPath: string }[];
 }
 
 export type WorktreeActionKind = "create" | "remove" | "lock" | "unlock" | "prune" | "launch";
@@ -56,17 +66,35 @@ export interface WorktreeActionResult {
   worktreeId?: string;
   /** The repo the notice attaches to, when no single worktree owns it. */
   repoId?: string;
-  outcome: "ok" | "error" | "indeterminate";
+  outcome: "ok" | "error" | "indeterminate" | "unavailable";
   /** Git's stderr, bounded and trimmed. Shown verbatim. */
   error?: string;
   /** What the forced rebuild actually observed. Shown verbatim. */
   observed?: string;
+  /**
+   * Which reads failed, on an `unavailable` outcome. Never empty there: the
+   * notice says what could not be checked, and "something" is not an answer.
+   */
+  unreadable?: readonly string[];
   needsConfirm?: WorktreeRemoveBlocker;
+  /**
+   * The row this notice was about, once that row has left the tree.
+   *
+   * Set only by reconciliation: a removal that SUCCEEDS deletes the row its own
+   * result was hanging on, so the notice had nowhere left to render and the
+   * user was told nothing (round-3 B1). Re-scoped to the repository, it needs
+   * to name what it is reporting on.
+   */
+  orphanedLabel?: string;
+  /** The action succeeded; what it was asked to do next did not. */
+  openFailed?: string;
 }
 
 /** Host-computed seed for the create form (`requestWorktreeCreateDefaults`). */
 export interface WorktreeCreateDefaults {
   repoId: string;
+  /** The branch this answer was computed for; absent when none was named. */
+  answersBranch?: string;
   repoLabel: string;
   /** Absolute path of the repo's main worktree, shown under the repo picker. */
   mainPath: string;

@@ -25,6 +25,7 @@ import {
 } from "./worktreeFixtures";
 import type {
   DelegationRoster,
+  WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeInfo,
   WorktreePresence,
@@ -1014,5 +1015,167 @@ describe("row activation", () => {
     setting = "preview";
     activate(view, "w1");
     expect(seen).toEqual(["focus", "preview"]);
+  });
+});
+
+describe("a mutation's outcome reads as what it was (design.md D11)", () => {
+  it("renders a re-scoped notice under its repository, naming the row it outlived", () => {
+    // The row is gone — that is what a successful removal means — so there is
+    // nothing left for a worktree-scoped notice to hang on (round-3 B1).
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "remove",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          orphanedLabel: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel",
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.textContent ?? "").toContain("Remove done.");
+    expect(notice?.textContent ?? "").toContain("worktree-panel");
+  });
+
+  it("says nothing extra when the notice still has a row of its own", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        { action: "remove", worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/release", outcome: "ok" },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.textContent ?? "").toContain("Remove done.");
+    expect(notice?.textContent ?? "").not.toContain("/release");
+  });
+
+  it("keeps a create that could not be opened a success, and says what failed", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          openFailed: "no window available",
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.textContent ?? "").toContain("Create done.");
+    expect(notice?.textContent ?? "").toContain("no window available");
+    expect(notice?.textContent ?? "").not.toMatch(/couldn.t create/i);
+  });
+
+  it("offers no retry on a failed mutation", () => {
+    // worktree-actions.md § 5: retrying a partially applied git mutation is how
+    // a recoverable error becomes an unrecoverable one. The only offered action
+    // is the confirmation the blocker set demands.
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [removeErrorResult] });
+    const labels = [...view.element.querySelectorAll(".wt-notice--error button")].map((b) => b.textContent ?? "");
+    expect(labels.some((l) => /retry|try again/i.test(l))).toBe(false);
+  });
+
+  it("offers no retry on an indeterminate one either", () => {
+    // This is the case where retrying is most tempting and most dangerous — an
+    // unknown fraction of the tree is already gone.
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [removeIndeterminateResult] });
+    const labels = [...view.element.querySelectorAll(".wt-notice--warn button")].map((b) => b.textContent ?? "");
+    expect(labels.some((l) => /retry|try again/i.test(l))).toBe(false);
+  });
+
+  it("does not word an indeterminate result as a clean failure", () => {
+    // "Couldn't remove" would claim nothing happened, which is the one thing
+    // that is definitely not known.
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [removeIndeterminateResult] });
+    const warn = view.element.querySelector(".wt-notice--warn");
+    expect(warn?.textContent ?? "").not.toMatch(/couldn.t|failed/i);
+  });
+
+  it("carries what was observed, not a generic message", () => {
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [removeIndeterminateResult] });
+    expect(view.element.querySelector(".wt-notice--warn .wt-reason")?.textContent ?? "").not.toBe("");
+  });
+});
+
+describe("an outcome that could not be checked, and one that simply worked", () => {
+  const unavailable: WorktreeActionResult = {
+    action: "remove",
+    worktreeId: "/Volumes/ext/anywhere-terminal-wt/spike-hooks",
+    outcome: "unavailable",
+    unreadable: ["status", "sessions"],
+  };
+  const ok: WorktreeActionResult = {
+    action: "lock",
+    worktreeId: "/Volumes/ext/anywhere-terminal-wt/spike-hooks",
+    outcome: "ok",
+  };
+
+  it("offers a retry on an unreadable assessment — the one outcome retrying can change", () => {
+    const retried: WorktreeActionResult[] = [];
+    const { view } = mount({ onRetryAction: (r: WorktreeActionResult) => retried.push(r) });
+    view.setData({ ...populated(), actionResults: [unavailable] });
+    const button = [...view.element.querySelectorAll<HTMLButtonElement>(".wt-notice--warn button")].find((b) =>
+      /retry|try again/i.test(b.textContent ?? ""),
+    );
+    button?.click();
+
+    expect(retried).toEqual([unavailable]);
+  });
+
+  it("names which reads failed rather than saying it could not check", () => {
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [unavailable] });
+
+    expect(view.element.querySelector(".wt-notice--warn .wt-reason")?.textContent ?? "").toContain("status");
+  });
+
+  it("says nothing was changed, because nothing was attempted", () => {
+    // The distinction that makes this not a failure and not an indeterminate:
+    // the removal never ran, so there is no partial state to resolve.
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [unavailable] });
+
+    expect(view.element.querySelector(".wt-notice--warn")?.textContent ?? "").toMatch(/nothing was changed/i);
+  });
+
+  it("does not word it as a failure", () => {
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [unavailable] });
+
+    expect(view.element.querySelector(".wt-notice--error")).toBeNull();
+  });
+
+  it("still offers no retry on a failure or an indeterminate result", () => {
+    // The negative that gives the retry above its meaning: only `unavailable`
+    // gets one, so a wired-up retry cannot leak onto the destructive cases.
+    const { view } = mount({ onRetryAction: () => {} });
+    view.setData({ ...populated(), actionResults: [removeErrorResult, removeIndeterminateResult] });
+    const labels = [...view.element.querySelectorAll("button")].map((b) => b.textContent ?? "");
+
+    expect(labels.some((l) => /retry|try again/i.test(l))).toBe(false);
+  });
+
+  it("states a success instead of leaving the user to infer it from the tree", () => {
+    const { view } = mount();
+    view.setData({ ...populated(), actionResults: [ok] });
+
+    expect(view.element.textContent ?? "").toMatch(/lock.*done/i);
+  });
+
+  it("offers no retry on a success", () => {
+    const { view } = mount({ onRetryAction: () => {} });
+    view.setData({ ...populated(), actionResults: [ok] });
+    const labels = [...view.element.querySelectorAll("button")].map((b) => b.textContent ?? "");
+
+    expect(labels.some((l) => /retry|try again/i.test(l))).toBe(false);
   });
 });

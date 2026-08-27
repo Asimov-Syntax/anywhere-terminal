@@ -801,6 +801,12 @@ const routeMessage = createMessageRouter({
   onWorktreeActivatePane(msg) {
     worktreeController?.activatePane(msg.paneId);
   },
+  onWorktreeCreateDefaults(msg) {
+    worktreeController?.handleCreateDefaults(msg);
+  },
+  onWorktreeMutationResult(msg) {
+    worktreeController?.handleMutationResult(msg);
+  },
   onVaultContextCwd(msg) {
     // Drop a reply for a pane that is no longer active (stale-guard): the user
     // switched panes before this resolved, and a later request owns the scope.

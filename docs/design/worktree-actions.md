@@ -346,7 +346,7 @@ becomes an unrecoverable one.
 | Repo whose linked worktrees already live elsewhere | Detection wins over the default; the form shows the detected root |
 | Remove a worktree that is a VS Code workspace folder | Allowed after confirmation; VS Code is left showing a missing folder, and the confirmation says so |
 | Remove a `missing` worktree | Succeeds; registration pruned |
-| Remove while a pane inside it is running an agent | Blocked until confirmed; panes are left alive |
+| Remove while a pane inside it is running an agent | Refused — a running window-owned pane carries no confirmation that could authorize it; panes are left alive |
 | Lock an already-locked worktree | Git no-ops or errors; surfaced verbatim |
 | Prune with nothing prunable | Action not offered |
 | Launch an agent into a `missing` or `bare` worktree | Not offered |

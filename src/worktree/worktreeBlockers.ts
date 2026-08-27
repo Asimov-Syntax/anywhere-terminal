@@ -1,0 +1,207 @@
+// src/worktree/worktreeBlockers.ts — One pass that produces everything at risk in
+// a removal, and decides whether any confirmation could authorize it
+// (design.md D2, D4).
+//
+// One pass, because the confirmation has to name every blocker at once
+// (worktree-actions.md § 3.3): a set assembled from reads taken at different
+// moments is not a set anyone confirmed.
+//
+// The evidence carries IDENTITIES, not just counts, because the fingerprint 1_4
+// takes over it has to notice substitution — one dirty file swapped for another
+// leaves every count unchanged (design.md D3).
+
+import type { PaneActivity } from "../shared/paneEvidence";
+import { isPathInside } from "../utils/pathBoundary";
+import type { WorktreeInfo } from "./types";
+
+/** A worktree registered inside the removal target. */
+export interface ContainedWorktree {
+  worktreeId: string;
+  displayPath: string;
+}
+
+/** What is at risk, by identity. Counts for display are derived from these. */
+export interface RemovalEvidence {
+  /** Repo-relative, sorted. Tracked files with modifications. */
+  dirtyPaths: readonly string[];
+  /** Repo-relative, sorted. */
+  untrackedPaths: readonly string[];
+  /** Panes in THIS window rooted in the worktree whose agent is not mid-turn. */
+  paneIds: readonly string[];
+  /** Live registry sessions rooted here that belong to another window. */
+  externalSessionIds: readonly string[];
+  locked: boolean;
+  lockReason: string | null;
+}
+
+/**
+ * No confirmation authorizes these. Structurally carries no fingerprint, so a
+ * refusal can never be mistaken for a set that merely shrank (design.md D3).
+ */
+export interface RemovalRefusal {
+  kind: "refused";
+  isMain: boolean;
+  /** Agents mid-turn in THIS window. Never external sessions — see below. */
+  busyAgents: number;
+  containsWorktrees: readonly ContainedWorktree[];
+}
+
+export interface ConfirmableRemoval {
+  kind: "confirmable";
+  evidence: RemovalEvidence;
+}
+
+/**
+ * The blockers could not be READ, which is not the same as there being none.
+ *
+ * Three sources feed an assessment and all three can fail: the worktree's own
+ * `git status`, the external-session registry, and the repository listing. Each
+ * used to fall back to a benign value — `""`, `[]`, "current" — which produced
+ * an empty blocker set indistinguishable from a genuinely clean worktree, on
+ * the one action that cannot be undone (round-2 B6).
+ *
+ * Distinct from `refused` on purpose: a refusal is an answer, this is the
+ * absence of one, and only this one is worth retrying.
+ */
+export interface UnavailableRemoval {
+  kind: "unavailable";
+  /** Never empty. */
+  unreadable: readonly UnreadableSource[];
+}
+
+export type UnreadableSource = "status" | "sessions" | "listing";
+
+export type RemovalAssessment = RemovalRefusal | ConfirmableRemoval | UnavailableRemoval;
+
+/** A read that may have failed. The failure is carried, never substituted. */
+/**
+ * A source that was read, failed to read, or had nothing to read.
+ *
+ * `notApplicable` is NOT a benign fallback dressed up — that is exactly what
+ * D16 exists to forbid. It says the question does not arise: a worktree whose
+ * directory is authoritatively gone has no working tree to hold modified files,
+ * so `git status` is not a read that failed, it is a read with no subject. The
+ * distinction matters because `worktree-actions.md:348` requires removing a
+ * `missing` worktree to SUCCEED and prune the registration, and treating its
+ * absent directory as an unreadable status closed that path permanently
+ * (round-3 B8).
+ */
+export type SourceRead<T> = { ok: true; value: T } | { ok: false } | { ok: "notApplicable" };
+
+/** A projected row attributed to the target worktree. */
+export interface AttributedRow {
+  scope: "window" | "external";
+  activity: string;
+}
+
+export interface PaneFact {
+  paneId: string;
+  /** Normalized. Absent when the pane has not reported one. */
+  cwd: string | undefined;
+  activity: PaneActivity | undefined;
+}
+
+export interface ExternalSessionFact {
+  sessionId: string;
+  /** Normalized. */
+  cwd: string;
+}
+
+export interface RemovalInput {
+  target: WorktreeInfo;
+  /** Every registered worktree of the same repository, including the target. */
+  siblings: readonly WorktreeInfo[];
+  panes: readonly PaneFact[];
+  /** Rows the presence projection attributed to the target. */
+  rows: readonly AttributedRow[];
+  externalSessions: SourceRead<readonly ExternalSessionFact[]>;
+  /** Raw stdout of `git status --porcelain` run in the worktree. */
+  porcelain: SourceRead<string>;
+  /** The repository listing this input was built from was degraded or stale. */
+  listingDegraded?: boolean;
+}
+
+export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
+  const { target } = input;
+
+  // Checked FIRST, ahead of the refusals: a refusal derived from siblings and
+  // rows we know to be stale is not a stronger answer than admitting we could
+  // not check. `containsWorktrees` in particular comes straight from the
+  // listing.
+  const unreadable: UnreadableSource[] = [
+    ...(input.porcelain.ok === false ? (["status"] as const) : []),
+    ...(input.externalSessions.ok === false ? (["sessions"] as const) : []),
+    ...(input.listingDegraded === true ? (["listing"] as const) : []),
+  ];
+  if (unreadable.length > 0) {
+    return { kind: "unavailable", unreadable };
+  }
+
+  const containsWorktrees = input.siblings
+    .filter((w) => w.id !== target.id && isPathInside(w.id, target.id))
+    .map((w) => ({ worktreeId: w.id, displayPath: w.displayPath }))
+    .sort((a, b) => a.worktreeId.localeCompare(b.worktreeId));
+
+  // `busyAgents` counts WINDOW-OWNED rows only. presenceProjector emits every
+  // external registry session as a row with a hardcoded activity of "running";
+  // counting those here would score one external session as both busyAgents and
+  // externalAgents, converting the accepted CONFIRMABLE externalAgents blocker
+  // (worktree-actions.md:192) into an unconditional refusal — and making a
+  // worktree unremovable because some other window has a session in it.
+  const busyAgents = input.rows.filter(
+    (r) => r.scope !== "external" && (r.activity === "running" || r.activity === "waiting"),
+  ).length;
+
+  if (target.kind === "main" || busyAgents > 0 || containsWorktrees.length > 0) {
+    return { kind: "refused", isMain: target.kind === "main", busyAgents, containsWorktrees };
+  }
+
+  // `notApplicable` parses as empty and that is the honest answer here: there
+  // is no directory, so there are no working files a removal could destroy.
+  const status = parsePorcelain(input.porcelain.ok === true ? input.porcelain.value : "");
+  const paneIds = input.panes
+    .filter((p) => p.cwd !== undefined && isPathInside(p.cwd, target.id) && p.activity !== "exited")
+    .map((p) => p.paneId)
+    .sort();
+  const externalSessionIds = (input.externalSessions.ok === true ? input.externalSessions.value : [])
+    .filter((s) => isPathInside(s.cwd, target.id))
+    .map((s) => s.sessionId)
+    .sort();
+
+  return {
+    kind: "confirmable",
+    evidence: {
+      dirtyPaths: status.dirty,
+      untrackedPaths: status.untracked,
+      paneIds,
+      externalSessionIds,
+      locked: target.locked,
+      lockReason: target.lockReason ?? null,
+    },
+  };
+}
+
+/**
+ * `git status --porcelain` short format: two status columns, a space, the path.
+ * `??` is untracked; anything else is a tracked change. A rename reports
+ * `orig -> new`, and the NEW path is what a deletion would take.
+ */
+function parsePorcelain(stdout: string): { dirty: string[]; untracked: string[] } {
+  const dirty: string[] = [];
+  const untracked: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.length < 4) {
+      continue;
+    }
+    const code = line.slice(0, 2);
+    const rest = line.slice(3);
+    const path = rest.includes(" -> ") ? (rest.split(" -> ")[1] ?? rest) : rest;
+    const unquoted = path.startsWith('"') && path.endsWith('"') ? path.slice(1, -1) : path;
+    if (code === "??") {
+      untracked.push(unquoted);
+    } else {
+      dirty.push(unquoted);
+    }
+  }
+  return { dirty: dirty.sort(), untracked: untracked.sort() };
+}

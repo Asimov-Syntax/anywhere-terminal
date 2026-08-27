@@ -86,19 +86,20 @@ Two invariants carried over from the vault protocol:
 | `worktreeResumeHere` | `{ worktreeId, entryId }` | Resume an existing session with cwd overridden to this worktree |
 | `worktreeCopyResumeCommand` | `{ entryId, worktreeId? }` | Copy the resume command; the worktree scopes the cwd override when present |
 | `worktreeLaunchAgent` | `{ worktreeId, agent, permissionChoiceId?, prompt? }` | Launch an agent in the worktree |
-| `worktreeCreate` | `{ repoId, branchName, baseRef?, path?, createBranch: boolean, openAfter?: WorktreeOpenAfter, agent?, permissionChoiceId?, prompt? }` | Create a worktree, optionally launching an agent in it |
-| `worktreeRemove` | `{ worktreeId, force: boolean }` | Remove a worktree |
-| `worktreeLock` | `{ worktreeId, locked: boolean, reason?: string }` | Lock / unlock |
-| `worktreePrune` | `{ repoId }` | Prune stale registrations for one repo |
-| `requestWorktreeCreateDefaults` | `{ repoId }` | Suggested branch name + path for the create form |
+| `worktreeCreate` | `{ repoId, path, branch?, baseRef?, detach?: boolean, openAfter: WorktreeOpenAfterMode }` | Create a worktree. The three branch modes are mutually exclusive shapes, not flags: a new branch sends `branch` + `baseRef`, an existing one sends `branch` alone, and a detached create sends `detach` with an optional `baseRef`. Agent launch is WT-005.3 and is not sent yet |
+| `worktreeRemove` | `{ worktreeId, force: boolean, fingerprint?: string }` | Remove a worktree. `force` and `fingerprint` travel together or not at all — a force carrying no fingerprint authorizes nothing, and an unforced call carrying one is a payload the host never issued |
+| `worktreeLock` | `{ worktreeId, reason?: string }` | Lock a worktree |
+| `worktreeUnlock` | `{ worktreeId }` | Unlock a worktree. Two messages rather than one `locked` flag: the verbs take different arguments and a boolean made the payload lie about which |
+| `worktreePrune` | `{ repoId, confirmedCount: number }` | Prune stale registrations. `confirmedCount` is the number the user actually confirmed; the host re-counts before running and abandons the prune when the answer has moved |
+| `requestWorktreeCreateDefaults` | `{ repoId, branch? }` | The destination this repo would use. Sent again whenever the branch settles, because the path is derived from it |
 
 ### 2.2 Extension → WebView
 
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `worktreeTreeResponse` | `{ tree: WorktreeTree, presence: WorktreePresence }` | The whole view state, always both halves together |
-| `worktreeActionResult` | `{ action, worktreeId?, repoId?, outcome: "ok" \| "error" \| "indeterminate", error?: string, observed?: string, needsConfirm?: WorktreeRemoveBlocker }` | Outcome of any mutating action |
-| `worktreeCreateDefaultsResponse` | `{ repoId, branchName, path, pathIsWritable: boolean }` | Prefill for the create form |
+| `worktreeMutationResult` | `{ verb, repoId, worktreeId?, result }` where `result` is `{ kind: "ok", openFailed? }`, `{ kind: "error", message }`, `{ kind: "indeterminate", observed }`, `{ kind: "unavailable", unreadable }` or `{ kind: "blocked", worktreeId, fingerprint, blocker }` | Outcome of any mutating action, delivered to the SURFACE that started it. `unavailable` is not a failure — nothing was attempted, because what the action would affect could not be read. `openFailed` rides on a success: the worktree exists and the window did not open |
+| `worktreeCreateDefaults` | `{ repoId, root, prefix, path, branch?, collidedWith? }` | The destination the create will actually use. `path` is free against BOTH the registry and the filesystem; `collidedWith` names the unsuffixed candidate when it was taken. `branch` echoes the question, so a form can tell a current answer from one it has typed past |
 
 ```
 WorktreeOpenAfter = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspace"
