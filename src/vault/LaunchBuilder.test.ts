@@ -391,6 +391,16 @@ describe("buildStart", () => {
     expect(spec.args).toEqual(["--permission-mode", "acceptEdits", "ship the thing"]);
   });
 
+  it("refuses a posture for an agent that declares none", () => {
+    // opencode has no posture vocabulary. Ignoring the id and running the
+    // default would launch something other than what the request described.
+    expect(() => buildStart("opencode", "/wt/feat", env, { permissionChoiceId: "plan" })).toThrow(
+      /Unknown permission choice/,
+    );
+    // Without one it starts perfectly well.
+    expect(buildStart("opencode", "/wt/feat", env, {}).args).toEqual([]);
+  });
+
   it("carries opencode's prompt behind its flag, and drops the flag with the text", () => {
     expect(buildStart("opencode", "/wt/feat", env, { prompt: "go" }).args).toEqual(["--prompt", "go"]);
     expect(buildStart("opencode", "/wt/feat", env, {}).args).toEqual([]);

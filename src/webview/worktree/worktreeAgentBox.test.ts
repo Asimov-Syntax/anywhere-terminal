@@ -4,6 +4,7 @@
 // mount (design.md D7).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_CONTINUATION_INSTRUCTION } from "../../vault/continuationLimits";
 import { createWorktreeAgentBox } from "./worktreeAgentBox";
 import type { WorktreeLaunchAgent } from "./worktreeViewTypes";
 
@@ -125,6 +126,22 @@ describe("createWorktreeAgentBox", () => {
     expect(box.read().agentId).toBe("codex");
     box.setAgents([CLAUDE]);
     expect(box.read().agentId).toBe("claude");
+  });
+
+  it("shows the bound it is held to, and counts against it", () => {
+    // The host refuses an oversized prompt rather than truncating it, and the
+    // refusal happens after the dialog closes — so the limit belongs where the
+    // text is typed, as the Continue dialog already does it.
+    const { prompt, change } = mount([CLAUDE, BARE]);
+    expect(prompt().maxLength).toBe(MAX_CONTINUATION_INSTRUCTION);
+    const count = (): string => document.querySelectorAll(".wt-fhint")[0]?.textContent ?? "";
+    expect(count()).toBe(`0 / ${MAX_CONTINUATION_INSTRUCTION}`);
+    prompt().value = "hello";
+    prompt().dispatchEvent(new Event("input"));
+    expect(count()).toBe(`5 / ${MAX_CONTINUATION_INSTRUCTION}`);
+    // Switching to an agent that cannot be seeded clears the text AND the count.
+    change("wt-agent", "bare");
+    expect(count()).toBe(`0 / ${MAX_CONTINUATION_INSTRUCTION}`);
   });
 
   it("reports every edit, so a dialog can recompute its submit state", () => {

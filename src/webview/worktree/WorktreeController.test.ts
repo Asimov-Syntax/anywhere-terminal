@@ -631,6 +631,22 @@ describe("the launch entry paths WT-005.3 supplies", () => {
     expect(actions.resumeHere).toBeInstanceOf(Function);
   });
 
+  it("asks for start targets once at a time, however often the view is shown", () => {
+    // Two answers to the same question carry nothing that orders them, so the
+    // older one could land last and withdraw actions that are available.
+    const h = mount();
+    const asks = () => h.posts.filter((m) => m.type === "requestVaultLaunchTargets").length;
+    h.controller.setVisible(true);
+    h.controller.setVisible(false);
+    h.controller.setVisible(true);
+    expect(asks()).toBe(1);
+    // Answered, so the next way in is a fresh question rather than a duplicate.
+    h.controller.handleLaunchTargets(STARTABLE);
+    h.controller.setVisible(false);
+    h.controller.setVisible(true);
+    expect(asks()).toBe(2);
+  });
+
   it("ignores the continuation answer — the other question, and a different set", () => {
     const h = mount();
     h.controller.handleTreeResponse(response());

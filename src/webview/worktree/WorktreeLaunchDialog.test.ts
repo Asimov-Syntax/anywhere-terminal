@@ -34,12 +34,23 @@ afterEach(() => {
 function open(agents: WorktreeLaunchAgent[] = [CLAUDE]) {
   const onConfirm = vi.fn();
   const onCancel = vi.fn();
-  openWorktreeLaunchDialog(host, { worktreeLabel: "feat/login", agents, onConfirm, onCancel });
+  const dispose = openWorktreeLaunchDialog(host, { worktreeLabel: "feat/login", agents, onConfirm, onCancel });
   const q = <T extends HTMLElement>(sel: string): T => document.body.querySelector<T>(sel) as T;
-  return { onConfirm, onCancel, q };
+  return { onConfirm, onCancel, q, dispose };
 }
 
 describe("openWorktreeLaunchDialog", () => {
+  it("hands back a disposer, so the panel can supersede it", () => {
+    // Untracked, it stays mounted under whatever opens next, holding a focus
+    // trap and a document listener nobody will release.
+    const { dispose } = open();
+    expect(document.body.querySelector(".wt-dialog")).not.toBeNull();
+    dispose?.();
+    expect(document.body.querySelector(".wt-dialog")).toBeNull();
+    // Nothing to dispose when there was nothing to open.
+    expect(open([]).dispose).toBeNull();
+  });
+
   it("names the worktree the launch will run in", () => {
     open();
     expect(document.body.textContent).toContain("feat/login");

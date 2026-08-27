@@ -45,7 +45,9 @@ const RAW_DISPLAY = "/repo-wt/raw/";
 /** The repo id the fixture's listing produces — git's common dir, not the main path. */
 const REPO = "/repo/.git";
 
-function runner(gone = false, extra: string[][] = []): GitCommandRunner {
+/** `gone` is a function where a test needs the worktree to vanish mid-flight. */
+function runner(gone: boolean | (() => boolean) = false, extra: string[][] = []): GitCommandRunner {
+  const isGone = typeof gone === "function" ? gone : () => gone;
   const run = vi.fn(async (args: readonly string[], cwd: string): Promise<GitCommandResult> => {
     if (args[0] === "--version") {
       return res({ stdout: Buffer.from("git version 2.50.1\n") });
@@ -53,7 +55,7 @@ function runner(gone = false, extra: string[][] = []): GitCommandRunner {
     if (cwd !== "/repo") {
       return res({ code: 128, stderr: "fatal: not a git repository" });
     }
-    const feat = gone ? [...FEAT, "prunable gitdir file points to non-existent location"] : FEAT;
+    const feat = isGone() ? [...FEAT, "prunable gitdir file points to non-existent location"] : FEAT;
     return args[0] === "worktree"
       ? res({ stdout: nul(MAIN, feat, RAW, ...extra) })
       : res({ stdout: Buffer.from("/repo/.git\n") });
@@ -65,14 +67,19 @@ const api: GitApiAccessor = () =>
   ({ state: "initialized", repositories: [{ rootUri: { fsPath: "/repo" } }] }) as ReturnType<GitApiAccessor>;
 
 /** `gone` makes the feat worktree prunable AND absent, which is `missing`. */
-function deps(gone = false, extra: string[][] = [], shared?: GitCommandRunner): WorktreeTreeDeps {
+function deps(
+  gone: boolean | (() => boolean) = false,
+  extra: string[][] = [],
+  shared?: GitCommandRunner,
+): WorktreeTreeDeps {
+  const isGone = typeof gone === "function" ? gone : () => gone;
   const r = shared ?? runner(gone, extra);
   return {
     runner: r,
     capabilities: createGitCapabilities(r),
     normalize: async (p: string) => p.replace(/\/+$/, "") || "/",
     stat: async (path: string) => {
-      if (gone && path === FEAT_PATH) {
+      if (isGone() && path === FEAT_PATH) {
         throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       }
       return undefined;
@@ -226,7 +233,10 @@ async function builtHost(
   // One runner for the whole host, so a test can observe which git commands the
   // host actually issued — including the ones it deliberately does not.
   const argv: string[][] = [];
-  const base = runner(gone, over.extra ?? []);
+  // Mutable, so a test can make the worktree disappear while a launch resolves.
+  const missing = { now: gone };
+  const isGone = () => missing.now;
+  const base = runner(isGone, over.extra ?? []);
   const shared: GitCommandRunner = {
     run: async (args, cwd) => {
       argv.push([...args]);
@@ -234,7 +244,7 @@ async function builtHost(
     },
   };
   const host = createWorktreeHost({
-    deps: deps(gone, over.extra ?? [], shared),
+    deps: deps(isGone, over.extra ?? [], shared),
     workspaceFolders: () => ["/repo"],
     pool: { subscribePattern: () => ({ active: true, dispose: () => {} }) },
     clock,
@@ -257,6 +267,9 @@ async function builtHost(
   attachment.setDisplayed(true);
   host.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
   host.handleMessage(view, { type: "requestWorktreeTree" });
+  // The panel asks this on the way in, and the answer is what admission checks —
+  // a host that was never asked has offered nothing and admits nothing.
+  await host.publishLaunchTargets(view);
   await settle();
   view.posts.length = 0;
   return {
@@ -266,6 +279,12 @@ async function builtHost(
     reconciles,
     /** How many `git status` invocations the host has made so far. */
     statusRuns: () => argv.filter((a) => a[0] === "status").length,
+    /** Make the feat worktree vanish and let the host see that it did. */
+    vanish: async () => {
+      missing.now = true;
+      host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+      await settle();
+    },
     dispose: () => host.dispose(),
   };
 }
@@ -1081,6 +1100,62 @@ describe("launching an agent", () => {
     }
     await settle();
     expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("admits against what this surface was OFFERED, not against what is installed now", async () => {
+    // The drift the second probe could not see: an agent that becomes
+    // detectable AFTER the panel was answered was still never offered, so a
+    // request naming it is a request from a list the user never saw.
+    const startAgent = ok();
+    let answer = [LAUNCH_TARGETS[0] as (typeof LAUNCH_TARGETS)[number]];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      startAgent,
+      launchTargets: async () => answer,
+    });
+    answer = [...LAUNCH_TARGETS];
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "opencode" });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    // And once the surface is answered again, the same request is admitted.
+    await host.publishLaunchTargets(view);
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "opencode" });
+    await settle();
+    expect(startAgent).toHaveBeenCalledWith("opencode", FEAT_PATH, {});
+    dispose();
+  });
+
+  it("admits nothing on a surface that was never answered", async () => {
+    const startAgent = ok();
+    const { host, dispose } = await builtHost([windowRow()], false, { startAgent });
+    // A second surface, attached but never asking: it holds no offer of its own.
+    const other = surface();
+    host.attach(other).setDisplayed(true);
+    host.handleMessage(other, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "claude" });
+    await settle();
+    expect(startAgent).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("does not hand over a launch whose worktree went away while it resolved", async () => {
+    // Admission and executable resolution both await. The path read at the
+    // request is the one thing that cannot be trusted at the handoff.
+    let release: (() => void) | undefined;
+    const startAgent = vi.fn(
+      async () =>
+        new Promise<CreateSessionOptions>((resolve) => {
+          release = () => resolve(OPTS);
+        }),
+    );
+    const { host, view, dispose, vanish } = await builtHost([windowRow()], false, { startAgent });
+    host.handleMessage(view, { type: "worktreeLaunchAgent", worktreeId: FEAT_PATH, agent: "claude" });
+    await settle();
+    expect(startAgent).toHaveBeenCalled();
+    // The worktree disappears mid-resolution, then the launcher answers.
+    await vanish();
+    release?.();
+    await settle();
+    expect(view.launches).toEqual([]);
     dispose();
   });
 

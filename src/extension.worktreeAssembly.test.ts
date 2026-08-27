@@ -301,11 +301,13 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
       // The provider owns this one, not the host: answered here with a fixed set
       // so the walk does not depend on which agents this machine has installed.
       if (msg.type === "requestVaultLaunchTargets") {
-        route({
-          type: "vaultLaunchTargets",
-          capability: msg.capability ?? "continue",
-          targets: noStartableAgents ? [] : STARTABLE_TARGETS,
-        });
+        // The provider routes the START capability to the host, which answers and
+        // remembers what it answered — the same set its admission door reads.
+        if (msg.capability === "start") {
+          void host.publishLaunchTargets(surface);
+          return;
+        }
+        route({ type: "vaultLaunchTargets", capability: "continue", targets: STARTABLE_TARGETS });
         return;
       }
       void host.handleMessage(surface, msg as never);

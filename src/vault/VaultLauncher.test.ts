@@ -411,4 +411,19 @@ describe("VaultLauncher.startAgent", () => {
   it("refuses an agent it does not know", async () => {
     await expect(launcher().startAgent("nosuch", "/wt/feat", {})).rejects.toBeInstanceOf(VaultLaunchError);
   });
+
+  it("fails the launch when a templated executable cannot be found", async () => {
+    // cursor's start template names `{{executable}}`. An unresolved probe used
+    // to fall through and spawn that placeholder verbatim.
+    resolveAgentExecutable.mockResolvedValueOnce(null);
+    await expect(launcher().startAgent("cursor", "/wt/feat", {})).rejects.toMatchObject({
+      code: "executable-not-found",
+    });
+  });
+
+  it("probes only the agents whose template asks to be resolved", async () => {
+    resolveAgentExecutable.mockClear();
+    await launcher().startAgent("claude", "/wt/feat", {});
+    expect(resolveAgentExecutable).not.toHaveBeenCalled();
+  });
 });

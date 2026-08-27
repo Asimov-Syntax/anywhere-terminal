@@ -1177,10 +1177,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           // Untrusted like every other inbound field: anything but the one known
           // alternative falls back to continue, which is what an older webview
           // (sending no capability at all) means.
-          void this.handleRequestVaultLaunchTargets(
-            webviewView.webview,
-            message.capability === "start" ? "start" : "continue",
-          );
+          //
+          // The two capabilities are answered by different owners: the host owns
+          // the fresh-start answer because it also admits launches against it,
+          // and an answer it did not give is an answer it cannot check.
+          if (message.capability === "start") {
+            if (worktreeSurface) {
+              void this.worktreeHost?.publishLaunchTargets(worktreeSurface);
+            }
+            break;
+          }
+          void this.handleRequestVaultLaunchTargets(webviewView.webview, "continue");
           break;
 
         case "requestVaultMessageRecord":

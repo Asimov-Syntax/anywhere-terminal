@@ -335,6 +335,17 @@ export interface WorktreeHost extends vscode.Disposable {
   attach(surface: WorktreeSurface): WorktreeAttachment;
   /** Route an inbound worktree message from `surface`. Unknown types ignored. */
   handleMessage(surface: WorktreeSurface, msg: WebViewToExtensionMessage): void;
+  /**
+   * Answer "which agents can start a fresh session here" for `surface`, and
+   * remember the answer.
+   *
+   * The host answers rather than merely supplying the capability, because the
+   * admission door has to check the set this surface was OFFERED. Two
+   * independent probes are two answers with a window between them: an agent
+   * installed after the panel was answered would pass the second one having
+   * never appeared in the first.
+   */
+  publishLaunchTargets(surface: WorktreeSurface): Promise<void>;
 }
 
 /** What one projection request wants. */
@@ -386,6 +397,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * presence (.reviews/round-2.md B1).
    */
   let published: { tree: ReturnType<typeof cache.read>; presence: WorktreePresence } | undefined;
+
+  /**
+   * What each surface was told it could start, keyed by the surface itself so a
+   * detached one takes its answer with it. Admission checks THIS, not a fresh
+   * probe: the offer is what the request has to have come from.
+   */
+  const publishedTargets = new WeakMap<WorktreeSurface, readonly VaultLaunchTarget[]>();
   /**
    * Bumped by every write to the cached tree — never by a delivery attempt.
    *
@@ -646,7 +664,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * the router asserts a name, not a payload, so a field that is null or a
    * number reaches this function exactly as a well-formed one does.
    */
-  async function admissibleLaunch(fields: unknown): Promise<boolean> {
+  async function admissibleLaunch(surface: WorktreeSurface, fields: unknown): Promise<boolean> {
     if (typeof fields !== "object" || fields === null) {
       return false;
     }
@@ -657,11 +675,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (permissionChoiceId !== undefined && typeof permissionChoiceId !== "string") {
       return false;
     }
-    const targets = options.actions?.launchTargets;
-    if (!targets) {
-      return false;
-    }
-    const target = (await targets()).find((t) => t.agent === agent);
+    const target = (publishedTargets.get(surface) ?? []).find((t) => t.agent === agent);
     if (target === undefined) {
       return false;
     }
@@ -671,6 +685,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return false;
     }
     return permissionChoiceId === undefined || target.permissionChoices.some((c) => c.id === permissionChoiceId);
+  }
+
+  /** Resolve the start-capable targets for `surface`, remember them, and answer. */
+  async function publishLaunchTargets(surface: WorktreeSurface): Promise<void> {
+    const targets = (await options.actions?.launchTargets?.()) ?? [];
+    publishedTargets.set(surface, targets);
+    surface.post({ type: "vaultLaunchTargets", capability: "start", targets: [...targets] });
   }
 
   /** The launcher's option bag, with absent fields absent rather than undefined. */
@@ -749,7 +770,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // refused its launch would leave the user a directory they did not
           // ask for on its own.
           perform(async () => {
-            if (await admissibleLaunch(asked)) {
+            if (await admissibleLaunch(surface, asked)) {
               await create({ ...request, launch: asked });
             }
           });
@@ -926,11 +947,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // Admission first, and it is the HOST's own answer being checked, not
         // the registry's: an agent that resolves on this machine but was never
         // advertised for a fresh start is still not what the panel offered.
-        void admissibleLaunch(fields).then((admitted) => {
+        void admissibleLaunch(surface, fields).then((admitted) => {
           if (!admitted) {
             return;
           }
-          launch(surface, () => start(fields.agent, path, launchOpts(fields)));
+          launch(surface, msg.worktreeId, () => start(fields.agent, path, launchOpts(fields)));
         });
         return;
       }
@@ -944,7 +965,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           return;
         }
         const entryId = row.entryId;
-        launch(surface, () => resume(entryId, path));
+        launch(surface, msg.worktreeId, () => resume(entryId, path));
         return;
       }
     }
@@ -958,13 +979,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * did not get has to say so — "agent executable not found" is the whole error
    * surface this action has (worktree-actions.md § 5).
    */
-  function launch(surface: WorktreeSurface, resolve: () => Promise<CreateSessionOptions>): void {
+  function launch(surface: WorktreeSurface, worktreeId: string, resolve: () => Promise<CreateSessionOptions>): void {
     const open = surface.launchAgent;
     if (!open) {
       return;
     }
     void resolve()
-      .then((options) => open.call(surface, options))
+      .then((options) => {
+        // Asked again at the handoff, not only at the request: admission and
+        // executable resolution both await, and a worktree removed while they
+        // ran would otherwise still receive the session.
+        if (actionPath(worktreeId, false) === undefined) {
+          return undefined;
+        }
+        return options;
+      })
+      .then((options) => (options === undefined ? undefined : open.call(surface, options)))
       .catch((err: unknown) => {
         const reason = err instanceof Error ? err.message : "The agent could not be started.";
         surface.post({ type: "error", message: reason, severity: "error" });
@@ -1495,6 +1525,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     initPayload: () => ({ worktreeHasRepo: hasGitRepo(options.workspaceFolders(), options.exists) }),
     attach,
     handleMessage,
+    publishLaunchTargets,
 
     reportMutation: (report) => {
       if (disposed) {

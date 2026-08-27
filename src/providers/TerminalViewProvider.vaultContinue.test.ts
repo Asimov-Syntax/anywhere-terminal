@@ -30,6 +30,7 @@ import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { VaultLauncher } from "../vault/VaultLauncher";
 import type { VaultService } from "../vault/VaultService";
 import { TerminalViewProvider } from "./TerminalViewProvider";
+import type { WorktreeHost } from "./WorktreeHost";
 
 beforeEach(() => {
   __resetAll();
@@ -90,6 +91,20 @@ const okResolve = () =>
 
 function mount(vault: FakeVault, resolve: ReturnType<typeof okResolve> | ReturnType<typeof vi.fn> = okResolve()) {
   const sm = new SessionManager();
+  // Only the two members this file exercises: the start capability is answered
+  // by the host now, because the host is what admits launches against it.
+  const publishLaunchTargets = vi.fn(async () => {});
+  const worktreeHost = {
+    initPayload: () => ({ worktreeHasRepo: false }),
+    attach: () => ({ setDisplayed: () => {}, dispose: () => {} }),
+    handleMessage: () => {},
+    publishLaunchTargets,
+    mutationBindings: () => {
+      throw new Error("not exercised here");
+    },
+    reportMutation: () => {},
+    dispose: () => {},
+  } as unknown as WorktreeHost;
   const provider = new TerminalViewProvider(
     { fsPath: "/mock/extension" } as vscode.Uri,
     sm,
@@ -98,6 +113,8 @@ function mount(vault: FakeVault, resolve: ReturnType<typeof okResolve> | ReturnT
     null,
     vault as unknown as VaultService,
     { resolve } as unknown as VaultLauncher,
+    null,
+    worktreeHost,
   );
   const messageHandlers: Array<(msg: unknown) => void> = [];
   const postMessageSpy = vi.fn((_m: unknown) => Promise.resolve(true));
@@ -126,6 +143,7 @@ function mount(vault: FakeVault, resolve: ReturnType<typeof okResolve> | ReturnT
       }
     },
     resolve,
+    publishLaunchTargets,
     postMessageSpy,
     dispose: () => sm.dispose(),
   };
@@ -266,14 +284,15 @@ describe("requestVaultLaunchTargets", () => {
       .map((m) => ({ capability: m.capability, targets: m.targets ?? [] }));
   }
 
-  it("answers the start capability, and says so on the reply", async () => {
+  it("hands the start capability to the host, which answers it and remembers doing so", async () => {
+    // The provider used to answer this itself. It cannot any more: admission
+    // checks the set the surface was OFFERED, and an answer the host did not
+    // give is one it cannot check against (round-2 B1).
     const h = mount(makeVault());
     h.send({ type: "requestVaultLaunchTargets", capability: "start" });
     await tick();
-    const reply = replies(h.postMessageSpy)[0];
-    // Without the echo the two answers are indistinguishable, so a start answer
-    // would populate whichever dialog happened to be listening (design D5).
-    expect(reply?.capability).toBe("start");
+    expect(h.publishLaunchTargets).toHaveBeenCalledTimes(1);
+    expect(replies(h.postMessageSpy)).toEqual([]);
     h.dispose();
   });
 
@@ -285,13 +304,14 @@ describe("requestVaultLaunchTargets", () => {
     h.dispose();
   });
 
-  it("forwards the answer for the capability asked about, not the other one", async () => {
+  it("answers the continuation capability itself, and never with the other set", async () => {
     // An EQUALITY, not a loop over the postures: where no agent resolves, a loop
     // runs zero times and the test passes having checked nothing.
     const h = mount(makeVault());
-    h.send({ type: "requestVaultLaunchTargets", capability: "start" });
+    h.send({ type: "requestVaultLaunchTargets", capability: "continue" });
     await tick();
-    expect(replies(h.postMessageSpy)[0]?.targets).toEqual(STUB_TARGETS.start);
+    expect(replies(h.postMessageSpy)).toEqual([{ capability: "continue", targets: STUB_TARGETS.continue }]);
+    expect(h.publishLaunchTargets).not.toHaveBeenCalled();
     h.dispose();
   });
 });
