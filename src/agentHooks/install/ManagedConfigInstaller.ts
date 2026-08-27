@@ -8,6 +8,7 @@
 import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
 import { posixShellQuote } from "../../utils/posixShellQuote";
+import { isNotFound, LockedFile } from "./lockedJsonFile";
 import { ManagedEntryLedger, type ManagedEntryOwnership, memoryLedgerStore } from "./managedEntryLedger";
 import {
   PROBE_OUTER_DEADLINE_MS,
@@ -52,9 +53,6 @@ export interface ManagedConfigInstallerDependencies {
   rename?: (oldPath: string, newPath: string) => Promise<void>;
 }
 
-const LOCK_WAIT_MS = 25;
-const LOCK_MAX_WAIT_MS = 1_000;
-const STALE_LOCK_MS = 30_000;
 const MAX_RECONCILE_ATTEMPTS = 3;
 
 export class ManagedConfigInstaller {
@@ -107,8 +105,7 @@ export class ManagedConfigInstaller {
       return { installed: false, reason: "write-failed" };
     }
 
-    return this.withLock<HookInstallOutcome>(
-      configPath,
+    return this.locked(configPath).withLock<HookInstallOutcome>(
       async (): Promise<HookInstallOutcome> => {
         // The command is recorded BEFORE the file changes (round-4 B6). Owning a
         // command we never wrote costs nothing — there is nothing to remove —
@@ -138,8 +135,7 @@ export class ManagedConfigInstaller {
     if ((await this.readConfiguration(configPath)).kind === "missing") {
       return { removed: false, reason: "not-installed" };
     }
-    return this.withLock<HookRemoveOutcome>(
-      configPath,
+    return this.locked(configPath).withLock<HookRemoveOutcome>(
       async (): Promise<HookRemoveOutcome> => {
         let removed = false;
         const reconciled = await this.reconcile(configPath, (document) => {
@@ -223,49 +219,15 @@ export class ManagedConfigInstaller {
     return result.exitCode === 0 && isEmptyJson(result.stdout) ? "ready" : "probe-failed";
   }
 
-  private async withLock<T>(
-    configPath: string,
-    work: () => Promise<T>,
-    lockUnavailable: T,
-    writeFailed: T,
-  ): Promise<T> {
-    const lockPath = `${configPath}.anywhere-terminal.lock`;
-    if (!(await this.acquireLock(lockPath))) {
-      return lockUnavailable;
-    }
-    try {
-      return await work();
-    } catch {
-      return writeFailed;
-    } finally {
-      await this.fs.unlink(lockPath).catch(() => undefined);
-    }
-  }
-
-  private async acquireLock(lockPath: string): Promise<boolean> {
-    const attempts = Math.ceil(LOCK_MAX_WAIT_MS / LOCK_WAIT_MS);
-    for (let attempt = 0; attempt <= attempts; attempt += 1) {
-      try {
-        const handle = await this.fs.open(lockPath, "wx");
-        await handle.close();
-        return true;
-      } catch (error) {
-        if (!isAlreadyExists(error)) {
-          return false;
-        }
-        try {
-          const lock = await this.fs.stat(lockPath);
-          if (this.now() - lock.mtimeMs > STALE_LOCK_MS) {
-            await this.fs.unlink(lockPath);
-            continue;
-          }
-        } catch {
-          continue;
-        }
-        await this.sleep(LOCK_WAIT_MS);
-      }
-    }
-    return false;
+  /** The same file, addressed through the shared lock-and-replace discipline (D15). */
+  private locked(configPath: string): LockedFile {
+    return new LockedFile(configPath, {
+      fs: this.fs,
+      now: this.now,
+      sleep: this.sleep,
+      rename: this.replace,
+      platform: this.platform,
+    });
   }
 
   private async reconcile(
@@ -292,7 +254,10 @@ export class ManagedConfigInstaller {
       if (!(await this.matches(configPath, contents))) {
         continue;
       }
-      return (await this.atomicReplace(configPath, serialized, source.kind === "document" ? source.mode : undefined))
+      return (await this.locked(configPath).atomicReplace(
+        serialized,
+        source.kind === "document" ? source.mode : undefined,
+      ))
         ? "success"
         : "failed";
     }
@@ -336,26 +301,6 @@ export class ManagedConfigInstaller {
     }
   }
 
-  private async atomicReplace(configPath: string, contents: string, mode: number | undefined): Promise<boolean> {
-    const path = this.platform === "win32" ? win32 : posix;
-    const temporaryPath = path.join(
-      path.dirname(configPath),
-      `.${path.basename(configPath) || "hooks.json"}.${this.now()}.tmp`,
-    );
-    try {
-      await this.fs.mkdir(path.dirname(configPath), { recursive: true });
-      await this.fs.writeFile(temporaryPath, contents, { encoding: "utf8", mode: mode ?? 0o600 });
-      if (mode !== undefined) {
-        await this.fs.chmod(temporaryPath, mode);
-      }
-      await this.replace(temporaryPath, configPath);
-      return true;
-    } catch {
-      await this.fs.unlink(temporaryPath).catch(() => undefined);
-      return false;
-    }
-  }
-
   private command(): string {
     return managedWrapperCommand(this.adapter, { ...this.options, platform: this.platform });
   }
@@ -375,14 +320,6 @@ export function managedWrapperCommand(adapter: AgentConfigAdapter, options: Mana
 
 function hostPlatform(): Platform {
   return process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
-}
-
-function isNotFound(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function isEmptyJson(stdout: string): boolean {

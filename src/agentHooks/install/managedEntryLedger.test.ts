@@ -7,10 +7,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CURSOR_WRAPPER_DIRECTORY, cursorConfigAdapter } from "./cursorConfigAdapter";
+import { LockedFile } from "./lockedJsonFile";
 import { ManagedConfigInstaller, managedWrapperCommand } from "./ManagedConfigInstaller";
 import {
+  fileLedgerStore,
   type LedgerStore,
-  MANAGED_ENTRY_LEDGER_KEY,
+  MANAGED_ENTRY_LEDGER_FILE,
   MAX_PENDING_DESTINATIONS,
   ManagedEntryLedger,
   memoryLedgerStore,
@@ -205,16 +207,14 @@ describe("ManagedEntryLedger state", () => {
   });
 
   it("survives a stored value of the wrong shape rather than throwing", () => {
-    const ledger = new ManagedEntryLedger(
-      memoryLedgerStore({ [`${MANAGED_ENTRY_LEDGER_KEY}.cursor`]: { commands: "not-an-array", pending: 7 } }),
-    );
+    const ledger = new ManagedEntryLedger(memoryLedgerStore({ cursor: { commands: "not-an-array", pending: 7 } }));
 
     expect(ledger.entry("cursor")).toEqual({ destination: undefined, commands: [], pending: [] });
     expect(ledger.entry("claude")).toEqual({ destination: undefined, commands: [], pending: [] });
   });
 
   it.each([null, "text", [1, 2]])("survives a stored root of %s", (stored) => {
-    const ledger = new ManagedEntryLedger(memoryLedgerStore({ [`${MANAGED_ENTRY_LEDGER_KEY}.cursor`]: stored }));
+    const ledger = new ManagedEntryLedger(memoryLedgerStore({ cursor: stored }));
 
     expect(ledger.entry("cursor").commands).toEqual([]);
   });
@@ -230,18 +230,36 @@ describe("ManagedEntryLedger state", () => {
   });
 });
 
-/** A store whose reads lag its writes — the Memento contract the tests had assumed away. */
+/**
+ * A store whose synchronous view lags its writes, and whose exclusion — like the
+ * real lock's — is its own. A mutation deriving from anything but what `transact`
+ * hands it is what erased the earlier write in round 4.
+ */
 function laggingLedgerStore(): LedgerStore {
   const values = new Map<string, unknown>();
+  const published = new Map<string, unknown>();
+  let tail: Promise<unknown> = Promise.resolve();
   return {
-    get: <T>(key: string) => values.get(key) as T | undefined,
-    update: (key, value) =>
-      new Promise<void>((resolve) => {
-        setTimeout(() => {
-          values.set(key, value);
-          resolve();
-        }, 1);
-      }),
+    peek: (key) => published.get(key),
+    load: async () => undefined,
+    transact: (key, change) => {
+      const next = tail.then(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(() => {
+              const updated = change(values.get(key));
+              values.set(key, updated);
+              published.set(key, updated);
+              resolve();
+            }, 1);
+          }),
+      );
+      tail = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
+    },
   };
 }
 
@@ -335,5 +353,107 @@ describe("ManagedEntryLedger durability (round-4 B5, B6, B7)", () => {
     }
 
     expect(await ledger.recordPending("cursor", "/failed/0/hooks.json")).toBe(true);
+  });
+});
+
+describe("ManagedEntryLedger on disk (round-5 B5, W5)", () => {
+  async function ledgerFile(dependencies: ConstructorParameters<typeof LockedFile>[1] = {}) {
+    const directory = await mkdtemp(join(tmpdir(), "ledger-file-"));
+    tempDirectories.push(directory);
+    const path = join(directory, MANAGED_ENTRY_LEDGER_FILE);
+    return { path, open: () => new ManagedEntryLedger(fileLedgerStore(new LockedFile(path, dependencies))) };
+  }
+
+  it("shows a second host what the first recorded", async () => {
+    const { open } = await ledgerFile();
+    await open().recordPending("cursor", "/old/hooks.json");
+
+    const second = open();
+    await second.load();
+
+    expect(second.pending("cursor")).toEqual([resolve("/old/hooks.json")]);
+  });
+
+  it("does not let a host that never read an entry erase it", async () => {
+    const { open } = await ledgerFile();
+    const first = open();
+    // Opened, and its view warmed, BEFORE the other host writes anything —
+    // exactly the stale snapshot a per-window cache hands back on the next write.
+    const second = open();
+    await second.load();
+
+    await first.ownership("cursor", "seed").recordInstalled("/a/hooks.json", "cursor-command");
+    await second.ownership("claude", "seed").recordInstalled("/b/settings.json", "claude-command");
+
+    const reopened = open();
+    await reopened.load();
+    expect(reopened.destination("cursor")).toBe(resolve("/a/hooks.json"));
+    expect(reopened.destination("claude")).toBe(resolve("/b/settings.json"));
+  });
+
+  it("keeps every write when two of them overlap on one file", async () => {
+    const { open } = await ledgerFile();
+    const ledger = open();
+
+    await Promise.all([
+      ledger.recordPending("cursor", "/one/hooks.json"),
+      ledger.recordPending("cursor", "/two/hooks.json"),
+      ledger.ownership("cursor", "seed").recordCommand("command"),
+    ]);
+
+    const reopened = open();
+    await reopened.load();
+    expect(reopened.pending("cursor")).toEqual([resolve("/one/hooks.json"), resolve("/two/hooks.json")]);
+    expect(reopened.entry("cursor").commands).toEqual(["command"]);
+  });
+
+  it("writes through a lock a dead process left behind", async () => {
+    const { path, open } = await ledgerFile({ now: () => Date.now() + 60_000 });
+    await writeFile(`${path}.anywhere-terminal.lock`, "");
+
+    await open().recordPending("cursor", "/old/hooks.json");
+
+    const reopened = open();
+    await reopened.load();
+    expect(reopened.pending("cursor")).toEqual([resolve("/old/hooks.json")]);
+  });
+
+  it("holds a destination it could not persist, and lands it on the next write that can", async () => {
+    let failing = true;
+    const { open } = await ledgerFile({
+      rename: async (from, to) => {
+        if (failing) {
+          throw new Error("disk full");
+        }
+        await rename(from, to);
+      },
+    });
+    const ledger = open();
+
+    // The configuration was already replaced; forgetting where is what W5 named.
+    await ledger.ownership("cursor", "seed").recordInstalled("/a/hooks.json", "command");
+    expect(ledger.pending("cursor")).toEqual([resolve("/a/hooks.json")]);
+
+    failing = false;
+    await ledger.ownership("cursor", "seed").recordCommand("command");
+
+    const reopened = open();
+    await reopened.load();
+    expect(reopened.pending("cursor")).toEqual([resolve("/a/hooks.json")]);
+    expect(reopened.destination("cursor")).toBe(resolve("/a/hooks.json"));
+  });
+
+  it("starts empty on a ledger file that is not readable as a record", async () => {
+    const { path, open } = await ledgerFile();
+    await writeFile(path, "{ not json");
+
+    const ledger = open();
+    await ledger.load();
+
+    expect(ledger.entry("cursor")).toEqual({ destination: undefined, commands: [], pending: [] });
+    await ledger.recordPending("cursor", "/old/hooks.json");
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      cursor: { destination: undefined, commands: [], pending: [resolve("/old/hooks.json")] },
+    });
   });
 });

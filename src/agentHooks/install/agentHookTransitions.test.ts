@@ -16,7 +16,7 @@ import {
 } from "./agentHookRegistry";
 import { AgentHookTransitions, type AgentHookTransitionsOptions, summarizeUninstall } from "./agentHookTransitions";
 import { ManagedConfigInstaller, managedWrapperCommand } from "./ManagedConfigInstaller";
-import { ManagedEntryLedger, memoryLedgerStore } from "./managedEntryLedger";
+import { MAX_PENDING_DESTINATIONS, ManagedEntryLedger, memoryLedgerStore } from "./managedEntryLedger";
 import type { AgentConfigAdapter } from "./types";
 
 const tempDirectories: string[] = [];
@@ -287,5 +287,101 @@ describe("agent hook transitions", () => {
       release();
       await all;
     });
+  });
+});
+
+describe("a destination the ledger cannot track (round-5 B8)", () => {
+  async function ceilingReached() {
+    const { settings, location, storageRoot, adapters } = await agentConfigs();
+    const { entry, adapter } = adapters[0];
+    const previous = adapter.configPath();
+    const ledger = new ManagedEntryLedger(memoryLedgerStore());
+    await installerFor(adapter, storageRoot, ledger, entry.agent).install();
+    for (let index = 0; index < MAX_PENDING_DESTINATIONS; index += 1) {
+      await ledger.recordPending(entry.agent, join(storageRoot, `stranded-${index}.json`));
+    }
+
+    const registry = [{ ...entry, createAdapter: () => entry.createAdapterForPath(`${previous}.moved`) }];
+    let refuse = true;
+    const forced: Array<[string, boolean]> = [];
+    const transitions = transitionsFor({
+      settings,
+      location,
+      storageRoot,
+      ledger,
+      registry,
+      createUninstaller: (target: AgentConfigAdapter, agent: VaultAgentId) =>
+        refuse && target.configPath() === previous
+          ? {
+              uninstall: async () => {
+                throw new Error("permission denied");
+              },
+            }
+          : installerFor(target, storageRoot, ledger, agent),
+      setDesiredEnabled: async (agent, enabled) => {
+        forced.push([agent, enabled]);
+      },
+    });
+    return {
+      entry,
+      adapter,
+      previous,
+      ledger,
+      forced,
+      storageRoot,
+      settings,
+      location,
+      movedEntry: registry[0],
+      transitions,
+      allow: () => {
+        refuse = false;
+      },
+    };
+  }
+
+  it("stops the move rather than forgetting the file it could not clean", async () => {
+    const { entry, previous, ledger, forced, movedEntry, transitions, adapter } = await ceilingReached();
+
+    const outcome = await transitions.submit(movedEntry);
+
+    expect(outcome).toMatchObject({ destination: previous, reconciled: false, blockedBy: previous });
+    // The record still names it, which is the only way anything finds it again.
+    expect(ledger.destination(entry.agent)).toBe(resolve(previous));
+    expect(forced).toEqual([]);
+    expect(await readFile(previous, "utf8")).toContain(adapter.wrapperLocation("linux").directoryName);
+  });
+
+  it("still finds that destination when the user removes everything", async () => {
+    const { entry, previous, ledger, movedEntry, transitions, adapter, settings, location, storageRoot, allow } =
+      await ceilingReached();
+    await transitions.submit(movedEntry);
+
+    allow();
+    const results = await transitionsFor({
+      settings,
+      location,
+      storageRoot,
+      ledger,
+      registry: [movedEntry],
+    }).uninstallEverything();
+
+    expect(results[0]).toMatchObject({ agent: entry.agent, removed: true });
+    expect(await readFile(previous, "utf8")).not.toContain(adapter.wrapperLocation("linux").directoryName);
+  });
+
+  it("moves once a slot frees, whether or not the cleanup succeeds", async () => {
+    const { entry, previous, ledger, forced, movedEntry, transitions, storageRoot } = await ceilingReached();
+    await transitions.submit(movedEntry);
+
+    await ledger.clearPending(entry.agent, join(storageRoot, "stranded-0.json"));
+    const outcome = await transitions.submit(movedEntry);
+
+    expect(outcome.reconciled).toBe(true);
+    expect(outcome.blockedBy).toBeUndefined();
+    expect(ledger.pending(entry.agent)).toContain(resolve(previous));
+    expect(forced).toEqual([
+      [entry.agent, false],
+      [entry.agent, false],
+    ]);
   });
 });

@@ -168,9 +168,12 @@ observable in the wrong mode.
 
 ### D12: Ownership is exact equality against a ledger of what we wrote, never a parse of the user's string
 
-**Supersedes D3's matching rule.** The extension keeps a persisted ledger in `globalState`:
-per agent, the destination it is installed into, the exact command strings it has written,
-and any destinations whose cleanup has not yet succeeded. An entry is ours **iff** its
+> **Amended by D15** after review cycle 2: the matching rule below stands; the ledger no
+> longer lives in `globalState`.
+
+**Supersedes D3's matching rule.** The extension keeps a persisted ledger: per agent, the
+destination it is installed into, the exact command strings it has written, and any
+destinations whose cleanup has not yet succeeded. An entry is ours **iff** its
 command is byte-equal to one the ledger records. Nothing else is ever removed.
 
 D3's premise — that we could recognise our own entry by looking at the command — survived
@@ -188,13 +191,13 @@ looks like. A command the user hand-edited is also not claimed — we decline to
 which is the safe direction and visible to the user rather than silent.
 
 The ledger keeps what D3 was actually for. A moved storage root still matches, because the
-ledger holds the command as written, not as recomputed. `globalState` survives extension
-updates for the same reason `globalStorageUri` does.
+ledger holds the command as written, not as recomputed. It lives under `globalStorageUri`,
+which is stable across extension updates.
 
 Entries written by the shipped Cursor build predate the ledger. On first run with no ledger,
 the extension seeds it with the exact command that build emitted for the current
-`globalStorageUri` — a deterministic construction, not a search. A user whose `globalState`
-was cleared keeps whatever we cannot prove is ours; the uninstall command reports it rather
+`globalStorageUri` — a deterministic construction, not a search. A user whose ledger was
+cleared keeps whatever we cannot prove is ours; the uninstall command reports it rather
 than guessing.
 
 ### D13: One serialized transition owner per agent
@@ -214,6 +217,14 @@ forgotten, and are retried on the next transition and at activation. That closes
 cross-restart stranding recorded as out of reach in cycle 1 — with the ledger it is reachable,
 so it is no longer deferred.
 
+The pending list is bounded, and reaching that bound **stops the move rather than dropping the
+destination**. A stale destination that can neither be cleaned nor recorded leaves the agent
+where it is: the record still names it, so uninstall can still find it, and the user is told
+which path is holding the queue. The alternative — refusing to track it and letting the
+transition continue — was tried in round 4 and loses a file we modified, because the next
+`recordInstalled` overwrites the last record naming it. Freezing a location the user asked to
+change is visible and recoverable; forgetting a config file we wrote to is neither.
+
 ### D14: One process-runner contract, absolute and cancellable
 
 The probe runner takes an absolute executable path, contains `error` and `close`, owns exactly
@@ -226,6 +237,29 @@ one-off spot fix buys. The spawned process also had no `error` listener, so a lo
 failure escaped the surrounding `try`/`catch`. And the two deadlines were both 2,000 ms, so the
 outer one resolved before the inner reap wait it was supposed to back up: the awaiting added in
 round 3 never actually ran.
+
+### D15: The ledger is a lock-protected file under global storage, not `globalState`
+
+**Amends D12's persistence.** The ledger is a JSON file beside the agent wrapper directories
+under `globalStorageUri`, written through the same lock-and-atomic-rename discipline the
+managed config already uses: acquire the per-ledger lock, read fresh under it, mutate, replace
+atomically, release.
+
+`globalState` is a per-window cache flushed back on update, not a store two extension hosts
+share. Two VS Code windows both reconciling the same agent therefore hold independent
+snapshots, and the later write replaces the whole entry — including a pending destination the
+other window had just recorded. The config file's own lock does not help: it guards a
+different path, and `recordPending`/`clearPending` run outside it. The failure is not a lost
+preference but a lost record that cleanup is still owed, which is exactly what D13 relies on
+surviving.
+
+The same authority covers reads. A snapshot taken before the lock is stale by definition, so
+the entry is read inside the lock rather than from a cached root.
+
+Finalization failure is treated as a destination that still holds our entries: if recording
+the installed destination fails after the configuration was replaced, the written path is
+recorded pending, and the host keeps it in memory for the rest of the session so this window
+can still reconcile it even when nothing persisted.
 
 ## Interfaces
 

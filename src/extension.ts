@@ -13,8 +13,13 @@ import {
   type SettingsReader,
 } from "./agentHooks/install/agentHookRegistry";
 import { AgentHookTransitions, summarizeUninstall } from "./agentHooks/install/agentHookTransitions";
+import { LockedFile } from "./agentHooks/install/lockedJsonFile";
 import { ManagedConfigInstaller, managedWrapperCommand } from "./agentHooks/install/ManagedConfigInstaller";
-import { ManagedEntryLedger } from "./agentHooks/install/managedEntryLedger";
+import {
+  fileLedgerStore,
+  MANAGED_ENTRY_LEDGER_FILE,
+  ManagedEntryLedger,
+} from "./agentHooks/install/managedEntryLedger";
 import type { AgentConfigAdapter } from "./agentHooks/install/types";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
 import { createWatcherPool } from "./providers/fsWatcherPool";
@@ -346,10 +351,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // storageRoot, not the wrapper directory: each adapter appends its own
   // sub-directory, so cursor's on-disk location is unchanged.
   const agentHookStorageRoot = context.globalStorageUri.fsPath;
-  // What this extension has recorded writing, and where. Persisted in
-  // globalState so a destination a previous session could not clean is still
-  // reachable after a restart (install-claude-hooks D12, D13).
-  const agentHookLedger = new ManagedEntryLedger(context.globalState);
+  // What this extension has recorded writing, and where, so a destination a
+  // previous session could not clean is still reachable after a restart
+  // (install-claude-hooks D12, D13). A file rather than globalState: that is a
+  // per-window cache, and a second extension host would overwrite ours (D15).
+  const agentHookLedger = new ManagedEntryLedger(
+    fileLedgerStore(new LockedFile(path.join(agentHookStorageRoot, MANAGED_ENTRY_LEDGER_FILE))),
+  );
   const agentHookInstaller = (adapter: AgentConfigAdapter, agent: VaultAgentId) =>
     new ManagedConfigInstaller(adapter, {
       storageRoot: agentHookStorageRoot,
@@ -435,8 +443,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
   await agentHookController.start();
-  // Retries anything a previous session recorded but could not clean (D13).
-  void agentHookTransitions.reconcileAll();
+  // Retries anything a previous session recorded but could not clean (D13) —
+  // after the ledger file is read, since that record is what names them.
+  void agentHookLedger.load().then(() => agentHookTransitions.reconcileAll());
 
   // Shared GitDecorationProvider — one singleton, threaded through every
   // FileTreeHost so the three webviews (sidebar / panel / editor) see one

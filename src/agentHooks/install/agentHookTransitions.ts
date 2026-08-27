@@ -5,6 +5,7 @@
 // that failed is carried in the ledger until it succeeds — including across a
 // restart, which the previous in-memory destination map could not survive.
 
+import { resolve } from "node:path";
 import { createKeyedSerialQueue } from "../../utils/keyedSerialQueue";
 import type { VaultAgentId } from "../../vault/types";
 import {
@@ -46,6 +47,8 @@ export interface TransitionOutcome {
   /** Destinations still holding our entries after this transition. */
   pending: string[];
   reconciled: boolean;
+  /** Set when a destination that could neither be cleaned nor tracked stopped the move (round-5 B8). */
+  blockedBy?: string;
 }
 
 export class AgentHookTransitions {
@@ -117,7 +120,12 @@ export class AgentHookTransitions {
     const { ledger, settings, location } = this.options;
     const destination = entry.createAdapter(settings, location).configPath();
     const recorded = ledger.destination(entry.agent);
-    const stale = this.destinationsToClean(entry.agent).filter((candidate) => candidate !== destination);
+    // Canonicalized on both sides: the ledger stores resolved paths, so a
+    // settings value spelled with a `..` would otherwise look like a move away
+    // from the very file it names.
+    const stale = this.destinationsToClean(entry.agent).filter(
+      (candidate) => resolve(candidate) !== resolve(destination),
+    );
     let moved = false;
 
     for (const candidate of stale) {
@@ -125,8 +133,18 @@ export class AgentHookTransitions {
       // "Nothing was there" is a clean outcome, not a failure.
       if (outcome.removed || outcome.reason === "not-installed") {
         await ledger.clearPending(entry.agent, candidate);
-      } else {
-        await this.trackPending(entry.agent, candidate, outcome.reason);
+      } else if (!(await this.trackPending(entry.agent, candidate, outcome.reason))) {
+        // Neither cleaned nor tracked. Continuing would install at the new
+        // destination and overwrite the only record naming this one, leaving a
+        // file we modified with nothing pointing at it (round-5 B8). The agent
+        // stays where it is instead, which is recoverable.
+        return {
+          agent: entry.agent,
+          destination: recorded ?? candidate,
+          pending: ledger.pending(entry.agent),
+          reconciled: false,
+          blockedBy: candidate,
+        };
       }
       moved = moved || candidate === recorded;
     }
@@ -141,18 +159,20 @@ export class AgentHookTransitions {
     return { agent: entry.agent, destination, pending: ledger.pending(entry.agent), reconciled };
   }
 
+  /** False when the ceiling refused the destination — the caller decides what that costs. */
   private async trackPending(
     agent: VaultAgentId,
     destination: string,
     reason: HookRemoveOutcome["reason"],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const tracked = await this.options.ledger.recordPending(agent, destination);
     this.options.onWarning?.(
       agent,
       tracked
         ? `hooks left behind in ${destination} (${reason ?? "unknown"})`
-        : `hooks left behind in ${destination} and too many destinations already await cleanup to track it`,
+        : `hooks left behind in ${destination}; too many destinations already await cleanup, so this agent stays where it is until one is cleared`,
     );
+    return tracked;
   }
 
   /** The recorded destination plus anything a previous attempt could not clear. */

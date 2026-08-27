@@ -173,3 +173,28 @@
     1. In src/agentHooks/install/probeRunner.ts surface that the fallback reached only the process leader when the absolute taskkill could not start
     2. Cover that path in src/agentHooks/install/probeRunner.test.ts with a spawn whose taskkill invocation fails, asserting the leader is still killed and the incomplete termination is reported
 
+## 6. Cycle-2 round-5 fixes
+
+- [x] 6_1 Move the ledger behind the same lock the configuration write uses — verified: pnpm exec vitest run 'src/agentHooks/install/managedEntryLedger.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_1
+  - **Refs**: .reviews/round-5.md#b5, .reviews/round-5.md#w5, design.md#d15-the-ledger-is-a-lock-protected-file-under-global-storage-not-globalstate
+  - **Acceptance**:
+    - Outcome: A second host cannot replace an entry it never read, and a written destination is never lost
+    - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
+  - **Plan**:
+    1. Extract the lock acquisition, stale reclaim and atomic replacement of src/agentHooks/install/ManagedConfigInstaller.ts into src/agentHooks/install/lockedJsonFile.ts so both the configuration and the ledger take the same authority, and create src/agentHooks/install/lockedJsonFile.test.ts over it
+    2. Back src/agentHooks/install/managedEntryLedger.ts with that file under the storage root, reading each entry inside the lock rather than from a cached snapshot, and keeping the synchronous ownership answer served from a value refreshed on every mutation
+    3. Record the written destination as pending when finalization fails after the configuration was replaced, and hold it in memory for the session so this host can still reconcile it
+    4. Point src/extension.ts at the storage-root ledger instead of globalState
+    5. Cover in src/agentHooks/install/managedEntryLedger.test.ts: two ledgers over one file each seeing the other's pending destination, an entry written by one not erased by the other, a stale lock reclaimed, and a finalization failure leaving the written path pending
+
+- [x] 6_2 Stop a move that would forget a destination it cannot track — verified: pnpm exec vitest run 'src/agentHooks/install/agentHookTransitions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_2
+  - **Refs**: .reviews/round-5.md#b8, design.md#d13-one-serialized-transition-owner-per-agent
+  - **Acceptance**:
+    - Outcome: A destination that can neither be cleaned nor tracked keeps the agent where it is
+    - Verify: unit src/agentHooks/install/agentHookTransitions.test.ts
+  - **Plan**:
+    1. In src/agentHooks/install/agentHookTransitions.ts abandon the reconcile when a stale destination could neither be cleaned nor recorded, leaving the recorded destination naming it, and report which path is holding the move
+    2. Cover in src/agentHooks/install/agentHookTransitions.test.ts: a full pending list with a refused cleanup leaving the recorded destination unchanged and nothing installed at the new one, that uninstall still finds it, and that the move proceeds once a slot frees
+
