@@ -834,7 +834,7 @@ export class VaultService {
     projectSessionId: string;
   }): string {
     const token = createHash("sha256")
-      .update(`${this.cursorChildSalt} ${child.parentSessionId} ${child.childAgentId}`)
+      .update(`${this.cursorChildSalt}\0${child.parentSessionId}\0${child.childAgentId}`)
       .digest("hex")
       .slice(0, 32);
     const sessionId = `${CURSOR_CHILD_PREFIX}${token}`;

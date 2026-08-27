@@ -346,7 +346,7 @@ export class PreviewController {
    * reply for a message the user has since navigated away from resolves nothing.
    */
   handleMessageRecordResponse(msg: VaultMessageRecordResponseMessage): void {
-    const key = `${msg.entryId} ${msg.msgRef}`;
+    const key = `${msg.entryId}\0${msg.msgRef}`;
     const pending = this.pendingRecords.get(key);
     if (!pending) {
       return;
@@ -427,7 +427,7 @@ export class PreviewController {
 
   /** Ask the host for one message's stored record; rejects if none comes back. */
   private requestMessageRecord(entryId: string, msgRef: string): Promise<string> {
-    const key = `${entryId} ${msgRef}`;
+    const key = `${entryId}\0${msgRef}`;
     const existing = this.pendingRecords.get(key);
     if (existing) {
       return existing.promise;

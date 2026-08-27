@@ -405,7 +405,7 @@ export class WorktreeView {
     const liveRosterKeys = new Set<string>();
     const sessionRowIds = new Set<string>();
     const collapsed = new Set<string>();
-    const before = [...this.collapsed].join(" ");
+    const before = [...this.collapsed].join("\0");
     for (const repo of data.tree.repos) {
       liveIds.add(repo.repoId);
       if (this.collapsed.has(repo.repoId)) {
@@ -435,7 +435,7 @@ export class WorktreeView {
       }
     }
     this.collapsed = collapsed;
-    if ([...collapsed].join(" ") !== before) {
+    if ([...collapsed].join("\0") !== before) {
       this.deps.persistCollapsed?.([...collapsed]);
     }
     // Reconciled against the identities presence actually carries, never

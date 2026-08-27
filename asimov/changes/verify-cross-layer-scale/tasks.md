@@ -1,6 +1,6 @@
 ## 1. Traceability
 
-- [ ] 1_1 Audit the truthfulness invariants and publish the registry and budget constants
+- [x] 1_1 Audit the truthfulness invariants and publish the registry and budget constants — verified: bun test 'src/test/invariants/coverage.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D1, D2, D9
   - **Acceptance**:
@@ -107,7 +107,7 @@
     2. Add its row to the cross-document consistency registry in docs/DESIGN.md, and repoint the stale `§ 15` sync-rule footers in docs/design/ at it
     3. Assert in src/test/invariants/coverage.test.ts that the registry row states the exported value
 
-- [ ] 4_2 Write NUL separators as escapes so the sources stop reading as binary
+- [x] 4_2 Write NUL separators as escapes so the sources stop reading as binary — verified: pnpm run test:unit && pnpm run check-types exit 0
   - **Deps**: none
   - **Refs**: design.md D7
   - **Acceptance**:

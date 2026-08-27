@@ -289,7 +289,7 @@ describe("readCursorSessions: eligibility and mapped bounds", () => {
   });
 
   it("rejects a cwd containing control characters as unreadable", async () => {
-    await writeChat("bucket-a", "chat-ctrl-cwd", { ...BASE_META, cwd: "/Users/me/proj" });
+    await writeChat("bucket-a", "chat-ctrl-cwd", { ...BASE_META, cwd: "/Users/me/\x07proj" });
     const { entries, unreadable } = await readCursorSessions(undefined, opts());
     expect(entries).toHaveLength(0);
     expect(unreadable).toBe(1);
