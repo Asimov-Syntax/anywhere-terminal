@@ -30,6 +30,26 @@ The host SHALL publish, per repository, a token that changes whenever it can no 
 its worktree registrations are the ones it last reported. A launch SHALL quote the token its
 row carried, and SHALL be refused unless that token is still current at handoff.
 
+### Requirement: A repository whose listing failed authorizes nothing
+
+WHERE a repository's listing failed and the host is showing what it previously held, that
+repository SHALL publish no registration token, so a launch into it is refused whether it quotes
+the previous token or none.
+
+- A repository whose listing SUCCEEDED SHALL keep its token even where the host cannot watch it
+  for later changes: the registrations were read, and refusing would withdraw the capability
+  without making the reading fresher.
+
+#### Scenario: A failed listing withdraws authority but not the display
+
+- **WHEN** a repository's listing fails and its previously reported worktrees are still shown
+- **THEN** launching into one of them is refused
+
+#### Scenario: An unwatched repository still launches
+
+- **WHEN** a repository was listed successfully but cannot be watched for changes
+- **THEN** launching into its worktrees still works
+
 ### Requirement: The registration token is not derived from git state
 
 The token SHALL NOT be derived from the branch or commit a worktree is on, and SHALL be scoped

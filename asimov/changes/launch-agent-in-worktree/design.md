@@ -240,6 +240,44 @@ git's admin directory is intrusive for a launch guard. Inode plus birth time was
 first implementation: platform-varying, inodes are reused, and it still needs the generation as
 its fallback.
 
+### D11: An unwatched repository keeps launch authority; an unobserved one does not
+
+Round 5 accepted B7 as "refuse new registration admission while the containing repository or
+global git state is degraded". Implementing that literally disabled the feature, and the
+assembly walk proved it: `degraded` carries two unrelated claims.
+
+| Claim | What produced it | Were the registrations observed? |
+|---|---|---|
+| "this listing failed, I am showing what I had" | `applyRepo` with a degraded listing | **No** — retained, not read |
+| "this repository is not being watched" | `reconcileWatches`, after a watcher failed to establish | **Yes** — the rebuild that just ran read it |
+
+Only the first is a reason to withhold authority. The second says future changes may go
+unnoticed, which is a statement about the future, not about what was read.
+
+**Options considered**
+
+- **A — refuse on any `degraded`.** What round 5's wording asks for. Every launch is refused on
+  any host where file watching is unavailable; `extension.worktreeAssembly.test.ts` is exactly
+  such a host and every launch case in it failed. The capability would simply not exist there.
+- **B — split the two claims (chosen).** A retained listing publishes no registration; an
+  unwatched one keeps its own, and `markDegraded` exists so the annotation cannot travel the
+  retain path by accident.
+- **C — re-list the repository at admission.** Superficially the strongest, and it collapses:
+  the token means "I re-observed", so re-listing always advances it, so the quoted value never
+  matches and every launch refuses. Identical outcome to A, at the cost of a git call.
+- **D — refuse when unwatched and not re-observed within some window.** Needs a clock and an
+  arbitrary constant, and still cannot distinguish a replacement from quiet.
+
+**What B accepts.** On an unwatched repository the host's view can be stale without the host
+knowing, so a quoted registration can be current and wrong. That ceiling is not the launch
+guard's to raise: the guard can be no fresher than the tree it reads, and the panel already
+tells the user that repository may be out of date. Refusing would remove the capability without
+making anything more correct — the user cannot launch, and the stale tree is just as stale.
+
+The guard's actual claim is therefore narrower than "the worktree is the one you picked". It is
+"the host has not observed a change to it since you picked it", which is exactly what the
+generation records, and is the strongest claim any listing-derived identity can make.
+
 ## Interfaces
 
 ```ts

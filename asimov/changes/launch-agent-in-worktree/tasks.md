@@ -224,7 +224,7 @@
 
 - [x] 8_1 Make the admitted intent the only thing a launch acts on — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_4
-  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-acts-on-the-registration-it-was-chosen-against, the-registration-token-is-not-derived-from-git-state, a-launch-resolves-its-own-target}, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
+  - **Refs**: specs/worktree-tree-protocol/spec.md#{a-launch-acts-on-the-registration-it-was-chosen-against, a-repository-whose-listing-failed-authorizes-nothing, the-registration-token-is-not-derived-from-git-state, a-launch-resolves-its-own-target}, design.md#d11-an-unwatched-repository-keeps-launch-authority-an-unobserved-one-does-not, design.md#d10-a-launch-is-one-immutable-intent-minted-by-the-host-and-re-checked-at-handoff
   - **Boundary**: no launch path may read the tree twice for one decision
   - **Acceptance**:
     - Outcome: every launch path acts only on values one admission returned
