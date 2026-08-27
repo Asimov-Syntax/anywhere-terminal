@@ -1,10 +1,10 @@
-// src/session/SessionManager.cursorHooks.test.ts — Renewable Cursor-hook
+// src/session/SessionManager.agentHooks.test.ts — Renewable agent-hook
 // authority wired through the terminal lifecycle (integrate-cursor-agent 2_3).
 // See: design.md D6, D7; specs/cursor-agent-status/spec.md
 // #hook-session-isolation, #cursor-status-pane-isolation.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionEnvironmentContributor } from "../cursor/CursorHookRuntime";
+import type { SessionEnvironmentContributor } from "../agentHooks/AgentHookRuntime";
 import { __resetAll, __setAppRoot, __setWorkspaceFolders } from "../test/__mocks__/vscode";
 import { mockWebview } from "../test/sessionMocks";
 
@@ -96,13 +96,13 @@ function makeFactories() {
   return { headless, serialize };
 }
 
-function newSM(cursorHookContributor?: SessionEnvironmentContributor) {
+function newSM(agentHookContributor?: SessionEnvironmentContributor) {
   const fx = makeFactories();
   return new SessionManager(undefined, {
     restoreEnabled: true,
     headlessFactory: fx.headless,
     serializeAddonFactory: fx.serialize,
-    cursorHookContributor,
+    agentHookContributor,
   });
 }
 
@@ -136,7 +136,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("SessionManager Cursor-hook authority — initial spawn", () => {
+describe("SessionManager agent-hook authority — initial spawn", () => {
   it("merges fresh hook authority into the initial spawn env", () => {
     const contributor = fakeContributor();
     const sm = newSM(contributor);
@@ -152,6 +152,28 @@ describe("SessionManager Cursor-hook authority — initial spawn", () => {
   it("skips contributor calls entirely when none is attached", () => {
     const sm = newSM();
     expect(() => sm.createSession("sidebar", mockWebview())).not.toThrow();
+    sm.dispose();
+  });
+
+  it("still opens the pane when the contributor throws, spawning without hook env (B3)", () => {
+    const contributor = {
+      create: vi.fn(() => {
+        throw new Error("contributor exploded");
+      }),
+      release: vi.fn(),
+    } satisfies SessionEnvironmentContributor;
+    const sm = newSM(contributor);
+
+    let id = "";
+    expect(() => {
+      id = sm.createSession("sidebar", mockWebview());
+    }).not.toThrow();
+
+    const spawnCall = mockSpawnCalls.find((c) => c.id === id);
+    expect(spawnCall).toBeDefined();
+    expect(spawnCall?.env.ANYWHERE_TERMINAL_CURSOR_URL).toBeUndefined();
+    // Best-effort release so a half-minted authority cannot outlive the failure.
+    expect(contributor.release).toHaveBeenCalledWith(id);
     sm.dispose();
   });
 
@@ -187,7 +209,7 @@ describe("SessionManager Cursor-hook authority — initial spawn", () => {
   });
 });
 
-describe("SessionManager Cursor-hook authority — fallback-shell renewal", () => {
+describe("SessionManager agent-hook authority — fallback-shell renewal", () => {
   it("releases the old token before issuing a fresh one for the replacement PTY", () => {
     const contributor = fakeContributor();
     const sm = newSM(contributor);
@@ -216,7 +238,7 @@ describe("SessionManager Cursor-hook authority — fallback-shell renewal", () =
   });
 });
 
-describe("SessionManager Cursor-hook authority — failed spawn", () => {
+describe("SessionManager agent-hook authority — failed spawn", () => {
   it("releases authority when the initial spawn throws", () => {
     const contributor = fakeContributor();
     const sm = newSM(contributor);
@@ -231,14 +253,14 @@ describe("SessionManager Cursor-hook authority — failed spawn", () => {
   });
 });
 
-describe("SessionManager Cursor-hook authority — attach/detach toggle", () => {
+describe("SessionManager agent-hook authority — attach/detach toggle", () => {
   it("clears live webview identity when hook authority is detached", () => {
     const contributor = fakeContributor();
     const sm = newSM(contributor);
     const webview = mockWebview();
     const id = sm.createSession("sidebar", webview);
 
-    sm.setCursorHookContributor(undefined);
+    sm.setAgentHookContributor(undefined);
 
     expect(webview.postMessage).toHaveBeenCalledWith({
       type: "agentActivityStatus",
@@ -252,17 +274,17 @@ describe("SessionManager Cursor-hook authority — attach/detach toggle", () => 
   it("stops granting authority once detached, and resumes once reattached", () => {
     const contributor = fakeContributor();
     const sm = newSM();
-    sm.setCursorHookContributor(contributor);
+    sm.setAgentHookContributor(contributor);
 
     const id1 = sm.createSession("sidebar", mockWebview());
     expect(contributor.create).toHaveBeenCalledTimes(1);
     expect(contributor.create).toHaveBeenCalledWith(id1);
 
-    sm.setCursorHookContributor(undefined);
+    sm.setAgentHookContributor(undefined);
     sm.createSession("sidebar", mockWebview());
     expect(contributor.create).toHaveBeenCalledTimes(1); // unchanged — no contributor attached
 
-    sm.setCursorHookContributor(contributor);
+    sm.setAgentHookContributor(contributor);
     const id3 = sm.createSession("sidebar", mockWebview());
     expect(contributor.create).toHaveBeenCalledTimes(2);
     expect(contributor.create).toHaveBeenNthCalledWith(2, id3);
@@ -277,11 +299,11 @@ describe("SessionManager Cursor-hook authority — attach/detach toggle", () => 
     expect(contributor.create).toHaveBeenCalledTimes(2);
 
     // Same-reference set: idempotent no-op, no release.
-    sm.setCursorHookContributor(contributor);
+    sm.setAgentHookContributor(contributor);
     expect(contributor.release).not.toHaveBeenCalled();
 
     // Detach: every currently tracked session's token is released.
-    sm.setCursorHookContributor(undefined);
+    sm.setAgentHookContributor(undefined);
     expect(contributor.release).toHaveBeenCalledTimes(2);
     expect(contributor.release).toHaveBeenCalledWith(id1);
     expect(contributor.release).toHaveBeenCalledWith(id2);
@@ -298,7 +320,7 @@ describe("SessionManager Cursor-hook authority — attach/detach toggle", () => 
     const sm = newSM(contributorA);
     const id1 = sm.createSession("sidebar", mockWebview());
 
-    sm.setCursorHookContributor(contributorB);
+    sm.setAgentHookContributor(contributorB);
 
     expect(contributorA.release).toHaveBeenCalledWith(id1);
     expect(contributorB.release).not.toHaveBeenCalled();
@@ -310,7 +332,7 @@ describe("SessionManager Cursor-hook authority — attach/detach toggle", () => 
   });
 });
 
-describe("SessionManager Cursor-hook authority — exit and destroy", () => {
+describe("SessionManager agent-hook authority — exit and destroy", () => {
   it("releases authority on natural (non-agent) exit", () => {
     const contributor = fakeContributor();
     const sm = newSM(contributor);
@@ -335,7 +357,7 @@ describe("SessionManager Cursor-hook authority — exit and destroy", () => {
   });
 });
 
-describe("SessionManager Cursor-hook authority — manager disposal", () => {
+describe("SessionManager agent-hook authority — manager disposal", () => {
   it("releases authority for every live session on dispose()", () => {
     const contributor = fakeContributor();
     const sm = newSM(contributor);

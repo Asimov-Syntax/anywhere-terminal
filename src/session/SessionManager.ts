@@ -13,7 +13,7 @@
 //      asimov/changes/restore-terminal-sessions/design.md (D1-D13).
 
 import * as crypto from "node:crypto";
-import type { SessionEnvironmentContributor } from "../cursor/CursorHookRuntime";
+import type { SessionEnvironmentContributor } from "../agentHooks/AgentHookRuntime";
 import * as PtyManager from "../pty/PtyManager";
 import { PtySession } from "../pty/PtySession";
 import { queryProcessCwd } from "../pty/processCwd";
@@ -99,16 +99,18 @@ export interface SessionManagerOptions {
    */
   paneEvidence?: PaneEvidenceStore;
   /**
-   * Optional per-session environment contributor for Cursor-hook renewable
-   * authority (design D6, integrate-cursor-agent 2_3). Every live PTY
-   * incarnation (initial spawn + fallback-shell respawn) merges its fresh
+   * Optional per-session environment contributor for renewable agent-hook
+   * authority (design D6, integrate-cursor-agent 2_3). One contributor serves
+   * every enabled agent, so a spawn's coordinates arrive whole or not at all
+   * (generalize-agent-hook-runtime D1). Every live PTY incarnation (initial
+   * spawn + fallback-shell respawn) merges its fresh
    * `create(sessionId)` env into the spawn env; authority is released on
    * failed spawn, natural exit, destroy, and manager disposal. May also be
-   * attached/detached post-construction via `setCursorHookContributor` —
+   * attached/detached post-construction via `setAgentHookContributor` —
    * `extension.ts` wires it that way because the hook runtime binds its
    * loopback listener asynchronously, after SessionManager is constructed.
    */
-  cursorHookContributor?: SessionEnvironmentContributor;
+  agentHookContributor?: SessionEnvironmentContributor;
 }
 
 // ─── SessionManager ─────────────────────────────────────────────────
@@ -175,11 +177,11 @@ export class SessionManager {
   private storage: SessionStorage | null;
 
   /**
-   * Optional per-session Cursor-hook environment contributor (design D6).
-   * Not `readonly` — `setCursorHookContributor` may attach/detach it after
+   * Optional per-session agent-hook environment contributor (design D6).
+   * Not `readonly` — `setAgentHookContributor` may attach/detach it after
    * construction (extension.ts wiring, and hook-disable teardown).
    */
-  private cursorHooks: SessionEnvironmentContributor | undefined;
+  private agentHooks: SessionEnvironmentContributor | undefined;
 
   /** See `SessionManagerOptions.paneEvidence`. Absent in tests that don't need it. */
   private readonly paneEvidence: PaneEvidenceStore | undefined;
@@ -194,7 +196,7 @@ export class SessionManager {
   constructor(customNameStorage: CustomNameStorage = noopCustomNameStorage, options: SessionManagerOptions = {}) {
     this.customNames = new CustomNameRegistry(customNameStorage);
     this.storage = options.storage ?? null;
-    this.cursorHooks = options.cursorHookContributor;
+    this.agentHooks = options.agentHookContributor;
     this.paneEvidence = options.paneEvidence;
     this.defaultGracePeriodMs = options.gracePeriodMs ?? DEFAULT_GRACE_DESTROY_MS;
     this.shellIntegration = new ShellIntegrationCoordinator({
@@ -254,27 +256,28 @@ export class SessionManager {
   }
 
   /**
-   * Attach (or detach with `undefined`) the Cursor-hook session-environment
-   * contributor. Called by `extension.ts` once the hook runtime finishes
-   * binding its loopback listener, and again on every enable/disable toggle
-   * — every session created afterward gets fresh renewable hook authority
+   * Attach (or detach with `undefined`) the agent-hook session-environment
+   * contributor. Called by the hook controller once the runtime finishes
+   * binding its loopback listener, and again when the last authoritative
+   * agent goes away (generalize-agent-hook-runtime D6) — every session
+   * created afterward gets fresh renewable hook authority
    * (design D6). Same-reference calls are a no-op. Swapping to a different
    * contributor (including `undefined`) first releases EVERY currently
    * tracked session through the OLD contributor, so a token minted while
    * attached can never "go live" later just by re-attaching without a fresh
    * PTY (hook-session-isolation).
    */
-  setCursorHookContributor(contributor: SessionEnvironmentContributor | undefined): void {
-    if (contributor === this.cursorHooks) {
+  setAgentHookContributor(contributor: SessionEnvironmentContributor | undefined): void {
+    if (contributor === this.agentHooks) {
       return;
     }
-    const previous = this.cursorHooks;
+    const previous = this.agentHooks;
     if (previous) {
       for (const sessionId of this.sessions.keys()) {
-        this.releaseCursorHookAuthority(sessionId, previous);
+        this.releaseAgentHookAuthority(sessionId, previous);
       }
     }
-    this.cursorHooks = contributor;
+    this.agentHooks = contributor;
   }
 
   // ─── Snapshot pass-through (test + provider compatibility) ──────
@@ -485,15 +488,13 @@ export class SessionManager {
       if (options?.env) {
         spawnEnv = { ...spawnEnv, ...options.env };
       }
-      // Every live PTY incarnation gets fresh renewable Cursor-hook authority
+      // Every live PTY incarnation gets fresh renewable agent-hook authority
       // (design D6) — merged last so it can never be shadowed by an override.
-      if (this.cursorHooks) {
-        spawnEnv = { ...spawnEnv, ...this.cursorHooks.create(id) };
-      }
+      spawnEnv = { ...spawnEnv, ...this.mintAgentHookEnv(id) };
       try {
         pty.spawn(nodePty, resolvedShell, [...spawnArgs], { cwd, env: spawnEnv });
       } catch (err) {
-        this.releaseCursorHookAuthority(id);
+        this.releaseAgentHookAuthority(id);
         throw err;
       }
       // Wire the unified shell-integration sink — receives every parsed event
@@ -704,7 +705,7 @@ export class SessionManager {
     this.shellIntegration.cleanupSession(id);
     // Fallback replacement invalidates the old hook token BEFORE a fresh one
     // is issued for the replacement PTY (design D6 / hook-session-isolation).
-    this.releaseCursorHookAuthority(id);
+    this.releaseAgentHookAuthority(id);
     const pty = new PtySession(id);
     let spawnArgs: readonly string[] = args;
     let spawnEnv: Record<string, string> = baseEnv;
@@ -714,9 +715,7 @@ export class SessionManager {
       spawnEnv = injection.env;
       pty.setShellIntegrationNonce(injection.nonce);
     }
-    if (this.cursorHooks) {
-      spawnEnv = { ...spawnEnv, ...this.cursorHooks.create(id) };
-    }
+    spawnEnv = { ...spawnEnv, ...this.mintAgentHookEnv(id) };
     // Do all fallible spawn work BEFORE mutating `session`, so a throw leaves the
     // old PTY/buffer intact for the caller's fall-through exit path. Tear down the
     // half-spawned shell on failure so it isn't orphaned.
@@ -725,7 +724,7 @@ export class SessionManager {
       pty.setShellIntegrationSink(this.shellIntegration.makeSink(id));
       pty.resize(session.cols, session.rows);
     } catch (err) {
-      this.releaseCursorHookAuthority(id);
+      this.releaseAgentHookAuthority(id);
       pty.dispose();
       throw err;
     }
@@ -1310,7 +1309,7 @@ export class SessionManager {
       } catch {
         /* best-effort */
       }
-      this.releaseCursorHookAuthority(id);
+      this.releaseAgentHookAuthority(id);
       for (const d of session.disposables) {
         try {
           d.dispose();
@@ -1402,9 +1401,9 @@ export class SessionManager {
       }
     }
 
-    // Release Cursor-hook authority for this session — natural exit and
+    // Release agent-hook authority for this session — natural exit and
     // destroy both funnel through here (design D6; hook-session-isolation).
-    this.releaseCursorHookAuthority(sessionId);
+    this.releaseAgentHookAuthority(sessionId);
 
     // Reject any in-flight scrollback dumps for this session — the webview
     // is about to disappear and the response will never arrive (D4).
@@ -1497,8 +1496,25 @@ export class SessionManager {
 
   // ─── Private: Safe Message Posting ──────────────────────────────
 
+  /**
+   * Hook coordinates are optional observability, so minting them must never
+   * decide whether a pane opens: a throwing contributor releases whatever it
+   * half-minted and the shell spawns with no hook environment at all.
+   */
+  private mintAgentHookEnv(sessionId: string): Record<string, string> {
+    if (!this.agentHooks) {
+      return {};
+    }
+    try {
+      return this.agentHooks.create(sessionId);
+    } catch {
+      this.releaseAgentHookAuthority(sessionId);
+      return {};
+    }
+  }
+
   /** Release hook authority and immediately revoke its webview identity. */
-  private releaseCursorHookAuthority(sessionId: string, contributor = this.cursorHooks): void {
+  private releaseAgentHookAuthority(sessionId: string, contributor = this.agentHooks): void {
     try {
       contributor?.release(sessionId);
     } catch {
