@@ -95,14 +95,15 @@ function posixWrapper(): string {
   ].join("\n")}\n`;
 }
 
-// The stdin reader is fully qualified: Windows resolves a bare `more` against
+// EVERY executable here is fully qualified: Windows resolves a bare name against
 // the working directory before PATH, so a repo carrying its own `more.*` would
-// otherwise receive the hook payload.
+// otherwise receive the hook payload — and its own `powershell.*` would be RUN,
+// on every hook, by the extension host (round-7 B11).
 function windowsWrapper(): string {
   return `@echo off
 setlocal
 if not defined ${CURSOR_HOOK_ENV_VAR} goto output
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$body=[Console]::In.ReadToEnd(); try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -TimeoutSec 2 -Body $body ($env:${CURSOR_HOOK_ENV_VAR} + '/${CURSOR_HOOK_SLUG}') ^| Out-Null } catch {}"
+"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "$body=[Console]::In.ReadToEnd(); try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -TimeoutSec 2 -Body $body ($env:${CURSOR_HOOK_ENV_VAR} + '/${CURSOR_HOOK_SLUG}') ^| Out-Null } catch {}"
 :output
 "%SystemRoot%\\System32\\more.com" >nul 2>nul
 echo {}

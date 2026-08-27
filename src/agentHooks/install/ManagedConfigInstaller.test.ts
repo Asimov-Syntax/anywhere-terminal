@@ -381,7 +381,7 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
           "@echo off",
           "setlocal",
           "if not defined ANYWHERE_TERMINAL_CURSOR_URL goto output",
-          `powershell -NoProfile -ExecutionPolicy Bypass -Command "$body=[Console]::In.ReadToEnd(); try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -TimeoutSec 2 -Body $body ($env:ANYWHERE_TERMINAL_CURSOR_URL + '/cursor') ^| Out-Null } catch {}"`,
+          `"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "$body=[Console]::In.ReadToEnd(); try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -TimeoutSec 2 -Body $body ($env:ANYWHERE_TERMINAL_CURSOR_URL + '/cursor') ^| Out-Null } catch {}"`,
           ":output",
           '"%SystemRoot%\\System32\\more.com" >nul 2>nul',
           "echo {}",
@@ -389,7 +389,7 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
           "",
         ].join("\n"),
       );
-      expect(Buffer.byteLength(contents, "utf8")).toBe(418);
+      expect(Buffer.byteLength(contents, "utf8")).toBe(469);
       expect(contents).toContain("$env:ANYWHERE_TERMINAL_CURSOR_URL + '/cursor'");
       expect(contents).toContain('"%SystemRoot%\\System32\\more.com" >nul 2>nul');
       expect(contents).not.toMatch(/^more /m);

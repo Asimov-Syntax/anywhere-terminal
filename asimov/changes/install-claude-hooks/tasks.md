@@ -225,7 +225,7 @@
     2. In src/agentHooks/install/agentHookTransitions.ts hold at most one running transition per agent plus one pending rerun that carries the latest desired state, so a burst collapses to the current answer without discarding the obligation to converge
     3. Cover in src/agentHooks/install/agentHookTransitions.test.ts: an unrelated settings event enqueueing nothing, a burst of relevant events running fewer transitions than events while ending at the latest state, and the forced location-only edit still reconciling
 
-- [ ] 7_3 Qualify every interpreter the Windows wrappers invoke
+- [x] 7_3 Qualify every interpreter the Windows wrappers invoke — verified: pnpm exec vitest run 'src/agentHooks/install/cursorConfigAdapter.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: .reviews/round-7.md#b11
   - **Acceptance**:
