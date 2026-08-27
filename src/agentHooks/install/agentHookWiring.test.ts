@@ -116,6 +116,25 @@ describe("agent hook wiring", () => {
     expect(storageRoot).toBeTruthy();
   });
 
+  it("can build an adapter pinned to a destination the settings no longer name", async () => {
+    const { storageRoot, adapters } = await agentConfigs();
+    for (const { entry, adapter } of adapters) {
+      const previous = adapter.configPath();
+      const installer = new ManagedConfigInstaller(adapter, { storageRoot, platform: "linux" });
+      expect((await installer.install()).installed, entry.agent).toBe(true);
+
+      // The user moves the setting elsewhere; only the pinned adapter can still
+      // reach what was left behind (round-1 B1).
+      const pinned = entry.createAdapterForPath(previous);
+      expect(pinned.configPath()).toBe(previous);
+      expect(
+        (await new ManagedConfigInstaller(pinned, { storageRoot, platform: "linux" }).uninstall()).removed,
+        entry.agent,
+      ).toBe(true);
+      expect(await readFile(previous, "utf8")).not.toContain(adapter.wrapperLocation("linux").directoryName);
+    }
+  });
+
   it("removes every agent's entries whatever the settings say", async () => {
     const { settings, location, storageRoot, adapters } = await agentConfigs();
     for (const { adapter } of adapters) {

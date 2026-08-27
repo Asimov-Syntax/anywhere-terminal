@@ -64,3 +64,21 @@
   - **Plan**:
     1. Replace the bare `more` in src/agentHooks/install/cursorConfigAdapter.ts with `"%SystemRoot%\System32\more.com"`, since Windows resolves an unqualified name against the working directory before PATH and a repo-local `more.*` would receive the hook payload
     2. Update the wrapper byte pin in src/agentHooks/install/ManagedConfigInstaller.test.ts and assert the qualified path
+
+## 3. Review round 1 fixes
+
+- [x] 3_1 Fix the round-1 findings — verified: pnpm vitest run 'src/agentHooks/install/ManagedConfigInstaller.test.ts' && pnpm run check-types && pnpm vitest run --maxWorkers=4 exit 0
+  - **Deps**: 2_2, 2_3
+  - **Refs**: .reviews/round-1.md, specs/agent-hook-installation/spec.md#{user-authored-configuration-is-preserved, a-moved-managed-script-is-reconciled-not-duplicated, claude-configuration-location-is-overridable}, design.md#d3-a-managed-entry-is-identified-by-its-extension-owned-directory-suffix-not-a-bare-filename, design.md#d4-claudes-config-directory-resolves-setting-environment-default
+  - **Acceptance**:
+    - Outcome: A lookalike hook survives, group metadata survives, and one operation targets one destination
+    - Verify: unit src/agentHooks/install/ManagedConfigInstaller.test.ts
+  - **Plan**:
+    1. B1 — resolve the config path once per install and uninstall in src/agentHooks/install/ManagedConfigInstaller.ts and thread it through the symlink check, directory creation, lock, read, comparison and replacement
+    2. B1 — track each agent's installed destination in src/extension.ts and src/agentHooks/install/agentHookRegistry.ts so a changed location removes the previous file instead of stranding it, covered in src/agentHooks/install/agentHookWiring.test.ts
+    3. B2 — match ownership on the parsed command token's terminal path components, never a substring, and cover not-<agent>-hooks, a filename suffix and an argument-only occurrence
+    4. B3 — in src/agentHooks/install/claudeConfigAdapter.ts drop a swept group only when its shape is one this extension creates, else keep its keys with an empty hooks array, covered in src/agentHooks/install/claudeConfigAdapter.test.ts
+    5. W1 — give runCommand its own deadline that kills and reaps the child, restoring what the extraction dropped
+    6. W2 — reword the claude setting description in package.json to transport-only
+    7. W3 — pin the claude POSIX wrapper to an independent literal with a length assertion in src/agentHooks/install/claudeConfigAdapter.test.ts
+    8. S1 — reuse src/utils/posixShellQuote.ts; S2 — ignore a non-absolute claude config directory override

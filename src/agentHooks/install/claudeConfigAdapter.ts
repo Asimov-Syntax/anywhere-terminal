@@ -4,7 +4,7 @@
 // `hooks` and nothing else.
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { CLAUDE_HOOK_ENV_VAR, CLAUDE_HOOK_EVENTS, CLAUDE_HOOK_SLUG, CLAUDE_MATCHER_EVENTS } from "../agents/claude";
 import { type AgentConfigAdapter, isJsonObject, type JsonObject, type OwnershipTest } from "./types";
 
@@ -22,13 +22,15 @@ export interface ClaudeConfigLocation {
 }
 
 /**
- * Setting → `CLAUDE_CONFIG_DIR` → `~/.claude` (D4). Re-resolved on every call
- * rather than captured once, so changing either takes effect on reload without
- * the installer holding a stale path.
+ * Setting → `CLAUDE_CONFIG_DIR` → `~/.claude` (D4). Re-resolved on every call,
+ * so changing either takes effect on reload; a single install or uninstall
+ * snapshots one result rather than re-asking mid-operation (round-1 B1).
  */
 export function resolveClaudeConfigPath(location: ClaudeConfigLocation = {}): string {
   const configured = location.configuredDirectory?.()?.trim();
-  if (configured) {
+  // Absolute only (round-1 S2): a relative override would resolve against
+  // whatever working directory the extension host happens to hold.
+  if (configured && isAbsolute(configured)) {
     return join(configured, CLAUDE_CONFIG_FILE);
   }
   const environment = (location.environment ?? process.env)[CLAUDE_CONFIG_DIR_ENV_VAR]?.trim();
@@ -115,9 +117,10 @@ function managedGroup(event: string, command: string): JsonObject {
 }
 
 /**
- * Drops our handlers wherever they sit, then drops any group left empty. A group
- * the user added handlers to survives with those handlers, and a group that held
- * only ours disappears rather than accumulating as an empty husk.
+ * Drops our handlers wherever they sit. An emptied group disappears only when
+ * its shape is one this extension creates; any other group keeps its keys and an
+ * empty `hooks` array, because those keys are user-authored configuration we
+ * promised to round-trip (round-1 B3).
  */
 function sweepGroups(groups: JsonObject[], isOwned: OwnershipTest): JsonObject[] {
   const swept: JsonObject[] = [];
@@ -132,11 +135,20 @@ function sweepGroups(groups: JsonObject[], isOwned: OwnershipTest): JsonObject[]
       swept.push(group);
       continue;
     }
-    if (retained.length > 0) {
+    if (retained.length > 0 || !isExtensionCreatedGroup(group)) {
       swept.push({ ...group, hooks: retained });
     }
   }
   return swept;
+}
+
+/** Exactly what `managedGroup` emits: `{hooks}`, or `{matcher: "*", hooks}`. */
+function isExtensionCreatedGroup(group: JsonObject): boolean {
+  const keys = Object.keys(group).sort();
+  if (keys.length === 1) {
+    return keys[0] === "hooks";
+  }
+  return keys.length === 2 && keys[0] === "hooks" && keys[1] === "matcher" && group.matcher === "*";
 }
 
 /** The managed shape *and* extension-owned ownership, exactly as cursor's is (D3). */

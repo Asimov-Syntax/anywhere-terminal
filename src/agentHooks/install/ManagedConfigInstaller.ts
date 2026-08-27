@@ -8,6 +8,7 @@
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
+import { posixShellQuote } from "../../utils/posixShellQuote";
 import {
   type AgentConfigAdapter,
   type ConfigRead,
@@ -70,7 +71,11 @@ export class ManagedConfigInstaller {
   }
 
   public async install(): Promise<HookInstallOutcome> {
-    if (await this.isSymlinkedDestination()) {
+    // Resolved once and threaded through every stage below (round-1 B1). The
+    // adapter re-resolves per call, so re-asking would let a setting change
+    // mid-operation lock one file and write another.
+    const configPath = this.adapter.configPath();
+    if (await this.isSymlinkedDestination(configPath)) {
       return { installed: false, reason: "unsupported-config" };
     }
     const wrapper = await this.createWrapper();
@@ -84,14 +89,15 @@ export class ManagedConfigInstaller {
     // before the lock — a first-run agent whose config directory is absent
     // would otherwise fail as `lock-unavailable`.
     try {
-      await this.fs.mkdir(this.configDirectory(), { recursive: true });
+      await this.fs.mkdir(this.configDirectory(configPath), { recursive: true });
     } catch {
       return { installed: false, reason: "write-failed" };
     }
 
     return this.withLock<HookInstallOutcome>(
+      configPath,
       async (): Promise<HookInstallOutcome> => {
-        const reconciled = await this.reconcile((document, command) =>
+        const reconciled = await this.reconcile(configPath, (document, command) =>
           this.adapter.applyManagedEntries(document, command, this.ownershipTest()),
         );
         return reconciled === "success"
@@ -104,18 +110,20 @@ export class ManagedConfigInstaller {
   }
 
   public async uninstall(): Promise<HookRemoveOutcome> {
-    if (await this.isSymlinkedDestination()) {
+    const configPath = this.adapter.configPath();
+    if (await this.isSymlinkedDestination(configPath)) {
       return { removed: false, reason: "unsupported-config" };
     }
     // Answered without a lock, and without creating the directory a lock file
     // would need: there is nothing to remove and nothing to race against.
-    if ((await this.readConfiguration()).kind === "missing") {
+    if ((await this.readConfiguration(configPath)).kind === "missing") {
       return { removed: false, reason: "not-installed" };
     }
     return this.withLock<HookRemoveOutcome>(
+      configPath,
       async (): Promise<HookRemoveOutcome> => {
         let removed = false;
-        const reconciled = await this.reconcile((document) => {
+        const reconciled = await this.reconcile(configPath, (document) => {
           removed = this.adapter.removeManagedEntries(document, this.ownershipTest());
           return removed;
         });
@@ -130,23 +138,31 @@ export class ManagedConfigInstaller {
   }
 
   /**
-   * Ownership is the extension-owned directory plus the wrapper filename (D3),
-   * compared on a separator-normalized path. Matching a bare filename anywhere
-   * in the command would sweep a user's own same-named script.
+   * Ownership is the extension-owned directory plus the wrapper filename as the
+   * final two path components of the *invoked* command (D3). A substring test
+   * would claim `not-cursor-hooks/cursor-hook-observer.sh`, a `.backup` suffix,
+   * or the text appearing as somebody else's argument (round-1 B2).
    */
   private ownershipTest(): OwnershipTest {
     const { directoryName, fileName } = this.adapter.wrapperLocation(this.platform);
-    const owned = `${directoryName}/${fileName}`;
-    return (command: unknown) => typeof command === "string" && normalizeSeparators(command).includes(owned);
+    return (command: unknown) => {
+      if (typeof command !== "string") {
+        return false;
+      }
+      const segments = normalizeSeparators(invokedPath(command))
+        .split("/")
+        .filter((segment) => segment !== "");
+      return segments.at(-1) === fileName && segments.at(-2) === directoryName;
+    };
   }
 
   /**
    * Refused ahead of the lock (D5): a lock file created beside a symlinked
    * config is itself a write into a directory we have decided not to touch.
    */
-  private async isSymlinkedDestination(): Promise<boolean> {
+  private async isSymlinkedDestination(configPath: string): Promise<boolean> {
     try {
-      return (await this.fs.lstat(this.adapter.configPath())).isSymbolicLink();
+      return (await this.fs.lstat(configPath)).isSymbolicLink();
     } catch {
       return false;
     }
@@ -166,9 +182,9 @@ export class ManagedConfigInstaller {
     return join(this.options.storageRoot, this.adapter.wrapperLocation(this.platform).directoryName);
   }
 
-  private configDirectory(): string {
+  private configDirectory(configPath: string): string {
     const path = this.platform === "win32" ? win32 : posix;
-    return path.dirname(this.adapter.configPath());
+    return path.dirname(configPath);
   }
 
   /**
@@ -193,6 +209,10 @@ export class ManagedConfigInstaller {
     if (this.platform !== "win32") {
       return "ready";
     }
+    // Two deadlines, deliberately. `runCommand` kills and reaps its own child;
+    // this one bounds the installer against any injected runner that does not
+    // (round-1 W1 — the extraction had only the outer one, which cancels the
+    // wait without ending the process).
     const result = await withDeadline(this.run("cmd.exe", ["/d", "/s", "/c", wrapper]), WINDOWS_PROBE_DEADLINE_MS, {
       exitCode: 1,
       stdout: "",
@@ -200,8 +220,13 @@ export class ManagedConfigInstaller {
     return result.exitCode === 0 && isEmptyJson(result.stdout) ? "ready" : "probe-failed";
   }
 
-  private async withLock<T>(work: () => Promise<T>, lockUnavailable: T, writeFailed: T): Promise<T> {
-    const lockPath = `${this.adapter.configPath()}.anywhere-terminal.lock`;
+  private async withLock<T>(
+    configPath: string,
+    work: () => Promise<T>,
+    lockUnavailable: T,
+    writeFailed: T,
+  ): Promise<T> {
+    const lockPath = `${configPath}.anywhere-terminal.lock`;
     if (!(await this.acquireLock(lockPath))) {
       return lockUnavailable;
     }
@@ -241,11 +266,12 @@ export class ManagedConfigInstaller {
   }
 
   private async reconcile(
+    configPath: string,
     change: (document: JsonObject, command: string) => boolean,
   ): Promise<"success" | "unsupported" | "failed"> {
     const command = this.command();
     for (let attempt = 0; attempt < MAX_RECONCILE_ATTEMPTS; attempt += 1) {
-      const source = await this.readConfiguration();
+      const source = await this.readConfiguration(configPath);
       if (source.kind === "unsupported") {
         return "unsupported";
       }
@@ -260,10 +286,10 @@ export class ManagedConfigInstaller {
       }
       const serialized = `${JSON.stringify(desired, null, 2)}\n`;
       await this.beforeReplace();
-      if (!(await this.matches(contents))) {
+      if (!(await this.matches(configPath, contents))) {
         continue;
       }
-      return (await this.atomicReplace(serialized, source.kind === "document" ? source.mode : undefined))
+      return (await this.atomicReplace(configPath, serialized, source.kind === "document" ? source.mode : undefined))
         ? "success"
         : "failed";
     }
@@ -275,10 +301,10 @@ export class ManagedConfigInstaller {
    * parse, or whose root is not an object, is `unsupported` — never coerced to
    * `{}` and rewritten.
    */
-  private async readConfiguration(): Promise<ConfigRead> {
+  private async readConfiguration(configPath: string): Promise<ConfigRead> {
     let contents: string;
     try {
-      contents = await this.fs.readFile(this.adapter.configPath(), "utf8");
+      contents = await this.fs.readFile(configPath, "utf8");
     } catch (error) {
       return isNotFound(error) ? { kind: "missing" } : { kind: "unsupported" };
     }
@@ -292,24 +318,23 @@ export class ManagedConfigInstaller {
       return { kind: "unsupported" };
     }
     try {
-      const file = await this.fs.stat(this.adapter.configPath());
+      const file = await this.fs.stat(configPath);
       return { kind: "document", contents, document: parsed, mode: file.mode & 0o777 };
     } catch {
       return { kind: "unsupported" };
     }
   }
 
-  private async matches(contents: string): Promise<boolean> {
+  private async matches(configPath: string, contents: string): Promise<boolean> {
     try {
-      return (await this.fs.readFile(this.adapter.configPath(), "utf8")) === contents;
+      return (await this.fs.readFile(configPath, "utf8")) === contents;
     } catch (error) {
       return contents === "" && isNotFound(error);
     }
   }
 
-  private async atomicReplace(contents: string, mode: number | undefined): Promise<boolean> {
+  private async atomicReplace(configPath: string, contents: string, mode: number | undefined): Promise<boolean> {
     const path = this.platform === "win32" ? win32 : posix;
-    const configPath = this.adapter.configPath();
     const temporaryPath = path.join(
       path.dirname(configPath),
       `.${path.basename(configPath) || "hooks.json"}.${this.now()}.tmp`,
@@ -330,16 +355,12 @@ export class ManagedConfigInstaller {
 
   private command(): string {
     const wrapper = this.wrapperPath();
-    return this.platform === "win32" ? `"${wrapper.replaceAll('"', '""')}"` : posixShellQuoteCommand(wrapper);
+    return this.platform === "win32" ? `"${wrapper.replaceAll('"', '""')}"` : posixShellQuote(wrapper);
   }
 }
 
 function normalizeSeparators(value: string): string {
   return value.replaceAll("\\", "/");
-}
-
-function posixShellQuoteCommand(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function isAlreadyExists(error: unknown): boolean {
@@ -359,6 +380,43 @@ function isEmptyJson(stdout: string): boolean {
   }
 }
 
+/**
+ * The deadline lives here so a hung probe is killed and reaped rather than
+ * merely stopped being waited on — racing the promise from outside leaves the
+ * process running after install() has returned (round-1 W1).
+ */
+export function runCommand(
+  file: string,
+  args: string[],
+  deadlineMs: number = WINDOWS_PROBE_DEADLINE_MS,
+): Promise<{ exitCode: number; stdout: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(file, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    let stdout = "";
+    let settled = false;
+    const finish = (exitCode: number) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve({ exitCode, stdout });
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(1);
+    }, deadlineMs);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.on("error", () => {
+      stdout = "";
+      finish(1);
+    });
+    child.on("close", (code) => finish(code ?? 1));
+  });
+}
+
 function withDeadline<T>(promise: Promise<T>, milliseconds: number, fallback: T): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => resolve(fallback), milliseconds);
@@ -375,14 +433,36 @@ function withDeadline<T>(promise: Promise<T>, milliseconds: number, fallback: T)
   });
 }
 
-function runCommand(file: string, args: string[]): Promise<{ exitCode: number; stdout: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(file, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
-    let stdout = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.on("error", () => resolve({ exitCode: 1, stdout: "" }));
-    child.on("close", (code) => resolve({ exitCode: code ?? 1, stdout }));
-  });
+/**
+ * The path a stored hook command actually invokes. Best-effort: anything this
+ * cannot parse yields a value that fails the ownership test, which is the safe
+ * direction — we decline to claim a command rather than sweeping it.
+ */
+function invokedPath(command: string): string {
+  const value = command.trim();
+  if (value.startsWith("'")) {
+    return unquote(value, "'", `'\\''`);
+  }
+  if (value.startsWith('"')) {
+    return unquote(value, '"', '""');
+  }
+  return value.split(/\s/)[0] ?? value;
+}
+
+function unquote(value: string, quote: string, escaped: string): string {
+  let out = "";
+  let index = 1;
+  while (index < value.length) {
+    if (value.startsWith(escaped, index)) {
+      out += quote;
+      index += escaped.length;
+      continue;
+    }
+    if (value[index] === quote) {
+      break;
+    }
+    out += value[index];
+    index += 1;
+  }
+  return out;
 }

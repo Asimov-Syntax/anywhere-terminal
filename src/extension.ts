@@ -127,6 +127,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // storageRoot, not the wrapper directory: each adapter appends its own
   // sub-directory, so cursor's on-disk location is unchanged.
   const agentHookStorageRoot = context.globalStorageUri.fsPath;
+  // Where each agent's entries currently live. A location setting that moves
+  // mid-session must clean the file it left behind, which the adapter can no
+  // longer resolve (install-claude-hooks round-1 B1).
+  const agentHookDestinations = new Map<string, string>(
+    AGENT_HOOK_REGISTRY.map((entry) => [entry.agent, entry.createAdapter(readAgentHookSetting).configPath()]),
+  );
   const agentHookController = new AgentHookController({
     agents: AGENT_HOOK_REGISTRY.map((entry) => ({
       agent: entry.agent,
@@ -180,8 +186,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       for (const entry of AGENT_HOOK_REGISTRY) {
+        const enabled = isAgentHookEnabled(entry, readAgentHookSetting);
+        const previous = agentHookDestinations.get(entry.agent);
+        const current = entry.createAdapter(readAgentHookSetting).configPath();
+        if (previous !== undefined && previous !== current) {
+          agentHookDestinations.set(entry.agent, current);
+          void new ManagedConfigInstaller(entry.createAdapterForPath(previous), {
+            storageRoot: agentHookStorageRoot,
+          }).uninstall();
+        }
         if (event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`)) {
-          void agentHookController.setDesiredEnabled(entry.agent, isAgentHookEnabled(entry, readAgentHookSetting));
+          void agentHookController.setDesiredEnabled(entry.agent, enabled);
         }
       }
     }),

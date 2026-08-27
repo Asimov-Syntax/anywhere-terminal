@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CURSOR_HOOK_EVENTS } from "../agents/cursor";
 import { CURSOR_WRAPPER_DIRECTORY, cursorConfigAdapter, cursorWrapperScripts } from "./cursorConfigAdapter";
-import { ManagedConfigInstaller, type ManagedConfigInstallerDependencies } from "./ManagedConfigInstaller";
+import { ManagedConfigInstaller, type ManagedConfigInstallerDependencies, runCommand } from "./ManagedConfigInstaller";
 
 const tempDirectories: string[] = [];
 
@@ -207,6 +207,27 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
       expect(hooks.sessionStart[0]?.command).not.toBe(stale);
     });
 
+    it.each([
+      ["a directory that merely ends in the owned name", "'/home/alice/not-cursor-hooks/cursor-hook-observer.sh'"],
+      ["a filename that merely starts with the owned name", "'/root/cursor-hooks/cursor-hook-observer.sh.backup'"],
+      [
+        "the owned pair appearing as somebody else's argument",
+        "'/usr/bin/audit' --script cursor-hooks/cursor-hook-observer.sh",
+      ],
+      ["a same-named script in a different directory", "'/home/alice/scripts/cursor-hook-observer.sh'"],
+    ])("does not claim %s", async (_name, command) => {
+      const paths = await fixture();
+      const foreign = { command, timeout: 2 };
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: { sessionStart: [{ ...foreign }] } }));
+      const installer = installerFor(paths);
+
+      expect((await installer.install()).installed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [foreign, { timeout: 2 }] });
+
+      expect((await installer.uninstall()).removed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [foreign] });
+    });
+
     it("leaves a same-named script the extension does not own untouched", async () => {
       const paths = await fixture();
       const foreign = { command: "'/home/alice/scripts/cursor-hook-observer.sh'", timeout: 2 };
@@ -269,6 +290,19 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
       expect(contents).toContain('"%SystemRoot%\\System32\\more.com" >nul 2>nul');
       expect(contents).not.toMatch(/^more /m);
     });
+  });
+
+  it("kills a hung probe rather than only ceasing to wait for it", async () => {
+    const paths = await fixture();
+    await mkdir(paths.storageRoot, { recursive: true });
+    const marker = join(paths.storageRoot, "survived.txt");
+
+    const result = await runCommand("/bin/sh", ["-c", `sleep 0.4; : > '${marker}'`], 100);
+
+    expect(result).toEqual({ exitCode: 1, stdout: "" });
+    // Long enough that an unkilled child would have created the marker.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("makes the wrapper executable before it is reachable (D11)", async () => {

@@ -183,6 +183,51 @@ describe("claudeConfigAdapter through the shared reconciler", () => {
     expect(groupsFor(await settings(paths.configPath), "Stop")).toEqual([{ hooks: [userHandler] }]);
   });
 
+  it("keeps a user-authored group's own keys when our handler is the last one in it", async () => {
+    const paths = await fixture();
+    const userGroup = { matcher: "*", label: "keep me", note: { any: "shape" } };
+    await writeFile(paths.configPath, "{}");
+    const installer = installerFor(paths);
+    await installer.install();
+    const document = await settings(paths.configPath);
+    const managed = groupsFor(document, "Stop")[0]?.hooks;
+    (document.hooks as Record<string, unknown[]>).Stop = [{ ...userGroup, hooks: managed }];
+    await writeFile(paths.configPath, JSON.stringify(document));
+
+    expect((await installer.uninstall()).removed).toBe(true);
+    expect(groupsFor(await settings(paths.configPath), "Stop")).toEqual([{ ...userGroup, hooks: [] }]);
+  });
+
+  it("does not leave an empty husk behind for a group it created itself", async () => {
+    const paths = await fixture();
+    await writeFile(paths.configPath, "{}");
+    const installer = installerFor(paths);
+    await installer.install();
+
+    expect((await installer.uninstall()).removed).toBe(true);
+    const document = await settings(paths.configPath);
+    for (const event of CLAUDE_HOOK_EVENTS) {
+      expect(groupsFor(document, event)).toEqual([]);
+    }
+  });
+
+  it.each([
+    ["a directory that merely ends in the owned name", "'/home/alice/not-claude-hooks/claude-hook-observer.sh'"],
+    ["a filename that merely starts with the owned name", "'/root/claude-hooks/claude-hook-observer.sh.bak'"],
+    ["the owned pair as somebody else's argument", "'/usr/bin/audit' --script claude-hooks/claude-hook-observer.sh"],
+  ])("does not claim %s", async (_name, command) => {
+    const paths = await fixture();
+    const foreign = { type: "command", command, timeout: 2 };
+    await writeFile(paths.configPath, JSON.stringify({ hooks: { Stop: [{ hooks: [{ ...foreign }] }] } }));
+    const installer = installerFor(paths);
+
+    expect((await installer.install()).installed).toBe(true);
+    expect(groupsFor(await settings(paths.configPath), "Stop")[0]?.hooks).toEqual([foreign]);
+
+    expect((await installer.uninstall()).removed).toBe(true);
+    expect(groupsFor(await settings(paths.configPath), "Stop")[0]?.hooks).toEqual([foreign]);
+  });
+
   it("converges to one managed group per event across repeated installs", async () => {
     const paths = await fixture();
     await writeFile(paths.configPath, "{}");
@@ -334,6 +379,37 @@ describe("claudeConfigAdapter through the shared reconciler", () => {
 
       const contents = await readFile(join(paths.wrapperDirectory, "claude-hook-observer.sh"), "utf8");
       expect(contents).toBe(claudeWrapperScripts().posix);
+      // Independent of the generator: a same-length edit would slip past an
+      // equality check against the code under test (round-1 W3). The `${...}`
+      // occurrences below are shell expansions the emitted script must carry
+      // literally, not template placeholders.
+      // biome-ignore-start lint/suspicious/noTemplateCurlyInString: emitted shell syntax
+      expect(contents).toBe(
+        [
+          "#!/bin/sh",
+          "# Managed by AnyWhere Terminal. This observer is intentionally fail-open.",
+          "# The {} is defensive output; emitting it first covers every exit path below.",
+          'printf "{}\\n"',
+          "# Captured before the guards: an early exit must not leave the caller writing",
+          "# into a pipe nothing reads.",
+          "payload=$(cat)",
+          "# A backgrounded session inherited the dispatching terminal's environment.",
+          'if [ -n "${CLAUDE_JOB_DIR:-}" ]; then',
+          "  exit 0",
+          "fi",
+          'if [ -z "${ANYWHERE_TERMINAL_CLAUDE_URL:-}" ] || ! command -v curl >/dev/null 2>&1; then',
+          "  exit 0",
+          "fi",
+          `printf '%s' "$payload" | curl --silent --output /dev/null \\`,
+          "  --connect-timeout 0.5 --max-time 1.5 \\",
+          '  --request POST --header "content-type: application/json" \\',
+          '  --data-binary @- "${ANYWHERE_TERMINAL_CLAUDE_URL}/claude" || true',
+          "exit 0",
+          "",
+        ].join("\n"),
+      );
+      // biome-ignore-end lint/suspicious/noTemplateCurlyInString: emitted shell syntax
+      expect(Buffer.byteLength(contents, "utf8")).toBe(761);
       expect(contents.startsWith("#!/bin/sh\n")).toBe(true);
       const lines = contents.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
       expect(lines[0]).toBe('printf "{}\\n"');

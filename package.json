@@ -108,13 +108,13 @@
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "description": "Enable observational Claude Code hooks on this machine. Hooks are fail-open and only report terminal activity. Enabling this writes a managed entry into your Claude settings.json; disabling it removes that entry again."
+          "description": "Enable observational Claude Code hooks on this machine. Enabling this writes a managed entry into your Claude settings.json and has Claude Code post each hook event to a local loopback port; disabling it removes that entry again. Hooks are fail-open. No terminal activity is surfaced in the UI yet — that arrives in a later release."
         },
         "anywhereTerminal.agentHooks.claudeConfigDir": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Directory holding the Claude settings.json to install hooks into. Leave empty to use CLAUDE_CONFIG_DIR, or ~/.claude when that is unset."
+          "description": "Absolute path to the directory holding the Claude settings.json to install hooks into. A relative path is ignored. Leave empty to use CLAUDE_CONFIG_DIR, or ~/.claude when that is unset."
         },
         "anywhereTerminal.fileSearch.maxResults": {
           "type": "number",

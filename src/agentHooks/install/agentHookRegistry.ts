@@ -3,7 +3,7 @@
 // installable from a setting yet invisible to "remove everything" (D9).
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { VaultAgentId } from "../../vault/types";
 import type { AgentHookRegistration } from "../AgentHookRuntime";
 import { claudeAgentRegistration } from "../agents/claude";
@@ -31,6 +31,12 @@ export interface AgentHookRegistryEntry {
    * agent's file live would leave our entries in the old one.
    */
   createAdapter: (settings: SettingsReader, location?: AgentHookEnvironment) => AgentConfigAdapter;
+  /**
+   * An adapter pinned to one config file. Used to clean up the destination an
+   * agent was previously installed into when its location setting moves, which
+   * `createAdapter` can no longer reach (round-1 B1).
+   */
+  createAdapterForPath: (configPath: string) => AgentConfigAdapter;
   createRegistration: () => AgentHookRegistration;
 }
 
@@ -44,6 +50,7 @@ export const AGENT_HOOK_REGISTRY: readonly AgentHookRegistryEntry[] = [
     enabledSettingKey: "cursorAgent.hooks.enabled",
     createAdapter: (_settings, location) =>
       cursorConfigAdapter(join((location?.homeDirectory ?? homedir)(), ".cursor", "hooks.json")),
+    createAdapterForPath: (configPath) => cursorConfigAdapter(configPath),
     createRegistration: cursorAgentRegistration,
   },
   {
@@ -55,6 +62,7 @@ export const AGENT_HOOK_REGISTRY: readonly AgentHookRegistryEntry[] = [
         environment: location?.environment,
         homeDirectory: location?.homeDirectory,
       }),
+    createAdapterForPath: (configPath) => claudeConfigAdapter({ configuredDirectory: () => dirname(configPath) }),
     createRegistration: claudeAgentRegistration,
   },
 ];
