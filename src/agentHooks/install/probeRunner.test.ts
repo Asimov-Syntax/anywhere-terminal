@@ -31,6 +31,19 @@ afterEach(async () => {
   await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
+/** Whether `pid` is gone, waited for rather than assumed. */
+async function gone(pid: number, timeoutMs = 2_000): Promise<boolean> {
+  for (let waited = 0; waited <= timeoutMs; waited += 25) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await settle(25);
+  }
+  return false;
+}
+
 describe("runProbe", () => {
   it("returns what a well-behaved probe printed", async () => {
     await expect(runProbe("/bin/sh", ["-c", 'printf "{}\\n"'])).resolves.toEqual({ exitCode: 0, stdout: "{}\n" });
@@ -141,6 +154,73 @@ describe("runProbe", () => {
     await settle(50);
     // The leader is still killed — the fallback is partial, not absent.
     expect(() => process.kill(leader as number, 0)).toThrow();
+  });
+
+  it("reports leader-only termination when a started taskkill exits nonzero (round-7 B12)", async () => {
+    let leader: number | undefined;
+    const spawnOrFail = ((file: string, args: string[], options: object) => {
+      if (file.endsWith("taskkill.exe")) {
+        // Starts fine and fails: access denied, or a pid already reaped. No
+        // `error` event is emitted at all, so only the exit status shows it.
+        return spawn("/bin/sh", ["-c", "exit 1"], options);
+      }
+      const child = spawn(file, args, options);
+      leader = child.pid;
+      return child;
+    }) as never;
+
+    const result = await runProbe("/bin/sh", ["-c", "sleep 5"], {
+      deadlineMs: 50,
+      reapGraceMs: 400,
+      platform: "win32",
+      spawn: spawnOrFail,
+    });
+
+    expect(result).toEqual({ exitCode: 1, stdout: "", leaderOnlyTermination: true });
+    // Polled rather than slept on: a fixed grace is a coin flip on a loaded machine.
+    expect(await gone(leader as number)).toBe(true);
+  });
+
+  it("does not report a clean kill it has not yet observed (round-7 B12)", async () => {
+    let released: (() => void) | undefined;
+    const spawnSlowKiller = ((file: string, args: string[], options: object) => {
+      if (file.endsWith("taskkill.exe")) {
+        // Still running when the child is already gone: settling on the child's
+        // close alone would report a termination whose result is unknown.
+        const killer = spawn("/bin/sh", ["-c", "sleep 0.2; exit 1"], options);
+        released = () => killer.kill("SIGKILL");
+        return killer;
+      }
+      return spawn(file, args, options);
+    }) as never;
+
+    const result = await runProbe("/bin/sh", ["-c", "sleep 5"], {
+      deadlineMs: 50,
+      reapGraceMs: 2_000,
+      platform: "win32",
+      spawn: spawnSlowKiller,
+      kill: (pid, signal) => process.kill(pid, signal),
+    });
+
+    expect(result.leaderOnlyTermination).toBe(true);
+    released?.();
+  });
+
+  it("reports incomplete termination when the grace expires before the killer answers", async () => {
+    const spawnSilentKiller = ((file: string, args: string[], options: object) =>
+      file.endsWith("taskkill.exe")
+        ? spawn("/bin/sh", ["-c", "sleep 5"], options)
+        : spawn(file, args, options)) as never;
+
+    const result = await runProbe("/bin/sh", ["-c", "sleep 5"], {
+      deadlineMs: 50,
+      reapGraceMs: 100,
+      platform: "win32",
+      spawn: spawnSilentKiller,
+    });
+
+    // Nothing is known about the tree here, and unknown is not clean.
+    expect(result).toEqual({ exitCode: 1, stdout: "", leaderOnlyTermination: true });
   });
 
   it("kills on Windows through an absolute System32 path", async () => {

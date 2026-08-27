@@ -235,7 +235,7 @@
     1. Invoke PowerShell through its absolute system path in the Windows wrapper in src/agentHooks/install/cursorConfigAdapter.ts, as the same template already does for more.com
     2. Cover in src/agentHooks/install/cursorConfigAdapter.test.ts, and in src/agentHooks/install/claudeConfigAdapter.test.ts for its own wrapper, that no emitted Windows wrapper names an unqualified executable
 
-- [ ] 7_4 Report a termination that did not complete, however it failed
+- [x] 7_4 Report a termination that did not complete, however it failed — verified: pnpm exec vitest run 'src/agentHooks/install/probeRunner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_3
   - **Refs**: .reviews/round-7.md#b12, design.md#d14-one-process-runner-contract-absolute-and-cancellable
   - **Acceptance**:

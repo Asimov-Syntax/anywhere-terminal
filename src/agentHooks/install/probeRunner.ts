@@ -95,6 +95,17 @@ export function runProbe(
     }
 
     deadline = setTimeout(() => {
+      // Both facts are needed before reporting: that the child is gone, and how
+      // the kill went. A child that closes while the terminator is still running
+      // would otherwise be reported as a clean termination we had not yet
+      // observed (round-7 B12).
+      let terminated = false;
+      let closed = false;
+      const finishWhenKnown = () => {
+        if (terminated && closed) {
+          finish(1);
+        }
+      };
       terminateTree(child, {
         spawn,
         kill: dependencies.kill,
@@ -102,11 +113,26 @@ export function runProbe(
         onLeaderOnly: () => {
           leaderOnly = true;
         },
+        onOutcome: () => {
+          terminated = true;
+          finishWhenKnown();
+        },
       });
-      // Report only once the child is observed gone; the grace keeps an
-      // unkillable process from holding the install open forever.
-      reap = setTimeout(() => finish(1), reapGraceMs);
-      child.once("close", () => finish(1));
+      // The grace keeps an unkillable process, or a terminator that never
+      // reports, from holding the install open forever. Reaching it means the
+      // termination outcome is still unknown, and unknown is reported as
+      // incomplete: the whole point of the flag is that a caller never reads
+      // silence as a clean kill.
+      reap = setTimeout(() => {
+        if (!terminated) {
+          leaderOnly = true;
+        }
+        finish(1);
+      }, reapGraceMs);
+      child.once("close", () => {
+        closed = true;
+        finishWhenKnown();
+      });
     }, deadlineMs);
 
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -127,9 +153,12 @@ function terminateTree(
     kill?: (pid: number, signal: NodeJS.Signals) => void;
     platform: NodeJS.Platform;
     onLeaderOnly: () => void;
+    /** Called once the termination attempt's result is known, however it went. */
+    onOutcome: () => void;
   },
 ): void {
   if (child.pid === undefined) {
+    context.onOutcome();
     return;
   }
   const kill = context.kill ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal));
@@ -139,12 +168,23 @@ function terminateTree(
   };
   try {
     if (context.platform === "win32") {
-      context
-        .spawn(windowsSystemPath("taskkill.exe"), ["/pid", String(child.pid), "/T", "/F"], {
-          stdio: "ignore",
-          windowsHide: true,
-        })
-        .on("error", leaderOnly);
+      // A terminator that STARTS and then fails — access denied, pid already
+      // reaped — emits no `error` at all. Watching only that reported the tree
+      // as killed whenever taskkill exited nonzero (round-7 B12).
+      const killer = context.spawn(windowsSystemPath("taskkill.exe"), ["/pid", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      killer.on("error", () => {
+        leaderOnly();
+        context.onOutcome();
+      });
+      killer.on("close", (code) => {
+        if (code !== 0) {
+          leaderOnly();
+        }
+        context.onOutcome();
+      });
       return;
     }
     // Negative pid addresses the group the detached spawn created.
@@ -152,6 +192,7 @@ function terminateTree(
   } catch {
     leaderOnly();
   }
+  context.onOutcome();
 }
 
 /** Bounds an injected runner that may not honour a deadline of its own. */
