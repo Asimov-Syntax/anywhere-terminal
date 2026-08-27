@@ -466,6 +466,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         resolve: bindings.resolve,
         repoPath: bindings.repoPath,
         assessRemoval: bindings.assessRemoval,
+        observation: bindings.observation,
         observeAfter: async (target, journalledPath) => {
           // Two INDEPENDENT readings. The previous version inferred "directory
           // gone" from a null registration lookup, which is the one thing D11

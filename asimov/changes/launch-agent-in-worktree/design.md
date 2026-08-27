@@ -330,6 +330,14 @@ after the stat. An assessment that spans two observations belongs to neither, an
 registration read taken from a different observation than the existence read is not
 the disagreement those two reads exist to detect. Both fail closed to indeterminate.
 
+The last of those boundaries is the coordinator itself: it takes the observation
+before it assesses and re-asks it immediately before issuing the command, with no
+`await` in between. Validating inside `assessRemoval` is not enough, because the
+caller resumes from an `await` and a rebuild continuation queued behind that one
+lands first — evidence gathered under one observation would authorize a command
+issued under another, which at the same path is how a replacement gets removed on
+its predecessor's evidence.
+
 **What removal loses and gains.** It no longer refuses on a watcher failure, so worktrees can be
 removed on hosts without file watching. It now refuses while git is unusable, which it did only
 incidentally before, through a degradation string that a more specific reason could displace.

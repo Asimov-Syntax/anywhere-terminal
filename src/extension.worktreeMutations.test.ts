@@ -134,6 +134,11 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(typeof received.actions?.lockWorktree).toBe("function");
     expect(typeof received.actions?.unlockWorktree).toBe("function");
     expect(typeof received.actions?.pruneRepo).toBe("function");
+    // Round-10 B8: the coordinator's last check before a destructive command is
+    // only as real as production supplying what it asks. The service is built
+    // lazily, so something has to ask for it first.
+    received.actions?.reconcileFingerprints?.([]);
+    expect(typeof received.deps?.observation).toBe("function");
   });
 });
 

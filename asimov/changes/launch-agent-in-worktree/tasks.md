@@ -285,3 +285,18 @@
     2. `src/extension.ts` — `observeAfter` re-checks after the stat, so the registration read belongs to the observation the existence read was authorized under
     3. `src/worktree/WorktreeCache.ts` — build the git-unavailable output once (S3)
     4. `src/providers/WorktreeHost.actions.test.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts` — interleaving regressions at both boundaries, and an assembly walk proving an unusable git runs no removal command (W9)
+
+## 12. Round 10 fixes
+
+- [x] 12_1 Re-ask the observation with no await before the destructive command — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 11_1
+  - **Refs**: design.md#d12-one-predicate-this-repository-was-observed-authorizes-both-a-launch-and-a-removal, .reviews/round-10.md
+  - **Boundary**: the last check must be synchronous — no await may separate it from `removeWorktree`
+  - **Acceptance**:
+    - Outcome: no remove command runs when the observation moves after the assessment returns
+    - Verify: unit src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts` — the coordinator captures the observation before assessing and re-asks it immediately before issuing the command
+    2. `src/extension.ts` — supply the binding to the service
+    3. `src/worktree/worktreeMutationService.test.ts` — a rebuild landing after the assessment resolves issues no argv
+    4. `src/extension.worktreeMutations.test.ts` — production supplies the capability, not just the interface

@@ -68,6 +68,8 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     },
     repoPath: () => "/repo",
     assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence(), fingerprint: "" }),
+    // A tree that holds still, unless a test says otherwise.
+    observation: () => 1,
     observeAfter: async () => ({ isRegistered: false, existsOnDisk: false }),
     createContext: () => ({ mainWorktree: "/repo", linkedWorktrees: [] }),
     pathDeps: {
@@ -350,6 +352,33 @@ describe("a mutation reaches git through the coordinator", () => {
 
     expect(h.runner.run).not.toHaveBeenCalled();
     expect(h.outcomes[0]).toMatchObject({ kind: "unavailable", unreadable: ["status"] });
+  });
+
+  it("runs nothing when the tree moves between the assessment and the command", async () => {
+    // Round-10 B8: `assessRemoval` validates its own observation, but this
+    // coordinator resumes from an `await`, and a rebuild continuation already
+    // queued behind that one lands first. The evidence then describes a tree
+    // the command would no longer be issued against — at the same path, that is
+    // how a replacement gets removed on a predecessor's evidence.
+    const observations = [1, 2];
+    const h = harness({
+      observation: () => observations.shift() ?? 2,
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }),
+    });
+
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable", unreadable: ["listing"] });
+  });
+
+  it("still runs when the tree holds still across both", async () => {
+    // The negative that keeps the check above from being a blanket refusal.
+    const h = harness({ assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence() }) });
+
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).toHaveBeenCalled();
   });
 
   it("spends the token even on an exit that never reached git", async () => {

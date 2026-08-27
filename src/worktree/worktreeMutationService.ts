@@ -121,6 +121,14 @@ export interface MutationServiceDeps {
    */
   assessRemoval(target: WorktreeMutationTarget): Promise<RemovalAssessment | null>;
   /**
+   * The observation the tree currently holds of this repository (design.md D12).
+   *
+   * Synchronous by contract: the coordinator asks it immediately before it
+   * issues a destructive command, and an `await` in there would reopen the very
+   * window the question exists to close (round-10 B8).
+   */
+  observation(repoId: string): number | undefined;
+  /**
    * What the rebuilt tree and the filesystem say about the target NOW.
    *
    * Two independent readings, not one: D11 turns on registration and directory
@@ -282,6 +290,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           // A throw is a forced exit too. Every `return` below spends the
           // token; an exception left it live, so the next message could retry a
           // removal whose git call may already have run (round-4 S1).
+          // Taken BEFORE the assessment, so the window this closes covers the
+          // whole of it as well as the handoff below (round-10 B8).
+          const observed = deps.observation(target.repoId);
           const assessment = await deps.assessRemoval(target).catch((error: unknown) => {
             spend();
             throw error;
@@ -344,6 +355,16 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             wasRegistered: t.wasRegistered,
             existedOnDisk: t.existedOnDisk,
           };
+          // The last window, and the one every earlier check depends on: the
+          // assessment validated its own observation, but this caller resumes
+          // from an `await`, and a rebuild continuation already queued behind it
+          // lands first. Asked here, synchronously, with nothing between this
+          // line and the command — evidence gathered under one observation must
+          // not authorize a command issued under another (round-10 B8).
+          if (deps.observation(target.repoId) !== observed) {
+            spend();
+            return { kind: "unavailable", verb: "remove", repoId: target.repoId, unreadable: ["listing"] };
+          }
           const { result, timedOut } = await removeWorktree(deps.runner, {
             ...paths(t),
             force,
