@@ -114,3 +114,18 @@
     5. `src/agentHooks/hookEnvironment.ts` — resolve the fixed environment per terminal, and yield a variable the terminal already carries (B3, B5)
     6. `src/extension.ts` — serialize reconciliation, project when a report arrives, and bound the vault read to one per projection (B5, B6, B7)
     7. `src/agentHooks/opencodePlugin.test.ts`, `src/agentHooks/hookEnvironment.test.ts`, `src/worktree/presenceProjector.test.ts`, `src/session/SessionManager.cursorHooks.test.ts` — the cases above
+
+- [x] 6_2 A report proves the pane, once per rebuild — verified: bun test 'src/worktree/presenceProjector.test.ts' && bun run check-types && bun run test:unit exit 0
+  - **Deps**: 6_1
+  - **Refs**: specs/agent-hook-identity/spec.md#an-agent-reports-the-session-it-is-running, specs/worktree-agent-presence/spec.md#{claim-agent-identity-only-from-evidence-that-proves-it, one-session-belongs-to-one-pane}, design.md#d4-a-report-is-a-fourth-kind-of-evidence-ranked-above-the-rest, .reviews/round-2.md#{b1, b7, w2, w3}
+  - **Acceptance**:
+    - Outcome: a reported pane keeps its session against a directory claimant even when both name the same id, and one rebuild reads the vault once however many panes fall back to it
+    - Verify: unit src/worktree/presenceProjector.test.ts
+  - **Plan**:
+    1. `src/worktree/presenceTypes.ts` — `agentSource` admits the report that proved the agent (B1)
+    2. `src/webview/worktree/worktreeFormat.ts` — a reported row is a proven row (B1)
+    3. `src/worktree/presenceProjector.ts` — a report always carries `reported` evidence, proves an otherwise unproven pane, and correcting a guess is not a new epoch (B1, W3)
+    4. `src/worktree/presenceDeps.ts` — the newest-session-under-a-directory index is built once per rebuild, inside the snapshot (B7)
+    5. `src/extension.ts` — hand the projector the vault read and the reported agent, not a per-pane lookup (B1, B7)
+    6. `src/agentHooks/opencodePlugin.ts` — remember only the session currently reported (W2)
+    7. `src/worktree/presenceProjector.test.ts`, `src/worktree/presenceDeps.test.ts`, `src/agentHooks/opencodePlugin.test.ts`, `src/webview/worktree/worktreeFormat.test.ts` — the cases above

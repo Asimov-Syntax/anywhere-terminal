@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
+import type { VaultAgentId } from "../vault/types";
 import type { SessionLookup } from "./agentIdentity";
 import { createPresenceProjector, type Pane, type PresenceProjectorDeps } from "./presenceProjector";
 
@@ -26,9 +27,10 @@ function makeProjector(initial: Pane[] = []) {
   let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
   let vaultUnderCwd: ((agent: string, cwd: string) => Promise<string | undefined>) | undefined;
-  let reported: ((paneId: string, agent: string) => string | undefined) | undefined;
+  let reported: ((paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) | undefined;
   let snapshots = 0;
   let resolves = 0;
+  let underCwdCalls = 0;
 
   const deps: PresenceProjectorDeps = {
     panes: () => panes,
@@ -41,12 +43,15 @@ function makeProjector(initial: Pane[] = []) {
           return lookup(p.paneId);
         },
         sessions: async () => registry,
+        sessionUnderCwd: async (agent, cwd) => {
+          underCwdCalls += 1;
+          return vaultUnderCwd ? await vaultUnderCwd(agent, cwd) : undefined;
+        },
       };
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
-    sessionUnderCwd: (agent, cwd) => (vaultUnderCwd ? vaultUnderCwd(agent, cwd) : Promise.resolve(undefined)),
-    reportedSession: (paneId, agent) => reported?.(paneId, agent),
+    reportedSession: (paneId) => reported?.(paneId),
     now: () => clock,
   };
 
@@ -70,10 +75,10 @@ function makeProjector(initial: Pane[] = []) {
     setVaultUnderCwd(next: (agent: string, cwd: string) => Promise<string | undefined>) {
       vaultUnderCwd = next;
     },
-    setReportedSession(next: (paneId: string, agent: string) => string | undefined) {
+    setReportedSession(next: (paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) {
       reported = next;
     },
-    counts: () => ({ snapshots, resolves }),
+    counts: () => ({ snapshots, resolves, underCwdCalls }),
   };
 }
 
@@ -777,7 +782,7 @@ describe("the agent said which session it is on", () => {
   it("takes the reported session over the one recorded under the directory", async () => {
     const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
     h.setVaultUnderCwd(async () => "opencode:ses_stale");
-    h.setReportedSession(() => "opencode:ses_live");
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
     h.setVaultTitle(async (entryId) => (entryId === "opencode:ses_live" ? "Port the pty layer to bun" : "An old one"));
 
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
@@ -793,7 +798,7 @@ describe("the agent said which session it is on", () => {
       lookups += 1;
       return "opencode:ses_stale";
     });
-    h.setReportedSession(() => "opencode:ses_live");
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
 
     await h.projector.project([WT]);
 
@@ -805,7 +810,9 @@ describe("the agent said which session it is on", () => {
       pane({ paneId: "reporter", title: "opencode" }),
       pane({ paneId: "bystander", title: "zsh" }),
     ]);
-    h.setReportedSession((paneId) => (paneId === "reporter" ? "opencode:ses_live" : undefined));
+    h.setReportedSession((paneId) =>
+      paneId === "reporter" ? { agent: "opencode", entryId: "opencode:ses_live" } : undefined,
+    );
     h.setVaultUnderCwd(async () => "opencode:ses_live");
     h.setVaultTitle(async () => "Port the pty layer to bun");
 
@@ -825,7 +832,7 @@ describe("the agent said which session it is on", () => {
     h.setVaultTitle(async (entryId) => (entryId === "opencode:ses_live" ? "Port the pty layer to bun" : "An old one"));
 
     const first = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
-    h.setReportedSession(() => "opencode:ses_live");
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
     const second = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
 
     expect(first.entryId).toBe("opencode:ses_stale");
@@ -833,12 +840,73 @@ describe("the agent said which session it is on", () => {
     expect(second.title).toBe("Port the pty layer to bun");
   });
 
-  it("moves to the second session the same terminal reports", async () => {
-    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
-    h.setReportedSession(() => "opencode:ses_one");
+  // The guess being right is the dangerous case, not the harmless one: a tie on
+  // rank means `settleContestedSessions` gives the session to nobody, so the
+  // pane that actually reported loses it (.reviews/round-2.md B1).
+  it("still ranks as reported when the report only confirms the guess", async () => {
+    const h = makeProjector([
+      pane({ paneId: "reporter", title: "opencode" }),
+      pane({ paneId: "bystander", title: "opencode" }),
+    ]);
+    h.setVaultUnderCwd(async () => "opencode:ses_live");
     await h.projector.project([WT]);
 
-    h.setReportedSession(() => "opencode:ses_two");
+    h.setReportedSession((paneId) =>
+      paneId === "reporter" ? { agent: "opencode", entryId: "opencode:ses_live" } : undefined,
+    );
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.find((r) => r.paneId === "reporter")?.entryId).toBe("opencode:ses_live");
+    expect(rows.find((r) => r.paneId === "bystander")?.entryId).toBeUndefined();
+  });
+
+  // A plugin only runs inside the agent, and the credential it posts under was
+  // issued to this terminal for this run — so a report is proof the agent is
+  // here, not merely a guess about which session it is on.
+  it("proves the agent in a pane nothing else recognised", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
+    h.setVaultTitle(async () => "Port the pty layer to bun");
+
+    const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(row).toMatchObject({ agent: "opencode", agentSource: "report", entryId: "opencode:ses_live" });
+    expect(row.title).toBe("Port the pty layer to bun");
+  });
+
+  // The pane did not restart; only what we know about it changed. Resetting the
+  // epoch would show an hour-old session as newly started (.reviews/round-2.md W3).
+  it("keeps the row's age when a report corrects the guess", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setVaultUnderCwd(async () => "opencode:ses_stale");
+    const first = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    clock += 3_600_000;
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_live" }));
+    const second = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    expect(second.entryId).toBe("opencode:ses_live");
+    expect(second.startedAt).toBe(first.startedAt);
+  });
+
+  it("starts a new epoch when the terminal reports a genuinely different session", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_one" }));
+    const first = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    clock += 3_600_000;
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_two" }));
+    const second = (await h.projector.project([WT])).rowsByWorktreeId[WT][0];
+
+    expect(second.startedAt).toBe(first.startedAt! + 3_600_000);
+  });
+
+  it("moves to the second session the same terminal reports", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "opencode" })]);
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_one" }));
+    await h.projector.project([WT]);
+
+    h.setReportedSession(() => ({ agent: "opencode", entryId: "opencode:ses_two" }));
     const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
     expect(row.entryId).toBe("opencode:ses_two");

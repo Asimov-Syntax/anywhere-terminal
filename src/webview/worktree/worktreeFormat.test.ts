@@ -188,6 +188,15 @@ describe("evidence sources", () => {
     expect(hasProvenIdentity(launchIdentityOutputActivity)).toBe(true);
     expect(isFallbackActivity(launchIdentityOutputActivity.activitySource)).toBe(true);
   });
+
+  // A report comes from inside the agent, under a credential issued to that one
+  // terminal for that one run — the strongest proof of identity there is, not a
+  // guess like a matching title (.reviews/round-2.md B1).
+  it("counts the agent that reported itself as proven", () => {
+    const reported = agentRow({ rowId: "c", agent: "opencode", agentSource: "report", activitySource: "output" });
+
+    expect(hasProvenIdentity(reported)).toBe(true);
+  });
 });
 
 describe("agentCountLabel", () => {

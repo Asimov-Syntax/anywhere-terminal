@@ -158,6 +158,20 @@ describe("the plugin OpenCode loads", () => {
     await new Promise<void>((resolve) => stalled.close(() => resolve()));
   });
 
+  it("remembers only the session it is on, not every session it has seen", async () => {
+    const plugin = await loadPlugin(dir);
+
+    await plugin.event({ event: { type: "session.created", properties: { info: { id: "ses_one" } } } });
+    await plugin.event({ event: { type: "session.created", properties: { info: { id: "ses_two" } } } });
+    await plugin.event({ event: { type: "session.updated", properties: { info: { id: "ses_one" } } } });
+
+    expect(hook.received.map((r) => (r.body as { sessionID: string }).sessionID)).toEqual([
+      "ses_one",
+      "ses_two",
+      "ses_one",
+    ]);
+  });
+
   it("stays quiet when no credential is in the environment", async () => {
     delete process.env.ANYWHERE_TERMINAL_AGENT_HOOK_URL;
     const plugin = await loadPlugin(dir);

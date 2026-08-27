@@ -42,7 +42,7 @@ import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
-import { formatEntryId, type VaultListResult, type VaultSessionEntry } from "./vault/types";
+import { formatEntryId } from "./vault/types";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
@@ -607,26 +607,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // differ between reading the tree and changing it.
   const worktreeTreeDeps = createWorktreeTreeDeps();
 
-  // `VaultService.list()` is a full read of every agent's store, and the panes
-  // that need it need it at the same moment — one rebuild, N panes with no
-  // session id yet. Sharing the read in flight bounds that to one, which is the
-  // same per-rebuild bound `openSnapshot` already keeps (.reviews/round-1.md B7).
-  let sessionsInFlight: Promise<VaultListResult> | undefined;
-  function listSessionsOnce(): Promise<VaultListResult> {
-    if (sessionsInFlight !== undefined) {
-      return sessionsInFlight;
-    }
-    const pending = vaultService.list();
-    sessionsInFlight = pending;
-    const clear = (): void => {
-      if (sessionsInFlight === pending) {
-        sessionsInFlight = undefined;
-      }
-    };
-    pending.then(clear, clear);
-    return pending;
-  }
-
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
     // The two evidence sources a removal blocker set needs and the tree does
@@ -675,28 +655,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const entry = await vaultService.getEntry(entryId);
           return entry?.customName || entry?.title || undefined;
         },
-        // What the agent in this pane said about itself. Trusted over the two
-        // lookups below because a report reaches exactly one terminal.
-        reportedSession: (paneId, agent) => {
+        // What the agent in this pane said about itself. Trusted over the
+        // lookup below because a report reaches exactly one terminal.
+        reportedSession: (paneId) => {
           const session = hookReceiver?.reportedSession(paneId);
-          return session === undefined || session.agent !== agent ? undefined : formatEntryId(agent, session.sessionId);
+          return session === undefined
+            ? undefined
+            : { agent: session.agent, entryId: formatEntryId(session.agent, session.sessionId) };
         },
-        // The handle for a pane no pid registry can name — every agent but
-        // claude. Newest wins, since the transcript being written now is the
+        // The source for the handle a pane no pid registry can name — every
+        // agent but claude. Read once per rebuild and indexed by the deps;
+        // newest wins there, since the transcript being written now is the
         // session the proven-running agent is in.
-        sessionUnderCwd: async (agent, cwd) => {
-          const { entries } = await listSessionsOnce();
-          let best: VaultSessionEntry | undefined;
-          for (const entry of entries) {
-            if (entry.agent !== agent || path.resolve(entry.cwd) !== cwd) {
-              continue;
-            }
-            if (best === undefined || entry.modified > best.modified) {
-              best = entry;
-            }
-          }
-          return best?.id;
-        },
+        listSessions: async () => (await vaultService.list()).entries,
       }),
     ),
     onPaneChange: (listener) => {

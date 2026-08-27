@@ -80,7 +80,7 @@ export interface WorktreeAgentRow {
   model?: string;
   /** Omitted when identity is unproven; presence never invents an agent id. */
   agent?: VaultAgentId;
-  agentSource: "launch" | "process" | "registry" | "title" | "none";
+  agentSource: "launch" | "process" | "registry" | "report" | "title" | "none";
   activity: "running" | "waiting" | "idle" | "exited";
   activitySource: "hook" | "output" | "title" | "registry" | "none";
   /** Vault `<agent>:<sessionId>` once resolved. */
