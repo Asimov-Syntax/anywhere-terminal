@@ -13,7 +13,7 @@
 //  - A dangerous permission posture is labelled and never preselected.
 //  - The repo picker appears only once the workspace holds more than one repo.
 
-import { sanitizeBranchForPath } from "../../worktree/createPath";
+import { sanitizeBranchForPath } from "../../worktree/branchSlug";
 import { dialogTitle, field, keyHint, openDialogShell, selectControl, textButton } from "./worktreeDialogShell";
 import type {
   WorktreeBranchMode,
@@ -76,8 +76,8 @@ export interface WorktreeCreateDialogDeps {
   onCancel?: () => void;
 }
 
-// The branch→segment rule lives beside the other path rules, so the form and
-// the host cannot disagree about what a branch turns into (round-3 B12).
+// Re-exported from branchSlug, the one definition the host shares, so the form
+// and the host cannot disagree about what a branch turns into (round-3 B12).
 export { sanitizeBranchForPath };
 
 /** Mount the create form and return its disposer. */

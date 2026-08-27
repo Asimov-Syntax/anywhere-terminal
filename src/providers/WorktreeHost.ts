@@ -14,7 +14,8 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeOpenAfterMode,
 } from "../types/messages";
-import { resolveCreateRoot, sanitizeBranchForPath, suggestFreePath } from "../worktree/createPath";
+import { sanitizeBranchForPath } from "../worktree/branchSlug";
+import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {

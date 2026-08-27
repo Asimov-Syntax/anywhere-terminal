@@ -83,21 +83,6 @@ export type CreatePathResult =
  * target and the component walk never encounters `link`. The lexical walk
  * therefore runs before the normalizer, on the path exactly as supplied.
  */
-/**
- * `feat/worktree ui` → `feat-worktree-ui`, the segment a default path appends.
- *
- * Lives here rather than in the form because the HOST derives the destination
- * now: a second copy of this rule in the webview would let the path the form
- * shows and the path the host resolved drift apart (round-3 B12).
- */
-export function sanitizeBranchForPath(branch: string): string {
-  return branch
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase();
-}
-
 export async function validateCreatePath(
   raw: string,
   ctx: CreatePathContext,
