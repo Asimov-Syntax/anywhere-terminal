@@ -134,11 +134,18 @@ describe("[I7] hook status is never carried across a window reload", () => {
     await p.send("UserPromptSubmit");
     expect((await p.row())?.activitySource).toBe("hook");
 
-    // What a reload is, from the projection's side: the process that published the
-    // status is gone and the runtime retires it.
-    p.runtime.setAgentEnabled("claude", false);
+    // Round-1 B4: this used to call `setAgentEnabled(false)`, which is entitlement
+    // revocation — a user turning the agent off, not a window going away. A reload
+    // DISPOSES the runtime: it closes the server and marks itself disposed, and the
+    // question I7 asks is whether the status it published survives that.
+    p.runtime.dispose();
     await new Promise((resolve) => setImmediate(resolve));
 
+    expect((await p.row())?.activitySource).not.toBe("hook");
+
+    // And it cannot come back: a disposed runtime republishing is the same defect from
+    // the other side, so the socket it minted must no longer accept a turn.
+    await expect(p.send("UserPromptSubmit")).rejects.toThrow();
     expect((await p.row())?.activitySource).not.toBe("hook");
   });
 });

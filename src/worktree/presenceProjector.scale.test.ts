@@ -30,7 +30,10 @@ function wireAtScale() {
 
   const listRunning = vi.fn(async (): Promise<RunningSessionsOutcome> => ({ kind: "ok", sessions: [] }));
   const sessionMtime = vi.fn(async () => 1);
-  const sessionPath = vi.fn(async () => null);
+  // A path, not null: `presenceDeps` deliberately does NOT cache a miss (a session that
+  // cannot be located yet may be locatable later), so a null-returning stub would measure
+  // that eviction rather than the memo.
+  const sessionPath = vi.fn(async (): Promise<string | null> => "/sessions/sess-1.jsonl");
 
   const store = createPaneEvidenceStore({ now: () => NOW });
   for (let i = 0; i < PANES; i++) {
@@ -50,7 +53,7 @@ function wireAtScale() {
     sessionPath,
     now: () => NOW,
   });
-  return { open, listRunning, sessionMtime, projector: createPresenceProjector(deps) };
+  return { open, listRunning, sessionMtime, sessionPath, store, projector: createPresenceProjector(deps) };
 }
 
 describe(`presence cost envelope — ${PANES} panes across ${WORKTREES} worktrees`, () => {
@@ -76,6 +79,28 @@ describe(`presence cost envelope — ${PANES} panes across ${WORKTREES} worktree
 
     expect(ten.open).toHaveBeenCalledTimes(PROCESS_TABLE_READS.exactly);
     expect(ten.listRunning).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-resolve a reported session whose pane key has not changed", async () => {
+    // Round-1 B9: D2's envelope has THREE conditions and the suite asserted two. This is
+    // the third — "no re-resolution for unchanged pane keys" — and without it the memoized
+    // resolution can regress to per-rebuild work while every other count stays flat.
+    const { sessionPath, projector, store } = wireAtScale();
+    // A reported session is what resolution is FOR: the pane's own agent names a session
+    // id, and where that session LIVES has to be looked up rather than read off the pane.
+    store.reportTurn("pane-0", {
+      state: "working",
+      stateStartedAt: NOW,
+      agentSessionId: "sess-1",
+      subagents: [],
+    });
+
+    await projector.project(worktreeIds);
+    const afterFirst = sessionPath.mock.calls.length;
+    await projector.project(worktreeIds);
+
+    expect(afterFirst, "nothing was resolved, so caching it proves nothing").toBeGreaterThan(0);
+    expect(sessionPath.mock.calls.length).toBe(afterFirst);
   });
 
   it("charges each rebuild once rather than carrying a read across them", async () => {

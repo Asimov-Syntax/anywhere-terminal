@@ -112,7 +112,10 @@ function buildFixtureRepo(): { tmp: string; repo: string } {
   fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
   git(["add", "."], repo);
   git(["commit", "-qm", "init"], repo);
-  for (let i = 0; i < WORKTREES; i++) {
+  // Round-1 W1: `git init` already made the main worktree, so adding WORKTREES linked ones
+  // built ELEVEN against a published fixture of ten. The fixture size is frozen (D2) — this
+  // makes the repo match it rather than moving it.
+  for (let i = 0; i < WORKTREES - 1; i++) {
     git(["worktree", "add", "-q", "-b", `feat-${i}`, path.join(tmp, `wt-${i}`)], repo);
   }
   return { tmp, repo };

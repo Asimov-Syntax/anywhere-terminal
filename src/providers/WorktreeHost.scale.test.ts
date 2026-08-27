@@ -188,4 +188,39 @@ describe("watcher burst and sustained stream, composed", () => {
     expect(ticks).toBeGreaterThan(windows);
     expect(git.listsFor("/a") - before).toBe(windows + 1);
   });
+
+  it("serves a forced refresh immediately, without waiting out the floor", async () => {
+    // Round-1 B10: D3 names five facts and three were asserted. This is the fourth — a
+    // force is a user asking now, and making it queue behind the per-repo floor would make
+    // the affordance a lie. Fired straight after a burst, so the floor is genuinely armed.
+    const { host, git, fireOn } = await joined();
+    fireOn("/a");
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+    await drain();
+    const before = git.listsFor("/a");
+
+    // The repo IDENTITY, not the folder: `rev-parse --git-common-dir` above answers
+    // `<folder>/.git`, and that is the key the gate is scoped by.
+    await host.mutationBindings().forceRebuild("/a/.git");
+    await drain();
+
+    expect(git.listsFor("/a") - before).toBe(GIT_INVOCATIONS_PER_BURST.exactly);
+  });
+
+  it("counts per repository, not in aggregate, when two are affected at once", async () => {
+    // Round-1 B10: the fifth fact. Every earlier assertion watches one repo while its
+    // sibling stays quiet, which cannot tell a per-repo bound from a global one — a host
+    // that collapsed both repos into a single rebuild would pass all three.
+    const { git, fireOn } = await joined();
+    const beforeA = git.listsFor("/a");
+    const beforeB = git.listsFor("/b");
+
+    fireOn("/a");
+    fireOn("/b");
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+    await drain();
+
+    expect(git.listsFor("/a") - beforeA).toBe(GIT_INVOCATIONS_PER_BURST.exactly);
+    expect(git.listsFor("/b") - beforeB).toBe(GIT_INVOCATIONS_PER_BURST.exactly);
+  });
 });
