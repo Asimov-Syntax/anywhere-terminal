@@ -15,6 +15,8 @@ export const CLAUDE_CONFIG_FILE = "settings.json";
 export const CLAUDE_CONFIG_DIR_ENV_VAR = "CLAUDE_CONFIG_DIR";
 
 export interface ClaudeConfigLocation {
+  /** An exact settings file, pinning the adapter past any setting (round-2 S3). */
+  configFile?: string;
   /** The `anywhereTerminal.agentHooks.claudeConfigDir` setting, read at resolution time (D4). */
   configuredDirectory?: () => string | undefined;
   environment?: NodeJS.ProcessEnv;
@@ -27,6 +29,9 @@ export interface ClaudeConfigLocation {
  * snapshots one result rather than re-asking mid-operation (round-1 B1).
  */
 export function resolveClaudeConfigPath(location: ClaudeConfigLocation = {}): string {
+  if (location.configFile) {
+    return location.configFile;
+  }
   const configured = location.configuredDirectory?.()?.trim();
   // Absolute only (round-1 S2): a relative override would resolve against
   // whatever working directory the extension host happens to hold.

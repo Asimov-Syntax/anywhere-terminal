@@ -82,3 +82,16 @@
     6. W2 — reword the claude setting description in package.json to transport-only
     7. W3 — pin the claude POSIX wrapper to an independent literal with a length assertion in src/agentHooks/install/claudeConfigAdapter.test.ts
     8. S1 — reuse src/utils/posixShellQuote.ts; S2 — ignore a non-absolute claude config directory override
+
+- [x] 3_2 Fix the round-2 findings — verified: pnpm vitest run 'src/agentHooks/install/agentHookWiring.test.ts' && pnpm run check-types && pnpm vitest run --maxWorkers=4 exit 0
+  - **Deps**: 3_1
+  - **Refs**: .reviews/round-2.md, specs/agent-hook-installation/spec.md#{user-authored-configuration-is-preserved, claude-configuration-location-is-overridable}
+  - **Acceptance**:
+    - Outcome: A moved destination reconciles at its new file and a concatenated command is read as the shell reads it
+    - Verify: unit src/agentHooks/install/agentHookWiring.test.ts
+  - **Plan**:
+    1. B1 — move the mid-session destination change into one awaited operation in src/agentHooks/install/agentHookRegistry.ts that cleans the old file, advances the record only on success, and reports that the new one must be reconciled; call it from src/extension.ts and force the reconcile rather than assuming the enablement key changed
+    2. B2 — replace the single-token unquoter in src/agentHooks/install/ManagedConfigInstaller.ts with a first-word parser per platform so concatenated runs resolve as the shell resolves them and an unterminated quote fails closed
+    3. W1 — await the child's close behind a secondary deadline and terminate the process group rather than the leader
+    4. W3 — pin both cursor wrappers to independent literals in src/agentHooks/install/ManagedConfigInstaller.test.ts
+    5. S3 — let src/agentHooks/install/claudeConfigAdapter.ts take an exact config file so the pinned factory returns what it was given

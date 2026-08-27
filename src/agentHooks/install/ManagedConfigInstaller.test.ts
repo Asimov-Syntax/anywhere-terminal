@@ -228,6 +228,48 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
       expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [foreign] });
     });
 
+    it.each([
+      [
+        "a quoted path with a suffix concatenated after the closing quote",
+        "'/root/cursor-hooks/cursor-hook-observer.sh'.bak",
+      ],
+      [
+        "a quoted path with a suffix concatenated in a second quoted run",
+        `'/root/cursor-hooks/cursor-hook-observer.sh'".bak"`,
+      ],
+      ["an unterminated single quote", "'/root/cursor-hooks/cursor-hook-observer.sh"],
+      ["an unterminated double quote", '"/root/cursor-hooks/cursor-hook-observer.sh'],
+    ])("does not claim %s", async (_name, command) => {
+      const paths = await fixture();
+      const foreign = { command, timeout: 2 };
+      await writeFile(paths.configPath, JSON.stringify({ version: 1, hooks: { sessionStart: [{ ...foreign }] } }));
+      const installer = installerFor(paths);
+
+      expect((await installer.install()).installed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [foreign, { timeout: 2 }] });
+
+      expect((await installer.uninstall()).removed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [foreign] });
+    });
+
+    it("claims a command whose quoting differs but whose resolved path is ours", async () => {
+      const paths = await fixture();
+      const wrapper = join(paths.wrapperDirectory, "cursor-hook-observer.sh");
+      // Same path the shell would resolve, written three other ways.
+      const equivalents = [wrapper, `"${wrapper}"`, `'${wrapper.slice(0, 5)}'${wrapper.slice(5)}`];
+      await writeFile(
+        paths.configPath,
+        JSON.stringify({
+          version: 1,
+          hooks: { sessionStart: equivalents.map((command) => ({ command, timeout: 2 })) },
+        }),
+      );
+
+      expect((await installerFor(paths).install()).installed).toBe(true);
+      expect((await config(paths.configPath)).hooks).toMatchObject({ sessionStart: [{ timeout: 2 }] });
+      expect(((await config(paths.configPath)).hooks as Record<string, unknown[]>).sessionStart).toHaveLength(1);
+    });
+
     it("leaves a same-named script the extension does not own untouched", async () => {
       const paths = await fixture();
       const foreign = { command: "'/home/alice/scripts/cursor-hook-observer.sh'", timeout: 2 };
@@ -271,6 +313,22 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
 
       const contents = await readFile(join(paths.wrapperDirectory, "cursor-hook-observer.sh"), "utf8");
       expect(contents).toBe(cursorWrapperScripts().posix);
+      // biome-ignore-start lint/suspicious/noTemplateCurlyInString: emitted shell syntax
+      expect(contents).toBe(
+        [
+          "#!/bin/sh",
+          "# Managed by AnyWhere Terminal. This observer is intentionally fail-open.",
+          'if [ -n "${ANYWHERE_TERMINAL_CURSOR_URL:-}" ] && command -v curl >/dev/null 2>&1; then',
+          "  curl --silent --output /dev/null --connect-timeout 0.5 --max-time 1.5 \\",
+          '    --request POST --header "content-type: application/json" \\',
+          '    --data-binary @- "${ANYWHERE_TERMINAL_CURSOR_URL}/cursor" || true',
+          "fi",
+          "cat >/dev/null 2>&1 || true",
+          'printf "{}\\n"',
+          "",
+        ].join("\n"),
+      );
+      // biome-ignore-end lint/suspicious/noTemplateCurlyInString: emitted shell syntax
       expect(Buffer.byteLength(contents, "utf8")).toBe(423);
       expect(contents.startsWith("#!/bin/sh\n")).toBe(true);
       // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted script must carry this shell expansion literally.
@@ -285,6 +343,19 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
 
       const contents = await readFile(join(paths.wrapperDirectory, "cursor-hook-observer.cmd"), "utf8");
       expect(contents).toBe(cursorWrapperScripts().windows);
+      expect(contents).toBe(
+        [
+          "@echo off",
+          "setlocal",
+          "if not defined ANYWHERE_TERMINAL_CURSOR_URL goto output",
+          `powershell -NoProfile -ExecutionPolicy Bypass -Command "$body=[Console]::In.ReadToEnd(); try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -TimeoutSec 2 -Body $body ($env:ANYWHERE_TERMINAL_CURSOR_URL + '/cursor') ^| Out-Null } catch {}"`,
+          ":output",
+          '"%SystemRoot%\\System32\\more.com" >nul 2>nul',
+          "echo {}",
+          "exit /b 0",
+          "",
+        ].join("\n"),
+      );
       expect(Buffer.byteLength(contents, "utf8")).toBe(418);
       expect(contents).toContain("$env:ANYWHERE_TERMINAL_CURSOR_URL + '/cursor'");
       expect(contents).toContain('"%SystemRoot%\\System32\\more.com" >nul 2>nul');
@@ -301,6 +372,19 @@ describe("ManagedConfigInstaller with the cursor adapter", () => {
 
     expect(result).toEqual({ exitCode: 1, stdout: "" });
     // Long enough that an unkilled child would have created the marker.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("waits for the killed probe to be reaped, and takes its descendants with it", async () => {
+    const paths = await fixture();
+    await mkdir(paths.storageRoot, { recursive: true });
+    const marker = join(paths.storageRoot, "grandchild.txt");
+    // The child backgrounds a grandchild, then exits itself. Killing only the
+    // leader would leave the grandchild to create the marker (round-2 W1).
+    const result = await runCommand("/bin/sh", ["-c", `(sleep 0.4; : > '${marker}') & sleep 5`], 100);
+
+    expect(result).toEqual({ exitCode: 1, stdout: "" });
     await new Promise((resolve) => setTimeout(resolve, 700));
     await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });

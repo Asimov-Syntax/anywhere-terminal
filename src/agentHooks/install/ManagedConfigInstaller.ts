@@ -45,6 +45,7 @@ const LOCK_MAX_WAIT_MS = 1_000;
 const STALE_LOCK_MS = 30_000;
 const MAX_RECONCILE_ATTEMPTS = 3;
 const WINDOWS_PROBE_DEADLINE_MS = 2_000;
+const REAP_GRACE_MS = 500;
 
 export class ManagedConfigInstaller {
   private readonly fs: FileSystem;
@@ -149,7 +150,7 @@ export class ManagedConfigInstaller {
       if (typeof command !== "string") {
         return false;
       }
-      const segments = normalizeSeparators(invokedPath(command))
+      const segments = normalizeSeparators(invokedPath(command, this.platform))
         .split("/")
         .filter((segment) => segment !== "");
       return segments.at(-1) === fileName && segments.at(-2) === directoryName;
@@ -382,8 +383,10 @@ function isEmptyJson(stdout: string): boolean {
 
 /**
  * The deadline lives here so a hung probe is killed and reaped rather than
- * merely stopped being waited on — racing the promise from outside leaves the
- * process running after install() has returned (round-1 W1).
+ * merely stopped being waited on (round-1 W1), and the timeout path waits for
+ * `close` before reporting rather than reporting on `kill` (round-2 W1).
+ * Termination targets the process group: the probe runs `cmd.exe /c <wrapper>`
+ * and the wrapper spawns curl, so killing only the leader leaves a descendant.
  */
 export function runCommand(
   file: string,
@@ -391,7 +394,11 @@ export function runCommand(
   deadlineMs: number = WINDOWS_PROBE_DEADLINE_MS,
 ): Promise<{ exitCode: number; stdout: string }> {
   return new Promise((resolve) => {
-    const child = spawn(file, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    const child = spawn(file, args, {
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+      detached: process.platform !== "win32",
+    });
     let stdout = "";
     let settled = false;
     const finish = (exitCode: number) => {
@@ -399,12 +406,17 @@ export function runCommand(
         return;
       }
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(deadline);
+      clearTimeout(reapDeadline);
       resolve({ exitCode, stdout });
     };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(1);
+    let reapDeadline: ReturnType<typeof setTimeout> | undefined;
+    const deadline = setTimeout(() => {
+      terminateTree(child);
+      // Report only once the child is actually gone; a second deadline keeps an
+      // unkillable process from holding the install open indefinitely.
+      reapDeadline = setTimeout(() => finish(1), REAP_GRACE_MS);
+      child.once("close", () => finish(1));
     }, deadlineMs);
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
@@ -415,6 +427,22 @@ export function runCommand(
     });
     child.on("close", (code) => finish(code ?? 1));
   });
+}
+
+function terminateTree(child: ReturnType<typeof spawn>): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      return;
+    }
+    // Negative pid addresses the group the `detached` spawn created.
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
 }
 
 function withDeadline<T>(promise: Promise<T>, milliseconds: number, fallback: T): Promise<T> {
@@ -434,35 +462,80 @@ function withDeadline<T>(promise: Promise<T>, milliseconds: number, fallback: T)
 }
 
 /**
- * The path a stored hook command actually invokes. Best-effort: anything this
- * cannot parse yields a value that fails the ownership test, which is the safe
- * direction — we decline to claim a command rather than sweeping it.
+ * The path a stored hook command actually invokes: its first shell word, with
+ * quoting resolved the way the shell resolves it. Adjacent runs concatenate, so
+ * `'/x/claude-hooks/observer.sh'.bak` yields the `.bak` path the shell would
+ * really execute rather than the owned-looking prefix (round-2 B2). An
+ * unterminated quote yields nothing, which fails the ownership test — the safe
+ * direction, since we decline to claim a command instead of sweeping it.
  */
-function invokedPath(command: string): string {
-  const value = command.trim();
-  if (value.startsWith("'")) {
-    return unquote(value, "'", `'\\''`);
-  }
-  if (value.startsWith('"')) {
-    return unquote(value, '"', '""');
-  }
-  return value.split(/\s/)[0] ?? value;
+function invokedPath(command: string, platform: Platform): string {
+  return platform === "win32" ? firstWindowsToken(command) : firstPosixWord(command);
 }
 
-function unquote(value: string, quote: string, escaped: string): string {
-  let out = "";
-  let index = 1;
-  while (index < value.length) {
-    if (value.startsWith(escaped, index)) {
-      out += quote;
-      index += escaped.length;
-      continue;
-    }
-    if (value[index] === quote) {
-      break;
-    }
-    out += value[index];
+function firstPosixWord(command: string): string {
+  let word = "";
+  let index = 0;
+  while (index < command.length && isBlank(command[index])) {
     index += 1;
   }
-  return out;
+  while (index < command.length) {
+    const character = command[index];
+    if (isBlank(character)) {
+      break;
+    }
+    if (character === "\\") {
+      if (index + 1 >= command.length) {
+        return "";
+      }
+      word += command[index + 1];
+      index += 2;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      const closing = command.indexOf(character, index + 1);
+      if (closing === -1) {
+        return "";
+      }
+      word += command.slice(index + 1, closing);
+      index = closing + 1;
+      continue;
+    }
+    word += character;
+    index += 1;
+  }
+  return word;
+}
+
+/** cmd.exe: `"` toggles quoting and `""` inside quotes is one literal quote. */
+function firstWindowsToken(command: string): string {
+  let token = "";
+  let index = 0;
+  let quoted = false;
+  while (index < command.length && isBlank(command[index])) {
+    index += 1;
+  }
+  while (index < command.length) {
+    const character = command[index];
+    if (character === '"') {
+      if (quoted && command[index + 1] === '"') {
+        token += '"';
+        index += 2;
+        continue;
+      }
+      quoted = !quoted;
+      index += 1;
+      continue;
+    }
+    if (!quoted && isBlank(character)) {
+      break;
+    }
+    token += character;
+    index += 1;
+  }
+  return quoted ? "" : token;
+}
+
+function isBlank(character: string | undefined): boolean {
+  return character === " " || character === "\t" || character === "\n" || character === "\r";
 }

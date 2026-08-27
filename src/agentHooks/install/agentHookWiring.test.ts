@@ -11,6 +11,7 @@ import {
   AGENT_HOOK_REGISTRY,
   AGENT_HOOK_UNINSTALL_COMMAND,
   isAgentHookEnabled,
+  migrateAgentDestination,
   type SettingsReader,
 } from "./agentHookRegistry";
 import { ManagedConfigInstaller } from "./ManagedConfigInstaller";
@@ -133,6 +134,91 @@ describe("agent hook wiring", () => {
       ).toBe(true);
       expect(await readFile(previous, "utf8")).not.toContain(adapter.wrapperLocation("linux").directoryName);
     }
+  });
+
+  describe("a destination that moves mid-session (round-2 B1)", () => {
+    it("cleans the old file, advances the record, and asks for reconciliation", async () => {
+      const { storageRoot, adapters } = await agentConfigs();
+      for (const { entry, adapter } of adapters) {
+        const previous = adapter.configPath();
+        await new ManagedConfigInstaller(adapter, { storageRoot, platform: "linux" }).install();
+
+        const migration = await migrateAgentDestination({
+          entry,
+          previous,
+          current: `${previous}.moved`,
+          storageRoot,
+          uninstall: (pinned) => new ManagedConfigInstaller(pinned, { storageRoot, platform: "linux" }).uninstall(),
+        });
+
+        expect(migration, entry.agent).toEqual({
+          destination: `${previous}.moved`,
+          cleaned: true,
+          reconcile: true,
+        });
+        expect(await readFile(previous, "utf8")).not.toContain(adapter.wrapperLocation("linux").directoryName);
+      }
+    });
+
+    it("keeps recording the old destination when cleanup failed, and still reconciles", async () => {
+      const { storageRoot, adapters } = await agentConfigs();
+      const { entry } = adapters[0];
+
+      const migration = await migrateAgentDestination({
+        entry,
+        previous: "/old/settings.json",
+        current: "/new/settings.json",
+        storageRoot,
+        uninstall: async () => {
+          throw new Error("permission denied");
+        },
+      });
+
+      // Forgetting /old would strand our entries there permanently; reconciling
+      // /new anyway beats leaving the agent installed nowhere.
+      expect(migration).toEqual({ destination: "/old/settings.json", cleaned: false, reconcile: true });
+    });
+
+    it("treats an untouched old file as cleanly migrated", async () => {
+      const { storageRoot, adapters } = await agentConfigs();
+
+      const migration = await migrateAgentDestination({
+        entry: adapters[0].entry,
+        previous: "/old/settings.json",
+        current: "/new/settings.json",
+        storageRoot,
+        uninstall: async () => ({ removed: false, reason: "not-installed" }),
+      });
+
+      expect(migration).toEqual({ destination: "/new/settings.json", cleaned: true, reconcile: true });
+    });
+
+    it("does no work and asks for nothing when the destination did not move", async () => {
+      const { storageRoot, adapters } = await agentConfigs();
+      let called = false;
+
+      const migration = await migrateAgentDestination({
+        entry: adapters[0].entry,
+        previous: "/same/settings.json",
+        current: "/same/settings.json",
+        storageRoot,
+        uninstall: async () => {
+          called = true;
+          return { removed: true };
+        },
+      });
+
+      expect(called).toBe(false);
+      expect(migration).toEqual({ destination: "/same/settings.json", cleaned: true, reconcile: false });
+    });
+
+    it("pins the adapter to the exact file it was given, not merely its directory", async () => {
+      const { adapters } = await agentConfigs();
+      for (const { entry } of adapters) {
+        const exact = "/somewhere/else/not-the-default-name.json";
+        expect(entry.createAdapterForPath(exact).configPath(), entry.agent).toBe(exact);
+      }
+    });
   });
 
   it("removes every agent's entries whatever the settings say", async () => {

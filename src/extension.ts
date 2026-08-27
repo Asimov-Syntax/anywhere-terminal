@@ -9,6 +9,7 @@ import {
   AGENT_HOOK_REGISTRY,
   AGENT_HOOK_UNINSTALL_COMMAND,
   isAgentHookEnabled,
+  migrateAgentDestination,
   type SettingsReader,
 } from "./agentHooks/install/agentHookRegistry";
 import { ManagedConfigInstaller } from "./agentHooks/install/ManagedConfigInstaller";
@@ -185,20 +186,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // the same serialized controller and the latest desired setting wins.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      for (const entry of AGENT_HOOK_REGISTRY) {
-        const enabled = isAgentHookEnabled(entry, readAgentHookSetting);
-        const previous = agentHookDestinations.get(entry.agent);
-        const current = entry.createAdapter(readAgentHookSetting).configPath();
-        if (previous !== undefined && previous !== current) {
-          agentHookDestinations.set(entry.agent, current);
-          void new ManagedConfigInstaller(entry.createAdapterForPath(previous), {
-            storageRoot: agentHookStorageRoot,
-          }).uninstall();
+      void (async () => {
+        for (const entry of AGENT_HOOK_REGISTRY) {
+          const enabled = isAgentHookEnabled(entry, readAgentHookSetting);
+          const previous = agentHookDestinations.get(entry.agent);
+          const current = entry.createAdapter(readAgentHookSetting).configPath();
+          let reconcile = event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`);
+          if (previous !== undefined && previous !== current) {
+            const migration = await migrateAgentDestination({
+              entry,
+              previous,
+              current,
+              storageRoot: agentHookStorageRoot,
+              uninstall: (adapter) =>
+                new ManagedConfigInstaller(adapter, { storageRoot: agentHookStorageRoot }).uninstall(),
+            });
+            agentHookDestinations.set(entry.agent, migration.destination);
+            if (!migration.cleaned) {
+              console.warn(`[AnyWhere Terminal] ${entry.agent} hooks left behind in ${previous}`);
+            }
+            reconcile = reconcile || migration.reconcile;
+          }
+          if (!reconcile) {
+            continue;
+          }
+          // Forced rather than assumed: the desired value is often unchanged by
+          // a location-only edit, and a no-op there would leave the agent
+          // installed nowhere (round-2 B1).
+          await agentHookController.setDesiredEnabled(entry.agent, false);
+          await agentHookController.setDesiredEnabled(entry.agent, enabled);
         }
-        if (event.affectsConfiguration(`anywhereTerminal.${entry.enabledSettingKey}`)) {
-          void agentHookController.setDesiredEnabled(entry.agent, enabled);
-        }
-      }
+      })();
     }),
     vscode.commands.registerCommand(AGENT_HOOK_UNINSTALL_COMMAND, async () => {
       const results = await uninstallAllAgents({

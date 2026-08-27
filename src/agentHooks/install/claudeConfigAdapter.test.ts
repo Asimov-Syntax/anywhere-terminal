@@ -215,6 +215,8 @@ describe("claudeConfigAdapter through the shared reconciler", () => {
     ["a directory that merely ends in the owned name", "'/home/alice/not-claude-hooks/claude-hook-observer.sh'"],
     ["a filename that merely starts with the owned name", "'/root/claude-hooks/claude-hook-observer.sh.bak'"],
     ["the owned pair as somebody else's argument", "'/usr/bin/audit' --script claude-hooks/claude-hook-observer.sh"],
+    ["a suffix concatenated after the closing quote", "'/root/claude-hooks/claude-hook-observer.sh'.bak"],
+    ["an unterminated quote", "'/root/claude-hooks/claude-hook-observer.sh"],
   ])("does not claim %s", async (_name, command) => {
     const paths = await fixture();
     const foreign = { type: "command", command, timeout: 2 };
