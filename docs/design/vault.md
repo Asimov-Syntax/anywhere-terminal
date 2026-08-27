@@ -61,7 +61,7 @@ knows none of the three.
 
 | Value | Canonical form | Defined in |
 |-------|----------------|-----------|
-| Vault entry id | `<agent>:<sessionId>` | `src/vault/types.ts:53` — see [DESIGN.md](../DESIGN.md) § 15 |
+| Vault entry id | `<agent>:<sessionId>` | `src/vault/types.ts:53` — see [DESIGN.md](../DESIGN.md) § 10 |
 | Agent ids | `claude` \| `codex` \| `opencode` \| `cursor` | `src/vault/types.ts:27` |
 
 `parseEntryId` splits on the **first** colon only (`src/vault/types.ts:57`); a sessionId may itself
@@ -420,7 +420,7 @@ written.
 |-----|------|---------|-------|
 | `anywhereTerminal.cursorAgent.hooks.enabled` | setting, `machine` | `false` | `package.json:101-106` |
 | `anywhereTerminal.vaultCustomNames` | `workspaceState` | — | `VaultCustomNameRegistry.ts:27` |
-| `vaultView`, `vaultGroupMode`, `vaultPreviewGeometry` | per-surface view state | — | `VaultPanel.ts:90-96`; [DESIGN.md](../DESIGN.md) § 15 |
+| `vaultView`, `vaultGroupMode`, `vaultPreviewGeometry` | per-surface view state | — | `VaultPanel.ts:90-96`; [DESIGN.md](../DESIGN.md) § 10 |
 
 No setting enables the vault or changes its scan roots — the roots come from each agent's
 own environment ([vault-readers.md](vault-readers.md) § 3).
@@ -446,4 +446,4 @@ own environment ([vault-readers.md](vault-readers.md) § 3).
 ---
 
 > **Sync rule**: § 2's diagram names the same collaborators the sections below describe; § 7's and § 8's diagrams must match their prose.
-> **Registry**: values shared with other documents belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values shared with other documents belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.

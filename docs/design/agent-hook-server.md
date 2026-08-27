@@ -244,7 +244,7 @@ Precedence and its guards:
 | Shell title (`zsh`/`bash`/`pwsh`) reclaims the pane | Forces `done` even against a published `working` |
 | No hook status | Inference path, unchanged |
 
-The staleness window's canonical value lives in [DESIGN.md](../DESIGN.md) § 15. It is
+The staleness window's canonical value lives in [DESIGN.md](../DESIGN.md) § 10. It is
 deliberately short: the inference path already covers a genuinely long-running turn, so a
 short window costs precision on a slow tool call and buys a hard bound on how long a wrong
 status can persist.
@@ -378,4 +378,4 @@ later reads "authoritative" as "provenance-checked".
 ---
 
 > **Sync rule**: the § 1 diagram must show the same channels and flow as § 4.
-> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.

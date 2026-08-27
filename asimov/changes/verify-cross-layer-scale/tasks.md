@@ -97,7 +97,7 @@
 
 ## 4. Registration and hygiene
 
-- [ ] 4_1 Publish the render cap as a value other documents can reference
+- [x] 4_1 Publish the render cap as a value other documents can reference — verified: pnpm run test:unit && pnpm run check-types && pnpm exec vitest run src/test/invariants src/webview/worktree/WorktreeView.test.ts exit 0
   - **Deps**: 2_1, 4_2
   - **Refs**: design.md D6; specs/NO-DELTA.md
   - **Acceptance**:

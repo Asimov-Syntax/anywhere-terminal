@@ -276,4 +276,4 @@ thing we can show, and hiding them would make the failure unactionable.
 > Every message name it does show must appear in § 2 with the same direction, and every
 > *class* of flow in § 2 — request/reply, unsolicited push, action plus result — must appear
 > in the diagram at least once.
-> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.

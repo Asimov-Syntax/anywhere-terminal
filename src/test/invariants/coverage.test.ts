@@ -9,9 +9,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MAX_WORKTREES_PER_REPO } from "../../webview/worktree/WorktreeView";
 import { DEFERRED_BY_WT_006_2, INVARIANTS } from "./registry";
 
-const SRC_PLACEHOLDER = 0;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SRC = path.join(REPO_ROOT, "src");
 
@@ -181,5 +181,19 @@ describe("truthfulness invariants — coverage", () => {
     for (const id of taggedInvariants().keys()) {
       expect(known.has(id), `tag [${id}] names no registry row`).toBe(true);
     }
+  });
+});
+
+// The render cap is not a § 8.4 invariant — it is WT-007.1's fifth acceptance clause,
+// "a repo past the render budget caps visibly rather than truncating silently". The
+// behaviour was already covered (WorktreeView.test.ts:217). What was missing is that the
+// value was module-private and absent from the § 10 registry, so a change to either side
+// went unnoticed. This is the drift detector, not a second copy of the behaviour.
+describe("cross-document consistency registry", () => {
+  it("states the render cap the shipped code actually exports", () => {
+    const doc = fs.readFileSync(path.join(REPO_ROOT, "docs/DESIGN.md"), "utf8");
+    const row = doc.split("\n").find((line) => line.includes("Worktree render cap"));
+    expect(row, "DESIGN.md § 10.1 has no row for the worktree render cap").toBeDefined();
+    expect(row).toContain(`MAX_WORKTREES_PER_REPO = ${MAX_WORKTREES_PER_REPO}`);
   });
 });

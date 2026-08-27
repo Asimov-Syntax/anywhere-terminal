@@ -53,7 +53,7 @@ import type {
 /** Worktrees rendered per repo before the cap offers "Show all" (§ 8). The cap
  *  exists so a repo with hundreds of worktrees does not stall the render; it is a
  *  visible affordance, never a silent truncation. */
-const MAX_WORKTREES_PER_REPO = 20;
+export const MAX_WORKTREES_PER_REPO = 20;
 
 export interface WorktreeViewData {
   tree: WorktreeTree | null;

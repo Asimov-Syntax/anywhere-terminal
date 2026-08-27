@@ -409,4 +409,4 @@ detection.
 ---
 
 > **Sync rule**: § 7.3's effect table follows `EVENT_EFFECTS` — if that constant changes, this table changes with it.
-> **Registry**: values shared with other documents belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values shared with other documents belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.

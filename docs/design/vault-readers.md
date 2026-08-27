@@ -403,4 +403,4 @@ Every reader has an adjacent test; the fixtures below are their inputs.
 ---
 
 > **Sync rule**: § 4's bounds table is the single copy of the shared limits; per-agent sections list only what that agent adds.
-> **Registry**: values shared with other documents belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values shared with other documents belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.

@@ -260,7 +260,7 @@ These are not stylistic preferences; each one prevents a specific false claim.
 | Click / Enter | Worktree row | Toggle expand (when it has agents), else no-op |
 | Click / Enter | Agent row, window scope | Per `anywhereTerminal.worktree.rowActivation`: focus that pane (default) or open its preview. A row with no session falls back to focus, whatever the setting says — there is no preview to open |
 | Click / Enter | Agent row, external | Open the session preview — never focus, whatever the setting says |
-| Double click | Worktree row | Open folder in a new window. No setting governs the mode: DESIGN.md § 15 registers `rowActivation` with no companion key, and one is not invented here — the other mode stays a context-menu item |
+| Double click | Worktree row | Open folder in a new window. No setting governs the mode: DESIGN.md § 10 registers `rowActivation` with no companion key, and one is not invented here — the other mode stays a context-menu item |
 | Right click | Any row | Context menu, per [worktree-actions.md](worktree-actions.md) § 3 |
 | `ArrowUp` / `ArrowDown` | Tree | Move through visible rows |
 | `ArrowRight` / `ArrowLeft` | Tree | Expand / collapse, then descend / ascend |
@@ -433,4 +433,4 @@ and are recorded so the mockup cannot re-introduce them.
 ---
 
 > **Sync rule**: the § 1 diagram must show the same hierarchy as § 3.
-> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.

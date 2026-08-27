@@ -497,3 +497,4 @@ other doc references it rather than restating it.
 | File-tree drag MIME | `application/x-anywhere-terminal-file-tree-path` | `src/webview/fileTree/ReadOnlyFileRenderer.ts:101` | file-tree, flow-clipboard |
 | Hover-preview defaults | `delay: 300 ms` (clamp 100–2000), `blockSensitive: true` | `src/providers/hoverPreviewSettings.ts:17-20,27` | link-detection, theme-integration |
 | Vault entry id | `<agent>:<sessionId>`, split on the **first** colon only | `src/vault/types.ts:53,57` | vault, vault-readers, message-protocol |
+| Worktree render cap | `MAX_WORKTREES_PER_REPO = 20` per repo, then a "Show all" affordance — capped visibly, never truncated silently | `src/webview/worktree/WorktreeView.ts:56` | worktree-panel, worktree-model |

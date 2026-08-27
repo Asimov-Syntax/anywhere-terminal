@@ -440,4 +440,4 @@ becomes an unrecoverable one.
 ---
 
 > **Sync rule**: the § 1 diagram must show the same action classes as § 2.
-> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.

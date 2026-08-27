@@ -291,7 +291,7 @@ Two watcher caveats to honour:
 Nothing is persisted to disk. A cold window rebuilds the tree from git on first show; the
 cost is one `rev-parse` plus one `worktree list` per repo, which is milliseconds.
 
-> **Key format source of truth**: [DESIGN.md](../DESIGN.md) § 15
+> **Key format source of truth**: [DESIGN.md](../DESIGN.md) § 10
 
 ## 4. Interface
 
@@ -396,4 +396,4 @@ not re-shell into repo B.
 ---
 
 > **Sync rule**: the § 1 diagram must show the same steps and data flows as the prose below.
-> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 15 — do not keep a second copy here.
+> **Registry**: values this doc shares with others belong in [DESIGN.md](../DESIGN.md) § 10 — do not keep a second copy here.
