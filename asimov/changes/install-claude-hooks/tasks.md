@@ -329,14 +329,14 @@
     1. Replace the wrapper through the same lock the configuration and ledger already take in src/agentHooks/install/ManagedConfigInstaller.ts
     2. Cover in src/agentHooks/install/ManagedConfigInstaller.test.ts: concurrent wrapper creation with a colliding temporary name still producing one complete executable wrapper and no failed install
 
-- [ ] 8_7 Migrate a record we cannot fully reconstruct
+- [x] 8_7 Migrate a record we cannot fully reconstruct — verified: bun test 'src/agentHooks/install/managedEntryLedger.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_1
   - **Refs**: .reviews/round-9.md#b17, design.md#d19-ownership-is-a-path-and-a-command-and-unprovable-history-says-so
   - **Acceptance**:
     - Outcome: A configuration recorded in the previous shape is never silently dropped, even when the command that identifies it is gone
     - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
   - **Plan**:
-    1. Convert an entry written in the previous shape into the records design.md#d19-ownership-is-a-path-and-a-command-and-unprovable-history-says-so describes, without inventing a path-to-command relationship the old shape never held
+    1. Convert an entry written in the previous shape into the records design.md#d19-ownership-is-a-path-and-a-command-and-unprovable-history-says-so describes in src/agentHooks/install/managedEntryLedger.ts, without inventing a path-to-command relationship the old shape never held
     2. Answer ownership from the path and the command together, and materialize the pre-ledger seed once as a concrete record instead of re-arming whenever nothing is recorded
     3. Cover in src/agentHooks/install/managedEntryLedger.test.ts: a pending path whose command survived migrating with it; one whose command did not migrating as unresolved and surviving a sweep that reported nothing installed; and a cleaned entry no longer re-seeding
 

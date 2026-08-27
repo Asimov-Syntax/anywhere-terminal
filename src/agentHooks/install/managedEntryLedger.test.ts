@@ -23,7 +23,7 @@ import {
 function commandsOf(ledger: ManagedEntryLedger, agent: string): string[] {
   return ledger
     .entry(agent)
-    .writes.filter((write) => !write.unresolved)
+    .writes.filter((write) => write.command.length > 0)
     .map((write) => write.command);
 }
 
@@ -535,7 +535,7 @@ describe("ManagedEntryLedger on disk (round-5 B5, W5)", () => {
     await ledger.recordPending("cursor", "/old/hooks.json");
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
       cursor: {
-        writes: [{ path: resolve("/old/hooks.json"), command: "", claims: [], unresolved: true }],
+        writes: [{ path: resolve("/old/hooks.json"), command: "", claims: [] }],
       },
     });
   });
@@ -649,5 +649,52 @@ describe("the configuration write depends on a durable record (round-7 B6)", () 
     expect(outcome).toEqual({ installed: false, reason: "write-failed" });
     // A command written with no durable record is one no later session can remove.
     expect(await readFile(fields.configPath, "utf8")).toBe(original);
+  });
+});
+
+describe("a record written before writes were reserved (round-9 B17, D19)", () => {
+  const legacy = {
+    cursor: {
+      destination: "/live/hooks.json",
+      commands: ["older-command", "newest-command"],
+      pending: ["/stranded/hooks.json"],
+    },
+  };
+
+  it("keeps the destination's newest command, which is the one relation the old shape held", () => {
+    const ledger = new ManagedEntryLedger(memoryLedgerStore(legacy), "alpha");
+
+    expect(ledger.destination("cursor")).toBe("/live/hooks.json");
+    expect(ledger.ownership("cursor", "seed").isOwned("newest-command")).toBe(true);
+  });
+
+  it("carries a stranded path's possible commands without claiming which one it is", () => {
+    const ledger = new ManagedEntryLedger(memoryLedgerStore(legacy), "alpha");
+
+    const stranded = ledger.entry("cursor").writes.find((write) => write.path === "/stranded/hooks.json");
+
+    // The old shape never said which command went where, so neither do we.
+    expect(stranded).toMatchObject({ unresolved: true, command: "", claims: [] });
+    expect(stranded?.candidates).toEqual(["older-command", "newest-command"]);
+    // Any of them is still worth recognising — that is strictly better than
+    // dropping the file, which is what the capped command list did.
+    expect(ledger.ownership("cursor", "seed").isOwned("older-command")).toBe(true);
+  });
+
+  it("does not forget an unresolved path just because a sweep found nothing", async () => {
+    const ledger = new ManagedEntryLedger(memoryLedgerStore(legacy), "alpha");
+
+    // "not-installed" is the EXPECTED answer when the command that identifies
+    // the entries is the one the old shape lost.
+    await ledger.clearPending("cursor", "/stranded/hooks.json");
+
+    expect(ledger.pending("cursor")).toContain("/stranded/hooks.json");
+    expect(ledger.unresolved("cursor")).toEqual(["/stranded/hooks.json"]);
+  });
+
+  it("does not migrate a record that has none of the old keys", () => {
+    const ledger = new ManagedEntryLedger(memoryLedgerStore({ cursor: {} }), "alpha");
+
+    expect(ledger.entry("cursor").writes).toEqual([]);
   });
 });

@@ -49,6 +49,12 @@ export interface LedgerWrite {
   command: string;
   claims: string[];
   unresolved?: boolean;
+  /**
+   * Commands that MAY be the one written here, carried over from a record whose
+   * shape never related a path to a command. Ownership accepts any of them; none
+   * of them is asserted to be the one (D19).
+   */
+  candidates?: string[];
 }
 
 export interface AgentLedgerEntry {
@@ -148,7 +154,7 @@ export class ManagedEntryLedger {
   }
 
   private view(stored: unknown, agent: string): AgentLedgerEntry {
-    return fold(sanitize(stored), this.session.get(agent));
+    return fold(sanitize(stored, this.scope), this.session.get(agent));
   }
 
   /**
@@ -164,7 +170,9 @@ export class ManagedEntryLedger {
           return false;
         }
         const writes = this.entry(agent).writes;
-        return writes.length === 0 ? command === seedCommand : writes.some((write) => write.command === command);
+        return writes.length === 0
+          ? command === seedCommand
+          : writes.some((write) => write.command === command || write.candidates?.includes(command));
       },
       refresh: async () => {
         await this.refresh(agent);
@@ -243,20 +251,38 @@ export class ManagedEntryLedger {
       if (!tracked) {
         return entry;
       }
-      // Releasing every claim is what makes a write owed. A path we never
-      // recorded arrives here only from a pre-D17 record, so it is tracked with
-      // its command unknown rather than silently dropped (D19).
+      // Releasing every claim is what makes a write owed. A path with no record
+      // is tracked rather than dropped; it is not marked unresolved, which means
+      // something narrower — a record migrated from a shape that lost the
+      // command, and which therefore no sweep may declare finished (D19).
       return known
         ? { writes: entry.writes.map((write) => (write.path === path ? { ...write, claims: [] } : write)) }
-        : { writes: [...entry.writes, { path, command: "", claims: [], unresolved: true }] };
+        : { writes: [...entry.writes, { path, command: "", claims: [] }] };
     });
     return tracked && persisted;
   }
 
   public async clearPending(agent: string, destination: string): Promise<void> {
     await this.mutate(agent, (entry) => ({
-      writes: entry.writes.filter((write) => write.path !== canonical(destination) || write.claims.length > 0),
+      writes: entry.writes.filter(
+        // An unresolved record is NOT cleared by a sweep that found nothing:
+        // "nothing installed" is the expected answer when the command we would
+        // have recognised is the one the old shape lost, so treating it as done
+        // is how a file we modified stops being tracked while it still fires
+        // (D19). It is cleared when its real command is finally recognised.
+        (write) => write.path !== canonical(destination) || write.claims.length > 0 || write.unresolved === true,
+      ),
     }));
+  }
+
+  /**
+   * Paths carried over from a record that cannot say what was written there.
+   * They hold capacity and need a person, so something above has to say so.
+   */
+  public unresolved(agent: string): string[] {
+    return this.entry(agent)
+      .writes.filter((write) => write.unresolved)
+      .map((write) => write.path);
   }
 
   /**
@@ -304,7 +330,7 @@ export class ManagedEntryLedger {
       // `change` runs on what the store read under its own exclusion, never on
       // anything this object cached — the whole point of D15.
       await this.store.transact(agent, (current) => {
-        base = fold(sanitize(current), held);
+        base = fold(sanitize(current, this.scope), held);
         return change(base);
       });
       this.session.delete(agent);
@@ -424,6 +450,43 @@ function fold(stored: AgentLedgerEntry, held: AgentLedgerEntry | undefined): Age
   return { writes: [...merged.values()] };
 }
 
+/**
+ * A record written before D17, converted without inventing what it never held.
+ *
+ * The old shape stored a destination, a capped command list, and a pending list,
+ * with no relation between a path and the command written there — and a pending
+ * path whose command aged out of that cap has no recoverable command at all.
+ * Producing every path-by-command pair would state as fact something we do not
+ * know, so each path carries the surviving commands as CANDIDATES and is marked
+ * unresolved. The destination keeps the newest command, which is the one the
+ * old `recordInstalled` had just written there — the single relation that shape
+ * did encode.
+ */
+function migrate(record: Record<string, unknown>, scope: string): AgentLedgerEntry {
+  const commands = strings(record.commands);
+  const destination = typeof record.destination === "string" ? record.destination : undefined;
+  const newest = commands.at(-1);
+  const owed = strings(record.pending).filter((path) => path !== destination);
+  return {
+    writes: [
+      ...owed.map((path) => ({
+        path,
+        command: "",
+        claims: [],
+        unresolved: true,
+        ...(commands.length > 0 ? { candidates: commands } : {}),
+      })),
+      ...(destination === undefined
+        ? []
+        : [
+            newest === undefined
+              ? { path: destination, command: "", claims: [scope], unresolved: true }
+              : { path: destination, command: newest, claims: [scope], candidates: commands },
+          ]),
+    ],
+  };
+}
+
 function key(write: LedgerWrite): string {
   return `${write.path} ${write.command}`;
 }
@@ -462,8 +525,11 @@ function claim(entry: AgentLedgerEntry, path: string, command: string, scope: st
   };
 }
 
-function sanitize(value: unknown): AgentLedgerEntry {
+function sanitize(value: unknown, scope: string): AgentLedgerEntry {
   const record = isRecord(value) ? value : {};
+  if (!Array.isArray(record.writes) && (record.destination !== undefined || record.pending !== undefined)) {
+    return migrate(record, scope);
+  }
   const writes = Array.isArray(record.writes) ? record.writes : [];
   return {
     writes: writes.filter(isRecord).flatMap((write) =>
