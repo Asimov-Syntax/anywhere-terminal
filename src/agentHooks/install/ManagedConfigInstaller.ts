@@ -110,7 +110,12 @@ export class ManagedConfigInstaller {
         // The command is recorded BEFORE the file changes (round-4 B6). Owning a
         // command we never wrote costs nothing — there is nothing to remove —
         // while writing one we never recorded puts it beyond our own reach.
-        await this.ownership.recordCommand(this.command());
+        // A record that reached only this session is not enough: the window can
+        // close, and the command in the user's file would then be unrecognisable
+        // to every later session (round-7 B6).
+        if (!(await this.ownership.recordCommand(this.command()))) {
+          return { installed: false, reason: "write-failed" };
+        }
         const reconciled = await this.reconcile(configPath, (document, command) =>
           this.adapter.applyManagedEntries(document, command, (entry) => this.ownership.isOwned(entry)),
         );
@@ -137,6 +142,10 @@ export class ManagedConfigInstaller {
     }
     return this.locked(configPath).withLock<HookRemoveOutcome>(
       async (): Promise<HookRemoveOutcome> => {
+        // Taken inside the configuration lock so nothing can record a command
+        // between this read and the sweep it decides (round-7 B5). Install has
+        // its own fresh read through `recordCommand` above.
+        await this.ownership.refresh();
         let removed = false;
         const reconciled = await this.reconcile(configPath, (document) => {
           removed = this.adapter.removeManagedEntries(document, (entry) => this.ownership.isOwned(entry));

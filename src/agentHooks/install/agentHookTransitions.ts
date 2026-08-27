@@ -80,6 +80,9 @@ export class AgentHookTransitions {
     return Promise.all(
       this.options.registry.map((entry) =>
         this.queue.run(entry.agent, async (): Promise<AgentUninstallResult> => {
+          // Same reason as `transition`: "remove everything" is exactly the claim
+          // a stale inventory makes falsely (round-7 B5).
+          await this.options.ledger.refresh(entry.agent);
           const destinations = [
             ...new Set([
               entry.createAdapter(this.options.settings, this.options.location).configPath(),
@@ -118,6 +121,10 @@ export class AgentHookTransitions {
 
   private async transition(entry: AgentHookRegistryEntry, force: boolean): Promise<TransitionOutcome> {
     const { ledger, settings, location } = this.options;
+    // This operation's own read. Everything below freezes an inventory from it,
+    // and an inventory built from a view another window has already changed
+    // reports a cleanup done that never ran (round-7 B5).
+    await ledger.refresh(entry.agent);
     const destination = entry.createAdapter(settings, location).configPath();
     const recorded = ledger.destination(entry.agent);
     // Canonicalized on both sides: the ledger stores resolved paths, so a

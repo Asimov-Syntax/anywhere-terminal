@@ -12,6 +12,7 @@ import { ManagedConfigInstaller, managedWrapperCommand } from "./ManagedConfigIn
 import {
   fileLedgerStore,
   type LedgerStore,
+  MANAGED_ENTRY_LEDGER_DIRECTORY,
   MANAGED_ENTRY_LEDGER_FILE,
   MAX_PENDING_DESTINATIONS,
   ManagedEntryLedger,
@@ -241,6 +242,10 @@ function laggingLedgerStore(): LedgerStore {
   let tail: Promise<unknown> = Promise.resolve();
   return {
     peek: (key) => published.get(key),
+    read: async (key) => {
+      published.set(key, values.get(key));
+      return values.get(key);
+    },
     load: async () => undefined,
     transact: (key, change) => {
       const next = tail.then(
@@ -455,5 +460,116 @@ describe("ManagedEntryLedger on disk (round-5 B5, W5)", () => {
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
       cursor: { destination: undefined, commands: [], pending: [resolve("/old/hooks.json")] },
     });
+  });
+});
+
+describe("ManagedEntryLedger across hosts (round-7 B5, B6, B9, B10)", () => {
+  async function twoHosts() {
+    const directory = await mkdtemp(join(tmpdir(), "ledger-hosts-"));
+    tempDirectories.push(directory);
+    const path = join(directory, MANAGED_ENTRY_LEDGER_DIRECTORY, MANAGED_ENTRY_LEDGER_FILE);
+    const open = (dependencies: ConstructorParameters<typeof LockedFile>[1] = {}) =>
+      new ManagedEntryLedger(fileLedgerStore(new LockedFile(path, dependencies)));
+    return { directory, path, open };
+  }
+
+  it("creates the ledger's own directory rather than degrading to unavailable", async () => {
+    const { path, open } = await twoHosts();
+    // Nothing has created `~/.anywhere-terminal` on a first run.
+    await open().recordPending("cursor", "/old/hooks.json");
+
+    expect(JSON.parse(await readFile(path, "utf8")).cursor.pending).toEqual([resolve("/old/hooks.json")]);
+  });
+
+  it("sees a destination the other host recorded after this one loaded", async () => {
+    const { open } = await twoHosts();
+    const first = open();
+    await first.load();
+    await open().recordPending("cursor", "/other/hooks.json");
+
+    // `entry` still answers from the view this host holds...
+    expect(first.pending("cursor")).toEqual([]);
+    // ...and the operation-scoped read is what every inventory must use.
+    expect((await first.refresh("cursor")).pending).toEqual([resolve("/other/hooks.json")]);
+  });
+
+  it("keeps claiming a command written under a storage root that has since moved", async () => {
+    const { open } = await twoHosts();
+    const ledger = open();
+    await ledger.ownership("cursor", "old-seed").recordCommand("'/old/root/observer.sh'");
+
+    // A new window with a different storage root: same ledger path, so the
+    // command the previous root wrote is still recognised (D16).
+    const relocated = open();
+    await relocated.load();
+
+    expect(relocated.ownership("cursor", "'/new/root/observer.sh'").isOwned("'/old/root/observer.sh'")).toBe(true);
+  });
+
+  it("reports a pending destination as untracked when the write reached only this session", async () => {
+    const { open } = await twoHosts();
+    const ledger = open({
+      rename: async () => {
+        throw new Error("disk full");
+      },
+    });
+
+    // The B8 guard asks this question to decide whether a move is safe; an
+    // answer that ignores durability authorizes the loss it guards against.
+    expect(await ledger.recordPending("cursor", "/old/hooks.json")).toBe(false);
+    expect(ledger.pending("cursor")).toEqual([resolve("/old/hooks.json")]);
+  });
+
+  it("refuses a new obligation once the merged list has reached the ceiling", async () => {
+    const { open } = await twoHosts();
+    const failing = open({
+      rename: async () => {
+        throw new Error("disk full");
+      },
+    });
+    // Admitted while there was room, then stranded in this host's memory.
+    expect(await failing.recordPending("cursor", "/session/only/hooks.json")).toBe(false);
+
+    // Another host fills the durable list without ever seeing that one.
+    const durable = open();
+    for (let index = 0; index < MAX_PENDING_DESTINATIONS; index += 1) {
+      await durable.recordPending("cursor", `/durable/${index}/hooks.json`);
+    }
+
+    expect(await failing.recordPending("cursor", "/one/too/many/hooks.json")).toBe(false);
+
+    // Nothing already owed was dropped to make room — the ceiling refuses,
+    // it never truncates.
+    const merged = (await failing.refresh("cursor")).pending;
+    expect(merged).toHaveLength(MAX_PENDING_DESTINATIONS + 1);
+    expect(merged).toContain(resolve("/durable/0/hooks.json"));
+    expect(merged).toContain(resolve("/session/only/hooks.json"));
+    expect(merged).not.toContain(resolve("/one/too/many/hooks.json"));
+  });
+});
+
+describe("the configuration write depends on a durable record (round-7 B6)", () => {
+  it("does not touch the user's config when the pre-write record cannot persist", async () => {
+    const fields = await fixture();
+    const directory = await mkdtemp(join(tmpdir(), "ledger-durable-"));
+    tempDirectories.push(directory);
+    const original = JSON.stringify({ version: 1, hooks: {} });
+    await writeFile(fields.configPath, original);
+
+    const ledger = new ManagedEntryLedger(
+      fileLedgerStore(
+        new LockedFile(join(directory, MANAGED_ENTRY_LEDGER_FILE), {
+          rename: async () => {
+            throw new Error("disk full");
+          },
+        }),
+      ),
+    );
+
+    const outcome = await installer(fields, ledger).install();
+
+    expect(outcome).toEqual({ installed: false, reason: "write-failed" });
+    // A command written with no durable record is one no later session can remove.
+    expect(await readFile(fields.configPath, "utf8")).toBe(original);
   });
 });

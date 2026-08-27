@@ -96,6 +96,14 @@ export class LockedFile {
   }
 
   private async acquireLock(lockPath: string): Promise<boolean> {
+    // The lock file lives beside the target, so its directory has to exist
+    // before the first attempt — otherwise every write to a not-yet-created
+    // location degrades to lock-unavailable rather than creating it.
+    try {
+      await this.fs.mkdir((this.platform === "win32" ? win32 : posix).dirname(this.path), { recursive: true });
+    } catch {
+      return false;
+    }
     const attempts = Math.ceil(LOCK_MAX_WAIT_MS / LOCK_WAIT_MS);
     for (let attempt = 0; attempt <= attempts; attempt += 1) {
       try {

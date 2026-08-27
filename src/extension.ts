@@ -17,6 +17,7 @@ import { LockedFile } from "./agentHooks/install/lockedJsonFile";
 import { ManagedConfigInstaller, managedWrapperCommand } from "./agentHooks/install/ManagedConfigInstaller";
 import {
   fileLedgerStore,
+  MANAGED_ENTRY_LEDGER_DIRECTORY,
   MANAGED_ENTRY_LEDGER_FILE,
   ManagedEntryLedger,
 } from "./agentHooks/install/managedEntryLedger";
@@ -355,8 +356,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // previous session could not clean is still reachable after a restart
   // (install-claude-hooks D12, D13). A file rather than globalState: that is a
   // per-window cache, and a second extension host would overwrite ours (D15).
+  //
+  // Deliberately NOT under the storage root the wrappers live in. That root
+  // moves with a profile or a portable install, and a record that moved with it
+  // could no longer recognise the command the previous root wrote — leaving an
+  // entry in the user's config that nothing sweeps (D16).
   const agentHookLedger = new ManagedEntryLedger(
-    fileLedgerStore(new LockedFile(path.join(agentHookStorageRoot, MANAGED_ENTRY_LEDGER_FILE))),
+    fileLedgerStore(new LockedFile(path.join(os.homedir(), MANAGED_ENTRY_LEDGER_DIRECTORY, MANAGED_ENTRY_LEDGER_FILE))),
   );
   const agentHookInstaller = (adapter: AgentConfigAdapter, agent: VaultAgentId) =>
     new ManagedConfigInstaller(adapter, {

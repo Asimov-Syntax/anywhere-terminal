@@ -8,6 +8,7 @@
 // mutation may derive from a snapshot taken before the exclusion began.
 
 import { resolve } from "node:path";
+import { createKeyedSerialQueue } from "../../utils/keyedSerialQueue";
 import type { LockedFile } from "./lockedJsonFile";
 
 /** The persistence the ledger is written against; every mutation is one `transact`. */
@@ -23,6 +24,11 @@ export interface LedgerStore {
    * actually there, publish the result. Rejects when it could not be persisted.
    */
   transact(key: string, change: (current: unknown) => AgentLedgerEntry): Promise<void>;
+  /**
+   * The value as it is on disk right now, taken under the same exclusion and
+   * published, so the synchronous view behind it is no longer stale.
+   */
+  read(key: string): Promise<unknown>;
   /** Warm the synchronous view, so a read before the first mutation is not empty. */
   load(): Promise<void>;
 }
@@ -39,13 +45,29 @@ export interface AgentLedgerEntry {
 /** The ownership half of the ledger, bound to one agent. */
 export interface ManagedEntryOwnership {
   isOwned(command: unknown): boolean;
-  /** Recorded BEFORE the configuration is written (round-4 B6). */
-  recordCommand(command: string): Promise<void>;
+  /**
+   * Takes this operation's own snapshot under the ledger lock. Called inside the
+   * configuration lock, so no installer can write between the read and the
+   * ownership decision it feeds (round-7 B5).
+   */
+  refresh(): Promise<void>;
+  /**
+   * Recorded BEFORE the configuration is written (round-4 B6). False means the
+   * record reached only this session, which is not enough to write on (round-7 B6).
+   */
+  recordCommand(command: string): Promise<boolean>;
   recordInstalled(destination: string, command: string): Promise<void>;
   recordRemoved(destination: string): Promise<void>;
 }
 
-/** Name of the ledger file inside the extension's global storage root. */
+/**
+ * Where the record lives, relative to the user's home. Outside the extension's
+ * storage root on purpose: that root moves, and a record of what we wrote has to
+ * outlive every location it describes (D16). One file therefore serves every
+ * VS Code installation for this user, which matches the agent configuration
+ * files they already share.
+ */
+export const MANAGED_ENTRY_LEDGER_DIRECTORY = ".anywhere-terminal";
 export const MANAGED_ENTRY_LEDGER_FILE = "agent-hooks-ledger.json";
 
 /**
@@ -80,7 +102,21 @@ export class ManagedEntryLedger {
 
   /** Sanitized read — a hand-edited or older-shaped value degrades to empty, never throws. */
   public entry(agent: string): AgentLedgerEntry {
-    return sanitize(this.session.get(agent) ?? this.store.peek(agent));
+    return this.view(this.store.peek(agent), agent);
+  }
+
+  /**
+   * This operation's own snapshot, read under the ledger's exclusion. A view
+   * refreshed once per host cannot see a destination another window recorded
+   * afterwards, and an inventory frozen from it reports a cleanup complete that
+   * never ran (round-7 B5).
+   */
+  public async refresh(agent: string): Promise<AgentLedgerEntry> {
+    return this.view(await this.store.read(agent), agent);
+  }
+
+  private view(stored: unknown, agent: string): AgentLedgerEntry {
+    return fold(sanitize(stored), this.session.get(agent));
   }
 
   /**
@@ -101,9 +137,10 @@ export class ManagedEntryLedger {
         const recorded = this.entry(agent).commands;
         return recorded.length === 0 ? command === seedCommand : recorded.includes(command);
       },
-      recordCommand: async (command) => {
-        await this.mutate(agent, (entry) => ({ ...entry, commands: remember(entry, command) }));
+      refresh: async () => {
+        await this.refresh(agent);
       },
+      recordCommand: (command) => this.mutate(agent, (entry) => ({ ...entry, commands: remember(entry, command) })),
       recordInstalled: async (destination, command) => {
         const persisted = await this.mutate(agent, (entry) => ({
           destination: canonical(destination),
@@ -132,15 +169,21 @@ export class ManagedEntryLedger {
     return this.entry(agent).pending;
   }
 
-  /** False when the ceiling refused to track this destination — the caller must say so. */
+  /**
+   * False when this destination is not tracked in a way that survives the window
+   * — either the ceiling refused it, or the write reached only session memory.
+   * The caller asks in order to decide whether continuing is safe, so an answer
+   * that ignores durability authorizes exactly the loss it was guarding against
+   * (round-7 B6, and B8's guard).
+   */
   public async recordPending(agent: string, destination: string): Promise<boolean> {
     const path = canonical(destination);
     let tracked = true;
-    await this.mutate(agent, (entry) => {
+    const persisted = await this.mutate(agent, (entry) => {
       tracked = entry.pending.includes(path) || entry.pending.length < MAX_PENDING_DESTINATIONS;
       return tracked && !entry.pending.includes(path) ? { ...entry, pending: [...entry.pending, path] } : entry;
     });
-    return tracked;
+    return tracked && persisted;
   }
 
   public async clearPending(agent: string, destination: string): Promise<void> {
@@ -154,14 +197,22 @@ export class ManagedEntryLedger {
   /** True when the result reached the store; false when only this session holds it. */
   private async mutate(agent: string, change: (entry: AgentLedgerEntry) => AgentLedgerEntry): Promise<boolean> {
     const held = this.session.get(agent);
+    let base: AgentLedgerEntry | undefined;
     try {
       // `change` runs on what the store read under its own exclusion, never on
       // anything this object cached — the whole point of D15.
-      await this.store.transact(agent, (current) => change(fold(sanitize(current), held)));
+      await this.store.transact(agent, (current) => {
+        base = fold(sanitize(current), held);
+        return change(base);
+      });
       this.session.delete(agent);
       return true;
     } catch {
-      this.session.set(agent, change(this.entry(agent)));
+      // Held back against the SAME base the attempt used, when it got far enough
+      // to read one. Re-deciding against this host's own view would answer a
+      // ceiling question from a list missing every destination only the file
+      // knows about, and admit an obligation the merged list had no room for.
+      this.session.set(agent, change(base ?? this.entry(agent)));
       return false;
     }
   }
@@ -172,6 +223,7 @@ export function memoryLedgerStore(initial: Record<string, unknown> = {}): Ledger
   const values = new Map<string, unknown>(Object.entries(initial));
   return {
     peek: (key) => values.get(key),
+    read: async (key) => values.get(key),
     load: async () => undefined,
     transact: async (key, change) => {
       values.set(key, change(values.get(key)));
@@ -186,9 +238,23 @@ export function memoryLedgerStore(initial: Record<string, unknown> = {}): Ledger
  */
 export function fileLedgerStore(file: LockedFile): LedgerStore {
   let published: Record<string, unknown> = {};
-  // Two transacts from this host would otherwise contend for a lock built to
+  // Two operations from this host would otherwise contend for a lock built to
   // exclude other PROCESSES, and spin for a second before one of them failed.
-  let tail: Promise<unknown> = Promise.resolve();
+  // The repository's own keyed serialization owns this; a second chain here was
+  // duplication (round-7 reuse).
+  const queue = createKeyedSerialQueue();
+
+  const underLock = async <T>(body: () => Promise<T>): Promise<T> => {
+    const outcome = await file.withLock<{ ok: true; value: T } | { ok: false }>(
+      async () => ({ ok: true, value: await body() }),
+      { ok: false },
+      { ok: false },
+    );
+    if (!outcome.ok) {
+      throw new Error(`agent hook ledger unavailable: ${file.path}`);
+    }
+    return outcome.value;
+  };
 
   const read = async (): Promise<Record<string, unknown>> => {
     const contents = await file.readText();
@@ -201,26 +267,9 @@ export function fileLedgerStore(file: LockedFile): LedgerStore {
         ? (parsed as Record<string, unknown>)
         : {};
     } catch {
+      // Our own bookkeeping, not the user's document: replacing an unreadable
+      // one is right here, and wrong in D10's classified read.
       return {};
-    }
-  };
-
-  const serialize = (key: string, change: (current: unknown) => AgentLedgerEntry) => async (): Promise<void> => {
-    const applied = await file.withLock(
-      async () => {
-        const document = await read();
-        const next = { ...document, [key]: change(document[key]) };
-        if (!(await file.atomicReplace(`${JSON.stringify(next, null, 2)}\n`, 0o600))) {
-          return false;
-        }
-        published = next;
-        return true;
-      },
-      false,
-      false,
-    );
-    if (!applied) {
-      throw new Error(`agent hook ledger unavailable: ${file.path}`);
     }
   };
 
@@ -229,14 +278,24 @@ export function fileLedgerStore(file: LockedFile): LedgerStore {
     load: async () => {
       published = await read().catch(() => published);
     },
-    transact: (key, change) => {
-      const next = tail.then(serialize(key, change), serialize(key, change));
-      tail = next.then(
-        () => undefined,
-        () => undefined,
-      );
-      return next;
-    },
+    read: (key) =>
+      queue.run(file.path, () =>
+        underLock(async () => {
+          published = await read();
+          return published[key];
+        }),
+      ),
+    transact: (key, change) =>
+      queue.run(file.path, () =>
+        underLock(async () => {
+          const document = await read();
+          const next = { ...document, [key]: change(document[key]) };
+          if (!(await file.atomicReplace(`${JSON.stringify(next, null, 2)}\n`, 0o600))) {
+            throw new Error(`agent hook ledger write failed: ${file.path}`);
+          }
+          published = next;
+        }),
+      ),
   };
 }
 
@@ -254,6 +313,11 @@ function fold(stored: AgentLedgerEntry, held: AgentLedgerEntry | undefined): Age
     commands: [...stored.commands.filter((command) => !held.commands.includes(command)), ...held.commands].slice(
       -MAX_REMEMBERED_COMMANDS,
     ),
+    // Unioned, never trimmed: both lists are cleanup this extension still owes,
+    // and dropping either is the orphaning the ceiling exists to prevent. The
+    // ceiling instead governs what may be ADDED — `recordPending` measures the
+    // merged list, so the union can only exceed the bound by obligations that
+    // were already real, and never by new ones (round-7 B10).
     pending: [...stored.pending, ...held.pending.filter((path) => !stored.pending.includes(path))],
   };
 }

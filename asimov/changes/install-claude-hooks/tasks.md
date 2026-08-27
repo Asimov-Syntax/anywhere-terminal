@@ -200,7 +200,7 @@
 
 ## 7. Cycle-3 round-7 fixes
 
-- [ ] 7_1 Keep the ownership record where it outlives what it describes, and read it per operation
+- [x] 7_1 Keep the ownership record where it outlives what it describes, and read it per operation — verified: pnpm exec vitest run 'src/agentHooks/install/managedEntryLedger.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 6_1
   - **Refs**: .reviews/round-7.md#b9, .reviews/round-7.md#b5, .reviews/round-7.md#b6, .reviews/round-7.md#b10, design.md#d16-ownership-history-outlives-the-root-it-describes, design.md#d15-the-ledger-is-a-lock-protected-file-not-globalstate
   - **Acceptance**:
@@ -208,7 +208,7 @@
     - Verify: unit src/agentHooks/install/managedEntryLedger.test.ts
   - **Plan**:
     1. Point the ledger at the per-user path in src/extension.ts, leaving the wrapper under the storage root, and create the containing directory before the first lock attempt
-    2. Give src/agentHooks/install/managedEntryLedger.ts a per-operation snapshot taken under the ledger lock, so ownership, destination and pending answers come from a read this operation made rather than from a view refreshed once per host
+    2. Give src/agentHooks/install/managedEntryLedger.ts a per-operation snapshot taken under the ledger lock, so ownership, destination and pending answers come from a read this operation made rather than from a view refreshed once per host; take it in src/agentHooks/install/agentHookTransitions.ts before each transition and sweep freezes its inventory, and in src/agentHooks/install/ManagedConfigInstaller.ts inside the configuration lock before ownership is applied
     3. Stop reporting a write that reached only session memory as a durable one, and refuse the pre-write command record's failure rather than continuing into the configuration write
     4. Apply the pending ceiling where session-only and stored lists merge, refusing new obligations rather than truncating existing ones
     5. Reuse src/utils/keyedSerialQueue.ts for the store's in-process serialization instead of the second chain in src/agentHooks/install/managedEntryLedger.ts
@@ -246,7 +246,7 @@
     2. Cover in src/agentHooks/install/probeRunner.test.ts: a terminator that starts and exits nonzero reporting incomplete termination and still killing the leader
 
 - [ ] 7_5 Write the user's configuration only when it would change
-  - **Deps**: 7_3
+  - **Deps**: 7_1, 7_3
   - **Refs**: .reviews/round-7.md#w6
   - **Acceptance**:
     - Outcome: Installing over an installation already in the desired shape leaves the file untouched
