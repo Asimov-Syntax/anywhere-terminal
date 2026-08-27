@@ -125,10 +125,19 @@ describe("truthfulness invariants — coverage", () => {
       `const quoted = 'it("[I7] a declaration inside a string", () => {});';`,
       'const templated = `it("[I8] inside a template", () => {});`;',
       String.raw`const pattern = /it\("\[I10\] inside a regex", \(\) => \{\}\);/;`,
+      // Round-3 B1: `item(` was read as `it` with the modifier `em`, and `testHelper(` as
+      // `test` with `Helper` — the identifier's left boundary was guarded and its right one
+      // was not. A helper with a longer name could hold an invariant covered after the real
+      // test was deleted.
+      'item("[I11] a longer identifier is not a test", 1);',
+      'testHelper("[I12] nor is this one", 2);',
+      'itemize("[I13] nor this", 3);',
     ].join("\n");
-    // Round-1 B1: this expectation used to LIST the commented declaration, so the scan's own
-    // regression test certified the defect. Round-2 B1: strings, templates and regex
-    // literals were still scanned. Only a call site reached as CODE counts now.
+    // Every case here is a round that got this wrong: a commented declaration counted
+    // (round 1), one inside a literal counted (round 2), a longer identifier counted
+    // (round 3). They stay as regression cases, but what they prove now is that the
+    // MECHANISM does not need to remember them — none of them is a call to `it`, and the
+    // TypeScript parser knows that without being told (design.md D1, revised).
     expect(
       declarationsIn(source)
         .filter(isActive)

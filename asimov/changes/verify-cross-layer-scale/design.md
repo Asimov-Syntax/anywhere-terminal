@@ -44,6 +44,39 @@ how this change's own discovery first mis-read two wired call sites as dead. It 
 `test(` **call sites**, not raw text, so a tag in a comment or a fixture string does not count. And
 it rejects `.skip`, `.todo`, and `.failing`, so a disabled test cannot hold an invariant open.
 
+**Revised after review round 3 — the scan parses, it does not lex.** The call-site property above
+is the whole load-bearing claim, and three successive hand-written scanners each failed it in a way
+their own fixtures certified as correct:
+
+| Round | What counted as a test declaration but was not |
+|---|---|
+| 1 | A commented-out `it(...)` — and the regression fixture asserted it SHOULD count |
+| 2 | An `it(...)` inside a string, template, or regex literal — the round-1 fixture escaped its embedded quote and so stepped around the case |
+| 3 | `item(...)` read as `it` + modifier `em`; `testHelper(...)` as `test` + `Helper` — the left identifier boundary was guarded, the right one was not |
+
+Each fix was locally correct and the next probe found another way in, which is the signature of a
+wrong mechanism rather than a wrong patch. So the scan SHALL use the TypeScript compiler API —
+`ts.createSourceFile` and a walk over `CallExpression` nodes whose callee is the identifier `it` or
+`test`, or a property-access chain rooted at one — rather than any character-level scan.
+`typescript@5.9.3` is already a devDependency, so this adds no dependency. Comments, literals, and
+identifier boundaries stop being cases the scanner has to remember: they are not call expressions,
+and the parser already knows it.
+
+The three negative fixtures the rounds produced stay as regression cases, because what they now
+prove is that the mechanism does not need them.
+
+### D10: I10 is closed by a source rule, not by a test
+
+A test cannot prove "the extension never deletes files directly" — it can only prove that the
+paths it happens to walk delegate to git. Round 3 was right that documenting the gap in the
+registry does not close it while the row still reads `covered`.
+
+So I10 SHALL be enforced by a source-level assertion over production code: no module reachable
+from the removal path may call a destructive `node:fs` operation (`rm`, `rmSync`, `rmdir`,
+`unlink`, and their `promises` forms). This is the same shape as D7's byte scan — an fs-based
+read over the sources, expressed as a test, asserting a property of the code rather than of one
+execution.
+
 **Known limit, not solved:** nothing machine-checks that a test tagged `[I7]` asserts I7. The
 `stimulus` field and the review round are the only checks, and the change carries the `re-review`
 flag so that round is mandatory.

@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 /** Every `.ts` file under `dir`, recursively. */
 export function tsFiles(dir: string): string[] {
@@ -27,142 +28,64 @@ export function tsFiles(dir: string): string[] {
 
 export interface Declaration {
   readonly title: string;
-  /** The `.skip` / `.todo` / … chain, if any. */
+  /** The `.skip` / `.todo` / … chain, if any, without a leading dot. */
   readonly modifiers: string;
 }
 
 /** Modifiers that mean the declaration does not run, so it cannot hold an invariant open. */
 const INERT = /(^|\.)(skip|todo|failing|concurrent\.skip)($|\.)/;
 
-const IDENT_TAIL = /[A-Za-z0-9_$]/;
-
 /**
- * Every `it(...)` / `test(...)` declaration that a runner would actually execute.
+ * Every `it(...)` / `test(...)` declaration a runner would actually execute.
  *
- * A single pass over the characters, tracking whether it is inside a comment, a string, a
- * template, or a regex literal, because a regex over transformed text cannot answer this.
- * Round 1 (B1) found comments counting as coverage; round 2 found the same for string
- * contents — a `it("[I1] …")` inside an ordinary fixture string was live coverage, so the
- * last executable test for an invariant could be deleted and its tag survive in a quoted
- * example. Only a call site reached as CODE counts.
- *
- * `it.skip` and friends are reported with their modifier chain rather than dropped, so the
- * caller can say "a disabled test does not hold an invariant open" in its own words.
+ * Parsed, not lexed. Three hand-written scanners each failed the one property this exists
+ * for — that only a real call site counts — and each failure was certified as correct by
+ * its own fixture: a commented-out declaration (round 1), one inside a string, template or
+ * regex literal (round 2), and `item(` read as `it` with the modifier `em` (round 3). Three
+ * misses through one mechanism is a wrong mechanism, so the mechanism is gone. Comments,
+ * literals and identifier boundaries are not cases to remember here; they are simply not
+ * call expressions, and the parser already knows that.
  */
 export function declarationsIn(source: string): Declaration[] {
+  const file = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found: Declaration[] = [];
-  let i = 0;
-  /** True where a `/` starts a regex literal rather than a division. */
-  let regexAllowed = true;
 
-  const skipString = (quote: string): void => {
-    i++;
-    while (i < source.length) {
-      if (source[i] === "\\") {
-        i += 2;
+  /** `it` / `test` at the root of the callee, plus the `.skip`-style chain hung off it. */
+  const declarationOf = (callee: ts.Expression): string | null => {
+    const parts: string[] = [];
+    let node: ts.Expression = callee;
+    // `it.each([...])("title", …)` puts a CALL in the callee position, so the chain has to
+    // walk through one as well as through property accesses.
+    while (ts.isPropertyAccessExpression(node) || ts.isCallExpression(node)) {
+      if (ts.isCallExpression(node)) {
+        node = node.expression;
         continue;
       }
-      if (quote === "`" && source[i] === "$" && source[i + 1] === "{") {
-        // Interpolations hold real code, but a declaration inside one is exotic enough
-        // that scanning to the matching brace would buy nothing; skip to it.
-        let depth = 1;
-        i += 2;
-        while (i < source.length && depth > 0) {
-          if (source[i] === "{") {
-            depth++;
-          } else if (source[i] === "}") {
-            depth--;
-          }
-          i++;
-        }
-        continue;
-      }
-      if (source[i] === quote) {
-        i++;
-        return;
-      }
-      i++;
+      parts.unshift(node.name.text);
+      node = node.expression;
     }
+    if (!ts.isIdentifier(node) || (node.text !== "it" && node.text !== "test")) {
+      return null;
+    }
+    return parts.join(".");
   };
 
-  while (i < source.length) {
-    const c = source[i];
-    if (c === "/" && source[i + 1] === "/") {
-      while (i < source.length && source[i] !== "\n") {
-        i++;
-      }
-      continue;
-    }
-    if (c === "/" && source[i + 1] === "*") {
-      i += 2;
-      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) {
-        i++;
-      }
-      i += 2;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      skipString(c);
-      regexAllowed = false;
-      continue;
-    }
-    if (c === "/" && regexAllowed) {
-      i++;
-      let inClass = false;
-      while (i < source.length) {
-        if (source[i] === "\\") {
-          i += 2;
-          continue;
-        }
-        if (source[i] === "[") {
-          inClass = true;
-        } else if (source[i] === "]") {
-          inClass = false;
-        } else if (source[i] === "/" && !inClass) {
-          i++;
-          break;
-        } else if (source[i] === "\n") {
-          break;
-        }
-        i++;
-      }
-      regexAllowed = false;
-      continue;
-    }
-    if (c === "i" || c === "t") {
-      const rest = source.slice(i);
-      const name = rest.startsWith("it") ? "it" : rest.startsWith("test") ? "test" : null;
-      const before = source[i - 1] ?? " ";
-      if (name !== null && !IDENT_TAIL.test(before) && before !== ".") {
-        let j = i + name.length;
-        const modStart = j;
-        while (j < source.length && (source[j] === "." || IDENT_TAIL.test(source[j]))) {
-          j++;
-        }
-        const modifiers = source.slice(modStart, j);
-        while (j < source.length && /\s/.test(source[j])) {
-          j++;
-        }
-        if (source[j] === "(") {
-          j++;
-          while (j < source.length && /\s/.test(source[j])) {
-            j++;
-          }
-          const quote = source[j];
-          if (quote === '"' || quote === "'" || quote === "`") {
-            const save = i;
-            i = j;
-            skipString(quote);
-            found.push({ title: source.slice(save, i).slice(source.slice(save, i).indexOf(quote) + 1, -1), modifiers });
-            regexAllowed = true;
-            continue;
-          }
-        }
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const modifiers = declarationOf(node.expression);
+      const title = node.arguments[0];
+      if (
+        modifiers !== null &&
+        title !== undefined &&
+        (ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title))
+      ) {
+        found.push({ title: title.text, modifiers });
       }
     }
-    regexAllowed = !IDENT_TAIL.test(c) && c !== ")" && c !== "]";
-    i++;
-  }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(file);
   return found;
 }
 

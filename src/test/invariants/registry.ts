@@ -107,10 +107,6 @@ export const INVARIANTS: readonly InvariantRow[] = [
     owners: ["WT-005.2"],
     stimulus: "Remove a worktree directory with a filesystem call instead of delegating to git",
     status: "covered",
-    // Round-2 B2, stated rather than papered over: the tagged tests prove the extension
-    // DELEGATES (argv at the host seam, real git doing the deleting in the integration
-    // suite). Nothing here would notice an `fs.rm` added somewhere else entirely — that
-    // needs a lint rule over the source, not a test, and it is not in this change.
   },
   {
     id: "I11",

@@ -149,3 +149,15 @@
     5. B2, B5: retag against the assertions that actually prove each invariant, including src/webview/integration/paneEvidenceReporting.test.ts and src/worktree/presenceProjector.test.ts
     6. B9, B10, B11: complete the D2/D3/D4 inventories in src/worktree/presenceProjector.scale.test.ts, src/providers/WorktreeHost.scale.test.ts, src/providers/WorktreeHost.secondSurface.test.ts
     7. W1: build the published fixture size in src/test/bench/scale.bench.ts
+
+- [x] 6_2 Parse the suite instead of lexing it, and close I10 with a source rule — round-3 blockers — verified: pnpm run test:unit && pnpm run check-types exit 0
+  - **Deps**: 6_1
+  - **Refs**: .reviews/round-3.md; design.md D1 (revised), D10
+  - **Acceptance**:
+    - Outcome: A non-test identifier cannot hold an invariant covered, and a direct fs deletion in the removal path fails the suite
+    - Verify: command pnpm run test:unit
+  - **Boundary**: no character-level scanner; the declaration scan goes through the TypeScript parser
+  - **Plan**:
+    1. Rewrite `declarationsIn` in src/test/invariants/sourceSources.ts over `ts.createSourceFile` and `CallExpression`, keeping all three rounds' negative fixtures in src/test/invariants/coverage.test.ts
+    2. Tag I1's activity-retention assertion in src/worktree/presenceProjector.test.ts
+    3. Add the D10 source rule to src/test/invariants/sourceBytes.test.ts and drop I10's admission comment from src/test/invariants/registry.ts

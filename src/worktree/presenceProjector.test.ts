@@ -251,7 +251,7 @@ describe("an inconclusive read retains identity", () => {
     expect(row).toMatchObject({ agent: "claude", agentSource: "registry", entryId: "claude:s1" });
   });
 
-  it("does not let a failure flip the row to a less active state", async () => {
+  it("[I1] does not let a failure flip the row to a less active state", async () => {
     const h = makeProjector([pane({ paneId: "a", ptyPid: 42 })]);
     h.setActivity("a", "running");
     h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1" }));
