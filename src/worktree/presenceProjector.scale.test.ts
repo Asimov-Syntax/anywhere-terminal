@@ -10,8 +10,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DescendantsOutcome, ProcessTableSnapshot } from "../pty/processTableSnapshot";
 import { createPaneEvidenceStore } from "../session/PaneEvidenceStore";
-import type { RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import { PROCESS_TABLE_READS } from "../test/invariants/budgets";
+import type { RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import { createPresenceProjectorDeps } from "./presenceDeps";
 import { createPresenceProjector } from "./presenceProjector";
 
@@ -34,7 +34,12 @@ function wireAtScale() {
 
   const store = createPaneEvidenceStore({ now: () => NOW });
   for (let i = 0; i < PANES; i++) {
-    store.create(`pane-${i}`, { viewId: "sidebar", cwd: worktreeIds[i % WORKTREES], ptyPid: 1000 + i, shell: "claude" });
+    store.create(`pane-${i}`, {
+      viewId: "sidebar",
+      cwd: worktreeIds[i % WORKTREES],
+      ptyPid: 1000 + i,
+      shell: "claude",
+    });
   }
 
   const deps = createPresenceProjectorDeps({

@@ -10,13 +10,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
+import { GIT_INVOCATIONS_PER_BURST } from "../test/invariants/budgets";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import { REBUILD_FLOOR_MS } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
-import { GIT_INVOCATIONS_PER_BURST } from "../test/invariants/budgets";
 import { createWatcherPool, DEBOUNCE_MS } from "./fsWatcherPool";
 import { createWorktreeHost, type WorktreeSurface } from "./WorktreeHost";
 
@@ -103,10 +103,10 @@ async function joined(folders: string[] = ["/a", "/b"]) {
     capabilities: createGitCapabilities(git.runner),
     normalize: async (p: string) => p.replace(/\/+$/, "") || "/",
     stat: async () => undefined,
-    getGitApi: ((() => ({
+    getGitApi: (() => ({
       state: "initialized",
       repositories: folders.map((fsPath) => ({ rootUri: { fsPath } })),
-    })) as unknown) as GitApiAccessor,
+    })) as unknown as GitApiAccessor,
   };
   const host = createWorktreeHost({
     deps,

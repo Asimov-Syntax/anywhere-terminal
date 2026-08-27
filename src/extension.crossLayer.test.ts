@@ -13,24 +13,22 @@
 // own.
 
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  type AgentActivityUpdate,
-  type AgentTurnReport,
-  createAgentHookRuntime,
-} from "./agentHooks/AgentHookRuntime";
-import { claudeAgentRegistration, CLAUDE_HOOK_ENV_VAR, CLAUDE_HOOK_SLUG } from "./agentHooks/agents/claude";
+import { type AgentActivityUpdate, type AgentTurnReport, createAgentHookRuntime } from "./agentHooks/AgentHookRuntime";
+import { CLAUDE_HOOK_ENV_VAR, CLAUDE_HOOK_SLUG, claudeAgentRegistration } from "./agentHooks/agents/claude";
+import { createProcessTableSnapshot } from "./pty/processTableSnapshot";
 import { createPaneEvidenceStore, type PaneEvidenceStore } from "./session/PaneEvidenceStore";
+import type { RunningSessionsOutcome } from "./vault/readers/runningSessions";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
-import type { RunningSessionsOutcome } from "./vault/readers/runningSessions";
-import { createProcessTableSnapshot } from "./pty/processTableSnapshot";
 
 const WT = "/repo";
 const NOW = 1_700_000_000_000;
 
 const runtimes: Array<{ dispose(): void }> = [];
 afterEach(() => {
-  runtimes.splice(0).forEach((runtime) => runtime.dispose());
+  for (const runtime of runtimes.splice(0)) {
+    runtime.dispose();
+  }
 });
 
 function post(url: string, body: string): Promise<{ status: number }> {

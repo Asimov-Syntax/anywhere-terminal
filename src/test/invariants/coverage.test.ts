@@ -60,12 +60,12 @@ const INERT = /(^|\.)(skip|todo|failing|concurrent\.skip)($|\.)/;
  */
 const DECLARATION = /\b(?:it|test)((?:\.\w+)*)\s*\(\s*(["'`])([\s\S]*?)\2/g;
 
-export interface Declaration {
+interface Declaration {
   readonly title: string;
   readonly active: boolean;
 }
 
-export function declarationsIn(source: string): Declaration[] {
+function declarationsIn(source: string): Declaration[] {
   const found: Declaration[] = [];
   for (const match of source.matchAll(DECLARATION)) {
     found.push({ title: match[3], active: !INERT.test(match[1]) });
@@ -153,10 +153,11 @@ describe("truthfulness invariants — coverage", () => {
       'it.skip("[I3] a disabled one", () => {});',
       'const fixture = "[I4] a tag inside a fixture string";',
     ].join("\n");
-    expect(declarationsIn(source).filter((d) => d.active).map((d) => d.title)).toEqual([
-      "[I1] a tag in a comment is not coverage",
-      "[I2] a real one",
-    ]);
+    expect(
+      declarationsIn(source)
+        .filter((d) => d.active)
+        .map((d) => d.title),
+    ).toEqual(["[I1] a tag in a comment is not coverage", "[I2] a real one"]);
   });
 
   it("treats a disabled declaration as inert, so it cannot hold an invariant open", () => {
@@ -171,7 +172,9 @@ describe("truthfulness invariants — coverage", () => {
     const tagged = taggedInvariants();
     for (const row of INVARIANTS) {
       if (row.status === "covered") {
-        expect(tagged.get(row.id)?.length ?? 0, `${row.id} claims coverage but no active test tags it`).toBeGreaterThan(0);
+        expect(tagged.get(row.id)?.length ?? 0, `${row.id} claims coverage but no active test tags it`).toBeGreaterThan(
+          0,
+        );
       }
     }
   });

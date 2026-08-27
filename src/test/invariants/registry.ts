@@ -55,7 +55,8 @@ export const INVARIANTS: readonly InvariantRow[] = [
   },
   {
     id: "I4",
-    statement: "Identity confidence and activity confidence are derived independently from their own source; neither is collapsed into a single field",
+    statement:
+      "Identity confidence and activity confidence are derived independently from their own source; neither is collapsed into a single field",
     owners: ["WT-004.1"],
     stimulus: "Collapse agentSource and activitySource into one confidence field",
     status: "covered",
@@ -76,28 +77,33 @@ export const INVARIANTS: readonly InvariantRow[] = [
   },
   {
     id: "I7",
-    statement: "Hook status is never carried across a window reload \u2014 the process that published it is gone, so the pane returns to inference",
+    statement:
+      "Hook status is never carried across a window reload \u2014 the process that published it is gone, so the pane returns to inference",
     owners: ["WT-006.3", "WT-004.0"],
     stimulus: "Retain a published turn report across runtime disposal, so a reloaded window keeps hook status",
     status: "covered",
   },
   {
     id: "I8",
-    statement: "Degraded data is labelled with its failing source and reason; a repo that fails to list keeps its last good listing. An empty result that is genuinely empty is not degraded",
+    statement:
+      "Degraded data is labelled with its failing source and reason; a repo that fails to list keeps its last good listing. An empty result that is genuinely empty is not degraded",
     owners: ["WT-001.2", "WT-004.1"],
-    stimulus: "Report a genuinely empty listing as degraded, or drop the failing source and reason from a real degradation",
+    stimulus:
+      "Report a genuinely empty listing as degraded, or drop the failing source and reason from a real degradation",
     status: "covered",
   },
   {
     id: "I9",
-    statement: "Decorative title frames are stripped in the webview, before any message, comparison, render signature, or identity test",
+    statement:
+      "Decorative title frames are stripped in the webview, before any message, comparison, render signature, or identity test",
     owners: ["WT-003.2", "WT-004.0"],
     stimulus: "Compare, hash, or send a title before stripDecorations runs on it",
     status: "covered",
   },
   {
     id: "I10",
-    statement: "The extension never deletes files directly; directory removal is delegated to git \u2014 which still deletes recursively, so this bounds our bugs, not git's consequences",
+    statement:
+      "The extension never deletes files directly; directory removal is delegated to git \u2014 which still deletes recursively, so this bounds our bugs, not git's consequences",
     owners: ["WT-005.2"],
     stimulus: "Remove a worktree directory with a filesystem call instead of delegating to git",
     status: "covered",
@@ -120,19 +126,22 @@ export const INVARIANTS: readonly InvariantRow[] = [
     id: "I13",
     statement: "Every turn state maps to exactly one activity; a state no event can produce does not exist",
     owners: ["WT-006.3"],
-    stimulus: "Add a turn state with no activity, map one turn state onto two activities, or leave a mapped state no event can produce",
+    stimulus:
+      "Add a turn state with no activity, map one turn state onto two activities, or leave a mapped state no event can produce",
     status: "covered",
   },
   {
     id: "I14",
-    statement: "A confirmation authorizes the blocker set it was shown; a blocker that appears afterwards re-prompts, and a working agent is never force-removable",
+    statement:
+      "A confirmation authorizes the blocker set it was shown; a blocker that appears afterwards re-prompts, and a working agent is never force-removable",
     owners: ["WT-005.2"],
     stimulus: "Execute a confirmed removal against a blocker set that changed after the confirmation was shown",
     status: "covered",
   },
   {
     id: "I15",
-    statement: "A failed or timed-out mutation still forces a rebuild; a state git and the filesystem disagree about is reported as indeterminate, never as a clean failure",
+    statement:
+      "A failed or timed-out mutation still forces a rebuild; a state git and the filesystem disagree about is reported as indeterminate, never as a clean failure",
     owners: ["WT-005.2"],
     stimulus: "Report a timed-out mutation as a clean failure, or skip the rebuild that follows it",
     status: "covered",

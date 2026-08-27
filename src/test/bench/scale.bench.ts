@@ -26,9 +26,9 @@ import * as path from "node:path";
 import type { DescendantsOutcome, ProcessTableSnapshot } from "../../pty/processTableSnapshot";
 import { createPaneEvidenceStore } from "../../session/PaneEvidenceStore";
 import type { RunningSessionsOutcome } from "../../vault/readers/runningSessions";
-import { buildWorktreeTree } from "../../worktree/WorktreeDiscovery";
 import { createPresenceProjectorDeps } from "../../worktree/presenceDeps";
 import { createPresenceProjector } from "../../worktree/presenceProjector";
+import { buildWorktreeTree } from "../../worktree/WorktreeDiscovery";
 import { createWorktreeTreeDeps } from "../../worktree/worktreeDeps";
 import { MODEL_REBUILD, PRESENCE_REBUILD } from "../invariants/budgets";
 

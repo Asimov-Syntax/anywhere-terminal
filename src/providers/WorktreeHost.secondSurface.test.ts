@@ -75,7 +75,10 @@ function harness() {
     capabilities: createGitCapabilities(runner),
     normalize: async (p: string) => p.replace(/\/+$/, "") || "/",
     stat: async () => undefined,
-    getGitApi: ((() => ({ state: "initialized", repositories: [{ rootUri: { fsPath: "/a" } }] })) as unknown) as GitApiAccessor,
+    getGitApi: (() => ({
+      state: "initialized",
+      repositories: [{ rootUri: { fsPath: "/a" } }],
+    })) as unknown as GitApiAccessor,
   };
 
   const host = createWorktreeHost({
