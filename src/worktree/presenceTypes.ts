@@ -61,7 +61,14 @@ export interface WorktreeAgentRow {
   paneId?: string;
   /** Which webview hosts the pane; window scope only. */
   viewId?: string;
-  /** Pane title, decoration-stripped (§ 3.4). */
+  /**
+   * What the row is called: the session's registry name, else the vault's title
+   * for it, else the pane's decoration-stripped terminal title (§ 3.4).
+   *
+   * The terminal title is last, not first, because an agent CLI is not obliged
+   * to set one — claude sets none at all — so the pane title is whatever the
+   * shell happened to leave behind.
+   */
   title?: string;
   /** Last meaningful line; rendered after the title. */
   preview?: string;

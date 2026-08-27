@@ -18,7 +18,13 @@ import type { PresenceDegradation, WorktreeAgentRow } from "./presenceTypes";
 
 /** What rank 2 concluded for this pane. */
 export type SessionLookup =
-  | { kind: "resolved"; agent: VaultAgentId; sessionId: string }
+  | {
+      kind: "resolved";
+      agent: VaultAgentId;
+      sessionId: string;
+      /** The session's own published name, when the source that resolved it carries one. */
+      name?: string;
+    }
   | { kind: "absent" }
   | {
       kind: "failed";
@@ -42,7 +48,14 @@ export interface IdentityInput {
 }
 
 export type IdentityOutcome =
-  | { kind: "proven"; agent: VaultAgentId; source: WorktreeAgentRow["agentSource"]; entryId?: string }
+  | {
+      kind: "proven";
+      agent: VaultAgentId;
+      source: WorktreeAgentRow["agentSource"];
+      entryId?: string;
+      /** The resolved session's published name — a property of the session, not of the rank. */
+      name?: string;
+    }
   | { kind: "absent" }
   | { kind: "failed"; source: PresenceDegradation["source"]; reason: string };
 
@@ -58,10 +71,18 @@ export type IdentityOutcome =
 export function resolveAgentIdentity(input: IdentityInput): IdentityOutcome {
   const { session } = input;
 
-  // Available whichever rank wins the identity: the handle is a property of the
-  // resolved session, not of the rank that happened to name the agent.
-  const entryId =
-    session.kind === "resolved" ? { entryId: formatEntryId(session.agent, session.sessionId) } : undefined;
+  // Available whichever rank wins the identity: the handle and the session's
+  // own name are properties of the resolved session, not of the rank that
+  // happened to name the agent. A launch-record pane (rank 1) sitting on a
+  // resolved session gets both, which is why they are spread into every proven
+  // outcome rather than returned only by rank 2.
+  const resolved =
+    session.kind === "resolved"
+      ? {
+          entryId: formatEntryId(session.agent, session.sessionId),
+          ...(session.name !== undefined ? { name: session.name } : {}),
+        }
+      : undefined;
 
   // Rank 1 — the launcher told us what it started. `agentKindForExecutable` is
   // the registry's own mapping, aliases included; a second matcher built from
@@ -70,13 +91,13 @@ export function resolveAgentIdentity(input: IdentityInput): IdentityOutcome {
   if (input.isAgentLaunch === true) {
     const launched = agentKindForExecutable(input.shell);
     if (launched) {
-      return { kind: "proven", agent: launched, source: "launch", ...entryId };
+      return { kind: "proven", agent: launched, source: "launch", ...resolved };
     }
   }
 
   // Rank 2 — a live agent session belonging to this pane.
   if (session.kind === "resolved") {
-    return { kind: "proven", agent: session.agent, source: "registry", ...entryId };
+    return { kind: "proven", agent: session.agent, source: "registry", ...resolved };
   }
   if (session.kind === "failed") {
     return { kind: "failed", source: session.source, reason: session.reason };

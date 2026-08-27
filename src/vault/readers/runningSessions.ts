@@ -25,7 +25,28 @@ export interface RunningClaudeSession {
    * value. See `isHeadlessSession`.
    */
   entrypoint?: string;
+  /**
+   * The session's own name (`name` in the registry file), bounded and trimmed.
+   *
+   * The one name Claude itself publishes for a live session — derived from the
+   * directory (`docs-54`) or set by the user (`WORKTREE-PHASE6`) — and the only
+   * identity a presence row can show without opening a transcript. Absent when
+   * the field is missing, not a string, or empty after trimming: a registry
+   * written by a Claude old enough not to carry it must stay distinguishable
+   * from one that named the session the empty string.
+   */
+  name?: string;
 }
+
+/**
+ * Upper bound on a session name.
+ *
+ * The registry file is another product's format on a shared filesystem, and
+ * this value is rendered into a row and folded into the tree's render
+ * signature — neither has a length it stops being a name at, so the bound is
+ * imposed here rather than by whichever consumer notices first.
+ */
+export const MAX_SESSION_NAME_CHARS = 200;
 
 /**
  * `entrypoint` values that mark a one-shot, non-interactive run.
@@ -196,12 +217,17 @@ export async function listRunningClaudeSessions(
         ? parsed.startedAt
         : undefined;
     const entrypoint = typeof parsed.entrypoint === "string" ? parsed.entrypoint : undefined;
+    // Trimmed before the emptiness test, so a name of nothing but whitespace is
+    // absent rather than a title that renders as a blank row.
+    const trimmedName = typeof parsed.name === "string" ? parsed.name.trim() : "";
+    const sessionName = trimmedName === "" ? undefined : trimmedName.slice(0, MAX_SESSION_NAME_CHARS);
     const entry: RunningClaudeSession = {
       sessionId,
       cwd,
       pid,
       ...(startedAt !== undefined ? { startedAt } : {}),
       ...(entrypoint !== undefined ? { entrypoint } : {}),
+      ...(sessionName !== undefined ? { name: sessionName } : {}),
     };
     const existing = bySession.get(sessionId);
     if (!existing || winsDedupe(entry, existing)) {
@@ -253,6 +279,15 @@ export interface RunningSessionIndex {
   /** Live sessions launched in exactly `cwd`. */
   byCwd(cwd: string): readonly RunningClaudeSession[];
   /**
+   * The live record for one session id, or `undefined`.
+   *
+   * Singular where the other two are lists because the reader deduped on this
+   * key before the index was built. Exists so a caller holding the id a
+   * resolution returned can read the rest of that record — the session's own
+   * `name` — without re-scanning the registry it just consulted.
+   */
+  bySessionId(sessionId: string): RunningClaudeSession | undefined;
+  /**
    * Every live, non-headless session — the set both lookups are built from.
    *
    * The external-row pass reads this rather than the reader's array, so the
@@ -267,6 +302,7 @@ const NONE: readonly RunningClaudeSession[] = [];
 export function indexRunningSessions(sessions: readonly RunningClaudeSession[]): RunningSessionIndex {
   const byPid = new Map<number, RunningClaudeSession[]>();
   const byCwd = new Map<string, RunningClaudeSession[]>();
+  const bySessionId = new Map<string, RunningClaudeSession>();
   const live: RunningClaudeSession[] = [];
 
   function push(
@@ -292,6 +328,7 @@ export function indexRunningSessions(sessions: readonly RunningClaudeSession[]):
     // last writer decides pane identity by enumeration order, where the filter
     // this replaced handed both to the mtime tie-break (.reviews/round-3.md W4).
     live.push(session);
+    bySessionId.set(session.sessionId, session);
     push(byPid as Map<string | number, RunningClaudeSession[]>, session.pid, session);
     push(byCwd as Map<string | number, RunningClaudeSession[]>, session.cwd, session);
   }
@@ -310,6 +347,7 @@ export function indexRunningSessions(sessions: readonly RunningClaudeSession[]):
       return found;
     },
     byCwd: (cwd) => byCwd.get(cwd) ?? NONE,
+    bySessionId: (sessionId) => bySessionId.get(sessionId),
     all: () => live,
   };
 }
