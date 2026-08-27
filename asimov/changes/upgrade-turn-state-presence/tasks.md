@@ -130,3 +130,16 @@
     4. `src/webview/worktree/worktreeRenderSignature.ts`, `src/webview/worktree/worktreeTreeView.ts` — live rows render as live, and provenance takes part in the signature (W3)
     5. `src/extension.ts` — a revoked Claude source expires the turn's authority instead of waiting out its deadline (W6)
     6. `src/agentHooks/agents/claude.test.ts`, `src/worktree/presenceProjector.test.ts`, `src/session/PaneEvidenceStore.test.ts`, `src/extension.worktreeAssembly.test.ts`, `src/webview/worktree/worktreeRenderSignature.test.ts` — one case per finding; the 3_3 mismatch and 4_1 revocation tests move to the corrected behaviour
+
+- [x] 5_2 Close review round 2 — overflow identity, live rendering, and two narrower races — verified: pnpm exec vitest run src/agentHooks/agents/claude.test.ts src/webview/worktree/WorktreeView.test.ts src/worktree/presenceDeps.test.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_1
+  - **Refs**: .reviews/round-2.md, docs/design/agent-hook-server.md#44-event--turn-state, specs/worktree-agent-presence/spec.md#a-turn-a-delegation-is-still-working-on-is-not-a-finished-turn, specs/worktree-agent-presence/spec.md#delegated-work-is-reported-as-history-never-as-live-work
+  - **Boundary**: no new events and no change to an accepted requirement; the roster stays bounded — an unbounded overflow set is not an acceptable fix for B4
+  - **Acceptance**:
+    - Outcome: a stop for a child nothing recorded starting clears no overflow, and a live delegation is rendered and labelled as live rather than as history
+    - Verify: command pnpm exec vitest run src/agentHooks/agents/claude.test.ts src/webview/worktree/WorktreeView.test.ts src/worktree/presenceDeps.test.ts
+  - **Plan**:
+    1. `src/agentHooks/agents/claude.ts` — overflow keeps child identity, with a sticky unknown state only where identity itself overflows (B4); a roster event that changed nothing publishes nothing (W8)
+    2. `src/worktree/presenceDeps.ts` — cache cleanup deletes only the entry it installed (W7)
+    3. `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/worktreePanel.css` — the section label follows reported provenance, and a live row gets its own rail and status glyph (W3)
+    4. `src/agentHooks/agents/claude.test.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/worktree/presenceDeps.test.ts` — the three B4 paths the scalar got wrong, the duplicate-start prompt case, DOM cases for an empty and a non-empty reported roster, and how the cache treats a miss, a hit, and an eviction (B6, W7)

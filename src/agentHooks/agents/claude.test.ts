@@ -294,6 +294,59 @@ describe("claude agent registration", () => {
       expect(latest()?.state).toBe("done");
     });
 
+    it("clears no overflow for a stop nothing recorded starting", async () => {
+      // A count cannot tell these apart from a real overflow stop, which is why
+      // the overflow keeps ids (round-2.md B4).
+      const { send, latest } = await reducer();
+
+      await send("UserPromptSubmit");
+      for (let i = 0; i < CLAUDE_ROSTER_CAP + 1; i++) {
+        await send("SubagentStart", { agent_id: `a${i}`, agent_type: "explorer" });
+      }
+      await send("Stop");
+      await send("SubagentStop", { agent_id: "never-started" });
+      // The same child stopping twice must not settle a second delegation.
+      await send("SubagentStop", { agent_id: "a0" });
+      await send("SubagentStop", { agent_id: "a0" });
+
+      expect(latest()?.state).toBe("working");
+    });
+
+    it("counts a repeated start for a displaced child once", async () => {
+      const { send, latest } = await reducer();
+
+      await send("UserPromptSubmit");
+      for (let i = 0; i < CLAUDE_ROSTER_CAP + 1; i++) {
+        await send("SubagentStart", { agent_id: `a${i}`, agent_type: "explorer" });
+      }
+      // The displaced child starts again — one delegation, not two.
+      await send("SubagentStart", { agent_id: `a${CLAUDE_ROSTER_CAP}`, agent_type: "explorer" });
+      await send("Stop");
+      for (let i = 0; i <= CLAUDE_ROSTER_CAP; i++) {
+        await send("SubagentStop", { agent_id: `a${i}` });
+      }
+
+      expect(latest()?.state).toBe("done");
+    });
+
+    it("keeps a waiting row's question when a duplicate child start arrives", async () => {
+      // An event that changes nothing must publish nothing: republishing here
+      // strips the question the row is still waiting on (round-2.md W8).
+      const { send, latest } = await reducer();
+
+      await send("SubagentStart", { agent_id: "a1", agent_type: "explorer" });
+      await send("PreToolUse", {
+        tool_name: "AskUserQuestion",
+        tool_input: { questions: [{ question: "Ship it?" }] },
+      });
+      const waiting = latest();
+      await send("SubagentStart", { agent_id: "a1", agent_type: "explorer" });
+
+      expect(latest()).toEqual(waiting);
+      expect(latest()?.state).toBe("waiting");
+      expect(latest()?.interactivePrompt).toContain("Ship it?");
+    });
+
     it("never reports a finished turn while a child the cap displaced is working", async () => {
       // The cap bounds what the roster remembers; it must not bound what the
       // turn admits is running, or the overflow reads as completion (round-1 B4).

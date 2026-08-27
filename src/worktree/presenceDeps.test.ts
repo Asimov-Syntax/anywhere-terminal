@@ -10,7 +10,7 @@ import type { DescendantsOutcome, ProcessTableSnapshot } from "../pty/processTab
 import { createProcessTableSnapshot } from "../pty/processTableSnapshot";
 import { createPaneEvidenceStore } from "../session/PaneEvidenceStore";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
-import { createPresenceProjectorDeps, type PresenceDepsOptions } from "./presenceDeps";
+import { createPresenceProjectorDeps, type PresenceDepsOptions, REPORTED_SESSION_CACHE_CAP } from "./presenceDeps";
 import { createPresenceProjector } from "./presenceProjector";
 
 const NOW = 1_700_000_000_000;
@@ -299,5 +299,101 @@ describe("the rebuild's registry read, exposed intact", () => {
     const lookup = await (await deps.openSnapshot()).resolve({ paneId: "a", ptyPid: 10, cwd: "/repo" });
 
     expect(lookup).toEqual({ kind: "failed", source: "panes", reason: "`ps` timed out" });
+  });
+});
+
+// ── WT-006.3 — the reported-session cache ─────────────────────────────────
+
+describe("resolving a session an agent reported", () => {
+  it("asks once for a session it has already resolved", async () => {
+    const calls: string[] = [];
+    const { deps } = wire({
+      sessionPath: async (sessionId) => {
+        calls.push(sessionId);
+        return "/vault/s1.jsonl";
+      },
+    });
+
+    await deps.resolveReportedSession?.("s1");
+    await deps.resolveReportedSession?.("s1");
+
+    expect(calls).toEqual(["s1"]);
+  });
+
+  it("asks again after a miss, because the transcript may not have existed yet", async () => {
+    // A pane can report its session before the file is written. Remembering the
+    // miss would answer every later projection with that one moment (round-1 B6).
+    let path: string | null = null;
+    const calls: string[] = [];
+    const { deps } = wire({
+      sessionPath: async (sessionId) => {
+        calls.push(sessionId);
+        return path;
+      },
+    });
+
+    expect(await deps.resolveReportedSession?.("s1")).toBeNull();
+    path = "/vault/s1.jsonl";
+
+    expect(await deps.resolveReportedSession?.("s1")).toEqual({
+      entryId: "claude:s1",
+      agent: "claude",
+      transcriptPath: "/vault/s1.jsonl",
+    });
+    expect(calls).toEqual(["s1", "s1"]);
+  });
+
+  it("keeps the cache bounded by forgetting the oldest resolved session", async () => {
+    const calls: string[] = [];
+    const { deps } = wire({
+      sessionPath: async (sessionId) => {
+        calls.push(sessionId);
+        return `/vault/${sessionId}.jsonl`;
+      },
+    });
+
+    for (let i = 0; i <= REPORTED_SESSION_CACHE_CAP; i++) {
+      await deps.resolveReportedSession?.(`s${i}`);
+    }
+    // The first is gone, so asking for it again costs a second read.
+    await deps.resolveReportedSession?.("s0");
+
+    expect(calls).toHaveLength(REPORTED_SESSION_CACHE_CAP + 2);
+    expect(calls.at(-1)).toBe("s0");
+  });
+
+  it("does not let an evicted read's cleanup discard the read that replaced it", async () => {
+    // The evicted promise settles LAST here. Deleting by id alone would drop the
+    // live entry installed after it, defeating the deduplication the cache is
+    // for (round-2.md W7).
+    const calls: string[] = [];
+    let releaseFirst: ((value: string | null) => void) | undefined;
+    const { deps } = wire({
+      sessionPath: async (sessionId) => {
+        calls.push(sessionId);
+        if (sessionId === "slow" && releaseFirst === undefined) {
+          return new Promise<string | null>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        return `/vault/${sessionId}.jsonl`;
+      },
+    });
+
+    const first = deps.resolveReportedSession?.("slow");
+    // Push it out of the cache while it is still in flight.
+    for (let i = 0; i < REPORTED_SESSION_CACHE_CAP; i++) {
+      await deps.resolveReportedSession?.(`filler${i}`);
+    }
+    // A second read for the same session installs a fresh, resolved entry.
+    await deps.resolveReportedSession?.("slow");
+    const callsBefore = calls.length;
+
+    // Now let the evicted one settle as a miss.
+    releaseFirst?.(null);
+    await first;
+    await deps.resolveReportedSession?.("slow");
+
+    expect(calls).toHaveLength(callsBefore);
   });
 });

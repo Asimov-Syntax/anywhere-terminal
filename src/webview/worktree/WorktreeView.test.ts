@@ -411,6 +411,48 @@ describe("subagent rows", () => {
     expect(hist?.querySelector(".wt-outcome--failed")).not.toBeNull();
   });
 
+  it("render a reported roster as live work rather than as history", () => {
+    // The label, the rail and the glyph all had to change: a signature fix alone
+    // left live delegations looking exactly like transcript history
+    // (.reviews/round-2.md W3).
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(
+      withRoster({
+        kind: "ok",
+        reported: true,
+        rows: [{ name: "explorer", title: "Map the seam", status: "running", live: true }],
+      }),
+    );
+
+    const hist = view.element.querySelector(".wt-hist");
+    expect(hist?.classList.contains("wt-hist-live")).toBe(true);
+    expect(hist?.querySelector(".wt-hist-label")?.textContent).toBe("Delegations");
+    expect(hist?.querySelector(".wt-outcome--live")).not.toBeNull();
+    expect(hist?.querySelector(".wt-outcome--done")).toBeNull();
+    expect(hist?.querySelector<HTMLElement>(".wt-srow")?.dataset.live).toBe("true");
+  });
+
+  it("calls a reported roster with no delegations live, not past", () => {
+    // An agent reporting no delegations has reported about NOW. Deriving the
+    // label from the rows would call that empty answer history.
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster({ kind: "ok", reported: true, rows: [] }));
+
+    const hist = view.element.querySelector(".wt-hist");
+    expect(hist?.querySelector(".wt-hist-label")?.textContent).toBe("Delegations");
+    expect(hist?.querySelector(".wt-hist-note")?.textContent).toBe("No delegations found");
+  });
+
+  it("still calls a transcript roster past, whatever it recorded", () => {
+    const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
+    view.setData(withRoster({ kind: "ok", rows: [{ name: "librarian", status: "running", live: false }] }));
+
+    const hist = view.element.querySelector(".wt-hist");
+    expect(hist?.classList.contains("wt-hist-live")).toBe(false);
+    expect(hist?.querySelector(".wt-hist-label")?.textContent).toBe("Past delegations");
+    expect(hist?.querySelector(".wt-outcome--live")).toBeNull();
+  });
+
   it("render no agent icon and nest exactly one level", () => {
     const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
     view.setData(populated());

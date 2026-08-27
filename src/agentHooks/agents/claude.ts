@@ -239,8 +239,24 @@ class ClaudeHookAgentSession implements AgentHookSession {
   private stateStartedAt: number;
   private published: AgentTurnReport["state"] | null = null;
   private readonly roster = new Map<string, AgentTurnSubagent>();
-  /** Children the cap displaced while they were working; see `upsertChild`. */
-  private droppedWorking = 0;
+  /**
+   * Children the cap displaced while they were working, still by id.
+   *
+   * A count would be cheaper and wrong: it cannot tell a stop for one of these
+   * from a stop for a child nothing recorded starting, so any stray or repeated
+   * stop would settle an overflow it knows nothing about (.reviews/round-2.md
+   * B4).
+   */
+  private readonly overflow = new Set<string>();
+  /**
+   * Set only when identity itself overflowed, and cleared only at a session
+   * boundary.
+   *
+   * Past this point the turn genuinely does not know which children are still
+   * running, so it holds open rather than guessing. Nothing a later event says
+   * can clear it — that is the difference between bounded and merely small.
+   */
+  private overflowUnknown = false;
   private agentSessionId: string | undefined;
   private transcriptPath: string | undefined;
   private toolName: string | undefined;
@@ -265,6 +281,7 @@ class ClaudeHookAgentSession implements AgentHookSession {
 
   public dispose(): void {
     this.roster.clear();
+    this.overflow.clear();
   }
 
   /** Returns whether the event said anything about this pane at all. */
@@ -281,7 +298,8 @@ class ClaudeHookAgentSession implements AgentHookSession {
         // boundary so nothing downstream reads it as a turn that completed.
         this.clearPerEvent();
         this.roster.clear();
-        this.droppedWorking = 0;
+        this.overflow.clear();
+        this.overflowUnknown = false;
         this.lead = "done";
         this.sessionBoundary = true;
         return true;
@@ -319,11 +337,13 @@ class ClaudeHookAgentSession implements AgentHookSession {
         }
         return true;
       case "SubagentStart": {
-        if (payload.subagentId === undefined) {
+        if (payload.subagentId === undefined || !this.upsertChild(payload.subagentId, payload.subagentName)) {
+          // A repeat that started nothing changed nothing, and an event that
+          // changed nothing must publish nothing — republishing here would
+          // clear the question the row is still waiting on (round-2.md W8).
           return false;
         }
         this.clearPerEvent();
-        this.upsertChild(payload.subagentId, payload.subagentName);
         // The cached lead is left exactly as it was: § 4.4 makes this row a
         // roster change only. `effectiveState` overlays `working` for as long as
         // a child is running, so promoting the lead here would say the same
@@ -335,39 +355,43 @@ class ClaudeHookAgentSession implements AgentHookSession {
         if (payload.subagentId === undefined) {
           return false;
         }
-        if (this.roster.delete(payload.subagentId)) {
-          this.clearPerEvent();
-          return true;
+        // A stop settles the child it names and no other. Matching by identity
+        // is what stops a stray or repeated stop from retiring some unrelated
+        // delegation the cap had displaced.
+        if (!this.roster.delete(payload.subagentId) && !this.overflow.delete(payload.subagentId)) {
+          // A child nothing recorded starting makes no claim about this pane.
+          return false;
         }
-        // A stop for a child the cap displaced settles that overflow rather than
-        // being discarded as unknown.
-        if (this.droppedWorking > 0) {
-          this.clearPerEvent();
-          this.droppedWorking -= 1;
-          return true;
-        }
-        // A child nothing recorded starting makes no claim about this pane.
-        return false;
+        this.clearPerEvent();
+        return true;
       }
     }
   }
 
-  private upsertChild(id: string, name: string | undefined): void {
-    const existing = this.roster.get(id);
-    if (existing !== undefined) {
-      // A repeated start is one child, and does not restart its clock.
-      return;
+  /** Returns whether this actually started a delegation nothing was tracking. */
+  private upsertChild(id: string, name: string | undefined): boolean {
+    // A repeated start is one child, wherever that child is already tracked, and
+    // it does not restart its clock.
+    if (this.roster.has(id) || this.overflow.has(id)) {
+      return false;
     }
     if (this.roster.size >= CLAUDE_ROSTER_CAP) {
       // The cap bounds what the roster REMEMBERS, and must not bound what the
       // turn admits is still running: dropping a working child outright would
-      // let the pane report a finished turn while that child worked on. An
-      // idle child is forgettable; otherwise the newcomer is counted instead of
-      // listed, which holds the turn open without growing (round-1.md B4).
+      // let the pane report a finished turn while that child worked on. An idle
+      // child is forgettable; otherwise the newcomer is remembered by id alone,
+      // which holds the turn open without holding its whole record.
       const spare = [...this.roster.values()].find((child) => child.state !== "working");
       if (spare === undefined) {
-        this.droppedWorking += 1;
-        return;
+        if (this.overflow.size >= CLAUDE_ROSTER_CAP) {
+          // Identity itself has now overflowed. Holding open on a sticky flag is
+          // the honest answer: the turn cannot say which children remain, and
+          // guessing is what makes a status pipeline lie.
+          this.overflowUnknown = true;
+          return true;
+        }
+        this.overflow.add(id);
+        return true;
       }
       this.roster.delete(spare.id);
     }
@@ -377,6 +401,7 @@ class ClaudeHookAgentSession implements AgentHookSession {
       state: "working",
       startedAt: this.channel.now(),
     });
+    return true;
   }
 
   /**
@@ -400,7 +425,10 @@ class ClaudeHookAgentSession implements AgentHookSession {
     if (this.lead !== "done") {
       return this.lead;
     }
-    const working = this.droppedWorking > 0 || [...this.roster.values()].some((child) => child.state === "working");
+    const working =
+      this.overflowUnknown ||
+      this.overflow.size > 0 ||
+      [...this.roster.values()].some((child) => child.state === "working");
     return working ? "working" : "done";
   }
 

@@ -42,7 +42,7 @@ export interface PresenceDepsOptions {
 }
 
 /** Most resolved sessions remembered at once; the oldest is dropped past it. */
-const REPORTED_SESSION_CACHE_CAP = 128;
+export const REPORTED_SESSION_CACHE_CAP = 128;
 
 export function createPresenceProjectorDeps(options: PresenceDepsOptions): PresenceProjectorDeps {
   const store = options.store;
@@ -96,14 +96,21 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
         // Only a hit is durable. A pane can report its session before the
         // transcript exists on disk, so remembering the miss would answer every
         // later projection with the one moment the file was not there yet.
-        void pending.then(
-          (resolved) => {
-            if (resolved === null) {
-              reportedSessions.delete(sessionId);
-            }
-          },
-          () => reportedSessions.delete(sessionId),
-        );
+        //
+        // Compared before deleting: this entry may already have been evicted and
+        // a newer read installed under the same id, and dropping THAT one would
+        // undo the deduplication this cache exists for (round-2.md W7).
+        const settled = pending;
+        const forget = () => {
+          if (reportedSessions.get(sessionId) === settled) {
+            reportedSessions.delete(sessionId);
+          }
+        };
+        void settled.then((resolved) => {
+          if (resolved === null) {
+            forget();
+          }
+        }, forget);
       }
       const transcriptPath = await pending;
       return transcriptPath === null

@@ -480,6 +480,16 @@
   padding-left: 8px;
   border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
 }
+/* Work an agent reported itself, while it runs. The rail carries the running
+   colour rather than the muted history one, so live delegations are not read as
+   transcript history at a glance. */
+.wt-hist.wt-hist-live {
+  border-left-color: color-mix(in srgb, var(--vscode-charts-blue) 55%, transparent);
+}
+.wt-hist-live > .wt-hist-label {
+  color: var(--vscode-charts-blue);
+  opacity: 0.95;
+}
 /* Section state — reading, empty, unreadable, or "not all of it". Muted and
    un-rowed, so it is never read as a delegation that happened. */
 .wt-hist-note {
@@ -530,6 +540,10 @@
 }
 .wt-outcome--failed {
   color: color-mix(in srgb, var(--vscode-editorError-foreground) 80%, var(--vscode-descriptionForeground));
+}
+/* Still running, so it is not muted like a recorded outcome. */
+.wt-outcome--live {
+  color: var(--vscode-charts-blue);
 }
 .wt-stext {
   min-width: 0;

@@ -445,7 +445,10 @@ export function renderSubagentSection(
   wrap.setAttribute("role", "group");
   wrap.dataset.parentRowId = parent.rowId;
 
-  const live = roster !== undefined && roster.kind === "ok" && roster.rows.some((row) => row.live);
+  // Provenance, not row contents, decides the vocabulary: an agent that reported
+  // no delegations has reported about NOW, and calling that empty answer "past"
+  // describes the wrong tense of the wrong thing (.reviews/round-2.md W3).
+  const live = roster !== undefined && roster.kind === "ok" && roster.reported === true;
   if (live) {
     wrap.classList.add("wt-hist-live");
   }
@@ -490,9 +493,20 @@ export function renderSubagentSection(
 
     const outcome = document.createElement("span");
     const failed = sub.status === "failed";
-    outcome.className = failed ? "wt-outcome wt-outcome--failed" : "wt-outcome wt-outcome--done";
+    // A delegation reported running has no outcome yet, so it does not get the
+    // completed glyph's vocabulary — that is what made live work read as
+    // finished work (round-2.md W3).
+    const running = sub.live && sub.status === "running";
+    outcome.className = failed
+      ? "wt-outcome wt-outcome--failed"
+      : running
+        ? "wt-outcome wt-outcome--live"
+        : "wt-outcome wt-outcome--done";
     outcome.setAttribute("aria-hidden", "true");
     outcome.textContent = failed ? "✕" : sub.status === "running" ? "…" : "✓";
+    if (running) {
+      row.dataset.live = "true";
+    }
 
     const text = document.createElement("span");
     text.className = "wt-stext";
