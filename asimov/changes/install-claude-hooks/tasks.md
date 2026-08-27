@@ -273,7 +273,7 @@
     3b. Re-express the round-5 B8 ceiling tests in src/agentHooks/install/agentHookTransitions.test.ts at the boundary that now refuses: a destination with no room to be recorded, rather than a claim being released on one already recorded
     4. Cover in src/agentHooks/install/managedEntryLedger.test.ts: a write whose command precedes many later ones staying owned; a refused reservation naming the paths; two hosts' records both surviving a fold with session state winning on the shared key; and a post-write failure updating its reserved record rather than adding one
 
-- [ ] 8_2 Claim a write per installation
+- [x] 8_2 Claim a write per installation — verified: bun test 'src/agentHooks/install/agentHookTransitions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_1
   - **Refs**: .reviews/round-9.md#b14, design.md#d18-a-write-is-claimed-by-installations-not-by-a-flag
   - **Acceptance**:
@@ -282,6 +282,7 @@
   - **Plan**:
     1. Mint and read the installation scope in src/extension.ts from the store design.md#d18-a-write-is-claimed-by-installations-not-by-a-flag names, and pass it to the transition owner
     2. Build the transition and uninstall inventories in src/agentHooks/install/agentHookTransitions.ts from claims rather than from one destination, releasing only the caller's claim and removing entries only when the last claim is gone
+    2a. Hold the scope on the ledger itself in src/agentHooks/install/managedEntryLedger.ts, since it identifies the installation rather than any one agent, and cover it in src/agentHooks/install/managedEntryLedger.test.ts
     3. Record and release claims per path in src/agentHooks/install/ManagedConfigInstaller.ts
     4. Cover in src/agentHooks/install/agentHookTransitions.test.ts, with two transition owners holding different scopes over one file-backed ledger: one reconciling leaves the other's registration untouched; one moving cleans only its own previous path; and removing everything clears both
 

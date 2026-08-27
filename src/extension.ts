@@ -71,6 +71,25 @@ import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import type { MutationOutcome } from "./worktree/worktreeMutationService";
 import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
 
+const AGENT_HOOK_SCOPE_KEY = "anywhereTerminal.agentHooks.installationId";
+
+/**
+ * This VS Code installation's identity for ledger claims (D18). Minted once and
+ * kept in `globalState`, which is per-installation and shared with nothing —
+ * and never derived from `claudeConfigDir`, the wrapper root, or the ledger
+ * path, because all three move for reasons that are not a change of
+ * installation.
+ */
+function installationScope(context: vscode.ExtensionContext): string {
+  const existing = context.globalState.get<string>(AGENT_HOOK_SCOPE_KEY);
+  if (typeof existing === "string" && existing.length > 0) {
+    return existing;
+  }
+  const minted = crypto.randomUUID();
+  void context.globalState.update(AGENT_HOOK_SCOPE_KEY, minted);
+  return minted;
+}
+
 /**
  * What the worktree panel's read-only actions need from the world, injected so
  * the resolution above them can be tested without a window.
@@ -362,8 +381,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // moves with a profile or a portable install, and a record that moved with it
   // could no longer recognise the command the previous root wrote — leaving an
   // entry in the user's config that nothing sweeps (D16).
+  //
+  // Which makes one ledger serve every installation on the machine, and two of
+  // them may point `claudeConfigDir` at different files. Each claims its own
+  // writes under an id minted once and kept in `globalState` — the property that
+  // made that store wrong for the ledger is exactly what an installation
+  // identity needs, since it is per-installation and deliberately unshared.
+  // Losing it (a fresh profile) correctly reads as a new installation (D18).
   const agentHookLedger = new ManagedEntryLedger(
     fileLedgerStore(new LockedFile(path.join(os.homedir(), MANAGED_ENTRY_LEDGER_DIRECTORY, MANAGED_ENTRY_LEDGER_FILE))),
+    installationScope(context),
   );
   const agentHookInstaller = (adapter: AgentConfigAdapter, agent: VaultAgentId) =>
     new ManagedConfigInstaller(adapter, {

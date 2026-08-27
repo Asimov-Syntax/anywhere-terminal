@@ -122,6 +122,10 @@ export class AgentHookTransitions {
           // Same reason as `transition`: "remove everything" is exactly the claim
           // a stale inventory makes falsely (round-7 B5).
           await this.options.ledger.refresh(entry.agent);
+          // The one place a claim we do not hold is ours to drop: "remove
+          // everything" means every installation's registration, which is what
+          // the user asked for (D9, D18).
+          await this.options.ledger.releaseEverything(entry.agent);
           const destinations = [
             ...new Set([
               entry.createAdapter(this.options.settings, this.options.location).configPath(),
@@ -221,7 +225,12 @@ export class AgentHookTransitions {
     return tracked;
   }
 
-  /** The recorded destination plus anything a previous attempt could not clear. */
+  /**
+   * What THIS installation may clean: where it installed, plus anything nobody
+   * claims any more. A path another installation still claims is deliberately
+   * absent — it is a live registration belonging to a different profile, and
+   * sweeping it was how two of them removed each other (round-9 B14).
+   */
   private destinationsToClean(agent: VaultAgentId): string[] {
     const { ledger } = this.options;
     const recorded = ledger.destination(agent);

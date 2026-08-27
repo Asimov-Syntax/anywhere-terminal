@@ -437,3 +437,69 @@ describe("a destination the ledger cannot track (round-5 B8)", () => {
     expect(await readFile(previous, "utf8")).not.toContain(adapter.wrapperLocation("linux").directoryName);
   });
 });
+
+describe("two installations sharing one ledger (round-9 B14)", () => {
+  /** Two profiles, two `claudeConfigDir` values, one machine-wide ledger file. */
+  async function twoInstallations() {
+    const { location, storageRoot, adapters } = await agentConfigs();
+    const entry = adapters.find(({ entry: candidate }) => candidate.locationSettingKeys.length > 0)?.entry;
+    if (!entry) {
+      throw new Error("no agent declares a configuration location");
+    }
+    const home = location.homeDirectory();
+    const store = memoryLedgerStore();
+    const profile = (name: string) => {
+      const settings = settingsFrom({ "agentHooks.claudeConfigDir": join(home, name) });
+      const ledger = new ManagedEntryLedger(store, name);
+      return {
+        settings,
+        ledger,
+        path: entry.createAdapter(settings, location).configPath(),
+        transitions: transitionsFor({ settings, location, storageRoot, ledger, registry: [entry] }),
+        install: () =>
+          installerFor(entry.createAdapter(settings, location), storageRoot, ledger, entry.agent).install(),
+      };
+    };
+    return { entry, first: profile("alpha"), second: profile("beta"), storageRoot, location };
+  }
+
+  it("leaves the other installation's registration in place when one reconciles", async () => {
+    const { entry, first, second } = await twoInstallations();
+    expect(await first.install()).toEqual({ installed: true });
+    expect(await second.install()).toEqual({ installed: true });
+
+    await first.transitions.submit(entry, true);
+
+    // One `destination` string could not hold both, so each installation read
+    // the other's file as stale and swept it (round-9 B14).
+    expect(await readFile(second.path, "utf8")).toContain("observer");
+    expect(second.ledger.destination(entry.agent)).toBe(resolve(second.path));
+    expect(first.ledger.destination(entry.agent)).toBe(resolve(first.path));
+  });
+
+  it("cleans only its own previous path when one installation moves", async () => {
+    const { entry, first, second, storageRoot, location } = await twoInstallations();
+    await first.install();
+    await second.install();
+
+    const movedSettings = settingsFrom({ "agentHooks.claudeConfigDir": join(location.homeDirectory(), "alpha-moved") });
+    await installerFor(entry.createAdapter(movedSettings, location), storageRoot, first.ledger, entry.agent).install();
+
+    // The path it left is owed cleanup; the other installation's is not.
+    expect(first.ledger.pending(entry.agent)).toContain(resolve(first.path));
+    expect(first.ledger.pending(entry.agent)).not.toContain(resolve(second.path));
+  });
+
+  it("removes both when the user removes everything", async () => {
+    const { entry, first, second } = await twoInstallations();
+    await first.install();
+    await second.install();
+
+    const results = await first.transitions.uninstallEverything();
+
+    expect(results[0]?.removed).toBe(true);
+    expect(await readFile(first.path, "utf8")).not.toContain("observer");
+    expect(await readFile(second.path, "utf8")).not.toContain("observer");
+    expect(first.ledger.pending(entry.agent)).toEqual([]);
+  });
+});

@@ -101,9 +101,9 @@ export const MAX_TRACKED_WRITES = 16;
 export const MAX_PENDING_DESTINATIONS = MAX_TRACKED_WRITES;
 
 /**
- * Stands in for the installation scope until 8_2 threads the real one through.
- * Every claim in this build is the same installation, which is exactly the
- * single-`destination` behaviour it replaces — no better, and no worse.
+ * The scope a ledger with no installation identity claims under. A store that
+ * cannot mint one (a test, or a host whose state is unreadable) still behaves
+ * exactly as the single-`destination` build did.
  */
 export const DEFAULT_INSTALLATION_SCOPE = "default";
 
@@ -118,7 +118,14 @@ export class ManagedEntryLedger {
    */
   private readonly session = new Map<string, AgentLedgerEntry>();
 
-  public constructor(private readonly store: LedgerStore) {}
+  /**
+   * `scope` identifies this VS Code installation (D18). It belongs to the ledger
+   * rather than to an agent because it says WHO is claiming, not what.
+   */
+  public constructor(
+    private readonly store: LedgerStore,
+    private readonly scope: string = DEFAULT_INSTALLATION_SCOPE,
+  ) {}
 
   /** Warm the store's synchronous view; safe to call more than once. */
   public load(): Promise<void> {
@@ -168,7 +175,7 @@ export class ManagedEntryLedger {
       reserve: (destination, command) => this.reserve(agent, destination, command),
       recordInstalled: async (destination, command) => {
         const persisted = await this.mutate(agent, (entry) =>
-          claim(reserved(entry, canonical(destination), command), canonical(destination), command),
+          claim(reserved(entry, canonical(destination), command), canonical(destination), command, this.scope),
         );
         // A finalization that did not persist needs nothing further: the claimed
         // write is held in the session entry and folds into the next successful
@@ -178,9 +185,7 @@ export class ManagedEntryLedger {
         void persisted;
       },
       recordRemoved: async (destination) => {
-        await this.mutate(agent, (entry) => ({
-          writes: entry.writes.filter((write) => write.path !== canonical(destination)),
-        }));
+        await this.release(agent, destination);
       },
     };
   }
@@ -254,8 +259,41 @@ export class ManagedEntryLedger {
     }));
   }
 
+  /**
+   * Where THIS installation last installed. Another installation's destination is
+   * not ours to report, and was not ours to overwrite either (round-9 B14).
+   */
   public destination(agent: string): string | undefined {
-    return [...this.entry(agent).writes].reverse().find((write) => write.claims.length > 0)?.path;
+    return [...this.entry(agent).writes].reverse().find((write) => write.claims.includes(this.scope))?.path;
+  }
+
+  /**
+   * Drops this installation's claim on a path. The record itself survives while
+   * any other installation still wants it — removing it would sweep a
+   * registration that is someone else's and still live (D18).
+   */
+  public async release(agent: string, destination: string): Promise<void> {
+    const path = canonical(destination);
+    await this.mutate(agent, (entry) => ({
+      writes: entry.writes.flatMap((write) => {
+        if (write.path !== path) {
+          return [write];
+        }
+        const claims = write.claims.filter((claimant) => claimant !== this.scope);
+        return claims.length > 0 ? [{ ...write, claims }] : [];
+      }),
+    }));
+  }
+
+  /**
+   * "Remove everything" (D9): every installation's claim goes, because that is
+   * what the user asked for — the one place a claim we do not hold is ours to
+   * release.
+   */
+  public async releaseEverything(agent: string): Promise<void> {
+    await this.mutate(agent, (entry) => ({
+      writes: entry.writes.map((write) => ({ ...write, claims: [] })),
+    }));
   }
 
   /** True when the result reached the store; false when only this session holds it. */
@@ -398,17 +436,30 @@ function reserved(entry: AgentLedgerEntry, path: string, command: string): Agent
 }
 
 /**
- * Claims the write this install just made. A successful install sweeps our own
- * older entries out of that file and re-appends one, so any other command
- * recorded at the SAME path is no longer in it and stops being an obligation —
- * which is what keeps repeated moves from accumulating records. Writes at other
- * paths are untouched: their entries are still there, and only a cleanup that
- * ran may say otherwise. The claimed write goes last, so `destination` reads the
- * most recent one. 8_2 scopes this to the calling installation.
+ * Claims the write this install just made, for one installation.
+ *
+ * A successful install sweeps our own older entries out of that file and
+ * re-appends one, so any other command recorded at the SAME path is no longer in
+ * it and stops being an obligation — which keeps repeated moves from
+ * accumulating records. At every OTHER path this installation drops its claim,
+ * because it has moved away; the record survives if another installation still
+ * claims it, and becomes cleanup owed if nobody does. The claimed write goes
+ * last, so `destination` reads the most recent one.
  */
-function claim(entry: AgentLedgerEntry, path: string, command: string): AgentLedgerEntry {
-  const claimed: LedgerWrite = { path, command, claims: [DEFAULT_INSTALLATION_SCOPE] };
-  return { writes: [...entry.writes.filter((write) => write.path !== path), claimed] };
+function claim(entry: AgentLedgerEntry, path: string, command: string, scope: string): AgentLedgerEntry {
+  const elsewhere = entry.writes.filter((write) => write.path !== path);
+  const previous = entry.writes.find((write) => write.path === path && write.command === command);
+  const claimed: LedgerWrite = {
+    path,
+    command,
+    claims: [...new Set([...(previous?.claims ?? []), scope])],
+  };
+  return {
+    writes: [
+      ...elsewhere.map((write) => ({ ...write, claims: write.claims.filter((claimant) => claimant !== scope) })),
+      claimed,
+    ],
+  };
 }
 
 function sanitize(value: unknown): AgentLedgerEntry {
