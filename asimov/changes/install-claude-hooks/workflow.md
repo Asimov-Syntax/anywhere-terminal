@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -37,5 +37,8 @@ Two corrections owed to agent-hook-server.md at blueprint sync: § 4.7's scope c
 docs/research/20260827-claude-code-hooks-settings-schema.md was produced during the oracle round and is cited by task 2_1.
 2_1 posts `application/json` with `--data-binary @-`, not the form-encoded body § 4.3's prose names. Form fields exist in the reference implementation only because it hand-builds JSON around path-bearing coordinate fields; ours carries every coordinate in the URL and streams stdin verbatim, so the hazard form-encoding solves does not exist here. A third correction owed to § 4.3 at blueprint sync.
 2_3 was added mid-build from the same reference read: Windows resolves an unqualified `more`/`curl` against the working directory before PATH, so the shipped cursor wrapper hands the hook payload to a repo-local `more.*` if one exists. Out of 2_1's lease, hence its own task.
+Cycle-1 remediation landed as tasks 4_1 (D12 ledger), 4_2 (D13 single transition owner) and 4_3 (D14 probe runner). The parser, `migrateAgentDestination` and `uninstallAllAgents` are deleted rather than patched — the three defects each had the same root, which is why patching them individually thrashed.
+`main` was merged in mid-cycle (b405735): 24 commits carrying phases 4 and 5, including WT-004.3. Two conflicts, both resolved toward this branch's contract — `SessionManager`'s `cursorHooks` field is `agentHooks` here since WT-006.1, and `paneEvidence` from main is threaded alongside it. The pnpm lockfile was regenerated rather than hand-merged.
+Lint reports 13 warnings, all pre-existing on main and none in files this change touches; `biome check` exits 0. `pnpm run lint` runs Biome's auto-fix form and would silently rewrite `src/webview/worktree/worktreeFormat.ts`'s spinner regex, dropping backslash from the frame set — reverted, and the gate was taken from check mode.
 Cycle 1 closed after its third round with blockers outstanding (REJECT). B1 and B2 each survived two fix attempts and widened under patching, which is the thrash stop: remediation returns to planning rather than a fourth round. Round 3 also raised B4 (unqualified `taskkill`) and left W1 (the outer deadline preempts the inner reap wait). Risk acceptance was not available for B2 or B4 — silent deletion of user configuration and executing a working-directory binary in the extension host are both on the never-eligible list. Gate 2 and the Implement gates are untucked accordingly; the next review is cycle 2 discovery, not a verification round.
 
