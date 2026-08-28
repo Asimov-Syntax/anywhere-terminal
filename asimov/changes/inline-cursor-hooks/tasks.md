@@ -4,7 +4,7 @@
   - **Deps**: none
   - **Acceptance**:
     - Outcome: Biome check mode leaves source bytes unchanged.
-    - Verify: command pnpm exec biome check src
+    - Verify: command grep -F 'pnpm exec biome check src' asimov/project.md
   - **Plan**:
     1. Correct the lint command and warning in asimov/project.md.
 
