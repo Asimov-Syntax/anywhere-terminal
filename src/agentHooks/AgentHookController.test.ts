@@ -151,6 +151,20 @@ describe("AgentHookController", () => {
     );
   });
 
+  it("treats unsupported-platform removal as successful absence", async () => {
+    const { controller, onWarning } = controllerDeps({
+      initialEnabled: true,
+      uninstall: async () => ({ removed: false, reason: "unsupported-platform" }),
+    });
+    await controller.start();
+
+    await expect(controller.setDesiredEnabled("cursor", false)).resolves.toEqual({
+      success: true,
+      reason: "",
+    });
+    expect(onWarning).not.toHaveBeenCalledWith("cursor", "uninstall", expect.anything());
+  });
+
   it("returns the settled removal failure with exact paths", async () => {
     const { controller } = controllerDeps({
       initialEnabled: true,

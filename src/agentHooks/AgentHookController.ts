@@ -252,7 +252,7 @@ export class AgentHookController {
   private async uninstall(state: AgentState): Promise<HookReconciliationOutcome> {
     try {
       const result = await state.installer.uninstall();
-      if (!result.removed && result.reason !== "not-installed") {
+      if (!result.removed && result.reason !== "not-installed" && result.reason !== "unsupported-platform") {
         return {
           success: false,
           reason: result.reason ?? "uninstall-failed",

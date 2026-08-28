@@ -184,3 +184,13 @@
     1. Return settled outcomes through src/agentHooks/AgentHookController.ts and pin failure propagation in src/agentHooks/AgentHookController.test.ts.
     2. Aggregate per-agent removal outcomes and centralize fully-qualified settings keys in src/agentHooks/install/agentHookLifecycle.ts and src/agentHooks/install/agentHookLifecycle.test.ts.
     3. Show success or warning from the settled aggregate in src/extension.ts.
+
+- [x] 6_2 Normalize unsupported-platform removal as successful absence — verified: pnpm exec vitest run src/agentHooks/AgentHookController.test.ts src/agentHooks/install/agentHookLifecycle.test.ts --maxWorkers=1 && pnpm run check-types && pnpm exec biome check src/agentHooks/AgentHookController.ts src/agentHooks/AgentHookController.test.ts exit 0
+  - **Deps**: 6_1
+  - **Refs**: design.md D8, D9; .reviews/round-3.md W1
+  - **Acceptance**:
+    - Outcome: Unsupported-platform removals report successful absence.
+    - Verify: command pnpm exec vitest run src/agentHooks/AgentHookController.test.ts src/agentHooks/install/agentHookLifecycle.test.ts --maxWorkers=1
+  - **Plan**:
+    1. Normalize unsupported-platform beside not-installed in src/agentHooks/AgentHookController.ts.
+    2. Pin the settled outcome and user-summary classification in src/agentHooks/AgentHookController.test.ts and src/agentHooks/install/agentHookLifecycle.test.ts.
