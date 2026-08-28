@@ -81,9 +81,9 @@
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy}; design.md D1, D2
   - **Acceptance**:
     - Outcome: Real cursor-agent delivers lifecycle payloads through the frozen literal.
-    - Verify: command bun scripts/verify-cursor-inline-hook.ts
+    - Verify: command bun scripts/verify-cursor-inline-hook.mjs
   - **Plan**:
-    1. Add scripts/verify-cursor-inline-hook.ts as a bounded temporary-workspace and listener harness around the installed cursor-agent.
+    1. Add scripts/verify-cursor-inline-hook.mjs as a bounded temporary-workspace and listener harness around the installed cursor-agent.
     2. Record CLI and shell version, command hash, delivered events, exit status, startup-environment probe, and untouched user-config evidence in docs/research/20260828-cursor-inline-hook-spike.md.
 
 
