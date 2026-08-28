@@ -48,4 +48,13 @@ describe("reconcileClaudeSettings", () => {
     expect(reconcileClaudeSettings(source, "install", COMMAND)).toEqual({ kind: "ownership-conflict" });
     expect(source.hooks.PreToolUse[0].matcher).toBe("Bash");
   });
+
+  it("refuses the exact handler under an unregistered event without mutation", () => {
+    const source = {
+      hooks: { PreCompact: [{ hooks: [{ type: "command", command: COMMAND, timeout: 2 }] }] },
+    };
+    const before = structuredClone(source);
+    expect(reconcileClaudeSettings(source, "install", COMMAND)).toEqual({ kind: "ownership-conflict" });
+    expect(source).toEqual(before);
+  });
 });

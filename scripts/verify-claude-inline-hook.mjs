@@ -9,6 +9,12 @@ const { CLAUDE_HOOK_COMMAND } = await import("../src/agentHooks/install/ClaudeHo
 const CLI_TIMEOUT_MS = 60_000;
 const OUTPUT_LIMIT_BYTES = 1_048_576;
 const EXPECTED_CLI_VERSION = "2.1.250 (Claude Code)";
+// Independent D7 admission expectations, checked in separately from the CLAUDE_HOOK_COMMAND
+// export so a drifted export fails this harness instead of validating itself tautologically.
+const EXPECTED_COMMAND_BYTES = 1_046;
+const EXPECTED_COMMAND_SHA256 = "a2a47005c04f2bcc870ef97f16f8a64a42bdcb1075586234e62c300e05a00e6a";
+// Payload field names carrying execution-identifying data in real Claude Code hook payloads.
+const SENSITIVE_PAYLOAD_FIELDS = ["session_id", "transcript_path", "cwd", "permission_mode"];
 
 function fail(message) {
   throw new Error(`Claude inline hook verification failed: ${message}`);
@@ -149,9 +155,25 @@ function commandFromSettings(settings, event) {
   return handler?.type === "command" ? handler.command : undefined;
 }
 
+function sensitivePayloadValues(payload) {
+  const values = new Set();
+  for (const field of SENSITIVE_PAYLOAD_FIELDS) {
+    const value = payload[field];
+    if (typeof value === "string" && value.length > 0) {
+      values.add(value);
+    }
+  }
+  return [...values];
+}
+
 async function main() {
   const commandBytes = Buffer.byteLength(CLAUDE_HOOK_COMMAND);
   const commandHash = sha256(CLAUDE_HOOK_COMMAND);
+  if (commandBytes !== EXPECTED_COMMAND_BYTES || commandHash !== EXPECTED_COMMAND_SHA256) {
+    fail(
+      `exported CLAUDE_HOOK_COMMAND drifted from the independent D7 expectation (expected ${EXPECTED_COMMAND_BYTES} bytes sha256 ${EXPECTED_COMMAND_SHA256}; got ${commandBytes} bytes sha256 ${commandHash})`,
+    );
+  }
   const actualUserSettings = join(process.env.HOME ?? "", ".claude", "settings.json");
   const actualUserBefore = await fingerprint(actualUserSettings);
   const cliVersion = await run("claude", ["--version"], { timeoutMs: 10_000 });
@@ -192,6 +214,7 @@ async function main() {
     }
 
     recorder = await openRecorder(randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", ""));
+    const payloadPrivacySentinel = `payload-privacy-sentinel-${randomUUID().replaceAll("-", "")}`;
     const environment = {
       ...process.env,
       ANYWHERE_TERMINAL_CLAUDE_URL: recorder.endpoint,
@@ -209,7 +232,7 @@ async function main() {
         "project",
         "--settings",
         explicitSettings,
-        "Reply with exactly: hook-boundary-ok",
+        `Reply with exactly: hook-boundary-ok ${payloadPrivacySentinel}`,
       ],
       { cwd: project, env: environment },
     );
@@ -243,10 +266,21 @@ async function main() {
     if (!startup) {
       fail("SessionStart did not carry Claude Code's startup source");
     }
-    for (const { body } of recorder.payloads) {
+    if (!recorder.payloads.some(({ body }) => body.includes(payloadPrivacySentinel))) {
+      fail("the payload privacy sentinel did not reach a lifecycle payload");
+    }
+    for (const { body, payload } of recorder.payloads) {
       if (result.stderr.includes(body)) {
         fail("a lifecycle payload appeared on Claude stderr");
       }
+      for (const value of sensitivePayloadValues(payload)) {
+        if (result.stderr.includes(value)) {
+          fail("Claude stderr individually exposed a sensitive lifecycle payload field value");
+        }
+      }
+    }
+    if (result.stderr.includes(payloadPrivacySentinel)) {
+      fail("Claude stderr exposed the payload privacy sentinel");
     }
     if (result.stderr.includes(recorder.endpoint) || result.stderr.includes(commandHash)) {
       fail("Claude stderr exposed listener or command verification data");
@@ -254,11 +288,12 @@ async function main() {
 
     console.log(`Claude Code: ${cliVersionText}`);
     console.log(`Shell: /bin/sh ${shellVersionText || "does not support --version"}`);
-    console.log(`Command: ${commandBytes} bytes sha256 ${commandHash}`);
+    console.log(`Command: ${commandBytes} bytes sha256 ${commandHash} (matches independent D7 expectation)`);
     console.log(`Events: ${events.join(", ")}`);
     console.log("Startup probe: SessionStart source=startup");
     console.log("Excluded sources: user and local sentinels did not fire");
     console.log("Settings: scratch and real user settings unchanged; stderr carried no payload");
+    console.log("Privacy: stderr carried no individual sensitive payload field value or privacy sentinel");
   } finally {
     if (recorder) {
       await recorder.close();

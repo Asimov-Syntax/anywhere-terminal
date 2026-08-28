@@ -5,14 +5,16 @@
 // release failure is reported with the exact path rather than swallowed
 // (install-claude-hooks-v1 D5, D9).
 
-import { chmod, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import type { FileHandle } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 
 export type Platform = "darwin" | "linux" | "win32";
 
 export type LockedFileSystem = Pick<
   typeof import("node:fs/promises"),
-  "chmod" | "mkdir" | "open" | "readFile" | "rename" | "unlink" | "writeFile"
+  "chmod" | "link" | "lstat" | "mkdir" | "open" | "readFile" | "rename" | "unlink" | "writeFile"
 >;
 
 export interface LockedFileDependencies {
@@ -21,7 +23,16 @@ export interface LockedFileDependencies {
   sleep?: (milliseconds: number) => Promise<void>;
   /** The replacement step alone, injectable so a test can fail the rename and nothing else. */
   rename?: (oldPath: string, newPath: string) => Promise<void>;
+  randomBytes?: (size: number) => Uint8Array;
   platform?: Platform;
+}
+
+export type StagedCommit = "create" | "replace";
+
+export interface StagedReplacement {
+  readonly path: string;
+  commit(kind: StagedCommit): Promise<boolean>;
+  discard(): Promise<void>;
 }
 
 export const LOCK_WAIT_MS = 25;
@@ -29,32 +40,30 @@ export const LOCK_MAX_WAIT_MS = 1_000;
 
 export class LockedFile {
   private readonly fs: LockedFileSystem;
-  private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly replace: (oldPath: string, newPath: string) => Promise<void>;
+  private readonly createRandomBytes: (size: number) => Uint8Array;
   private readonly platform: Platform;
 
   public constructor(
     public readonly path: string,
     dependencies: LockedFileDependencies = {},
   ) {
-    this.fs = { chmod, mkdir, open, readFile, rename, unlink, writeFile, ...dependencies.fs };
-    this.now = dependencies.now ?? Date.now;
+    this.fs = { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile, ...dependencies.fs };
     this.sleep = dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.replace = dependencies.rename ?? this.fs.rename;
+    this.createRandomBytes = dependencies.randomBytes ?? randomBytes;
     this.platform = dependencies.platform ?? (process.platform === "win32" ? "win32" : "linux");
   }
 
+  public get lockPath(): string {
+    return `${this.path}.anywhere-terminal.lock`;
+  }
+
   /**
-   * Runs `work` while holding the lock. The two failure values are the caller's
-   * because only the caller knows what its outcome type says: a lock nobody
-   * released and a body that threw are different facts.
-   *
-   * `work`'s result is never discarded for a release failure: a committed
-   * install/remove already happened. Instead, a non-ENOENT failure unlinking
-   * the lock afterward is reported through `onLockReleaseFailed` with the
-   * exact lock path, so a caller can merge it into its own unresolved-path
-   * list without losing the committed outcome (D5, D9).
+   * Runs `work` while holding an exclusively-created sibling lock. The owned
+   * handle stays open until release, and release removes the pathname only if
+   * it still names the inode this operation created.
    */
   public async withLock<T>(
     work: () => Promise<T>,
@@ -62,8 +71,8 @@ export class LockedFile {
     failed: T,
     onLockReleaseFailed?: (lockPath: string) => void,
   ): Promise<T> {
-    const lockPath = `${this.path}.anywhere-terminal.lock`;
-    if (!(await this.acquireLock(lockPath))) {
+    const lock = await this.acquireLock(this.lockPath);
+    if (!lock) {
       return lockUnavailable;
     }
     let result: T;
@@ -72,34 +81,123 @@ export class LockedFile {
     } catch {
       result = failed;
     }
-    try {
-      await this.fs.unlink(lockPath);
-    } catch (error) {
-      if (!isNotFound(error)) {
-        onLockReleaseFailed?.(lockPath);
-      }
+    if (!(await this.releaseLock(this.lockPath, lock))) {
+      onLockReleaseFailed?.(this.lockPath);
     }
     return result;
   }
 
-  public async atomicReplace(contents: string, mode: number | undefined): Promise<boolean> {
+  /** Creates and fills an unpredictable exclusive sibling temporary. */
+  public async stageReplacement(contents: string, mode: number | undefined): Promise<StagedReplacement | undefined> {
     const path = this.platform === "win32" ? win32 : posix;
     const temporaryPath = path.join(
       path.dirname(this.path),
-      `.${path.basename(this.path) || "hooks.json"}.${this.now()}.tmp`,
+      `.${path.basename(this.path) || "hooks.json"}.${Buffer.from(this.createRandomBytes(16)).toString("hex")}.tmp`,
     );
+    let handle: FileHandle | undefined;
+    let ownedIdentity: { dev: number | bigint; ino: number | bigint } | undefined;
+    let live = false;
+
+    const ownsTemporaryPath = async (): Promise<boolean> => {
+      if (!live || !ownedIdentity) {
+        return false;
+      }
+      try {
+        const current = await this.fs.lstat(temporaryPath);
+        return !current.isSymbolicLink() && current.isFile() && sameIdentity(ownedIdentity, current);
+      } catch {
+        return false;
+      }
+    };
+
+    const closeHandle = async () => {
+      await handle?.close().catch(() => undefined);
+      handle = undefined;
+    };
+
+    const discard = async () => {
+      if (!live) {
+        return;
+      }
+      if (await ownsTemporaryPath()) {
+        await this.fs.unlink(temporaryPath).catch(() => undefined);
+      }
+      live = false;
+      await closeHandle();
+    };
+
     try {
       await this.fs.mkdir(path.dirname(this.path), { recursive: true });
-      await this.fs.writeFile(temporaryPath, contents, { encoding: "utf8", mode: mode ?? 0o600 });
+      handle = await this.fs.open(temporaryPath, "wx", mode ?? 0o600);
+      live = true;
+      await handle.writeFile(contents, { encoding: "utf8" });
       if (mode !== undefined) {
-        await this.fs.chmod(temporaryPath, mode);
+        await handle.chmod(mode);
       }
-      await this.replace(temporaryPath, this.path);
-      return true;
+      const opened = await handle.stat();
+      if (!opened.isFile()) {
+        await discard();
+        return undefined;
+      }
+      ownedIdentity = { dev: opened.dev, ino: opened.ino };
     } catch {
-      await this.fs.unlink(temporaryPath).catch(() => undefined);
+      if (live && !ownedIdentity) {
+        try {
+          const opened = await handle?.stat();
+          if (opened) {
+            ownedIdentity = { dev: opened.dev, ino: opened.ino };
+          }
+        } catch {
+          // No identity means no pathname is authorized for cleanup.
+        }
+      }
+      await discard();
+      return undefined;
+    }
+
+    return {
+      path: temporaryPath,
+      commit: async (kind) => {
+        if (!(await ownsTemporaryPath())) {
+          return false;
+        }
+        try {
+          if (kind === "create") {
+            await this.fs.link(temporaryPath, this.path);
+            try {
+              await this.fs.unlink(temporaryPath);
+              live = false;
+              await closeHandle();
+            } catch (error) {
+              if (isNotFound(error)) {
+                live = false;
+                await closeHandle();
+              }
+            }
+            return true;
+          }
+          await this.replace(temporaryPath, this.path);
+          live = false;
+          await closeHandle();
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      discard,
+    };
+  }
+
+  public async atomicReplace(contents: string, mode: number | undefined): Promise<boolean> {
+    const staged = await this.stageReplacement(contents, mode);
+    if (!staged) {
       return false;
     }
+    const committed = await staged.commit("replace");
+    if (!committed) {
+      await staged.discard();
+    }
+    return committed;
   }
 
   /** `undefined` for a file that is not there — every other read failure throws. */
@@ -114,33 +212,60 @@ export class LockedFile {
     }
   }
 
-  private async acquireLock(lockPath: string): Promise<boolean> {
-    // The lock file lives beside the target, so its directory has to exist
-    // before the first attempt — otherwise every write to a not-yet-created
-    // location degrades to lock-unavailable rather than creating it.
+  private async acquireLock(lockPath: string): Promise<FileHandle | undefined> {
     try {
       await this.fs.mkdir((this.platform === "win32" ? win32 : posix).dirname(this.path), { recursive: true });
     } catch {
-      return false;
+      return undefined;
     }
-    // Bounded exclusive wait only: no mtime or age ever authorizes deleting a
-    // live holder's lock (D5). A holder that pauses indefinitely simply keeps
-    // every other host waiting until this budget runs out.
     const attempts = Math.ceil(LOCK_MAX_WAIT_MS / LOCK_WAIT_MS);
     for (let attempt = 0; attempt <= attempts; attempt += 1) {
       try {
-        const handle = await this.fs.open(lockPath, "wx");
-        await handle.close();
-        return true;
+        return await this.fs.open(lockPath, "wx");
       } catch (error) {
         if (!isAlreadyExists(error)) {
-          return false;
+          return undefined;
         }
         await this.sleep(LOCK_WAIT_MS);
       }
     }
-    return false;
+    return undefined;
   }
+
+  private async releaseLock(lockPath: string, handle: FileHandle): Promise<boolean> {
+    try {
+      const owned = await handle.stat();
+      let current: Awaited<ReturnType<typeof lstat>>;
+      try {
+        current = await this.fs.lstat(lockPath);
+      } catch (error) {
+        if (isNotFound(error) && owned.nlink === 0) {
+          return true;
+        }
+        return false;
+      }
+      if (!sameIdentity(owned, current)) {
+        return false;
+      }
+      try {
+        await this.fs.unlink(lockPath);
+      } catch (error) {
+        return isNotFound(error);
+      }
+      return true;
+    } catch {
+      return false;
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+  }
+}
+
+function sameIdentity(
+  left: { dev: number | bigint; ino: number | bigint },
+  right: { dev: number | bigint; ino: number | bigint },
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 export function isAlreadyExists(error: unknown): boolean {

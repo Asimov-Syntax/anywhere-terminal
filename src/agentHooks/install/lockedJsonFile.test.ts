@@ -3,7 +3,7 @@
 // fails closed without time-based authority and reports non-ENOENT release
 // residue by exact path rather than swallowing it (D5, D9).
 
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -128,6 +128,27 @@ describe("LockedFile", () => {
     expect(reported).toEqual([lockPath]);
   });
 
+  it("does not delete a lock pathname substituted while work is running", async () => {
+    const { target, lockPath } = await fixture();
+    const reported: string[] = [];
+    const file = new LockedFile(target);
+
+    const outcome = await file.withLock<string>(
+      async () => {
+        await rm(lockPath);
+        await writeFile(lockPath, "replacement");
+        return "committed";
+      },
+      "unavailable",
+      "failed",
+      (path) => reported.push(path),
+    );
+
+    expect(outcome).toBe("committed");
+    expect(reported).toEqual([lockPath]);
+    expect(await readFile(lockPath, "utf8")).toBe("replacement");
+  });
+
   it("treats an already-removed lock file as clean rather than a release failure", async () => {
     const { target } = await fixture();
     const file = new LockedFile(target, {
@@ -196,6 +217,46 @@ describe("LockedFile", () => {
 
     expect(await readFile(target, "utf8")).toBe("old");
     expect((await readdir(directory)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("does not follow or delete a pre-created predictable temporary symlink", async () => {
+    const { directory, target } = await fixture();
+    const victim = join(directory, "victim.json");
+    const temporaryPath = join(directory, `.record.json.${"ab".repeat(16)}.tmp`);
+    await writeFile(target, "old");
+    await writeFile(victim, "victim");
+    await symlink(victim, temporaryPath);
+    const file = new LockedFile(target, {
+      randomBytes: () => Buffer.alloc(16, 0xab),
+    });
+
+    expect(await file.atomicReplace("new", undefined)).toBe(false);
+
+    expect(await readFile(target, "utf8")).toBe("old");
+    expect(await readFile(victim, "utf8")).toBe("victim");
+    expect((await lstat(temporaryPath)).isSymbolicLink()).toBe(true);
+  });
+
+  it("does not commit or clean up a substituted temporary pathname", async () => {
+    const { directory, target } = await fixture();
+    const victim = join(directory, "victim.json");
+    await writeFile(target, "old");
+    await writeFile(victim, "victim");
+    const file = new LockedFile(target);
+    const staged = await file.stageReplacement("new", undefined);
+    expect(staged).toBeDefined();
+    if (!staged) {
+      return;
+    }
+    await rm(staged.path);
+    await symlink(victim, staged.path);
+
+    expect(await staged.commit("replace")).toBe(false);
+    await staged.discard();
+
+    expect(await readFile(target, "utf8")).toBe("old");
+    expect(await readFile(victim, "utf8")).toBe("victim");
+    expect((await lstat(staged.path)).isSymbolicLink()).toBe(true);
   });
 
   it("reads a missing file as absent rather than as an error", async () => {

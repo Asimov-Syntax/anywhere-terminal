@@ -1,6 +1,19 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,7 +27,7 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), "claude-hooks-"));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "claude-hooks-")));
   directories.push(directory);
   return { directory, path: join(directory, "settings.json") };
 }
@@ -41,8 +54,131 @@ describe("ClaudeHookInstaller", () => {
     await writeFile(target, "{ broken");
     await symlink(target, path);
     const installer = new ClaudeHookInstaller({ configuredDirectory: () => directory });
-    await expect(installer.install()).resolves.toEqual({ installed: false, reason: "unsupported-config" });
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "unsupported-config",
+      affected: [path],
+    });
     expect(await readFile(target, "utf8")).toBe("{ broken");
+  });
+
+  it("fails closed when the final file is swapped for a symlink before commit", async () => {
+    const { directory, path } = await fixture();
+    const target = join(directory, "target.json");
+    await writeFile(path, "{}\n");
+    await writeFile(target, '{"user":true}\n');
+    const installer = new ClaudeHookInstaller(
+      { configuredDirectory: () => directory },
+      {
+        beforeReplace: async () => {
+          await unlink(path);
+          await symlink(target, path);
+        },
+      },
+    );
+
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "write-failed",
+      affected: [path],
+    });
+    expect((await lstat(path)).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, "utf8")).toBe('{"user":true}\n');
+  });
+
+  it("fails closed when an ancestor is substituted before commit", async () => {
+    const { directory } = await fixture();
+    const configured = join(directory, "configured");
+    const moved = join(directory, "moved");
+    const replacement = join(directory, "replacement");
+    const path = join(configured, "settings.json");
+    await mkdir(configured);
+    await mkdir(replacement);
+    await writeFile(path, "{}\n");
+    const installer = new ClaudeHookInstaller(
+      { configuredDirectory: () => configured },
+      {
+        beforeReplace: async () => {
+          await rename(configured, moved);
+          await symlink(replacement, configured);
+        },
+      },
+    );
+
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "write-failed",
+      affected: [path],
+      unresolved: [`${path}.anywhere-terminal.lock`],
+    });
+    expect(await readFile(join(moved, "settings.json"), "utf8")).toBe("{}\n");
+    await expect(readFile(join(replacement, "settings.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("fails closed when the final regular file identity is substituted before commit", async () => {
+    const { directory, path } = await fixture();
+    const original = join(directory, "original.json");
+    await writeFile(path, "{}\n");
+    const installer = new ClaudeHookInstaller(
+      { configuredDirectory: () => directory },
+      {
+        beforeReplace: async () => {
+          await rename(path, original);
+          await writeFile(path, '{"replacement":true}\n');
+        },
+      },
+    );
+
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "write-failed",
+      affected: [path],
+    });
+    expect(await readFile(path, "utf8")).toBe('{"replacement":true}\n');
+    expect(await readFile(original, "utf8")).toBe("{}\n");
+  });
+
+  it("retries post-compare concurrent edits three times and preserves the last user bytes", async () => {
+    const { directory, path } = await fixture();
+    await writeFile(path, "{}\n");
+    let edits = 0;
+    const installer = new ClaudeHookInstaller(
+      { configuredDirectory: () => directory },
+      {
+        beforeReplace: async () => {
+          edits += 1;
+          await writeFile(path, `${JSON.stringify({ userEdit: edits })}\n`);
+        },
+      },
+    );
+
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "write-failed",
+      affected: [path],
+    });
+    expect(edits).toBe(3);
+    expect(await readFile(path, "utf8")).toBe('{"userEdit":3}\n');
+  });
+
+  it("does not overwrite a file that appears after a missing-target classification", async () => {
+    const { directory, path } = await fixture();
+    const appeared = '{"appeared":true}\n';
+    const installer = new ClaudeHookInstaller(
+      { configuredDirectory: () => directory },
+      {
+        beforeReplace: async () => {
+          await writeFile(path, appeared);
+        },
+      },
+    );
+
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "write-failed",
+      affected: [path],
+    });
+    expect(await readFile(path, "utf8")).toBe(appeared);
   });
 
   it("refuses ownership conflicts without rewriting bytes", async () => {
@@ -51,8 +187,26 @@ describe("ClaudeHookInstaller", () => {
       '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"true","timeout":2}]}]}}';
     await writeFile(path, contents);
     const installer = new ClaudeHookInstaller({ configuredDirectory: () => directory, command: "true" });
-    await expect(installer.install()).resolves.toEqual({ installed: false, reason: "ownership-conflict" });
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "ownership-conflict",
+      affected: [path],
+    });
     expect(await readFile(path, "utf8")).toBe(contents);
+  });
+
+  it("resolves the uninstall destination once", async () => {
+    const { directory } = await fixture();
+    let calls = 0;
+    const installer = new ClaudeHookInstaller({
+      configuredDirectory: () => {
+        calls += 1;
+        return directory;
+      },
+    });
+
+    await expect(installer.uninstall()).resolves.toEqual({ removed: false, reason: "not-installed" });
+    expect(calls).toBe(1);
   });
 
   it("removes current-destination handlers only", async () => {
@@ -84,7 +238,11 @@ describe("ClaudeHookInstaller", () => {
       { configuredDirectory: () => directory },
       { sleep: async () => undefined },
     );
-    await expect(installer.install()).resolves.toEqual({ installed: false, reason: "lock-unavailable" });
+    await expect(installer.install()).resolves.toEqual({
+      installed: false,
+      reason: "lock-unavailable",
+      affected: [path, lock],
+    });
     expect(await readFile(path, "utf8")).toBe("{}\n");
     expect(await readFile(lock, "utf8")).toBe("held");
   });
@@ -107,6 +265,8 @@ describe("ClaudeHookInstaller", () => {
     );
     await expect(installer.install()).resolves.toEqual({
       installed: true,
+      reason: "lock-release-failed",
+      affected: [path],
       unresolved: [`${path}.anywhere-terminal.lock`],
     });
     expect((await stat(path)).mode & 0o777).toBe(0o640);

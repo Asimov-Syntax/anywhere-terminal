@@ -128,7 +128,7 @@
 
 ## 5. Review round 1 remediation
 
-- [ ] 5_1 Make Claude file authorization identity-safe and diagnostic
+- [x] 5_1 Make Claude file authorization identity-safe and diagnostic — verified: bun test 'src/agentHooks/install/ClaudeHookInstaller.test.ts' && pnpm exec vitest run src/agentHooks/install/lockedJsonFile.test.ts src/agentHooks/AgentHookController.test.ts --maxWorkers=1 && pnpm run check-types exit 0
   - **Deps**: 4_3, 5_3
   - **Refs**: specs/agent-hook-installation/spec.md#claude-hook-writes-fail-closed; design.md D3, D5, D9; .reviews/round-1.md B1, B2
   - **Acceptance**:
@@ -139,7 +139,7 @@
     2. Rework src/agentHooks/install/ClaudeHookInstaller.ts and src/agentHooks/install/ClaudeHookInstaller.test.ts around under-lock no-follow identity checks, no-overwrite missing-file publication, bounded drift retry, and exact affected settings and lock paths.
     3. Preserve affected and unresolved paths through src/agentHooks/AgentHookController.ts and src/agentHooks/AgentHookController.test.ts diagnostics.
 
-- [ ] 5_2 Correct location revocation and reuse the keyed queue
+- [x] 5_2 Correct location revocation and reuse the keyed queue — verified: bun test 'src/agentHooks/install/agentHookLifecycle.test.ts' && pnpm run check-types exit 0
   - **Deps**: 4_3, 5_3
   - **Refs**: design.md D6; .reviews/round-1.md B3, W2
   - **Acceptance**:
@@ -162,7 +162,7 @@
     5. Align readonly outcome path plumbing in src/agentHooks/AgentHookController.ts with the merged Cursor installer.
     6. Update docs/PLAN.md, docs/DESIGN.md, and docs/design/agent-hook-server.md to replace the temporary Cursor bridge claim with the merged inline implementation.
 
-- [ ] 5_4 Strengthen frozen-command and ownership admission tests
+- [x] 5_4 Strengthen frozen-command and ownership admission tests — verified: bun scripts/verify-claude-inline-hook.mjs && pnpm exec vitest run src/agentHooks/install/claudeConfig.test.ts && git diff --check -- scripts/verify-claude-inline-hook.mjs docs/research/20260828-claude-inline-hook-spike.md exit 0
   - **Deps**: 4_3, 5_3
   - **Refs**: design.md D4, D10; .reviews/round-1.md W1, S1, S2
   - **Acceptance**:

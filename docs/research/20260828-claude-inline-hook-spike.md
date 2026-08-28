@@ -6,7 +6,7 @@
 
 - Claude Code: `2.1.250 (Claude Code)`
 - Hook shell: `/bin/sh`, GNU bash `3.2.57(1)-release (arm64-apple-darwin25)`
-- Exported `CLAUDE_HOOK_COMMAND`: 1,046 UTF-8 bytes; SHA-256 `a2a47005c04f2bcc870ef97f16f8a64a42bdcb1075586234e62c300e05a00e6a`
+- Exported `CLAUDE_HOOK_COMMAND`: 1,046 UTF-8 bytes; SHA-256 `a2a47005c04f2bcc870ef97f16f8a64a42bdcb1075586234e62c300e05a00e6a`, matching independent checked-in D7 expectations that the harness compares before running the CLI, failing closed on any drift.
 - The non-interactive, bounded CLI invocation exited 0 and delivered `SessionStart` and `Stop` to the uniquely tokened `127.0.0.1` recorder through the literal loaded from the explicit settings file.
 - The `SessionStart` payload carried `source: "startup"`; the listener was accepting requests before Claude Code started.
 
@@ -16,4 +16,4 @@ The harness gives the child process a disposable `HOME` and `CLAUDE_CONFIG_DIR`,
 
 It fingerprints the explicit, project, local, and scratch-user settings before and after the CLI run. It separately fingerprints the real user's `~/.claude/settings.json` before and after without modifying it. All fingerprints remained unchanged. Scratch state is removed in a `finally` block.
 
-The recorder accepts only the generated loopback route. The harness rejects any lifecycle body reproduced on Claude stderr and rejects stderr that exposes the recorder coordinate. The passing invocation produced no payload on stderr.
+The recorder accepts only the generated loopback route. The harness rejects any lifecycle body reproduced on Claude stderr and rejects stderr that exposes the recorder coordinate. It also injects a unique payload privacy sentinel into the prompt sent to Claude, requires that sentinel to appear in a recorded lifecycle payload, and, for every recorded `SessionStart`/`Stop` payload, individually checks `session_id`, `transcript_path`, `cwd`, and `permission_mode` values against stderr, so a partial or differently serialized leak of any one field fails independently of the full compact body check. The passing invocation produced no payload, no individual sensitive field value, and no privacy sentinel on stderr.

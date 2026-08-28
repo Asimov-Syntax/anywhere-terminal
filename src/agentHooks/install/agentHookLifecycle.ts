@@ -1,3 +1,5 @@
+import { createKeyedSerialQueue } from "../../utils/keyedSerialQueue";
+
 export const AGENT_HOOK_UNINSTALL_COMMAND = "anywhereTerminal.agentHooks.uninstall";
 
 export const AGENT_HOOK_SETTINGS = {
@@ -21,7 +23,7 @@ export interface AgentHookLifecycleOptions {
  * their destination only after this lifecycle has read the current opt-in.
  */
 export class AgentHookLifecycle {
-  private readonly tails = new Map<AgentHookLifecycleAgent, Promise<void>>();
+  private readonly queue = createKeyedSerialQueue();
 
   public constructor(private readonly options: AgentHookLifecycleOptions) {}
 
@@ -44,30 +46,35 @@ export class AgentHookLifecycle {
   }
 
   public handleConfigurationChange(affectsConfiguration: (key: string) => boolean): Promise<void> {
-    const agents = this.agents().filter((agent) =>
-      AGENT_HOOK_SETTINGS[agent].some((key) => affectsConfiguration(`anywhereTerminal.${key}`)),
-    );
-    return Promise.all(agents.map((agent) => this.reconcile(agent))).then(() => undefined);
+    const cursorEnabled = affectsConfiguration("anywhereTerminal.cursorAgent.hooks.enabled");
+    const claudeEnabled = affectsConfiguration("anywhereTerminal.agentHooks.claude.enabled");
+    const claudeLocation = affectsConfiguration("anywhereTerminal.agentHooks.claudeConfigDir");
+    const reconciliations: Promise<void>[] = [];
+
+    if (cursorEnabled) {
+      reconciliations.push(this.reconcile("cursor"));
+    }
+    if (claudeLocation) {
+      reconciliations.push(this.reconcileClaudeLocation());
+    } else if (claudeEnabled) {
+      reconciliations.push(this.reconcile("claude"));
+    }
+
+    return Promise.all(reconciliations).then(() => undefined);
   }
 
   private agents(): readonly AgentHookLifecycleAgent[] {
     return ["cursor", "claude"];
   }
 
-  private enqueue(agent: AgentHookLifecycleAgent, operation: () => Promise<void>): Promise<void> {
-    const previous = this.tails.get(agent) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(operation);
-    this.tails.set(agent, next);
-    void next.then(
-      () => this.clearTail(agent, next),
-      () => this.clearTail(agent, next),
-    );
-    return next;
+  private reconcileClaudeLocation(): Promise<void> {
+    return this.enqueue("claude", async () => {
+      await this.options.controller.setDesiredEnabled("claude", false);
+      await this.options.controller.setDesiredEnabled("claude", this.options.readEnabled("claude"));
+    });
   }
 
-  private clearTail(agent: AgentHookLifecycleAgent, tail: Promise<void>): void {
-    if (this.tails.get(agent) === tail) {
-      this.tails.delete(agent);
-    }
+  private enqueue(agent: AgentHookLifecycleAgent, operation: () => Promise<void>): Promise<void> {
+    return this.queue.run(agent, operation);
   }
 }

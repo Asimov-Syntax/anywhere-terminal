@@ -111,7 +111,12 @@ describe("AgentHookController", () => {
   it("grants authority and warns separately when install commits but lock cleanup leaves residue (D5, D9)", async () => {
     const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
       initialEnabled: true,
-      install: async () => ({ installed: true, unresolved: ["/tmp/settings.json.anywhere-terminal.lock"] }),
+      install: async () => ({
+        installed: true,
+        reason: "lock-release-failed",
+        affected: ["/tmp/settings.json"],
+        unresolved: ["/tmp/settings.json.anywhere-terminal.lock"],
+      }),
     });
 
     await controller.start();
@@ -122,14 +127,39 @@ describe("AgentHookController", () => {
     expect(onWarning).toHaveBeenCalledWith(
       "cursor",
       "install",
-      expect.stringContaining("/tmp/settings.json.anywhere-terminal.lock"),
+      "lock-release-failed: /tmp/settings.json, /tmp/settings.json.anywhere-terminal.lock",
+    );
+  });
+
+  it("merges a failed primary reason with exact affected and unresolved paths", async () => {
+    const { controller, onWarning } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({
+        installed: false,
+        reason: "write-failed",
+        affected: ["/profiles/work/settings.json"],
+        unresolved: ["/profiles/work/settings.json.anywhere-terminal.lock"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(onWarning).toHaveBeenCalledWith(
+      "cursor",
+      "install",
+      "write-failed: /profiles/work/settings.json, /profiles/work/settings.json.anywhere-terminal.lock",
     );
   });
 
   it("withholds authority when removal commits but leaves an unresolved lock path (D5, D9)", async () => {
     const { controller, onWarning, runtime } = controllerDeps({
       initialEnabled: false,
-      uninstall: async () => ({ removed: true, unresolved: ["/tmp/settings.json.anywhere-terminal.lock"] }),
+      uninstall: async () => ({
+        removed: true,
+        reason: "lock-release-failed",
+        affected: ["/tmp/settings.json"],
+        unresolved: ["/tmp/settings.json.anywhere-terminal.lock"],
+      }),
     });
 
     await controller.start();
@@ -138,7 +168,7 @@ describe("AgentHookController", () => {
     expect(onWarning).toHaveBeenCalledWith(
       "cursor",
       "uninstall",
-      expect.stringContaining("/tmp/settings.json.anywhere-terminal.lock"),
+      "lock-release-failed: /tmp/settings.json, /tmp/settings.json.anywhere-terminal.lock",
     );
   });
 

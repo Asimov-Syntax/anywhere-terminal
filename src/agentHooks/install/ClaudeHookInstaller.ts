@@ -1,4 +1,6 @@
-import { lstat, readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { posix } from "node:path";
 import type { HookInstallOutcome, HookRemoveOutcome } from "../AgentHookController";
 import {
   type ClaudeConfigLocation,
@@ -7,8 +9,6 @@ import {
   resolveClaudeConfigPath,
 } from "./claudeConfig";
 import { isNotFound, LockedFile, type LockedFileSystem, type Platform } from "./lockedJsonFile";
-
-type FileSystem = Pick<typeof import("node:fs/promises"), "lstat" | "readFile" | "stat"> & LockedFileSystem;
 
 /**
  * D7: the one frozen POSIX shell literal registered on Darwin and Linux. It consumes stdin,
@@ -26,169 +26,236 @@ export interface ClaudeHookInstallerOptions extends ClaudeConfigLocation {
 
 export interface ClaudeHookInstallerDependencies {
   fs?: Partial<FileSystem>;
-  now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   beforeReplace?: () => Promise<void>;
   rename?: (oldPath: string, newPath: string) => Promise<void>;
+  randomBytes?: (size: number) => Uint8Array;
 }
 
-type ReadResult =
+type FileSystem = LockedFileSystem;
+
+type Identity = { dev: number | bigint; ino: number | bigint };
+type ComponentIdentity = Identity & { path: string };
+type FinalIdentity = { kind: "missing" } | ({ kind: "file" } & Identity);
+interface PathAuthorization {
+  components: readonly ComponentIdentity[];
+  final: FinalIdentity;
+}
+
+type AuthorizedRead =
+  | { kind: "mismatch" }
   | { kind: "missing" }
   | { kind: "document"; contents: string; document: JsonObject; mode: number }
   | { kind: "unsupported" };
+
+type Operation = "install" | "remove";
+type OperationOutcome = HookInstallOutcome | HookRemoveOutcome;
 
 /** Destination-local Claude settings reconciler. It intentionally owns no history or ledger. */
 export class ClaudeHookInstaller {
   private readonly fs: FileSystem;
   private readonly platform: Platform;
   private readonly command: string;
-  private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly beforeReplace: () => Promise<void>;
   private readonly rename?: (oldPath: string, newPath: string) => Promise<void>;
+  private readonly createRandomBytes?: (size: number) => Uint8Array;
 
   public constructor(
     private readonly options: ClaudeHookInstallerOptions = {},
     dependencies: ClaudeHookInstallerDependencies = {},
   ) {
-    this.fs = { lstat, readFile, stat, ...dependencies.fs } as FileSystem;
+    this.fs = { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile, ...dependencies.fs };
     this.platform = options.platform ?? hostPlatform();
     this.command = options.command ?? CLAUDE_HOOK_COMMAND;
-    this.now = dependencies.now ?? Date.now;
     this.sleep = dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.beforeReplace = dependencies.beforeReplace ?? (async () => undefined);
     this.rename = dependencies.rename;
+    this.createRandomBytes = dependencies.randomBytes;
   }
 
   public async install(): Promise<HookInstallOutcome> {
     if (this.platform === "win32") {
       return { installed: false, reason: "unsupported-platform" };
     }
-    const path = resolveClaudeConfigPath(this.options);
-    if (await this.isSymlink(path)) {
-      return { installed: false, reason: "unsupported-config" };
-    }
-    const unresolved: string[] = [];
-    const outcome = await this.locked(path).withLock<HookInstallOutcome>(
-      async () => this.reconcile(path, "install") as Promise<HookInstallOutcome>,
-      { installed: false, reason: "lock-unavailable" },
-      { installed: false, reason: "write-failed" },
-      (lockPath) => unresolved.push(lockPath),
-    );
-    return unresolved.length === 0 ? outcome : { ...outcome, unresolved };
+    return (await this.run(resolveClaudeConfigPath(this.options), "install")) as HookInstallOutcome;
   }
 
   public async uninstall(): Promise<HookRemoveOutcome> {
     if (this.platform === "win32") {
       return { removed: false, reason: "unsupported-platform" };
     }
-    const path = resolveClaudeConfigPath(this.options);
-    if (await this.isSymlink(path)) {
-      return { removed: false, reason: "unsupported-config" };
-    }
-    // Avoid creating a directory and lock just to report the absent current destination.
-    if ((await this.readConfiguration(path)).kind === "missing") {
-      return { removed: false, reason: "not-installed" };
-    }
+    return (await this.run(resolveClaudeConfigPath(this.options), "remove")) as HookRemoveOutcome;
+  }
+
+  private async run(path: string, operation: Operation): Promise<OperationOutcome> {
+    const locked = this.locked(path);
     const unresolved: string[] = [];
-    const outcome = await this.locked(path).withLock<HookRemoveOutcome>(
-      async () => this.reconcile(path, "remove") as Promise<HookRemoveOutcome>,
-      { removed: false, reason: "lock-unavailable" },
-      { removed: false, reason: "write-failed" },
+    const outcome = await locked.withLock<OperationOutcome>(
+      async () => {
+        const authorization = await this.authorize(path);
+        if (!authorization) {
+          return this.failure(operation, "unsupported-config", path);
+        }
+        return this.reconcile(path, operation, authorization);
+      },
+      this.failure(operation, "lock-unavailable", path, [path, locked.lockPath]),
+      this.failure(operation, "write-failed", path),
       (lockPath) => unresolved.push(lockPath),
     );
-    return unresolved.length === 0 ? outcome : { ...outcome, unresolved };
+    if (unresolved.length === 0) {
+      return outcome;
+    }
+    const committedOrAbsent =
+      ("installed" in outcome && outcome.installed) ||
+      ("removed" in outcome && (outcome.removed || outcome.reason === "not-installed"));
+    return {
+      ...outcome,
+      reason: committedOrAbsent ? "lock-release-failed" : outcome.reason,
+      affected: uniquePaths([...(outcome.affected ?? []), path]),
+      unresolved: uniquePaths([...(outcome.unresolved ?? []), ...unresolved]),
+    };
   }
 
   private async reconcile(
     path: string,
-    operation: "install" | "remove",
-  ): Promise<HookInstallOutcome | HookRemoveOutcome> {
+    operation: Operation,
+    authorization: PathAuthorization,
+  ): Promise<OperationOutcome> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const source = await this.readConfiguration(path);
+      const source = await this.readAuthorized(path, authorization);
+      if (source.kind === "mismatch") {
+        continue;
+      }
       if (source.kind === "unsupported") {
-        return operation === "install"
-          ? { installed: false, reason: "unsupported-config" }
-          : { removed: false, reason: "unsupported-config" };
+        return this.failure(operation, "unsupported-config", path);
       }
       if (source.kind === "missing") {
         if (operation === "remove") {
           return { removed: false, reason: "not-installed" };
         }
         const desired = reconcileClaudeSettings({}, operation, this.command);
-        const replacement =
-          desired.kind === "changed" ? await this.replace(path, "", desired.document, undefined) : "failed";
+        if (desired.kind !== "changed") {
+          return this.failure(operation, "write-failed", path);
+        }
+        const replacement = await this.replace(path, authorization, source, desired.document, undefined);
         if (replacement === "mismatch") {
           continue;
         }
-        return replacement === "replaced" || replacement === "unchanged"
-          ? { installed: true }
-          : { installed: false, reason: "write-failed" };
+        return replacement === "replaced" ? { installed: true } : this.failure(operation, "write-failed", path);
       }
+
       const desired = reconcileClaudeSettings(source.document, operation, this.command);
       if (desired.kind === "unsupported") {
-        return operation === "install"
-          ? { installed: false, reason: "unsupported-config" }
-          : { removed: false, reason: "unsupported-config" };
+        return this.failure(operation, "unsupported-config", path);
       }
       if (desired.kind === "ownership-conflict") {
-        return operation === "install"
-          ? { installed: false, reason: "ownership-conflict" }
-          : { removed: false, reason: "ownership-conflict" };
+        return this.failure(operation, "ownership-conflict", path);
       }
       if (desired.kind === "unchanged") {
+        if (!(await this.matchesAuthorizedSource(path, authorization, source))) {
+          continue;
+        }
         return operation === "install" ? { installed: true } : { removed: false, reason: "not-installed" };
       }
-      const replacement = await this.replace(path, source.contents, desired.document, source.mode);
+      const replacement = await this.replace(path, authorization, source, desired.document, source.mode);
       if (replacement === "mismatch") {
         continue;
       }
-      if (replacement === "replaced" || replacement === "unchanged") {
+      if (replacement === "replaced") {
         return operation === "install" ? { installed: true } : { removed: true };
       }
-      return operation === "install"
-        ? { installed: false, reason: "write-failed" }
-        : { removed: false, reason: "write-failed" };
+      return this.failure(operation, "write-failed", path);
     }
-    return operation === "install"
-      ? { installed: false, reason: "write-failed" }
-      : { removed: false, reason: "write-failed" };
+    return this.failure(operation, "write-failed", path);
   }
 
   private async replace(
     path: string,
-    source: string,
+    authorization: PathAuthorization,
+    source: Extract<AuthorizedRead, { kind: "missing" | "document" }>,
     document: JsonObject,
     mode: number | undefined,
-  ): Promise<"replaced" | "unchanged" | "mismatch" | "failed"> {
+  ): Promise<"replaced" | "mismatch" | "failed"> {
     const contents = `${JSON.stringify(document, null, 2)}\n`;
-    if (contents === source) {
-      return "unchanged";
+    const staged = await this.locked(path).stageReplacement(contents, mode);
+    if (!staged) {
+      return "failed";
     }
-    await this.beforeReplace();
-    if (!(await this.matches(path, source))) {
-      return "mismatch";
-    }
-    return (await this.locked(path).atomicReplace(contents, mode)) ? "replaced" : "failed";
-  }
-
-  private async isSymlink(path: string): Promise<boolean> {
     try {
-      return (await this.fs.lstat(path)).isSymbolicLink();
-    } catch (error) {
-      return !isNotFound(error);
+      await this.beforeReplace();
+      if (!(await this.matchesAuthorizedSource(path, authorization, source))) {
+        return "mismatch";
+      }
+      return (await staged.commit(source.kind === "missing" ? "create" : "replace")) ? "replaced" : "mismatch";
+    } finally {
+      await staged.discard();
     }
   }
 
-  private async readConfiguration(path: string): Promise<ReadResult> {
-    let contents: string;
+  /** Freezes every ancestor and the final regular-file identity under the sibling lock. */
+  private async authorize(path: string): Promise<PathAuthorization | undefined> {
+    const components: ComponentIdentity[] = [];
+    for (const componentPath of parentComponents(path)) {
+      try {
+        const entry = await this.fs.lstat(componentPath);
+        if (entry.isSymbolicLink() || !entry.isDirectory()) {
+          return undefined;
+        }
+        components.push({ path: componentPath, dev: entry.dev, ino: entry.ino });
+      } catch {
+        return undefined;
+      }
+    }
+    let entry: Awaited<ReturnType<FileSystem["lstat"]>>;
     try {
-      contents = await this.fs.readFile(path, "utf8");
+      entry = await this.fs.lstat(path);
     } catch (error) {
-      return isNotFound(error) ? { kind: "missing" } : { kind: "unsupported" };
+      return isNotFound(error) ? { components, final: { kind: "missing" } } : undefined;
+    }
+    if (entry.isSymbolicLink() || !entry.isFile()) {
+      return undefined;
     }
     try {
-      const document: unknown = JSON.parse(contents);
+      const handle = await this.fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const opened = await handle.stat();
+        if (!opened.isFile() || !sameIdentity(entry, opened)) {
+          return undefined;
+        }
+        return { components, final: { kind: "file", dev: opened.dev, ino: opened.ino } };
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async readAuthorized(path: string, authorization: PathAuthorization): Promise<AuthorizedRead> {
+    if (!(await this.componentsMatch(authorization.components))) {
+      return { kind: "mismatch" };
+    }
+    if (authorization.final.kind === "missing") {
+      try {
+        await this.fs.lstat(path);
+        return { kind: "mismatch" };
+      } catch (error) {
+        return isNotFound(error) ? { kind: "missing" } : { kind: "mismatch" };
+      }
+    }
+    const opened = await this.openAuthorized(path, authorization.final);
+    if (!opened) {
+      return { kind: "mismatch" };
+    }
+    try {
+      const contents = await opened.handle.readFile("utf8");
+      let document: unknown;
+      try {
+        document = JSON.parse(contents);
+      } catch {
+        return { kind: "unsupported" };
+      }
       if (typeof document !== "object" || document === null || Array.isArray(document)) {
         return { kind: "unsupported" };
       }
@@ -196,30 +263,113 @@ export class ClaudeHookInstaller {
         kind: "document",
         contents,
         document: document as JsonObject,
-        mode: (await this.fs.stat(path)).mode & 0o777,
+        mode: opened.mode,
       };
-    } catch {
-      return { kind: "unsupported" };
+    } finally {
+      await opened.handle.close();
     }
   }
 
-  private async matches(path: string, source: string): Promise<boolean> {
-    try {
-      return (await this.fs.readFile(path, "utf8")) === source;
-    } catch (error) {
-      return source === "" && isNotFound(error);
+  private async matchesAuthorizedSource(
+    path: string,
+    authorization: PathAuthorization,
+    source: Extract<AuthorizedRead, { kind: "missing" | "document" }>,
+  ): Promise<boolean> {
+    if (!(await this.componentsMatch(authorization.components))) {
+      return false;
     }
+    if (source.kind === "missing") {
+      try {
+        await this.fs.lstat(path);
+        return false;
+      } catch (error) {
+        return isNotFound(error);
+      }
+    }
+    if (authorization.final.kind !== "file") {
+      return false;
+    }
+    const opened = await this.openAuthorized(path, authorization.final);
+    if (!opened) {
+      return false;
+    }
+    try {
+      return opened.mode === source.mode && (await opened.handle.readFile("utf8")) === source.contents;
+    } finally {
+      await opened.handle.close();
+    }
+  }
+
+  private async componentsMatch(components: readonly ComponentIdentity[]): Promise<boolean> {
+    for (const expected of components) {
+      try {
+        const current = await this.fs.lstat(expected.path);
+        if (current.isSymbolicLink() || !current.isDirectory() || !sameIdentity(expected, current)) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async openAuthorized(
+    path: string,
+    expected: Identity,
+  ): Promise<{ handle: Awaited<ReturnType<FileSystem["open"]>>; mode: number } | undefined> {
+    let handle: Awaited<ReturnType<FileSystem["open"]>> | undefined;
+    try {
+      const entry = await this.fs.lstat(path);
+      if (entry.isSymbolicLink() || !entry.isFile() || !sameIdentity(expected, entry)) {
+        return undefined;
+      }
+      handle = await this.fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const opened = await handle.stat();
+      if (!opened.isFile() || !sameIdentity(expected, opened) || !sameIdentity(entry, opened)) {
+        await handle.close();
+        return undefined;
+      }
+      return { handle, mode: opened.mode & 0o777 };
+    } catch {
+      await handle?.close().catch(() => undefined);
+      return undefined;
+    }
+  }
+
+  private failure(operation: Operation, reason: string, path: string, affected = [path]): OperationOutcome {
+    return operation === "install" ? { installed: false, reason, affected } : { removed: false, reason, affected };
   }
 
   private locked(path: string): LockedFile {
     return new LockedFile(path, {
       fs: this.fs,
-      now: this.now,
       sleep: this.sleep,
       rename: this.rename,
+      randomBytes: this.createRandomBytes,
       platform: this.platform,
     });
   }
+}
+
+function parentComponents(path: string): string[] {
+  const parent = posix.dirname(path);
+  const root = posix.parse(parent).root;
+  const result = [root];
+  let current = root;
+  for (const segment of parent.slice(root.length).split("/").filter(Boolean)) {
+    current = posix.join(current, segment);
+    result.push(current);
+  }
+  return result;
+}
+
+function sameIdentity(left: Identity, right: Identity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function uniquePaths(paths: readonly string[]): string[] {
+  return [...new Set(paths)];
 }
 
 function hostPlatform(): Platform {

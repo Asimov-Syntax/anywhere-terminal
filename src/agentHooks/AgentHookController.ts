@@ -10,14 +10,18 @@ import type { AgentHookRuntime } from "./AgentHookRuntime";
 export interface HookInstallOutcome {
   installed: boolean;
   reason?: string;
-  /** Exact lock paths a committed install could not clean up (D5, D9). */
+  /** Exact settings/lock paths affected by the primary outcome (D3, D5, D9). */
+  affected?: readonly string[];
+  /** Exact owned resource paths a committed install could not clean up (D5, D9). */
   unresolved?: readonly string[];
 }
 
 export interface HookRemoveOutcome {
   removed: boolean;
   reason?: string;
-  /** Exact lock paths a committed removal could not clean up (D5, D9). */
+  /** Exact settings/lock paths affected by the primary outcome (D3, D5, D9). */
+  affected?: readonly string[];
+  /** Exact owned resource paths a committed removal could not clean up (D5, D9). */
   unresolved?: readonly string[];
 }
 
@@ -53,6 +57,13 @@ interface AgentState {
   authorityGranted: boolean;
   /** Keeps the unregistered-agent warning to one per agent, not one per reconcile. */
   registrationWarned: boolean;
+}
+
+interface ControllerOutcome {
+  success: boolean;
+  reason: string;
+  affected?: readonly string[];
+  unresolved?: readonly string[];
 }
 
 /** Owns serialized per-agent hook configuration and runtime authority as one lifecycle. */
@@ -202,44 +213,60 @@ export class AgentHookController {
       // behind (D9); a failed install or a removal carrying unresolved paths
       // both already report through `success: false`.
       if (!outcome.success || (outcome.unresolved && outcome.unresolved.length > 0)) {
-        this.options.onWarning?.(agent, enabled ? "install" : "uninstall", outcome.reason);
+        this.options.onWarning?.(agent, enabled ? "install" : "uninstall", formatWarning(outcome));
       }
       return;
     }
   }
 
-  private async install(
-    state: AgentState,
-  ): Promise<{ success: boolean; reason: string; unresolved?: readonly string[] }> {
+  private async install(state: AgentState): Promise<ControllerOutcome> {
     try {
       const result = await state.installer.install();
       if (!result.installed) {
-        return { success: false, reason: result.reason ?? "install-failed", unresolved: result.unresolved };
+        return {
+          success: false,
+          reason: result.reason ?? "install-failed",
+          affected: result.affected,
+          unresolved: result.unresolved,
+        };
       }
       // Installed config plus cleanup warning still grants authority; the
       // warning is emitted separately by the caller (D9).
       const unresolved = result.unresolved;
       return unresolved && unresolved.length > 0
-        ? { success: true, reason: `lock-release-failed: ${unresolved.join(", ")}`, unresolved }
+        ? {
+            success: true,
+            reason: result.reason ?? "lock-release-failed",
+            affected: result.affected,
+            unresolved,
+          }
         : { success: true, reason: "" };
     } catch (error) {
       return { success: false, reason: error instanceof Error ? error.message : String(error) };
     }
   }
 
-  private async uninstall(
-    state: AgentState,
-  ): Promise<{ success: boolean; reason: string; unresolved?: readonly string[] }> {
+  private async uninstall(state: AgentState): Promise<ControllerOutcome> {
     try {
       const result = await state.installer.uninstall();
       if (!result.removed && result.reason !== "not-installed") {
-        return { success: false, reason: result.reason ?? "uninstall-failed", unresolved: result.unresolved };
+        return {
+          success: false,
+          reason: result.reason ?? "uninstall-failed",
+          affected: result.affected,
+          unresolved: result.unresolved,
+        };
       }
       // Any removal result carrying unresolved paths remains unsuccessful at
       // the controller boundary, even though the config write committed (D5, D9).
       const unresolved = result.unresolved;
       return unresolved && unresolved.length > 0
-        ? { success: false, reason: `lock-release-failed: ${unresolved.join(", ")}`, unresolved }
+        ? {
+            success: false,
+            reason: result.reason ?? "lock-release-failed",
+            affected: result.affected,
+            unresolved,
+          }
         : { success: true, reason: "" };
     } catch (error) {
       return { success: false, reason: error instanceof Error ? error.message : String(error) };
@@ -323,4 +350,9 @@ export class AgentHookController {
     this.options.setContributor(undefined);
     this.attached = false;
   }
+}
+
+function formatWarning(outcome: ControllerOutcome): string {
+  const paths = [...new Set([...(outcome.affected ?? []), ...(outcome.unresolved ?? [])])];
+  return paths.length === 0 ? outcome.reason : `${outcome.reason}: ${paths.join(", ")}`;
 }

@@ -82,14 +82,134 @@ describe("AgentHookLifecycle", () => {
     ]);
   });
 
-  it("submits enabled and location changes for Claude, and only enabled changes for Cursor", async () => {
+  it("revokes Claude before a slow failed reinstallation after a location change", async () => {
+    const enabled = { cursor: false, claude: true };
+    const reinstallation = deferred();
+    const reinstallationStarted = deferred();
+    const controller = {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", desired: boolean) => {
+        if (desired) {
+          reinstallationStarted.resolve();
+          await reinstallation.promise;
+          throw new Error("install failed");
+        }
+      }),
+    };
+    const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
+
+    const change = lifecycle.handleConfigurationChange((key) => key === "anywhereTerminal.agentHooks.claudeConfigDir");
+    await reinstallationStarted.promise;
+    expect(controller.setDesiredEnabled.mock.calls).toEqual([
+      ["claude", false],
+      ["claude", true],
+    ]);
+
+    reinstallation.resolve();
+    await expect(change).rejects.toThrow("install failed");
+  });
+
+  it("rereads Claude opt-in after location revocation", async () => {
+    const enabled = { cursor: false, claude: false };
+    const disable = deferred();
+    const disableStarted = deferred();
+    const controller = {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", desired: boolean) => {
+        if (!desired) {
+          disableStarted.resolve();
+          await disable.promise;
+        }
+      }),
+    };
+    const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
+
+    const change = lifecycle.handleConfigurationChange((key) => key === "anywhereTerminal.agentHooks.claudeConfigDir");
+    await disableStarted.promise;
+    enabled.claude = true;
+    disable.resolve();
+    await change;
+
+    expect(controller.setDesiredEnabled.mock.calls).toEqual([
+      ["claude", false],
+      ["claude", true],
+    ]);
+  });
+
+  it("runs the Claude location sequence once when enabled and location settings change together", async () => {
     const enabled = { cursor: false, claude: true };
     const { controller, lifecycle } = lifecycleDouble(enabled);
 
-    await lifecycle.handleConfigurationChange((key) => key === "anywhereTerminal.agentHooks.claudeConfigDir");
-    expect(controller.setDesiredEnabled).toHaveBeenCalledWith("claude", true);
+    await lifecycle.handleConfigurationChange(
+      (key) =>
+        key === "anywhereTerminal.agentHooks.claude.enabled" || key === "anywhereTerminal.agentHooks.claudeConfigDir",
+    );
 
-    controller.setDesiredEnabled.mockClear();
+    expect(controller.setDesiredEnabled.mock.calls).toEqual([
+      ["claude", false],
+      ["claude", true],
+    ]);
+  });
+
+  it("orders racing Claude events and reads the location opt-in when its body begins", async () => {
+    const enabled = { cursor: false, claude: true };
+    const first = deferred();
+    const firstStarted = deferred();
+    const controller = {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", _desired: boolean) => {
+        if (controller.setDesiredEnabled.mock.calls.length === 1) {
+          firstStarted.resolve();
+          await first.promise;
+        }
+      }),
+    };
+    const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
+
+    const initial = lifecycle.reconcile("claude");
+    await firstStarted.promise;
+    const location = lifecycle.handleConfigurationChange(
+      (key) => key === "anywhereTerminal.agentHooks.claudeConfigDir",
+    );
+    enabled.claude = false;
+    first.resolve();
+    await Promise.all([initial, location]);
+
+    expect(controller.setDesiredEnabled.mock.calls).toEqual([
+      ["claude", true],
+      ["claude", false],
+      ["claude", false],
+    ]);
+  });
+
+  it("continues queued Claude work after a failed location reinstallation", async () => {
+    const enabled = { cursor: false, claude: true };
+    let failInstall = true;
+    const controller = {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", desired: boolean) => {
+        if (desired && failInstall) {
+          failInstall = false;
+          throw new Error("install failed");
+        }
+      }),
+    };
+    const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
+
+    const failedLocation = lifecycle.handleConfigurationChange(
+      (key) => key === "anywhereTerminal.agentHooks.claudeConfigDir",
+    );
+    const recovery = lifecycle.reconcile("claude");
+    await expect(failedLocation).rejects.toThrow("install failed");
+    await recovery;
+
+    expect(controller.setDesiredEnabled.mock.calls).toEqual([
+      ["claude", false],
+      ["claude", true],
+      ["claude", true],
+    ]);
+  });
+
+  it("submits only enabled changes for Cursor", async () => {
+    const enabled = { cursor: false, claude: true };
+    const { controller, lifecycle } = lifecycleDouble(enabled);
+
     await lifecycle.handleConfigurationChange((key) => key === "anywhereTerminal.cursorAgent.hooks.enabled");
     expect(controller.setDesiredEnabled).toHaveBeenCalledWith("cursor", false);
   });
