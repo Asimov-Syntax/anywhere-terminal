@@ -54,6 +54,7 @@ their own fixtures certified as correct:
 | 2 | An `it(...)` inside a string, template, or regex literal — the round-1 fixture escaped its embedded quote and so stepped around the case |
 | 3 | `item(...)` read as `it` + modifier `em`; `testHelper(...)` as `test` + `Helper` — the left identifier boundary was guarded, the right one was not |
 | 4 | An `it(...)` under `describe.skip`, and one calling a locally shadowed `it` — real call sites, correctly parsed, that never execute |
+| 5 | `describe.skipIf(true)`, `describe.runIf(false)`, `it.skipIf(true)`, `describe["skip"]`, and a shadow declared as a function rather than a const |
 
 Each fix was locally correct and the next probe found another way in, which is the signature of a
 wrong mechanism rather than a wrong patch. So the scan SHALL use the TypeScript compiler API —
@@ -80,21 +81,84 @@ checking. The scan SHALL therefore also:
 All 235 test files in this repo import their runner explicitly, so requiring the import removes a
 family of false positives at no cost to real coverage.
 
+**Revised again after review round 5 — the runner reports execution; nothing decides it by hand.**
+Round 4's scan resolved the vitest import and carried `describe.skip` downward, and round 5 walked
+straight past it five more ways (table row 5). Five rounds, five mechanisms, five fixture sets that
+each certified their own scanner as correct: the constant is not the bug, it is the question. Every
+one of those scanners was trying to decide **statically** whether a test would run, and the runner
+does not decide that statically either — `ctx.skip()` is called at runtime.
+
+So D1 SHALL stop asking. Coverage SHALL be counted from a **Vitest reporter** reading the runner's
+own verdict in `onTestRunEnd`: a tag counts only where `TestCase.result().state === "passed"` and
+`TestCase.options.fails !== true`. The reporter observes what actually executed, so `skipIf`,
+`runIf`, `only`, a dynamic `ctx.skip()`, and every future modifier are covered without being
+enumerated. API surface: `vitest@4.0.18` `dist/chunks/reporters.d.*.d.ts` lines 103-133, 276-284,
+929-950.
+
+`options.fails` is why this is a reporter and not `vitest list`. An `it.fails(...)` **executes and
+passes when its body fails** — a collection-time answer counts it as coverage. The repo has no such
+test today, and that is precisely the class of case that has beaten this scanner five times running.
+
+Rejected, with reasons: `vitest list` — answers collection, not execution. `expect.soft` in a final
+test — no test has a global view of the tasks completed around it. A global-setup manifest — runs
+before execution and cannot see a dynamic skip. `startVitest` from inside the measured suite —
+a nested run, reentrant.
+
+**Scope: the reporter is enabled only for the canonical full run (`pnpm run test:unit`).** Under
+`vitest run one-file.test.ts` it would report I1-I16 uncovered because the developer deliberately
+collected one file. `pnpm run test:unit` and CI stay authoritative. Restricting the check to CI
+only would not be acceptable — a developer must be able to run it.
+
+The character-level scanner and its five generations of negative fixtures are **deleted**, not kept
+as regression cases. They only ever existed to answer "would this run?", which is now answered by
+the thing that runs it. `sourceSources.ts` keeps only `tsFiles`. Registry assertions 1, 2, 5 and 6
+are unaffected — they read documents, not execution. Assertions 3 and 4 are re-expressed over the
+reporter's observed tags, and assertion 4 accordingly checks tags on tests that ran; a stray tag on
+a test that never runs is invisible to it, and so is a test that never runs.
+
 ### D10: I10 is closed by a source rule, not by a test
 
 A test cannot prove "the extension never deletes files directly" — it can only prove that the
 paths it happens to walk delegate to git. Round 3 was right that documenting the gap in the
 registry does not close it while the row still reads `covered`.
 
-So I10 SHALL be enforced by a source-level assertion over production code: no module reachable
-from the removal path may call a destructive `node:fs` operation (`rm`, `rmSync`, `rmdir`,
-`unlink`, and their `promises` forms). This is the same shape as D7's byte scan — an fs-based
-read over the sources, expressed as a test, asserting a property of the code rather than of one
-execution.
+So I10 SHALL be enforced by a source-level rule over production code: no module **in an enumerated
+scope** — `src/worktree/**` plus `src/providers/WorktreeHost.ts`, excluding tests and benches — may
+acquire or call a destructive `node:fs` operation (`rm`, `rmSync`, `rmdir`, `unlink`, and their
+`promises` forms).
+
+The scope is a stated list, and the rule claims no more than that. An earlier wording said "no
+module **reachable from the removal path**", which asserts call-graph reachability this change
+never computes; it survived five review rounds unchallenged. Either build the call graph or claim
+the list — not one while doing the other.
 
 **Known limit, not solved:** nothing machine-checks that a test tagged `[I7]` asserts I7. The
 `stimulus` field and the review round are the only checks, and the change carries the `re-review`
 flag so that round is mandatory.
+
+**Revised after review round 5 — resolve the symbol, do not chase the alias.** The rule was first
+a regex, then a hand-written AST binding resolver, and round 5 walked past it with
+`const wipe = fs.promises.rm`, `fs.promises["rm"](dir)`, and nested destructuring — while it also
+**fired on a harmless parameter named `rm`**. A rule with both failure directions at once is not a
+rule.
+
+Identifier resolution is the TypeScript checker's job, so the rule SHALL run as a standalone gate
+over a real `ts.createProgram` built from this repo's `tsconfig.json`, and reject where a
+destructive symbol is **acquired or referenced** — a named import, `fs.rm`, `fs.promises.rm`,
+`fs.promises["rm"]`, destructuring from an fs namespace, or the assignment of such a member to a
+variable. It does not follow an alias to its call site: acquisition is the auditable event, and
+the checker resolves the originating symbol, so a lexical shadow resolves elsewhere and passes.
+Measured on this checkout: 918 files in the Program, 29 in scope, 938 call expressions, median
+**0.901 s** over five fresh processes — 0.78-0.97 s of that is Program creation, ~78 ms is the
+traversal.
+
+**It fails closed.** A non-literal member access on an fs namespace (`fs.promises[key]`) is
+rejected rather than resolved. Within this narrow scope a dynamic destructive call is not something
+to audit at review time.
+
+A standalone gate, not the unit suite: ~1 s of Program construction is acceptable once per gate run
+and wrong in watch mode or a targeted unit run. Not Biome — it has no TypeScript symbol-resolution
+seam. Not a new ESLint stack — same Program cost, plus a lint framework adopted for one rule.
 
 ### D2: Count in the suite; time in a bench
 
@@ -159,6 +223,7 @@ task", and it is the half a per-layer suite structurally cannot reach. The scena
 
 | Invariant | Composed scenario |
 |---|---|
+| I2 | Raw pane evidence → real reporter → store → identity classification → projected row → rendered agent cell, with an unproven identity reaching the DOM undecorated |
 | I6 | Resume/clear hook event → turn report carrying a session boundary → presence lands idle **without** a completed turn |
 | I7 | Runtime disposal on reload → hook evidence gone → projection falls back to inference rather than retaining status |
 | I9 | Decorative frame stripped at the webview boundary → no host message, no identity change, no rebuild, no render |
@@ -177,6 +242,25 @@ composition twice is the duplication these invariants argue against.
 
 `finishedAt` and `activitySource` are dropped at the host→webview contract, so the assembly
 harness captures the real projector's own answer on its way past rather than reading the DOM.
+
+**Added after review round 5 — I2 is composed, and it does not need the extension.** I2 says an
+unproven identity renders undecorated, and it was proved at the render end alone, against a
+hand-built row. That proves the renderer honours `agentSource`; it proves nothing about what
+production puts in that field. The composition SHALL be: the real `createPaneEvidenceStore`, a pane
+under a minimal worktree with **no launch proof** and a session lookup returning `absent`, the real
+`createPaneEvidenceReporter` routed into `store.report`, raw evidence such as `⠋ claude` reported
+through it, the real `createPresenceProjector` over `store.panes()` and `store.explainActivityFor()`,
+an assertion that the projected row is specifically `{ agent: "claude", agentSource: "title" }` —
+which is what proves the test traversed production classification rather than being handed
+`"none"` — and only then the real `renderAgentRow`, asserting `.wt-aicon` carries the terminal glyph
+with no brand tooltip and no accent.
+
+Seams: `paneEvidenceReporter.ts:31-68` · `PaneEvidenceStore.ts:377-403` · `agentIdentity.ts:106-113`
+· `presenceProjector.ts:669-715` · `worktreeFormat.ts:178-184` · `worktreeTreeView.ts:339-357`.
+
+Standing up `activate()` for this one adds setup without strengthening the invariant —
+`paneEvidenceReporting.test.ts:73-118` already proves TerminalFactory reaches the reporter, so the
+composition starts at the store.
 
 ### D6: The render cap exists — register it, do not rebuild it
 

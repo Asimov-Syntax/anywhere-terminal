@@ -190,3 +190,68 @@
   - **Plan**:
     1. I9: tag the spinner-stopping test and assert the posted title arrives undecorated (src/webview/integration/paneEvidenceReporting.test.ts)
     2. I5: assert historical subagent rows carry live=false rather than only counting them (src/webview/worktree/WorktreeView.test.ts)
+
+## 8. Designed fix (round-5 handback)
+
+- [ ] 8_1 Count coverage from the runner's verdict, and delete the scanner
+  - **Deps**: 7_2
+  - **Refs**: design.md D1 (revised after round 5); discovery.md § "Round-5 handback" 2b, 3
+  - **Acceptance**:
+    - Outcome: An invariant losing its last running tagged test makes `pnpm run test:unit` exit non-zero
+    - Verify: command pnpm run test:unit
+  - **Boundary**: no static decision about whether a test runs; the reporter reads `result()` and never re-derives it. The reporter attaches from the `test:unit` script, not from vitest.config.mts, so a targeted `vitest run <file>` is unaffected
+  - **Plan**:
+    1. Add src/test/invariants/coverageReporter.ts — `onTestRunEnd`, counting a `[I<n>]` tag only where `result().state === "passed"` and `options.fails !== true`, reporting missing and unknown ids and setting a non-zero `process.exitCode`
+    2. Attach it in package.json on `test:unit` only (`--reporter=default --reporter=./src/test/invariants/coverageReporter.ts`)
+    3. Delete `Declaration`, `declarationsIn`, `isActive` and all five rounds' negative fixtures from src/test/invariants/sourceSources.ts and src/test/invariants/coverage.test.ts, leaving `tsFiles` and registry assertions 1, 2, 5, 6
+    4. Red-demo before ticking: untag one covered invariant, confirm a non-zero exit, restore
+    5. Declare the fixture deletion at `verify-task` — rounds 1-5 assert properties of a scanner that no longer exists
+
+- [ ] 8_2 Resolve the destructive symbol with the checker, in a standalone gate
+  - **Deps**: 8_1
+  - **Refs**: design.md D10 (revised after round 5); discovery.md § "Round-5 handback" 2, 4
+  - **Acceptance**:
+    - Outcome: The gate exits non-zero on any destructive-symbol acquisition inside the removal scope
+    - Verify: command pnpm run gate:fs-deletion
+  - **Boundary**: no alias chasing — acquisition is the rejected event; no Program construction inside `test:unit`
+  - **Plan**:
+    1. Add src/test/invariants/fsDeletionGate.ts building one `ts.createProgram` from tsconfig.json, rejecting acquisition of a destructive `node:fs` symbol in `src/worktree/**` + src/providers/WorktreeHost.ts, and failing closed on non-literal member access
+    2. Check in src/test/invariants/fixtures/fsDeletion/ with the six bypasses plus the two lexical shadows, asserted through the same Program so the gate proves it can see
+    3. Add the `gate:fs-deletion` script to package.json and record the measured wall-clock in workflow.md Notes
+    4. Remove the `destructiveCalls` resolver and its cases from src/test/invariants/sourceBytes.test.ts, leaving the D7 byte scan
+    5. Declare the move at `verify-task` — the same eight spellings are asserted, by the checker rather than by hand
+
+- [ ] 8_3 Prove I2 through production classification, not at the render end alone
+  - **Deps**: 8_2
+  - **Refs**: design.md D5 (I2 composition, added after round 5); discovery.md § "Round-5 handback" 5
+  - **Acceptance**:
+    - Outcome: A pane with no launch proof renders an undecorated agent cell through production classification
+    - Verify: unit src/webview/integration/paneEvidenceReporting.test.ts
+  - **Boundary**: no `activate()` standup — the composition starts at the real store
+  - **Plan**:
+    1. Compose the real store, reporter, projector, and `renderAgentRow` in src/webview/integration/paneEvidenceReporting.test.ts, asserting `{ agent: "claude", agentSource: "title" }` before render
+    2. Move the `[I2]` tag off the hand-built row assertion in src/webview/worktree/WorktreeView.test.ts, leaving that test as the renderer's own unit
+    3. Declare the tag move at `verify-task` — the render-end test keeps its assertion and loses a tag it overstated
+
+- [ ] 8_4 Tear activation down through `deactivate`, not around it
+  - **Deps**: 8_3
+  - **Refs**: .reviews/round-5.md § W4; discovery.md § "Round-5 handback" 6
+  - **Acceptance**:
+    - Outcome: Every assembly case tears down through production deactivation, and a throwing disposal fails the test
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Boundary**: teardown only; no production change, and no claim that this fixes `PTY_LOAD_FAILED` — D8 owns that
+  - **Plan**:
+    1. Capture `deactivate` alongside `activate` inside `assemble()` in src/extension.worktreeAssembly.test.ts — `beforeEach` calls `vi.resetModules()`, so a later import yields a different module instance with different controller state
+    2. `await deactivate()` in `afterEach`, then dispose `context.subscriptions`, surfacing unexpected failures; drop the direct `captured.runtime?.dispose()`
+
+- [ ] 8_5 One repo fixture, shared by the bench and the integration suite
+  - **Deps**: 8_4
+  - **Refs**: .reviews/round-5.md § W2; discovery.md § "Round-5 handback" 8
+  - **Acceptance**:
+    - Outcome: The bench and the mutation integration suite build their temp repo from one module
+    - Verify: command pnpm run bench:scale
+  - **Boundary**: runtime-neutral — the shared module imports nothing from vitest, and lives outside D10's scope because it calls `fs.rmSync`
+  - **Plan**:
+    1. Add src/test/fixtures/repoFixture.ts with a caller-owned handle: `realpathSync(mkdtempSync(...))`, `git init -q -b main`, identity config, `README.md`, `add .`, `commit -qm init`, optional linked worktrees, and a `dispose()`
+    2. Consume it from src/test/bench/scale.bench.ts and from src/worktree/worktreeMutations.integration.test.ts, keeping each side's own lifecycle
+    3. Declare the replacement at `verify-task` — the same repo shape is built, from one place

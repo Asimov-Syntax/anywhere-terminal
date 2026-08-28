@@ -381,8 +381,8 @@ state. There is nothing to provision.
 | **Stage** | 5 |
 | **Size** | M |
 | **Labels** | re-review |
-| **Notes** | Cross-layer verification cannot live inside any single feature task |
-| **Acceptance** | Every truthfulness invariant is covered by a test that fails when violated, and each is traceable to the task that owns it; the documented latency and per-rebuild cost budgets hold at realistic worktree and pane counts; event bursts and sustained streams both collapse to the documented rebuild bounds; a second surface adds no work, and a repo past the render budget caps visibly rather than truncating silently |
+| **Notes** | Cross-layer verification cannot live inside any single feature task. Acceptance was narrowed at the 2026-08-28 review handback: the original clause read "covered by a test that fails when violated", which claims a machine proves each tagged assertion necessarily goes red for every violation of its English stimulus. Nothing checks that a test tagged `[I7]` asserts I7 — the stimulus field and the mandatory `re-review` round are the only checks, and the narrowed clause says so instead of implying otherwise. Coverage, traceability, and execution stay machine-enforced; no invariant was dropped |
+| **Acceptance** | Every truthfulness invariant is traceable to the task that owns it and to at least one tagged test that actually ran and passed in the canonical suite, with the registry matching § 8.4 in both directions and nothing left unproven outside the frozen deferred set; every invariant states the stimulus that must make its test go red, and that the tagged assertion answers that stimulus is established by the mandatory review round, not by a machine; an invariant closed by a source-level rule instead of a behavioural test states its scope and fails closed where it cannot decide; the documented latency and per-rebuild cost budgets hold at realistic worktree and pane counts; event bursts and sustained streams both collapse to the documented rebuild bounds; a second surface adds no work, and a repo past the render budget caps visibly rather than truncating silently |
 | **Status** | in_progress |
 
 ---

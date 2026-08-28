@@ -8,12 +8,12 @@
 
 - [x] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -94,3 +94,13 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   (vitest reporter), D10 (symbol acquisition + fail-closed + the "reachable" wording fix), D5 (I2
   composition), then add tasks for W4 and W2. Cycle 2 has round 6 remaining.
 - Review remains NOT closed and NOT approved. Nothing in this session ticked any gate.
+
+### Handback executed — Gate 2 reopened
+
+- Gate 2, `All tasks done`, and the Verify Gate are unticked. The gate evidence described a tree
+  whose D1 mechanism and D10 rule are both being replaced, so it no longer describes what ships.
+  `Review done` and `Gate: implementation approved` were never ticked and stay that way.
+- What changed, and where the reasoning lives: `docs/PLAN.md` WT-007.1 Acceptance (narrowed to the
+  four guarantees a machine actually delivers), `design.md` D1 (vitest reporter), D10 (symbol
+  acquisition, fail-closed, and the "reachable from the removal path" overclaim), D5 (the I2
+  composition), plus tasks for W4 and W2. Evidence: `discovery.md` § "Round-5 handback".

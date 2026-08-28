@@ -138,6 +138,32 @@ element access:
 
 6/6 bypasses closed, 0 false positives — the two cases my hand-written resolver got wrong.
 
+## 2b. The reporter probe — run after the oracle returned, because the failure channel was unverified
+
+The oracle settled *what to read*. It did not settle *how the gate fails*: a Vitest reporter is an
+observer, and nothing about `onTestRunEnd` obviously fails a run. Five rounds died on unverified
+mechanisms, so this one was measured before it entered the design.
+
+A reporter setting `process.exitCode = 7` in `onTestRunEnd`, over a fixture of seven declarations:
+
+| Declaration | `result().state` | `options.mode` | `options.fails` | Counts as coverage |
+|---|---|---|---|---|
+| plain `it` under a live `describe` | `passed` | `run` | `undefined` | **yes** |
+| under `describe.skip` | `skipped` | `skip` | — | no |
+| under `describe.skipIf(true)` | `skipped` | `skip` | — | no |
+| under `describe.runIf(false)` | `skipped` | `skip` | — | no |
+| `it.skipIf(true)` | `skipped` | `skip` | — | no |
+| `it.fails(...)` with a failing body | `passed` | `run` | **`true`** | **no** — the trap |
+| `it(...)` calling `ctx.skip()` at runtime | `skipped` | `run` | — | no |
+
+Vitest reported `2 passed | 5 skipped`, and the process exited **7**. Both halves hold: the runner
+distinguishes every disabled form without being asked about any of them, and a reporter can fail
+the run.
+
+The last row is the one no scanner could ever have reached — `mode` is still `run`, and the skip
+happens during execution. Five generations of static scanner were trying to answer a question that
+is not decidable before the test runs.
+
 ## 3. D1 SHALL use a Vitest reporter, NOT `vitest list`
 
 `vitest list` answers *collection*, not *execution*. It cannot see:
