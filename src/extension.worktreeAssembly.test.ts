@@ -317,15 +317,30 @@ vi.mock("./providers/WorktreeHost", async (importOriginal) => {
  */
 let subscriptions: Array<{ dispose(): unknown }> = [];
 
-afterEach(() => {
-  captured.runtime?.dispose();
+/**
+ * The shipped `deactivate`, captured from the SAME module instance that supplied `activate`.
+ *
+ * `beforeEach` calls `vi.resetModules()`, so importing it here would yield a different instance
+ * holding a different `_activeAgentHookController` — teardown would then run against nothing.
+ */
+let teardown: (() => Promise<void> | void) | undefined;
+
+afterEach(async () => {
+  // Round-5 W4: this reached past the controller and disposed the runtime directly, so
+  // everything deactivate does BESIDES that — detaching the contributor before disabling —
+  // was never exercised, and a regression in it could not fail here.
+  await teardown?.();
+  teardown = undefined;
+  const failures: unknown[] = [];
   for (const subscription of subscriptions.splice(0)) {
     try {
       subscription.dispose();
-    } catch {
-      // A double dispose is not a finding: the point is that nothing stays open.
+    } catch (err) {
+      failures.push(err);
     }
   }
+  // Swallowing these hid exactly the leak this teardown exists to close.
+  expect(failures, "a disposable registered by activate threw on teardown").toEqual([]);
 });
 
 beforeEach(() => {
@@ -358,8 +373,9 @@ beforeEach(() => {
  * posts back to that surface goes through the real `routeExtensionMessage`.
  */
 async function assemble(): Promise<{ controller: WorktreeController; host: WorktreeHost }> {
-  const { activate } = await import("./extension");
+  const { activate, deactivate } = await import("./extension");
   subscriptions = [];
+  teardown = deactivate;
   const vscode = await import("./test/__mocks__/vscode");
   vscode.__resetAll();
   vscode.__setWorkspaceFolders([{ uri: { fsPath: REPO } }]);
@@ -851,6 +867,20 @@ describe("a Claude turn reaches the pane's evidence through the real assembly", 
     await h.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
 
     expect(h.store.read(h.paneId)?.turn?.report).toMatchObject({ state: "working", agentSessionId: "sess-1" });
+  });
+
+  // Round-5 W4: teardown used to dispose the captured runtime directly, which closed the
+  // socket without ever running production deactivation. That made the leak invisible AND
+  // the fix unfalsifiable — the endpoint closed either way. This asserts the shipped path.
+  it("closes the hook endpoint on deactivate, so a reload leaves no listener behind", async () => {
+    const h = await reportingPane();
+    const open = await h.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
+    expect(open.ok, "the endpoint was never open, so closing it proves nothing").toBe(true);
+
+    await teardown?.();
+    teardown = undefined;
+
+    await expect(h.post({ hook_event_name: "Stop", session_id: "sess-1" })).rejects.toThrow();
   });
 
   it("leaves the pane on inference when the agent's entitlement is revoked", async () => {

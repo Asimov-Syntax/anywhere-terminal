@@ -233,7 +233,7 @@
     2. Move the `[I2]` tag off the hand-built row assertion in src/webview/worktree/WorktreeView.test.ts, leaving that test as the renderer's own unit
     3. Declare the tag move at `verify-task` — the render-end test keeps its assertion and loses a tag it overstated
 
-- [ ] 8_4 Tear activation down through `deactivate`, not around it
+- [x] 8_4 Tear activation down through `deactivate`, not around it — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_3
   - **Refs**: .reviews/round-5.md § W4; discovery.md § "Round-5 handback" 6
   - **Acceptance**:
