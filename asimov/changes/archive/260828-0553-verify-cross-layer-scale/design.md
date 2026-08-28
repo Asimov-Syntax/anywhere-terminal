@@ -312,7 +312,7 @@ Neither a retry flag nor a widened timeout is acceptable: this change's subject 
 that fails when reality does, and a retry converts an intermittent failure into a silent one. If
 the root cause lands in the peer-owned tree, it is deferred rather than leased.
 
-### D9: The peer-owned tree is a change-wide boundary, and WT-007.1 stays open because of it
+### D9: The peer-owned tree is a change-wide boundary
 
 No task SHALL lease or modify `src/agentHooks/AgentHookController.ts` or
 `src/agentHooks/install/**`. Invariants whose covering test would have to live there are recorded
@@ -325,6 +325,21 @@ says *every* invariant. Marking the blueprint task `done` with rows still deferr
 completeness this change cannot have. Freezing the deferred set is what stops `deferred` from
 becoming a builder's escape hatch: adding a row means editing a named constant, which is a visible
 plan change rather than a free-form reason.
+
+**Revised at the Verify Gate — the second clause is withdrawn; the boundary is not.** The lease
+boundary above stands unchanged: no task leased or modified the peer-owned tree. What does not
+stand is the conclusion that WT-007.1 must stay `in_progress`. That rested on "with rows still
+deferred", and `DEFERRED_BY_WT_006_2` is **empty** — the audit found every § 8.4 invariant
+reachable from outside that tree, so nothing was deferred and the premise is false. WT-006.2 is
+not among WT-007.1's four declared dependencies, all of which are `done`, and the blueprint
+already marks WT-006.3 `done` under the same transitive dependency it cites here.
+
+The completeness worry is real and is answered by a check rather than by a status: `coverage.test.ts`
+compares the registry against § 8.4 as an ordered array in both directions, and the reporter fails a
+`covered` row with no passing tagged test. A § 8.4 invariant arriving from WT-006.2 therefore turns
+the suite red until it is covered. Holding WT-007.1 open would assert an incompleteness that does
+not exist — the defect class this whole change was built to catch, and one this section committed
+by predicting the audit's outcome before running it.
 
 ## Risk Map
 

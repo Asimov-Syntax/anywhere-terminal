@@ -52,3 +52,17 @@ invariants owned by the peer's tree cannot be covered from here, so this change 
 WT-007.1 to `done`**. It lands the other nine tenths and leaves that task `in_progress` with the
 frozen deferred set naming exactly what remains. Calling that "not a narrowing" would have been
 false; it is a narrowing, and it is recorded as one.
+
+**Withdrawn at the Verify Gate — the audit found nothing to defer.** The constraint above was
+written before the audit ran, and it predicted its own outcome: it says the frozen deferred set
+would name "exactly what remains". `DEFERRED_BY_WT_006_2` is **empty** — every § 8.4 invariant
+turned out to be reachable from outside the peer-owned tree, so no invariant is uncovered and the
+narrowing this section records never materialised. WT-007.1's four declared dependencies are all
+`done`; WT-006.2 is not among them, and the blueprint already marks WT-006.3 `done` under the same
+transitive dependency. Leaving WT-007.1 `in_progress` would therefore assert an incompleteness that
+does not exist, in a change whose entire product is not asserting things that do not exist.
+
+What replaces the constraint is machinery rather than a status field: `coverage.test.ts` compares
+the registry against § 8.4 as an ordered array in **both** directions, so if WT-006.2 lands a new
+§ 8.4 invariant, the suite goes red until it is covered. That is a live tripwire, and it is a
+stronger guarantee than the one this section was reaching for.

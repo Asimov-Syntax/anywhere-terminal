@@ -25,19 +25,19 @@
         }
       ],
       "firstAt": 1787846849062,
-      "lastAt": 1787895530105,
+      "lastAt": 1787896407688,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "plan",
           "agent": "asm-review-master",
           "model": "gpt-5.6-sol",
-          "messages": 149,
-          "inputTokens": 1200609,
-          "outputTokens": 167004,
+          "messages": 154,
+          "inputTokens": 1247266,
+          "outputTokens": 169696,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 19595264,
+          "cacheReadTokens": 20430336,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -50,12 +50,12 @@
           "phase": "plan",
           "agent": "asm-review-logic",
           "model": "gpt-5.6-terra",
-          "messages": 55,
-          "inputTokens": 332355,
-          "outputTokens": 30389,
+          "messages": 60,
+          "inputTokens": 368471,
+          "outputTokens": 31963,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 1968640,
+          "cacheReadTokens": 2074112,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -266,12 +266,12 @@
           "phase": "plan",
           "agent": "asm-review-contracts",
           "model": "gpt-5.6-sol",
-          "messages": 23,
-          "inputTokens": 158048,
-          "outputTokens": 13491,
+          "messages": 29,
+          "inputTokens": 199404,
+          "outputTokens": 14973,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 654848,
+          "cacheReadTokens": 825344,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -320,15 +320,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 702,
-          "inputTokens": 1404,
-          "outputTokens": 566368,
-          "reasoningTokens": 190514,
-          "cacheWriteTokens": 1395837,
-          "cacheReadTokens": 152219518,
+          "messages": 734,
+          "inputTokens": 1468,
+          "outputTokens": 590360,
+          "reasoningTokens": 198986,
+          "cacheWriteTokens": 1431911,
+          "cacheReadTokens": 158032593,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 1395837,
+            "cacheWrite1hTokens": 1431911,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -368,6 +368,12 @@
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
+        }
+      ],
+      "windows": [
+        {
+          "from": 1787846849062,
+          "to": 1787896408211
         }
       ]
     }

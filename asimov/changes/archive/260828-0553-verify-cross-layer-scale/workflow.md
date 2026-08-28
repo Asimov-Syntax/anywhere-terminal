@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(cycle 5 closed at round 12: APPROVE, 0 BLOCK / 0 WARN / 0 SUGGEST)_
+- [x] Gate: implementation approved _(fastlane auto-approve; round 12 APPROVE, 0 open findings)_
+- [x] Blueprint sync complete
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -242,3 +242,23 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   `gap-undeclared-probe.ts`, which fails the gate.
 - Verify Gate re-run: check-types clean, 234 files / 4733 tests, gate exit 0, bench both inside
   budget, lint 13 warnings + 1 info (unchanged from local main), verify-status exit 0.
+- Fastlane auto-decision at the approval gate: Approve, sync & archive. Round 12 returned APPROVE
+  with zero open findings and no accepted risk.
+- Blueprint sync, and the one decision that needed a judgement call. D9 and proposal.md § Completion
+  constraint both said WT-007.1 must stay `in_progress`. Their shared premise — "rows still
+  deferred" — is false: `DEFERRED_BY_WT_006_2` is EMPTY, because the audit found every § 8.4
+  invariant reachable from outside the peer-owned tree. Both sections were written before the audit
+  ran and predicted its outcome. WT-006.2 is not one of WT-007.1's four declared dependencies, all
+  of which are `done`, and the blueprint already marks WT-006.3 `done` under the same transitive
+  dependency those sections cite. Holding the task open would assert an incompleteness that does not
+  exist. Both artifacts carry the withdrawal explicitly rather than being quietly edited, and the
+  completeness worry is answered by machinery instead: `coverage.test.ts` compares the registry to
+  § 8.4 as an ordered array in BOTH directions, so a § 8.4 invariant arriving from WT-006.2 turns the
+  suite red until it is covered.
+- DESIGN.md § 8.5's "File deletion" row asserted the universal negative D10 concluded cannot be
+  proven. Synced to state the control and its actual evidence — exercised real-git tests plus a
+  tripwire that does no value-flow analysis and names the four spellings it does not decide. That row
+  and WT-007.1's Status are the only two blueprint lines this sync touched.
+- Not fixed, and not this change's to fix: WT-007.1's Design Ref cites `DESIGN.md § 13.4`, which does
+  not exist — DESIGN.md ends at § 10. Pre-existing dangling reference, recorded rather than silently
+  repaired.
