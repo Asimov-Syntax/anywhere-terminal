@@ -631,7 +631,7 @@
     "lint": "biome check --write --unsafe src/",
     "format": "biome format --write src/",
     "test": "vscode-test",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run --reporter=default --reporter=./src/test/invariants/coverageReporter.ts",
     "bench:scale": "bun src/test/bench/scale.bench.ts",
     "test:unit:watch": "vitest watch",
     "test:unit:coverage": "vitest run --coverage",

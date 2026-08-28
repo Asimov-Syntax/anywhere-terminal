@@ -193,7 +193,7 @@
 
 ## 8. Designed fix (round-5 handback)
 
-- [ ] 8_1 Count coverage from the runner's verdict, and delete the scanner
+- [x] 8_1 Count coverage from the runner's verdict, and delete the scanner — verified: pnpm run test:unit && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_2
   - **Refs**: design.md D1 (revised after round 5); discovery.md § "Round-5 handback" 2b, 3
   - **Acceptance**:

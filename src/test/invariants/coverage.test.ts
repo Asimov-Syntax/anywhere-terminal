@@ -1,9 +1,10 @@
 // src/test/invariants/coverage.test.ts — Keeps the § 8.4 invariants honest.
 // See asimov/changes/verify-cross-layer-scale/design.md D1.
 //
-// Everything here reads through node:fs rather than a shell. Five sources in this repo embed
-// a literal NUL, which makes BSD grep classify them as binary and skip them printing nothing
-// to stdout — that is how this change's own discovery first read two wired call sites as dead.
+// What lives here reads DOCUMENTS: the registry against § 8.4, owners against the blueprint,
+// the deferred set against its frozen constant. Whether a tagged test actually RAN is a question
+// about execution, and it is answered by `coverageReporter.ts` from the run's own report — five
+// generations of source scanner tried to answer it statically and each was walked past.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -11,10 +12,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { MAX_WORKTREES_PER_REPO } from "../../webview/worktree/WorktreeView";
 import { DEFERRED_BY_WT_006_2, INVARIANTS } from "./registry";
-import { declarationsIn, isActive, tsFiles } from "./sourceSources";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const SRC = path.join(REPO_ROOT, "src");
 
 /** The § 8.4 table, parsed from the doc itself so the registry cannot drift away from it. */
 function documentedInvariants(): Map<string, string> {
@@ -37,25 +36,6 @@ function documentedInvariants(): Map<string, string> {
 function blueprintTaskIds(): Set<string> {
   const plan = fs.readFileSync(path.join(REPO_ROOT, "docs/PLAN.md"), "utf8");
   return new Set([...plan.matchAll(/^###\s*\[(WT-[\d.]+)\]/gm)].map((m) => m[1]));
-}
-
-const TAG = /\[(I\d+)\]/g;
-
-/** Every invariant id tagged on a declaration that actually runs, mapped to where it was found. */
-function taggedInvariants(): Map<string, string[]> {
-  const byId = new Map<string, string[]>();
-  for (const full of tsFiles(SRC).filter((f) => f.endsWith(".test.ts"))) {
-    const rel = path.relative(REPO_ROOT, full);
-    for (const declaration of declarationsIn(fs.readFileSync(full, "utf8"))) {
-      if (!isActive(declaration)) {
-        continue;
-      }
-      for (const [, id] of declaration.title.matchAll(TAG)) {
-        byId.set(id, [...(byId.get(id) ?? []), rel]);
-      }
-    }
-  }
-  return byId;
 }
 
 describe("truthfulness invariants — registry", () => {
@@ -101,91 +81,12 @@ describe("truthfulness invariants — registry", () => {
     expect(deferred).toEqual([...DEFERRED_BY_WT_006_2]);
   });
 
-  // Assertion 6 (design.md D1). `uncovered` is the audit's backlog, not a
-  // resting state: once the change that opened it closes, an invariant may only
-  // be covered or deferred against the frozen set above. Leaving this to a
-  // reviewer is what let the backlog become permanent last time.
+  // `uncovered` is the audit's backlog, not a resting state: once the change that opened it
+  // closes, an invariant may only be covered or deferred against the frozen set above. Leaving
+  // this to a reviewer is what let the backlog become permanent last time.
   it("leaves no invariant merely recorded as unproven", () => {
     const uncovered = INVARIANTS.filter((row) => row.status === "uncovered").map((row) => row.id);
     expect(uncovered).toEqual([]);
-  });
-});
-
-describe("truthfulness invariants — coverage", () => {
-  it("finds a tag only where a test actually declares one", () => {
-    const source = [
-      'import { describe, it, test } from "vitest";',
-      '// it("[I1] a line comment is not coverage", () => {});',
-      'it("[I2] a real one", () => {});',
-      'it.skip("[I3] a disabled one", () => {});',
-      '/* it("[I5] a block comment is not coverage either", () => {}); */',
-      'it("[I6] a real one after a block comment", () => {});',
-      // Round-2 B1: comments were blanked but STRING CONTENTS were still scanned, so a
-      // declaration quoted inside an ordinary fixture counted as live coverage — an
-      // invariant's tag could survive in a quoted example after its real test was deleted.
-      `const quoted = 'it("[I7] a declaration inside a string", () => {});';`,
-      'const templated = `it("[I8] inside a template", () => {});`;',
-      String.raw`const pattern = /it\("\[I10\] inside a regex", \(\) => \{\}\);/;`,
-      // Round-3 B1: `item(` was read as `it` with the modifier `em`, and `testHelper(` as
-      // `test` with `Helper` — the identifier's left boundary was guarded and its right one
-      // was not. A helper with a longer name could hold an invariant covered after the real
-      // test was deleted.
-      'item("[I11] a longer identifier is not a test", 1);',
-      'testHelper("[I12] nor is this one", 2);',
-      'itemize("[I13] nor this", 3);',
-      // Round-4 B12: the parser retired every LEXICAL miss above and introduced an
-      // EXECUTION one. These call sites are real calls to the real `it` — and still never
-      // run, so counting them lets a whole invariant suite be disabled while the registry
-      // stays green.
-      'describe.skip("dead suite", () => { it("[I14] under a skipped suite", () => {}); });',
-      'describe.todo("todo suite", () => { it("[I15] under a todo suite", () => {}); });',
-      'describe("live", () => { it("[I16] under a live suite", () => {}); });',
-      'function helper() { const it = (t: string, f: () => void) => {}; it("[I4] a shadowed it", () => {}); }',
-    ].join("\n");
-    // Every case here is a round that got this wrong: a commented declaration counted
-    // (round 1), one inside a literal counted (round 2), a longer identifier counted
-    // (round 3), and one that never executes counted (round 4). The first three prove the
-    // MECHANISM no longer needs to remember them — none is a call to `it`, and the parser
-    // knows that unasked. The fourth proves the part the parser does NOT know unasked:
-    // a real call site is not the same claim as a test that runs (design.md D1, revised).
-    expect(
-      declarationsIn(source)
-        .filter(isActive)
-        .map((d) => d.title),
-    ).toEqual(["[I2] a real one", "[I6] a real one after a block comment", "[I16] under a live suite"]);
-  });
-
-  it("treats a disabled declaration as inert, so it cannot hold an invariant open", () => {
-    const IMPORT = 'import { describe, it } from "vitest";\n';
-    for (const modifier of ["skip", "todo", "failing"]) {
-      const found = declarationsIn(`${IMPORT}it.${modifier}("[I9] x", () => {});`);
-      // Asserting the length first: `found[0] && isActive(found[0])` is false when nothing
-      // was found at all, which is how a scan that returns NOTHING reads as a correct
-      // answer here.
-      expect(found, `it.${modifier} was not parsed at all`).toHaveLength(1);
-      expect(isActive(found[0]), `it.${modifier} counted as active`).toBe(false);
-    }
-    const live = declarationsIn(`${IMPORT}it.only("[I9] x", () => {});`);
-    expect(live).toHaveLength(1);
-    expect(isActive(live[0])).toBe(true);
-  });
-
-  it("has a running test for every invariant it claims is covered", () => {
-    const tagged = taggedInvariants();
-    for (const row of INVARIANTS) {
-      if (row.status === "covered") {
-        expect(tagged.get(row.id)?.length ?? 0, `${row.id} claims coverage but no active test tags it`).toBeGreaterThan(
-          0,
-        );
-      }
-    }
-  });
-
-  it("carries no tag that names an invariant the registry does not have", () => {
-    const known = new Set(INVARIANTS.map((row) => row.id));
-    for (const id of taggedInvariants().keys()) {
-      expect(known.has(id), `tag [${id}] names no registry row`).toBe(true);
-    }
   });
 });
 

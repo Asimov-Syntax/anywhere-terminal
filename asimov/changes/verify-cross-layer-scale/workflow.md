@@ -8,7 +8,7 @@
 
 - [x] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -104,3 +104,8 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   four guarantees a machine actually delivers), `design.md` D1 (vitest reporter), D10 (symbol
   acquisition, fail-closed, and the "reachable from the removal path" overclaim), D5 (the I2
   composition), plus tasks for W4 and W2. Evidence: `discovery.md` § "Round-5 handback".
+- Gate 2 re-earned under fastlane. One mechanism claim was probed before it entered the design, not
+  after: a Vitest reporter setting `process.exitCode` in `onTestRunEnd` exits the run non-zero
+  (measured 7), and the runner marks `describe.skipIf`, `runIf`, and a runtime `ctx.skip()` as
+  skipped while `it.fails` reports `passed` with `options.fails === true`. Evidence in discovery.md
+  § "Round-5 handback" 2b. The oracle settled what to read; it did not settle how the gate fails.
