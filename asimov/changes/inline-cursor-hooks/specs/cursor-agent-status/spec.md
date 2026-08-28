@@ -46,9 +46,13 @@ A failed lookup for a required utility MUST NOT fall back to the inherited execu
 
 ### Requirement: Cursor hook payload privacy
 
-After managed-command execution begins, AnyWhere Terminal-controlled hook runtime and command code SHALL NOT persist, log, transmit off-device, or expose to the webview hook prompts, shell output, user identity, raw request bodies, or content not required for status.
+AnyWhere Terminal-controlled hook runtime and command code SHALL NOT persist, log, transmit off-device, or expose to the webview hook prompts, shell output, user identity, raw request bodies, or content not required for status.
 
-The managed command MUST validate the extension's complete loopback authority and path shape, restrict requests to HTTP, bypass all proxy environment variables, and disable ambient curl configuration before transmitting the request. Code that Cursor's selected shell or process loader executes before the managed command begins is outside this guarantee because it already has equivalent process and stdin authority.
+The managed command MUST validate the extension's complete loopback authority and path shape, restrict requests to HTTP, bypass all proxy environment variables, and disable ambient curl configuration before transmitting the request.
+
+### Requirement: Cursor pre-command execution boundary
+
+The payload-privacy guarantee SHALL begin when managed-command execution starts. Code that Cursor's selected shell or process loader executes beforehand is outside the guarantee because it already has equivalent process and stdin authority.
 
 #### Scenario: Host configures a proxy or curl startup file
 

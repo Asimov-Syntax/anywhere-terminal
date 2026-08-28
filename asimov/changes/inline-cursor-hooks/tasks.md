@@ -78,7 +78,7 @@
 
 - [ ] 3_2 Execute the frozen bytes through real cursor-agent
   - **Deps**: 2_2, 2_3, 3_3
-  - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy}; design.md D1, D2
+  - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy, cursor-pre-command-execution-boundary}; design.md D1, D2
   - **Acceptance**:
     - Outcome: Real cursor-agent delivers lifecycle payloads through the frozen literal.
     - Verify: command bun scripts/verify-cursor-inline-hook.mjs
