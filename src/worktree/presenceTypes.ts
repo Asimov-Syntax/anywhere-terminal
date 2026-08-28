@@ -102,6 +102,14 @@ export interface WorktreeAgentRow {
   interactivePrompt?: string;
   /** Vault `<agent>:<sessionId>` once resolved. */
   entryId?: string;
+  /**
+   * The entry that may NAME this row, without the row claiming it.
+   *
+   * Set only where `entryId` was withdrawn because two panes resolved to one session. Ownership is
+   * what a contest settles; the session's name was never in dispute, and a shell pane has no title
+   * of its own to fall back on. Kept separate so nothing reads it as a claim.
+   */
+  titleSourceId?: string;
   /** When this row's agent was first seen. */
   startedAt?: number;
   /** When the current `activity` began — drives the age column. */

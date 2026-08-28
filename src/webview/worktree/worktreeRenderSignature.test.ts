@@ -120,6 +120,7 @@ const FULL_ROW: Required<WorktreeAgentRow> = {
   activitySource: "hook",
   interactivePrompt: '{"approval":{"tool":"Bash"}}',
   entryId: "entry-1",
+  titleSourceId: "entry-1",
   startedAt: 10,
   stateStartedAt: 20,
   finishedAt: 30,
@@ -179,6 +180,8 @@ const FULL_TREE: Required<WorktreeTree> = {
 const NOT_RENDERED: Record<string, string> = {
   "WorktreePresence.scannedAt": "moves on every rescan; keying it would make the guard buy nothing",
   "WorktreeAgentRow.pid": "no renderer reads it",
+  "WorktreeAgentRow.titleSourceId":
+    "names where a disowned row's title came from, never drawn; `title` is what renders, and it moves on its own",
   "WorktreeSubagentRow.live": "typed as the constant false, so it can never move",
   "WorktreeRepo.generation":
     "the token a launch quotes, rendered nowhere; it moves on every rebuild, so keying it would repaint the tree at rebuild rate (design.md D10)",

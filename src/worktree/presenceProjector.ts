@@ -298,13 +298,17 @@ function settleContestedSessions(produced: readonly ProducedRow[]): readonly Pro
     if (!disowned.has(item.row)) {
       return item;
     }
-    const { entryId: _entryId, title: _title, ...rest } = item.row;
+    const { entryId: _entryId, ...rest } = item.row;
     const sessionWasIdentity = item.row.agentSource === "registry";
+    // The pane's own title outranks the session it just lost, but a shell pane has none — and
+    // blanking the row there is what rendered `(untitled)` for a session already resolved.
+    const paneTitle = item.paneTitle?.trim();
     return {
       worktreeId: item.worktreeId,
       row: {
         ...rest,
-        ...(item.paneTitle === undefined ? {} : { title: item.paneTitle }),
+        ...(paneTitle ? { title: paneTitle } : {}),
+        ...(item.row.entryId === undefined ? {} : { titleSourceId: item.row.entryId }),
         ...(sessionWasIdentity ? { agentSource: "none" as const, agent: undefined } : {}),
       },
     };
@@ -442,8 +446,11 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     const alive = new Set<string>();
     for (const rows of Object.values(rowsByWorktreeId)) {
       for (const row of rows) {
-        if (row.entryId !== undefined) {
-          alive.add(row.entryId);
+        // A disowned row still reads this memo through `titleSourceId`; evicting on `entryId`
+        // alone would drop the entry out from under it on every rebuild.
+        const source = row.entryId ?? row.titleSourceId;
+        if (source !== undefined) {
+          alive.add(source);
         }
       }
     }
@@ -456,10 +463,16 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     for (const [worktreeId, rows] of Object.entries(rowsByWorktreeId)) {
       rowsByWorktreeId[worktreeId] = await Promise.all(
         rows.map(async (row) => {
-          if (row.entryId === undefined) {
+          const source = row.entryId ?? row.titleSourceId;
+          if (source === undefined) {
             return row;
           }
-          const title = await vaultTitle(row.entryId, read, now);
+          // A row that lost the contest takes the session's name only where it has none of its
+          // own: the session no longer names it, it merely supplies a name it would otherwise lack.
+          if (row.entryId === undefined && row.title !== undefined) {
+            return row;
+          }
+          const title = await vaultTitle(source, read, now);
           return title === undefined ? row : { ...row, title };
         }),
       );

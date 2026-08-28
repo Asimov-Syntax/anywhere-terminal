@@ -1072,6 +1072,28 @@ describe("two panes, one session", () => {
     expect(rows.map((r) => r.entryId)).toEqual([undefined, undefined]);
   });
 
+  // Losing the session is a finding about OWNERSHIP. The name was never contested, and a shell
+  // pane has no title of its own to fall back to, so discarding it rendered `(untitled)` for a
+  // row whose session had just been resolved.
+  it("still names a disowned row when the pane has no title of its own", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: undefined }), pane({ paneId: "b", title: undefined })]);
+    bothResolve(h, {});
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.map((r) => r.entryId)).toEqual([undefined, undefined]);
+    expect(rows.map((r) => r.title)).toEqual(["Adversarial review of Q3 options", "Adversarial review of Q3 options"]);
+  });
+
+  it("still prefers the pane's own title over the session it lost", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "zsh" }), pane({ paneId: "b", title: "npm run watch" })]);
+    bothResolve(h, {});
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.find((r) => r.paneId === "b")?.title).toBe("npm run watch");
+  });
+
   it("takes the agent away too when the session was the only thing naming it", async () => {
     // `agentSource: "registry"` means the row is an agent BECAUSE of the session
     // it just lost; a pane proven by its own process keeps what proved it.
