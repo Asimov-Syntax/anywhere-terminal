@@ -72,3 +72,25 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
 - Review still NOT closed and not to be read as approved: the round-4 fixes have had no reviewer
   verdict. Cycle 2 has rounds 5 and 6 available.
 
+### Cycle 2 round 5 — BLOCK, thrash stop, handback (state at compaction)
+
+- Round 5 verdict BLOCK: 2 blockers (B2, B12), 2 warnings (W4, W2), 0 suggestions. Fixed that
+  round: B13, B14, S2, S3, B2/I3, and the F1/I9 + F2/I5 addendum. Triage is in `.reviews/round-5.md`.
+- **Thrash stop declared**: I10 survived two designed fix attempts, and D1's scanner has failed in
+  five consecutive rounds through five different mechanisms.
+- **User decisions (explicit, this session):**
+  1. Thrash stop → **option 1**, hand back to `asimov-plan` for a designed fix.
+  2. **Narrow the blueprint acceptance clause** for WT-007.1 per the oracle's four explicit
+     guarantees — keep I2 and I10, cut the implicit claim that a machine proves each tagged
+     assertion necessarily fails for every possible violation of its English stimulus.
+  3. **W2 → fix**, not risk-accepted. No blocker in this change is risk-accepted.
+- An `asm-oracle` consultation was user-requested. Its full reasoning, both empirical probes, the
+  measured Program cost, the I2 composition recipe, the W4 `vi.resetModules()` trap, and the
+  peer-overlap analysis are written to `discovery.md` § "Round-5 handback" — they do not survive
+  the session otherwise.
+- **Handback is NOT yet executed.** No artifact has been revised and no fix code written since
+  `aa031e0`. Next agent: reopen Gate 2 (untick `Gate 2: plan approved`, `Review done`,
+  `Gate: implementation approved`), revise `docs/PLAN.md` WT-007.1 Acceptance, `design.md` D1
+  (vitest reporter), D10 (symbol acquisition + fail-closed + the "reachable" wording fix), D5 (I2
+  composition), then add tasks for W4 and W2. Cycle 2 has round 6 remaining.
+- Review remains NOT closed and NOT approved. Nothing in this session ticked any gate.
