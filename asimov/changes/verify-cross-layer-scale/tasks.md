@@ -207,7 +207,7 @@
     4. Red-demo before ticking: untag one covered invariant, confirm a non-zero exit, restore
     5. Declare the fixture deletion at `verify-task` — rounds 1-5 assert properties of a scanner that no longer exists
 
-- [ ] 8_2 Resolve the destructive symbol with the checker, in a standalone gate
+- [x] 8_2 Resolve the destructive symbol with the checker, in a standalone gate — verified: pnpm run gate:fs-deletion && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_1
   - **Refs**: design.md D10 (revised after round 5); discovery.md § "Round-5 handback" 2, 4
   - **Acceptance**:
@@ -217,7 +217,7 @@
   - **Plan**:
     1. Add src/test/invariants/fsDeletionGate.ts building one `ts.createProgram` from tsconfig.json, rejecting acquisition of a destructive `node:fs` symbol in `src/worktree/**` + src/providers/WorktreeHost.ts, and failing closed on non-literal member access
     2. Check in src/test/invariants/fixtures/fsDeletion/ with the six bypasses plus the two lexical shadows, asserted through the same Program so the gate proves it can see
-    3. Add the `gate:fs-deletion` script to package.json and record the measured wall-clock in workflow.md Notes
+    3. Add the `gate:fs-deletion` script to package.json and register it under asimov/project.md § Commands, so every future Verify Gate runs it
     4. Remove the `destructiveCalls` resolver and its cases from src/test/invariants/sourceBytes.test.ts, leaving the D7 byte scan
     5. Declare the move at `verify-task` — the same eight spellings are asserted, by the checker rather than by hand
 

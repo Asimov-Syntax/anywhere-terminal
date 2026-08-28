@@ -24,4 +24,5 @@ A VS Code extension that allows users to place terminal instances anywhere in th
 - **Lint**: `pnpm run lint` (Biome — lint + format + auto-fix)
 - **Format**: `pnpm run format` (Biome — auto-format)
 - **Test**: `pnpm run test:unit` (Vitest)
+- **I10 gate**: `pnpm run gate:fs-deletion` (TypeScript Program; ~1.6 s) — no direct filesystem deletion in the worktree removal path
 - **E2E**: N/A
