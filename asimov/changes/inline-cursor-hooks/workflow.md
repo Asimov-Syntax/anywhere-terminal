@@ -41,3 +41,4 @@ Fastlane re-approval: task 1_1 verifies the recorded command itself; final lint 
 Fastlane re-approval: task 3_1 RED proved closed stdout raises SIGPIPE before drain; D1 now ignores PIPE before neutral output, and task 3_1 owns the resulting source-literal update.
 Fastlane re-approval: real Cursor grammar admission rejected shell pattern-removal expansion, not command length; D1 now uses the executed POSIX awk validator, and task 3_3 owns source/test convergence before the final real-agent spike.
 Fastlane re-approval: the reproducible real-agent harness is `.mjs`, avoiding tsc rootDir inclusion while Bun still imports the TypeScript literal.
+Fastlane re-approval: the real spike proved Cursor sources BASH_ENV before D1; the privacy spec now matches D2’s enforceable boundary—AnyWhere Terminal-controlled execution after command entry—while loopback/proxy/curl obligations remain absolute.

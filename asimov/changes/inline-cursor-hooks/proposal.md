@@ -25,6 +25,7 @@ M (≤3d)
 - Owner, lease, destination pointer, relocation, or shape-based residue inference.
 - A Windows inline command before it can be executed on a real Windows host.
 - Preserving Cursor hook observability on Windows during the removal-only interval.
+- Arbitrary startup or loader code executed by Cursor before the managed command (`BASH_ENV`, `ENV`, `LD_PRELOAD`, `DYLD_*`).
 
 ## Risk Level
 

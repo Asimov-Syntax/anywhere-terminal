@@ -66,7 +66,7 @@
     3. Drive neutral output, semantic JSON delivery, numeric authority and token validation, PATH, function, and xtrace hardening, failed-lookup drain, timeout, proxy environment, curl startup, trailing-LF, and stdout-closure branches in src/cursor/CursorHookInstaller.test.ts.
     4. Keep controls in src/cursor/CursorHookInstaller.test.ts proving function and PATH hijack, xtrace disclosure, authority escape, proxy disclosure, curlrc disclosure, and EPIPE without each mitigation.
 
-- [ ] 3_3 Replace Cursor-rejected shell parsing with trusted URL validation
+- [x] 3_3 Replace Cursor-rejected shell parsing with trusted URL validation — verified: bun test 'src/cursor/CursorHookInstaller.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy}; design.md D1, D2
   - **Acceptance**:
