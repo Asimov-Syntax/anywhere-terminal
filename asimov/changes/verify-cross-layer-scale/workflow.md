@@ -177,3 +177,33 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
 - Fixtures: 12 flag- (all rejected) and 5 pass- (none rejected), from 7 and 2 at round 5.
 - Verify Gate: check-types clean, 234 files / 4733 tests, gate exit 0 in 1.48 s, bench 0.1 ms /
   32.4 ms, lint identical to the main baseline (13 warnings + 1 info), verify-status exit 0.
+
+### Cycle 4 round 9 — REJECT, second thrash stop on I10, claim narrowed
+
+- Round 8 returned SUPERSEDED with no verdict: I sent a mechanism change into a verification round
+  after telling the round-6 chair that exactly this closes a cycle. A round was spent on my error.
+- Round 9 (discovery): 3 BLOCK, 2 WARN, 1 SUGGEST. All accepted; W8's second clause rebutted with a
+  measurement — skipping every node under a type ancestor still catches all 12 `flag-` fixtures, so
+  the reported visibility count was not inflated by type annotations.
+- **B17 settles the argument.** TypeScript's type identity is structural, so a destructive fs
+  function passed through a structurally-compatible local type no longer resolves to
+  `@types/node/fs`. No type-based rule can be sound. Soundness needs reaching-definitions value
+  flow — a static analyzer, not a verification task.
+- Thrash stop: I10 survived three fix attempts across four mechanisms. Handback taken under
+  fastlane, and the TARGET is inverted — every previous handback tried to make the rule stronger,
+  which produced defects in the false-positive direction (W7, then W9). This one makes the CLAIM
+  weaker and asserts the gaps instead of denying them.
+- Not risk-accepted: only the user grants that, and it has not been granted.
+- Gate 2 re-earned under fastlane. One task, 11_1: the rule shrinks, and its gaps become `gap-`
+  fixtures the gate asserts rather than prose nobody checks.
+- 11_1 built. The erased-type branch, the provenance walk and the shared cycle state are deleted —
+  they existed only to support the withdrawn soundness claim, and they are what produced W7, W9 and
+  S10. Scanning is restricted to executable positions (W8). Fixtures: 10 `flag-` caught, 5 `pass-`
+  clean, 4 `gap-` asserted to stay open.
+- Writing the gap fixtures caught an error in my own evidence: the first `gap-call-produced.ts` was
+  REJECTED, because `return fs.promises.rm` inside the same file is itself a reference. The gap is
+  real only when the producer lives outside the scanned scope, so the factory moved to an unasserted
+  helper. A gap fixture that passes for the wrong reason would have documented a limit that is not
+  the limit.
+- Verify Gate: check-types clean, 234 files / 4733 tests, gate exit 0 in 1.35 s, bench 0.1 ms /
+  26.9 ms, lint identical to the main baseline, verify-status exit 0.

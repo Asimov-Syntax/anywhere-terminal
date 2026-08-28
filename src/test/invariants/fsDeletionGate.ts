@@ -68,99 +68,43 @@ function isDestructiveFsType(type: tsmod.Type): boolean {
   });
 }
 
-/** Whether this type carries `node:fs` deletion members — an fs module object, or an alias of one. */
-function isFsBearingType(type: tsmod.Type): boolean {
-  return constituents(type).some((part) =>
-    [...DESTRUCTIVE].some((name) => {
-      const property = part.getProperty(name);
-      const declarations = property?.getDeclarations() ?? [];
-      return declarations.some((d) => d.getSourceFile().fileName.includes("@types/node/fs"));
-    }),
-  );
-}
-
-/** `any` and `unknown` erase the symbol, so nothing below them can be resolved — or trusted. */
-function isErased(type: tsmod.Type): boolean {
-  return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-}
-
-/** Look through casts and parentheses for the expression the checker can still type. */
-function typedSource(expression: tsmod.Expression): tsmod.Expression {
-  let node: tsmod.Expression = expression;
-  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
-    node = node.expression;
+/** Whether this node sits in a type position, where nothing executes. */
+function isTypePosition(node: tsmod.Node): boolean {
+  for (let n: tsmod.Node | undefined = node.parent; n !== undefined; n = n.parent) {
+    if (ts.isTypeNode(n) || ts.isTypeQueryNode(n) || ts.isImportTypeNode(n)) {
+      return true;
+    }
   }
-  return node;
+  return false;
 }
 
 /**
- * Every reference in `file` that names a destructive `node:fs` function.
+ * Every executable reference in `file` that names a destructive `node:fs` function.
  *
- * Rounds 4-7 each enumerated BINDING forms — import, property access, element access, binding
- * element, destructuring assignment, nested destructuring assignment — and each round found
- * another one, because that set is open-ended. The set of REFERENCE forms is not: a value is used
- * by naming it, or by selecting a member of something. So the question is asked once, at the use,
- * and the checker answers it whatever syntax bound the name.
+ * A tripwire, and only a tripwire. Four mechanisms have been defeated here, and round 9 settled
+ * why the fourth is different: TypeScript's type identity is STRUCTURAL, so an fs function reached
+ * through a structurally-compatible local type no longer resolves to `@types/node/fs`. Deciding
+ * that soundly needs value-flow analysis, which this is not and does not claim to be.
+ *
+ * What it catches is a contributor reaching for `fs.rmSync(dir)` because it is convenient — the
+ * way this invariant will actually be broken. What it does not catch is written down in D10 AND
+ * asserted by the `gap-` fixtures, so a stated limit fails the moment it stops being true.
  */
 function scan(file: tsmod.SourceFile, checker: tsmod.TypeChecker): Finding[] {
   const found: Finding[] = [];
   const rel = relativeTo(file.fileName);
-  const report = (node: tsmod.Node, why: string): void => {
-    found.push({
-      file: rel,
-      line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
-      text: node.getText(file).split("\n")[0].slice(0, 80),
-      why,
-    });
-  };
-
-  /**
-   * An erased type cannot be resolved, so it is judged by where it CAME FROM.
-   *
-   * Round-7 W7: the previous rule rejected any destructive-looking member on an erased owner, so
-   * an unrelated `cache.rm(key)` was reported as filesystem deletion. Provenance is what separates
-   * `(fs.promises as any).rm` — rejected, its chain is fs — from a cache that never touched fs.
-   */
-  const seen = new Set<tsmod.Node>();
-  const fromFs = (expression: tsmod.Expression): boolean => {
-    const node = typedSource(expression);
-    if (seen.has(node)) {
-      return false;
-    }
-    seen.add(node);
-    const type = checker.getTypeAtLocation(node);
-    if (isFsBearingType(type) || isDestructiveFsType(type)) {
-      return true;
-    }
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      return fromFs(node.expression);
-    }
-    // `const anyFs: any = fs.promises` erases the provenance at the DECLARATION, so the one hop
-    // that recovers it is to what the name was initialised from. A parameter has no initializer,
-    // which is why an unrelated erased argument stays a pass (W7).
-    if (ts.isIdentifier(node)) {
-      const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
-      if (declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined) {
-        return fromFs(declaration.initializer);
-      }
-    }
-    return false;
-  };
 
   const visit = (node: tsmod.Node): void => {
     if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      // Skip the name half of a member access: it is resolved with its owner, not on its own.
+      // The name half of a member access is resolved with its owner, not on its own.
       const isMemberName = ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
-      if (!isMemberName) {
-        if (isDestructiveFsType(checker.getTypeAtLocation(node))) {
-          report(node, "names a destructive fs function");
-        } else if (
-          (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
-          isErased(checker.getTypeAtLocation(node)) &&
-          fromFs(node.expression)
-        ) {
-          report(node, "selects a member of an fs module through a type the checker cannot resolve");
-        }
+      if (!isMemberName && !isTypePosition(node) && isDestructiveFsType(checker.getTypeAtLocation(node))) {
+        found.push({
+          file: rel,
+          line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+          text: node.getText(file).split("\n")[0].slice(0, 80),
+          why: "names a destructive fs function",
+        });
       }
     }
     ts.forEachChild(node, visit);
@@ -184,6 +128,7 @@ function main(): void {
   const offenders: Finding[] = [];
   const missed: string[] = [];
   const falsePositives: Finding[] = [];
+  const closed: string[] = [];
   let proven = 0;
 
   for (const file of sources) {
@@ -209,6 +154,13 @@ function main(): void {
     if (name.startsWith("pass-")) {
       falsePositives.push(...hits);
     }
+    // A `gap-` case is a limit D10 states out loud. Asserting it is what makes the limit a fact
+    // rather than prose — the "reachable from the removal path" overclaim survived five rounds
+    // precisely because nothing checked it. A gap that closes is good news that must be recorded,
+    // not absorbed silently, so it fails here until the fixture is reclassified.
+    if (name.startsWith("gap-") && hits.length > 0) {
+      closed.push(rel);
+    }
   }
 
   const lines: string[] = [];
@@ -221,6 +173,9 @@ function main(): void {
   for (const f of falsePositives) {
     lines.push(`  ${f.file}:${f.line} is a pass- fixture the rule fired on — ${f.why}`);
   }
+  for (const rel of closed) {
+    lines.push(`  ${rel} is a gap- fixture the rule NOW catches — the stated limit closed, reclassify it as flag-`);
+  }
 
   if (lines.length > 0) {
     console.error("[I10] direct filesystem deletion in the worktree removal path:");
@@ -228,11 +183,15 @@ function main(): void {
     process.exit(1);
   }
   const scoped = sources.filter((f) => isRemovalPath(relativeTo(f.fileName))).length;
+  const closedCount = sources.filter((f) => path.basename(relativeTo(f.fileName)).startsWith("gap-")).length;
   if (scoped === 0 || proven === 0) {
     console.error(`[I10] vacuous — ${scoped} modules in scope, ${proven} spellings proven visible`);
     process.exit(1);
   }
-  console.log(`[I10] ok — ${scoped} modules delegate removal to git; ${proven} bypass spellings proven visible`);
+  console.log(
+    `[I10] ok — ${scoped} modules delegate removal to git; ${proven} spellings caught, ` +
+      `${closedCount} stated gaps still open`,
+  );
 }
 
 main();

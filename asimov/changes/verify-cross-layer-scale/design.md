@@ -189,6 +189,39 @@ acquires `fs.promises.rm` and never uses it deletes nothing, and any in-scope us
 it is written. A caller outside the scope is outside the scope by construction — the same stated
 boundary the wording above already carries.
 
+**Revised after review round 9 — the defect was the claim, not the mechanism.** Four mechanisms
+have now been defeated: a regex, an AST binding walk, the checker over acquisition shapes, and the
+checker over reference types. The first three failures were incomplete enumerations and were mine.
+The fourth is not that kind. TypeScript's type identity is **structural**, so `fs` passed to a
+parameter typed `{ rmSync(path: string): void }` resolves that member to the local declaration and
+not to `@types/node/fs`. The language does not preserve where a function came from, so no
+type-based rule can decide "this value is `fs.rm`". Deciding it soundly needs reaching-definitions
+value-flow analysis — a static analyzer, and out of proportion to this task.
+
+Each round widened the rule chasing that soundness, and the widening produced its own defects in
+the opposite direction: round 7's W7 and round 9's W9 both reject valid code. A rule wrong in both
+directions is the one this file's own comment says gets switched off within a week.
+
+So D10 SHALL stop asserting a property it cannot hold. I10 is closed by two things, each claiming
+only what it proves:
+
+1. **Behaviour** — the real-git integration tests prove removal is delegated to `git worktree
+   remove`, including the nested and already-deleted cases (`worktreeMutations.integration.test.ts`).
+2. **A regression tripwire** — no module in the enumerated scope may reference a destructive
+   `node:fs` member, judged by type at executable positions. It exists to catch a contributor
+   reaching for `fs.rmSync(dir)` because it is convenient, which is the way this invariant will
+   actually be broken.
+
+**The tripwire does not fail closed, and says so.** Round 6's fail-closed handling of erased types
+is DELETED along with the provenance walk it required — it was invented to support a soundness
+claim that is now withdrawn, and it is what produced W7, W9 and S10. The rule gets smaller.
+
+**The gaps are asserted, not merely written down.** Alongside `flag-` and `pass-`, the fixture
+directory gains `gap-` cases: spellings the tripwire knowingly does not catch — a value produced by
+a call, an `as any` cast, an erased alias, a structurally-typed parameter. Each is asserted to
+produce NO finding. A stated limit that nothing checks is how D10's "reachable from the removal
+path" overclaim survived five rounds; a limit that fails when it stops being true is a fact.
+
 ### D2: Count in the suite; time in a bench
 
 Per-rebuild **cost** budgets SHALL be asserted as exact equality in the unit suite. The two

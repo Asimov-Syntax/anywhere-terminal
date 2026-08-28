@@ -282,3 +282,16 @@
     1. Replace the acquisition visitor in src/test/invariants/fsDeletionGate.ts with a reference rule over identifiers and member accesses, resolving union constituents
     2. Judge an erased callee by the nearest typed sub-expression under casts and parentheses, not by the member name
     3. Add nested-assignment, unrelated-`any`-member and unrelated-`any`-index fixtures to src/test/invariants/fixtures/fsDeletion/
+
+- [x] 11_1 Make the tripwire small, and assert the gaps it leaves — verified: pnpm run gate:fs-deletion && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 10_1
+  - **Refs**: .reviews/round-9.md; design.md D10 (revised after round 9)
+  - **Acceptance**:
+    - Outcome: Every gap- fixture passes the gate and every flag- fixture still fails it
+    - Verify: command pnpm run gate:fs-deletion
+  - **Boundary**: no provenance walking and no erased-type handling; the rule claims only what it enforces
+  - **Plan**:
+    1. Delete the erased-type branch, `fromFs`, and the shared cycle state from src/test/invariants/fsDeletionGate.ts, leaving the reference-type rule
+    2. W8: restrict scanning to executable positions, skipping nodes under a type ancestor
+    3. Add a `gap-` fixture class asserted to produce no finding, and move the erased cases into it in src/test/invariants/fixtures/fsDeletion/
+    4. Add gap fixtures for a call-produced value and a structurally-typed parameter (round-9 B16, B17)
