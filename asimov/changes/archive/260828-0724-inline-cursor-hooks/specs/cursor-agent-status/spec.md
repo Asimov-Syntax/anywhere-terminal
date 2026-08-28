@@ -21,6 +21,10 @@ On Windows, enabling or disabling Cursor hook observation SHALL remove exact rel
 
 A failed or partial cleanup SHALL report its underlying reason and every unresolved path rather than only reporting platform support.
 
+### Requirement: Cursor pre-command execution boundary
+
+The payload-privacy guarantee SHALL begin when managed-command execution starts. Code that Cursor's selected shell or process loader executes beforehand is outside the guarantee because it already has equivalent process and stdin authority.
+
 ## MODIFIED Requirements
 
 ### Requirement: Cursor hook configuration ownership
@@ -49,10 +53,6 @@ A failed lookup for a required utility MUST NOT fall back to the inherited execu
 AnyWhere Terminal-controlled hook runtime and command code SHALL NOT persist, log, transmit off-device, or expose to the webview hook prompts, shell output, user identity, raw request bodies, or content not required for status.
 
 The managed command MUST validate the extension's complete loopback authority and path shape, restrict requests to HTTP, bypass all proxy environment variables, and disable ambient curl configuration before transmitting the request.
-
-### Requirement: Cursor pre-command execution boundary
-
-The payload-privacy guarantee SHALL begin when managed-command execution starts. Code that Cursor's selected shell or process loader executes beforehand is outside the guarantee because it already has equivalent process and stdin authority.
 
 #### Scenario: Host configures a proxy or curl startup file
 

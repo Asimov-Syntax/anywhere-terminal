@@ -104,10 +104,10 @@
   - **Deps**: 3_2, 4_1
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-hook-configuration-ownership, cursor-hook-writer-coordination, cursor-legacy-command-ownership, cursor-legacy-wrapper-migration, windows-cursor-hook-removal-only}; design.md D3, D4, D5, D6, D8; .reviews/round-1.md#{b1,b2}
   - **Acceptance**:
-    - Outcome: Cleanup never deletes a wrapper retained by preserved configuration, and every final lock-release failure reports the exact lock residue without erasing committed state.
+    - Outcome: Cleanup reports exact unresolved paths.
     - Verify: unit src/cursor/CursorHookInstaller.test.ts
   - **Plan**:
     1. Retain exact legacy-reference knowledge through reconciliation in src/cursor/CursorHookInstaller.ts and skip wrapper unlink when any preserved event still references it.
     2. Make src/cursor/CursorHookInstaller.ts preserve work booleans while mapping a final lock unlink failure to an explicit reason and exact unresolved lock path.
-    3. Add POSIX and Windows install/uninstall regressions for custom-event wrapper references and final lock-unlink failure in src/cursor/CursorHookInstaller.test.ts.
+    3. Add POSIX and Windows installation and removal regressions for custom-event wrapper references and final lock-unlink failure in src/cursor/CursorHookInstaller.test.ts.
     4. Confirm partial-install warnings and incomplete-removal authority behavior in src/cursor/CursorHookController.ts and src/cursor/CursorHookController.test.ts.

@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -42,3 +42,4 @@ Fastlane re-approval: task 3_1 RED proved closed stdout raises SIGPIPE before dr
 Fastlane re-approval: real Cursor grammar admission rejected shell pattern-removal expansion, not command length; D1 now uses the executed POSIX awk validator, and task 3_3 owns source/test convergence before the final real-agent spike.
 Fastlane re-approval: the reproducible real-agent harness is `.mjs`, avoiding tsc rootDir inclusion while Bun still imports the TypeScript literal.
 Fastlane re-approval: the real spike proved Cursor sources BASH_ENV before D1; the privacy spec now matches D2’s enforceable boundary—AnyWhere Terminal-controlled execution after command entry—while loopback/proxy/curl obligations remain absolute.
+Fastlane artifact correction: apply proved the new pre-command boundary had been misclassified as MODIFIED; moved unchanged requirement text to ADDED and revalidated without implementation impact.
