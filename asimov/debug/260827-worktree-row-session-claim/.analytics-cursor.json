@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "cursors": {
+    "claude:64962976-fbe9-4031-86fc-49b37fb5ff64": {
+      "main": {
+        "position": "3385998",
+        "fingerprint": "msg_011CeSxAzNE2RNoFx9K1Ak2U",
+        "lastRecordId": "msg_011CeTAM79hCUrKNYtPG5KoY"
+      }
+    }
+  },
+  "stamps": {
+    "claude:64962976-fbe9-4031-86fc-49b37fb5ff64": "24d0371473d3ec14a9a9c55d3aa97e484db4b8a0"
+  }
+}

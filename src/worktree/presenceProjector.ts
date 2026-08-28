@@ -17,6 +17,7 @@
 import path from "node:path";
 import type { AgentTurnReport, AgentTurnSubagent } from "../agentHooks/AgentHookRuntime";
 import { type PaneEvidence, TURN_FRESHNESS_MS } from "../session/PaneEvidenceStore";
+import { type ClaudeSessionEvidence, EVIDENCE_RANK } from "../session/resolveClaudeSession";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import { isPathInside, normalizePathForCompare } from "../utils/pathBoundary";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
@@ -49,6 +50,8 @@ export interface ResolutionSnapshot {
    * rows cost no additional scan (design.md D2).
    */
   sessions(): Promise<RunningSessionsOutcome>;
+  /** Newest vault entry for a proven agent under this cwd, once per rebuild. */
+  sessionUnderCwd?(agent: VaultAgentId, cwd: string): Promise<string | undefined>;
 }
 
 /**
@@ -153,6 +156,8 @@ export interface PresenceProjectorDeps {
    * conclusive: nothing is created for a session the store does not know.
    */
   resolveReportedSession?(sessionId: string): Promise<ReportedSessionEntry | null>;
+  /** A standing terminal-bound identity report, such as OpenCode's. */
+  reportedSession?(paneId: string): { agent: VaultAgentId; entryId: string } | undefined;
   now?(): number;
 }
 
@@ -210,6 +215,10 @@ interface ProvenIdentity {
   entryId?: string;
   /** The session's own published name, when the registry carried one. */
   name?: string;
+  /** Strength of the session-to-pane match, used only to settle contention. */
+  evidence?: ClaudeSessionEvidence;
+  /** Standing reports disappear on revoke; turn reports retain validated identity. */
+  reportLifetime?: "standing" | "retained";
 }
 
 /**
@@ -241,6 +250,68 @@ interface PaneState {
  * and no other CLI publishes a registry to read.
  */
 const REGISTRY_AGENT: VaultAgentId = "claude";
+
+interface ProducedRow {
+  worktreeId: string;
+  row: WorktreeAgentRow;
+  evidence?: ClaudeSessionEvidence;
+  paneTitle?: string;
+}
+
+function rankOf(evidence: ClaudeSessionEvidence | undefined): number {
+  return evidence === undefined ? -1 : EVIDENCE_RANK[evidence];
+}
+
+/** Give a contested session to one strictly strongest claimant, never a tie. */
+function settleContestedSessions(produced: readonly ProducedRow[]): readonly ProducedRow[] {
+  const byEntryId = new Map<string, ProducedRow[]>();
+  for (const item of produced) {
+    const entryId = item.row.entryId;
+    if (entryId !== undefined) {
+      const sharing = byEntryId.get(entryId);
+      if (sharing) {
+        sharing.push(item);
+      } else {
+        byEntryId.set(entryId, [item]);
+      }
+    }
+  }
+
+  const disowned = new Set<WorktreeAgentRow>();
+  for (const sharing of byEntryId.values()) {
+    if (sharing.length < 2) {
+      continue;
+    }
+    const best = Math.max(...sharing.map((item) => rankOf(item.evidence)));
+    const strongest = sharing.filter((item) => rankOf(item.evidence) === best);
+    for (const item of sharing) {
+      if (strongest.length !== 1 || item !== strongest[0]) {
+        disowned.add(item.row);
+      }
+    }
+  }
+
+  if (disowned.size === 0) {
+    return produced;
+  }
+  return produced.map((item) => {
+    if (!disowned.has(item.row)) {
+      return item;
+    }
+    const { entryId: _entryId, title: _title, ...rest } = item.row;
+    const sessionWasIdentity = item.row.agentSource === "registry";
+    return {
+      worktreeId: item.worktreeId,
+      row: {
+        ...rest,
+        ...(item.paneTitle === undefined ? {} : { title: item.paneTitle }),
+        ...(sessionWasIdentity ? { agentSource: "none" as const, agent: undefined } : {}),
+      },
+    };
+  });
+}
+
+const TITLE_REFRESH_MS = 60_000;
 
 /** The one owner of an external row's identity: row creation and eviction share it. */
 function externalRowId(sessionId: string): string {
@@ -284,6 +355,11 @@ function startsNewEpoch(previous: ProvenIdentity | undefined, next: ProvenIdenti
     return true;
   }
   if (previous?.entryId !== undefined && next?.entryId !== undefined) {
+    // A first report correcting a directory guess describes the same pane
+    // epoch. Two reports naming different sessions are a genuine handover.
+    if (next.evidence === "reported" && previous.evidence !== "reported") {
+      return false;
+    }
     return previous.entryId !== next.entryId;
   }
   return false;
@@ -336,34 +412,33 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       }
     | undefined;
 
-  /**
-   * One vault title read per session, for the life of the window.
-   *
-   * The promise is memoized, not its value: a second pass joins the first read
-   * rather than starting its own, and a read that resolved to `undefined` is
-   * still an answer — re-asking every pass would open a transcript every five
-   * seconds for a session the vault genuinely cannot title. The cost of that is
-   * a rename made after the first read not reaching the row until the window
-   * reopens, which is the trade a registry-named row never has to make.
-   */
-  const vaultTitles = new Map<string, Promise<string | undefined>>();
+  /** One vault title read per session, per refresh window. */
+  const vaultTitles = new Map<string, { at: number; title: Promise<string | undefined> }>();
 
   function clock(): number {
     return deps.now?.() ?? Date.now();
   }
 
-  /**
-   * Fill in a title for every row the registry left unnamed, from the vault.
-   *
-   * Rows are REPLACED rather than written through: a replayed window row is the
-   * retained pass's own object, and titling it in place would edit what the next
-   * replay hands back.
-   */
-  async function titleFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>): Promise<void> {
+  function vaultTitle(entryId: string, read: (id: string) => Promise<string | undefined>, now: number) {
+    const cached = vaultTitles.get(entryId);
+    if (cached && now - cached.at < TITLE_REFRESH_MS) {
+      return cached.title;
+    }
+    const previous = cached?.title;
+    const title = read(entryId)
+      .catch(() => undefined)
+      .then(async (next) => next ?? (previous === undefined ? undefined : await previous));
+    vaultTitles.set(entryId, { at: now, title });
+    return title;
+  }
+
+  /** Prefer the vault's session title; registry and pane titles are fallbacks. */
+  async function titleFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>, now: number): Promise<void> {
     const read = deps.sessionTitle;
     if (!read) {
       return;
     }
+
     const alive = new Set<string>();
     for (const rows of Object.values(rowsByWorktreeId)) {
       for (const row of rows) {
@@ -377,16 +452,14 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         vaultTitles.delete(entryId);
       }
     }
+
     for (const [worktreeId, rows] of Object.entries(rowsByWorktreeId)) {
       rowsByWorktreeId[worktreeId] = await Promise.all(
         rows.map(async (row) => {
-          const entryId = row.entryId;
-          if (row.title !== undefined || entryId === undefined) {
+          if (row.entryId === undefined) {
             return row;
           }
-          const pending = vaultTitles.get(entryId) ?? read(entryId).catch(() => undefined);
-          vaultTitles.set(entryId, pending);
-          const title = await pending;
+          const title = await vaultTitle(row.entryId, read, now);
           return title === undefined ? row : { ...row, title };
         }),
       );
@@ -409,6 +482,39 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     snapshot: ResolutionSnapshot,
     failures: Map<PresenceDegradation["source"], string>,
   ): Promise<ProvenIdentity | undefined> {
+    // Standing reports are checked before the cache: they can arrive or change
+    // while the pane's pid and cwd remain fixed.
+    const claim = deps.reportedSession?.(pane.paneId);
+    if (claim !== undefined) {
+      if (
+        state.proven?.reportLifetime === "standing" &&
+        state.proven.agent === claim.agent &&
+        state.proven.entryId === claim.entryId
+      ) {
+        return state.proven;
+      }
+      state.proven = {
+        agent: claim.agent,
+        source: "report",
+        entryId: claim.entryId,
+        evidence: "reported",
+        reportLifetime: "standing",
+      };
+      state.provenPtyPid = pane.ptyPid;
+      state.provenCwd = pane.cwd;
+      return state.proven;
+    }
+    if (state.proven?.reportLifetime === "standing") {
+      state.proven = undefined;
+    }
+
+    // Claude's turn report has a different lifetime: after its activity ages
+    // out, the validated ID/path pair remains identity evidence.
+    const retainedReport = await reportedIdentity(pane);
+    if (retainedReport !== undefined) {
+      return retainedReport;
+    }
+
     if (state.proven && state.provenPtyPid === pane.ptyPid && state.provenCwd === pane.cwd) {
       return state.proven;
     }
@@ -422,23 +528,30 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     });
 
     if (outcome.kind === "proven") {
-      state.proven = { agent: outcome.agent, source: outcome.source, entryId: outcome.entryId, name: outcome.name };
+      const guessed =
+        outcome.entryId !== undefined || pane.cwd === undefined || outcome.agent === REGISTRY_AGENT
+          ? undefined
+          : await snapshot.sessionUnderCwd?.(outcome.agent, deps.normalize(pane.cwd));
+      const entryId = outcome.entryId ?? guessed;
+      state.proven = {
+        agent: outcome.agent,
+        source: outcome.source,
+        entryId,
+        name: outcome.name,
+        evidence: guessed !== undefined ? "directory" : outcome.evidence,
+      };
       state.provenPtyPid = pane.ptyPid;
       state.provenCwd = pane.cwd;
       return state.proven;
     }
 
     if (outcome.kind === "failed") {
-      // The read did not conclude, so it says nothing about this pane. The
-      // proven tuple is left where it was, which is what makes the next
-      // rebuild retry rather than reuse (D10).
       if (!failures.has(outcome.source)) {
         failures.set(outcome.source, outcome.reason);
       }
       return state.proven;
     }
 
-    // Conclusively nothing: the agent really did exit, so the row clears.
     state.proven = undefined;
     state.provenPtyPid = pane.ptyPid;
     state.provenCwd = pane.cwd;
@@ -492,7 +605,13 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     if (report?.transcriptPath !== undefined && !sameTranscript(report.transcriptPath, entry.transcriptPath)) {
       return undefined;
     }
-    return { agent: entry.agent, source: "hook", entryId: entry.entryId };
+    return {
+      agent: entry.agent,
+      source: "report",
+      entryId: entry.entryId,
+      evidence: "reported",
+      reportLifetime: "retained",
+    };
   }
 
   function freshTurn(pane: Pane, now: number): AgentTurnReport | undefined {
@@ -658,6 +777,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     // The external pass drops these: a session claimed by a pane is that pane's
     // row, never a second one labelled "other window" (D3).
     const claimed = new Set<string>();
+    const produced: ProducedRow[] = [];
 
     for (const pane of panes) {
       let state = states.get(pane.paneId);
@@ -676,7 +796,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // would spend a process-table read on a row the report already decided,
       // and would record that read's degradation against a row it did not
       // choose (.reviews/round-1.md W5).
-      const identity = (await reportedIdentity(pane)) ?? (await identify(pane, state, snapshot, failures));
+      const identity = await identify(pane, state, snapshot, failures);
       if (identity?.entryId !== undefined) {
         claimed.add(identity.entryId);
       }
@@ -714,11 +834,15 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         lastActivityAt: state.lastActivityAt,
       };
 
-      (rowsByWorktreeId[worktreeId] ??= []).push(row);
+      produced.push({ worktreeId, row, evidence: identity?.evidence, paneTitle: pane.title });
       const at = state.lastActivityAt;
       if (at !== undefined) {
         nextRanks.set(worktreeId, Math.max(nextRanks.get(worktreeId) ?? 0, at));
       }
+    }
+
+    for (const { worktreeId, row } of settleContestedSessions(produced)) {
+      (rowsByWorktreeId[worktreeId] ??= []).push(row);
     }
 
     lastWindowPass = {
@@ -815,7 +939,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         }
       }
 
-      await titleFromVault(rowsByWorktreeId);
+      await titleFromVault(rowsByWorktreeId, now);
 
       // A source that answered this rebuild clears its entry; one still failing
       // keeps the epoch of the FIRST failure in the run, so the affordance can

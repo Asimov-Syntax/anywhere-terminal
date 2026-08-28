@@ -27,6 +27,7 @@ import {
   CURSOR_HOOK_QUIET_WINDOW_MS,
   cursorAgentRegistration,
 } from "./agents/cursor";
+import { OPENCODE_HOOK_ENV_VAR, opencodeAgentRegistration } from "./agents/opencode";
 
 const runtimes: Array<{ dispose(): void }> = [];
 
@@ -170,6 +171,31 @@ describe("AgentHookRuntime", () => {
     expect(base as string).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/session-1\/[0-9a-f]+$/);
     const response = await postRaw(`${base}/cursor`, eventBody("beforeSubmitPrompt"));
     expect(response.status).toBe(204);
+  });
+
+  it("binds an OpenCode report to the terminal credential and clears it on revoke", async () => {
+    const { runtime, status } = await fixture({ extraAgents: [opencodeAgentRegistration()] });
+    runtime.setAgentEnabled("opencode", true);
+    const base = runtime.create("terminal-1")[OPENCODE_HOOK_ENV_VAR];
+
+    await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc" }));
+    expect(status.at(-1)).toEqual({ sessionId: "terminal-1", agent: "opencode", state: "ses_abc" });
+
+    runtime.setAgentEnabled("opencode", false);
+    expect(status.at(-1)).toEqual({ sessionId: "terminal-1", agent: "opencode", state: null });
+  });
+
+  it("rejects an OpenCode report after credential release without changing identity", async () => {
+    const { runtime, status, reasons } = await fixture({ extraAgents: [opencodeAgentRegistration()] });
+    runtime.setAgentEnabled("opencode", true);
+    const base = runtime.create("terminal-1")[OPENCODE_HOOK_ENV_VAR];
+    runtime.release("terminal-1");
+    status.length = 0;
+
+    await postRaw(`${base}/opencode`, JSON.stringify({ sessionID: "ses_abc" }));
+
+    expect(status).toEqual([]);
+    expect(reasons.map((entry) => entry.reason)).toContain("unknown-session");
   });
 
   it("mints no coordinates for a registered but disabled agent", async () => {

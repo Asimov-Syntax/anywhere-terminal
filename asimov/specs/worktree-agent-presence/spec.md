@@ -24,9 +24,9 @@ worktree contains, SHALL produce no row. A pane SHALL NOT appear under more than
 
 ### Requirement: Claim agent identity only from evidence that proves it
 
-Every agent row SHALL carry the source that proved its identity, resolved in the precedence launch
-record, then live session registry, then process recognition, then a committed title. A row SHALL
-report `none` and claim no agent when no source proved one.
+Every agent row SHALL carry the source that proved its identity, resolved in the precedence a report
+from the agent itself, then launch record, then live session registry, then process recognition, then
+a committed title. A row SHALL report `none` and claim no agent when no source proved one.
 
 #### Scenario: A pane no surface has reported
 
@@ -171,6 +171,24 @@ contains its recorded working directory.
 
 - **WHEN** the registry holds a live headless one-shot session whose working directory is inside a worktree
 - **THEN** no row is produced for it
+
+### Requirement: Name a resolved row from its session
+
+A row with a resolved session SHALL prefer the vault title describing what the session is about over
+a registry-derived name or terminal title. A proven agent with no PID registry MAY take the newest
+session recorded for that agent under the pane's directory. Title reads SHALL be bounded and SHALL
+refresh so a generated title or rename becomes visible; a failed refresh SHALL retain the previous
+successful title.
+
+#### Scenario: A registry name is a directory-derived slug
+
+- **WHEN** the vault titles a resolved session and the registry also publishes a derived name
+- **THEN** the row carries the vault title
+
+#### Scenario: An agent has no PID registry
+
+- **WHEN** a pane is independently proved to run an agent and the vault records that agent's newest session under its directory
+- **THEN** the row carries that session and its title
 
 ### Requirement: Scan for outside-this-window agents only while the view is shown
 
@@ -375,10 +393,11 @@ title shows a shell has reclaimed it SHALL report idle whatever it last reported
 
 ### Requirement: A reported session identity is a lookup key and a reported path is never opened
 
-WHERE an agent reports which session it is and where its transcript lives, presence SHALL use the
-reported session only to look up an entry that already exists, and SHALL NOT create one. A reported
-transcript path SHALL be used only when it matches the path already recorded for that session, and
-SHALL NOT be opened on the report's authority.
+WHERE an agent reports which session it is, presence SHALL treat the identifier as a lookup key and
+SHALL NOT create a vault entry. For a dialect that also reports a transcript path, the session SHALL
+identify the pane only after an existing entry resolves, and the reported path SHALL be used only
+when it matches the path already recorded for that session; it SHALL NOT be opened on the report's
+authority. An ID-only terminal-bound report MAY prove the pane before the vault can title the handle.
 
 #### Scenario: A reported session nothing knows about
 
@@ -389,6 +408,20 @@ SHALL NOT be opened on the report's authority.
 
 - **WHEN** a pane reports a transcript path different from the one stored for that session
 - **THEN** the reported path is discarded and nothing at it is read
+
+### Requirement: One session belongs to one pane
+
+When more than one pane resolves to the same session, the session SHALL be claimed by the pane whose
+evidence ranks strictly highest, and by no pane at all when the strongest evidence is shared. The
+rank SHALL be report, then process subtree, then directory match, then newest recorded session.
+
+A pane that loses a contested session SHALL fall back to its own reported title, and SHALL claim no
+agent when that session was the only source that proved one.
+
+#### Scenario: Two panes in one directory, one of them running the agent
+
+- **WHEN** a pane running an agent and a pane running a shell resolve to the same session by sharing a directory
+- **THEN** only the pane whose evidence proves the agent is in it carries that session
 
 ### Requirement: A pane that is gone leaves no report behind
 

@@ -8,6 +8,8 @@ import { AgentHookController } from "./agentHooks/AgentHookController";
 import { createAgentHookRuntime } from "./agentHooks/AgentHookRuntime";
 import { claudeAgentRegistration } from "./agentHooks/agents/claude";
 import { cursorAgentRegistration } from "./agentHooks/agents/cursor";
+import { opencodeAgentRegistration } from "./agentHooks/agents/opencode";
+import { withHookEnvironment } from "./agentHooks/hookEnvironment";
 import {
   AGENT_HOOK_SETTINGS,
   AGENT_HOOK_UNINSTALL_COMMAND,
@@ -15,6 +17,8 @@ import {
   summarizeAgentHookRemoval,
 } from "./agentHooks/install/agentHookLifecycle";
 import { ClaudeHookInstaller } from "./agentHooks/install/ClaudeHookInstaller";
+import { installOpenCodePlugin } from "./agentHooks/opencodeConfigDir";
+import { ReportedSessions } from "./agentHooks/reportedSessions";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
 import { CursorHookInstaller } from "./cursor/CursorHookInstaller";
 import { createWatcherPool } from "./providers/fsWatcherPool";
@@ -49,6 +53,7 @@ import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
+import { formatEntryId } from "./vault/types";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
@@ -339,7 +344,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Per-agent hook authority is granted only after the current destination
   // reconciles. Claude resolves its settings path inside every install/remove,
   // so a location change never reaches backward to an old destination.
-  const readAgentHookEnabled = (agent: "cursor" | "claude"): boolean =>
+  const readAgentHookEnabled = (agent: "cursor" | "claude" | "opencode"): boolean =>
     vscode.workspace.getConfiguration().get<boolean>(AGENT_HOOK_SETTINGS[agent].enabled) === true;
   const cursorInstaller = new CursorHookInstaller({
     configPath: path.join(os.homedir(), ".cursor", "hooks.json"),
@@ -357,17 +362,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           vscode.workspace.getConfiguration("anywhereTerminal").get<string>("agentHooks.claudeConfigDir"),
       }).uninstall(),
   };
+  const reportedSessions = new ReportedSessions();
+  let opencodeEnvironment: Record<string, string> = {};
+  const opencodeInstaller = {
+    install: async () => {
+      opencodeEnvironment = await installOpenCodePlugin({ storagePath: context.globalStorageUri.fsPath });
+      return { installed: true };
+    },
+    uninstall: async () => {
+      opencodeEnvironment = {};
+      reportedSessions.clear();
+      onPaneEvidenceChange?.();
+      return { removed: true };
+    },
+  };
   const agentHookController = new AgentHookController({
     agents: [
       { agent: "cursor", initialEnabled: readAgentHookEnabled("cursor"), installer: cursorInstaller },
       { agent: "claude", initialEnabled: readAgentHookEnabled("claude"), installer: claudeInstaller },
+      { agent: "opencode", initialEnabled: readAgentHookEnabled("opencode"), installer: opencodeInstaller },
     ],
     createRuntime: () =>
       createAgentHookRuntime(
-        [cursorAgentRegistration(), claudeAgentRegistration()],
+        [cursorAgentRegistration(), claudeAgentRegistration(), opencodeAgentRegistration()],
         {},
         {
           onStatus: (update) => {
+            if (update.agent === "opencode") {
+              if (typeof update.state === "string") {
+                reportedSessions.record({
+                  terminalId: update.sessionId,
+                  agent: "opencode",
+                  sessionId: update.state,
+                });
+              } else if (update.state === null) {
+                reportedSessions.release(update.sessionId);
+              }
+              // A report changes identity and title without changing pane facts.
+              onPaneEvidenceChange?.();
+              return;
+            }
             // A structured turn goes to the pane's evidence, which is what the
             // presence projection reads. It never reaches the webview status
             // contract below — that one carries Cursor's two words only.
@@ -375,16 +409,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               paneEvidence.reportTurn(update.sessionId, update.state);
               return;
             }
-            // A source that was revoked or disabled publishes null. Waiting out
-            // the freshness deadline would leave a row running on the authority
-            // of a source that has stopped reporting, so the turn is retired
-            // now — its identity survives (.reviews/round-1.md W6).
-            if (update.state === null && update.agent !== "cursor") {
+            // A revoked Claude source stops deciding activity immediately; its
+            // validated identity remains in PaneEvidenceStore.
+            if (update.state === null && update.agent === "claude") {
               paneEvidence.expireTurn(update.sessionId);
               return;
             }
-            // The webview status contract carries Cursor only; other agents
-            // reach the panel through the presence pipeline instead.
             if (update.agent !== "cursor") {
               return;
             }
@@ -409,7 +439,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           },
         },
       ),
-    setContributor: (contributor) => sessionManager.setAgentHookContributor(contributor),
+    setContributor: (contributor) =>
+      sessionManager.setAgentHookContributor(
+        contributor === undefined ? undefined : withHookEnvironment(contributor, () => opencodeEnvironment),
+      ),
     onWarning: (agent, operation, reason) => {
       if (operation === "runtime") {
         console.warn(
@@ -680,6 +713,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const entry = await vaultService.getEntry(entryId);
           return entry?.customName || entry?.title || undefined;
         },
+        reportedSession: (paneId) => {
+          const report = reportedSessions.get(paneId);
+          return report === undefined
+            ? undefined
+            : { agent: report.agent, entryId: formatEntryId(report.agent, report.sessionId) };
+        },
+        listSessions: async () => (await vaultService.list()).entries,
       }),
     ),
     onPaneChange: (listener) => {

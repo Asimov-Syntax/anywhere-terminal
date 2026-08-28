@@ -131,6 +131,12 @@
           "scope": "machine",
           "description": "Absolute path to the directory holding the Claude settings.json to install hooks into. A relative path is ignored. Leave empty to use CLAUDE_CONFIG_DIR, or ~/.claude when that is unset."
         },
+        "anywhereTerminal.opencode.hooks.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Let OpenCode report which session each terminal is running, so its worktree row is named. Reporting is fail-open, sends only the session id, and never touches your own OpenCode configuration."
+        },
         "anywhereTerminal.fileSearch.maxResults": {
           "type": "number",
           "default": 50,

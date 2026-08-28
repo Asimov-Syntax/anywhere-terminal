@@ -23,7 +23,7 @@ import {
   listRunningClaudeSessions,
   type RunningSessionsOutcome,
 } from "../vault/readers/runningSessions";
-import { formatEntryId } from "../vault/types";
+import { formatEntryId, type VaultAgentId, type VaultSessionEntry } from "../vault/types";
 import type { SessionLookup } from "./agentIdentity";
 import type { PresenceProjectorDeps, ReportedSessionEntry, ResolutionSnapshot } from "./presenceProjector";
 
@@ -36,8 +36,12 @@ export interface PresenceDepsOptions {
   sessionMtime?(sessionId: string): Promise<number | undefined>;
   /** Vault title for a session the registry did not name; see `PresenceProjectorDeps`. */
   sessionTitle?(entryId: string): Promise<string | undefined>;
-  /** Where the vault keeps a session, by id. Injected only so tests need no vault on disk. */
+  /** Where the vault keeps a Claude session, by id. */
   sessionPath?(sessionId: string): Promise<string | null>;
+  /** Every vault session, indexed once per rebuild for cwd fallbacks. */
+  listSessions?(): Promise<readonly VaultSessionEntry[]>;
+  /** A standing terminal-bound report, such as OpenCode's session id. */
+  reportedSession?(paneId: string): { agent: VaultAgentId; entryId: string } | undefined;
   now?(): number;
 }
 
@@ -71,6 +75,7 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
     normalize: (p) => path.resolve(p),
 
     ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),
+    ...(options.reportedSession ? { reportedSession: options.reportedSession } : {}),
 
     /**
      * Resolve by id, and only by id.
@@ -141,6 +146,26 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
       let reading: Promise<ProcessTableReading> | undefined;
       const processTable = () => (reading ??= table.open());
 
+      // The vault is a full multi-agent read, so every pane in this rebuild
+      // shares one lazily-built newest-session-per-agent-and-cwd index.
+      let sessionsRead: Promise<Map<string, string>> | undefined;
+      const newestUnderCwd = (): Promise<Map<string, string>> => {
+        sessionsRead ??= (async () => {
+          const newest = new Map<string, string>();
+          const modified = new Map<string, number>();
+          for (const entry of (await options.listSessions?.()) ?? []) {
+            const key = `${entry.agent}\u0000${path.resolve(entry.cwd)}`;
+            const previous = modified.get(key);
+            if (previous === undefined || entry.modified > previous) {
+              modified.set(key, entry.modified);
+              newest.set(key, entry.id);
+            }
+          }
+          return newest;
+        })();
+        return sessionsRead;
+      };
+
       // One resolve-and-stat per session id per rebuild, not per pane that
       // tie-breaks on it: `resolveClaudeSessionPath` scans every Claude project
       // directory, so the un-memoized cost is O(panes x sessions x dirs)
@@ -153,6 +178,14 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
       };
 
       return {
+        ...(options.listSessions
+          ? {
+              async sessionUnderCwd(agent: VaultAgentId, cwd: string): Promise<string | undefined> {
+                return (await newestUnderCwd()).get(`${agent}\u0000${cwd}`);
+              },
+            }
+          : {}),
+
         async sessions(): Promise<RunningSessionsOutcome> {
           const read = await registryRead;
           // `all()`, never `read.sessions`: the headless drop happens in the
@@ -203,6 +236,7 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
             kind: "resolved",
             agent: "claude",
             sessionId: session.sessionId,
+            evidence: session.evidence,
             ...(named !== undefined ? { name: named } : {}),
           };
         },

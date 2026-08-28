@@ -175,11 +175,14 @@ export function groupPresenceByActivity(rows: readonly WorktreeAgentRow[]): Pres
   return groups;
 }
 
-/** `agentSource` is authoritative for `launch` / `process` / `registry` only. */
+/** `agentSource` is authoritative for `launch` / `process` / `registry` / `report` only. */
 export function hasProvenIdentity(row: WorktreeAgentRow): boolean {
   return (
     row.agent !== undefined &&
-    (row.agentSource === "launch" || row.agentSource === "process" || row.agentSource === "registry")
+    (row.agentSource === "launch" ||
+      row.agentSource === "process" ||
+      row.agentSource === "registry" ||
+      row.agentSource === "report")
   );
 }
 

@@ -11,7 +11,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function lifecycleDouble(enabled: { cursor: boolean; claude: boolean }) {
+function lifecycleDouble(enabled: { cursor: boolean; claude: boolean; opencode: boolean }) {
   const controller = { setDesiredEnabled: vi.fn(async () => successfulOutcome) };
   const lifecycle = new AgentHookLifecycle({
     controller,
@@ -22,7 +22,7 @@ function lifecycleDouble(enabled: { cursor: boolean; claude: boolean }) {
 
 describe("AgentHookLifecycle", () => {
   it("reads the enabled setting when its queued reconciliation begins", async () => {
-    const enabled = { cursor: true, claude: false };
+    const enabled = { cursor: true, claude: false, opencode: false };
     const first = deferred();
     const firstStarted = deferred();
     const controller = {
@@ -51,11 +51,11 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("keeps agent queues independent while preserving each agent's event order", async () => {
-    const enabled = { cursor: true, claude: true };
+    const enabled = { cursor: true, claude: true, opencode: true };
     const cursor = deferred();
     const cursorStarted = deferred();
     const controller = {
-      setDesiredEnabled: vi.fn(async (agent: "cursor" | "claude") => {
+      setDesiredEnabled: vi.fn(async (agent: "cursor" | "claude" | "opencode") => {
         if (agent === "cursor" && controller.setDesiredEnabled.mock.calls.length === 1) {
           cursorStarted.resolve();
           await cursor.promise;
@@ -87,11 +87,11 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("revokes Claude before a slow failed reinstallation after a location change", async () => {
-    const enabled = { cursor: false, claude: true };
+    const enabled = { cursor: false, claude: true, opencode: false };
     const reinstallation = deferred();
     const reinstallationStarted = deferred();
     const controller = {
-      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", desired: boolean) => {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude" | "opencode", desired: boolean) => {
         if (desired) {
           reinstallationStarted.resolve();
           await reinstallation.promise;
@@ -114,11 +114,11 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("rereads Claude opt-in after location revocation", async () => {
-    const enabled = { cursor: false, claude: false };
+    const enabled = { cursor: false, claude: false, opencode: false };
     const disable = deferred();
     const disableStarted = deferred();
     const controller = {
-      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", desired: boolean) => {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude" | "opencode", desired: boolean) => {
         if (!desired) {
           disableStarted.resolve();
           await disable.promise;
@@ -141,7 +141,7 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("runs the Claude location sequence once when enabled and location settings change together", async () => {
-    const enabled = { cursor: false, claude: true };
+    const enabled = { cursor: false, claude: true, opencode: false };
     const { controller, lifecycle } = lifecycleDouble(enabled);
 
     await lifecycle.handleConfigurationChange(
@@ -156,11 +156,11 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("orders racing Claude events and reads the location opt-in when its body begins", async () => {
-    const enabled = { cursor: false, claude: true };
+    const enabled = { cursor: false, claude: true, opencode: false };
     const first = deferred();
     const firstStarted = deferred();
     const controller = {
-      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", _desired: boolean) => {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude" | "opencode", _desired: boolean) => {
         if (controller.setDesiredEnabled.mock.calls.length === 1) {
           firstStarted.resolve();
           await first.promise;
@@ -187,10 +187,10 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("continues queued Claude work after a failed location reinstallation", async () => {
-    const enabled = { cursor: false, claude: true };
+    const enabled = { cursor: false, claude: true, opencode: false };
     let failInstall = true;
     const controller = {
-      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude", desired: boolean) => {
+      setDesiredEnabled: vi.fn(async (_agent: "cursor" | "claude" | "opencode", desired: boolean) => {
         if (desired && failInstall) {
           failInstall = false;
           throw new Error("install failed");
@@ -215,16 +215,25 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("submits only enabled changes for Cursor", async () => {
-    const enabled = { cursor: false, claude: true };
+    const enabled = { cursor: false, claude: true, opencode: false };
     const { controller, lifecycle } = lifecycleDouble(enabled);
 
     await lifecycle.handleConfigurationChange((key) => key === "anywhereTerminal.cursorAgent.hooks.enabled");
     expect(controller.setDesiredEnabled).toHaveBeenCalledWith("cursor", false);
   });
 
+  it("reconciles the OpenCode opt-in independently", async () => {
+    const enabled = { cursor: false, claude: false, opencode: true };
+    const { controller, lifecycle } = lifecycleDouble(enabled);
+
+    await lifecycle.handleConfigurationChange((key) => key === "anywhereTerminal.opencode.hooks.enabled");
+
+    expect(controller.setDesiredEnabled).toHaveBeenCalledWith("opencode", true);
+  });
+
   it("returns each settled per-agent removal outcome", async () => {
     const controller = {
-      setDesiredEnabled: vi.fn(async (agent: "cursor" | "claude") =>
+      setDesiredEnabled: vi.fn(async (agent: "cursor" | "claude" | "opencode") =>
         agent === "cursor"
           ? successfulOutcome
           : {
@@ -243,6 +252,12 @@ describe("AgentHookLifecycle", () => {
       { agent: "cursor", success: true, reason: "" },
       {
         agent: "claude",
+        success: false,
+        reason: "ownership-conflict",
+        affected: ["/tmp/settings.json"],
+      },
+      {
+        agent: "opencode",
         success: false,
         reason: "ownership-conflict",
         affected: ["/tmp/settings.json"],
@@ -270,13 +285,14 @@ describe("AgentHookLifecycle", () => {
   });
 
   it("remove-all revokes each agent against only its currently derivable destination", async () => {
-    const enabled = { cursor: true, claude: true };
+    const enabled = { cursor: true, claude: true, opencode: true };
     const { controller, lifecycle } = lifecycleDouble(enabled);
 
     await lifecycle.removeAll();
     expect(controller.setDesiredEnabled.mock.calls).toEqual([
       ["cursor", false],
       ["claude", false],
+      ["opencode", false],
     ]);
 
     controller.setDesiredEnabled.mockClear();

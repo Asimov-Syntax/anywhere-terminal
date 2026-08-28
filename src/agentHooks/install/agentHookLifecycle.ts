@@ -9,6 +9,7 @@ export const AGENT_HOOK_SETTINGS = {
     enabled: "anywhereTerminal.agentHooks.claude.enabled",
     configDir: "anywhereTerminal.agentHooks.claudeConfigDir",
   },
+  opencode: { enabled: "anywhereTerminal.opencode.hooks.enabled" },
 } as const;
 
 export type AgentHookLifecycleAgent = keyof typeof AGENT_HOOK_SETTINGS;
@@ -69,6 +70,7 @@ export class AgentHookLifecycle {
     const cursorEnabled = affectsConfiguration(AGENT_HOOK_SETTINGS.cursor.enabled);
     const claudeEnabled = affectsConfiguration(AGENT_HOOK_SETTINGS.claude.enabled);
     const claudeLocation = affectsConfiguration(AGENT_HOOK_SETTINGS.claude.configDir);
+    const opencodeEnabled = affectsConfiguration(AGENT_HOOK_SETTINGS.opencode.enabled);
     const reconciliations: Promise<void>[] = [];
 
     if (cursorEnabled) {
@@ -79,12 +81,15 @@ export class AgentHookLifecycle {
     } else if (claudeEnabled) {
       reconciliations.push(this.reconcile("claude"));
     }
+    if (opencodeEnabled) {
+      reconciliations.push(this.reconcile("opencode"));
+    }
 
     return Promise.all(reconciliations).then(() => undefined);
   }
 
   private agents(): readonly AgentHookLifecycleAgent[] {
-    return ["cursor", "claude"];
+    return ["cursor", "claude", "opencode"];
   }
 
   private reconcileClaudeLocation(): Promise<void> {

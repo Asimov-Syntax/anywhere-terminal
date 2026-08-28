@@ -490,7 +490,7 @@ export class SessionManager {
       }
       // Every live PTY incarnation gets fresh renewable agent-hook authority
       // (design D6) — merged last so it can never be shadowed by an override.
-      spawnEnv = { ...spawnEnv, ...this.mintAgentHookEnv(id) };
+      spawnEnv = { ...spawnEnv, ...this.mintAgentHookEnv(id, spawnEnv) };
       try {
         pty.spawn(nodePty, resolvedShell, [...spawnArgs], { cwd, env: spawnEnv });
       } catch (err) {
@@ -715,7 +715,7 @@ export class SessionManager {
       spawnEnv = injection.env;
       pty.setShellIntegrationNonce(injection.nonce);
     }
-    spawnEnv = { ...spawnEnv, ...this.mintAgentHookEnv(id) };
+    spawnEnv = { ...spawnEnv, ...this.mintAgentHookEnv(id, spawnEnv) };
     // Do all fallible spawn work BEFORE mutating `session`, so a throw leaves the
     // old PTY/buffer intact for the caller's fall-through exit path. Tear down the
     // half-spawned shell on failure so it isn't orphaned.
@@ -1501,12 +1501,12 @@ export class SessionManager {
    * decide whether a pane opens: a throwing contributor releases whatever it
    * half-minted and the shell spawns with no hook environment at all.
    */
-  private mintAgentHookEnv(sessionId: string): Record<string, string> {
+  private mintAgentHookEnv(sessionId: string, spawnEnv: Readonly<Record<string, string>>): Record<string, string> {
     if (!this.agentHooks) {
       return {};
     }
     try {
-      return this.agentHooks.create(sessionId);
+      return this.agentHooks.create(sessionId, spawnEnv);
     } catch {
       this.releaseAgentHookAuthority(sessionId);
       return {};

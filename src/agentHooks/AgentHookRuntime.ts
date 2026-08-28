@@ -87,7 +87,12 @@ function samePublishedState(a: AgentPublishedState, b: AgentPublishedState): boo
 
 /** Mirrors `SessionManager`'s per-session environment-contribution seam (design D6). */
 export interface SessionEnvironmentContributor {
-  create(sessionId: string): Record<string, string>;
+  /**
+   * `spawnEnv` is the environment this contribution will merge into. A
+   * decorator may yield to a user-selected value while the runtime-issued
+   * credentials themselves still merge last.
+   */
+  create(sessionId: string, spawnEnv?: Readonly<Record<string, string>>): Record<string, string>;
   release(sessionId: string): void;
 }
 

@@ -10,6 +10,7 @@ import type { DescendantsOutcome, ProcessTableSnapshot } from "../pty/processTab
 import { createProcessTableSnapshot } from "../pty/processTableSnapshot";
 import { createPaneEvidenceStore } from "../session/PaneEvidenceStore";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
+import type { VaultAgentId, VaultSessionEntry } from "../vault/types";
 import { createPresenceProjectorDeps, type PresenceDepsOptions, REPORTED_SESSION_CACHE_CAP } from "./presenceDeps";
 import { createPresenceProjector } from "./presenceProjector";
 
@@ -17,6 +18,10 @@ const NOW = 1_700_000_000_000;
 
 function running(over: Partial<RunningClaudeSession> = {}): RunningClaudeSession {
   return { pid: 4242, sessionId: "s1", cwd: "/repo", ...over } as RunningClaudeSession;
+}
+
+function entry(over: Partial<VaultSessionEntry> & { id: string; agent: VaultAgentId; cwd: string; modified: number }) {
+  return { sessionId: over.id, title: "", flags: {}, canFork: false, ...over } as VaultSessionEntry;
 }
 
 /**
@@ -101,6 +106,33 @@ describe("one read of each shared source per rebuild", () => {
     expect(processTable.open).toHaveBeenCalledTimes(1);
     // Never the per-call form: that one re-checks the TTL on every pane.
     expect(processTable.descendantsOf).not.toHaveBeenCalled();
+  });
+
+  it("reads the vault once however many panes fall back to it", async () => {
+    const listSessions = vi.fn(async () => [
+      entry({ id: "opencode:ses_one", agent: "opencode", cwd: "/repo", modified: 10 }),
+      entry({ id: "opencode:ses_two", agent: "opencode", cwd: "/repo", modified: 20 }),
+      entry({ id: "codex:ses_three", agent: "codex", cwd: "/repo", modified: 5 }),
+    ]);
+    const { deps } = wire({ listSessions });
+    const snapshot = await deps.openSnapshot();
+
+    const answers = [
+      await snapshot.sessionUnderCwd?.("opencode", "/repo"),
+      await snapshot.sessionUnderCwd?.("opencode", "/repo"),
+      await snapshot.sessionUnderCwd?.("codex", "/repo"),
+    ];
+
+    expect(listSessions).toHaveBeenCalledTimes(1);
+    expect(answers).toEqual(["opencode:ses_two", "opencode:ses_two", "codex:ses_three"]);
+  });
+
+  it("gives a directory nothing when the vault recorded nothing for that agent there", async () => {
+    const { deps } = wire({
+      listSessions: async () => [entry({ id: "opencode:ses_one", agent: "opencode", cwd: "/elsewhere", modified: 10 })],
+    });
+
+    expect(await (await deps.openSnapshot()).sessionUnderCwd?.("opencode", "/repo")).toBeUndefined();
   });
 
   it("still reads once when a slow rebuild crosses the table's TTL between panes", async () => {

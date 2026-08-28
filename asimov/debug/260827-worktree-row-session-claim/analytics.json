@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "debug",
+    "id": "260827-worktree-row-session-claim"
+  },
+  "sessions": [
+    {
+      "sessionId": "64962976-fbe9-4031-86fc-49b37fb5ff64",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787829194560,
+      "phases": [
+        {
+          "phase": "debug",
+          "from": 1787829194560
+        }
+      ],
+      "firstAt": 1787829194560,
+      "lastAt": 1787829541499,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "debug",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 32,
+          "inputTokens": 64,
+          "outputTokens": 18035,
+          "reasoningTokens": 3147,
+          "cacheWriteTokens": 48324,
+          "cacheReadTokens": 10443597,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 48324,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}
