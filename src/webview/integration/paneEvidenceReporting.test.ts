@@ -155,7 +155,10 @@ describe("title evidence reaches the host through the factory", () => {
     expect(posted).toEqual([]);
   });
 
-  it("reports the spinner stopping, which the signature alone would hide", () => {
+  // Round-4, specialist-direct: the [I9] tag sat only on the "sends nothing" half. A
+  // regression that dropped the FINAL transition, or sent the decorated title, left every
+  // tagged assertion green — so the tag claimed more than its test proved.
+  it("[I9] reports the spinner stopping, which the signature alone would hide", () => {
     const { posted, factory, emitTitle } = wireSurface();
     const instance = factory.createTerminal("pane-1", "Terminal 1", CONFIG as any, false, null);
 
@@ -164,6 +167,10 @@ describe("title evidence reaches the host through the factory", () => {
     emitTitle(instance, "Fix tests");
 
     expect(posted).toEqual([{ type: "paneEvidence", paneId: "pane-1", title: "Fix tests", decorated: false }]);
+    // The stripped title is what reaches comparison and render: a report still carrying its
+    // spinner would make every later frame look like a new title.
+    expect(posted[0]).toMatchObject({ title: "Fix tests", decorated: false });
+    expect(String((posted[0] as { title: string }).title)).not.toMatch(/[⠋⠙⠹]/);
   });
 
   it("never states waiting on a title report", () => {

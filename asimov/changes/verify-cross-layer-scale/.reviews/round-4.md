@@ -168,3 +168,24 @@ the render-cap test read at `WorktreeView.test.ts:217` (no pre-click count asser
 | W2 | accepted, deferred to the user | Valid. A runtime-neutral fixture shared by a bun script and a vitest suite is a real extraction, not a trivial one, and it is the second time this has been deferred. Recording it as author-deferred rather than fixed or risk-accepted: the chair is right that "deliberately left unfixed" was never a status the process defines, and only the user can grant `risk-accepted`. |
 
 No finding rebutted this round.
+
+## Author addendum — two findings that reached me outside the chair's report
+
+While round 4 was running, two review specialists messaged this session directly instead of
+reporting to the chair. `asm-review-reuse`'s finding is B13 above, so it arrived by both routes.
+`asm-review-frontend` sent four; two of them (I2, I3) are inside B2, and two are in neither B2 nor
+any other block of this report. They are recorded here rather than dropped, with their origin
+stated, because a finding that is true does not become false by losing its delivery path — and
+letting one go because a report omitted it is the exact "green but unproven" failure this change
+exists to prevent.
+
+Both were reproduced before being accepted.
+
+| ID | Source | Status | Triage |
+|---|---|---|---|
+| F1 | `asm-review-frontend`, direct message | accepted | The `[I9]` tag sat only on the "sends nothing for a spinner frame" half. The test proving the FINAL transition still reports, and that the title arrives stripped, was untagged at `paneEvidenceReporting.test.ts:158`. A regression dropping the last transition, or sending the decorated title, left every I9-tagged assertion green. Fixed in 7_2. |
+| F2 | `asm-review-frontend`, direct message | accepted, adjusted | The `[I5]` tag counted rows and checked the label but never asserted that a historical row does not present as live. The specialist's suggested `dataset.live === "false"` does not hold: the renderer stamps `data-live` only on the live path, so the invariant is the ABSENCE of `"true"`, and asserting `"false"` fails against correct code. Fixed as absence, plus the `live: false` / `status: "running"` disagreement case tagged `[I5]` — that is where the two sources conflict and the invariant has teeth. |
+
+Not treated as a process finding against the chair here, but recorded: two specialists bypassed
+their nesting, and two of their findings did not survive the trip. The chair's report is the
+adjudicated record, so anything that skips it skips triage as well.

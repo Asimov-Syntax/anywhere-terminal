@@ -179,3 +179,14 @@
     5. B14: assert the pre-click row count equals the exported cap in src/webview/worktree/WorktreeView.test.ts
     6. W4: dispose activation in an `afterEach` in src/extension.worktreeAssembly.test.ts
     7. S2: build the one-pane fixture in src/worktree/presenceProjector.scale.test.ts; S3: delete `withoutComments` from src/test/invariants/sourceSources.ts
+
+- [x] 7_2 Two invariant tags that name more than their test proves — round-4, specialist-direct — verified: pnpm run test:unit && pnpm run check-types exit 0
+  - **Deps**: 7_1
+  - **Refs**: .reviews/round-4.md § Triage — findings F1 and F2
+  - **Acceptance**:
+    - Outcome: The [I5] and [I9] tags sit on assertions that fail when their invariant is violated
+    - Verify: command pnpm run test:unit
+  - **Boundary**: tags and assertions only; no production change, no fixture reshaping
+  - **Plan**:
+    1. I9: tag the spinner-stopping test and assert the posted title arrives undecorated (src/webview/integration/paneEvidenceReporting.test.ts)
+    2. I5: assert historical subagent rows carry live=false rather than only counting them (src/webview/worktree/WorktreeView.test.ts)

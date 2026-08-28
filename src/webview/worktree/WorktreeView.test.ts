@@ -425,8 +425,15 @@ describe("subagent rows", () => {
     const hist = view.element.querySelector(".wt-hist");
     expect(hist?.querySelector(".wt-hist-label")?.textContent).toBe("Past delegations");
     expect(hist?.querySelectorAll(".wt-state")).toHaveLength(0);
-    expect(hist?.querySelectorAll(".wt-srow")).toHaveLength(2);
+    const srows = [...(hist?.querySelectorAll<HTMLElement>(".wt-srow") ?? [])];
+    expect(srows).toHaveLength(2);
     expect(hist?.querySelector(".wt-outcome--failed")).not.toBeNull();
+    // Round-4, specialist-direct: counting the rows and checking the label left the actual
+    // claim — that a transcript row never presents as live — asserted nowhere under this tag.
+    // The live path stamps `data-live="true"` (asserted in the live-roster case below), so
+    // its absence here is the invariant, not an unset attribute nobody writes.
+    expect(srows.filter((r) => r.dataset.live === "true")).toEqual([]);
+    expect(hist?.querySelector(".wt-outcome--live")).toBeNull();
   });
 
   it("render a reported roster as live work rather than as history", () => {
@@ -466,7 +473,9 @@ describe("subagent rows", () => {
     expect(hist?.querySelector(".wt-hist-note")?.textContent).toBe("No delegations found");
   });
 
-  it("still calls a transcript roster past, whatever it recorded", () => {
+  // Tagged [I5] because this is the case where the two sources disagree: the row says
+  // `status: "running"` and `live: false`, and history must follow `live`.
+  it("[I5] still calls a transcript roster past, whatever it recorded", () => {
     const { view } = mount({ getInitialExpandedRows: () => ["main-claude"] });
     view.setData(withRoster({ kind: "ok", rows: [{ name: "librarian", status: "running", live: false }] }));
 
