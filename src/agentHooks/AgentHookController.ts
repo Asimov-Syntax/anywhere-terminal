@@ -50,7 +50,7 @@ interface AgentState {
   installer: HookInstaller;
   desiredEnabled: boolean;
   desiredRevision: number;
-  reconcilePromise: Promise<void> | null;
+  reconcilePromise: Promise<HookReconciliationOutcome> | null;
   reconciledRevision: number;
   reconciledEnabled: boolean;
   reconciledSuccessfully: boolean;
@@ -59,7 +59,7 @@ interface AgentState {
   registrationWarned: boolean;
 }
 
-interface ControllerOutcome {
+export interface HookReconciliationOutcome {
   success: boolean;
   reason: string;
   affected?: readonly string[];
@@ -102,17 +102,19 @@ export class AgentHookController {
     return this.startPromise;
   }
 
-  public setDesiredEnabled(agent: VaultAgentId, enabled: boolean): Promise<void> {
+  public setDesiredEnabled(agent: VaultAgentId, enabled: boolean): Promise<HookReconciliationOutcome> {
     const state = this.states.get(agent);
     if (!state) {
-      return Promise.resolve();
+      return Promise.resolve({ success: false, reason: "agent-not-configured" });
     }
     state.desiredEnabled = enabled;
     state.desiredRevision += 1;
     if (!enabled) {
       this.revokeAgent(agent, state);
     }
-    return this.started ? this.reconcileLatest(agent, state) : Promise.resolve();
+    return this.started
+      ? this.reconcileLatest(agent, state)
+      : Promise.resolve({ success: false, reason: "controller-not-started" });
   }
 
   public dispose(): void {
@@ -177,7 +179,7 @@ export class AgentHookController {
     }
   }
 
-  private reconcileLatest(agent: VaultAgentId, state: AgentState): Promise<void> {
+  private reconcileLatest(agent: VaultAgentId, state: AgentState): Promise<HookReconciliationOutcome> {
     if (state.reconcilePromise) {
       return state.reconcilePromise;
     }
@@ -187,7 +189,7 @@ export class AgentHookController {
     return state.reconcilePromise;
   }
 
-  private async runReconciliation(agent: VaultAgentId, state: AgentState): Promise<void> {
+  private async runReconciliation(agent: VaultAgentId, state: AgentState): Promise<HookReconciliationOutcome> {
     while (!this.disposed) {
       const revision = state.desiredRevision;
       const enabled = state.desiredEnabled;
@@ -198,7 +200,7 @@ export class AgentHookController {
 
       const outcome = enabled ? await this.install(state) : await this.uninstall(state);
       if (this.disposed) {
-        return;
+        return { success: false, reason: "controller-disposed" };
       }
       if (revision !== state.desiredRevision) {
         this.revokeAgent(agent, state);
@@ -215,11 +217,12 @@ export class AgentHookController {
       if (!outcome.success || (outcome.unresolved && outcome.unresolved.length > 0)) {
         this.options.onWarning?.(agent, enabled ? "install" : "uninstall", formatWarning(outcome));
       }
-      return;
+      return outcome;
     }
+    return { success: false, reason: "controller-disposed" };
   }
 
-  private async install(state: AgentState): Promise<ControllerOutcome> {
+  private async install(state: AgentState): Promise<HookReconciliationOutcome> {
     try {
       const result = await state.installer.install();
       if (!result.installed) {
@@ -246,7 +249,7 @@ export class AgentHookController {
     }
   }
 
-  private async uninstall(state: AgentState): Promise<ControllerOutcome> {
+  private async uninstall(state: AgentState): Promise<HookReconciliationOutcome> {
     try {
       const result = await state.installer.uninstall();
       if (!result.removed && result.reason !== "not-installed") {
@@ -352,7 +355,7 @@ export class AgentHookController {
   }
 }
 
-function formatWarning(outcome: ControllerOutcome): string {
+function formatWarning(outcome: HookReconciliationOutcome): string {
   const paths = [...new Set([...(outcome.affected ?? []), ...(outcome.unresolved ?? [])])];
   return paths.length === 0 ? outcome.reason : `${outcome.reason}: ${paths.join(", ")}`;
 }

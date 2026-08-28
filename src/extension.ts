@@ -8,7 +8,12 @@ import { AgentHookController } from "./agentHooks/AgentHookController";
 import { createAgentHookRuntime } from "./agentHooks/AgentHookRuntime";
 import { claudeAgentRegistration } from "./agentHooks/agents/claude";
 import { cursorAgentRegistration } from "./agentHooks/agents/cursor";
-import { AGENT_HOOK_UNINSTALL_COMMAND, AgentHookLifecycle } from "./agentHooks/install/agentHookLifecycle";
+import {
+  AGENT_HOOK_SETTINGS,
+  AGENT_HOOK_UNINSTALL_COMMAND,
+  AgentHookLifecycle,
+  summarizeAgentHookRemoval,
+} from "./agentHooks/install/agentHookLifecycle";
 import { ClaudeHookInstaller } from "./agentHooks/install/ClaudeHookInstaller";
 import { exportBuffer, exportCommand, exportLastCommand, NO_FOCUS_TOAST } from "./commands/exportCommands";
 import { CursorHookInstaller } from "./cursor/CursorHookInstaller";
@@ -334,12 +339,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Per-agent hook authority is granted only after the current destination
   // reconciles. Claude resolves its settings path inside every install/remove,
   // so a location change never reaches backward to an old destination.
-  const readAgentHookEnabled = (agent: "cursor" | "claude"): boolean => {
-    const configuration = vscode.workspace.getConfiguration("anywhereTerminal");
-    return agent === "cursor"
-      ? configuration.get<boolean>("cursorAgent.hooks.enabled") === true
-      : configuration.get<boolean>("agentHooks.claude.enabled") === true;
-  };
+  const readAgentHookEnabled = (agent: "cursor" | "claude"): boolean =>
+    vscode.workspace.getConfiguration().get<boolean>(AGENT_HOOK_SETTINGS[agent].enabled) === true;
   const cursorInstaller = new CursorHookInstaller({
     configPath: path.join(os.homedir(), ".cursor", "hooks.json"),
     storagePath: path.join(context.globalStorageUri.fsPath, "cursor-hooks"),
@@ -433,8 +434,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void agentHookLifecycle.handleConfigurationChange((key) => event.affectsConfiguration(key));
     }),
     vscode.commands.registerCommand(AGENT_HOOK_UNINSTALL_COMMAND, async () => {
-      await agentHookLifecycle.removeAll();
-      void vscode.window.showInformationMessage("AnyWhere Terminal agent hook removal reconciliation completed.");
+      const summary = summarizeAgentHookRemoval(await agentHookLifecycle.removeAll());
+      if (summary.success) {
+        void vscode.window.showInformationMessage(summary.message);
+      } else {
+        void vscode.window.showWarningMessage(summary.message);
+      }
     }),
   );
   await agentHookController.start();

@@ -151,6 +151,25 @@ describe("AgentHookController", () => {
     );
   });
 
+  it("returns the settled removal failure with exact paths", async () => {
+    const { controller } = controllerDeps({
+      initialEnabled: true,
+      uninstall: async () => ({
+        removed: false,
+        reason: "ownership-conflict",
+        affected: ["/tmp/settings.json"],
+      }),
+    });
+    await controller.start();
+
+    await expect(controller.setDesiredEnabled("cursor", false)).resolves.toEqual({
+      success: false,
+      reason: "ownership-conflict",
+      affected: ["/tmp/settings.json"],
+      unresolved: undefined,
+    });
+  });
+
   it("withholds authority when removal commits but leaves an unresolved lock path (D5, D9)", async () => {
     const { controller, onWarning, runtime } = controllerDeps({
       initialEnabled: false,

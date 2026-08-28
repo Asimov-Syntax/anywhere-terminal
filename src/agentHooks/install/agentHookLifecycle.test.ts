@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentHookLifecycle } from "./agentHookLifecycle";
+import { AgentHookLifecycle, summarizeAgentHookRemoval } from "./agentHookLifecycle";
+
+const successfulOutcome = { success: true, reason: "" } as const;
 
 function deferred() {
   let resolve!: () => void;
@@ -10,7 +12,7 @@ function deferred() {
 }
 
 function lifecycleDouble(enabled: { cursor: boolean; claude: boolean }) {
-  const controller = { setDesiredEnabled: vi.fn(async () => undefined) };
+  const controller = { setDesiredEnabled: vi.fn(async () => successfulOutcome) };
   const lifecycle = new AgentHookLifecycle({
     controller,
     readEnabled: (agent) => enabled[agent],
@@ -29,6 +31,7 @@ describe("AgentHookLifecycle", () => {
           firstStarted.resolve();
           await first.promise;
         }
+        return successfulOutcome;
       }),
     };
     const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
@@ -57,6 +60,7 @@ describe("AgentHookLifecycle", () => {
           cursorStarted.resolve();
           await cursor.promise;
         }
+        return successfulOutcome;
       }),
     };
     const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
@@ -93,6 +97,7 @@ describe("AgentHookLifecycle", () => {
           await reinstallation.promise;
           throw new Error("install failed");
         }
+        return successfulOutcome;
       }),
     };
     const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
@@ -118,6 +123,7 @@ describe("AgentHookLifecycle", () => {
           disableStarted.resolve();
           await disable.promise;
         }
+        return successfulOutcome;
       }),
     };
     const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
@@ -159,6 +165,7 @@ describe("AgentHookLifecycle", () => {
           firstStarted.resolve();
           await first.promise;
         }
+        return successfulOutcome;
       }),
     };
     const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
@@ -188,6 +195,7 @@ describe("AgentHookLifecycle", () => {
           failInstall = false;
           throw new Error("install failed");
         }
+        return successfulOutcome;
       }),
     };
     const lifecycle = new AgentHookLifecycle({ controller, readEnabled: (agent) => enabled[agent] });
@@ -212,6 +220,53 @@ describe("AgentHookLifecycle", () => {
 
     await lifecycle.handleConfigurationChange((key) => key === "anywhereTerminal.cursorAgent.hooks.enabled");
     expect(controller.setDesiredEnabled).toHaveBeenCalledWith("cursor", false);
+  });
+
+  it("returns each settled per-agent removal outcome", async () => {
+    const controller = {
+      setDesiredEnabled: vi.fn(async (agent: "cursor" | "claude") =>
+        agent === "cursor"
+          ? successfulOutcome
+          : {
+              success: false,
+              reason: "ownership-conflict",
+              affected: ["/tmp/settings.json"],
+            },
+      ),
+    };
+    const lifecycle = new AgentHookLifecycle({
+      controller,
+      readEnabled: () => true,
+    });
+
+    await expect(lifecycle.removeAll()).resolves.toEqual([
+      { agent: "cursor", success: true, reason: "" },
+      {
+        agent: "claude",
+        success: false,
+        reason: "ownership-conflict",
+        affected: ["/tmp/settings.json"],
+      },
+    ]);
+  });
+
+  it("summarizes failed removals with agents, reasons, and exact paths", () => {
+    expect(
+      summarizeAgentHookRemoval([
+        { agent: "cursor", success: true, reason: "" },
+        {
+          agent: "claude",
+          success: false,
+          reason: "ownership-conflict",
+          affected: ["/tmp/settings.json"],
+          unresolved: ["/tmp/settings.json.lock"],
+        },
+      ]),
+    ).toEqual({
+      success: false,
+      message:
+        "AnyWhere Terminal could not remove all agent hooks: claude (ownership-conflict: /tmp/settings.json, /tmp/settings.json.lock).",
+    });
   });
 
   it("remove-all revokes each agent against only its currently derivable destination", async () => {

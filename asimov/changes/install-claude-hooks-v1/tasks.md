@@ -172,3 +172,15 @@
     1. Add the unregistered-event conflict and immutability case in src/agentHooks/install/claudeConfig.test.ts.
     2. Pin independent command byte and hash constants and payload-specific stderr sentinels in scripts/verify-claude-inline-hook.mjs and refresh docs/research/20260828-claude-inline-hook-spike.md.
 
+## 6. Round-2 review remediation
+
+- [x] 6_1 Report the true user-invoked removal result — verified: bun test 'src/agentHooks/install/agentHookLifecycle.test.ts' && pnpm run check-types && pnpm exec vitest run src/agentHooks/install/agentHookLifecycle.test.ts src/agentHooks/AgentHookController.test.ts --maxWorkers=1 exit 0
+  - **Deps**: 5_4
+  - **Refs**: design.md D6, D9; .reviews/round-2.md B1, W2
+  - **Acceptance**:
+    - Outcome: Removal notifications report each settled per-agent outcome and exact failed paths.
+    - Verify: unit src/agentHooks/install/agentHookLifecycle.test.ts
+  - **Plan**:
+    1. Return settled outcomes through src/agentHooks/AgentHookController.ts and pin failure propagation in src/agentHooks/AgentHookController.test.ts.
+    2. Aggregate per-agent removal outcomes and centralize fully-qualified settings keys in src/agentHooks/install/agentHookLifecycle.ts and src/agentHooks/install/agentHookLifecycle.test.ts.
+    3. Show success or warning from the settled aggregate in src/extension.ts.
