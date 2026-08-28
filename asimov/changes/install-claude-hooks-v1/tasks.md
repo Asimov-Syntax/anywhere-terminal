@@ -158,7 +158,7 @@
     1. Merge the reviewed branch named in D2 and resolve CHANGELOG.md, asimov/project.md, src/cursor/CursorHookInstaller.ts, and src/cursor/CursorHookInstaller.test.ts by preserving current Claude v1 work plus the branch's Cursor-owned behavior.
     2. Retain the branch's asimov/changes/archive/260828-0724-inline-cursor-hooks/, asimov/specs/cursor-agent-status/spec.md, docs/audit/2026-08-28-agent-hook-recovery-plan.md, docs/research/20260828-cursor-inline-hook-spike.md, scripts/verify-cursor-inline-hook.mjs, src/cursor/CursorHookController.ts, and src/cursor/CursorHookController.test.ts without reimplementation.
     3. Remove the temporary Cursor formatter override from biome.json and verify the merged source against the existing inline review evidence.
-    4. Merge the Cursor release note in CHANGELOG.md without dropping the Claude v1 entry.
+    4. Update CHANGELOG.md with the Cursor release note without dropping the Claude v1 entry.
 
 - [ ] 5_4 Strengthen frozen-command and ownership admission tests
   - **Deps**: 4_3, 5_3
