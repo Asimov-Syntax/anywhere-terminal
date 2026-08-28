@@ -116,111 +116,69 @@ are unaffected — they read documents, not execution. Assertions 3 and 4 are re
 reporter's observed tags, and assertion 4 accordingly checks tags on tests that ran; a stray tag on
 a test that never runs is invisible to it, and so is a test that never runs.
 
-### D10: I10 is closed by a source rule, not by a test
+### D10: I10 rests on behaviour, guarded by a limited tripwire
 
-A test cannot prove "the extension never deletes files directly" — it can only prove that the
-paths it happens to walk delegate to git. Round 3 was right that documenting the gap in the
-registry does not close it while the row still reads `covered`.
+A test cannot prove "the extension never deletes files directly" — it can only prove that the paths
+it walks delegate to git. Round 3 was right that documenting the gap in the registry does not close
+it while the row reads `covered`. Five revisions then tried to close it by construction and failed.
+So I10 SHALL be carried by two things, each claiming only what it proves.
 
-So I10 SHALL be enforced by a source-level rule over production code: no module **in an enumerated
-scope** — `src/worktree/**` plus `src/providers/WorktreeHost.ts`, excluding tests and benches — may
-acquire or call a destructive `node:fs` operation (`rm`, `rmSync`, `rmdir`, `unlink`, and their
-`promises` forms).
+**1. Behaviour.** Passing `[I10]` host and real-git tests SHALL drive the shipped removal path
+through `removeWorktree` and show that it invokes `git worktree remove`, including the nested and
+already-deleted cases (`worktreeMutations.integration.test.ts`).
 
-The scope is a stated list, and the rule claims no more than that. An earlier wording said "no
-module **reachable from the removal path**", which asserts call-graph reachability this change
-never computes; it survived five review rounds unchallenged. Either build the call graph or claim
-the list — not one while doing the other.
+**2. A regression tripwire.** `pnpm run gate:fs-deletion` SHALL build one `ts.createProgram` from
+this repo's `tsconfig.json` and report every identifier, property access or element access — outside
+type syntax and outside a declaration's own name — in `src/worktree/**` plus
+`src/providers/WorktreeHost.ts`, excluding tests and benches, whose TypeScript type carries an `rm`,
+`rmSync`, `rmdir`, `rmdirSync`, `unlink` or `unlinkSync` symbol declared by `@types/node/fs`.
+
+The scope is a stated list, and the rule claims no more than the list. An earlier wording said "no
+module **reachable from the removal path**", which asserts call-graph reachability this change never
+computes; it survived five review rounds unchallenged. Either build the call graph or claim the
+list.
+
+**The tripwire is unsound and SHALL say so.** It performs no reaching-definitions or value-flow
+analysis, and it does not decide a destructive value obtained from a call, passed through `any`,
+carried through an erased alias, or reached through a structurally typed parameter. It exists to
+catch a contributor reaching for `fs.rmSync(dir)` because it is convenient, which is how this
+invariant will actually be broken.
+
+**The limits are asserted, not written down.** `gap-call-produced.ts`, `gap-any-cast.ts`,
+`gap-erased-alias.ts` and `gap-structural-parameter.ts` SHALL each produce no finding, and the gate
+SHALL fail when one of those four is missing or starts being caught. A stated limit that nothing
+checks is exactly how the "reachable from the removal path" overclaim survived five rounds.
+Alongside them, `flag-` fixtures assert the spellings the rule does see and `pass-` fixtures assert
+what it must not fire on — an empty offender list is otherwise an absence rather than a result.
+
+Green evidence therefore establishes exercised git delegation, plus the absence of a reference this
+predicate recognises in the enumerated scope, and nothing stronger. The registry row for I10 states
+the same standard, and the gate's own output reports the search rather than the property.
 
 **Known limit, not solved:** nothing machine-checks that a test tagged `[I7]` asserts I7. The
 `stimulus` field and the review round are the only checks, and the change carries the `re-review`
 flag so that round is mandatory.
 
-**Revised after review round 5 — resolve the symbol, do not chase the alias.** The rule was first
-a regex, then a hand-written AST binding resolver, and round 5 walked past it with
-`const wipe = fs.promises.rm`, `fs.promises["rm"](dir)`, and nested destructuring — while it also
-**fired on a harmless parameter named `rm`**. A rule with both failure directions at once is not a
-rule.
+**A standalone gate, not the unit suite.** ~1 s of Program construction is acceptable once per gate
+run and wrong in watch mode or a targeted unit run. Measured on this checkout: 918 files in the
+Program, 29 in scope, median **0.901 s** over five fresh processes. Not Biome — it has no TypeScript
+symbol-resolution seam. Not a new ESLint stack — same Program cost, plus a lint framework adopted
+for one rule.
 
-Identifier resolution is the TypeScript checker's job, so the rule SHALL run as a standalone gate
-over a real `ts.createProgram` built from this repo's `tsconfig.json`, and reject where a
-destructive symbol is **acquired or referenced** — a named import, `fs.rm`, `fs.promises.rm`,
-`fs.promises["rm"]`, destructuring from an fs namespace, or the assignment of such a member to a
-variable. It does not follow an alias to its call site: acquisition is the auditable event, and
-the checker resolves the originating symbol, so a lexical shadow resolves elsewhere and passes.
-Measured on this checkout: 918 files in the Program, 29 in scope, 938 call expressions, median
-**0.901 s** over five fresh processes — 0.78-0.97 s of that is Program creation, ~78 ms is the
-traversal.
-
-**It fails closed.** A non-literal member access on an fs namespace (`fs.promises[key]`) is
-rejected rather than resolved. Within this narrow scope a dynamic destructive call is not something
-to audit at review time.
-
-A standalone gate, not the unit suite: ~1 s of Program construction is acceptable once per gate run
-and wrong in watch mode or a targeted unit run. Not Biome — it has no TypeScript symbol-resolution
-seam. Not a new ESLint stack — same Program cost, plus a lint framework adopted for one rule.
-
-**Revised again after review rounds 6 and 7 — name the value, do not enumerate the binding.**
-Three checker-based versions of this rule have now been walked past, and the shapes were found in
-this order: quoted binding key, destructuring assignment, `as any`, erased alias (round 6), then
-**nested** destructuring assignment (round 7). Round 6's diagnosis — that member-name extraction was
-reimplemented at each shape — was correct and insufficient. The defect is the enumeration itself.
-
-D10 has been enumerating **binding forms**: the ways a name can come to hold an fs member. That set
-is open-ended, which is why every round found another member of it. The set of **reference forms**
-is not: every use of a value is an identifier, or a member selected from something.
-
-So the rule SHALL ask one question at the point of USE — *does this expression's type resolve to a
-destructive `node:fs` symbol?* — over identifiers and member accesses, resolving through unions.
-`wipe(dir)` has the type `typeof fs.promises.rm` whatever syntax produced `wipe`; nested
-destructuring, quoted keys, assignments and aliases all collapse into that one answer, and the
-checker gives it without being told which shape bound the name.
-
-**Erased types need provenance, not a name guess (W7).** Round 6's fail-closed rule rejected any
-destructive-looking member on an `any` owner, so `cache.rm(key)` on an unrelated erased API was
-reported as filesystem deletion — a rule wrong in both directions at once, which this file's own
-comment calls the kind that gets switched off within a week. Where a callee's type is erased, the
-rule SHALL look through casts and parentheses for the nearest sub-expression the checker can still
-type, and reject only when THAT is fs-bearing. `(fs.promises as any).rm(dir)` is rejected because
-`fs.promises` is; `cache.rm(key)` is not, because nothing in its chain ever was.
-
-**Stated limit, not hidden.** The rule is about references in the enumerated scope. A module that
-acquires `fs.promises.rm` and never uses it deletes nothing, and any in-scope use is caught wherever
-it is written. A caller outside the scope is outside the scope by construction — the same stated
-boundary the wording above already carries.
-
-**Revised after review round 9 — the defect was the claim, not the mechanism.** Four mechanisms
-have now been defeated: a regex, an AST binding walk, the checker over acquisition shapes, and the
-checker over reference types. The first three failures were incomplete enumerations and were mine.
-The fourth is not that kind. TypeScript's type identity is **structural**, so `fs` passed to a
-parameter typed `{ rmSync(path: string): void }` resolves that member to the local declaration and
-not to `@types/node/fs`. The language does not preserve where a function came from, so no
-type-based rule can decide "this value is `fs.rm`". Deciding it soundly needs reaching-definitions
-value-flow analysis — a static analyzer, and out of proportion to this task.
-
-Each round widened the rule chasing that soundness, and the widening produced its own defects in
-the opposite direction: round 7's W7 and round 9's W9 both reject valid code. A rule wrong in both
-directions is the one this file's own comment says gets switched off within a week.
-
-So D10 SHALL stop asserting a property it cannot hold. I10 is closed by two things, each claiming
-only what it proves:
-
-1. **Behaviour** — the real-git integration tests prove removal is delegated to `git worktree
-   remove`, including the nested and already-deleted cases (`worktreeMutations.integration.test.ts`).
-2. **A regression tripwire** — no module in the enumerated scope may reference a destructive
-   `node:fs` member, judged by type at executable positions. It exists to catch a contributor
-   reaching for `fs.rmSync(dir)` because it is convenient, which is the way this invariant will
-   actually be broken.
-
-**The tripwire does not fail closed, and says so.** Round 6's fail-closed handling of erased types
-is DELETED along with the provenance walk it required — it was invented to support a soundness
-claim that is now withdrawn, and it is what produced W7, W9 and S10. The rule gets smaller.
-
-**The gaps are asserted, not merely written down.** Alongside `flag-` and `pass-`, the fixture
-directory gains `gap-` cases: spellings the tripwire knowingly does not catch — a value produced by
-a call, an `as any` cast, an erased alias, a structurally-typed parameter. Each is asserted to
-produce NO finding. A stated limit that nothing checks is how D10's "reachable from the removal
-path" overclaim survived five rounds; a limit that fails when it stops being true is a fact.
+**Why the claim is this narrow — the history, for a reader who would otherwise widen it again.**
+Four mechanisms were defeated: a regex (renamed and named imports), an AST binding walk (assigned
+members, element access, nested destructuring), the checker over acquisition *shapes* (quoted keys,
+destructuring assignment, `as any`, nested assignment), and the checker over reference *types*
+(call results, structural typing). The first three failures were incomplete enumerations of how a
+name comes to hold an fs member — an open-ended set, which is why every round found another member
+of it. The fourth is different in kind: TypeScript's type identity is **structural**, so `fs` passed
+to a parameter typed `{ rmSync(path: string): void }` resolves that member to the local declaration
+rather than to `@types/node/fs`. The language does not preserve where a function came from, so no
+type-based rule can decide "this value is `fs.rm`"; deciding it soundly needs a static analyzer, and
+that is out of proportion to this task. Each widening chasing soundness also produced defects in the
+opposite direction — round 7's W7 and round 9's W9 both rejected valid code, and a rule wrong in
+both directions is the kind that gets switched off within a week. The defect was the claim, not the
+mechanism.
 
 ### D2: Count in the suite; time in a bench
 

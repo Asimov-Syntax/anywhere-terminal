@@ -295,3 +295,21 @@
     2. W8: restrict scanning to executable positions, skipping nodes under a type ancestor
     3. Add a `gap-` fixture class asserted to produce no finding, and move the erased cases into it in src/test/invariants/fixtures/fsDeletion/
     4. Add gap fixtures for a call-produced value and a structurally-typed parameter (round-9 B16, B17)
+
+## 10. Review fixes (cycle 5)
+
+- [x] 12_1 State one contract, and make each gap fixture isolate its own cause — verified: pnpm run gate:fs-deletion && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 11_1
+  - **Refs**: .reviews/round-10.md; design.md D10
+  - **Acceptance**:
+    - Outcome: The gate names the expected gaps, and each gap fixture carries a real fs value
+    - Verify: command pnpm run gate:fs-deletion
+  - **Boundary**: no new rule capability; the mechanism keeps the shape task 11_1 left it in
+  - **Plan**:
+    1. B19: replace the superseded D10 revisions with one canonical contract in asimov/changes/verify-cross-layer-scale/design.md
+    2. B19: reword the header, success and failure output to report references searched for, not delegation, in src/test/invariants/fsDeletionGate.ts
+    3. W8: skip an identifier that is its parent declaration's name, and the binding halves of import and export specifiers, in src/test/invariants/fsDeletionGate.ts
+    4. W12: assert the gap inventory by name and count only classified fixtures in src/test/invariants/fsDeletionGate.ts
+    5. W10, W11, S13: annotate the factory `typeof fs.promises.rm`, pass real `fs` through the structural parameter, and delete the unfalsifiable pass case in src/test/invariants/fixtures/fsDeletion/
+    6. B19: record the evidence standard the I10 row rests on in src/test/invariants/registry.ts
+    7. B19: reword the gate's one-line description, which carries the same overclaim, in asimov/project.md

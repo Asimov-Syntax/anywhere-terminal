@@ -100,12 +100,22 @@ export const INVARIANTS: readonly InvariantRow[] = [
     stimulus: "Compare, hash, or send a title before stripDecorations runs on it",
     status: "covered",
   },
+  // `covered` here is the engineering standard this registry uses everywhere — a passing test
+  // exercises the behaviour — and NOT a proof of I10's universal negative. Round 9 established that
+  // no type-based rule can decide "this value is `fs.rm`", because TypeScript's type identity is
+  // structural. So the evidence is: the real-git tests drive the shipped removal path and show it
+  // calls `git worktree remove`, and `pnpm run gate:fs-deletion` is a regression tripwire over an
+  // enumerated scope. What the tripwire does not decide is not prose — the four `gap-` fixtures it
+  // asserts by name are the inventory (design.md D10). The stimulus below is narrowed to match:
+  // a gap spelling would not turn this evidence red, and claiming otherwise is the overclaim
+  // rounds 5 through 10 kept finding.
   {
     id: "I10",
     statement:
       "The extension never deletes files directly; directory removal is delegated to git \u2014 which still deletes recursively, so this bounds our bugs, not git's consequences",
     owners: ["WT-005.2"],
-    stimulus: "Remove a worktree directory with a filesystem call instead of delegating to git",
+    stimulus:
+      "Stop the exercised removal path from calling `git worktree remove`, or write a destructive `node:fs` reference the tripwire recognises inside its enumerated scope",
     status: "covered",
   },
   {

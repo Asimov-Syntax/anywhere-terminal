@@ -1,16 +1,19 @@
-// src/test/invariants/fsDeletionGate.ts — I10: the extension deletes no directory itself.
-// See asimov/changes/verify-cross-layer-scale/design.md D10 (revised after review round 5).
+// src/test/invariants/fsDeletionGate.ts — I10's regression tripwire.
+// See asimov/changes/verify-cross-layer-scale/design.md D10.
 //
 // Run: pnpm run gate:fs-deletion
 //
-// Four versions of this rule enumerated the ways a name can COME TO HOLD an fs member — regex,
-// then an AST binding walk, then the checker over acquisition shapes. Each round found another
-// shape: renamed imports, assigned members, element access, quoted binding keys, destructuring
-// assignment, `as any`, and finally a NESTED destructuring assignment. That set is open-ended.
+// This does NOT prove the extension deletes no directory itself — the real-git integration tests
+// in src/extension.worktreeMutations.integration.test.ts do, by driving the removal path. This asks
+// one narrower question of the scoped modules: does any expression's type resolve to a destructive
+// `node:fs` function?
 //
-// The set of ways a value is USED is not: you name it, or you select a member of something. So
-// the question is asked at the reference — does this expression's type resolve to a destructive
-// `node:fs` function — and the checker answers it whatever syntax bound the name.
+// An earlier version of this header claimed the set of reference forms was closed — every use is an
+// identifier or a member selection — and so the checker would answer for any binding syntax. Round 9
+// disproved it: TypeScript's type identity is STRUCTURAL, so an fs function reached through a
+// structurally-compatible local type is no longer typed by `@types/node/fs`, and a call result is
+// never asked at all. What the rule cannot see is enumerated in the `gap-` fixtures, which fail if
+// they ever start being caught.
 
 import path from "node:path";
 import * as tsmod from "typescript";
@@ -44,6 +47,20 @@ function isRemovalPath(rel: string): boolean {
 }
 
 const FIXTURES = "src/test/invariants/fixtures/fsDeletion/";
+
+/**
+ * The limits D10 states out loud, named rather than counted.
+ *
+ * Counting whatever happened to be present let a stated gap disappear in silence and let any file
+ * called `gap-*` inflate the total (round-10 W12) — the same shape of defect as the "reachable from
+ * the removal path" overclaim, which survived five rounds because nothing checked it.
+ */
+const EXPECTED_GAPS = new Set([
+  "gap-any-cast.ts",
+  "gap-call-produced.ts",
+  "gap-erased-alias.ts",
+  "gap-structural-parameter.ts",
+]);
 
 export interface Finding {
   readonly file: string;
@@ -79,6 +96,33 @@ function isTypePosition(node: tsmod.Node): boolean {
 }
 
 /**
+ * Whether this identifier is a name being DECLARED or BOUND rather than a value being used.
+ *
+ * A declaration's name is a SIBLING of its annotation, not a descendant, so `isTypePosition` never
+ * saw it: `declare const ambient: typeof fs.promises.rm` was reported as deletion (round-10 W8).
+ * The member half of `fs.promises.rm` lands here too — it is resolved with its owner, not alone.
+ */
+function isBindingName(node: tsmod.Node): boolean {
+  const parent = node.parent;
+  if (parent === undefined) {
+    return false;
+  }
+  // `{ rm }` in an object literal is a use of `rm`; `{ rm }` in a destructure is a binding.
+  if (ts.isShorthandPropertyAssignment(parent)) {
+    return false;
+  }
+  if (
+    ts.isImportSpecifier(parent) ||
+    ts.isExportSpecifier(parent) ||
+    ts.isImportClause(parent) ||
+    ts.isNamespaceImport(parent)
+  ) {
+    return true;
+  }
+  return (parent as { name?: tsmod.Node }).name === node;
+}
+
+/**
  * Every executable reference in `file` that names a destructive `node:fs` function.
  *
  * A tripwire, and only a tripwire. Four mechanisms have been defeated here, and round 9 settled
@@ -96,9 +140,7 @@ function scan(file: tsmod.SourceFile, checker: tsmod.TypeChecker): Finding[] {
 
   const visit = (node: tsmod.Node): void => {
     if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      // The name half of a member access is resolved with its owner, not on its own.
-      const isMemberName = ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
-      if (!isMemberName && !isTypePosition(node) && isDestructiveFsType(checker.getTypeAtLocation(node))) {
+      if (!isBindingName(node) && !isTypePosition(node) && isDestructiveFsType(checker.getTypeAtLocation(node))) {
         found.push({
           file: rel,
           line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
@@ -129,6 +171,7 @@ function main(): void {
   const missed: string[] = [];
   const falsePositives: Finding[] = [];
   const closed: string[] = [];
+  const seenGaps = new Set<string>();
   let proven = 0;
 
   for (const file of sources) {
@@ -158,8 +201,11 @@ function main(): void {
     // rather than prose — the "reachable from the removal path" overclaim survived five rounds
     // precisely because nothing checked it. A gap that closes is good news that must be recorded,
     // not absorbed silently, so it fails here until the fixture is reclassified.
-    if (name.startsWith("gap-") && hits.length > 0) {
-      closed.push(rel);
+    if (name.startsWith("gap-")) {
+      seenGaps.add(name);
+      if (hits.length > 0) {
+        closed.push(rel);
+      }
     }
   }
 
@@ -176,21 +222,28 @@ function main(): void {
   for (const rel of closed) {
     lines.push(`  ${rel} is a gap- fixture the rule NOW catches — the stated limit closed, reclassify it as flag-`);
   }
+  for (const name of EXPECTED_GAPS) {
+    if (!seenGaps.has(name)) {
+      lines.push(`  ${FIXTURES}${name} is a limit D10 states but no fixture asserts — restore it or amend D10`);
+    }
+  }
 
   if (lines.length > 0) {
-    console.error("[I10] direct filesystem deletion in the worktree removal path:");
+    console.error("[I10] fs-deletion tripwire failed:");
     console.error(lines.join("\n"));
     process.exit(1);
   }
   const scoped = sources.filter((f) => isRemovalPath(relativeTo(f.fileName))).length;
-  const closedCount = sources.filter((f) => path.basename(relativeTo(f.fileName)).startsWith("gap-")).length;
   if (scoped === 0 || proven === 0) {
     console.error(`[I10] vacuous — ${scoped} modules in scope, ${proven} spellings proven visible`);
     process.exit(1);
   }
+  // Reports the search, not a property. "Delegates removal to git" is what the real-git
+  // integration tests prove; all this command found is the absence of a reference it can recognize,
+  // and the gap count is the standing reminder that those are not the same claim (round-10 B19).
   console.log(
-    `[I10] ok — ${scoped} modules delegate removal to git; ${proven} spellings caught, ` +
-      `${closedCount} stated gaps still open`,
+    `[I10] ok — ${scoped} scoped modules scanned, no recognised destructive node:fs reference; ` +
+      `${proven} flag fixtures caught, ${seenGaps.size} declared gaps still undetected`,
   );
 }
 

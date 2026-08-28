@@ -207,3 +207,27 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   the limit.
 - Verify Gate: check-types clean, 234 files / 4733 tests, gate exit 0 in 1.35 s, bench 0.1 ms /
   26.9 ms, lint identical to the main baseline, verify-status exit 0.
+- 12_1 built, closing round-10 B19 and W8/W10/W11/W12/S13. D10's five stacked revisions are REPLACED
+  by one contract instead of a sixth revision — the earlier normative SHALLs still certified the
+  universal claim round 9 withdrew, which is the defect B19 names. The gate's header, success and
+  failure text now report the search rather than the property, and `asimov/project.md` carried the
+  same overclaim in its one-line description.
+- The I10 registry row keeps `status: "covered"` and now states the standard it means: passing
+  behavioural evidence, not proof of a universal negative. Its `stimulus` is narrowed to a change the
+  evidence actually turns red, because a `gap-` spelling would not. Oracle consulted on exactly this
+  question (option (b) of four) and concurred; its wording for the row and the success line is used.
+- Two probes, because W10 and W11 said the gap fixtures proved the wrong limit and they were right.
+  With the helper annotated `typeof fs.promises.rm`, adding `CallExpression` to the visited kinds now
+  CLOSES `gap-call-produced` — before, it stayed open through structural erasure, so it never
+  isolated the call-produced cause. Deleting a `gap-` fixture now fails the gate (W12).
+- My own W8 fixture was wrong twice before it was right: `typeof ambient` and `rm.name` in value
+  positions are genuine executable references, and the rule was correct to report them. The fixture
+  had to stop using the names at all for the claim to be about declarations.
+- Correction to the previous Verify Gate note: the lint baseline was built from `origin/main`, which
+  is 59 commits STALE. The two extra format errors came from `src/cursor/CursorHook*.test.ts`, files
+  `ce2e8010` REMOVED from main before this branch — not files that landed after it. Rebuilt against
+  local `main` with one biome binary (2.4.5 both sides; the throwaway worktree resolves 2.3.14 and
+  reports 4 warnings, which is the version-drift trap): main 13 warnings + 1 info, HEAD 13 + 1.
+  Identical — 32 added files, no new finding.
+- Verify Gate re-run after 12_1: check-types clean, 234 files / 4733 tests, gate exit 0, bench 0.1 ms
+  presence / 33.2 ms model, lint identical to local main, verify-status exit 0.
