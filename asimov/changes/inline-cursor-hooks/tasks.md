@@ -74,7 +74,7 @@
     - Verify: unit src/cursor/CursorHookInstaller.test.ts
   - **Plan**:
     1. Replace the rejected shell-pattern parser in src/cursor/CursorHookInstaller.ts with D1's real-agent-proven awk generation.
-    2. Retarget src/cursor/CursorHookInstaller.test.ts valid UUID URLs, rejected authority/path cases, awk function and PATH controls, and failed-awk drain behavior.
+    2. Retarget src/cursor/CursorHookInstaller.test.ts valid UUID URLs, rejected authority and path cases, awk function and PATH controls, and failed-awk drain behavior.
 
 - [ ] 3_2 Execute the frozen bytes through real cursor-agent
   - **Deps**: 2_2, 2_3, 3_3
