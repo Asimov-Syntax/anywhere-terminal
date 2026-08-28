@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -109,3 +109,25 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   (measured 7), and the runner marks `describe.skipIf`, `runIf`, and a runtime `ctx.skip()` as
   skipped while `it.fails` reports `passed` with `options.fails === true`. Evidence in discovery.md
   § "Round-5 handback" 2b. The oracle settled what to read; it did not settle how the gate fails.
+
+### Round-5 designed fix built — tasks 8_1..8_5, Verify Gate re-run
+
+- Verify Gate: check-types clean; 234 files / 4733 tests pass; `pnpm run gate:fs-deletion` ok
+  (29 modules in scope, 7 bypass spellings proven visible, ~1.6 s); bench 0.1 ms / 30.8 ms, both
+  under budget; `verify-status` exit 0.
+- Lint re-measured against a clean detached worktree of `main` with THIS worktree's biome 2.4.5
+  (the version-drift lesson): finding sets are identical. Baseline additionally reports two format
+  errors in `src/cursor/CursorHookController.test.ts` and `CursorHookInstaller.test.ts`, which
+  landed on main after this branch and do not exist here. This change introduces no lint finding.
+- `pnpm run gate:fs-deletion` is registered in `asimov/project.md` § Commands, so it runs in every
+  future Verify Gate rather than only in the task that added it.
+- Two things were probed rather than assumed, both because a five-round history says mechanism
+  claims here do not survive on plausibility: a reporter setting `process.exitCode` in
+  `onTestRunEnd` does fail the run (exit 7), and `deactivate()` really closes the hook endpoint —
+  the old teardown disposed the runtime directly, which closed the socket either way and so made
+  the fix unfalsifiable. That is now its own assertion.
+- Red demos run and reverted: `it.skipIf(true)` on every `[I3]` test → coverage failure, exit 1;
+  a named-import `rm` added to `src/worktree/worktreeMutations.ts` → gate exit 1; the I2
+  classification assertion flipped to `agentSource: "launch"` → fails, so it reads a real value.
+- Review NOT closed and NOT approved. Cycle 2 has round 6 remaining; the round-5 blockers are
+  fixed but have had no reviewer verdict.

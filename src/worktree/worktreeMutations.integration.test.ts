@@ -4,38 +4,30 @@
 // `--force` really will not pass a lock, that prune really drops the count it
 // reported (design.md D4, D5, D11).
 
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createRepoFixture, type RepoFixture } from "../test/fixtures/repoFixture";
 import { createGitCommandRunner } from "./gitCommandRunner";
 import { createWorktree, lockWorktree, pruneRepo, removeWorktree } from "./worktreeMutations";
 
 const runner = createGitCommandRunner();
+let fixture: RepoFixture;
 let repo: string;
 let tmp: string;
 
 function git(args: string[], cwd = repo): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" });
+  return fixture.git(args, cwd);
 }
 
 beforeEach(() => {
-  // realpath: macOS hands back /var/... while git reports /private/var/...,
-  // which is the aliasing normalizeWorktreePath exists for.
-  tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "wt-int-")));
-  repo = path.join(tmp, "repo");
-  fs.mkdirSync(repo);
-  git(["init", "-q", "-b", "main"]);
-  git(["config", "user.email", "t@example.com"]);
-  git(["config", "user.name", "T"]);
-  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
-  git(["add", "."]);
-  git(["commit", "-qm", "init"]);
+  fixture = createRepoFixture({ prefix: "wt-int-" });
+  repo = fixture.repo;
+  tmp = fixture.tmp;
 });
 
 afterEach(() => {
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fixture.dispose();
 });
 
 /** Registered worktree paths, from git itself. */

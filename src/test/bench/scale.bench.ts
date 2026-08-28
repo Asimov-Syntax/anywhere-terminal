@@ -20,9 +20,6 @@
 // pass. If a measurement breaches its budget, that IS the finding.
 
 import { execFileSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import type { DescendantsOutcome, ProcessTableSnapshot } from "../../pty/processTableSnapshot";
 import { createPaneEvidenceStore } from "../../session/PaneEvidenceStore";
 import type { RunningSessionsOutcome } from "../../vault/readers/runningSessions";
@@ -30,6 +27,7 @@ import { createPresenceProjectorDeps } from "../../worktree/presenceDeps";
 import { createPresenceProjector } from "../../worktree/presenceProjector";
 import { buildWorktreeTree } from "../../worktree/WorktreeDiscovery";
 import { createWorktreeTreeDeps } from "../../worktree/worktreeDeps";
+import { createRepoFixture } from "../fixtures/repoFixture";
 import { MODEL_REBUILD, PRESENCE_REBUILD } from "../invariants/budgets";
 
 /** The fixture sizes the design documents publish. Frozen — see the header. */
@@ -97,30 +95,6 @@ function presenceProjector() {
 
 // ── Model ────────────────────────────────────────────────────────────────
 
-function git(args: string[], cwd: string): void {
-  execFileSync("git", args, { cwd, encoding: "utf8" });
-}
-
-/** A real repository with `WORKTREES` real linked worktrees. Caller removes `tmp`. */
-function buildFixtureRepo(): { tmp: string; repo: string } {
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "wt-bench-")));
-  const repo = path.join(tmp, "repo");
-  fs.mkdirSync(repo);
-  git(["init", "-q", "-b", "main"], repo);
-  git(["config", "user.email", "t@example.com"], repo);
-  git(["config", "user.name", "T"], repo);
-  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
-  git(["add", "."], repo);
-  git(["commit", "-qm", "init"], repo);
-  // Round-1 W1: `git init` already made the main worktree, so adding WORKTREES linked ones
-  // built ELEVEN against a published fixture of ten. The fixture size is frozen (D2) — this
-  // makes the repo match it rather than moving it.
-  for (let i = 0; i < WORKTREES - 1; i++) {
-    git(["worktree", "add", "-q", "-b", `feat-${i}`, path.join(tmp, `wt-${i}`)], repo);
-  }
-  return { tmp, repo };
-}
-
 interface Budgeted {
   maxMs: number;
   source: string;
@@ -146,7 +120,10 @@ async function main(): Promise<void> {
     breached++;
   }
 
-  const { tmp, repo } = buildFixtureRepo();
+  // The same builder the mutation integration suite uses. Round-5 W2: these were two copies
+  // that had already drifted, while the Risk Map claimed one reused the other.
+  const fixture = createRepoFixture({ prefix: "wt-bench-", worktrees: WORKTREES });
+  const repo = fixture.repo;
   try {
     // One deps object across every sample, as the host holds one: the git version probe is
     // cached on it, and rebuilding it per sample would charge the rebuild for a probe
@@ -165,7 +142,7 @@ async function main(): Promise<void> {
       );
     }
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fixture.dispose();
   }
 
   if (breached > 0) {

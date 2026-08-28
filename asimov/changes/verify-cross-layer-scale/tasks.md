@@ -244,7 +244,7 @@
     1. Capture `deactivate` alongside `activate` inside `assemble()` in src/extension.worktreeAssembly.test.ts — `beforeEach` calls `vi.resetModules()`, so a later import yields a different module instance with different controller state
     2. `await deactivate()` in `afterEach`, then dispose `context.subscriptions`, surfacing unexpected failures; drop the direct `captured.runtime?.dispose()`
 
-- [ ] 8_5 One repo fixture, shared by the bench and the integration suite
+- [x] 8_5 One repo fixture, shared by the bench and the integration suite — verified: pnpm run bench:scale && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_4
   - **Refs**: .reviews/round-5.md § W2; discovery.md § "Round-5 handback" 8
   - **Acceptance**:
