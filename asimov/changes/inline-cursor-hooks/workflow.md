@@ -38,3 +38,4 @@ Plan oracle: all five BLOCK and both WARN findings accepted. D1/D2 now validate 
 Fastlane Gate 2: approved after bounded oracle fixes; open questions: none. Left out by design: Claude support, unknown storage roots, and destination relocation.
 Fastlane re-approval: task 2_2 now matches D4 — executable fail-open bytes survive a failed migration, while runtime observability remains revoked.
 Fastlane re-approval: task 1_1 verifies the recorded command itself; final lint still runs at the Verify Gate after the owned Cursor test files are formatted. Main baseline had formatter errors only in those two owned test files.
+Fastlane re-approval: task 3_1 RED proved closed stdout raises SIGPIPE before drain; D1 now ignores PIPE before neutral output, and task 3_1 owns the resulting source-literal update.
