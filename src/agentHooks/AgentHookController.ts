@@ -11,14 +11,14 @@ export interface HookInstallOutcome {
   installed: boolean;
   reason?: string;
   /** Exact lock paths a committed install could not clean up (D5, D9). */
-  unresolved?: string[];
+  unresolved?: readonly string[];
 }
 
 export interface HookRemoveOutcome {
   removed: boolean;
   reason?: string;
   /** Exact lock paths a committed removal could not clean up (D5, D9). */
-  unresolved?: string[];
+  unresolved?: readonly string[];
 }
 
 export interface HookInstaller {
@@ -208,7 +208,9 @@ export class AgentHookController {
     }
   }
 
-  private async install(state: AgentState): Promise<{ success: boolean; reason: string; unresolved?: string[] }> {
+  private async install(
+    state: AgentState,
+  ): Promise<{ success: boolean; reason: string; unresolved?: readonly string[] }> {
     try {
       const result = await state.installer.install();
       if (!result.installed) {
@@ -225,7 +227,9 @@ export class AgentHookController {
     }
   }
 
-  private async uninstall(state: AgentState): Promise<{ success: boolean; reason: string; unresolved?: string[] }> {
+  private async uninstall(
+    state: AgentState,
+  ): Promise<{ success: boolean; reason: string; unresolved?: readonly string[] }> {
     try {
       const result = await state.installer.uninstall();
       if (!result.removed && result.reason !== "not-installed") {

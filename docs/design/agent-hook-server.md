@@ -149,12 +149,12 @@ coordinates and must silently do nothing.
 Per agent, idempotent, reversible, and **opt-in**. Cursor and Claude use different installer
 shapes; each is destination-local and neither remembers a prior destination.
 
-**Cursor** keeps its shipped, pre-generalization installer bridge (`CursorHookInstaller`),
-restored unchanged: a managed script written to an extension-owned directory, registered in
-`~/.cursor/hooks.json` by matching the script's filename, under the existing
-`<configPath>.anywhere-terminal.lock` cross-process lock, temp-write plus atomic rename, with
-unknown JSON keys preserved and a symlinked destination refused. This bridge is a placeholder
-for the still-pending `inline-cursor-hooks` migration and is not this task's subject.
+**Cursor** uses the independently reviewed inline installer (`CursorHookInstaller`): one
+frozen POSIX command is registered directly in `~/.cursor/hooks.json`, exact released inline and
+legacy-wrapper commands are the only migration identities, unrelated hooks retain their order,
+and the no-age sibling lock plus compare-and-retry protects the user file. Legacy wrapper files
+are deleted only after no config reference remains. Windows is removal-only until a real Cursor
+Agent spike validates inline generation there; no new Windows command is installed.
 
 **Claude v1** (`ClaudeHookInstaller`) has no wrapper script and no ledger of past destinations:
 
@@ -297,11 +297,10 @@ Both fields are **agent-reported, therefore untrusted**:
 |---------|---------|
 | `anywhereTerminal.agentHooks.uninstall` | Removes every managed entry for every agent at its current destination, whatever the settings say; ordered through the same per-agent queue as setting changes, revoking authority before the Claude uninstall commits |
 
-**Cursor's activation-time reconciliation.** Cursor's registered script path is absolute and
-lives under the extension's global storage. On activation, compare the path in each managed
-entry against the current one; when they differ, rewrite the entry under the same lock. Claude
-v1 has no script path to drift — its inline command is byte-identical across versions until the
-frozen literal itself changes.
+**Activation-time reconciliation.** Cursor and Claude both reconcile frozen inline command
+bytes under their own ownership rules. Cursor also removes exact released legacy-wrapper
+references and deletes an unreferenced legacy file after the config commit. Neither current
+implementation has a newly installed script path that can drift across extension updates.
 
 ## 5. Error Handling & Limits
 
@@ -333,9 +332,9 @@ frozen literal itself changes.
 | Question answered | Claude emits no hook; without inference the pane stays `waiting` until the next tool event clears it. Accepted limitation for this phase |
 | `/compact` | Pre-compact → `working`, post-compact → `done`, or the pane keeps a stuck spinner |
 | User uninstalls the agent CLI | Registered hook entry becomes inert; uninstall still removes it |
-| User edits Cursor's managed script | Overwritten on the next reconcile; it is extension-owned |
+| User edits a legacy Cursor wrapper | The inline installer never executes or overwrites it; exact unreferenced released wrappers are removal-only cleanup |
 | User edits the canonical Claude hook group into an ambiguous shape | Reconciliation reports `ownership-conflict`, leaves the document byte-identical, and revokes authority rather than guessing (§ 4.3) |
-| Extension updated, Cursor's script path moved | Reconciled at activation (§ 4.7) |
+| Extension updated, Cursor command changes | Exact released identities converge to the reviewed frozen inline command on the next reconcile (§ 4.7) |
 | Extension updated, Claude installer version changes | No script path to reconcile; the next Claude reconcile converges the inline command bytes directly (§ 4.3) |
 
 ## 7. Security
@@ -345,8 +344,8 @@ frozen literal itself changes.
 | Network exposure | Loopback bind only; ephemeral port |
 | Authentication | Per-session token, constant-time compared, re-validated against live registration at use time, invalidated on pane teardown and on disable. One token per pane; which agents it speaks for is a per-session entitlement set fixed at spawn, so disabling an agent strikes it from every live pane permanently — coordinates already sitting in an environment cannot be revived by re-enabling, only by a fresh spawn |
 | Coordinate distribution | Process environment only. No shared on-disk artifact exists to read, race on, or leak between windows (§ 2.1) |
-| Config mutation | Opt-in setting, off by default; cross-process lock with no age-based reclaim; atomic rename; unknown keys preserved; symlinked destination refused; managed entries only (Cursor: filename match; Claude: canonical singleton group, ownership-conflict on ambiguity); uninstall command provided |
-| Script path (Cursor) | Absolute and extension-owned, reconciled on update. A relative path would resolve against the agent's cwd and execute whatever happened to be there (`07-orchestration-teams.md` § 2) |
+| Config mutation | Opt-in setting, off by default; cross-process lock with no age-based reclaim; atomic rename; unknown keys preserved; symlinked destination refused; managed entries only (Cursor: exact released command identity; Claude: canonical singleton group, ownership-conflict on ambiguity); uninstall command provided |
+| Inline command (Cursor) | One reviewed POSIX literal with loopback validation and fail-open delivery; Windows installs no new command. Legacy wrapper paths are cleanup identities, never current execution targets |
 | Inline command (Claude) | One frozen POSIX literal registered directly in the hook entry — no file path to hijack or leave dangling; input consumed before the background-job and loopback-coordinate guards run |
 | Reported identity | `sessionId` is a lookup key; `transcriptPath` is compared against the vault store and never opened on the report's authority (§ 4.6) |
 | Payload trust | Hook payloads come from a local process and are treated as data: bounded, validated, never executed, never interpolated into a command |

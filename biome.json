@@ -64,15 +64,5 @@
       "quoteStyle": "double",
       "semicolons": "always"
     }
-  },
-  "overrides": [
-    {
-      "includes": [
-        "src/cursor/CursorHookInstaller.test.ts"
-      ],
-      "formatter": {
-        "enabled": false
-      }
-    }
-  ]
+  }
 }

@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - **Claude hook installation v1.** On macOS and Linux, the opt-in Claude observer now reconciles one frozen fail-open command into the currently resolved `settings.json`, preserving user hooks and refusing ambiguous ownership rather than guessing. Disabling or using the removal command cleans only that current destination; no historical-location ledger or sweep is retained. Windows remains unsupported with zero configuration I/O until a real Windows Claude Code spike validates the boundary.
 
+### Removed
+
+- **Windows Cursor hook observability is temporarily removed.** This upgrade is removal-only on Windows: enabling or disabling the feature now cleans up exact released entries and wrappers but installs no new command. No new command is installed because the inline hook has not yet been executed on a real Windows Cursor Agent. Restoration requires a successful real Windows spike before inline generation resumes.
+
 ## [0.18.1] — 2026-08-24
 
 ### Changed

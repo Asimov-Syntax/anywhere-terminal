@@ -51,16 +51,24 @@ describe("CursorHookInstaller runtime compatibility", () => {
       );
       try {
         runtime.setAgentEnabled("cursor", true);
-        const coordinates = runtime.create("cursor-session")[CURSOR_HOOK_ENV_VAR];
+        const coordinates = runtime.create("11111111-1111-4111-8111-111111111111")[CURSOR_HOOK_ENV_VAR];
         expect(coordinates).toBeDefined();
         const environment = { ...process.env, [CURSOR_HOOK_ENV_VAR]: coordinates } as Record<string, string>;
         const payload = JSON.stringify({ hook_event_name: "beforeSubmitPrompt" });
 
         await expect(runCommand(command as string, payload, environment)).resolves.toBe("{}\n");
-        expect(updates).toContainEqual({ sessionId: "cursor-session", agent: "cursor", state: "working" });
+        expect(updates).toContainEqual({
+          sessionId: "11111111-1111-4111-8111-111111111111",
+          agent: "cursor",
+          state: "working",
+        });
 
         runtime.setAgentEnabled("cursor", false);
-        expect(updates).toContainEqual({ sessionId: "cursor-session", agent: "cursor", state: null });
+        expect(updates).toContainEqual({
+          sessionId: "11111111-1111-4111-8111-111111111111",
+          agent: "cursor",
+          state: null,
+        });
         const publicationsAfterRevocation = updates.length;
 
         await expect(runCommand(command as string, payload, environment)).resolves.toBe("{}\n");

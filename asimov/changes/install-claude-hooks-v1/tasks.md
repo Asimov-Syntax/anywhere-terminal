@@ -148,7 +148,7 @@
   - **Plan**:
     1. Replace the local tail map in src/agentHooks/install/agentHookLifecycle.ts with src/utils/keyedSerialQueue.ts and pin disable-then-reread ordering in src/agentHooks/install/agentHookLifecycle.test.ts.
 
-- [ ] 5_3 Merge the reviewed inline Cursor replacement
+- [x] 5_3 Merge the reviewed inline Cursor replacement — verified: bun scripts/verify-cursor-inline-hook.mjs && pnpm run check-types && bun test src/cursor/CursorHookInstaller.test.ts src/cursor/CursorHookInstaller.runtime.test.ts exit 0
   - **Deps**: 4_3
   - **Refs**: design.md D2; .reviews/round-1.md B4, B5, B6
   - **Acceptance**:
@@ -159,6 +159,8 @@
     2. Retain the branch's asimov/changes/archive/260828-0724-inline-cursor-hooks/, asimov/specs/cursor-agent-status/spec.md, docs/audit/2026-08-28-agent-hook-recovery-plan.md, docs/research/20260828-cursor-inline-hook-spike.md, scripts/verify-cursor-inline-hook.mjs, src/cursor/CursorHookController.ts, and src/cursor/CursorHookController.test.ts without reimplementation.
     3. Remove the temporary Cursor formatter override from biome.json and verify the merged source against the existing inline review evidence.
     4. Update CHANGELOG.md with the Cursor release note without dropping the Claude v1 entry.
+    5. Align readonly outcome path plumbing in src/agentHooks/AgentHookController.ts with the merged Cursor installer.
+    6. Update docs/PLAN.md, docs/DESIGN.md, and docs/design/agent-hook-server.md to replace the temporary Cursor bridge claim with the merged inline implementation.
 
 - [ ] 5_4 Strengthen frozen-command and ownership admission tests
   - **Deps**: 4_3, 5_3

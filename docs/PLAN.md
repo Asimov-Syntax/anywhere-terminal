@@ -339,13 +339,13 @@ state. There is nothing to provision.
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Give Claude a destination-local, opt-in installer that reconciles the frozen inline command against the current Claude settings file, distinct from Cursor's restored wrapper-script bridge |
+| **Goal** | Give Claude a destination-local, opt-in installer that reconciles the frozen inline command against the current Claude settings file, alongside Cursor's independently reviewed inline hook installer |
 | **Design Ref** | [agent-hook-server.md](design/agent-hook-server.md) § 4.3, § 4.7, § 6, § 7 |
 | **Depends On** | WT-006.1 |
 | **Stage** | 4 |
 | **Size** | L |
 | **Labels** | security-privacy |
-| **Notes** | Superseded the rejected shared ledger/wrapper/probe lifecycle (`install-claude-hooks`, `remove-rejected-hook-installer`, archived) with a dedicated Claude reconciler; Cursor's shipped wrapper-script installer is unchanged and out of this task's scope. Delivered and unit-proven; confirmation that installed Claude Code itself invokes the frozen command remains a separate real-agent spike, tracked outside this blueprint entry |
+| **Notes** | Superseded the rejected shared ledger/wrapper/probe lifecycle (`install-claude-hooks`, `remove-rejected-hook-installer`, archived) with a dedicated Claude reconciler; the independently reviewed `inline-cursor-hooks` change is merged rather than reimplemented. Delivered and unit-proven; confirmation that installed Claude Code itself invokes the frozen command remains a separate real-agent spike, tracked outside this blueprint entry |
 | **Acceptance** | Installation is opt-in per agent and destination-local: the setting, then `CLAUDE_CONFIG_DIR`, then `~/.claude` resolve one absolute path per operation, with no memory of a prior destination; the user's config survives concurrent editors, interrupted writes, symlinked destinations, and keys we do not recognise; a canonical singleton hook group is the ownership boundary — an ambiguous shape (sibling handlers, extra keys, wrong matcher or event) leaves the document byte-identical and revokes authority rather than guessing; installing repeatedly converges, and uninstall removes exactly the canonical groups at the current destination, with no ledger or historical-destination sweep; the lock never reclaims on age; the registered command is one frozen POSIX literal run through the real shell, and Windows performs zero filesystem access until a real spike lands; a hook with no coordinates, or no runtime to reach, costs the agent nothing and claims nothing |
 | **Status** | done |
 
