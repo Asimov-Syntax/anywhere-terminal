@@ -44,3 +44,8 @@ Lane: light
   a session it just lost; that case is now asserted rather than incidental.
 - Verify Gate: check-types clean, 235 files / 4714 tests, gate exit 0, lint 13 warnings + 4 infos —
   identical to `main` under the same biome 2.4.5.
+- Round-1 B1 accepted and fixed in 2_1. My guard asked whether a title EXISTS when the question was
+  who OWNS it, so two live cases stayed broken: a pane reporting `""` (a real state — `paneEvidence.ts`
+  separates "reported nothing" from "never reported"), and a registry slug like `cyberk-skills-04`
+  that could never be upgraded to the vault's real title. `titleSourceId` is now set only where the
+  pane does not name itself, so its presence alone is the permission to read the vault.

@@ -1085,6 +1085,51 @@ describe("two panes, one session", () => {
     expect(rows.map((r) => r.title)).toEqual(["Adversarial review of Q3 options", "Adversarial review of Q3 options"]);
   });
 
+  // `unknown` is a pane nobody reported; `neutral` is a title that named nothing (paneEvidence.ts).
+  // Asking whether a title EXISTS conflates them, and a cleared shell title is the live case.
+  it("still names a disowned row whose pane reported an empty title", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: "" }), pane({ paneId: "b", title: "   " })]);
+    bothResolve(h, {});
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.map((r) => r.title)).toEqual(["Adversarial review of Q3 options", "Adversarial review of Q3 options"]);
+  });
+
+  // The registry publishes cwd-derived slugs; the vault holds the session's real title. Losing the
+  // contest must not freeze a row on the weaker of the two.
+  it("upgrades a disowned row from the registry name to the vault's title", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: undefined }), pane({ paneId: "b", title: undefined })]);
+    h.setLookup(() => ({
+      kind: "resolved",
+      agent: "claude",
+      sessionId: "s1",
+      name: "cyberk-skills-04",
+      evidence: "directory",
+    }));
+    h.setVaultTitle(async () => "Adversarial review of Q3 options");
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.map((r) => r.title)).toEqual(["Adversarial review of Q3 options", "Adversarial review of Q3 options"]);
+  });
+
+  it("keeps the registry name when the vault has no title for the session", async () => {
+    const h = makeProjector([pane({ paneId: "a", title: undefined }), pane({ paneId: "b", title: undefined })]);
+    h.setLookup(() => ({
+      kind: "resolved",
+      agent: "claude",
+      sessionId: "s1",
+      name: "cyberk-skills-04",
+      evidence: "directory",
+    }));
+    h.setVaultTitle(async () => undefined);
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows.map((r) => r.title)).toEqual(["cyberk-skills-04", "cyberk-skills-04"]);
+  });
+
   it("still prefers the pane's own title over the session it lost", async () => {
     const h = makeProjector([pane({ paneId: "a", title: "zsh" }), pane({ paneId: "b", title: "npm run watch" })]);
     bothResolve(h, {});

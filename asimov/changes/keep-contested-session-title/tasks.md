@@ -25,3 +25,17 @@ both rendering `(untitled)` while the projector had already computed `cyberk-ski
     3. In `titleFromVault` in src/worktree/presenceProjector.ts, consult `titleSourceId` when `entryId` is gone, but only for a row that has no title of its own
     4. Include `titleSourceId` in the `alive` set so the memo is not evicted while a contested row still reads it
     5. Record `titleSourceId` as non-rendering, with its reason, in src/webview/worktree/worktreeRenderSignature.test.ts
+
+## 2. Review fixes (cycle 1)
+
+- [x] 2_1 Ask who owns the title, not whether one exists — verified: pnpm exec vitest run 'src/worktree/presenceProjector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_1
+  - **Refs**: .reviews/round-1.md
+  - **Acceptance**:
+    - Outcome: A cleared or registry-named row still takes the vault's title
+    - Verify: unit src/worktree/presenceProjector.test.ts
+  - **Boundary**: ownership rules unchanged; only title provenance moves
+  - **Plan**:
+    1. Set `titleSourceId` only where the title is not pane-owned in src/worktree/presenceProjector.ts
+    2. Drop the value-presence guard in `titleFromVault`, keeping the registry name as fallback, in src/worktree/presenceProjector.ts
+    3. Cover reported-empty, whitespace-only and registry-name-upgraded cases in src/worktree/presenceProjector.test.ts

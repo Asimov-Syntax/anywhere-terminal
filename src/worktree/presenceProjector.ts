@@ -302,13 +302,16 @@ function settleContestedSessions(produced: readonly ProducedRow[]): readonly Pro
     const sessionWasIdentity = item.row.agentSource === "registry";
     // The pane's own title outranks the session it just lost, but a shell pane has none — and
     // blanking the row there is what rendered `(untitled)` for a session already resolved.
+    // Set only where the pane does NOT name itself: `titleSourceId` is the row's provenance, so a
+    // pane-owned title carries none and is never second-guessed. Asking merely whether a title
+    // exists conflates a reported-empty title with a registry slug, and froze both (round-1 B1).
     const paneTitle = item.paneTitle?.trim();
     return {
       worktreeId: item.worktreeId,
       row: {
         ...rest,
         ...(paneTitle ? { title: paneTitle } : {}),
-        ...(item.row.entryId === undefined ? {} : { titleSourceId: item.row.entryId }),
+        ...(paneTitle || item.row.entryId === undefined ? {} : { titleSourceId: item.row.entryId }),
         ...(sessionWasIdentity ? { agentSource: "none" as const, agent: undefined } : {}),
       },
     };
@@ -463,13 +466,10 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     for (const [worktreeId, rows] of Object.entries(rowsByWorktreeId)) {
       rowsByWorktreeId[worktreeId] = await Promise.all(
         rows.map(async (row) => {
+          // `titleSourceId` is present only where nothing else names the row, so its mere presence
+          // is the permission — a registry slug stays as the fallback the vault outranks.
           const source = row.entryId ?? row.titleSourceId;
           if (source === undefined) {
-            return row;
-          }
-          // A row that lost the contest takes the session's name only where it has none of its
-          // own: the session no longer names it, it merely supplies a name it would otherwise lack.
-          if (row.entryId === undefined && row.title !== undefined) {
             return row;
           }
           const title = await vaultTitle(source, read, now);
