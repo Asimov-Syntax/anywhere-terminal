@@ -63,23 +63,109 @@ describe("CursorHookController", () => {
     expect(events).toEqual(["detach", "runtime:false", "runtime:true", "attach"]);
   });
 
-  it.each(["unsupported-config", "write-failed", "windows-probe-failed"] as const)(
-    "detaches and disables after %s installation failure",
-    async (reason) => {
-      const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
-        initialEnabled: true,
-        install: async () => ({ installed: false, reason }),
-      });
+  it.each([
+    "unsupported-config",
+    "write-failed",
+    "unsupported-platform",
+  ] as const)("detaches and disables after %s installation failure", async (reason) => {
+    const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({ installed: false, reason }),
+    });
 
-      await controller.start();
+    await controller.start();
 
-      expect(runtime.setEnabled).not.toHaveBeenCalledWith(true);
-      expect(setContributor).not.toHaveBeenCalledWith(runtime);
-      expect(events.at(-2)).toBe("detach");
-      expect(events.at(-1)).toBe("runtime:false");
-      expect(onWarning).toHaveBeenCalledWith("install", reason);
-    },
-  );
+    expect(runtime.setEnabled).not.toHaveBeenCalledWith(true);
+    expect(setContributor).not.toHaveBeenCalledWith(runtime);
+    expect(events.at(-2)).toBe("detach");
+    expect(events.at(-1)).toBe("runtime:false");
+    expect(onWarning).toHaveBeenCalledWith("install", reason);
+  });
+
+  it("surfaces unresolved install paths without granting authority", async () => {
+    const { controller, onWarning, runtime, setContributor } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({
+        installed: false,
+        reason: "unsupported-config",
+        unresolved: ["C:\\Users\\alice\\.cursor\\hooks.json"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(runtime.setEnabled).not.toHaveBeenCalledWith(true);
+    expect(setContributor).not.toHaveBeenCalledWith(runtime);
+    expect(onWarning).toHaveBeenCalledWith("install", "unsupported-config: C:\\Users\\alice\\.cursor\\hooks.json");
+  });
+
+  it("grants authority and warns when only an unreferenced wrapper remains", async () => {
+    const { controller, events, onWarning } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({
+        installed: true,
+        reason: "legacy-wrapper-delete-failed",
+        unresolved: ["/tmp/cursor-hook-observer.sh"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(events.slice(-2)).toEqual(["runtime:true", "attach"]);
+    expect(onWarning).toHaveBeenCalledWith("install", "legacy-wrapper-delete-failed: /tmp/cursor-hook-observer.sh");
+  });
+
+  it("grants authority and warns when final lock release fails after install", async () => {
+    const { controller, events, onWarning } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({
+        installed: true,
+        reason: "lock-release-failed",
+        unresolved: ["/tmp/hooks.json.anywhere-terminal.lock"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(events.slice(-2)).toEqual(["runtime:true", "attach"]);
+    expect(onWarning).toHaveBeenCalledWith("install", "lock-release-failed: /tmp/hooks.json.anywhere-terminal.lock");
+  });
+
+  it("keeps authority revoked when removal commits but final lock release fails", async () => {
+    const { controller, events, onWarning, runtime } = controllerDeps({
+      initialEnabled: false,
+      uninstall: async () => ({
+        removed: true,
+        reason: "lock-release-failed",
+        unresolved: ["/tmp/hooks.json.anywhere-terminal.lock"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(runtime.setEnabled).not.toHaveBeenCalledWith(true);
+    expect(events.at(-2)).toBe("detach");
+    expect(events.at(-1)).toBe("runtime:false");
+    expect(onWarning).toHaveBeenCalledWith("uninstall", "lock-release-failed: /tmp/hooks.json.anywhere-terminal.lock");
+  });
+
+  it("reports incomplete removal paths and keeps authority revoked", async () => {
+    const { controller, events, onWarning, runtime } = controllerDeps({
+      initialEnabled: false,
+      uninstall: async () => ({
+        removed: false,
+        reason: "legacy-wrapper-delete-failed",
+        unresolved: ["/tmp/cursor-hook-observer.sh"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(runtime.setEnabled).not.toHaveBeenCalledWith(true);
+    expect(events.at(-2)).toBe("detach");
+    expect(events.at(-1)).toBe("runtime:false");
+    expect(onWarning).toHaveBeenCalledWith("uninstall", "legacy-wrapper-delete-failed: /tmp/cursor-hook-observer.sh");
+  });
 
   it("uses a setting change made while runtime creation awaits", async () => {
     const runtimeReady = deferred<CursorHookRuntime>();

@@ -117,6 +117,9 @@ export class CursorHookController {
       this.reconciledEnabled = enabled;
       this.reconciledSuccessfully = outcome.success;
       this.applyReconciledAuthority();
+      if (outcome.warning) {
+        this.options.onWarning?.(enabled ? "install" : "uninstall", outcome.warning);
+      }
       if (!outcome.success) {
         this.options.onWarning?.(enabled ? "install" : "uninstall", outcome.reason);
       }
@@ -124,23 +127,34 @@ export class CursorHookController {
     }
   }
 
-  private async install(): Promise<{ success: boolean; reason: string }> {
+  private async install(): Promise<{ success: boolean; reason: string; warning?: string }> {
     try {
       const result: CursorHookInstallResult = await this.options.installer.install();
-      return result.installed
-        ? { success: true, reason: "" }
-        : { success: false, reason: result.reason ?? "install-failed" };
+      if (result.installed) {
+        return {
+          success: true,
+          reason: "",
+          ...(result.reason ? { warning: formatOutcome(result.reason, result.unresolved) } : {}),
+        };
+      }
+      return {
+        success: false,
+        reason: formatOutcome(result.reason ?? "install-failed", result.unresolved),
+      };
     } catch (error) {
       return { success: false, reason: error instanceof Error ? error.message : String(error) };
     }
   }
 
-  private async uninstall(): Promise<{ success: boolean; reason: string }> {
+  private async uninstall(): Promise<{ success: boolean; reason: string; warning?: string }> {
     try {
       const result: CursorHookRemoveResult = await this.options.installer.uninstall();
-      return result.removed || result.reason === "not-installed"
-        ? { success: true, reason: "" }
-        : { success: false, reason: result.reason ?? "uninstall-failed" };
+      const clean = !result.unresolved || result.unresolved.length === 0;
+      const success = clean && (result.removed || result.reason === "not-installed");
+      return {
+        success,
+        reason: success ? "" : formatOutcome(result.reason ?? "uninstall-failed", result.unresolved),
+      };
     } catch (error) {
       return { success: false, reason: error instanceof Error ? error.message : String(error) };
     }
@@ -168,4 +182,8 @@ export class CursorHookController {
     this.runtime?.setEnabled(false);
     this.authorityGranted = false;
   }
+}
+
+function formatOutcome(reason: string, unresolved: readonly string[] | undefined): string {
+  return unresolved && unresolved.length > 0 ? `${reason}: ${unresolved.join(", ")}` : reason;
 }

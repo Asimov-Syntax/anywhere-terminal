@@ -4,6 +4,12 @@ All notable changes to **AnyWhere Terminal** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Windows Cursor hook observability is temporarily removed.** This upgrade is removal-only on Windows: enabling or disabling the feature now cleans up exact released entries and wrappers but installs no new command. No new command is installed because the inline hook has not yet been executed on a real Windows Cursor Agent. Restoration requires a successful real Windows spike before inline generation resumes.
+
 ## [0.18.1] — 2026-08-24
 
 ### Changed

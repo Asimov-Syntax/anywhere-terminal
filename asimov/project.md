@@ -21,7 +21,7 @@ A VS Code extension that allows users to place terminal instances anywhere in th
 ## Commands
 
 - **Type check**: `pnpm run check-types`
-- **Lint**: `pnpm run lint` (Biome — lint + format + auto-fix)
+- **Lint**: `pnpm exec biome check src` (Biome — check mode; `pnpm run lint` is the auto-fix form and must not be used for a gate)
 - **Format**: `pnpm run format` (Biome — auto-format)
 - **Test**: `pnpm run test:unit` (Vitest)
 - **E2E**: N/A

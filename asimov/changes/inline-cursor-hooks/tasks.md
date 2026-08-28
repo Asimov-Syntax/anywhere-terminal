@@ -76,7 +76,7 @@
     1. Replace the rejected shell-pattern parser in src/cursor/CursorHookInstaller.ts with D1's real-agent-proven awk generation.
     2. Retarget src/cursor/CursorHookInstaller.test.ts valid UUID URLs, rejected authority and path cases, awk function and PATH controls, and failed-awk drain behavior.
 
-- [ ] 3_2 Execute the frozen bytes through real cursor-agent
+- [x] 3_2 Execute the frozen bytes through real cursor-agent — verified: bun scripts/verify-cursor-inline-hook.mjs && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2, 2_3, 3_3
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy, cursor-pre-command-execution-boundary}; design.md D1, D2
   - **Acceptance**:
@@ -97,3 +97,17 @@
     - Verify: command grep -F "Windows Cursor hook observability" CHANGELOG.md
   - **Plan**:
     1. Add an Unreleased entry to ./CHANGELOG.md naming removal-only behavior, the safety reason, and restoration gate.
+
+## 5. Review remediation
+
+- [x] 5_1 Preserve referenced wrappers and surface final lock-release residue — verified: bun test 'src/cursor/CursorHookInstaller.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_2, 4_1
+  - **Refs**: specs/cursor-agent-status/spec.md#{cursor-hook-configuration-ownership, cursor-hook-writer-coordination, cursor-legacy-command-ownership, cursor-legacy-wrapper-migration, windows-cursor-hook-removal-only}; design.md D3, D4, D5, D6, D8; .reviews/round-1.md#{b1,b2}
+  - **Acceptance**:
+    - Outcome: Cleanup never deletes a wrapper retained by preserved configuration, and every final lock-release failure reports the exact lock residue without erasing committed state.
+    - Verify: unit src/cursor/CursorHookInstaller.test.ts
+  - **Plan**:
+    1. Retain exact legacy-reference knowledge through reconciliation in src/cursor/CursorHookInstaller.ts and skip wrapper unlink when any preserved event still references it.
+    2. Make src/cursor/CursorHookInstaller.ts preserve work booleans while mapping a final lock unlink failure to an explicit reason and exact unresolved lock path.
+    3. Add POSIX and Windows install/uninstall regressions for custom-event wrapper references and final lock-unlink failure in src/cursor/CursorHookInstaller.test.ts.
+    4. Confirm partial-install warnings and incomplete-removal authority behavior in src/cursor/CursorHookController.ts and src/cursor/CursorHookController.test.ts.
