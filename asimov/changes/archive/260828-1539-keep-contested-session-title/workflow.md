@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -49,3 +49,7 @@ Lane: light
   separates "reported nothing" from "never reported"), and a registry slug like `cyberk-skills-04`
   that could never be upgraded to the vault's real title. `titleSourceId` is now set only where the
   pane does not name itself, so its presence alone is the permission to read the vault.
+- Round 2 (8650ef13) APPROVE, 0 findings. Chair also confirmed no external-replay bypass:
+  `settleContestedSessions` assigns provenance before `lastWindowPass` is stored, external-only replay
+  copies settled rows including `titleSourceId`, and every projection path calls `titleFromVault`.
+- Fastlane: approved and archived without a user gate.
