@@ -35,7 +35,7 @@
   - **Deps**: 2_1
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-hook-writer-coordination, cursor-legacy-wrapper-migration}; design.md D4, D5
   - **Acceptance**:
-    - Outcome: Interrupted migration always leaves a working registered hook.
+    - Outcome: Interrupted migration preserves an executable fail-open released hook path.
     - Verify: unit src/cursor/CursorHookInstaller.test.ts
   - **Plan**:
     1. Reorder install and uninstall in src/cursor/CursorHookInstaller.ts around the existing lock and atomic replacement, with exact-path post-commit wrapper cleanup.
