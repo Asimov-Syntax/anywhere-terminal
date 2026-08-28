@@ -53,6 +53,7 @@ their own fixtures certified as correct:
 | 1 | A commented-out `it(...)` — and the regression fixture asserted it SHOULD count |
 | 2 | An `it(...)` inside a string, template, or regex literal — the round-1 fixture escaped its embedded quote and so stepped around the case |
 | 3 | `item(...)` read as `it` + modifier `em`; `testHelper(...)` as `test` + `Helper` — the left identifier boundary was guarded, the right one was not |
+| 4 | An `it(...)` under `describe.skip`, and one calling a locally shadowed `it` — real call sites, correctly parsed, that never execute |
 
 Each fix was locally correct and the next probe found another way in, which is the signature of a
 wrong mechanism rather than a wrong patch. So the scan SHALL use the TypeScript compiler API —
@@ -64,6 +65,20 @@ and the parser already knows it.
 
 The three negative fixtures the rounds produced stay as regression cases, because what they now
 prove is that the mechanism does not need them.
+
+**Revised again after review round 4 — the scan reads execution, not existence.** Rows 1-3 above
+were all lexical and the parser retired them together. Row 4 is not: those call sites are real
+calls to the real `it`, parsed correctly, and they still never run — so an entire invariant suite
+could be disabled by one `.skip` on its `describe` while the registry stayed green. Parsing was
+necessary and was never sufficient, because "a declaration exists" was never the property worth
+checking. The scan SHALL therefore also:
+
+- carry an enclosing `describe.skip` / `describe.todo` down to the declarations inside it;
+- resolve `it` / `test` to the names the file imported from `vitest`, so a locally shadowed
+  binding of the same name is not a test declaration.
+
+All 235 test files in this repo import their runner explicitly, so requiring the import removes a
+family of false positives at no cost to real coverage.
 
 ### D10: I10 is closed by a source rule, not by a test
 
@@ -150,6 +165,18 @@ task", and it is the half a per-layer suite structurally cannot reach. The scena
 | I14 | Blocker set shown → blockers change before execution → re-prompt; an agent that became working is not force-removable |
 | I15 | Mutation failure or timeout → forced rebuild → git/filesystem disagreement surfaces as indeterminate |
 | — | Tree/presence atomicity: no surface receives presence naming a worktree absent from the paired tree |
+
+**Revised after review round 4 — "the production composition" excludes a mirror of it.** I6 and I7
+were first proved against a lighter harness that could not run `activate()`, so it re-implemented
+the `onStatus` routing branch by hand and said so in its header. A mirrored seam cannot fail when
+the original changes, which is the single thing a cross-layer test exists to do: production could
+begin dropping non-working structured states with every I6-tagged test still green. The routing is
+reachable only by standing up the extension, so both invariants SHALL be proved in the assembly
+harness that does. The lighter harness is retired rather than kept alongside — standing up this
+composition twice is the duplication these invariants argue against.
+
+`finishedAt` and `activitySource` are dropped at the host→webview contract, so the assembly
+harness captures the real projector's own answer on its way past rather than reading the DOM.
 
 ### D6: The render cap exists — register it, do not rebuild it
 

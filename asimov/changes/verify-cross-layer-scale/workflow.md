@@ -46,3 +46,29 @@ Round 2 REJECT (5 BLOCK), round 3 BLOCK (2) — all accepted, none rebutted acro
 design.md D1 revised and D10 added at that handback: the declaration scan parses via `ts.createSourceFile` and walks CallExpression nodes instead of scanning characters (typescript 5.9.3 was already a devDependency), and I10 is closed by a source rule rather than by a comment admitting the gap. All three rounds' negative fixtures are kept — what they prove now is that the mechanism no longer needs them.
 The D10 rule is deliberately scoped to src/worktree/** plus WorktreeHost.ts. Six production modules elsewhere delete files they wrote themselves — a clipboard temp file, an injected shell-integration script, session storage, the vault cache, a sqlite temp, and the peer-owned locked-JSON writer. A rule failing on those would be a rule about fs.rm, not about I10.
 NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3 blockers have had no reviewer verdict since being fixed. W2 (bench fixture duplication) and S2 (redundant pane-count test) remain accepted-but-unfixed by choice. Any further review opens cycle 2, round 4, in discovery mode.
+
+- Round 4 opened cycle 2 in discovery mode (rounds 4-6 available) and returned REJECT: 4 BLOCK,
+  2 WARN, 2 SUGGEST. Every BLOCK was reproduced before triage — none accepted on the chair's word.
+- B12 is the fourth way D1 has been wrong, and the first non-lexical one: `describe.skip` and a
+  locally shadowed `it` are real, correctly parsed call sites that never execute. The parser was
+  necessary and never sufficient; "a declaration exists" was never the property worth checking.
+  design.md D1 carries the fourth row and the two rules that close it.
+- B13 cost a test file: `extension.crossLayer.test.ts` mirrored the `onStatus` routing branch by
+  hand because its lighter harness could not run `activate()`. Its I6/I7 tests moved into
+  `extension.worktreeAssembly.test.ts` and the file is deleted. Red-demoed: making production
+  routing drop non-working states now fails both I6 tests, and used to fail neither.
+- Deviation from task 7_1's Boundary: none. The alternative fix — extracting a production routing
+  helper — was considered and rejected in favour of the harness move, which needed no production
+  edit.
+- W4's `afterEach` is the first teardown this assembly file has ever had. Every case leaked an
+  AgentHookRuntime and its loopback server. This is a candidate cause of the PTY_LOAD_FAILED
+  order-instability carried over from the previous change, not a confirmed fix for it.
+- W2 (bench fixture duplicating `worktreeMutations.integration.test.ts`) is accepted and NOT fixed.
+  Recorded as author-deferred, not risk-accepted: only the user can grant that status. It has now
+  been deferred in two cycles.
+- Lint baseline was re-measured after a false diff: `/tmp/lintbase` inherited biome 2.5.10 from the
+  main checkout while this worktree runs 2.4.5. Compared with one binary and one config, the
+  finding set is IDENTICAL to clean `main` — this change introduces none.
+- Review still NOT closed and not to be read as approved: the round-4 fixes have had no reviewer
+  verdict. Cycle 2 has rounds 5 and 6 available.
+

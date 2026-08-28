@@ -18,7 +18,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentHookRuntime } from "./agentHooks/AgentHookRuntime";
 import type { WorktreeHost, WorktreeSurface } from "./providers/WorktreeHost";
 import { type PaneEvidenceStore, TURN_FRESHNESS_MS } from "./session/PaneEvidenceStore";
@@ -28,7 +28,7 @@ import type { CreateSessionOptions } from "./vault/VaultLauncher";
 import { createMessageRouter, type MessageHandlers } from "./webview/messaging/MessageRouter";
 import { WorktreeController } from "./webview/worktree/WorktreeController";
 import { agentRow } from "./webview/worktree/worktreeFixtures";
-import type { WorktreeAgentRow } from "./webview/worktree/worktreeViewTypes";
+import type { WorktreeAgentRow, WorktreePresence } from "./webview/worktree/worktreeViewTypes";
 
 // A REAL directory: the create-path probe asks the filesystem, and a fake root
 // nothing could ever occupy makes that probe untestable (round-4 B12).
@@ -170,7 +170,13 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
   };
 });
 
-const captured: { host?: WorktreeHost; runtime?: AgentHookRuntime; paneEvidence?: PaneEvidenceStore } = {};
+const captured: {
+  host?: WorktreeHost;
+  runtime?: AgentHookRuntime;
+  paneEvidence?: PaneEvidenceStore;
+  /** The real projector's own answer, before the resume-walk row is merged into it. */
+  projection?: WorktreePresence;
+} = {};
 
 /**
  * The real runtime and the real pane store, captured on the way past.
@@ -227,6 +233,10 @@ vi.mock("./worktree/presenceProjector", async (importOriginal) => {
         rankRevision: () => inner.rankRevision(),
         project: async (ids: readonly string[], options?: never) => {
           const base = await inner.project(ids, options);
+          // Captured here because the host→webview contract drops the fields I6 and I7
+          // are about: `finishedAt` and `activitySource` never reach a webview message,
+          // so the DOM cannot answer either question (round-4 B13).
+          captured.projection = base;
           if (publishedRow === null) {
             return base;
           }
@@ -297,6 +307,27 @@ vi.mock("./providers/WorktreeHost", async (importOriginal) => {
   };
 });
 
+/**
+ * Everything `activate` registered, so it can be torn down again.
+ *
+ * Round-4 W4: this file called `assemble()` once per case and disposed nothing, so each
+ * test left an AgentHookRuntime — and its loopback HTTP server — open for the rest of the
+ * run. Suites that leak listeners fail by suite ORDER, which is the shape of the
+ * PTY_LOAD_FAILED instability recorded against this file.
+ */
+let subscriptions: Array<{ dispose(): unknown }> = [];
+
+afterEach(() => {
+  captured.runtime?.dispose();
+  for (const subscription of subscriptions.splice(0)) {
+    try {
+      subscription.dispose();
+    } catch {
+      // A double dispose is not a finding: the point is that nothing stays open.
+    }
+  }
+});
+
 beforeEach(() => {
   argv = [];
   launched = [];
@@ -315,6 +346,7 @@ beforeEach(() => {
   captured.host = undefined;
   captured.runtime = undefined;
   captured.paneEvidence = undefined;
+  captured.projection = undefined;
   document.body.replaceChildren();
   vi.resetModules();
 });
@@ -327,6 +359,7 @@ beforeEach(() => {
  */
 async function assemble(): Promise<{ controller: WorktreeController; host: WorktreeHost }> {
   const { activate } = await import("./extension");
+  subscriptions = [];
   const vscode = await import("./test/__mocks__/vscode");
   vscode.__resetAll();
   vscode.__setWorkspaceFolders([{ uri: { fsPath: REPO } }]);
@@ -338,7 +371,7 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
 
   await activate({
     extensionUri: { fsPath: "/mock/extension" },
-    subscriptions: [],
+    subscriptions,
     globalState: { get: () => undefined, update: async () => {}, keys: () => [] },
     workspaceState: { get: () => undefined, update: async () => {}, keys: () => [] },
     globalStorageUri: { fsPath: "/mock/storage" },
@@ -848,6 +881,93 @@ describe("a Claude turn reaches the pane's evidence through the real assembly", 
     h.store.create(h.paneId);
 
     expect(h.store.read(h.paneId)?.turn).toBeUndefined();
+  });
+});
+
+// ─── I6 / I7 — the routing `activate` installs, through the real thing ──────
+//
+// These used to live in extension.crossLayer.test.ts against a lighter harness that could
+// not run `activate()`, so it re-implemented the onStatus routing branch by hand and stated
+// the mirror in its header. A mirrored seam cannot fail when the original changes, which is
+// the one thing a cross-layer test exists to do (round-4 B13). The routing is only reachable
+// by standing up the extension, so the tests moved to where it is reachable.
+
+describe("the routing activate installs between a hook turn and a projected row", () => {
+  /** A pane at a worktree the tree contains, so the real projector emits a row for it. */
+  async function pipeline(paneId = "pane-i6") {
+    await assemble();
+    await settle();
+    const { runtime, paneEvidence: store } = captured;
+    if (runtime === undefined || store === undefined) {
+      throw new Error("activate built no hook runtime or no pane store");
+    }
+    runtime.setAgentEnabled("claude", true);
+    store.create(paneId, { viewId: "sidebar", cwd: LINKED, ptyPid: 4242, shell: "claude", isAgentLaunch: true });
+    const url = runtime.create(paneId).ANYWHERE_TERMINAL_CLAUDE_URL;
+    if (url === undefined) {
+      throw new Error("no claude coordinates were minted");
+    }
+    return {
+      runtime,
+      store,
+      post: (body: unknown) =>
+        fetch(`${url}/claude`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      /** Re-project through the host, then read the projector's own answer. */
+      row: async (): Promise<WorktreeAgentRow | undefined> => {
+        await captured.host?.mutationBindings().forceRebuild(REPO_ID);
+        await settle();
+        return captured.projection?.rowsByWorktreeId[LINKED]?.[0];
+      },
+    };
+  }
+
+  it("[I6] stamps no finish for a session boundary, though the pane does read idle", async () => {
+    const p = await pipeline();
+    await p.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
+    // Projected between the events: the finish rule is a TRANSITION (running → idle), so a
+    // single projection at the end would never see one and the check would pass for the
+    // wrong reason.
+    expect((await p.row())?.activity).toBe("running");
+
+    await p.post({ hook_event_name: "SessionStart", session_id: "sess-1", source: "resume" });
+    const row = await p.row();
+
+    expect(row?.activity).toBe("idle");
+    expect(row?.finishedAt, "a boundary was recorded as a finished turn").toBeUndefined();
+  });
+
+  it("[I6] does stamp a finish for a turn that actually ended, so the check above is not vacuous", async () => {
+    const p = await pipeline();
+    await p.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
+    expect((await p.row())?.activity).toBe("running");
+
+    await p.post({ hook_event_name: "Stop", session_id: "sess-1" });
+    const row = await p.row();
+
+    expect(row?.activity).toBe("idle");
+    expect(row?.finishedAt).toBeDefined();
+  });
+
+  it("[I7] returns the pane to inference when the source that published it goes away", async () => {
+    const p = await pipeline();
+    await p.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1", prompt: "go" });
+    expect((await p.row())?.activitySource).toBe("hook");
+
+    // A reload DISPOSES the runtime — it closes the server and marks itself disposed. That
+    // is a different event from `setAgentEnabled(false)`, which is a user revoking an
+    // entitlement, and I7 is about the first one (round-1 B4).
+    p.runtime.dispose();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect((await p.row())?.activitySource).not.toBe("hook");
+    // And it cannot come back: a disposed runtime republishing is the same defect from the
+    // other side, so the socket it minted must no longer accept a turn.
+    await expect(p.post({ hook_event_name: "UserPromptSubmit", session_id: "sess-1" })).rejects.toThrow();
+    expect((await p.row())?.activitySource).not.toBe("hook");
   });
 });
 

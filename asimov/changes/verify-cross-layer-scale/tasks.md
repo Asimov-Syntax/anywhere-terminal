@@ -161,3 +161,21 @@
     1. Rewrite `declarationsIn` in src/test/invariants/sourceSources.ts over `ts.createSourceFile` and `CallExpression`, keeping all three rounds' negative fixtures in src/test/invariants/coverage.test.ts
     2. Tag I1's activity-retention assertion in src/worktree/presenceProjector.test.ts
     3. Add the D10 source rule to src/test/invariants/sourceBytes.test.ts and drop I10's admission comment from src/test/invariants/registry.ts
+
+## 7. Review fixes (cycle 2)
+
+- [x] 7_1 Check execution, not existence — round-4 blockers — verified: pnpm run test:unit && pnpm run check-types exit 0
+  - **Deps**: 6_2
+  - **Refs**: .reviews/round-4.md; design.md D1 (revised), D4, D10
+  - **Acceptance**:
+    - Outcome: A disabled suite, a named-import deletion, a routing change, and a render cap raised by one each make a test go red
+    - Verify: command pnpm run test:unit
+  - **Boundary**: no production behavior change — src/extension.ts routing stays as it is; I6 is proved through the existing activation harness, not through a new production seam
+  - **Plan**:
+    1. B12: propagate enclosing-suite inertness and resolve `it`/`test` to imported vitest bindings in src/test/invariants/sourceSources.ts, with `describe.skip`/`describe.todo`/shadowed-`it` fixtures in src/test/invariants/coverage.test.ts
+    2. B2: read `node:fs` bindings through the TypeScript AST in src/test/invariants/sourceBytes.test.ts so named, aliased, and renamed-namespace deletions are caught
+    3. B2: tag I2 at its title-evidence boundary and I3 at its direct activation test in src/webview/worktree/WorktreeView.test.ts
+    4. B13: drive I6 through real activation in src/extension.worktreeAssembly.test.ts and drop the mirrored `route()` from src/extension.crossLayer.test.ts
+    5. B14: assert the pre-click row count equals the exported cap in src/webview/worktree/WorktreeView.test.ts
+    6. W4: dispose activation in an `afterEach` in src/extension.worktreeAssembly.test.ts
+    7. S2: build the one-pane fixture in src/worktree/presenceProjector.scale.test.ts; S3: delete `withoutComments` from src/test/invariants/sourceSources.ts

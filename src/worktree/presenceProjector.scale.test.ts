@@ -22,7 +22,7 @@ const PANES = 10;
 
 const worktreeIds = Array.from({ length: WORKTREES }, (_, i) => `/repo/wt-${i}`);
 
-function wireAtScale() {
+function wireAtScale(panes: number = PANES) {
   const outcome: DescendantsOutcome = { kind: "ok", pids: [] };
   // Spied INSIDE the snapshot, because that is where per-pane resolution work happens:
   // `open` is once per rebuild by design, so counting it cannot see a per-pane regression.
@@ -47,7 +47,7 @@ function wireAtScale() {
   const sessionPath = vi.fn(async (): Promise<string | null> => "/sessions/sess-1.jsonl");
 
   const store = createPaneEvidenceStore({ now: () => NOW });
-  for (let i = 0; i < PANES; i++) {
+  for (let i = 0; i < panes; i++) {
     store.create(`pane-${i}`, {
       viewId: "sidebar",
       cwd: worktreeIds[i % WORKTREES],
@@ -93,11 +93,21 @@ describe(`presence cost envelope — ${PANES} panes across ${WORKTREES} worktree
   });
 
   it("costs the same per rebuild whether one pane or ten are looking", async () => {
+    // Round-4 S2: this built only the ten-pane fixture and re-asserted the two counts the
+    // cases above already own, so "the same" had nothing to compare against. The claim is
+    // a COMPARISON, and it needs both sides to be one.
+    const one = wireAtScale(1);
     const ten = wireAtScale();
+    await one.projector.project(worktreeIds);
     await ten.projector.project(worktreeIds);
 
+    expect(one.open).toHaveBeenCalledTimes(ten.open.mock.calls.length);
+    expect(one.listRunning).toHaveBeenCalledTimes(ten.listRunning.mock.calls.length);
     expect(ten.open).toHaveBeenCalledTimes(PROCESS_TABLE_READS.exactly);
     expect(ten.listRunning).toHaveBeenCalledTimes(1);
+    // And the ten-pane fixture really is ten: equal counts off equal inputs prove nothing.
+    expect(ten.store.panes().length).toBe(PANES);
+    expect(one.store.panes().length).toBe(1);
   });
 
   it("does not re-resolve a pane whose id, pid and cwd are unchanged", async () => {

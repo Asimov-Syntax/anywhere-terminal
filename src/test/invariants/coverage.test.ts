@@ -114,6 +114,7 @@ describe("truthfulness invariants — registry", () => {
 describe("truthfulness invariants — coverage", () => {
   it("finds a tag only where a test actually declares one", () => {
     const source = [
+      'import { describe, it, test } from "vitest";',
       '// it("[I1] a line comment is not coverage", () => {});',
       'it("[I2] a real one", () => {});',
       'it.skip("[I3] a disabled one", () => {});',
@@ -132,25 +133,41 @@ describe("truthfulness invariants — coverage", () => {
       'item("[I11] a longer identifier is not a test", 1);',
       'testHelper("[I12] nor is this one", 2);',
       'itemize("[I13] nor this", 3);',
+      // Round-4 B12: the parser retired every LEXICAL miss above and introduced an
+      // EXECUTION one. These call sites are real calls to the real `it` — and still never
+      // run, so counting them lets a whole invariant suite be disabled while the registry
+      // stays green.
+      'describe.skip("dead suite", () => { it("[I14] under a skipped suite", () => {}); });',
+      'describe.todo("todo suite", () => { it("[I15] under a todo suite", () => {}); });',
+      'describe("live", () => { it("[I16] under a live suite", () => {}); });',
+      'function helper() { const it = (t: string, f: () => void) => {}; it("[I4] a shadowed it", () => {}); }',
     ].join("\n");
     // Every case here is a round that got this wrong: a commented declaration counted
     // (round 1), one inside a literal counted (round 2), a longer identifier counted
-    // (round 3). They stay as regression cases, but what they prove now is that the
-    // MECHANISM does not need to remember them — none of them is a call to `it`, and the
-    // TypeScript parser knows that without being told (design.md D1, revised).
+    // (round 3), and one that never executes counted (round 4). The first three prove the
+    // MECHANISM no longer needs to remember them — none is a call to `it`, and the parser
+    // knows that unasked. The fourth proves the part the parser does NOT know unasked:
+    // a real call site is not the same claim as a test that runs (design.md D1, revised).
     expect(
       declarationsIn(source)
         .filter(isActive)
         .map((d) => d.title),
-    ).toEqual(["[I2] a real one", "[I6] a real one after a block comment"]);
+    ).toEqual(["[I2] a real one", "[I6] a real one after a block comment", "[I16] under a live suite"]);
   });
 
   it("treats a disabled declaration as inert, so it cannot hold an invariant open", () => {
+    const IMPORT = 'import { describe, it } from "vitest";\n';
     for (const modifier of ["skip", "todo", "failing"]) {
-      const only = declarationsIn(`it.${modifier}("[I9] x", () => {});`);
-      expect(only[0] !== undefined && isActive(only[0]), `it.${modifier} counted as active`).toBe(false);
+      const found = declarationsIn(`${IMPORT}it.${modifier}("[I9] x", () => {});`);
+      // Asserting the length first: `found[0] && isActive(found[0])` is false when nothing
+      // was found at all, which is how a scan that returns NOTHING reads as a correct
+      // answer here.
+      expect(found, `it.${modifier} was not parsed at all`).toHaveLength(1);
+      expect(isActive(found[0]), `it.${modifier} counted as active`).toBe(false);
     }
-    expect(isActive(declarationsIn('it.only("[I9] x", () => {});')[0])).toBe(true);
+    const live = declarationsIn(`${IMPORT}it.only("[I9] x", () => {});`);
+    expect(live).toHaveLength(1);
+    expect(isActive(live[0])).toBe(true);
   });
 
   it("has a running test for every invariant it claims is covered", () => {

@@ -6,8 +6,9 @@
 // no live dot on history, no focus offered on an external row.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ICON_TERMINAL } from "../vault/icons";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
-import { WorktreeView, type WorktreeViewDeps } from "./WorktreeView";
+import { MAX_WORKTREES_PER_REPO, WorktreeView, type WorktreeViewDeps } from "./WorktreeView";
 import {
   agentRow,
   confirmableBlocker,
@@ -225,10 +226,14 @@ describe("tree structure", () => {
     };
     const { view } = mount();
     view.setData({ tree, presence: null });
+    // The cap itself, not just the affordance: raising the slice by one used to leave every
+    // assertion here green, which is the fifth acceptance clause going unverified (round-4 B14).
+    expect(view.element.querySelectorAll(".wt-row")).toHaveLength(MAX_WORKTREES_PER_REPO);
     const showAll = view.element.querySelector<HTMLButtonElement>(".wt-showall");
     expect(showAll?.textContent).toBe("Show all 34 worktrees");
     showAll?.click();
     expect(view.element.querySelectorAll(".wt-row")).toHaveLength(34);
+    expect(view.element.querySelector(".wt-showall"), "the affordance survives expansion").toBeNull();
   });
 });
 
@@ -340,9 +345,22 @@ describe("agent rows", () => {
     const { view } = mount();
     view.setData(populated());
     const shell = agentRows(view).find((r) => r.querySelector(".wt-atitle")?.textContent?.startsWith("zsh"));
-    expect(shell?.querySelector(".wt-aicon svg")).not.toBeNull();
-    // A plain terminal glyph, not a brand badge and not an accent colour.
-    expect(shell?.querySelector<HTMLElement>(".wt-aicon")?.style.color).toBe("");
+    // `shell?.…` on a missing row yields undefined, and `expect(undefined).not.toBeNull()`
+    // passes — so the row has to be pinned before anything is asked of it (round-4 B2).
+    expect(shell, "no unproven-identity row in the fixture").toBeDefined();
+    const icon = shell?.querySelector<HTMLElement>(".wt-aicon");
+    expect(icon).not.toBeNull();
+    // The three things that separate a plain terminal glyph from a brand badge: the glyph
+    // is the shared terminal icon, no brand name reaches the tooltip, and no agent accent
+    // reaches the style attribute. Asserting only "some svg is present" cannot tell a
+    // terminal glyph from the Claude mark.
+    // Through a parse on both sides: jsdom rewrites `<rect …/>` to `<rect …></rect>`, so
+    // comparing rendered markup against the raw constant fails on the serializer, not the claim.
+    const expected = document.createElement("span");
+    expected.innerHTML = ICON_TERMINAL;
+    expect(icon?.innerHTML).toBe(expected.innerHTML);
+    expect(icon?.title).toBe("");
+    expect(icon?.style.color).toBe("");
   });
 
   it("marks a fallback activity source without touching the icon", () => {
@@ -1034,7 +1052,7 @@ describe("row activation", () => {
     }
   });
 
-  it("opens the preview for an external row under either setting", () => {
+  it("[I3] opens the preview for an external row under either setting", () => {
     // No pane of that row exists in this window, so `focus` has nothing to name.
     for (const setting of ["focus", "preview"] as const) {
       const seen: string[] = [];
