@@ -131,3 +131,24 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   classification assertion flipped to `agentSource: "launch"` → fails, so it reads a real value.
 - Review NOT closed and NOT approved. Cycle 2 has round 6 remaining; the round-5 blockers are
   fixed but have had no reviewer verdict.
+
+### Cycle 3 round 6 — BLOCK (1 B, 2 W), all accepted and fixed in 9_1
+
+- The chair agreed the handback superseded cycle 2 and opened this as cycle 3's discovery round.
+- B15 reproduced before triage: four acquisitions the new gate passed at exit 0 — a quoted binding
+  key, a destructuring assignment, an `as any` cast, and an `any`-typed alias. The gate's own
+  fixture mechanism reported all four as blind spots the moment they were written down.
+- The defect was NOT the checker approach. The checker resolved every spelling that reached it;
+  four never did, because member-name extraction was reimplemented inline at each AST shape. It is
+  now one `memberName` for name positions and one `elementKey` for index positions — the two were
+  conflated, which is why `fs.promises[member]` came back as the key "member" and resolved to
+  nothing.
+- The fail-open on `any` was the worse half and it was mine: D10 says fail closed, the file says so
+  in a comment, and the code three lines below treated an unresolved symbol as a pass. Both
+  unresolved cases are rejections now, and `pass-erased-unrelated.ts` keeps that from widening.
+- W5 (native path separators) and W6 (a throwing deactivate skipping the disposal loop) accepted
+  and fixed. W6 is the failure path of the round-5 W4 fix reopening the leak that fix closed.
+- Verify Gate re-run: check-types clean, 234 files / 4733 tests, gate ok (29 modules, **11**
+  spellings proven visible), bench 0.1 ms / 32.6 ms, lint identical to the main baseline,
+  `verify-status` exit 0.
+- Review still NOT closed and NOT approved. Cycle 3 has rounds 2 and 3 available.

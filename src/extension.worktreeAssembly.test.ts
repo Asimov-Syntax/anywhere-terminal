@@ -326,21 +326,29 @@ let subscriptions: Array<{ dispose(): unknown }> = [];
 let teardown: (() => Promise<void> | void) | undefined;
 
 afterEach(async () => {
-  // Round-5 W4: this reached past the controller and disposed the runtime directly, so
-  // everything deactivate does BESIDES that — detaching the contributor before disabling —
-  // was never exercised, and a regression in it could not fail here.
-  await teardown?.();
-  teardown = undefined;
   const failures: unknown[] = [];
-  for (const subscription of subscriptions.splice(0)) {
-    try {
-      subscription.dispose();
-    } catch (err) {
-      failures.push(err);
+  try {
+    // Round-5 W4: this reached past the controller and disposed the runtime directly, so
+    // everything deactivate does BESIDES that — detaching the contributor before disabling —
+    // was never exercised, and a regression in it could not fail here.
+    await teardown?.();
+  } catch (err) {
+    failures.push(err);
+  } finally {
+    // Round-6 W6: a throwing deactivate used to skip the loop below and leave `teardown` set,
+    // so the case that DETECTED a lifecycle regression was also the case that leaked past it
+    // into every test after — and left a stale teardown to run against the next module.
+    teardown = undefined;
+    for (const subscription of subscriptions.splice(0)) {
+      try {
+        subscription.dispose();
+      } catch (err) {
+        failures.push(err);
+      }
     }
   }
   // Swallowing these hid exactly the leak this teardown exists to close.
-  expect(failures, "a disposable registered by activate threw on teardown").toEqual([]);
+  expect(failures, "deactivate or a registered disposable threw on teardown").toEqual([]);
 });
 
 beforeEach(() => {

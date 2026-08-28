@@ -255,3 +255,18 @@
     1. Add src/test/fixtures/repoFixture.ts with a caller-owned handle: `realpathSync(mkdtempSync(...))`, `git init -q -b main`, identity config, `README.md`, `add .`, `commit -qm init`, optional linked worktrees, and a `dispose()`
     2. Consume it from src/test/bench/scale.bench.ts and from src/worktree/worktreeMutations.integration.test.ts, keeping each side's own lifecycle
     3. Declare the replacement at `verify-task` — the same repo shape is built, from one place
+
+## 9. Review fixes (cycle 3)
+
+- [x] 9_1 Stop enumerating AST shapes by hand, and honour the fail-closed rule — round-6 findings — verified: pnpm run gate:fs-deletion && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 8_5
+  - **Refs**: .reviews/round-6.md; design.md D10 (revised after round 5)
+  - **Acceptance**:
+    - Outcome: The gate exits non-zero on a quoted-key, assignment-destructured, or type-erased fs acquisition
+    - Verify: command pnpm run gate:fs-deletion
+  - **Boundary**: no alias chasing; an unresolved symbol on an fs-derived expression is a rejection, never a pass
+  - **Plan**:
+    1. B15: read a binding key through its literal text, cover destructuring assignment, and reject a destructive member reached through `any` in src/test/invariants/fsDeletionGate.ts
+    2. B15: keep the four reproduction cases as checked-in fixtures in src/test/invariants/fixtures/fsDeletion/
+    3. W5: normalise the relative path to `/` before scope classification in src/test/invariants/fsDeletionGate.ts
+    4. W6: dispose subscriptions in a `finally` and report the deactivation error alongside them in src/extension.worktreeAssembly.test.ts

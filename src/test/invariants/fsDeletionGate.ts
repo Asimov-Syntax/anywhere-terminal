@@ -19,6 +19,11 @@ const ts: typeof tsmod = (tsmod as { default?: typeof tsmod }).default ?? tsmod;
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 
+/** Repo-relative and `/`-joined: every predicate below compares against `/` literals (W5). */
+function relativeTo(fileName: string): string {
+  return path.relative(REPO_ROOT, fileName).split(path.sep).join("/");
+}
+
 /** The `node:fs` members that remove something from disk. */
 const DESTRUCTIVE = new Set(["rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"]);
 
@@ -58,15 +63,54 @@ function isDestructiveFsSymbol(checker: tsmod.TypeChecker, symbol: tsmod.Symbol 
   return (resolved.getDeclarations() ?? []).some((d) => d.getSourceFile().fileName.includes("@types/node/fs"));
 }
 
-/** Whether this expression evaluates to something carrying `node:fs` deletion members. */
-function isFsBearing(checker: tsmod.TypeChecker, node: tsmod.Expression): boolean {
-  const type = checker.getTypeAtLocation(node);
+/** Whether this type carries `node:fs` deletion members — an fs module object, or an alias of one. */
+function isFsBearingType(checker: tsmod.TypeChecker, type: tsmod.Type): boolean {
   return [...DESTRUCTIVE].some((name) => isDestructiveFsSymbol(checker, type.getProperty(name)));
+}
+
+/** `any` erases the property symbol, so nothing below it can be resolved — or trusted. */
+function isErased(type: tsmod.Type): boolean {
+  return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+}
+
+/**
+ * The member name a key expression selects, or `undefined` when it is decided at runtime.
+ *
+ * Round-6 B15: all four bypasses were name extraction, reimplemented inline at each AST shape.
+ * `{ "rm": wipe }` read as the four characters `"rm"` INCLUDING its quotes, so the lookup missed.
+ * One function, used by every shape, is what stops the next shape from inventing a fifth answer.
+ */
+/**
+ * The member an INDEX expression selects: `obj["rm"]` yes, `obj[member]` no.
+ *
+ * Separate from `memberName` deliberately. An identifier means opposite things in the two
+ * positions — a literal key in `{ rm: … }`, a runtime value in `obj[rm]` — and reading them with
+ * one function is how `fs.promises[member]` came back as the key "member" and quietly resolved
+ * to nothing.
+ */
+function elementKey(expression: tsmod.Expression): string | undefined {
+  if (ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
+    return expression.text;
+  }
+  return undefined;
+}
+
+function memberName(name: tsmod.Node): string | undefined {
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name)) {
+    return name.text;
+  }
+  if (ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  if (ts.isComputedPropertyName(name)) {
+    return ts.isStringLiteralLike(name.expression) ? name.expression.text : undefined;
+  }
+  return undefined;
 }
 
 function scan(file: tsmod.SourceFile, checker: tsmod.TypeChecker): Finding[] {
   const found: Finding[] = [];
-  const rel = path.relative(REPO_ROOT, file.fileName);
+  const rel = relativeTo(file.fileName);
   const report = (node: tsmod.Node, why: string): void => {
     found.push({
       file: rel,
@@ -76,31 +120,53 @@ function scan(file: tsmod.SourceFile, checker: tsmod.TypeChecker): Finding[] {
     });
   };
 
+  /**
+   * One acquisition: `key` selected off an object of type `owner`.
+   *
+   * Both unresolved cases are rejections, not passes. D10 says fail closed, and round 6 found
+   * this function's predecessor treating "the checker returned no symbol" as "not fs" — the
+   * rule contradicting its own stated policy, three lines under a comment restating it.
+   */
+  const acquires = (node: tsmod.Node, owner: tsmod.Type, key: string | undefined): void => {
+    if (key === undefined) {
+      if (isFsBearingType(checker, owner) || isErased(owner)) {
+        report(node, "selects a member of an fs module with a key decided at runtime");
+      }
+      return;
+    }
+    if (isDestructiveFsSymbol(checker, owner.getProperty(key))) {
+      report(node, `acquires the destructive fs member ${key}`);
+      return;
+    }
+    if (isErased(owner) && DESTRUCTIVE.has(key)) {
+      report(node, `acquires ${key} through a type the checker cannot resolve`);
+    }
+  };
+
   const visit = (node: tsmod.Node): void => {
     if (ts.isImportSpecifier(node) && isDestructiveFsSymbol(checker, checker.getSymbolAtLocation(node.name))) {
       report(node, "imports a destructive fs member");
-    } else if (
-      ts.isPropertyAccessExpression(node) &&
-      isDestructiveFsSymbol(checker, checker.getSymbolAtLocation(node.name))
-    ) {
-      report(node, "reads a destructive fs member");
+    } else if (ts.isPropertyAccessExpression(node)) {
+      acquires(node, checker.getTypeAtLocation(node.expression), node.name.text);
     } else if (ts.isElementAccessExpression(node)) {
-      const key = node.argumentExpression;
-      if (ts.isStringLiteralLike(key)) {
-        const property = checker.getTypeAtLocation(node.expression).getProperty(key.text);
-        if (isDestructiveFsSymbol(checker, property)) {
-          report(node, "reads a destructive fs member by name");
-        }
-      } else if (isFsBearing(checker, node.expression)) {
-        // Fail closed. Which member this reaches is decided at runtime, and in this narrow scope
-        // an unauditable destructive call is not a thing to settle at review time.
-        report(node, "indexes an fs module with a computed key");
-      }
+      acquires(node, checker.getTypeAtLocation(node.expression), elementKey(node.argumentExpression));
     } else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
-      const name = (node.propertyName ?? node.name).getText(file);
-      const property = checker.getTypeAtLocation(node.parent).getProperty(name);
-      if (isDestructiveFsSymbol(checker, property)) {
-        report(node, "destructures a destructive fs member");
+      const key = node.propertyName !== undefined ? memberName(node.propertyName) : memberName(node.name);
+      acquires(node, checker.getTypeAtLocation(node.parent), key);
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isObjectLiteralExpression(node.left)
+    ) {
+      // `({ rm: wipe } = fs.promises)` — a destructuring ASSIGNMENT is an object literal on the
+      // left of `=`, not a binding pattern, so the binding-element branch never sees it.
+      const owner = checker.getTypeAtLocation(node.right);
+      for (const property of node.left.properties) {
+        if (ts.isShorthandPropertyAssignment(property)) {
+          acquires(property, owner, property.name.text);
+        } else if (ts.isPropertyAssignment(property)) {
+          acquires(property, owner, memberName(property.name));
+        }
       }
     }
     ts.forEachChild(node, visit);
@@ -127,7 +193,7 @@ function main(): void {
   let proven = 0;
 
   for (const file of sources) {
-    const rel = path.relative(REPO_ROOT, file.fileName);
+    const rel = relativeTo(file.fileName);
     if (isRemovalPath(rel)) {
       offenders.push(...scan(file, checker));
       continue;
@@ -167,7 +233,7 @@ function main(): void {
     console.error(lines.join("\n"));
     process.exit(1);
   }
-  const scoped = sources.filter((f) => isRemovalPath(path.relative(REPO_ROOT, f.fileName))).length;
+  const scoped = sources.filter((f) => isRemovalPath(relativeTo(f.fileName))).length;
   if (scoped === 0 || proven === 0) {
     console.error(`[I10] vacuous — ${scoped} modules in scope, ${proven} spellings proven visible`);
     process.exit(1);
