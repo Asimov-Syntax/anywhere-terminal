@@ -21,16 +21,6 @@ export interface InvariantRow {
   readonly reason?: string;
 }
 
-/**
- * Invariants whose covering test would have to live in or modify
- * `src/agentHooks/AgentHookController.ts` or `src/agentHooks/install/**`, which task WT-006.2
- * is rewriting in another session. Frozen on purpose: adding a row means editing this
- * constant, which is a visible plan change rather than a free-form reason (design.md D9).
- *
- * The audit found none — every § 8.4 invariant is reachable from outside that tree.
- */
-export const DEFERRED_BY_WT_006_2: readonly string[] = [];
-
 export const INVARIANTS: readonly InvariantRow[] = [
   {
     id: "I1",

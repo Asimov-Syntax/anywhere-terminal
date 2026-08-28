@@ -19,13 +19,6 @@ import { tsFiles } from "./sourceSources";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SRC = path.join(REPO_ROOT, "src");
 
-/**
- * Owned by task WT-006.2 in another session, so this change does not touch it. Listed rather
- * than pattern-excluded: the second assertion fails once the peer fixes it, which is the signal
- * to delete this entry instead of leaving a stale exemption behind.
- */
-const PEER_OWNED = ["src/agentHooks/install/managedEntryLedger.ts"];
-
 const TAB = 0x09;
 const LF = 0x0a;
 const CR = 0x0d;
@@ -44,10 +37,6 @@ function offenders(): string[] {
 
 describe("source hygiene — raw control bytes", () => {
   it("leaves no source unreadable to a grep-based tool", () => {
-    expect(offenders().filter((rel) => !PEER_OWNED.includes(rel))).toEqual([]);
-  });
-
-  it("keeps the peer-owned exemption honest, so a fixed file stops being exempt", () => {
-    expect(offenders().filter((rel) => PEER_OWNED.includes(rel))).toEqual(PEER_OWNED);
+    expect(offenders()).toEqual([]);
   });
 });

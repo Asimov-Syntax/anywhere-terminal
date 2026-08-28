@@ -1,11 +1,13 @@
 // src/agentHooks/install/lockedJsonFile.test.ts — The exclusion and the
-// replacement, tested once for both callers that now take them (D15).
+// replacement, tested once for both callers that now take them (D15). Locking
+// fails closed without time-based authority and reports non-ENOENT release
+// residue by exact path rather than swallowing it (D5, D9).
 
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { LockedFile, STALE_LOCK_MS } from "./lockedJsonFile";
+import { LockedFile } from "./lockedJsonFile";
 
 const tempDirectories: string[] = [];
 
@@ -66,14 +68,108 @@ describe("LockedFile", () => {
     expect(ran).toBe(false);
   });
 
-  it("reclaims a lock left behind by a process that died", async () => {
+  it("keeps failing closed when a live holder pauses beyond the old staleness threshold", async () => {
     const { target, lockPath } = await fixture();
     await writeFile(lockPath, "");
-    // Nothing sweeps a lock file, so a crash between acquire and release would
-    // otherwise wedge every later write to this path.
-    const file = new LockedFile(target, { now: () => Date.now() + STALE_LOCK_MS + 1_000 });
+    let ran = false;
+    // No mtime or elapsed-time reading can reclaim the lock anymore (D5): even
+    // a clock that races far past the deleted 30-second window on every read
+    // must not unwedge a live holder.
+    const file = new LockedFile(target, {
+      sleep: async () => undefined,
+      now: () => Date.now() + 10 * 60_000,
+    });
 
-    expect(await file.withLock(async () => "ok", "unavailable", "failed")).toBe("ok");
+    const outcome = await file.withLock<string>(
+      async () => {
+        ran = true;
+        return "ok";
+      },
+      "unavailable",
+      "failed",
+    );
+
+    expect(outcome).toBe("unavailable");
+    expect(ran).toBe(false);
+    await expect(stat(lockPath)).resolves.toBeDefined();
+  });
+
+  it("never mutates the target or deletes the holder's lock while a waiter is failing closed", async () => {
+    const { target, lockPath } = await fixture();
+    await writeFile(target, "existing");
+    await writeFile(lockPath, "");
+    const file = new LockedFile(target, { sleep: async () => undefined });
+
+    await file.withLock<string>(async () => "ok", "unavailable", "failed");
+
+    expect(await readFile(target, "utf8")).toBe("existing");
+    await expect(stat(lockPath)).resolves.toBeDefined();
+  });
+
+  it("returns the committed result and reports the exact path when the final release fails for a non-ENOENT reason", async () => {
+    const { target, lockPath } = await fixture();
+    const file = new LockedFile(target, {
+      fs: {
+        unlink: async () => {
+          throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+        },
+      },
+    });
+    const reported: string[] = [];
+
+    const outcome = await file.withLock<string>(
+      async () => "committed",
+      "unavailable",
+      "failed",
+      (path) => reported.push(path),
+    );
+
+    expect(outcome).toBe("committed");
+    expect(reported).toEqual([lockPath]);
+  });
+
+  it("treats an already-removed lock file as clean rather than a release failure", async () => {
+    const { target } = await fixture();
+    const file = new LockedFile(target, {
+      fs: {
+        unlink: async () => {
+          throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+        },
+      },
+    });
+    const reported: string[] = [];
+
+    const outcome = await file.withLock<string>(
+      async () => "ok",
+      "unavailable",
+      "failed",
+      (path) => reported.push(path),
+    );
+
+    expect(outcome).toBe("ok");
+    expect(reported).toEqual([]);
+  });
+
+  it("lets a caller merge the reported lock path into unresolved paths it already collected", async () => {
+    const { target, lockPath } = await fixture();
+    const file = new LockedFile(target, {
+      fs: {
+        unlink: async () => {
+          throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+        },
+      },
+    });
+    const unresolved: string[] = ["other/stale.lock"];
+
+    const outcome = await file.withLock<string>(
+      async () => "committed",
+      "unavailable",
+      "failed",
+      (path) => unresolved.push(path),
+    );
+
+    expect(outcome).toBe("committed");
+    expect(unresolved).toEqual(["other/stale.lock", lockPath]);
   });
 
   it("replaces the contents and keeps the mode it was given", async () => {

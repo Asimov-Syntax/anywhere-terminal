@@ -367,7 +367,7 @@ specific false claim the view could otherwise make.
 | Destructive actions | Blockers re-evaluated at execution and bound to the confirmation by fingerprint; a newly appeared blocker re-prompts; a running or waiting agent is never force-removable; the main worktree is never removable |
 | File deletion | Never performed directly; delegated to `git worktree remove`, whose deletion is recursive and irreversible. Evidenced, not proven: real-git tests cover the removal paths they exercise, and `pnpm run gate:fs-deletion` is a regression tripwire over `src/worktree/**` plus `WorktreeHost.ts`. The tripwire does no value-flow analysis — a destructive `node:fs` value obtained from a call, passed through `any`, carried through an erased alias, or reached through a structurally typed parameter is not decided, and those four limits are themselves asserted by fixtures |
 | Hook endpoint | Loopback bind, ephemeral port, **per-session** token re-validated against live registration at use time, POST-only, fail-open, 1 MB cap. The trust boundary is the pane, not the agent: same-pane child processes inherit the coordinates and are inside it |
-| Agent config mutation | Opt-in setting, off by default; cross-process lock + atomic rename; unknown keys preserved; symlinked destination refused; uninstall command; absolute script path reconciled on extension update |
+| Agent config mutation | Opt-in setting, off by default; cross-process lock + atomic rename; unknown keys preserved; symlinked destination refused; uninstall command. Cursor: absolute wrapper-script path reconciled on extension update. Claude: no wrapper script — one frozen inline command reconciled against a canonical hook-group identity at one destination-local path per operation |
 | Agent-reported identity | `sessionId` looked up in the vault store; `transcriptPath` compared against the store, never opened on the report's authority |
 | Prompt delivery | Native prefill preferred; otherwise an argv token or a pty write, never shell interpolation |
 | Launch environment | **Known pre-existing gap.** `PtyManager.buildEnvironment()` clones the whole host `process.env` and the agent allowlist merges over it rather than filtering, so launched agents inherit host credentials. Affects every vault launch, not just this feature; recorded, not fixed here |
@@ -452,7 +452,7 @@ one definition; every other document references it.
 | Minimum supported git | 2.31 — supplies `locked` / `prunable`. Only `-z` (2.36) has a fallback | [worktree-model.md](design/worktree-model.md) § 3.3 | — |
 | Git command timeout | 10 s for read-only listings; mutations get a longer, cancellable budget | [worktree-model.md](design/worktree-model.md) § 5 | rpc § 5, actions § 3.6 |
 | Action outcome | `ok` / `error` / `indeterminate` | [worktree-rpc.md](design/worktree-rpc.md) § 2.2 | actions § 3.6 |
-| Hook env var — **planned** Claude server | `AT_HOOK_URL` — base, session id, and token in one value so a partial set cannot be inherited. Sole channel for that server; no on-disk endpoint artifact | [agent-hook-server.md](design/agent-hook-server.md) § 4.2 | — |
+| Hook env var — **shipped** Claude installer v1 | `ANYWHERE_TERMINAL_CLAUDE_URL = http://127.0.0.1:<port>/<sessionId>/<token>` — base, session id, and token in one value so a partial set cannot be inherited. Sole channel; no on-disk endpoint artifact | `src/agentHooks/install/ClaudeHookInstaller.ts` | [agent-hook-server.md](design/agent-hook-server.md) § 4.2 |
 | Hook env var — **shipped** Cursor agent | `ANYWHERE_TERMINAL_CURSOR_URL = http://127.0.0.1:<port>/<sessionId>/<token>/`; the wrapper appends the agent's slug. Unlike the planned server it **does** write on-disk artefacts: an observer wrapper script plus entries in `~/.cursor/hooks.json` | `src/agentHooks/agents/cursor.ts:14`, minted at `AgentHookRuntime.ts:232`; artefacts at `CursorHookInstaller.ts:280,293` | [agent-cli-integration.md](design/agent-cli-integration.md) |
 | Hook settings keys | `anywhereTerminal.agentHooks.claude.enabled`, `anywhereTerminal.agentHooks.claudeConfigDir`, and the pre-existing `anywhereTerminal.cursorAgent.hooks.enabled` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
 | Hook uninstall command | `anywhereTerminal.agentHooks.uninstall` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
@@ -474,9 +474,9 @@ activity describes a terminal. The mapping is total in one direction and partial
 `exited` has no turn-state preimage. It is produced only by pty exit and overrides any
 published hook state.
 
-**Status:** this mapping describes the planned Claude hook server. No shipped hook emits
-`waiting` today — the Cursor runtime produces only working/idle transitions, and the sole
-live source of `waiting` is the approval detector. See
+**Status:** the Claude installer (v1) is shipped and opt-in; the Cursor runtime still produces
+only working/idle transitions on its own, so until a user opts a session into the Claude hook,
+the sole live source of `waiting` is the approval detector. See
 [agent-cli-integration.md](design/agent-cli-integration.md).
 
 ### 10.1 Shipped-code values referenced by more than one document

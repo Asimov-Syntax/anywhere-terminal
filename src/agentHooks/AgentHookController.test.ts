@@ -108,6 +108,40 @@ describe("AgentHookController", () => {
     expect(onWarning).toHaveBeenCalledWith("cursor", "install", reason);
   });
 
+  it("grants authority and warns separately when install commits but lock cleanup leaves residue (D5, D9)", async () => {
+    const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({ installed: true, unresolved: ["/tmp/settings.json.anywhere-terminal.lock"] }),
+    });
+
+    await controller.start();
+
+    expect(runtime.setAgentEnabled).toHaveBeenCalledWith("cursor", true);
+    expect(setContributor).toHaveBeenLastCalledWith(runtime);
+    expect(events).toContain("attach");
+    expect(onWarning).toHaveBeenCalledWith(
+      "cursor",
+      "install",
+      expect.stringContaining("/tmp/settings.json.anywhere-terminal.lock"),
+    );
+  });
+
+  it("withholds authority when removal commits but leaves an unresolved lock path (D5, D9)", async () => {
+    const { controller, onWarning, runtime } = controllerDeps({
+      initialEnabled: false,
+      uninstall: async () => ({ removed: true, unresolved: ["/tmp/settings.json.anywhere-terminal.lock"] }),
+    });
+
+    await controller.start();
+
+    expect(runtime.setAgentEnabled).not.toHaveBeenCalledWith("cursor", true);
+    expect(onWarning).toHaveBeenCalledWith(
+      "cursor",
+      "uninstall",
+      expect.stringContaining("/tmp/settings.json.anywhere-terminal.lock"),
+    );
+  });
+
   it("uses a setting change made while runtime creation awaits", async () => {
     const runtimeReady = deferred<AgentHookRuntime>();
     const events: string[] = [];

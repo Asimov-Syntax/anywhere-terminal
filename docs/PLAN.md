@@ -335,19 +335,19 @@ state. There is nothing to provision.
 | **Acceptance** | One runtime serves every hook-capable agent, with the agent already shipping on it migrated and behaviourally unchanged; a token is bound to its pane and stops working the moment that pane or the feature does; the endpoint is unreachable off-host and cannot be made to change state, error, or stall the agent by any malformed request; coordinates reach a pane only through its own environment, whole or not at all, with nothing written to disk; a runtime that cannot start leaves every pane on inference |
 | **Status** | done |
 
-### [WT-006.2] Claude Hook Installation
+### [WT-006.2] Claude Hook Installation v1
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Extend the existing managed-config installer to a second agent, and own the reconciliation the extension does not do today |
+| **Goal** | Give Claude a destination-local, opt-in installer that reconciles the frozen inline command against the current Claude settings file, distinct from Cursor's restored wrapper-script bridge |
 | **Design Ref** | [agent-hook-server.md](design/agent-hook-server.md) § 4.3, § 4.7, § 6, § 7 |
 | **Depends On** | WT-006.1 |
 | **Stage** | 4 |
 | **Size** | L |
 | **Labels** | security-privacy |
-| **Notes** | Writes into a user-owned configuration file and registers an executable path. The lock, atomic rename, and typed failure reasons already exist and must be reused rather than reimplemented |
-| **Acceptance** | Installation is opt-in per agent and preserves whatever the user already set; the user's config survives concurrent editors, interrupted writes, symlinked destinations, and keys we do not recognise; installing repeatedly converges, and uninstall removes everything managed regardless of settings; an extension update cannot leave a registered script path dangling; a hook with no coordinates, or no runtime to reach, costs the agent nothing and claims nothing |
-| **Status** | in_progress |
+| **Notes** | Superseded the rejected shared ledger/wrapper/probe lifecycle (`install-claude-hooks`, `remove-rejected-hook-installer`, archived) with a dedicated Claude reconciler; Cursor's shipped wrapper-script installer is unchanged and out of this task's scope. Delivered and unit-proven; confirmation that installed Claude Code itself invokes the frozen command remains a separate real-agent spike, tracked outside this blueprint entry |
+| **Acceptance** | Installation is opt-in per agent and destination-local: the setting, then `CLAUDE_CONFIG_DIR`, then `~/.claude` resolve one absolute path per operation, with no memory of a prior destination; the user's config survives concurrent editors, interrupted writes, symlinked destinations, and keys we do not recognise; a canonical singleton hook group is the ownership boundary — an ambiguous shape (sibling handlers, extra keys, wrong matcher or event) leaves the document byte-identical and revokes authority rather than guessing; installing repeatedly converges, and uninstall removes exactly the canonical groups at the current destination, with no ledger or historical-destination sweep; the lock never reclaims on age; the registered command is one frozen POSIX literal run through the real shell, and Windows performs zero filesystem access until a real spike lands; a hook with no coordinates, or no runtime to reach, costs the agent nothing and claims nothing |
+| **Status** | done |
 
 ### [WT-006.3] Turn State & Presence Upgrade
 

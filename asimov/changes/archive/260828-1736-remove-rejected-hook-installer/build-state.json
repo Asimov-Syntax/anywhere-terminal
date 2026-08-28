@@ -1,0 +1,9 @@
+{
+  "change": "remove-rejected-hook-installer",
+  "leases": [],
+  "attempts": {
+    "2_3": 1
+  },
+  "locked": [],
+  "reads": 0
+}

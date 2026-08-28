@@ -1,16 +1,18 @@
 // src/agentHooks/install/lockedJsonFile.ts — The write discipline this extension
 // applies to every file another process may also hold: a lock file beside the
-// target with a staleness reclaim, and replacement through a temporary file and
-// a rename. Extracted from ManagedConfigInstaller so the ledger takes the same
-// authority rather than a second, weaker one (install-claude-hooks D15).
+// target, and replacement through a temporary file and a rename. A live lock
+// is never reclaimed by age; waiting fails closed instead, and a non-ENOENT
+// release failure is reported with the exact path rather than swallowed
+// (install-claude-hooks-v1 D5, D9).
 
-import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
-import type { Platform } from "./types";
+
+export type Platform = "darwin" | "linux" | "win32";
 
 export type LockedFileSystem = Pick<
   typeof import("node:fs/promises"),
-  "chmod" | "mkdir" | "open" | "readFile" | "rename" | "stat" | "unlink" | "writeFile"
+  "chmod" | "mkdir" | "open" | "readFile" | "rename" | "unlink" | "writeFile"
 >;
 
 export interface LockedFileDependencies {
@@ -24,7 +26,6 @@ export interface LockedFileDependencies {
 
 export const LOCK_WAIT_MS = 25;
 export const LOCK_MAX_WAIT_MS = 1_000;
-export const STALE_LOCK_MS = 30_000;
 
 export class LockedFile {
   private readonly fs: LockedFileSystem;
@@ -37,7 +38,7 @@ export class LockedFile {
     public readonly path: string,
     dependencies: LockedFileDependencies = {},
   ) {
-    this.fs = { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile, ...dependencies.fs };
+    this.fs = { chmod, mkdir, open, readFile, rename, unlink, writeFile, ...dependencies.fs };
     this.now = dependencies.now ?? Date.now;
     this.sleep = dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.replace = dependencies.rename ?? this.fs.rename;
@@ -48,19 +49,37 @@ export class LockedFile {
    * Runs `work` while holding the lock. The two failure values are the caller's
    * because only the caller knows what its outcome type says: a lock nobody
    * released and a body that threw are different facts.
+   *
+   * `work`'s result is never discarded for a release failure: a committed
+   * install/remove already happened. Instead, a non-ENOENT failure unlinking
+   * the lock afterward is reported through `onLockReleaseFailed` with the
+   * exact lock path, so a caller can merge it into its own unresolved-path
+   * list without losing the committed outcome (D5, D9).
    */
-  public async withLock<T>(work: () => Promise<T>, lockUnavailable: T, failed: T): Promise<T> {
+  public async withLock<T>(
+    work: () => Promise<T>,
+    lockUnavailable: T,
+    failed: T,
+    onLockReleaseFailed?: (lockPath: string) => void,
+  ): Promise<T> {
     const lockPath = `${this.path}.anywhere-terminal.lock`;
     if (!(await this.acquireLock(lockPath))) {
       return lockUnavailable;
     }
+    let result: T;
     try {
-      return await work();
+      result = await work();
     } catch {
-      return failed;
-    } finally {
-      await this.fs.unlink(lockPath).catch(() => undefined);
+      result = failed;
     }
+    try {
+      await this.fs.unlink(lockPath);
+    } catch (error) {
+      if (!isNotFound(error)) {
+        onLockReleaseFailed?.(lockPath);
+      }
+    }
+    return result;
   }
 
   public async atomicReplace(contents: string, mode: number | undefined): Promise<boolean> {
@@ -104,6 +123,9 @@ export class LockedFile {
     } catch {
       return false;
     }
+    // Bounded exclusive wait only: no mtime or age ever authorizes deleting a
+    // live holder's lock (D5). A holder that pauses indefinitely simply keeps
+    // every other host waiting until this budget runs out.
     const attempts = Math.ceil(LOCK_MAX_WAIT_MS / LOCK_WAIT_MS);
     for (let attempt = 0; attempt <= attempts; attempt += 1) {
       try {
@@ -113,15 +135,6 @@ export class LockedFile {
       } catch (error) {
         if (!isAlreadyExists(error)) {
           return false;
-        }
-        try {
-          const lock = await this.fs.stat(lockPath);
-          if (this.now() - lock.mtimeMs > STALE_LOCK_MS) {
-            await this.fs.unlink(lockPath);
-            continue;
-          }
-        } catch {
-          continue;
         }
         await this.sleep(LOCK_WAIT_MS);
       }

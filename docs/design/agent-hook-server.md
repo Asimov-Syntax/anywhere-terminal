@@ -146,27 +146,47 @@ coordinates and must silently do nothing.
 
 ### 4.3 Install
 
-Per agent, idempotent, reversible, and **opt-in**, reusing `CursorHookInstaller`'s existing
-machinery:
+Per agent, idempotent, reversible, and **opt-in**. Cursor and Claude use different installer
+shapes; each is destination-local and neither remembers a prior destination.
 
-- Write a managed script to an extension-owned directory — never inline the logic into the
-  user's config.
-- Register it in the agent's own hook configuration. Managed entries are matched by the
-  script's filename, removed, then re-appended; **user-authored hooks are preserved**.
-- All of it under the existing `<configPath>.anywhere-terminal.lock` cross-process lock with
-  a stale-lock timeout, then written to a same-directory temp file and moved into place by
-  atomic rename. This is what makes the read→merge→write sequence safe against a concurrent
-  edit by another window, by the agent CLI itself, or by the user's editor.
-- Unknown JSON keys in the user's config are preserved verbatim. A typed serializer that
-  round-trips only the fields we know about would silently drop settings a newer CLI added.
-- Refuse a symlinked destination rather than following it.
-- Provide an uninstall that removes exactly the managed entries, exposed as a command
-  (§ 4.7) so a user can undo it without hunting through settings.
+**Cursor** keeps its shipped, pre-generalization installer bridge (`CursorHookInstaller`),
+restored unchanged: a managed script written to an extension-owned directory, registered in
+`~/.cursor/hooks.json` by matching the script's filename, under the existing
+`<configPath>.anywhere-terminal.lock` cross-process lock, temp-write plus atomic rename, with
+unknown JSON keys preserved and a symlinked destination refused. This bridge is a placeholder
+for the still-pending `inline-cursor-hooks` migration and is not this task's subject.
 
-The Claude script's shape: print `{}` to stdout first, guard against the background-job
+**Claude v1** (`ClaudeHookInstaller`) has no wrapper script and no ledger of past destinations:
+
+- One absolute settings path is resolved **once per operation** — the
+  `anywhereTerminal.agentHooks.claudeConfigDir` setting if absolute, else `CLAUDE_CONFIG_DIR`
+  if absolute, else `<home>/.claude/settings.json` — and that path alone is lstat'd, locked,
+  read, compared, and (on change) replaced. A destination change converges on the next
+  reconciliation; nothing tracks or cleans up the previous one.
+- Ownership is a **canonical singleton hook group**: the exact frozen handler alone under a
+  registered event (with `matcher: "*"` for `PreToolUse`). Install/remove may sweep duplicate
+  canonical groups while preserving unrelated group order; if the handler appears with sibling
+  handlers, extra group keys, the wrong matcher, or an unregistered event, reconciliation
+  returns `ownership-conflict`, leaves the document byte-identical, and revokes authority
+  instead of guessing at the user's intent. There is no filename-matched managed entry and no
+  historical-destination sweep.
+- The lock is the same sibling-lock primitive as Cursor's (exclusive `open("wx")`, temp-write
+  then atomic rename), but **fails closed with no age-based reclaim**: a paused or crashed
+  holder is never treated as abandoned, and compare-and-retry is bounded to three attempts.
+- Unknown JSON keys are preserved verbatim; a symlinked destination is refused rather than
+  followed.
+- Uninstall removes exactly the canonical groups at the current destination and is exposed
+  through the shared command (§ 4.7).
+- On Windows, install and uninstall return `unsupported-platform` before any path resolution
+  or filesystem access — no script, no `.cmd`, no cleanup candidate, because Claude hooks
+  never shipped there.
+
+The Claude command's shape: print `{}` to stdout first, guard against the background-job
 environment variable that would attribute a worker's events to the wrong pane, exit silently
-when the coordinates are absent from its environment, then a form-encoded POST with a short
-connect and total timeout so a dead runtime costs the agent well under two seconds.
+when the coordinates are absent from its environment, then a POST with a short connect and
+total timeout so a dead runtime costs the agent well under two seconds. Unlike Cursor's
+script, it is one frozen inline shell literal registered directly in the hook entry — there is
+no file on disk for it to drift from.
 
 > The `{}` is harmless defensive output, not a fail-closed guard: an empty stdout with exit 0
 > makes no permission decision and the normal flow proceeds. Earlier drafts of this design
@@ -269,19 +289,19 @@ Both fields are **agent-reported, therefore untrusted**:
 
 | Key | Type | Default | Scope | Behaviour on change |
 |-----|------|---------|-------|---------------------|
-| `anywhereTerminal.agentHooks.claude.enabled` | boolean | `false` | application | Installs or uninstalls at the next reconcile |
+| `anywhereTerminal.agentHooks.claude.enabled` | boolean | `false` | application | A bounded per-agent queue rereads this setting when each reconcile body begins: `false` leaves the current destination disabled/untouched; `true` installs at the destination resolved at that moment (§ 4.3). No historical destination is tracked or swept |
 | `anywhereTerminal.cursorAgent.hooks.enabled` | boolean | `false` | application | **Existing key, retained.** The generalization must not silently change a value the user already set |
 | `anywhereTerminal.agentHooks.claudeConfigDir` | string | `""` | application | Overrides the managed config root; empty means the agent's default. Honours `CLAUDE_CONFIG_DIR` when set and this is empty |
 
 | Command | Purpose |
 |---------|---------|
-| `anywhereTerminal.agentHooks.uninstall` | Removes every managed entry for every agent, whatever the settings say |
+| `anywhereTerminal.agentHooks.uninstall` | Removes every managed entry for every agent at its current destination, whatever the settings say; ordered through the same per-agent queue as setting changes, revoking authority before the Claude uninstall commits |
 
-**Activation-time reconciliation.** The registered script path is absolute and lives inside
-the extension's install directory, which **changes on every extension update**. On activation,
-compare the path in each managed entry against the current one; when they differ, rewrite the
-entry under the same lock. Without this, an update leaves every user's config pointing at a
-script that no longer exists.
+**Cursor's activation-time reconciliation.** Cursor's registered script path is absolute and
+lives under the extension's global storage. On activation, compare the path in each managed
+entry against the current one; when they differ, rewrite the entry under the same lock. Claude
+v1 has no script path to drift — its inline command is byte-identical across versions until the
+frozen literal itself changes.
 
 ## 5. Error Handling & Limits
 
@@ -313,8 +333,10 @@ script that no longer exists.
 | Question answered | Claude emits no hook; without inference the pane stays `waiting` until the next tool event clears it. Accepted limitation for this phase |
 | `/compact` | Pre-compact → `working`, post-compact → `done`, or the pane keeps a stuck spinner |
 | User uninstalls the agent CLI | Registered hook entry becomes inert; uninstall still removes it |
-| User edits the managed script | Overwritten on the next reconcile; it is extension-owned |
-| Extension updated, script path moved | Reconciled at activation (§ 4.7) |
+| User edits Cursor's managed script | Overwritten on the next reconcile; it is extension-owned |
+| User edits the canonical Claude hook group into an ambiguous shape | Reconciliation reports `ownership-conflict`, leaves the document byte-identical, and revokes authority rather than guessing (§ 4.3) |
+| Extension updated, Cursor's script path moved | Reconciled at activation (§ 4.7) |
+| Extension updated, Claude installer version changes | No script path to reconcile; the next Claude reconcile converges the inline command bytes directly (§ 4.3) |
 
 ## 7. Security
 
@@ -323,8 +345,9 @@ script that no longer exists.
 | Network exposure | Loopback bind only; ephemeral port |
 | Authentication | Per-session token, constant-time compared, re-validated against live registration at use time, invalidated on pane teardown and on disable. One token per pane; which agents it speaks for is a per-session entitlement set fixed at spawn, so disabling an agent strikes it from every live pane permanently — coordinates already sitting in an environment cannot be revived by re-enabling, only by a fresh spawn |
 | Coordinate distribution | Process environment only. No shared on-disk artifact exists to read, race on, or leak between windows (§ 2.1) |
-| Config mutation | Opt-in setting, off by default; cross-process lock; atomic rename; unknown keys preserved; symlinked destination refused; managed entries only; uninstall command provided |
-| Script path | Absolute and extension-owned, reconciled on update. A relative path would resolve against the agent's cwd and execute whatever happened to be there (`07-orchestration-teams.md` § 2) |
+| Config mutation | Opt-in setting, off by default; cross-process lock with no age-based reclaim; atomic rename; unknown keys preserved; symlinked destination refused; managed entries only (Cursor: filename match; Claude: canonical singleton group, ownership-conflict on ambiguity); uninstall command provided |
+| Script path (Cursor) | Absolute and extension-owned, reconciled on update. A relative path would resolve against the agent's cwd and execute whatever happened to be there (`07-orchestration-teams.md` § 2) |
+| Inline command (Claude) | One frozen POSIX literal registered directly in the hook entry — no file path to hijack or leave dangling; input consumed before the background-job and loopback-coordinate guards run |
 | Reported identity | `sessionId` is a lookup key; `transcriptPath` is compared against the vault store and never opened on the report's authority (§ 4.6) |
 | Payload trust | Hook payloads come from a local process and are treated as data: bounded, validated, never executed, never interpolated into a command |
 

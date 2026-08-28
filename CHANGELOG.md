@@ -4,6 +4,12 @@ All notable changes to **AnyWhere Terminal** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Claude hook installation v1.** On macOS and Linux, the opt-in Claude observer now reconciles one frozen fail-open command into the currently resolved `settings.json`, preserving user hooks and refusing ambiguous ownership rather than guessing. Disabling or using the removal command cleans only that current destination; no historical-location ledger or sweep is retained. Windows remains unsupported with zero configuration I/O until a real Windows Claude Code spike validates the boundary.
+
 ## [0.18.1] — 2026-08-24
 
 ### Changed

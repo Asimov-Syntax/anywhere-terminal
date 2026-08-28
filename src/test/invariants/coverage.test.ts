@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { MAX_WORKTREES_PER_REPO } from "../../webview/worktree/WorktreeView";
-import { DEFERRED_BY_WT_006_2, INVARIANTS } from "./registry";
+import { INVARIANTS } from "./registry";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -76,9 +76,9 @@ describe("truthfulness invariants — registry", () => {
     }
   });
 
-  it("defers only what the frozen peer-owned set names", () => {
+  it("defers nothing — every invariant this registry names is covered or explicitly uncovered", () => {
     const deferred = INVARIANTS.filter((row) => row.status === "deferred").map((row) => row.id);
-    expect(deferred).toEqual([...DEFERRED_BY_WT_006_2]);
+    expect(deferred).toEqual([]);
   });
 
   // `uncovered` is the audit's backlog, not a resting state: once the change that opened it
