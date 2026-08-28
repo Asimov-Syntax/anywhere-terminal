@@ -270,3 +270,15 @@
     2. B15: keep the four reproduction cases as checked-in fixtures in src/test/invariants/fixtures/fsDeletion/
     3. W5: normalise the relative path to `/` before scope classification in src/test/invariants/fsDeletionGate.ts
     4. W6: dispose subscriptions in a `finally` and report the deactivation error alongside them in src/extension.worktreeAssembly.test.ts
+
+- [x] 10_1 Ask the type at the point of use, and give fail-closed a provenance — verified: pnpm run gate:fs-deletion && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 9_1
+  - **Refs**: .reviews/round-7.md; design.md D10 (revised after rounds 6 and 7)
+  - **Acceptance**:
+    - Outcome: Every checked-in bypass fixture is rejected and every unrelated erased API passes
+    - Verify: command pnpm run gate:fs-deletion
+  - **Boundary**: no enumeration of binding forms; the rule reads types at references, and an erased type is judged by its chain rather than by the member's name
+  - **Plan**:
+    1. Replace the acquisition visitor in src/test/invariants/fsDeletionGate.ts with a reference rule over identifiers and member accesses, resolving union constituents
+    2. Judge an erased callee by the nearest typed sub-expression under casts and parentheses, not by the member name
+    3. Add nested-assignment, unrelated-`any`-member and unrelated-`any`-index fixtures to src/test/invariants/fixtures/fsDeletion/

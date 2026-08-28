@@ -152,3 +152,28 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   spellings proven visible), bench 0.1 ms / 32.6 ms, lint identical to the main baseline,
   `verify-status` exit 0.
 - Review still NOT closed and NOT approved. Cycle 3 has rounds 2 and 3 available.
+
+### Cycle 3 round 7 — BLOCK, thrash stop, second handback for I10
+
+- Round 7 verdict BLOCK: B15 (nested destructuring assignment) and W7 (fail-closed rejecting
+  unrelated erased APIs). Both accepted, both reproduced before triage. W5 and W6 confirmed fixed.
+- **Thrash stop declared**: the same invariant survived two fix attempts (tasks 8_2 and 9_1).
+  The user chose option 1 — hand back to `asimov-plan` for a designed fix.
+- W7 is the round-5 false-positive direction reintroduced by the fix for the opposite direction.
+  A rule wrong in both directions at once is the thing D10's own code comment calls disqualifying.
+- Diagnosis: round 6 blamed name extraction being reimplemented per shape. True, and insufficient
+  — the ENUMERATION is the defect. D10 has enumerated *binding forms*, which is open-ended, and
+  four rounds each found new members of that set.
+- Stated for the record: there is no filesystem-deletion defect in production. All 29 in-scope
+  modules are clean every round. B15 is a hole in a guard, not a live bug.
+- Gate 2 re-earned under fastlane (user: "fastlane nhé, plan -> build -> review tự động").
+  D10's mechanism moves from enumerating binding forms to reading types at references, and
+  fail-closed gains the provenance W7 asked for. One task, 10_1.
+- 10_1 built. The gate now reads types at references instead of enumerating binding forms, and
+  fail-closed is decided by an expression's chain rather than by the member's name. One bounded
+  hop follows a variable's initializer, because `const anyFs: any = fs.promises` erases provenance
+  at the declaration rather than at the use — a parameter has no initializer, which is what keeps
+  W7's unrelated erased APIs passing.
+- Fixtures: 12 flag- (all rejected) and 5 pass- (none rejected), from 7 and 2 at round 5.
+- Verify Gate: check-types clean, 234 files / 4733 tests, gate exit 0 in 1.48 s, bench 0.1 ms /
+  32.4 ms, lint identical to the main baseline (13 warnings + 1 info), verify-status exit 0.

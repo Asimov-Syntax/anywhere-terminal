@@ -3,13 +3,14 @@
 //
 // Run: pnpm run gate:fs-deletion
 //
-// Three hand-written versions of this rule each resolved identifiers by hand — a regex, then an
-// AST binding walk — and round 5 walked past all of them (`const wipe = fs.promises.rm`,
-// `fs.promises["rm"]`, nested destructuring) while ALSO firing on a harmless parameter named `rm`.
-// Resolving what an identifier refers to is the type checker's job, so it does that job here.
+// Four versions of this rule enumerated the ways a name can COME TO HOLD an fs member — regex,
+// then an AST binding walk, then the checker over acquisition shapes. Each round found another
+// shape: renamed imports, assigned members, element access, quoted binding keys, destructuring
+// assignment, `as any`, and finally a NESTED destructuring assignment. That set is open-ended.
 //
-// The rule rejects ACQUISITION, not the eventual call: chasing an alias to its call site is the
-// part that kept going wrong, and acquiring the symbol is the auditable event either way.
+// The set of ways a value is USED is not: you name it, or you select a member of something. So
+// the question is asked at the reference — does this expression's type resolve to a destructive
+// `node:fs` function — and the checker answers it whatever syntax bound the name.
 
 import path from "node:path";
 import * as tsmod from "typescript";
@@ -51,63 +52,56 @@ export interface Finding {
   readonly why: string;
 }
 
-/** Whether this symbol IS a destructive `node:fs` member, wherever it was renamed to. */
-function isDestructiveFsSymbol(checker: tsmod.TypeChecker, symbol: tsmod.Symbol | undefined): boolean {
-  if (symbol === undefined) {
-    return false;
-  }
-  const resolved = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
-  if (!DESTRUCTIVE.has(resolved.getName())) {
-    return false;
-  }
-  return (resolved.getDeclarations() ?? []).some((d) => d.getSourceFile().fileName.includes("@types/node/fs"));
+/** Every constituent of a union, or the type itself. */
+function constituents(type: tsmod.Type): readonly tsmod.Type[] {
+  return type.isUnion() ? type.types : [type];
+}
+
+/** Whether this TYPE is a destructive `node:fs` function, however the value was bound or renamed. */
+function isDestructiveFsType(type: tsmod.Type): boolean {
+  return constituents(type).some((part) => {
+    const symbol = part.getSymbol() ?? part.aliasSymbol;
+    if (symbol === undefined || !DESTRUCTIVE.has(symbol.getName())) {
+      return false;
+    }
+    return (symbol.getDeclarations() ?? []).some((d) => d.getSourceFile().fileName.includes("@types/node/fs"));
+  });
 }
 
 /** Whether this type carries `node:fs` deletion members — an fs module object, or an alias of one. */
-function isFsBearingType(checker: tsmod.TypeChecker, type: tsmod.Type): boolean {
-  return [...DESTRUCTIVE].some((name) => isDestructiveFsSymbol(checker, type.getProperty(name)));
+function isFsBearingType(type: tsmod.Type): boolean {
+  return constituents(type).some((part) =>
+    [...DESTRUCTIVE].some((name) => {
+      const property = part.getProperty(name);
+      const declarations = property?.getDeclarations() ?? [];
+      return declarations.some((d) => d.getSourceFile().fileName.includes("@types/node/fs"));
+    }),
+  );
 }
 
-/** `any` erases the property symbol, so nothing below it can be resolved — or trusted. */
+/** `any` and `unknown` erase the symbol, so nothing below them can be resolved — or trusted. */
 function isErased(type: tsmod.Type): boolean {
   return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
 }
 
-/**
- * The member name a key expression selects, or `undefined` when it is decided at runtime.
- *
- * Round-6 B15: all four bypasses were name extraction, reimplemented inline at each AST shape.
- * `{ "rm": wipe }` read as the four characters `"rm"` INCLUDING its quotes, so the lookup missed.
- * One function, used by every shape, is what stops the next shape from inventing a fifth answer.
- */
-/**
- * The member an INDEX expression selects: `obj["rm"]` yes, `obj[member]` no.
- *
- * Separate from `memberName` deliberately. An identifier means opposite things in the two
- * positions — a literal key in `{ rm: … }`, a runtime value in `obj[rm]` — and reading them with
- * one function is how `fs.promises[member]` came back as the key "member" and quietly resolved
- * to nothing.
- */
-function elementKey(expression: tsmod.Expression): string | undefined {
-  if (ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
-    return expression.text;
+/** Look through casts and parentheses for the expression the checker can still type. */
+function typedSource(expression: tsmod.Expression): tsmod.Expression {
+  let node: tsmod.Expression = expression;
+  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
+    node = node.expression;
   }
-  return undefined;
+  return node;
 }
 
-function memberName(name: tsmod.Node): string | undefined {
-  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name)) {
-    return name.text;
-  }
-  if (ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) {
-    return name.text;
-  }
-  if (ts.isComputedPropertyName(name)) {
-    return ts.isStringLiteralLike(name.expression) ? name.expression.text : undefined;
-  }
-  return undefined;
-}
-
+/**
+ * Every reference in `file` that names a destructive `node:fs` function.
+ *
+ * Rounds 4-7 each enumerated BINDING forms — import, property access, element access, binding
+ * element, destructuring assignment, nested destructuring assignment — and each round found
+ * another one, because that set is open-ended. The set of REFERENCE forms is not: a value is used
+ * by naming it, or by selecting a member of something. So the question is asked once, at the use,
+ * and the checker answers it whatever syntax bound the name.
+ */
 function scan(file: tsmod.SourceFile, checker: tsmod.TypeChecker): Finding[] {
   const found: Finding[] = [];
   const rel = relativeTo(file.fileName);
@@ -121,51 +115,51 @@ function scan(file: tsmod.SourceFile, checker: tsmod.TypeChecker): Finding[] {
   };
 
   /**
-   * One acquisition: `key` selected off an object of type `owner`.
+   * An erased type cannot be resolved, so it is judged by where it CAME FROM.
    *
-   * Both unresolved cases are rejections, not passes. D10 says fail closed, and round 6 found
-   * this function's predecessor treating "the checker returned no symbol" as "not fs" — the
-   * rule contradicting its own stated policy, three lines under a comment restating it.
+   * Round-7 W7: the previous rule rejected any destructive-looking member on an erased owner, so
+   * an unrelated `cache.rm(key)` was reported as filesystem deletion. Provenance is what separates
+   * `(fs.promises as any).rm` — rejected, its chain is fs — from a cache that never touched fs.
    */
-  const acquires = (node: tsmod.Node, owner: tsmod.Type, key: string | undefined): void => {
-    if (key === undefined) {
-      if (isFsBearingType(checker, owner) || isErased(owner)) {
-        report(node, "selects a member of an fs module with a key decided at runtime");
+  const seen = new Set<tsmod.Node>();
+  const fromFs = (expression: tsmod.Expression): boolean => {
+    const node = typedSource(expression);
+    if (seen.has(node)) {
+      return false;
+    }
+    seen.add(node);
+    const type = checker.getTypeAtLocation(node);
+    if (isFsBearingType(type) || isDestructiveFsType(type)) {
+      return true;
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      return fromFs(node.expression);
+    }
+    // `const anyFs: any = fs.promises` erases the provenance at the DECLARATION, so the one hop
+    // that recovers it is to what the name was initialised from. A parameter has no initializer,
+    // which is why an unrelated erased argument stays a pass (W7).
+    if (ts.isIdentifier(node)) {
+      const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+      if (declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined) {
+        return fromFs(declaration.initializer);
       }
-      return;
     }
-    if (isDestructiveFsSymbol(checker, owner.getProperty(key))) {
-      report(node, `acquires the destructive fs member ${key}`);
-      return;
-    }
-    if (isErased(owner) && DESTRUCTIVE.has(key)) {
-      report(node, `acquires ${key} through a type the checker cannot resolve`);
-    }
+    return false;
   };
 
   const visit = (node: tsmod.Node): void => {
-    if (ts.isImportSpecifier(node) && isDestructiveFsSymbol(checker, checker.getSymbolAtLocation(node.name))) {
-      report(node, "imports a destructive fs member");
-    } else if (ts.isPropertyAccessExpression(node)) {
-      acquires(node, checker.getTypeAtLocation(node.expression), node.name.text);
-    } else if (ts.isElementAccessExpression(node)) {
-      acquires(node, checker.getTypeAtLocation(node.expression), elementKey(node.argumentExpression));
-    } else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
-      const key = node.propertyName !== undefined ? memberName(node.propertyName) : memberName(node.name);
-      acquires(node, checker.getTypeAtLocation(node.parent), key);
-    } else if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isObjectLiteralExpression(node.left)
-    ) {
-      // `({ rm: wipe } = fs.promises)` — a destructuring ASSIGNMENT is an object literal on the
-      // left of `=`, not a binding pattern, so the binding-element branch never sees it.
-      const owner = checker.getTypeAtLocation(node.right);
-      for (const property of node.left.properties) {
-        if (ts.isShorthandPropertyAssignment(property)) {
-          acquires(property, owner, property.name.text);
-        } else if (ts.isPropertyAssignment(property)) {
-          acquires(property, owner, memberName(property.name));
+    if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      // Skip the name half of a member access: it is resolved with its owner, not on its own.
+      const isMemberName = ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
+      if (!isMemberName) {
+        if (isDestructiveFsType(checker.getTypeAtLocation(node))) {
+          report(node, "names a destructive fs function");
+        } else if (
+          (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+          isErased(checker.getTypeAtLocation(node)) &&
+          fromFs(node.expression)
+        ) {
+          report(node, "selects a member of an fs module through a type the checker cannot resolve");
         }
       }
     }

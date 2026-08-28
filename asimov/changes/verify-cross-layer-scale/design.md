@@ -160,6 +160,35 @@ A standalone gate, not the unit suite: ~1 s of Program construction is acceptabl
 and wrong in watch mode or a targeted unit run. Not Biome — it has no TypeScript symbol-resolution
 seam. Not a new ESLint stack — same Program cost, plus a lint framework adopted for one rule.
 
+**Revised again after review rounds 6 and 7 — name the value, do not enumerate the binding.**
+Three checker-based versions of this rule have now been walked past, and the shapes were found in
+this order: quoted binding key, destructuring assignment, `as any`, erased alias (round 6), then
+**nested** destructuring assignment (round 7). Round 6's diagnosis — that member-name extraction was
+reimplemented at each shape — was correct and insufficient. The defect is the enumeration itself.
+
+D10 has been enumerating **binding forms**: the ways a name can come to hold an fs member. That set
+is open-ended, which is why every round found another member of it. The set of **reference forms**
+is not: every use of a value is an identifier, or a member selected from something.
+
+So the rule SHALL ask one question at the point of USE — *does this expression's type resolve to a
+destructive `node:fs` symbol?* — over identifiers and member accesses, resolving through unions.
+`wipe(dir)` has the type `typeof fs.promises.rm` whatever syntax produced `wipe`; nested
+destructuring, quoted keys, assignments and aliases all collapse into that one answer, and the
+checker gives it without being told which shape bound the name.
+
+**Erased types need provenance, not a name guess (W7).** Round 6's fail-closed rule rejected any
+destructive-looking member on an `any` owner, so `cache.rm(key)` on an unrelated erased API was
+reported as filesystem deletion — a rule wrong in both directions at once, which this file's own
+comment calls the kind that gets switched off within a week. Where a callee's type is erased, the
+rule SHALL look through casts and parentheses for the nearest sub-expression the checker can still
+type, and reject only when THAT is fs-bearing. `(fs.promises as any).rm(dir)` is rejected because
+`fs.promises` is; `cache.rm(key)` is not, because nothing in its chain ever was.
+
+**Stated limit, not hidden.** The rule is about references in the enumerated scope. A module that
+acquires `fs.promises.rm` and never uses it deletes nothing, and any in-scope use is caught wherever
+it is written. A caller outside the scope is outside the scope by construction — the same stated
+boundary the wording above already carries.
+
 ### D2: Count in the suite; time in a bench
 
 Per-rebuild **cost** budgets SHALL be asserted as exact equality in the unit suite. The two
