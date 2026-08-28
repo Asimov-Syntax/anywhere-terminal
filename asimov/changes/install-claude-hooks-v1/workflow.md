@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-006.2`)_
@@ -26,6 +26,9 @@
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
+Fastlane amendment Gate 2: approved — reuse the reviewed inline Cursor branch; remediate Claude identity/diagnostics, location sequencing, and admission tests without expanding product scope.
+User directed round-1 Cursor remediation to merge `huybuidac/inline-cursor-hooks`; D2/task 5_3 reuse that reviewed branch and prohibit duplicate bridge rework.
+Round 1 REJECT accepted all six blockers, two warnings, and two suggestions. B4-B6 invalidate D2 exact-byte restoration, so cycle 1 is superseded and Gate 2 reopens for the safety-delta amendment before remediation.
 - 2026-08-28: User waived resource-contention-only full-suite timeouts; tasks use focused tests, and the full suite runs only at the final gate with one Vitest worker.
 
 <!-- Blueprint source + lane below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->

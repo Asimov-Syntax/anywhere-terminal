@@ -22,17 +22,17 @@ ClaudeHookInstaller v1
 
 The rejected mechanism lives in installation ownership, not event decoding, tokens, or presence. Claude v1 replaces `src/agentHooks/install/**` without reverting WT-006.1 or WT-006.3.
 
-### D2: Cursor returns to its pre-d31 installer seam
+### D2: Merge the independently reviewed inline Cursor replacement
 
-The change SHALL restore `src/cursor/CursorHookInstaller.{ts,test.ts}` exactly from `d31d6d17^` and wire it as the Cursor controller slot.
+The temporary pre-d31 bridge is superseded by the completed `huybuidac/inline-cursor-hooks` change. This change SHALL merge that branch rather than reimplement its safety fixes. The reviewed inline implementation owns Cursor command bytes, exact historical migration, no-age locking, config-first wrapper cleanup, Windows removal-only behavior, direct runtime compatibility, and the real Cursor Agent spike.
 
-A compatibility integration test SHALL execute the restored command against the current `AgentHookRuntime` plus `cursorAgentRegistration`, then prove status publication and revocation. Cursor's released migration contract differs from Claude's never-shipped capability; the approved `inline-cursor-hooks` branch replaces this bridge immediately after v1.
+Merge conflict resolution SHALL retain current local-main runtime/presence behavior and the Claude v1 implementation while taking the inline branch's Cursor-owned source, tests, spec delta, research, and verification harness. No second Cursor probe, wrapper-hardening path, or duplicate migration logic is introduced here.
 
-### D3: One Claude path is frozen per operation
+### D3: One Claude path and identity are frozen per operation
 
-`ClaudeHookInstaller.install()` and `uninstall()` SHALL each call the resolver once and thread that absolute settings path through symlink classification, lock acquisition, read, compare, replacement, and diagnostics.
+`ClaudeHookInstaller.install()` and `uninstall()` SHALL each call the resolver once and thread that absolute settings path through classification, lock acquisition, identity-safe read, comparison, replacement, and diagnostics.
 
-Resolution order is absolute configured directory, absolute `CLAUDE_CONFIG_DIR`, then `<home>/.claude/settings.json`. Invalid relative candidates fall through. Location changes converge the new destination on the next reconciliation; no state remembers the old one.
+Resolution order is absolute configured directory, absolute `CLAUDE_CONFIG_DIR`, then `<home>/.claude/settings.json`. Invalid relative candidates fall through. Under the sibling lock, every existing path component and the final file are classified without following symlinks; a stable regular-file identity and its bytes authorize reconciliation. The replacement is staged first, then final component/parent identity and source bytes are revalidated immediately before commit. Any substitution or concurrent edit aborts and retries within the existing bound; missing-target publication must not overwrite a file that appeared after classification. Location changes converge the new destination on the next reconciliation; no state remembers the old one.
 
 ### D4: Canonical groups are the ownership boundary
 
@@ -40,11 +40,13 @@ The exact handler is `{type: "command", command: CLAUDE_HOOK_COMMAND, timeout: 2
 
 Install and removal may sweep duplicate canonical groups while preserving all unrelated group order. If the exact handler appears with sibling handlers, extra group keys, the wrong matcher, or under an unregistered event, reconciliation returns `ownership-conflict`, leaves the entire document byte-identical, and revokes authority. This refuses ambiguous user rearrangement rather than changing its matcher/group semantics.
 
-### D5: Locking fails closed without time-based authority
+### D5: Locking and temporary publication fail closed
 
-A sibling lock acquired with exclusive `open("wx")` serializes cooperating hosts for at most one second of bounded waiting. No mtime or age permits reclamation. Compare-and-retry runs at most three times, and replacement remains temp-write → mode preservation → rename.
+A sibling lock acquired with exclusive `open("wx")` serializes cooperating hosts for at most one second of bounded waiting. No mtime or age permits reclamation. Compare-and-retry runs at most three times.
 
-Non-`ENOENT` lock-release failure preserves the committed install/remove boolean, reports `lock-release-failed`, and appends the exact lock path. Install may therefore grant runtime authority with a separate warning after the config committed; removal with unresolved paths remains unsuccessful at the controller boundary.
+Replacement uses a cryptographically unpredictable sibling temporary name created exclusively with `open("wx")`; bytes and mode are written through that owned handle, and cleanup removes only that operation's file. The staged file is committed only after D3's final no-follow identity/byte validation. A pre-created path, symlink substitution, parent identity change, or concurrent source edit aborts without replacing user bytes.
+
+Non-`ENOENT` lock-release failure preserves the committed install/remove boolean, reports `lock-release-failed`, and appends the exact lock path. Every failed operation also carries the exact affected settings path (and lock path when applicable) through controller diagnostics. Install may therefore grant runtime authority with a separate warning after the config committed; removal with unresolved paths remains unsuccessful at the controller boundary.
 
 ### D6: One in-memory queue owns current-setting transitions
 
@@ -68,17 +70,17 @@ It shares Cursor's proven transport controls but is a separate identity and comm
 
 On Windows, Claude install and uninstall return `unsupported-platform` before path resolution or filesystem access. No `.cmd` or historical cleanup candidate exists because Claude hooks never shipped.
 
-### D9: Controller authority follows settled outcomes
+### D9: Controller authority and diagnostics follow settled outcomes
 
-The generic controller SHALL retain per-agent serialization. `unresolved` paths extend install/remove results. Installed config plus cleanup warning grants authority and logs once; failed install does not. Disable revokes immediately, and any removal result carrying unresolved paths remains unsuccessful.
+The generic controller SHALL retain per-agent serialization. Install/remove outcomes carry exact affected resource paths separately from unresolved cleanup residue. Installed config plus cleanup warning grants authority and logs once; failed install does not. Every warning merges the primary reason with exact settings/lock paths, including a failed operation whose lock release also left residue. Disable revokes immediately, and any removal result carrying unresolved paths remains unsuccessful.
 
 The runtime remains registered for Claude so WT-006.3 assembly, turn-state, and pane cleanup invariants continue to execute.
 
 ### D10: Real Claude Code admits the final bytes
 
-A bounded `.mjs` harness SHALL run the exact exported literal through installed Claude Code using a scratch project, an explicit settings file containing the exported bytes, and a uniquely tokened loopback recorder. User and local setting sources are excluded explicitly; excluded scratch sources contain sentinel hooks that must not fire.
+A bounded `.mjs` harness SHALL run the exact exported literal through installed Claude Code using a scratch project, an explicit settings file containing the exported bytes, and a uniquely tokened loopback recorder. Independent checked-in byte-count and SHA-256 expectations pin D7 before the import is used. User and local setting sources are excluded explicitly; excluded scratch sources contain sentinel hooks that must not fire.
 
-Acceptance requires at least `SessionStart` and `Stop`, exit 0, byte-for-byte command equality in the loaded settings, unchanged scratch/user settings, exact command hash, observed shell/startup behavior, no sentinel event, and no payload on stderr. The harness is task evidence, not part of the normal unit suite.
+Acceptance requires at least `SessionStart` and `Stop`, exit 0, byte-for-byte command equality in the loaded settings, unchanged scratch/user settings, the independent command hash/count match, observed shell/startup behavior, no sentinel event, and no payload-specific sensitive marker or field on stderr. The harness is task evidence, not part of the normal unit suite.
 
 ### D11: The rejected change is archived, never applied
 
@@ -90,7 +92,7 @@ WT-006.2 is completed only by this v1 implementation; blueprint sync narrows ins
 
 | Resource | Writer / serialization | Crash or failure outcome | Failed-read policy | Two-host behavior |
 |---|---|---|---|---|
-| Current Claude `settings.json` | Dedicated installer under D5 sibling lock | Before rename: old bytes intact. After rename: current exact handlers committed; no wrapper lifecycle | Malformed, unsupported, unreadable, or symlink file fails closed unchanged | Cooperating hosts serialize; waiter never age-reclaims holder |
+| Current Claude `settings.json` | Dedicated installer under D3/D5 identity-safe sibling lock | Staged exclusive temp commits only after final no-follow identity/byte validation | Malformed, unsupported, unreadable, symlinked, substituted, or concurrently edited paths fail closed unchanged with exact diagnostics | Cooperating hosts serialize; non-cooperating drift retries or fails without overwrite |
 | Claude lock file | Exclusive create; owner releases after result | Process crash may leave a stale fail-closed lock; exact path reported | Unexpected errors never authorize deletion | Second host waits boundedly then reports residue |
 | Prior Claude destinations | No writer or inventory | Existing development entries may remain inert | Never read unless currently derivable | Hosts share no historical state to race over |
 | Cursor `hooks.json` and wrapper | Restored shipped installer bridge | Existing shipped behavior until inline change replaces it | Existing policy preserved | Existing bridge behavior preserved, not redesigned here |
@@ -110,5 +112,5 @@ WT-006.2 is completed only by this v1 implementation; blueprint sync narrows ins
 | Payload privacy | Proxy, curlrc, functions, PATH, or tracing leaks body | D7 managed-entry controls, explicit pre-entry tracing boundary, and D10 isolated real-agent spike |
 | Background jobs | Inherited coordinates publish as the wrong pane | D7 consumes then exits on `CLAUDE_JOB_DIR`; real and direct tests |
 | Windows | Untested bytes become a durable identity | D8 filesystem-zero unsupported path |
-| Cursor regression | Shared deletion removes shipped writer | D2 exact baseline restore; inline branch remains next dependency |
+| Cursor regression | Shared deletion removes shipped writer or duplicates reviewed migration logic | D2 merges the independently reviewed inline Cursor branch and resolves only its integration seam with Claude v1 |
 | Data scale | No growing destination inventory remains | Event set is fixed; config passes are bounded by existing file size and three retries |

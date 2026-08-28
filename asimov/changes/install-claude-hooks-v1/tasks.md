@@ -125,3 +125,47 @@
     1. Add explicit superseded notes to asimov/changes/install-claude-hooks/workflow.md and asimov/changes/remove-rejected-hook-installer/workflow.md while preserving incomplete gates and evidence.
     2. Move both directories intact to asimov/changes/archive/*-install-claude-hooks/ and asimov/changes/archive/*-remove-rejected-hook-installer/ without invoking `change apply` for either.
     3. Remove only their matching markers under asimov/.analytics-open/changes/ when present.
+
+## 5. Review round 1 remediation
+
+- [ ] 5_1 Make Claude file authorization identity-safe and diagnostic
+  - **Deps**: 4_3
+  - **Refs**: specs/agent-hook-installation/spec.md#claude-hook-writes-fail-closed; design.md D3, D5, D9; .reviews/round-1.md B1, B2
+  - **Acceptance**:
+    - Outcome: Claude settings reject path substitution and concurrent drift.
+    - Verify: unit src/agentHooks/install/ClaudeHookInstaller.test.ts
+  - **Plan**:
+    1. Harden src/agentHooks/install/lockedJsonFile.ts and src/agentHooks/install/lockedJsonFile.test.ts with exclusive random temporary handles and final validation support.
+    2. Rework src/agentHooks/install/ClaudeHookInstaller.ts and src/agentHooks/install/ClaudeHookInstaller.test.ts around under-lock no-follow identity checks, no-overwrite missing-file publication, bounded drift retry, and exact affected settings and lock paths.
+    3. Preserve affected and unresolved paths through src/agentHooks/AgentHookController.ts and src/agentHooks/AgentHookController.test.ts diagnostics.
+
+- [ ] 5_2 Correct location revocation and reuse the keyed queue
+  - **Deps**: 4_3
+  - **Refs**: design.md D6; .reviews/round-1.md B3, W2
+  - **Acceptance**:
+    - Outcome: Claude location changes revoke before ordered reinstallation.
+    - Verify: unit src/agentHooks/install/agentHookLifecycle.test.ts
+  - **Plan**:
+    1. Replace the local tail map in src/agentHooks/install/agentHookLifecycle.ts with src/utils/keyedSerialQueue.ts and pin disable-then-reread ordering in src/agentHooks/install/agentHookLifecycle.test.ts.
+
+- [ ] 5_3 Merge the reviewed inline Cursor replacement
+  - **Deps**: 4_3
+  - **Refs**: design.md D2; .reviews/round-1.md B4, B5, B6
+  - **Acceptance**:
+    - Outcome: Cursor uses the independently reviewed inline hook implementation.
+    - Verify: command bun scripts/verify-cursor-inline-hook.mjs
+  - **Plan**:
+    1. Merge the reviewed branch named in D2 and resolve CHANGELOG.md, asimov/project.md, and src/cursor/CursorHookInstaller.{ts,test.ts} by preserving current Claude v1 work plus the branch's Cursor-owned behavior.
+    2. Retain the branch's asimov/changes/archive/260828-0724-inline-cursor-hooks/, asimov/specs/cursor-agent-status/spec.md, docs/audit/2026-08-28-agent-hook-recovery-plan.md, docs/research/20260828-cursor-inline-hook-spike.md, scripts/verify-cursor-inline-hook.mjs, and src/cursor/CursorHookController.{ts,test.ts} without reimplementation.
+    3. Remove the temporary Cursor formatter override from biome.json and verify the merged source against the existing inline review evidence.
+
+- [ ] 5_4 Strengthen frozen-command and ownership admission tests
+  - **Deps**: 4_3
+  - **Refs**: design.md D4, D10; .reviews/round-1.md W1, S1, S2
+  - **Acceptance**:
+    - Outcome: Independent command bytes and every ownership/privacy boundary are pinned.
+    - Verify: command bun scripts/verify-claude-inline-hook.mjs
+  - **Plan**:
+    1. Add the unregistered-event conflict and immutability case in src/agentHooks/install/claudeConfig.test.ts.
+    2. Pin independent command byte and hash constants and payload-specific stderr sentinels in scripts/verify-claude-inline-hook.mjs and refresh docs/research/20260828-claude-inline-hook-spike.md.
+
