@@ -54,7 +54,7 @@
 
 ## 3. Transport proof
 
-- [ ] 3_1 Pin every bounded and privacy-preserving branch through the real POSIX shell
+- [x] 3_1 Pin every bounded and privacy-preserving branch through the real POSIX shell — verified: bun test 'src/cursor/CursorHookInstaller.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy}; design.md D1, D2
   - **Acceptance**:
@@ -66,8 +66,18 @@
     3. Drive neutral output, semantic JSON delivery, numeric authority and token validation, PATH, function, and xtrace hardening, failed-lookup drain, timeout, proxy environment, curl startup, trailing-LF, and stdout-closure branches in src/cursor/CursorHookInstaller.test.ts.
     4. Keep controls in src/cursor/CursorHookInstaller.test.ts proving function and PATH hijack, xtrace disclosure, authority escape, proxy disclosure, curlrc disclosure, and EPIPE without each mitigation.
 
+- [ ] 3_3 Replace Cursor-rejected shell parsing with trusted URL validation
+  - **Deps**: 3_1
+  - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy}; design.md D1, D2
+  - **Acceptance**:
+    - Outcome: The frozen literal validates the exact runtime URL through trusted POSIX awk.
+    - Verify: unit src/cursor/CursorHookInstaller.test.ts
+  - **Plan**:
+    1. Replace the rejected shell-pattern parser in src/cursor/CursorHookInstaller.ts with D1's real-agent-proven awk generation.
+    2. Retarget src/cursor/CursorHookInstaller.test.ts valid UUID URLs, rejected authority/path cases, awk function and PATH controls, and failed-awk drain behavior.
+
 - [ ] 3_2 Execute the frozen bytes through real cursor-agent
-  - **Deps**: 2_2, 2_3, 3_1
+  - **Deps**: 2_2, 2_3, 3_3
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-observers-fail-open, cursor-hook-payload-privacy}; design.md D1, D2
   - **Acceptance**:
     - Outcome: Real cursor-agent delivers lifecycle payloads through the frozen literal.
@@ -79,7 +89,7 @@
 
 ## 4. Release disclosure
 
-- [ ] 4_1 Record the temporary Windows observability regression
+- [x] 4_1 Record the temporary Windows observability regression — verified: grep -F "Windows Cursor hook observability" CHANGELOG.md && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: specs/cursor-agent-status/spec.md#windows-cursor-hook-removal-only; design.md D6
   - **Acceptance**:

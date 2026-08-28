@@ -1,9 +1,7 @@
 {
   "change": "inline-cursor-hooks",
   "leases": [],
-  "attempts": {
-    "4_1": 1
-  },
+  "attempts": {},
   "locked": [],
   "reads": 0
 }
