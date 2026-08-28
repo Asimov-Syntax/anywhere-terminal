@@ -129,7 +129,7 @@
 ## 5. Review round 1 remediation
 
 - [ ] 5_1 Make Claude file authorization identity-safe and diagnostic
-  - **Deps**: 4_3
+  - **Deps**: 4_3, 5_3
   - **Refs**: specs/agent-hook-installation/spec.md#claude-hook-writes-fail-closed; design.md D3, D5, D9; .reviews/round-1.md B1, B2
   - **Acceptance**:
     - Outcome: Claude settings reject path substitution and concurrent drift.
@@ -140,7 +140,7 @@
     3. Preserve affected and unresolved paths through src/agentHooks/AgentHookController.ts and src/agentHooks/AgentHookController.test.ts diagnostics.
 
 - [ ] 5_2 Correct location revocation and reuse the keyed queue
-  - **Deps**: 4_3
+  - **Deps**: 4_3, 5_3
   - **Refs**: design.md D6; .reviews/round-1.md B3, W2
   - **Acceptance**:
     - Outcome: Claude location changes revoke before ordered reinstallation.
@@ -155,12 +155,13 @@
     - Outcome: Cursor uses the independently reviewed inline hook implementation.
     - Verify: command bun scripts/verify-cursor-inline-hook.mjs
   - **Plan**:
-    1. Merge the reviewed branch named in D2 and resolve CHANGELOG.md, asimov/project.md, and src/cursor/CursorHookInstaller.{ts,test.ts} by preserving current Claude v1 work plus the branch's Cursor-owned behavior.
-    2. Retain the branch's asimov/changes/archive/260828-0724-inline-cursor-hooks/, asimov/specs/cursor-agent-status/spec.md, docs/audit/2026-08-28-agent-hook-recovery-plan.md, docs/research/20260828-cursor-inline-hook-spike.md, scripts/verify-cursor-inline-hook.mjs, and src/cursor/CursorHookController.{ts,test.ts} without reimplementation.
+    1. Merge the reviewed branch named in D2 and resolve CHANGELOG.md, asimov/project.md, src/cursor/CursorHookInstaller.ts, and src/cursor/CursorHookInstaller.test.ts by preserving current Claude v1 work plus the branch's Cursor-owned behavior.
+    2. Retain the branch's asimov/changes/archive/260828-0724-inline-cursor-hooks/, asimov/specs/cursor-agent-status/spec.md, docs/audit/2026-08-28-agent-hook-recovery-plan.md, docs/research/20260828-cursor-inline-hook-spike.md, scripts/verify-cursor-inline-hook.mjs, src/cursor/CursorHookController.ts, and src/cursor/CursorHookController.test.ts without reimplementation.
     3. Remove the temporary Cursor formatter override from biome.json and verify the merged source against the existing inline review evidence.
+    4. Merge the Cursor release note in CHANGELOG.md without dropping the Claude v1 entry.
 
 - [ ] 5_4 Strengthen frozen-command and ownership admission tests
-  - **Deps**: 4_3
+  - **Deps**: 4_3, 5_3
   - **Refs**: design.md D4, D10; .reviews/round-1.md W1, S1, S2
   - **Acceptance**:
     - Outcome: Independent command bytes and every ownership/privacy boundary are pinned.
