@@ -226,10 +226,10 @@ plan change rather than a free-form reason.
 
 | Component | Risk | Mitigation |
 |---|---|---|
-| `coverage.test.ts` scan | Grows with the suite — parses every `src/**/*.test.ts` per run | ≈230 files, one pass per run, no per-test cost; parsing is a regex over call sites, not a TS program |
+| `coverage.test.ts` scan | Grows with the suite — parses every `src/**/*.test.ts` per run | ≈235 files, one `ts.createSourceFile` per file per run, no per-test cost. Measured at ~1.0 s for the two scanning assertions combined. The original entry here said "a regex over call sites, not a TS program"; rounds 3 and 4 made that false in both halves |
 | Tag semantics | A test tagged for an invariant it does not assert | Not machine-checkable. `stimulus` gives the reviewer the check, and `re-review` makes that round mandatory (D1) |
 | `bench:scale` | Wall-clock, so machine-dependent | Out of `test:unit`, so it never flakes a normal run; run and recorded at the Verify Gate. Bound and fixture size are frozen (D2) |
-| Bench fixture repo | Real git + 10 worktrees is slow and leaves temp dirs | Reuses `worktreeMutations.integration.test.ts` fixtures, which already handle teardown |
+| Bench fixture repo | Real git + 10 worktrees is slow and leaves temp dirs | Builds and tears down its own repo. This row claimed reuse of `worktreeMutations.integration.test.ts` fixtures and that was never true — the bench is a bun script and cannot import a vitest fixture. Carried as round-2 W2, deferred twice, still open |
 | Cross-layer tests (D5) | Composing production wiring can pull in the peer-owned tree | I7's seam is `AgentHookRuntime` / `PaneEvidenceStore`, both outside the boundary; if a scenario cannot avoid it, defer that row (D9) |
 | Registry ↔ doc equality | A legitimate § 8.4 edit fails the suite | Intended. The failure names both texts |
 | `WorktreeView.ts` NUL edit | Silent behaviour change if mistyped | Byte-identical or wrong; the collapse-persistence tests cover the join, and D7 adds a byte scan |
