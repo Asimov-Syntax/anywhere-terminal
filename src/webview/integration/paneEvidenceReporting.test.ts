@@ -11,11 +11,18 @@
 // See: asimov/changes/add-host-pane-evidence/design.md D7.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DescendantsOutcome, ProcessTableSnapshot } from "../../pty/processTableSnapshot";
 import { createPaneEvidenceStore } from "../../session/PaneEvidenceStore";
 import type { PaneEvidenceMessage } from "../../types/messages";
+import type { RunningSessionsOutcome } from "../../vault/readers/runningSessions";
+import { createPresenceProjectorDeps } from "../../worktree/presenceDeps";
+import { createPresenceProjector } from "../../worktree/presenceProjector";
 import { createPaneEvidenceReporter } from "../terminal/paneEvidenceReporter";
 import { TerminalActivityTracker } from "../terminal/TerminalActivityTracker";
 import { TerminalFactory } from "../terminal/TerminalFactory";
+import { ICON_TERMINAL } from "../vault/icons";
+import { renderAgentRow } from "../worktree/worktreeTreeView";
+import type { WorktreeAgentRow } from "../worktree/worktreeViewTypes";
 
 // ─── xterm stand-in ─────────────────────────────────────────────────
 //
@@ -311,5 +318,68 @@ describe("the tab and the worktree row cannot disagree about a pane", () => {
 
     expect(terminals.get("t1")?.activityStatus).toBe("waiting");
     expect(host.activityFor("t1")).toBe("waiting");
+  });
+});
+
+// ─── I2, composed ───────────────────────────────────────────────────
+//
+// Round 5: `[I2]` sat on a render-end assertion over a hand-built row, which proves the
+// renderer honours `agentSource` and proves nothing about what production puts there.
+// This runs the real chain — evidence → store → classification → projection → render —
+// so a change that started classifying a title as `launch` fails it (design.md D5).
+
+const IDENTITY_WORKTREE = "/repo/wt-0";
+const NOW = 1_700_000_000_000;
+
+/** The production chain, minus the one hop that is a single call in `main.ts`. */
+function wireIdentity() {
+  const store = createPaneEvidenceStore({ now: () => NOW });
+  const reporter = createPaneEvidenceReporter((msg) => store.report(msg));
+  // No launch proof: a plain shell, and a pid whose process table shows no agent below it.
+  store.create("pane-1", { viewId: "sidebar", cwd: IDENTITY_WORKTREE, ptyPid: 4242, shell: "zsh" });
+
+  const outcome: DescendantsOutcome = { kind: "ok", pids: [] };
+  const table = {
+    open: async () => ({ descendantsOf: () => outcome }),
+    descendantsOf: async () => outcome,
+  } as unknown as ProcessTableSnapshot;
+
+  const deps = createPresenceProjectorDeps({
+    store,
+    table,
+    // Nothing in the registry either, so every rank above the title finds nothing.
+    listRunning: async (): Promise<RunningSessionsOutcome> => ({ kind: "ok", sessions: [] }),
+    sessionMtime: async () => 1,
+    sessionPath: async () => null,
+    now: () => NOW,
+  });
+  return { store, reporter, projector: createPresenceProjector(deps) };
+}
+
+describe("a spinner frame proves activity, never identity", () => {
+  it("[I2] classifies a title-named agent as title-sourced and renders it undecorated", async () => {
+    const { reporter, projector } = wireIdentity();
+
+    reporter.reportTitle("pane-1", "⠋ claude");
+    const row = (await projector.project([IDENTITY_WORKTREE])).rowsByWorktreeId[IDENTITY_WORKTREE]?.[0];
+
+    // Asserted BEFORE the render, and this is the half the render-end test could not reach:
+    // production did name an agent, and did record how weakly it knows. A row that resolved
+    // nothing at all would render the same terminal glyph for an entirely different reason.
+    expect(row, "the pane produced no row to classify").toBeDefined();
+    expect(row).toMatchObject({ agent: "claude", agentSource: "title" });
+
+    const icon = renderAgentRow(
+      row as WorktreeAgentRow,
+      { now: NOW },
+      { onActivate: () => {} },
+    ).querySelector<HTMLElement>(".wt-aicon");
+    // Through a parse on both sides: jsdom rewrites `<rect …/>` to `<rect …></rect>`, so
+    // comparing rendered markup against the raw constant fails on the serializer, not the claim.
+    const expected = document.createElement("span");
+    expected.innerHTML = ICON_TERMINAL;
+    expect(icon?.innerHTML).toBe(expected.innerHTML);
+    expect(icon?.title).toBe("");
+    expect(icon?.style.color).toBe("");
   });
 });

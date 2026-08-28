@@ -221,7 +221,7 @@
     4. Remove the `destructiveCalls` resolver and its cases from src/test/invariants/sourceBytes.test.ts, leaving the D7 byte scan
     5. Declare the move at `verify-task` — the same eight spellings are asserted, by the checker rather than by hand
 
-- [ ] 8_3 Prove I2 through production classification, not at the render end alone
+- [x] 8_3 Prove I2 through production classification, not at the render end alone — verified: pnpm exec vitest run 'src/webview/integration/paneEvidenceReporting.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_2
   - **Refs**: design.md D5 (I2 composition, added after round 5); discovery.md § "Round-5 handback" 5
   - **Acceptance**:

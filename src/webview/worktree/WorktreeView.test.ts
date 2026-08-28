@@ -341,7 +341,10 @@ describe("agent rows", () => {
     expect(rows[1]?.querySelector(".wt-gutter")?.innerHTML).toBe("");
   });
 
-  it("[I2] shows no agent icon when identity is unproven", () => {
+  // The [I2] tag moved to the composed test in webview/integration/paneEvidenceReporting.test.ts
+  // (design.md D5). This builds its row by hand, so it proves the renderer honours
+  // `agentSource` — it cannot prove production ever sets it to anything but "launch".
+  it("shows no agent icon when identity is unproven", () => {
     const { view } = mount();
     view.setData(populated());
     const shell = agentRows(view).find((r) => r.querySelector(".wt-atitle")?.textContent?.startsWith("zsh"));
