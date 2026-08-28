@@ -4,7 +4,7 @@
 
 ### Requirement: Cursor legacy command ownership
 
-The extension SHALL claim only released platform, path, and quoting tuples derivable under the current storage root. It SHALL NOT guess ownership from partial paths, normalization, or handler shape.
+The extension SHALL claim only released event, platform, path, and quoting tuples derivable under the current storage root. It SHALL NOT guess ownership from custom event names, partial paths, normalization, or handler shape.
 
 ### Requirement: Cursor legacy wrapper migration
 
@@ -36,11 +36,11 @@ Malformed, unsupported, unreadable, or symbolic-link configurations SHALL remain
 
 ### Requirement: Cursor hook writer coordination
 
-Hook reconciliation SHALL use bounded advisory locking, compare-and-retry, and atomic replacement. Configuration replacement SHALL commit before cleanup of any released executable path.
+Hook reconciliation SHALL use bounded exclusive locking, compare-and-retry, and atomic replacement. A live lock MUST NOT be reclaimed solely because of age, and configuration replacement SHALL commit before cleanup of any released executable path.
 
 ### Requirement: Cursor observers fail open
 
-AnyWhere Terminal's Cursor hook entries MUST consume the supplied request body, emit a neutral JSON result, exit successfully, and bound connection and total request time when the observer is absent, unavailable, malformed, or timed out.
+AnyWhere Terminal's Cursor hook entries MUST consume the supplied JSON body, emit a neutral JSON result, exit successfully, and bound each network attempt when the observer is absent, unavailable, malformed, or timed out. The registered Cursor handler timeout SHALL bound the overall hook process.
 
 A failed lookup for a required utility MUST NOT fall back to the inherited executable search path and MUST still consume stdin before exiting.
 
@@ -48,7 +48,7 @@ A failed lookup for a required utility MUST NOT fall back to the inherited execu
 
 Hook prompts, shell output, user identity, raw request bodies, and content not required for status SHALL NOT be persisted, logged, transmitted off-device, or exposed to the webview.
 
-The managed command MUST accept only the extension's loopback URL shape, MUST bypass all proxy environment variables, and MUST disable ambient curl configuration before transmitting the request.
+The managed command MUST validate the extension's complete loopback authority and path shape, restrict requests to HTTP, bypass all proxy environment variables, and disable ambient curl configuration before transmitting the request.
 
 #### Scenario: Host configures a proxy or curl startup file
 

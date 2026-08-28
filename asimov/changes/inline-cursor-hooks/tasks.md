@@ -10,8 +10,18 @@
 
 ## 2. Exact ownership and migration
 
-- [ ] 2_1 Replace the POSIX wrapper identity with the frozen inline generation
+- [ ] 2_0 Make config locking fail closed without age reclamation
   - **Deps**: 1_1
+  - **Refs**: specs/cursor-agent-status/spec.md#cursor-hook-writer-coordination; design.md D8
+  - **Acceptance**:
+    - Outcome: A paused lock holder remains exclusive beyond the former stale threshold.
+    - Verify: unit src/cursor/CursorHookInstaller.test.ts
+  - **Plan**:
+    1. Remove mtime-based live-lock reclamation from src/cursor/CursorHookInstaller.ts and surface the exact lock path on bounded refusal.
+    2. Cover crash residue, a holder paused beyond 30 seconds, and a competing host that neither writes nor releases the first lock in src/cursor/CursorHookInstaller.test.ts.
+
+- [ ] 2_1 Replace the POSIX wrapper identity with the frozen inline generation
+  - **Deps**: 2_0
   - **Refs**: specs/cursor-agent-status/spec.md#{cursor-hook-configuration-ownership, cursor-legacy-command-ownership}; design.md D1, D3, D7
   - **Acceptance**:
     - Outcome: POSIX installation converges exact owned entries to one inline generation.
@@ -19,7 +29,7 @@
   - **Plan**:
     1. Export the D1 literal and replace dynamic wrapper ownership in src/cursor/CursorHookInstaller.ts with the D3 host-specific candidate set.
     2. Classify missing, supported, malformed, unreadable, and symbolic-link configs without coercing unsupported input.
-    3. Retarget src/cursor/CursorHookInstaller.test.ts ownership, migration, malformed-config, symlink, and rounds-1–3 lookalike cases onto exact entries.
+    3. Retarget src/cursor/CursorHookInstaller.test.ts ownership, released-event scoping, migration, malformed-config, symlink, byte-identical waiver, and rounds-1–3 lookalike cases onto exact entries.
 
 - [ ] 2_2 Commit the inline entry before removing the released wrapper
   - **Deps**: 2_1
@@ -29,8 +39,8 @@
     - Verify: unit src/cursor/CursorHookInstaller.test.ts
   - **Plan**:
     1. Reorder install and uninstall in src/cursor/CursorHookInstaller.ts around the existing lock and atomic replacement, with exact-path post-commit wrapper cleanup.
-    2. Carry unresolved paths in install and remove outcomes in src/cursor/CursorHookInstaller.ts; make ENOENT idempotent without scanning the storage directory.
-    3. Extend src/cursor/CursorHookController.ts and its tests so successful install residue warns without revoking authority, while incomplete removal remains unsuccessful.
+    2. Define `unresolved` and `legacy-wrapper-delete-failed` in src/cursor/CursorHookInstaller.ts; make ENOENT idempotent without scanning the storage directory.
+    3. Extend src/cursor/CursorHookController.ts and src/cursor/CursorHookController.test.ts so successful install residue warns without revoking authority, while incomplete removal remains unsuccessful.
 
 - [ ] 2_3 Make Windows an outcome-preserving removal-only reconcile
   - **Deps**: 2_2
@@ -52,8 +62,8 @@
     - Verify: unit src/cursor/CursorHookInstaller.test.ts
   - **Plan**:
     1. Replace wrapper execution helpers in src/cursor/CursorHookInstaller.test.ts with `/bin/sh -c` tests of the exported literal.
-    2. Drive neutral output, delivery, missing and non-loopback coordinates, PATH shadowing, failed lookup drain, bounded failure, proxy environment, and curl startup branches in src/cursor/CursorHookInstaller.test.ts.
-    3. Keep positive controls proving the harness observes executable hijack, proxy disclosure, curlrc disclosure, and EPIPE without each mitigation.
+    2. Drive neutral output, semantic JSON delivery, numeric authority and token validation, PATH, function, and xtrace hardening, failed-lookup drain, timeout, proxy environment, curl startup, trailing-LF, and stdout-closure branches in src/cursor/CursorHookInstaller.test.ts.
+    3. Keep controls in src/cursor/CursorHookInstaller.test.ts proving function and PATH hijack, xtrace disclosure, authority escape, proxy disclosure, curlrc disclosure, and EPIPE without each mitigation.
 
 - [ ] 3_2 Execute the frozen bytes through real cursor-agent
   - **Deps**: 2_2, 2_3, 3_1
@@ -63,4 +73,16 @@
     - Verify: command bun scripts/verify-cursor-inline-hook.ts
   - **Plan**:
     1. Add scripts/verify-cursor-inline-hook.ts as a bounded temporary-workspace and listener harness around the installed cursor-agent.
-    2. Record CLI version, command hash, delivered events, exit status, and untouched user-config evidence in docs/research/20260828-cursor-inline-hook-spike.md.
+    2. Record CLI and shell version, command hash, delivered events, exit status, startup-environment probe, and untouched user-config evidence in docs/research/20260828-cursor-inline-hook-spike.md.
+
+
+## 4. Release disclosure
+
+- [ ] 4_1 Record the temporary Windows observability regression
+  - **Deps**: 2_3
+  - **Refs**: specs/cursor-agent-status/spec.md#windows-cursor-hook-removal-only; design.md D6
+  - **Acceptance**:
+    - Outcome: The changelog states that Windows Cursor hook observability is temporarily removed.
+    - Verify: command grep -F "Windows Cursor hook observability" CHANGELOG.md
+  - **Plan**:
+    1. Add an Unreleased entry to ./CHANGELOG.md naming removal-only behavior, the safety reason, and restoration gate.
