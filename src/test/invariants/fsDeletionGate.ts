@@ -3,10 +3,11 @@
 //
 // Run: pnpm run gate:fs-deletion
 //
-// This does NOT prove the extension deletes no directory itself — the real-git integration tests
-// in src/extension.worktreeMutations.integration.test.ts do, by driving the removal path. This asks
-// one narrower question of the scoped modules: does any expression's type resolve to a destructive
-// `node:fs` function?
+// Nothing here proves the extension deletes no directory itself, and neither does anything else in
+// this repo. The real-git tests in src/worktree/worktreeMutations.integration.test.ts prove that the
+// removal paths they EXERCISE delegate to `git worktree remove`; this gate asks one narrower
+// question of the scoped modules: does any expression's type resolve to a destructive `node:fs`
+// function? Both are evidence. Neither is the universal negative.
 //
 // An earlier version of this header claimed the set of reference forms was closed — every use is an
 // identifier or a member selection — and so the checker would answer for any binding syntax. Round 9
@@ -222,9 +223,16 @@ function main(): void {
   for (const rel of closed) {
     lines.push(`  ${rel} is a gap- fixture the rule NOW catches — the stated limit closed, reclassify it as flag-`);
   }
+  // Both directions. Round 10 asserted only that every declared gap exists, which left the count
+  // free to grow without the inventory being amended — the same defect one way round (round-11 W12).
   for (const name of EXPECTED_GAPS) {
     if (!seenGaps.has(name)) {
       lines.push(`  ${FIXTURES}${name} is a limit D10 states but no fixture asserts — restore it or amend D10`);
+    }
+  }
+  for (const name of seenGaps) {
+    if (!EXPECTED_GAPS.has(name)) {
+      lines.push(`  ${FIXTURES}${name} is a gap- fixture D10 does not state — declare it in D10 and EXPECTED_GAPS`);
     }
   }
 

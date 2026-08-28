@@ -313,3 +313,15 @@
     5. W10, W11, S13: annotate the factory `typeof fs.promises.rm`, pass real `fs` through the structural parameter, and delete the unfalsifiable pass case in src/test/invariants/fixtures/fsDeletion/
     6. B19: record the evidence standard the I10 row rests on in src/test/invariants/registry.ts
     7. B19: reword the gate's one-line description, which carries the same overclaim, in asimov/project.md
+
+- [x] 13_1 Give the header and the gap inventory the same narrowness the contract has — verified: pnpm run gate:fs-deletion && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 12_1
+  - **Refs**: .reviews/round-11.md; design.md D10
+  - **Acceptance**:
+    - Outcome: An undeclared gap fixture fails the gate, and no comment claims a universal negative
+    - Verify: command pnpm run gate:fs-deletion
+  - **Boundary**: comments and the inventory check only; the rule's predicate does not move
+  - **Plan**:
+    1. B19: say the integration tests prove delegation on exercised paths, and cite src/worktree/worktreeMutations.integration.test.ts, in src/test/invariants/fsDeletionGate.ts
+    2. W12: compare the observed and declared gap sets in both directions in src/test/invariants/fsDeletionGate.ts
+    3. W12: correct the fixture README, which states the one-directional rule in src/test/invariants/fixtures/fsDeletion/README.md

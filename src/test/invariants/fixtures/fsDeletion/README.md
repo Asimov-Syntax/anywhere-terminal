@@ -8,8 +8,9 @@ Fixtures for `src/test/invariants/fsDeletionGate.ts`. The filename is the assert
 | `helper-` | nothing | not a fixture; supporting code a `gap-` case needs to live outside its own file |
 
 Adding a `flag-` or `pass-` case needs no gate edit. A `gap-` case does: the four are named in
-`EXPECTED_GAPS`, and the gate fails when one goes missing. Counting whatever happened to be present
-let a stated limit disappear in silence (round-10 W12).
+`EXPECTED_GAPS`, and the gate fails when a declared one goes missing OR an undeclared one appears.
+Counting whatever happened to be present let a stated limit disappear in silence, and checking only
+that the declared four exist let the count grow without D10 being amended (round-10 and -11 W12).
 
 `gap-` exists because D10 once claimed "no module reachable from the removal path" while enumerating
 two directories, and that overclaim survived five review rounds — nothing checked it. A stated limit

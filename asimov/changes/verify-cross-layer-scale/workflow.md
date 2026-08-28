@@ -231,3 +231,14 @@ NOT closed, and not to be read as approved: cycle 1 is exhausted, so the round-3
   Identical — 32 added files, no new finding.
 - Verify Gate re-run after 12_1: check-types clean, 234 files / 4733 tests, gate exit 0, bench 0.1 ms
   presence / 33.2 ms model, lint identical to local main, verify-status exit 0.
+- 13_1 built, closing round-11's two warnings (0 blockers). B19 was the same overclaim one layer
+  down: I narrowed the gate's claim and then handed the withdrawn universal proof to the integration
+  tests in the next clause — they establish delegation on the paths they exercise, and the header now
+  says so. It also cited a file that does not exist; the real path is
+  `src/worktree/worktreeMutations.integration.test.ts`.
+- W12 survived in the other direction. Round 10 asserted every declared gap exists but not that every
+  observed gap is declared, so an added `gap-*` file stayed green and inflated the count — the defect
+  the fixture was invented to prevent. Both directions are now compared; probed by adding
+  `gap-undeclared-probe.ts`, which fails the gate.
+- Verify Gate re-run: check-types clean, 234 files / 4733 tests, gate exit 0, bench both inside
+  budget, lint 13 warnings + 1 info (unchanged from local main), verify-status exit 0.
