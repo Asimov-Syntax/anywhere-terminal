@@ -16,7 +16,7 @@
     5. In `syncView()`, set `this.groupBarEl.hidden = worktree` so the grouping control occupies no space in the Worktree body; leave the existing `folderToggleEl` / `statusEl` / create / refresh gating unchanged.
     6. Extend `syncSegmented()` to also mark the `.vault-view-toggle` buttons, setting `aria-selected` from `this.view`; in `setGroupMode()`, take the "picking a grouping leaves the Worktree body" branch only when `workbench` is false — under the two-level control the grouping tablist is not reachable from that body.
 
-- [ ] 1_2 Give both levels real tab semantics and keyboard operation
+- [x] 1_2 Give both levels real tab semantics and keyboard operation — verified: pnpm exec vitest run 'src/webview/vault/VaultPanel.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-control-that-chooses-among-values-says-so-and-is-reachable-by-keyboard
   - **Acceptance**:

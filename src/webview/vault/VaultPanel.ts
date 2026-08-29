@@ -479,6 +479,10 @@ export class VaultPanel {
       this.groupBarEl = document.createElement("div");
       this.groupBarEl.className = "vault-groupbar";
       this.groupBarEl.appendChild(this.segmentedEl);
+      // Only the two-level controls get the tabs pattern. The flat control keeps
+      // the focus behaviour it shipped with, and is retired with the rollout.
+      this.wireTablist(this.viewToggleEl);
+      this.wireTablist(this.segmentedEl);
     } else {
       this.viewToggleEl = null;
       this.groupBarEl = null;
@@ -644,6 +648,45 @@ export class VaultPanel {
     this.renderList();
   }
 
+  /**
+   * The ARIA tabs pattern: the tablist is ONE tab stop and arrows move within it.
+   * Selection follows focus, which is right here because switching is free — both
+   * bodies are already built and swapping them shows no spinner.
+   */
+  private wireTablist(el: HTMLElement): void {
+    el.addEventListener("keydown", (ev) => {
+      const buttons = Array.from(el.querySelectorAll<HTMLButtonElement>("button"));
+      const from = buttons.findIndex((b) => b.getAttribute("aria-selected") === "true");
+      const last = buttons.length - 1;
+      let to: number;
+      switch (ev.key) {
+        case "ArrowRight":
+        case "ArrowDown":
+          to = from >= last ? 0 : from + 1;
+          break;
+        case "ArrowLeft":
+        case "ArrowUp":
+          to = from <= 0 ? last : from - 1;
+          break;
+        case "Home":
+          to = 0;
+          break;
+        case "End":
+          to = last;
+          break;
+        default:
+          return; // every other key belongs to whatever else is listening
+      }
+      const target = buttons[to];
+      if (!target) {
+        return;
+      }
+      ev.preventDefault();
+      target.click();
+      target.focus();
+    });
+  }
+
   private syncSegmented(): void {
     // role="tab" → active state is communicated via aria-selected, not aria-pressed (W7).
     for (const el of [this.segmentedEl, this.viewToggleEl]) {
@@ -654,6 +697,11 @@ export class VaultPanel {
             // sessions body, so its selection is the grouping alone.
             (this.workbench || this.view === "sessions") && btn.dataset.mode === this.groupMode;
         btn.setAttribute("aria-selected", selected ? "true" : "false");
+        if (this.workbench) {
+          // Roving: focus order follows selection, so Tab lands on the value the
+          // control is currently showing rather than always on its first.
+          btn.tabIndex = selected ? 0 : -1;
+        }
       }
     }
   }

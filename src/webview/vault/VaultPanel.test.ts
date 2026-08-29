@@ -4417,3 +4417,92 @@ describe("the two-level view control", () => {
     expect(host.querySelectorAll(".vault-toolbar .vault-segmented button")).toHaveLength(4);
   });
 });
+
+describe("the two-level control's keyboard", () => {
+  function panelWith(): { host: HTMLElement; panel: VaultPanel } {
+    const host = createHost();
+    const body = document.createElement("div");
+    body.className = "wt-tree";
+    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench: true });
+    return { host, panel };
+  }
+
+  const arrow = (el: Element | null, key: string) =>
+    el?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  const tabs = (host: HTMLElement, sel: string) =>
+    Array.from(host.querySelectorAll<HTMLButtonElement>(`${sel} button`));
+  const focusOrder = (host: HTMLElement, sel: string) => tabs(host, sel).map((b) => b.tabIndex);
+
+  it("[1_2] puts only the chosen value in the tab order", () => {
+    // A tablist is ONE stop: Tab reaches the control, arrows move within it.
+    // Every button tabbable is the shape that makes it read as loose buttons.
+    const { host, panel } = panelWith();
+    expect(focusOrder(host, ".vault-view-toggle")).toEqual([-1, 0]);
+    expect(focusOrder(host, ".vault-groupbar .vault-segmented")).toEqual([0, -1, -1]);
+
+    panel.setView("worktree", { persist: false });
+    expect(focusOrder(host, ".vault-view-toggle")).toEqual([0, -1]);
+  });
+
+  it("[1_2] selects the value an arrow key lands on, in both directions", () => {
+    const { host, panel } = panelWith();
+    const toggle = host.querySelector(".vault-view-toggle");
+
+    arrow(toggle, "ArrowLeft");
+    expect(panel.getView()).toBe("worktree");
+    expect(host.querySelector<HTMLElement>('[data-view="worktree"]')).toBe(document.activeElement);
+
+    arrow(toggle, "ArrowRight");
+    expect(panel.getView()).toBe("sessions");
+  });
+
+  it("[1_2] wraps at both ends rather than stalling", () => {
+    const { host } = panelWith();
+    const bar = host.querySelector(".vault-groupbar .vault-segmented");
+    const selected = () =>
+      tabs(host, ".vault-groupbar .vault-segmented").find((b) => b.getAttribute("aria-selected") === "true")?.dataset
+        .mode;
+
+    expect(selected()).toBe("recent");
+    arrow(bar, "ArrowLeft");
+    expect(selected()).toBe("folder");
+    arrow(bar, "ArrowRight");
+    expect(selected()).toBe("recent");
+  });
+
+  it("[1_2] takes Home and End to the ends, and answers Up and Down too", () => {
+    const { host } = panelWith();
+    const bar = host.querySelector(".vault-groupbar .vault-segmented");
+    const selected = () =>
+      tabs(host, ".vault-groupbar .vault-segmented").find((b) => b.getAttribute("aria-selected") === "true")?.dataset
+        .mode;
+
+    arrow(bar, "End");
+    expect(selected()).toBe("folder");
+    arrow(bar, "Home");
+    expect(selected()).toBe("recent");
+    arrow(bar, "ArrowDown");
+    expect(selected()).toBe("agent");
+    arrow(bar, "ArrowUp");
+    expect(selected()).toBe("recent");
+  });
+
+  it("[1_2] claims the keys it handles and leaves the rest alone", () => {
+    const { host } = panelWith();
+    const toggle = host.querySelector(".vault-view-toggle");
+    const handled = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+    const passed = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    toggle?.dispatchEvent(handled);
+    toggle?.dispatchEvent(passed);
+    expect(handled.defaultPrevented).toBe(true);
+    expect(passed.defaultPrevented).toBe(false);
+  });
+
+  it("[1_2] leaves the shipped flat control's focus behaviour as it was", () => {
+    const host = createHost();
+    const body = document.createElement("div");
+    body.className = "wt-tree";
+    new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench: false });
+    expect(focusOrder(host, ".vault-segmented--flat")).toEqual([0, 0, 0, 0]);
+  });
+});
