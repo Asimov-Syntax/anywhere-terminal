@@ -132,10 +132,15 @@ selection that leaves the user looking at another worktree's terminal is not a s
   [worktree-panel-ui.md](worktree-panel-ui.md) § 6.1 covers the scope-derived rendering too.
 - A pane whose `cwd` moves to another worktree leaves the scope on the next push. It is not
   closed, hidden without trace, or duplicated.
-- The scoped worktree being removed, pruned, or going missing drops scope to `All` and says
-  why. It never leaves a surface filtered by a worktree that no longer exists.
-- A degraded presence source (I8) never re-attributes a pane on its own: a source that failed
-  leaves the last attribution standing rather than silently emptying a scope.
+- Validity is **tree membership**, not filesystem availability. The scoped worktree leaving the
+  tree — removed, pruned, or never there — drops scope to `All` and says why; a worktree still
+  registered but reported `missing` KEEPS the scope, because the registration exists and panes may
+  still be attributed to it. This is what the § 8 table says, and an earlier draft of this bullet
+  said the opposite for `missing`; the table and WT-010.1 are correct.
+- A degraded presence source (I8) never re-attributes a pane on its own. Nor could it: attribution
+  is derived from the pane's own `cwd` against the tree's worktree ids, and a failing source
+  weakens what a row says about its *agent* without moving the row between worktrees. There is
+  therefore no "last attribution" to hold and no cache to build.
 
 ## 4. The escape hatch
 
