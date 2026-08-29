@@ -284,15 +284,17 @@ describe("tree structure", () => {
     const shapeOf = (state: string): string => {
       const rule = new RegExp(`\\.wt-state--${state}\\s*\\{([^}]*)\\}`).exec(css);
       expect(rule, `no rule for .wt-state--${state}`).not.toBeNull();
-      return (rule?.[1] ?? "")
-        .split(";")
-        .map((d) => d.trim())
-        .filter((d) => d.length > 0 && !/color|background|opacity/.test(d.split(":")[0] ?? ""))
-        // Every colour token collapses to one word, so two rules that differ only
-        // in which colour they name compare as the same shape and fail the set.
-        .map((d) => d.replace(/var\(--[^)]*\)|color-mix\([^)]*\)|transparent|#[0-9a-f]{3,8}/g, "C"))
-        .sort()
-        .join(";");
+      return (
+        (rule?.[1] ?? "")
+          .split(";")
+          .map((d) => d.trim())
+          .filter((d) => d.length > 0 && !/color|background|opacity/.test(d.split(":")[0] ?? ""))
+          // Every colour token collapses to one word, so two rules that differ only
+          // in which colour they name compare as the same shape and fail the set.
+          .map((d) => d.replace(/var\(--[^)]*\)|color-mix\([^)]*\)|transparent|#[0-9a-f]{3,8}/g, "C"))
+          .sort()
+          .join(";")
+      );
     };
     const shapes = ["running", "waiting", "idle", "unknown", "exited"].map(shapeOf);
     expect(new Set(shapes).size).toBe(shapes.length);

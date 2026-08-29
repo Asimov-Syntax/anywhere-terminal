@@ -4,7 +4,6 @@
 
 import { describe, expect, it } from "vitest";
 import { agentRow, worktree } from "./worktreeFixtures";
-import type { PresenceDegradation } from "./worktreeViewTypes";
 import {
   agentCountLabel,
   ageTimestamp,
@@ -20,6 +19,7 @@ import {
   worktreePills,
   worktreeTooltip,
 } from "./worktreeFormat";
+import type { PresenceDegradation } from "./worktreeViewTypes";
 
 const NOW = 1_700_000_000_000;
 const MINUTE = 60_000;

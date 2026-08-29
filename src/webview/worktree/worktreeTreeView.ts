@@ -19,8 +19,8 @@ import {
   compactAge,
   hasProvenIdentity,
   isFallbackActivity,
-  type PresentedActivity,
   type PresenceGroup,
+  type PresentedActivity,
   worktreeBadges,
   worktreePills,
   worktreeTooltip,
@@ -28,7 +28,6 @@ import {
 import { ICON_BRANCH, ICON_LOCK, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
 import type {
   DelegationRoster,
-  WorktreeActivity,
   WorktreeAgentRow,
   WorktreeInfo,
   WorktreeRepo,
