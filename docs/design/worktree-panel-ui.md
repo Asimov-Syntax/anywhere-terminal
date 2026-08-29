@@ -176,7 +176,7 @@ tells them what to do; a title and a timestamp do not.
 | Child count | 1 | `+N` when the row has collapsed subagents | Disappears when expanded. Absent until the roster has been read — `+0` would claim one |
 | Scope marker | 1 | Only on `scope: "external"` | See § 4 |
 | Age | 1 | Relative time, right-aligned | Fixed-width column so titles truncate against a stable edge. Compact form (`now`, `5m`, `1h`, `3d`) |
-| **Preview** | 2 | The session's latest message or current tool, one line | Secondary emphasis. Truncates with an ellipsis; it never wraps to a third line |
+| **Preview** | 2 | The session's last transcript activity, one line | Secondary emphasis. Truncates with an ellipsis; it never wraps to a third line. Drawn verbatim — unlike the title it is **not** decoration-stripped, so a bulleted or dashed line keeps its marker ([worktree-agent-presence.md](worktree-agent-presence.md) § 3.8) |
 | Confidence marker | 1 | Carried by the state glyph itself when activity is unconfirmed (§ 7.2); a quiet marker when `activitySource` is a fallback one | Identity confidence is derived from `agentSource` separately and expressed by the icon's presence or absence — a row can be uncertain about one and sure of the other |
 
 The model id is **not** on the row. It competed with the preview for the same scarce width and
@@ -354,7 +354,7 @@ is reachable through any live pane it still holds, not only through the pane it 
 ### 6.1 Re-render discipline
 
 The Worktree view carries a render signature over the tree plus presence with **decorative title
-frames stripped first**. Without it, a single agent's spinner repaints the whole tree at
+frames stripped first** — the title only; the preview enters the signature as read. Without it, a single agent's spinner repaints the whole tree at
 animation rate and destroys scroll position and expansion state.
 
 The key covers **every field of every wire shape**, not only the ones a renderer prints. A row's

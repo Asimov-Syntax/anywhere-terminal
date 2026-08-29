@@ -53,7 +53,7 @@ WorktreeAgentRow {
   paneId?:      string           // AT session id; present iff scope === "window"
   viewId?:      string           // which webview hosts the pane; window scope only
   title?:       string           // pane title, decoration-stripped (§ 3.4)
-  preview?:     string           // last meaningful line; rendered after the title
+  preview?:     string           // last transcript activity, bounded at read (§ 3.8); NOT frame-stripped
   model?:       string           // agent-reported model label, when known
   agent?:       VaultAgentId     // omitted when identity is unproven
   agentSource:  "launch" | "process" | "registry" | "title" | "none"
@@ -378,6 +378,65 @@ repo's existing rows, has not established a cache-wide order it could acknowledg
 presence has resolved, every worktree ranks as having none, so the order stabilizes on the next
 push rather than reshuffling mid-render.
 
+### 3.8 The preview line — last activity, read from the tail
+
+`preview` is the session's last usable message. It is read from the **end** of the transcript,
+never derived from the pane title and never routed through the vault detail reader.
+
+The detail reader is the obvious reuse and the wrong one: it streams a whole transcript to build a
+classified timeline in order to expose one line. A transcript is the one thing here that actually
+grows — tens of megabytes for a long session whose last message is still one line — so the read is
+a positioned read of the file's last bytes, split on newlines and walked backwards to the first
+record the format calls usable. Cost is flat in transcript size.
+
+**Coverage is file-backed transcripts only: Claude JSONL, and Codex when its rollout file exists.**
+Not OpenCode (its content is SQLite `message`/`part` rows, with no transcript path exposed), not
+Cursor (whose own accepted requirements forbid a listing from opening `store.db`). This is a
+property of what the providers expose, not a shortcut.
+
+Two bounds, because "return the last message" and "never read the head" cannot both hold
+unconditionally — one record can be larger than any window:
+
+| Bound | Effect |
+|---|---|
+| Window growth cap | The tail window doubles up to a ceiling; a record not fully seen by then is given up on |
+| Line bound | The line is `boundedPreview`-bounded (≤120 chars, newlines collapsed) at the point it is READ, so nothing unbounded crosses IPC or enters the render signature |
+
+Both give up as *absence*, which § 5 treats as an ordinary row rather than a degradation.
+
+**One owner for freshness, rate, and cache — a preview service, not the projector.** The projector
+gets the same optional one-argument dep shape `sessionTitle` has (`sessionPreview(entryId)`) and
+stays ignorant of files. Behind that call:
+
+| Concern | Answer |
+|---|---|
+| Freshness | `(mtimeMs, size)` against the stamp held for that `entryId` — the vault list path's own gate. Equal → the held line, nothing opened. `mtimeMs` alone is not enough: coarse granularity hides two writes in one tick |
+| Rate | A minimum re-check interval per `entryId`. A full projection can run at the 150 ms debounce cap; without this, syscalls are rows × ~6.7/s during continuous pane activity. Perceivable freshness is seconds, not milliseconds |
+| Retry | Deliberately separate from the interval. Re-checking a known file is a `stat`; resolving one that is not there yet is a uuid scan over a history-sized, never-pruned sessions tree. Consecutive looks that achieve nothing decay their own retry; a look that confirms a stamp or completes a read restores the interval. The entry that produced a resolved target is cached beside it, so a healthy row's re-check asks neither the vault nor the store where its transcript is |
+| Duplicate reads | One in-flight promise per `entryId`; concurrent askers await it |
+| Eviction | An LRU bound on entry count, owned here — the projector holds no stamp and passes no alive set, so it cannot evict for the service |
+
+The cache is in memory and dies with the extension host. **No on-disk preview cache**: it would be
+a mutable resource whose failure outlives the request, to save one tail read per session per window
+session. The `0o600` list cache is untouched, and nothing about egress changes.
+
+```
+scan ──▶ row has entryId? ──no──▶ no preview
+             │yes
+             ▼
+      sessionPreview(entryId)
+             │
+             ├─ within re-check interval? ──yes──▶ held line, no syscall
+             ├─ stat ──▶ stamp unchanged? ──yes──▶ held line, no open
+             └─ tail read ──▶ bounded line ──▶ store {stamp, line}
+```
+
+**The preview never meets the title's stripper.** § 3.4 strips decorative frames because a leading
+`⠋` or `- ` in a pane title is an animation frame. In prose it is content: `- item` becomes `item`,
+and a line that is only a marker becomes `""`, which draws no second line at all. The preview is
+transcript message text with known provenance, so it is bounded and newline-stripped by its reader
+and frame-stripped nowhere. § 3.4's contract for `title` is unchanged.
+
 ## 4. Interface
 
 Presence has no RPC of its own. It rides on the worktree tree push and one lazy detail call:
@@ -402,6 +461,7 @@ Presence has no RPC of its own. It rides on the worktree tree push and one lazy 
 | Transcript read fails for subagents | Expansion shows an inline error, row stays | Rest of the tree unaffected |
 | Registry session has a cwd outside every worktree | Dropped | Not shown anywhere |
 | Same session id in a pane and the registry | Pane row wins | One row, not two |
+| No preview: unresolved session, an uncovered source, or a read that found nothing | The row carries no `preview` key and `degradedSources` is untouched | A row with a blank second line — the ordinary case, not a warning. A preview is optional enrichment; nothing about identity, activity, or ranking reads it |
 
 ### Fallback Chain — agent identity
 
@@ -428,6 +488,8 @@ graph LR
 | `claude -p` hook subprocess | Excluded by `isHeadlessSession` |
 | Title flips to `zsh` / `bash` / `pwsh` | Strong evidence the agent ended: force `idle`. A *neutral* title (`Terminal`) is not such proof |
 | Spinner-only title | Never `agent`, and never `activity` either. Decoration is stripped before a title reaches the host, so the host sees one report and cannot tell a spinner still animating from one frozen at the moment its process hung — deriving `running` from it would make a hung agent read as working forever. The evidence an agent is working is the **output** a live spinner produces, not the title it left behind |
+| A transcript is deleted or moved under a row that had a preview | The next look drops the resolved target and goes back to the vault for the entry rather than re-`stat`ing a dead path |
+| A preview line that is only `-` or opens with `- ` / `* ` | Rendered verbatim (§ 3.8) — it is message text, not a spinner frame |
 | Hundreds of panes | Mapping is O(panes × worktrees) with a small worktree count; bounded by § 7 |
 
 ## 7. Scale & Performance
@@ -439,6 +501,7 @@ graph LR
 | Process-table reads | per scan | Must be deduped behind a short-TTL snapshot so N panes cost one `ps`, not N. **This snapshot does not exist yet**: `descendantPids` shells out to a full-process-table `ps` on every call with a 500 ms timeout and no cache (`src/pty/processTree.ts:83-102`). Building it is part of the work, not an existing bound |
 | External scan | wall-clock | Flat 5 s while any surface shows the view; paused otherwise |
 | Title / waiting reports | per pane, per change | Decoration-stripped before send, so animation frames collapse to zero messages |
+| Preview reads | rows × scans | A per-`entryId` re-check interval bounds syscalls independently of scan rate; a `(mtimeMs, size)` stamp means a quiet scan opens nothing; the read itself is a tail window, flat in transcript size (§ 3.8) |
 | Subagent reads | per expanded row | Lazy; never on a tree push |
 
 The one non-obvious cost is session resolution, which walks a process tree per pane. It must
