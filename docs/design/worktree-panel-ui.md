@@ -72,6 +72,7 @@ vaultView?:      "sessions" | "worktree"      // which body is shown
 vaultGroupMode?: "recent" | "agent" | "folder" // grouping WITHIN the sessions body
 worktreeCollapsed?: string[]                   // collapsed repoIds and worktreeIds
 worktreeExpandedRows?: string[]                // expanded agent rowIds
+worktreeIdleTailSeeded?: string[]              // repoIds whose idle tail has been presented (§ 3.6)
 worktreeScope?: string                         // scoped worktreeId — worktree-scope.md § 6
 ```
 
@@ -82,6 +83,14 @@ expanded everything, and seeding defaults over it would silently re-collapse wha
 The set records expansion by omission, so the distinction cannot be recovered from its contents;
 only its presence carries it. Seeding is therefore one-shot, on the first tree a session sees,
 and never re-applied to a worktree already decided.
+
+The idle tail's default needs a **second** key for the same reason, not a second meaning on the
+first. Its fold lives in `worktreeCollapsed` under a namespaced key so it cannot collide with a
+repoId or a worktreeId, but an absent key there already means *expanded* — so one key cannot
+separate "this repo's tail has never been presented" (default folded) from "the user opened it"
+(stay open), and an existing user would have met the feature already unfolded.
+`worktreeIdleTailSeeded` records the repos whose tail has been presented, and it is what makes the
+default reach a user whose persisted state predates the capability.
 
 A collapsed **repoId** is honoured only while a repo group header is rendered (§ 3.1 draws none
 for a single repo). Otherwise a set persisted during a two-repo session would hide the only
@@ -237,10 +246,11 @@ weight they bury the two the user opened the view to find.
 |------|-------|
 | Treatment | An agentless worktree renders as a single dim line: leading branch glyph, branch name, its marks. No presence block, because there is none |
 | Folding | From **4** agentless worktrees upward, they collapse under one disclosure row reading `N idle worktrees`. Three or fewer stay visible — a disclosure that hides two rows costs more than it saves |
-| Persistence | The disclosure follows the same collapse state as the rest of the tree (§ 2.1), keyed so it survives a push |
-| Search | A search match inside the tail **expands it**. A filter that silently excludes matches is worse than no filter |
+| Persistence | The disclosure follows the same collapse state as the rest of the tree, under a namespaced key, plus the presented-marker § 2.1 describes |
+| Search | A search match inside the tail **reveals it**, at render time only — the reveal never writes the fold open, so clearing the filter returns the tail to the state the user chose. While a filter reveals it, no disclosure row is drawn at all: one that hides nothing has nothing to disclose, and leaving it on screen makes it inert rather than merely un-toggleable (§ 6 treats any row carrying `aria-expanded` as expandable, so Left is consumed before it can climb out) |
 | Ordering | The tail sits after the worktrees that hold agents, in the existing deterministic order |
 | Counting | The count is of the rows the fold hides, and it is exact. A degraded presence source does not move a worktree into the tail — unknown is not agentless |
+| Order against the cap | Filter, then partition, then cap, then fold. The disclosure counts only rows the cap admitted, so it never claims one the cap withheld; what the capping affordance itself states is unchanged (§ 8, "Many worktrees") |
 
 This is the 80% of the reference's "hide sleeping" filter with none of its machinery. The filter
 popover itself stays deferred (§ 7.5).

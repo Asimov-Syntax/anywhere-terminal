@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -72,3 +72,12 @@ Planned at: b9467406
   expandable, so an inert disclosure swallowed ArrowLeft before `parentOf` and could not
   be left at all.
 - Verify gate: lint check mode, 17 findings, set-identical to the pre-change baseline.
+- Cycle 2 (round-1 discovery at `0a597454`): WARN, 0 blockers. All three warnings accepted
+  and fixed in task 1_4; no BLOCK was fixed or rebutted, so the cycle ends at re-verify
+  rather than a re-review round. Triage in `.reviews/round-3.md`.
+- Cycle-2 W1 was fixed at focus ARRIVAL rather than on the disclosure that carried the
+  clause: the roving key was written only by the keyboard paths, so every row kind that
+  re-renders on a pointer toggle had the same hole. One `focusin` delegate closes them all.
+- The `toggleIdleTail` query guard is now unreachable from anything rendered — since W5 no
+  disclosure is drawn under a filter, so no click arrives. Kept and documented as such: it
+  and the reveal rule are the same rule, and the failure it prevents leaves no trace.
