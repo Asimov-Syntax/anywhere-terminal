@@ -701,10 +701,16 @@
 /* ── The idle tail (§ 3.6) ─────────────────────────────────────────────── */
 /* A worktree positively known to hold no agents is still a row — same hit area,
    same menu, same keyboard reach — drawn quieter so the working ones read first.
-   Opacity, not a dimmer colour: it must survive a high-contrast theme, where the
-   forced palette would flatten a hand-picked grey back into the foreground. */
+   Opacity rather than a hand-picked grey, which a forced palette would flatten
+   back into the foreground anyway. Opacity does NOT survive forced-colors either
+   — it dims the enforced pair anyway — so it is reset there rather than trusted. */
 .wt-row--idle {
   opacity: 0.72;
+}
+@media (forced-colors: active) {
+  .wt-row--idle {
+    opacity: 1;
+  }
 }
 .wt-row--idle:hover,
 .wt-row--idle:focus-visible {
@@ -728,6 +734,12 @@
 }
 .wt-idle:hover {
   background: var(--vscode-list-hoverBackground);
+}
+/* The one row a keyboard user must land on to reach the tail — every other
+   navigable row kind carries this, and the UA default ring is not enough. */
+.wt-idle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }
 .wt-idle[aria-expanded="false"] .wt-chev {
   transform: rotate(-90deg);

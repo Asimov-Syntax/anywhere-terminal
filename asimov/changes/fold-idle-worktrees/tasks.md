@@ -14,3 +14,15 @@
     4. The disclosure is a new row kind, not a restyled repo header: `navRows` matches on class and derives depth from it, and toggling routes through repo and worktree ids. Give it its own class, navigation key and toggle path, the tree item role, `aria-expanded`, and the same open-and-close arrow behaviour its Refs require of it.
     5. Let an active filter reveal the tail at render time only. Writing the fold open would spend the user's own choice on a transient query.
     6. Cover: both sides of the threshold; the degraded and not-yet-loaded cases; unknown-presence ordering; cap-and-fold together above the cap with most of it consumed by agent-holding rows; keyboard reach, toggle and focus retention on the disclosure; persistence across a push, across a reload, and on a restored array that predates the marker.
+
+- [x] 1_2 Round-1 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_1
+  - **Refs**: specs/worktree-panel/spec.md#{the-idle-fold-and-the-display-cap-never-describe-the-same-rows, a-search-match-inside-the-tail-opens-it, the-idle-disclosure-is-a-first-class-row-of-the-tree, present-the-supplied-worktree-tree}
+  - **Acceptance**:
+    - Outcome: the disclosure keeps its own navigation identity and never overwrites a fold it only revealed
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/worktreePanel.css`.
+    1. B1 + the duplication SUGGEST are one defect: route both toggles through a shared helper so the query guard cannot live on the render path alone.
+    2. B2: two key spaces, one namespaced. The navigation key needs the same namespace the collapse key already has, or the repo header keeps winning `keyOf`.
+    3. Cover multi-repo. A single-repo fixture is what hid B2 — no header exists there to collide with.

@@ -486,10 +486,16 @@ export class WorktreeView {
    * not clear any agent row's own expansion, and each persists separately.
    */
   private toggleCollapsed(id: string): void {
-    if (this.collapsed.has(id)) {
-      this.collapsed.delete(id);
+    this.toggleKey(id);
+  }
+
+  /** The one place a collapse key flips, so persistence and repaint cannot diverge
+   *  between the row kinds that share the set. */
+  private toggleKey(key: string): void {
+    if (this.collapsed.has(key)) {
+      this.collapsed.delete(key);
     } else {
-      this.collapsed.add(id);
+      this.collapsed.add(key);
     }
     this.deps.persistCollapsed?.([...this.collapsed]);
     this.repaint();
@@ -791,14 +797,14 @@ export class WorktreeView {
   }
 
   private toggleIdleTail(repoId: string): void {
-    const key = idleTailKey(repoId);
-    if (this.collapsed.has(key)) {
-      this.collapsed.delete(key);
-    } else {
-      this.collapsed.add(key);
+    // A filter REVEALS the tail; it does not re-decide it. `idleTailFolded` already
+    // returns false while a query is up, so the rendered state here is the query's
+    // and not the user's — flipping against the stored state would spend a choice
+    // the user never made on this render. Same guard, same place as the reveal.
+    if (this.query) {
+      return;
     }
-    this.deps.persistCollapsed?.([...this.collapsed]);
-    this.repaint();
+    this.toggleKey(idleTailKey(repoId));
   }
 
   /** Whether this repo's tail is folded right now — a live filter reveals it. */
@@ -907,7 +913,16 @@ export class WorktreeView {
       this.element.appendChild(
         renderIdleDisclosure(repo.repoId, tail.length, folded, () => this.toggleIdleTail(repo.repoId)),
       );
-      if (!folded) {
+      if (folded) {
+        // Folded hides the ROW, never what an action did to it. A newly created
+        // worktree is agentless by construction, so it lands in the tail — and a
+        // failure it never reported is the same silence the notice exists to break.
+        for (const info of tail) {
+          for (const result of this.resultsFor(info.id)) {
+            this.element.appendChild(this.buildActionNotice(result, info));
+          }
+        }
+      } else {
         for (const info of tail) {
           // Notices travel with the row they concern wherever it is drawn: a
           // worktree does not stop reporting what an action did to it because
@@ -918,7 +933,7 @@ export class WorktreeView {
     }
     if (shown.length < visible.length) {
       this.element.appendChild(
-        renderShowAll(visible.length, () => {
+        renderShowAll(visible.length - shown.length, () => {
           this.uncapped.add(repo.repoId);
           this.repaint();
         }),
@@ -1145,14 +1160,16 @@ export class WorktreeView {
   }
 
   private keyOf(row: HTMLElement): string {
-    return (
-      row.dataset.worktreeId ??
-      row.dataset.repoId ??
-      row.dataset.idleKey ??
-      row.dataset.rowId ??
-      row.dataset.subKey ??
-      ""
-    );
+    // The disclosure's `idleKey` IS its repo's id, byte-identical to the header's
+    // `repoId` — two row kinds, one string. Namespacing the navigation key the same
+    // way the collapse key is namespaced is what keeps them apart; without it the
+    // header renders first and wins every lookup, so focus and the tab stop land
+    // on the repository instead of the tail.
+    const idleKey = row.dataset.idleKey;
+    if (idleKey !== undefined) {
+      return idleTailKey(idleKey);
+    }
+    return row.dataset.worktreeId ?? row.dataset.repoId ?? row.dataset.rowId ?? row.dataset.subKey ?? "";
   }
 
   /** Depth in the declared tree, from the row's own class. */
@@ -1251,7 +1268,8 @@ export class WorktreeView {
       const rowId = active.dataset.rowId;
       if (idleKey) {
         this.toggleIdleTail(idleKey);
-        this.focusRow(this.navRows().find((r) => this.keyOf(r) === idleKey));
+        const key = idleTailKey(idleKey);
+        this.focusRow(this.navRows().find((r) => this.keyOf(r) === key));
         return;
       }
       if (treeId) {

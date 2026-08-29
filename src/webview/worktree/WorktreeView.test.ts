@@ -1053,7 +1053,9 @@ describe("tree structure", () => {
     // assertion here green, which is the fifth acceptance clause going unverified (round-4 B14).
     expect(view.element.querySelectorAll(".wt-row")).toHaveLength(MAX_WORKTREES_PER_REPO);
     const showAll = view.element.querySelector<HTMLButtonElement>(".wt-showall");
-    expect(showAll?.textContent).toBe("Show all 34 worktrees");
+    // What the cap EXCLUDED (34 - 20), not the total — the total would also
+    // describe rows the idle disclosure owns.
+    expect(showAll?.textContent).toBe("Show 14 more worktrees");
     showAll?.click();
     expect(view.element.querySelectorAll(".wt-row")).toHaveLength(34);
     expect(view.element.querySelector(".wt-showall"), "the affordance survives expansion").toBeNull();
@@ -2308,8 +2310,18 @@ describe("the idle tail", () => {
       (r) => r.querySelector(".wt-branch")?.textContent === "b",
     );
     expect(idle?.className).toContain("wt-row--idle");
-    expect(idle?.querySelector(".wt-glyph .wt-state")).toBeNull();
     expect(idle?.dataset.worktreeId).toBe("/wt/b");
+    // `.wt-presence` is the presence block this clause is about. Asserting on the
+    // glyph instead was tautological: `strongestActivity([], …)` is undefined for
+    // ANY agentless worktree, so it held with or without the idle treatment.
+    const withAgent = Array.from(view.element.querySelectorAll<HTMLElement>(".wt-row")).find(
+      (r) => r.querySelector(".wt-branch")?.textContent === "a",
+    );
+    // The pill is appended directly after the row it belongs to, so the sibling is
+    // the scope. `parentElement` is the whole view for an unexpanded row and would
+    // happily find the OTHER row's pill.
+    expect(withAgent?.nextElementSibling?.className).toContain("wt-presence");
+    expect(idle?.nextElementSibling?.className ?? "").not.toContain("wt-presence");
   });
 
   it("folds from four agentless worktrees, stating an exact hidden count", () => {
@@ -2390,14 +2402,69 @@ describe("the idle tail", () => {
 
   it("counts only what the cap admitted, leaving the excluded to the cap's own affordance", () => {
     const agentHolders = Array.from({ length: MAX_WORKTREES_PER_REPO - 4 }, (_, i) => `live-${i}`);
-    const idle = Array.from({ length: 8 }, (_, i) => `idle-${i}`);
+    const idle = Array.from({ length: 10 }, (_, i) => `idle-${i}`);
     const { view } = mount({ now: () => NOW });
     view.setData({ tree: tree([...agentHolders, ...idle]), presence: presence(agentHolders) });
-    // The cap admits four of the eight agentless worktrees, so the disclosure
-    // hides four — not eight — and the four the cap excluded are the cap's to
-    // report. Neither affordance describes the other's rows.
+    // 16 agent-holders + 10 agentless = 26; the cap admits 20, so it takes all 16
+    // and 4 of the agentless. The two counts are deliberately DIFFERENT numbers:
+    // when both read 4 the assertions cannot tell which affordance describes which
+    // rows, which is the whole thing this requirement is about.
     expect(disclosure(view)?.textContent).toContain("4 idle worktrees");
-    expect(view.element.querySelector(".wt-showall")?.textContent).toContain(String(agentHolders.length + idle.length));
+    expect(view.element.querySelector(".wt-showall")?.textContent).toBe("Show 6 more worktrees");
+  });
+
+  function twoRepoTree(branches: string[]): WorktreeTree {
+    const one = tree(branches);
+    return {
+      ...one,
+      repos: [...one.repos, { repoId: "/other/.git", label: "other", mainPath: "/other", worktrees: [] }],
+    };
+  }
+
+  it("[B2] keeps its navigation identity distinct from its repo header's", () => {
+    // The collapse key is namespaced; the navigation key was not, so `keyOf` read
+    // the same string off the header's `data-repo-id` and — the header rendering
+    // first — every lookup resolved to it. Only a multi-repo tree draws a header
+    // at all, which is why every single-repo test passed over this.
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: twoRepoTree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    const row = disclosure(view);
+    row?.focus();
+    row?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(branchesInOrder(view)).toHaveLength(5);
+    // Focus must land back on the disclosure, not on the repo header that shares its id.
+    expect(document.activeElement?.className).toContain("wt-idle");
+    expect(document.activeElement?.className).not.toContain("wt-repo");
+    // And the single tab stop moves with it rather than staying on the header.
+    const stops = Array.from(view.element.querySelectorAll<HTMLElement>('[tabindex="0"]'));
+    expect(stops).toHaveLength(1);
+    expect(stops[0]?.className).toContain("wt-idle");
+  });
+
+  it("[B1] a filter reveals the tail without letting a click on it spend the fold", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "spike-a", "spike-b", "spike-c", "spike-d"]), presence: presence(["live"]) });
+    expect(branchesInOrder(view)).toEqual(["live"]);
+    view.setQuery("spike");
+    // The disclosure reads open because the query revealed it — activating it here
+    // must not write that transient state over the fold the user actually chose.
+    view.element.querySelector<HTMLElement>(".wt-idle")?.click();
+    view.setQuery("");
+    expect(branchesInOrder(view)).toEqual(["live"]);
+  });
+
+  it("[W1] keeps a folded worktree's action notice reachable", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    expect(disclosure(view)).not.toBeNull();
+    view.setData({
+      tree: tree(["live", "a", "b", "c", "d"]),
+      presence: presence(["live"]),
+      actionResults: [{ action: "remove", worktreeId: "/wt/c", outcome: "error", error: "could not remove" }],
+    });
+    // Folded is a display state, not a mute: a worktree does not stop reporting
+    // what an action did to it because it is quiet enough to sit in the tail.
+    expect(view.element.textContent).toContain("could not remove");
   });
 
   it("gives the disclosure its own keyboard identity", () => {
