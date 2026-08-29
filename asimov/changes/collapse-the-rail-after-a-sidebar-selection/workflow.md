@@ -51,3 +51,40 @@ Planned at: 95545535
   once selected a worktree opens collapsed forever for a reason they never chose.
 - Must-not: no new persisted key, no change to what `vaultCollapsed` means, no change to the
   position defaults, and nothing collapses while the rollout setting is off.
+
+## HANDBACK — implementation evidence contradicts an accepted requirement
+
+Raised while building 1_2, before the fix loop. Task 1_1 is built, verified and committed; 1_2 is
+parked with its lease released.
+
+**The chain.** Collapsing the vault section reports the worktree view invisible —
+`syncWorktreeVisibility` in `VaultPanel.ts` emits `worktreeBodyEl !== null && view === "worktree" &&
+!collapsed`. `WorktreeController.setVisible` posts `worktreeViewVisibility: false`, and
+`WorktreeHost.ts:1590-1594` sets `state.visible = false`, then re-runs `reconcileShowing` and
+`reconcileScan`. Pushes to that surface stop, so `onAttribution` stops firing and the presence half
+of the tab bar's waiting evidence freezes at the moment of the collapse.
+
+**What that contradicts.** `tab-bar-component` § "The count reads every source that can say a pane
+is waiting" — *"Neither source alone SHALL be able to suppress the count"*, with the scenario
+*"Only presence knows → the tab is counted"*. `TabBarUtils.ts:103-110` reads both halves:
+`instance.activityStatus === "waiting"` stays live because it is surface-local, and
+`waiting.has(paneId)` is the frozen half. A pane only presence knows about stops raising the count
+while the rail is collapsed. It also contradicts this change's own new requirement, "Scope does not
+depend on the layout".
+
+**Why it is a handback and not a fix.** The collapse is exactly the state the user is in right
+after every selection under this change, which is when the escape control matters most. Resolving it
+is a design decision with more than one defensible answer, and each one moves an accepted contract:
+
+- Keep reporting the view visible while it is collapsed only because a selection collapsed it —
+  changes what `worktreeViewVisibility` means, and § 3.7's scan-cadence rule reads it.
+- Have the host keep pushing to a surface that holds a scope even when the view is not visible —
+  changes the push gate.
+- Accept a frozen presence half while collapsed and weaken the tab-bar requirement — a scope cut,
+  which fastlane never auto-chooses.
+
+**Not introduced here.** A user could already collapse the section by hand and get the same freeze,
+so the gap predates this change. What this change does is make it the routine path rather than an
+occasional one. That is worth stating plainly at the gate: the honest options include fixing the
+pre-existing gap as its own change and having this one depend on it.
+
