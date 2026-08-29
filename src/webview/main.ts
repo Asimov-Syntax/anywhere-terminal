@@ -22,6 +22,7 @@ import type {
 } from "../types/messages";
 import { SETI_FONT_CSS } from "../vendor/seti/setiFontCss";
 import { DragDropHandler } from "./DragDropHandler";
+import { mountEmptyScopeRegion } from "./emptyScopeRegion";
 import { FileTreeController } from "./fileTree/FileTreeController";
 import { FlowControl } from "./flow/FlowControl";
 import {
@@ -39,11 +40,10 @@ import { preloadSyntaxHighlighter } from "./links/syntaxRenderer";
 import { createMessageRouter } from "./messaging/MessageRouter";
 import { createScrollbackDumpHandler } from "./messaging/scrollbackDumpHandler";
 import { ResizeCoordinator } from "./resize/ResizeCoordinator";
-import { mountEmptyScopeRegion } from "./emptyScopeRegion";
+import { getAllSessionIds } from "./SplitModel";
 import { SplitTreeRenderer } from "./split/SplitTreeRenderer";
 import { resolveTabDisplayPane } from "./split/tabDisplay";
 import { WebviewStateStore } from "./state/WebviewStateStore";
-import { getAllSessionIds } from "./SplitModel";
 import { buildTabBarData, handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 import { type TabBarScopeWiring, wireTabBarScope } from "./tabBarScopeWiring";
 import { hideRenameOverlay, repositionRenameOverlay, showRenameOverlay } from "./tabRenameOverlay";

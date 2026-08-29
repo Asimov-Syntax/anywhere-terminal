@@ -5,8 +5,8 @@
 // does, and what does NOT count as a reason to redraw.
 
 import { describe, expect, it, vi } from "vitest";
-import { createBranch, createLeaf, type SplitNode } from "./SplitModel";
 import type { PaneAttribution, PaneReport } from "./paneAttribution";
+import { createBranch, createLeaf, type SplitNode } from "./SplitModel";
 import { TabBarScopeCoordinator, type TabBarScopeDeps, type TabBarScopeStore } from "./tabBarScope";
 import type { WorktreeInfo, WorktreeTree } from "./worktree/worktreeViewTypes";
 
@@ -250,20 +250,24 @@ describe("what counts as a reason to redraw", () => {
 
   it("ignores the order the attribution arrived in", () => {
     const scope = scoped();
-    scope.setAttribution(report(
-      new Map([
-        ["pane-2", ELSEWHERE],
-        ["pane-1", HERE],
-      ]),
-    ));
+    scope.setAttribution(
+      report(
+        new Map([
+          ["pane-2", ELSEWHERE],
+          ["pane-1", HERE],
+        ]),
+      ),
+    );
     expect(scope.shouldRender(layouts("tab-1"))).toBe(true);
 
-    scope.setAttribution(report(
-      new Map([
-        ["pane-1", HERE],
-        ["pane-2", ELSEWHERE],
-      ]),
-    ));
+    scope.setAttribution(
+      report(
+        new Map([
+          ["pane-1", HERE],
+          ["pane-2", ELSEWHERE],
+        ]),
+      ),
+    );
     expect(scope.shouldRender(layouts("tab-1"))).toBe(false);
   });
 

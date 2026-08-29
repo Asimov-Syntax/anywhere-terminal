@@ -730,13 +730,31 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     // to raise the count — a source that can be silenced by the other's ignorance
     // is the silence this badge exists to break.
     const store = leavesWaiting(["here", "gone"], []);
-    const data = buildTabBarData(store, scopeWaiting([["here", HERE], ["gone", ELSEWHERE]], ["gone"]));
+    const data = buildTabBarData(
+      store,
+      scopeWaiting(
+        [
+          ["here", HERE],
+          ["gone", ELSEWHERE],
+        ],
+        ["gone"],
+      ),
+    );
     expect(data.hiddenWaiting).toBe(1);
   });
 
   it("[I19] counts a hidden tab that only the SURFACE's own status calls waiting", () => {
     const store = leavesWaiting(["here", "gone"], ["gone"]);
-    const data = buildTabBarData(store, scopeWaiting([["here", HERE], ["gone", ELSEWHERE]], []));
+    const data = buildTabBarData(
+      store,
+      scopeWaiting(
+        [
+          ["here", HERE],
+          ["gone", ELSEWHERE],
+        ],
+        [],
+      ),
+    );
     expect(data.hiddenWaiting).toBe(1);
   });
 
@@ -749,7 +767,16 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
 
   it("counts no exited pane — a finished process waits on nobody", () => {
     const store = leavesWaiting(["here", "gone"], ["gone"], ["gone"]);
-    const data = buildTabBarData(store, scopeWaiting([["here", HERE], ["gone", ELSEWHERE]], ["gone"]));
+    const data = buildTabBarData(
+      store,
+      scopeWaiting(
+        [
+          ["here", HERE],
+          ["gone", ELSEWHERE],
+        ],
+        ["gone"],
+      ),
+    );
     expect(data.hiddenWaiting).toBe(0);
   });
 
