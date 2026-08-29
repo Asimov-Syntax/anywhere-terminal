@@ -72,3 +72,7 @@ asimov/debug/*/state.json*
 .opencode/command/asimov-debug.md
 .opencode/plugins/asimov-debug.ts
 asimov/changes/active
+# Open-analytics markers: empty files the CLI writes while a change is in flight
+# and deletes when it closes. They have been swept into commits and deleted
+# again several times; nothing reads them from history.
+asimov/.analytics-open/

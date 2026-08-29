@@ -4,7 +4,7 @@
     "asimov": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "5bcbaf1c160a90e9ec5eab83b24f300bbd2497f80ddbf59ecf435fb45a562212"
+      "computedHash": "64ddec39ae6661f95c89ef283537cb26ff5da240eb543c5ca471351035d8264f"
     },
     "asimov-archive": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
@@ -14,12 +14,12 @@
     "asimov-blueprint": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "7c51b15cb8ce3c5268965568eebfb49e0d1779a7675c535f6f666138314ddc0b"
+      "computedHash": "1bc02b74bdcbb4113e813310846e7dba0b937271141113b79cdb1374ebf1ccd8"
     },
     "asimov-build": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "b3dfda7f1f6fcec5a4d4ab86d55ddfd110a220b427a0bede739a10cc5376a9c8"
+      "computedHash": "e6d9d396cb5e8d758837bb019c13268bfacf30afb2819175e1af7e2d073ca240"
     },
     "asimov-core": {
       "source": "cyberk-dev/asimov",
@@ -40,12 +40,12 @@
     "asimov-plan": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "823f3c3c2e1633831677b3d0e132e9e6b4804416996c3e70c4b44138ab8edd6d"
+      "computedHash": "779f00679a6034b14a54871388c66a2fc1675963d56aeffee93629473f72ca96"
     },
     "asimov-refactor": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
       "sourceType": "local",
-      "computedHash": "fae3a871680b44c4e48c11ef94a317ff22782c9d52e6d1dbcf2b84135e9c86bd"
+      "computedHash": "d87d24d61306edadfddb383bfd4eca033642c383cf4b0dbd853d2fa943a684ba"
     },
     "asimov-review": {
       "source": "../../cyberk/cyberk-skills-workspace/cyberk-skills",
