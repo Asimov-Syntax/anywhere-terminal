@@ -30,6 +30,18 @@ describe("getTerminalHtml webview.js cache-buster (D11)", () => {
     expect(csp).toMatch(/img-src[^;]*blob:/);
   });
 
+  it("resets [hidden] so a hidden control cannot be resurrected by an author display rule", () => {
+    const html = getTerminalHtml(mockWebview(), vscode.Uri.file("/ext"), "sidebar");
+    // The UA's `[hidden] { display: none }` is user-agent origin, so any author rule
+    // setting `display` outranks it — which is how a hidden toolbar control stayed on
+    // screen. Asserted on the HTML because jsdom reports `display: none` for a hidden
+    // element with or without this rule, so computed style cannot fail for the defect.
+    expect(html).toMatch(/\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
+    // After the panel stylesheets, or it loses the cascade to a later equal-weight rule.
+    const reset = html.search(/\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
+    expect(reset).toBeGreaterThan(html.lastIndexOf(".vault-folder-toggle"));
+  });
+
   it("keeps the vault panel CSS INLINE (the externalization was reverted — D15)", () => {
     const html = getTerminalHtml(mockWebview(), vscode.Uri.file("/ext"), "sidebar");
     // The vault CSS is inlined into the host <style> (regenerated per render, so it

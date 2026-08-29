@@ -104,6 +104,13 @@ export function getTerminalHtml(
     ${WORKTREE_CSS}
     /* === End Worktree view styles === */
 
+    /* The UA's [hidden] rule is user-agent origin, so any author \`display\` above
+       outranks it and a control the code hid stays on screen. Last and !important
+       so every \`hidden\` writer in the webview means what it says. */
+    [hidden] {
+      display: none !important;
+    }
+
     :root {
       --awt-tab-bar-height: 30px;
     }

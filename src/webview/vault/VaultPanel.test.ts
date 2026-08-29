@@ -4057,6 +4057,29 @@ describe("worktree segment", () => {
     return el;
   }
 
+  it("offers each toolbar control only in the body it acts on", () => {
+    const host = createHost();
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: worktreeBody(),
+      onCreateWorktree: () => {},
+    });
+    const folderToggle = host.querySelector<HTMLElement>(".vault-folder-toggle");
+    const create = host.querySelector<HTMLElement>('[aria-label="Create worktree"]');
+    expect(folderToggle?.hidden).toBe(false);
+    expect(create?.hidden).toBe(true);
+
+    panel.setView("worktree");
+    // The tree is already workspace-scoped, so the filter has nothing left to scope.
+    expect(folderToggle?.hidden).toBe(true);
+    expect(create?.hidden).toBe(false);
+
+    panel.setView("sessions");
+    expect(folderToggle?.hidden).toBe(false);
+    expect(create?.hidden).toBe(true);
+  });
+
   it("never fires the sessions refresh protocol from the worktree view", () => {
     // The refresh button posts requestVaultSessions. In the worktree view that
     // is a real host operation against data the user cannot see, so with no
