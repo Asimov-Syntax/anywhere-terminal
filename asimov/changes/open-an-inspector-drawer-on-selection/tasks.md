@@ -63,7 +63,7 @@
 
 ## 2. The drawer
 
-- [ ] 2_1 Build the inspector drawer
+- [x] 2_1 Build the inspector drawer — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeInspector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1, 1_2, 1_3, 1_4
   - **Refs**: specs/worktree-panel/spec.md#{selecting-a-worktree-opens-an-inspector-under-the-tree, the-inspector-is-bounded-so-the-tree-stays-scannable, the-inspector-states-the-full-path-and-rows-still-state-none, the-inspector-names-the-model-that-no-row-names, a-push-that-changes-nothing-changes-no-pixel-of-the-inspector, the-inspector-keeps-its-own-claims-current-without-a-push, the-inspector-offers-only-actions-it-can-perform-on-this-worktree, the-inspector-carries-the-delegation-history-of-each-agent-it-presents} <!-- design.md D2, D5, D6, D7, D10, D11, D12 -->
   - **Acceptance**:
