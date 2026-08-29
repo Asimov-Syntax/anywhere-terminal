@@ -58,6 +58,8 @@ interface Surface {
   seam: TabBarScopeWiring;
   /** One entry per redraw the seam asked for. */
   renders: number;
+  /** One entry per time the seam said the presence need moved. */
+  presenceRevalidations: number;
   /** One entry per panel rebuild, so a doubled repaint is visible. */
   paints: number;
   /** The panel's notices, as text, at each paint. */
@@ -118,6 +120,7 @@ function surface(
   let controller: WorktreeController | null = null;
   const out = {
     renders: 0,
+    presenceRevalidations: 0,
     activations: [] as string[],
     opened: [] as string[],
     activePane: over.activePane ?? null,
@@ -150,6 +153,9 @@ function surface(
     panel: () => controller,
     source: () => source,
     render: draw,
+    revalidatePresence: () => {
+      out.presenceRevalidations += 1;
+    },
     activePane: () => out.activePane,
     activatePane: (paneId) => {
       out.activations.push(paneId);
@@ -814,5 +820,59 @@ describe("round-1: the region follows the presented set, not just the selection"
 
     expect(s.region()).toBe(before);
     expect(document.activeElement).toBe(offer);
+  });
+});
+
+describe("[2_2] the presence need reaches the surface even when nothing repaints", () => {
+  /**
+   * Put a signature on record. Setup calls `draw()` directly, so the coordinator
+   * has reported on nothing yet and its first gated comparison is against `null`
+   * — which renders whatever moved. Priming makes the gate answer the question
+   * these tests are actually asking.
+   */
+  function primed(s: Surface): Surface {
+    s.seam.onAttribution({ placement: new Map(), waiting: new Set() });
+    return s;
+  }
+
+  it("fires when the rollout flip arms a scope no tree has confirmed", () => {
+    // The bar's redraw is gated on a signature built from the CONFIRMED scope,
+    // which is absent both before and after this flip, so nothing repaints.
+    // Routing the subscription through that gate left a restored scope unable to
+    // ever resolve: resolving needs a tree, and the tree needs a subscription
+    // (round-2 B1).
+    const s = primed(surface({ workbench: false, persisted: PANEL }));
+    const rendersBefore = s.renders;
+    const before = s.presenceRevalidations;
+
+    s.seam.setWorkbench(true);
+
+    expect(s.seam.needsPresence(), "the flip did not arm the stored scope").toBe(true);
+    expect(s.seam.effectiveScope(), "the scope was confirmed without a tree").toBeUndefined();
+    expect(s.renders, "the premise failed: this edge did repaint after all").toBe(rendersBefore);
+    expect(s.presenceRevalidations, "the surface was never told its presence need had moved").toBeGreaterThan(before);
+  });
+
+  it("fires when a tree drops a stored scope it never confirmed", () => {
+    // The falling edge. Unlike the flip above, this one DOES repaint today — the
+    // arriving tree moves the signature for its own reasons — so a subscription
+    // riding the repaint would survive here by coincidence. Asserted anyway: the
+    // coincidence is not a guarantee, and what this records is that the need is
+    // reported from the need, not from whatever else happened to move.
+    const s = primed(surface({ persisted: "/no/such/worktree" }));
+    expect(s.seam.needsPresence()).toBe(true);
+    const before = s.presenceRevalidations;
+
+    s.push({ tree: treeWithout() });
+
+    expect(s.seam.needsPresence(), "the dropped scope kept the surface subscribed").toBe(false);
+    expect(s.presenceRevalidations, "the surface was never told to drop its subscription").toBeGreaterThan(before);
+  });
+
+  it("says nothing when the need did not move", () => {
+    const s = primed(surface());
+    const before = s.presenceRevalidations;
+    s.push();
+    expect(s.presenceRevalidations).toBe(before);
   });
 });

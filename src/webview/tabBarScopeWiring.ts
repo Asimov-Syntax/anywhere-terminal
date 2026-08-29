@@ -49,6 +49,13 @@ export interface TabBarScopeWiringDeps {
   source: () => TabBarDataSource;
   /** Redraw the tab bar. */
   render: () => void;
+  /**
+   * The surface's need for presence has changed. Separate from `render` because
+   * the two answer to different state: the bar redraws on a visual signature
+   * built from the confirmed scope, while a subscription follows the raw one and
+   * can move while nothing visible does (round-2 B1).
+   */
+  revalidatePresence?: () => void;
   /** The pane currently active, or `null`. */
   activePane: () => string | null;
   /** Bring this pane forward. Never called with the pane already active. */
@@ -159,6 +166,31 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
     }
   };
 
+  /**
+   * Whether a presence subscription was needed at the last settle. Compared
+   * rather than recomputed on demand, so the transition is what fires.
+   */
+  let neededPresence = coordinator.needsPresence();
+
+  /**
+   * Everything a mutator has to do after changing the coordinator.
+   *
+   * The presence half is deliberately NOT behind `renderIfMoved`'s gate. That
+   * gate compares a visual signature built from `effectiveScope()` — the
+   * CONFIRMED scope — so a need that moves while the scope is unresolved is
+   * invisible to it: a rollout flip on a restored scope, or a stale scope being
+   * dropped, would leave the surface unsubscribed or leave the five-second scan
+   * running with nothing left to draw (round-2 B1).
+   */
+  const settle = (): void => {
+    const needs = coordinator.needsPresence();
+    if (needs !== neededPresence) {
+      neededPresence = needs;
+      deps.revalidatePresence?.();
+    }
+    renderIfMoved();
+  };
+
   const renderIfMoved = (): void => {
     const source = deps.source();
     // The count the badge would draw, from the pass that draws it — see D2 and the
@@ -175,7 +207,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       // Between the new scope and the one draw: the in-scope test runs against the
       // scope being adopted, and the whole selection costs a single render.
       settleScope(true);
-      renderIfMoved();
+      settle();
     },
 
     onAttribution(report) {
@@ -183,7 +215,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       // Gated like every other mutator. Today the only caller is followed by the
       // tree push that would have caught it anyway, so this is a no-op — and not
       // relying on that is the point (round-2 V7).
-      renderIfMoved();
+      settle();
     },
 
     applyTree(tree, deliver) {
@@ -203,7 +235,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
         deliver();
       } finally {
         settleScope(false);
-        renderIfMoved();
+        settle();
       }
     },
 
@@ -217,7 +249,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       // without this the surface read "scoping off" while staying fully filtered
       // behind a hidden container, with no selection able to restore it (W1).
       settleScope(false);
-      renderIfMoved();
+      settle();
     },
 
     effectiveScope: () => coordinator.effectiveScope(),
@@ -247,7 +279,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
           // Gated, so the signature records the cleared state. Rendering
           // unconditionally left it unrecorded on a surface with no panel, and
           // drew the bar twice on one with a panel (round-2 V4).
-          renderIfMoved();
+          settle();
         },
       };
     },

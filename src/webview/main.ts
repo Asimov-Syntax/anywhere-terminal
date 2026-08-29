@@ -1102,12 +1102,11 @@ function handleInit(msg: InitMessage): void {
       workbench: msg.worktreeWorkbench,
       panel: () => worktreeController,
       source: () => store,
-      render: () => {
-        updateTabBar();
-        // Every route a scope can be set or cleared by lands here, including the
-        // ones the panel's own visibility never sees.
-        worktreeController?.revalidateVisibility();
-      },
+      render: () => updateTabBar(),
+      // Its own dependency, not a line inside `render`: the bar's redraw is
+      // gated on a visual signature that cannot see a presence need moving while
+      // the scope is unresolved (round-2 B1).
+      revalidatePresence: () => worktreeController?.revalidateVisibility(),
       activePane: () => {
         const tabId = store.activeTabId;
         return tabId === null ? null : (store.tabActivePaneIds.get(tabId) ?? tabId);

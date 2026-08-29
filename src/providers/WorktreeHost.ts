@@ -485,6 +485,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   let appliedRankRevision = projector?.rankRevision() ?? 0;
   /**
+   * Whether the projection behind `projected` ran per-row enrichment. A window
+   * whose only subscribers were presence-only publishes a deliberately bare
+   * envelope, and rebroadcasting that to a rail that just reopened would draw
+   * rows with no title and no preview until the next scan (round-2 W1).
+   */
+  let projectedEnriched = true;
+  /**
    * Rosters read, and the reads still in flight, both under `(rowId, entryId)`.
    *
    * Composite, not `rowId` alone: a slow read for session A completing after a
@@ -1226,6 +1233,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     }
     projected = next;
     projectedVersion = at;
+    // Remembered so a surface promoted to rows can tell whether what is
+    // published is worth redoing (round-2 W1).
+    projectedEnriched = enrich;
   }
 
   /**
@@ -1620,14 +1630,23 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return;
     }
     switch (msg.type) {
-      case "worktreeViewVisibility":
+      case "worktreeViewVisibility": {
+        const wasDrawing = anyDrawingRows();
         state.visible = msg.visible;
         // Absent means `"rows"`: the field is additive and a sender that predates
         // it is declaring what it always declared.
         state.level = msg.level ?? "rows";
         reconcileShowing(surface, state, false);
         reconcileScan();
+        // A window that has just gained its first row-drawing surface, holding an
+        // envelope built without enrichment, has to redo it — a tree request
+        // would only rebroadcast the bare one. Not forced: this re-reads no git,
+        // it re-runs the projection (round-2 W1).
+        if (!wasDrawing && anyDrawingRows() && !projectedEnriched) {
+          void requestProjection({ external: true, join: true });
+        }
         return;
+      }
       case "requestWorktreeSubagents":
         requestDelegations(msg.rowId, msg.entryId);
         return;

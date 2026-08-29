@@ -165,10 +165,12 @@ describe("[1_3] a scope keeps the surface subscribed after the rail closes", () 
     expect(posts.filter((m) => m.type === "requestWorktreeTree").length).toBe(before);
   });
 
-  it("re-requests the tree when promoted back to rows", () => {
-    // Not symmetric with demotion: the envelope the surface is holding was
-    // deliberately built bare, so waiting for the next five-second scan would
-    // draw the reopened rail with no titles and no previews (round-1 W1).
+  it("re-requests nothing when promoted back to rows either", () => {
+    // Promotion DOES need the bare envelope redone, but a tree request only
+    // rebroadcasts what is published. The host knows whether it published an
+    // enriched envelope and re-projects on promotion itself, so asking from here
+    // would be a second, weaker answer to a question the host already owns
+    // (round-2 W1).
     const scoped = true;
     const { controller, posts } = mountWith(() => scoped);
     controller.setVisible(true);
@@ -176,10 +178,7 @@ describe("[1_3] a scope keeps the surface subscribed after the rail closes", () 
     const before = posts.filter((m) => m.type === "requestWorktreeTree").length;
 
     controller.setVisible(true); // presence -> rows
-    expect(
-      posts.filter((m) => m.type === "requestWorktreeTree").length,
-      "a reopened rail kept the bare presence-only envelope",
-    ).toBe(before + 1);
+    expect(posts.filter((m) => m.type === "requestWorktreeTree").length).toBe(before);
   });
 
   it("still cancels an in-flight create when the rail closes under a scope", () => {

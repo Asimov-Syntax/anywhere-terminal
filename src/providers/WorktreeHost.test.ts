@@ -798,6 +798,48 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
     expect(options.some((o) => o?.enrich === true)).toBe(true);
   });
 
+  it("re-projects with enrichment when a surface is promoted against a bare envelope", async () => {
+    // A tree request would only rebroadcast what is published, and what is
+    // published came from a presence-only pass with no titles and no previews.
+    // The host owns that fact, so the host is what redoes it (round-2 W1).
+    const h = scoped();
+    const s = surface();
+    attachShown(h.worktrees, s);
+    h.worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+    h.worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    await settle();
+    expect(
+      h.options.some((o) => o?.enrich === false),
+      "nothing bare was published to begin with",
+    ).toBe(true);
+
+    h.options.length = 0;
+    h.worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+
+    expect(
+      h.options.some((o) => o?.enrich === true),
+      "a reopened rail kept the bare presence-only envelope",
+    ).toBe(true);
+  });
+
+  it("does not re-project when what is published was already enriched", async () => {
+    const h = scoped();
+    const rows = surface();
+    const other = surface();
+    attachShown(h.worktrees, rows);
+    attachShown(h.worktrees, other);
+    h.worktrees.handleMessage(rows, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    h.worktrees.handleMessage(rows, { type: "requestWorktreeTree" });
+    await settle();
+
+    h.options.length = 0;
+    h.worktrees.handleMessage(other, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+
+    expect(h.options, "an already-enriched envelope was projected again for nothing").toEqual([]);
+  });
+
   it("serves nothing to a surface that never subscribed", async () => {
     const { worktrees } = scoped();
     const s = surface();

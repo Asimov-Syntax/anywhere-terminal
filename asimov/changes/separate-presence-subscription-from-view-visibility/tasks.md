@@ -53,3 +53,18 @@
     5. In `src/providers/WorktreeHost.test.ts`, drive the scan through the injectable clock instead of a direct tree request, asserting that a presence-only subscriber arms it, that it runs with enrichment off, and that the last presence subscription ending cancels it (round-1 W2).
     6. In `src/worktree/presenceProjector.test.ts`, assert the rank value advances to the newer session under enrichment off, rather than merely remaining defined (round-1 S1).
     7. In `src/webview/tabBarScope.test.ts` and `src/webview/worktree/WorktreeController.state.test.ts`, cover a valid and a stale persisted scope with the body hidden, and the promotion request.
+
+- [x] 2_2 Make the presence need reach the controller, and the promotion reach an enriched projection — verified: pnpm exec vitest run 'src/webview/tabBarScopeWiring.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: design.md#d2-the-host-tracks-the-level-per-surface-the-scan-follows-subscription-enrichment-follows-drawing; specs/worktree-panel/spec.md#a-surface-subscribes-to-presence-for-what-it-draws-not-for-the-rail
+  - **Acceptance**:
+    - Outcome: a presence need that changes while the scope is unresolved still reaches the controller, and a promoted surface gets enriched rows
+    - Verify: unit src/webview/tabBarScopeWiring.test.ts
+  - **Plan**:
+    1. In `src/webview/tabBarScopeWiring.ts`, notify a presence-need change on every mutator independently of the render signature, since that signature is built from the confirmed scope and cannot see a need that moved while the scope was unresolved (round-2 B1).
+    2. In `src/webview/main.ts`, supply that notification as its own dependency and stop revalidating from the tab-bar render callback.
+    3. In `src/providers/WorktreeHost.ts`, remember whether the published envelope was enriched, and when a surface is promoted to rows against a bare one, run a projection rather than rebroadcasting it (round-2 W1). No git rebuild.
+    4. In `src/webview/worktree/WorktreeController.ts`, drop the promotion tree request added in 2_1 — the host owns whether the published envelope needs redoing, and asking for a rebroadcast of a bare envelope was the defect.
+    5. In `src/webview/tabBarScopeWiring.test.ts`, cover a hidden body across none-to-presence and presence-to-none, including the rollout flip and the stale drop, and prove the render signature did not move on those.
+    6. In `src/providers/WorktreeHost.test.ts`, cover a promotion against a bare published envelope producing an enriched projection, and no redundant projection when it was already enriched.
+    7. In `src/webview/worktree/WorktreeController.state.test.ts`, replace the 2_1 promotion assertion: the controller now re-requests nothing in either direction.
