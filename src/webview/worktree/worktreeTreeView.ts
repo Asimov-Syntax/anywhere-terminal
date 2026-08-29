@@ -97,7 +97,7 @@ export function renderRepoHeader(
   const name = document.createElement("span");
   name.className = "wt-repo-name";
   name.textContent = repo.label;
-  name.title = repo.mainPath;
+  name.dataset.tip = repo.mainPath;
 
   const countEl = document.createElement("span");
   countEl.className = "wt-repo-count";
@@ -111,7 +111,7 @@ export function renderRepoHeader(
   chev.setAttribute("aria-hidden", "true");
 
   header.append(name, countEl, spacer, chev);
-  header.title = collapsed ? `Expand ${repo.label}` : `Collapse ${repo.label}`;
+  header.dataset.tip = collapsed ? `Expand ${repo.label}` : `Collapse ${repo.label}`;
   bindActivation(header, onToggle);
   return header;
 }
@@ -139,7 +139,7 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   row.setAttribute("role", "treeitem");
   row.tabIndex = -1;
   row.dataset.worktreeId = info.id;
-  row.title = worktreeTooltip(info);
+  row.dataset.tip = worktreeTooltip(info);
   if (opts.hasAgents) {
     row.setAttribute("aria-expanded", opts.expanded ? "true" : "false");
     // The presence pill and the "N agents" header are hidden from assistive tech
@@ -174,7 +174,7 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
     el.className = pill.kind === "here" ? "wt-pill wt-pill--here" : "wt-pill";
     el.textContent = pill.text;
     if (pill.kind === "here") {
-      el.title = "This worktree is a workspace folder";
+      el.dataset.tip = "This worktree is a workspace folder";
     }
     marks.appendChild(el);
   }
@@ -182,7 +182,7 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
     const el = document.createElement("span");
     el.className = `wt-badge wt-badge--${badge.kind}`;
     if (badge.title) {
-      el.title = badge.title;
+      el.dataset.tip = badge.title;
     }
     if (badge.kind === "locked") {
       const icon = document.createElement("span");
@@ -218,7 +218,7 @@ export function renderPresencePill(groups: readonly PresenceGroup[], onExpand: (
   pill.className = "wt-presence";
   pill.tabIndex = -1;
   pill.setAttribute("aria-hidden", "true");
-  pill.title = "Show agents";
+  pill.dataset.tip = "Show agents";
 
   const wrap = document.createElement("span");
   wrap.className = "wt-presence-groups";
@@ -236,7 +236,7 @@ export function renderPresencePill(groups: readonly PresenceGroup[], onExpand: (
         // SVG comes ONLY from the closed agent-icon map, never from presence data.
         badge.classList.add(`vault-badge--${icon.accent}`);
         badge.innerHTML = icon.svg;
-        badge.title = icon.displayName;
+        badge.dataset.tip = icon.displayName;
       }
       icons.appendChild(badge);
     }
@@ -269,7 +269,7 @@ export function renderAgentsHeader(count: number, onCollapse: () => void): HTMLE
   header.className = "wt-agents";
   header.tabIndex = -1;
   header.setAttribute("aria-hidden", "true");
-  header.title = "Collapse agents";
+  header.dataset.tip = "Collapse agents";
 
   const label = document.createElement("span");
   label.textContent = agentCountLabel(count);
@@ -345,7 +345,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
     const accent = getAgentAccent(row.agent);
     if (brand) {
       icon.innerHTML = brand.svg;
-      icon.title = brand.displayName;
+      icon.dataset.tip = brand.displayName;
     }
     // Only a known, closed accent may reach the style attribute (W6).
     if (accent) {
@@ -362,12 +362,12 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   title.className = "wt-atitle";
   const titleText = agentRowTitle(row);
   title.append(document.createTextNode(titleText));
-  title.title = titleText;
+  title.dataset.tip = titleText;
   if (isFallbackActivity(row.activitySource)) {
     const marker = document.createElement("span");
     marker.className = "wt-confidence";
     marker.textContent = "~";
-    marker.title =
+    marker.dataset.tip =
       row.activitySource === "output"
         ? "Activity inferred from terminal output — the terminal is busy, which is not proof of an agent turn"
         : `Activity inferred from ${row.activitySource} — not a published agent state`;
@@ -380,7 +380,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   preview.className = "wt-apreview";
   preview.textContent = row.preview ?? "";
   if (row.preview) {
-    preview.title = row.preview;
+    preview.dataset.tip = row.preview;
   }
   el.appendChild(preview);
 
@@ -389,7 +389,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   const sixth = document.createElement("span");
   if (row.scope === "external") {
     sixth.className = "wt-scope";
-    sixth.title = "Running in another VS Code window";
+    sixth.dataset.tip = "Running in another VS Code window";
     const winIcon = document.createElement("span");
     winIcon.innerHTML = ICON_WINDOW;
     winIcon.setAttribute("aria-hidden", "true");
@@ -397,7 +397,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   } else if (row.model) {
     sixth.className = "wt-model";
     sixth.textContent = row.model;
-    sixth.title = row.model;
+    sixth.dataset.tip = row.model;
   }
   el.appendChild(sixth);
 
@@ -489,7 +489,7 @@ export function renderSubagentSection(
     // its position. Without one, every subagent row keys as "" and the roving
     // tabindex cannot tell them apart.
     row.dataset.subKey = `${parent.rowId}\u0000${i}`;
-    row.title = "Focuses the parent pane — a subagent has no pane of its own";
+    row.dataset.tip = "Focuses the parent pane — a subagent has no pane of its own";
 
     const outcome = document.createElement("span");
     const failed = sub.status === "failed";
@@ -520,7 +520,7 @@ export function renderSubagentSection(
     // The delegated task description is the primary text; the role name is the
     // fallback, not the lead (worktree-panel-ui.md § 3.4).
     text.textContent = sub.title ?? sub.name;
-    text.title = sub.title ? `${sub.title} — ${sub.name}` : sub.name;
+    text.dataset.tip = sub.title ? `${sub.title} — ${sub.name}` : sub.name;
 
     const age = document.createElement("span");
     age.className = "wt-age";

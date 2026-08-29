@@ -7,6 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ICON_TERMINAL } from "../vault/icons";
+import { resetTooltipForTests } from "../ui/Tooltip";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
 import { MAX_WORKTREES_PER_REPO, WorktreeView, type WorktreeViewDeps } from "./WorktreeView";
 import {
@@ -40,6 +41,7 @@ const PANEL_WT = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel
 
 afterEach(() => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  resetTooltipForTests();
   document.body.replaceChildren();
   vi.unstubAllGlobals();
 });
@@ -177,8 +179,20 @@ describe("tree structure", () => {
     const { view } = mount();
     view.setData(populated());
     expect(view.element.textContent).not.toContain(MAIN_PATH);
-    // It is reachable from the tooltip instead.
-    expect(rowFor(view, "main")?.title).toContain(MAIN_PATH);
+    // Reachable from the tooltip instead — and asserted by hovering, not by reading
+    // the attribute. This assertion used to read `.title`, which VS Code webviews
+    // never render: it was green while the user saw nothing on hover.
+    vi.useFakeTimers();
+    try {
+      const row = rowFor(view, "main");
+      row?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(300);
+      const tip = document.body.querySelector<HTMLElement>(".webview-tooltip");
+      expect(tip?.style.display).toBe("block");
+      expect(tip?.textContent).toContain(MAIN_PATH);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders a zero-agent worktree with no twisty and no presence element", () => {
@@ -362,7 +376,7 @@ describe("agent rows", () => {
     const expected = document.createElement("span");
     expected.innerHTML = ICON_TERMINAL;
     expect(icon?.innerHTML).toBe(expected.innerHTML);
-    expect(icon?.title).toBe("");
+    expect(icon?.dataset.tip).toBeUndefined();
     expect(icon?.style.color).toBe("");
   });
 

@@ -25,7 +25,7 @@
     1. Export a delegate attach from `src/webview/ui/Tooltip.ts` that binds one listener set to a container, resolves the hovered or focused target with `closest()`, and reads its hint from a data attribute at show time so a rebuilt row needs no re-attach. Reuse the existing widget, delay, positioning, and `aria-describedby` handling — do not add a second widget.
     2. Cover in `src/webview/ui/Tooltip.test.ts`: a descendant added after attach still gets its hint; a container rebuilt while a hint is showing leaves nothing on screen; keyboard focus shows the hint as pointer hover does; disposing the delegate stops it.
 
-- [ ] 2_2 Deliver the worktree tree's hints through the delegate
+- [x] 2_2 Deliver the worktree tree's hints through the delegate — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#an-open-worktree-is-marked-without-claiming-exclusivity <!-- existing: asimov/specs/worktree-panel/spec.md#no-row-exposes-a-filesystem-path -->
   - **Acceptance**:

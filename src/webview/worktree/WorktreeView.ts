@@ -11,6 +11,7 @@
 // derivations in worktreeFormat.ts, and this class holds only the state the DOM
 // cannot — collapse sets, the focused row, the query, and the render guard.
 
+import { attachTooltipDelegate } from "../ui/Tooltip";
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
 import { openWorktreeCreateDialog, type WorktreeCreateDialogDeps } from "./WorktreeCreateDialog";
 import { openWorktreeLaunchDialog, type WorktreeLaunchRequest } from "./WorktreeLaunchDialog";
@@ -155,6 +156,7 @@ export class WorktreeView {
   /** Repos the user asked to see past the render cap. */
   private readonly uncapped = new Set<string>();
   private closeDialog: (() => void) | null = null;
+  private readonly disposeTooltips: () => void;
   /** Roving tabindex target — the row keyboard navigation last landed on. */
   private focusedKey: string | null = null;
   /**
@@ -178,6 +180,9 @@ export class WorktreeView {
     this.element.setAttribute("role", "tree");
     this.element.setAttribute("aria-label", "Worktrees");
     this.element.addEventListener("keydown", (ev) => this.onKeyDown(ev));
+    // Delegated, because render() replaces every row: rows carry `data-tip` and
+    // nothing is attached or disposed per render.
+    this.disposeTooltips = attachTooltipDelegate(this.element);
     this.menu = deps.actions
       ? new WorktreeContextMenu({
           host: deps.host,
@@ -321,6 +326,7 @@ export class WorktreeView {
     this.closeDialog?.();
     this.closeDialog = null;
     this.menu?.close();
+    this.disposeTooltips();
   }
 
   // -- State ---------------------------------------------------------------
