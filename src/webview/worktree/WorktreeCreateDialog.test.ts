@@ -362,7 +362,9 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
 
   it("leads with the branch name — no control sits above it", () => {
     const { host, q } = open();
-    const controls = [...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea")];
+    const controls = [
+      ...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea"),
+    ];
     expect(controls[0]?.id).toBe("wt-branch");
     expect(document.activeElement).toBe(q("#wt-branch"));
   });
@@ -373,7 +375,9 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     const { host } = open({
       repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
     });
-    const controls = [...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea")];
+    const controls = [
+      ...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea"),
+    ];
     expect(controls[0]?.id).toBe("wt-branch");
     expect(controls.map((c) => c.id)).toContain("wt-repo-select");
   });
@@ -439,9 +443,11 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     opener.focus();
     const { host, q } = open();
     const trapped = (): HTMLElement[] =>
-      [...host.querySelectorAll<HTMLElement>('.wt-dialog input, .wt-dialog select, .wt-dialog button, .wt-dialog [tabindex]:not([tabindex="-1"])')].filter(
-        (el) => !el.closest("[hidden]") && !(el instanceof HTMLButtonElement && el.disabled),
-      );
+      [
+        ...host.querySelectorAll<HTMLElement>(
+          '.wt-dialog input, .wt-dialog select, .wt-dialog button, .wt-dialog [tabindex]:not([tabindex="-1"])',
+        ),
+      ].filter((el) => !el.closest("[hidden]") && !(el instanceof HTMLButtonElement && el.disabled));
     const first = trapped()[0];
     const last = trapped()[trapped().length - 1];
     expect(first).toBeDefined();

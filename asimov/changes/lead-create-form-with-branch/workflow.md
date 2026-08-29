@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-009.3`)_
@@ -42,3 +42,5 @@ Planned at: 874fc77d
 - Must not: no new create wire field, no change to `WorktreeOpenAfter`, no branch-name suggestion.
 - Oracle round: 5 findings, all verified against source and all accepted. Two were spec defects of mine — a submit rule that contradicted the retained detached mode, and a destination statement that could show the host default while the override submitted. Two were plan gaps — the tooltip target needed `tabindex` to be reachable by anything but a mouse, and the trap/dismissal coverage the blueprint's acceptance names was cut to the two easy cases. The fifth is the posture defect above.
 - Gate 2 taken under fastlane: the question was put and went unanswered for 10 minutes. Task 1_3 (the posture defect) is the one item that grew scope; it is last, so it can still be pulled without touching the other two.
+- Verify gate: lint check mode, 17 findings, set-identical to the pre-change baseline (`HEAD~3` in a detached worktree). Two format findings the change introduced were formatted away before the gate; nothing was auto-fixed to clear a lint rule.
+- One full-suite run reported 2 failures and the next three reported none, on the same tree. I did not capture which file, so I cannot name it — recording the observation rather than dropping it. The gate tick rests on the three clean runs and on the targeted suites, all of which were stable.

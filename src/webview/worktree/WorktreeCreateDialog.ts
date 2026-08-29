@@ -478,8 +478,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // default — submitting here would launch under a posture the user never
     // picked, which is the whole point of never preselecting one.
     const postureMissing = afterChoice === "agent" && agentBox.needsPosture();
-    createBtn.disabled =
-      Boolean(error) || !named || draft.path.trim().length === 0 || outstanding || postureMissing;
+    createBtn.disabled = Boolean(error) || !named || draft.path.trim().length === 0 || outstanding || postureMissing;
     shell.refreshFocusTrap();
   }
 
