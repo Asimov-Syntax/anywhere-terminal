@@ -154,8 +154,22 @@ nothing to provision.
 | **Stage** | 6 |
 | **Size** | S |
 | **Labels** | user-visible-ui |
-| **Notes** | The data already exists — the hook pipeline distinguishes turn states and the vault reads transcripts — so this is a rendering task, not a new source. Reuse pressure: the session list already renders a preview line for the same content, and a second formatter is how the two drift. Two things to hold: the preview is decoration-stripped like every other title, and it is a render-signature input, so a preview that changes must repaint while a spinner frame must not |
-| **Acceptance** | An agent row renders two lines — identity, marks and age above, the session's latest message or current tool below — and never a third; the preview truncates before the title and neither wraps; a row with nothing to preview renders no empty second line and no placeholder; a spinner frame is neither displayed in the preview nor able to trigger a re-render; the model id no longer appears on any list row and is absent entirely when unknown; the age column and the leading glyphs never truncate |
+| **Notes** | Corrected at planning: the data does NOT already exist on the row. `WorktreeAgentRow` declares `preview` and the row renderer already draws it, but the presence projector never populates it, so the span is empty on every row. The vault session list renders no preview line either, so the reuse pressure this task was warned about is not there. Sourcing the content means reading transcript text the `agent-session-index` spec currently forbids reading beyond a bounded title preview — that decision is WT-009.5's, and this task keeps only the layout half. Two things to hold: the preview is decoration-stripped like every other title, and it is a render-signature input, so a preview that changes must repaint while a spinner frame must not |
+| **Acceptance** | An agent row renders two lines — identity, marks and age above, its last-activity preview below — and never a third; neither line wraps and each truncates independently, the preview consuming none of the first line's width; a row with nothing to preview renders no empty second line and no placeholder; a spinner frame is neither displayed in the preview nor able to trigger a re-render; the model id no longer appears on any list row and is absent entirely when unknown; the age column and the leading glyphs never truncate. What fills the preview is WT-009.5's |
+| **Status** | todo |
+
+### [WT-009.5] Fill the Preview Line With What the Session Last Did
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Give the agent row's preview line a real source, and settle what transcript-derived text a passive row is allowed to carry |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.3, § 7.1; [worktree-agent-presence.md](design/worktree-agent-presence.md) |
+| **Depends On** | WT-009.2 |
+| **Stage** | 6 |
+| **Size** | M |
+| **Labels** | user-visible-ui, security-privacy |
+| **Notes** | Split out of WT-009.2, which assumed this data was already on the row; it is not — the presence projector populates no preview at all. The nearest contract is the vault detail reader's `latestMessage` / `recentActivity`, but `agent-session-index` states that the bounded title preview is the ONLY transcript-derived value the system touches and forbids reading message bodies past it. Putting a last message on a passive row means that text crosses IPC on every presence scan and enters the render signature, so the spec clause is amended deliberately or the source is narrowed to hook-reported tool and turn state, which needs no amendment but leaves external and registry-only rows blank. A per-push transcript parse per row is the data-scale trap; whatever source wins is read through an index or a change-stamped cache, never re-parsed per scan |
+| **Acceptance** | Every row whose session the chosen source covers shows its last activity on the preview line, and a row the source does not cover shows nothing rather than a placeholder; the text is bounded and single-line at the point it is read, not at the point it is drawn; presence scans that find no new activity perform no additional transcript reads; whichever privacy position is taken is written into the owning spec rather than left implied by the code |
 | **Status** | todo |
 
 ### [WT-009.3] Create Form Reads as a Worktree Form
@@ -258,7 +272,7 @@ nothing to provision.
 | **Stage** | 7 |
 | **Size** | L |
 | **Labels** | user-visible-ui |
-| **Notes** | Sized L rather than M: it carries an accessible drawer shell and its focus lifecycle *and* the action surface inside it, and the second is where the risk is. A drawer, not a body swap — at sidebar width, replacing the body makes selection destructive and forces a back control. Reuse pressure is high: every action it offers already has a handler and an id-resolving path, and growing a parallel set is the failure mode. It is also one of only two places a path is shown in full, so the no-path-on-a-row rule has to survive it |
+| **Notes** | Puts the model identifier back into the render signature: WT-009.2 removed it when the model left the list row, and the guard must key it again once the drawer draws it. Sized L rather than M: it carries an accessible drawer shell and its focus lifecycle *and* the action surface inside it, and the second is where the risk is. A drawer, not a body swap — at sidebar width, replacing the body makes selection destructive and forces a back control. Reuse pressure is high: every action it offers already has a handler and an id-resolving path, and growing a parallel set is the failure mode. It is also one of only two places a path is shown in full, so the no-path-on-a-row rule has to survive it |
 | **Acceptance** | Selecting a worktree opens the drawer and scopes the tab bar from one gesture, and selecting another replaces its contents rather than stacking; the drawer is capped so the tree above stays visible and scannable; it shows the full path, and no list row gains one; every action it offers resolves host-side from an id and runs the same operation as the equivalent menu item, with external agents still never offered focus; the model id appears here and on no row; dismissal is explicit and leaves the scope alone; focus is trapped correctly, returns where it came from, and survives the drawer opening and closing; the drawer is absent while the rollout setting is off |
 | **Status** | todo |
 
