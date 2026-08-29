@@ -309,6 +309,10 @@ export class WorktreeController {
       // has answered which agents can, and an item that opens an empty picker
       // is the inert rendering the panel spec forbids.
       actions: this.menuActions,
+      // The header door. Supplied unconditionally: unlike the launch items, a
+      // create is always performable where a repository exists, and the header
+      // it hangs on is only rendered where one does.
+      onCreateForRepo: (repoId) => this.openCreateForRepo(repoId),
       // The form's seed is the HOST's answer, never a path derived here: the
       // spec says a create names the destination it will actually use, and only
       // the host knows the configured root and which candidates are free.

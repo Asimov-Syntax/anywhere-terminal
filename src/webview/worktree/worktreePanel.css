@@ -1109,3 +1109,36 @@
   font-size: 10px;
   opacity: 0.65;
 }
+
+/* A control that lives on a row. Hidden until its row is hovered or holds focus
+   anywhere inside it — `:focus-within` is what keeps it from being a mouse-only
+   affordance. `visibility` rather than `opacity`, so a hidden control is not a
+   click target sitting invisibly over the row. */
+.wt-rowaction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--vscode-icon-foreground, currentColor);
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.wt-rowaction:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+.wt-repo:hover .wt-rowaction,
+.wt-repo:focus-within .wt-rowaction {
+  visibility: visible;
+}
+
+.wt-rowaction svg {
+  width: 14px;
+  height: 14px;
+}

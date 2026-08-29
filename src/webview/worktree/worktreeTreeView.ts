@@ -27,7 +27,7 @@ import {
   worktreePills,
   worktreeTooltip,
 } from "./worktreeFormat";
-import { ICON_BRANCH, ICON_LOCK, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
+import { ICON_BRANCH, ICON_LOCK, ICON_PLUS, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
 import type {
   DelegationRoster,
   WorktreeAgentRow,
@@ -52,6 +52,37 @@ export interface AgentRowCallbacks {
   onContextMenu?: (row: WorktreeAgentRow, ev: MouseEvent, el: HTMLElement) => void;
   /** Toggle this row's subagent disclosure — the SECOND, independent level (§ 3.5). */
   onToggleSubagents?: (row: WorktreeAgentRow) => void;
+}
+
+/**
+ * A control that lives ON a row and acts independently of it.
+ *
+ * The row binds a BUBBLING click and keydown (`bindActivation`), so without
+ * stopping both here one gesture would run the action AND toggle the row. The
+ * tab index starts at -1: the tree exposes one tab stop, and the view raises
+ * this to 0 only while its own row holds focus.
+ */
+function rowAction(icon: string, label: string, activate: () => void): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "wt-rowaction";
+  btn.tabIndex = -1;
+  btn.innerHTML = icon;
+  btn.setAttribute("aria-label", label);
+  btn.dataset.tip = label;
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    activate();
+  });
+  btn.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      // Stopped, not prevented: the button still turns the key into its own
+      // click, and that click is stopped above. Preventing here would leave the
+      // control keyboard-inert.
+      ev.stopPropagation();
+    }
+  });
+  return btn;
 }
 
 /** Attach click + Enter/Space to an element that behaves as a row. */
@@ -173,6 +204,7 @@ export function renderRepoHeader(
   count: number,
   collapsed: boolean,
   onToggle: () => void,
+  onCreate?: () => void,
 ): HTMLElement {
   const header = document.createElement("div");
   header.className = collapsed ? "wt-repo is-collapsed" : "wt-repo";
@@ -197,7 +229,11 @@ export function renderRepoHeader(
   chev.innerHTML = ICON_CHEVRON_DOWN;
   chev.setAttribute("aria-hidden", "true");
 
-  header.append(name, countEl, spacer, chev);
+  header.append(name, countEl, spacer);
+  if (onCreate) {
+    header.appendChild(rowAction(ICON_PLUS, `Create worktree in ${repo.label}`, onCreate));
+  }
+  header.appendChild(chev);
   header.dataset.tip = collapsed ? `Expand ${repo.label}` : `Collapse ${repo.label}`;
   bindActivation(header, onToggle);
   return header;

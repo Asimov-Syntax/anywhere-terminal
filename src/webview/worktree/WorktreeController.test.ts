@@ -892,6 +892,16 @@ describe("the create a toolbar with no repository opens", () => {
     expect(open()).toBe(false);
   });
 
+  it("[1_2] the view is given a way to open a create for one repository", () => {
+    // The header control is built only where this dep exists, so an unsupplied
+    // one is the same silent absence the toolbar had.
+    const h = ready(twoRepoResponse());
+    const deps = (h.controller as unknown as { view: { deps: { onCreateForRepo?: (r: string) => void } } }).view.deps;
+    deps.onCreateForRepo?.(REPO_B);
+
+    expect(asks(h)).toEqual([REPO_B]);
+  });
+
   it("[1_1] a repo-scoped create still asks only its own repository", () => {
     const h = ready(twoRepoResponse());
     h.controller.openCreateForRepo(REPO_B);

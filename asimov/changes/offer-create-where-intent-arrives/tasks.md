@@ -15,19 +15,19 @@
     5. Nothing here may build a create request. Every door ends at the request the menu already sends; a second construction site is how the safety model in § 3.2 acquires a hole.
     6. Cover: a cold single-repo panel, a cold multi-repo panel whose answers arrive out of order, and a panel whose answers never arrive; that the picker offers every repository with none chosen on the user's behalf; the control absent with no repository and absent in a sessions body.
 
-- [ ] 1_2 Create on the group header
+- [x] 1_2 Create on the group header — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-repo-group-header-offers-create-for-its-own-repository, keyboard-traversal-follows-the-declared-hierarchy}, docs/design/worktree-panel-ui.md#31-repo-group-header
   - **Acceptance**:
     - Outcome: a group header offers create for its own repo, reachable by keyboard
     - Verify: unit src/webview/worktree/WorktreeView.test.ts
   - **Plan**:
-    0. Files: `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreePanel.css`.
+    0. Files: `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreePanel.css`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`.
     1. The header already carries a spacer between its count and its chevron, which is where the control goes. Two mechanisms it must not disturb, both of which it breaks by default:
     2. `bindActivation` binds a **bubbling** click and keydown on the header itself, so a child button's activation reaches the button and then the header — one gesture, a create AND a collapse. The child stops what it handled.
     3. `onKeyDown` derives its position with `rows.indexOf(document.activeElement)`, so focus on a non-row yields `-1`: both vertical arrows land on the top of the tree, and the horizontal pair hands `expandOrDescend` something that is not a row. The traversal must resolve a focused control to the row that owns it before indexing — the same closest-row idiom the `focusin` delegate already uses to stamp the roving key.
     4. Hover-only is the failure this task exists to avoid, so the reveal is `:hover` **and** `:focus-within`. Keyboard reach follows the roving model the tree already has rather than a second tab stop: the control is in the tab order only while its own header holds focus. That is the rule the spec delta now states, and it is the part most likely to be got wrong quietly — assert the control is NOT tabbable from another row.
-    5. The header exists only in the multi-repo case, and that is the rule the control inherits rather than restates.
+    5. The header exists only in the multi-repo case, and that is the rule the control inherits rather than restates. The control is offered only where the view was given a way to perform it — the same absent-not-inert rule the toolbar gate follows, and the same defect if the controller never supplies the dep.
     6. Cover: activation opening the form on that repository and not another; that one pointer activation and one Enter and one Space each start exactly one create and leave the expansion alone; Tab reaching the control from its own header and not from another; each of the four arrow keys still moving between rows while the control holds focus; nothing header-shaped offering create in a single-repo tree.
 
 - [ ] 1_3 The state that can create, creates

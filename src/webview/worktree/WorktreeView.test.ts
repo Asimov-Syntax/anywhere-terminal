@@ -2849,3 +2849,113 @@ describe("every action result is placed", () => {
     expect(notice?.textContent ?? "").not.toContain("solo");
   });
 });
+
+describe("create on the repo group header", () => {
+  const REPO_B = "/Users/dev/Projects/cyberk-skills/.git";
+  const headers = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>(".wt-repo")];
+  const actionIn = (row: HTMLElement) => row.querySelector<HTMLButtonElement>(".wt-rowaction");
+
+  function twoRepos(over: Partial<WorktreeViewDeps> = {}) {
+    const created: string[] = [];
+    const { view, host } = mount({ onCreateForRepo: (repoId: string) => created.push(repoId), ...over });
+    view.setData({ tree: twoRepoTree(), presence: singleRepoPresence(NOW) });
+    return { view, host, created };
+  }
+  const rowsIn = (host: HTMLElement) => [
+    ...host.querySelectorAll<HTMLElement>(".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow"),
+  ];
+
+  it("[1_2] offers create on each header, scoped to that repository", () => {
+    const { host, created } = twoRepos();
+    const second = headers(host)[1];
+    if (!second) {
+      throw new Error("expected two group headers");
+    }
+    actionIn(second)?.click();
+
+    expect(created).toEqual([REPO_B]);
+  });
+
+  it("[1_2] a click creates without also collapsing the header it sits on", () => {
+    // `bindActivation` binds a BUBBLING click on the header, so a child button's
+    // activation reaches the button and then the header — one gesture, two acts.
+    const { host, created } = twoRepos();
+    const first = headers(host)[0];
+    if (!first) {
+      throw new Error("expected a group header");
+    }
+    const expanded = first.getAttribute("aria-expanded");
+    actionIn(first)?.click();
+
+    expect(created).toHaveLength(1);
+    expect(headers(host)[0]?.getAttribute("aria-expanded")).toBe(expanded);
+  });
+
+  for (const key of ["Enter", " "]) {
+    it(`[1_2] ${key === " " ? "Space" : key} creates without also collapsing`, () => {
+      const { host, created } = twoRepos();
+      const first = headers(host)[0];
+      const action = first ? actionIn(first) : null;
+      if (!first || !action) {
+        throw new Error("expected a header create control");
+      }
+      const expanded = first.getAttribute("aria-expanded");
+      action.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      // A native button turns Enter/Space into a click; jsdom does not, so the
+      // click is dispatched here too — the header must survive BOTH reaching it.
+      action.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+      expect(created).toHaveLength(1);
+      expect(headers(host)[0]?.getAttribute("aria-expanded")).toBe(expanded);
+    });
+  }
+
+  it("[1_2] is a tab stop only while its own header holds focus", () => {
+    const { host } = twoRepos();
+    const [first, second] = headers(host);
+    if (!first || !second) {
+      throw new Error("expected two group headers");
+    }
+    first.focus();
+    expect(actionIn(first)?.tabIndex).toBe(0);
+    expect(actionIn(second)?.tabIndex).toBe(-1);
+
+    second.focus();
+    expect(actionIn(first)?.tabIndex).toBe(-1);
+    expect(actionIn(second)?.tabIndex).toBe(0);
+  });
+
+  it("[1_2] arrows still move between rows while the control holds focus", () => {
+    // `onKeyDown` indexes `document.activeElement` into the row list, so focus on
+    // a non-row yields -1 and every arrow lands on the top of the tree.
+    const { view, host } = twoRepos();
+    const first = headers(host)[0];
+    const action = first ? actionIn(first) : null;
+    if (!first || !action) {
+      throw new Error("expected a header create control");
+    }
+    const after = rowsIn(host)[1];
+    action.focus();
+    view.element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+
+    expect(document.activeElement).toBe(after);
+  });
+
+  it("[1_2] offers nothing when the view cannot open a create", () => {
+    // Absent, not inert. The headers still render; what must not appear is a
+    // control for an action this view was given no way to perform.
+    const { view, host } = mount();
+    view.setData({ tree: twoRepoTree(), presence: singleRepoPresence(NOW) });
+
+    expect(host.querySelectorAll(".wt-repo").length).toBeGreaterThan(0);
+    expect(host.querySelectorAll(".wt-rowaction")).toHaveLength(0);
+  });
+
+  it("[1_2] a single-repo tree renders no header and no header control", () => {
+    const { view, host } = mount({ onCreateForRepo: () => {} } as Partial<WorktreeViewDeps>);
+    view.setData(populated());
+
+    expect(host.querySelectorAll(".wt-repo")).toHaveLength(0);
+    expect(host.querySelectorAll(".wt-rowaction")).toHaveLength(0);
+  });
+});

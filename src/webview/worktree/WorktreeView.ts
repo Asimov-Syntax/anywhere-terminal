@@ -76,6 +76,18 @@ function idleTailKey(repoId: string): string {
  *  stop, the level stamp and the focus delegate must agree on what a row IS. */
 const NAV_ROWS = ".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow";
 
+/**
+ * One tab stop for the tree, and one more inside the row that owns it: a row's
+ * own action control joins the tab order only while that row is the stop, so
+ * tabbing from a focused row reaches its actions and tabbing again leaves.
+ */
+function setRowTabStop(row: HTMLElement, isStop: boolean): void {
+  row.tabIndex = isStop ? 0 : -1;
+  for (const action of row.querySelectorAll<HTMLElement>(".wt-rowaction")) {
+    action.tabIndex = isStop ? 0 : -1;
+  }
+}
+
 /** setTimeout's delay is a signed 32-bit int; anything larger wraps and fires now. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -111,6 +123,11 @@ export interface WorktreeViewDeps {
   onActivateSubagent?: (subagent: WorktreeSubagentRow, parent: WorktreeAgentRow) => void;
   /** Rebuild this repo's listing after a degraded result. */
   onRetryRepo?: (repoId: string) => void;
+  /**
+   * Open the create form on one repository. Absent → no header offers create:
+   * an action the view cannot perform is absent rather than present and inert.
+   */
+  onCreateForRepo?: (repoId: string) => void;
   /** Drop an action notice the user dismissed. */
   onDismissActionResult?: (result: WorktreeActionResult) => void;
   /** Prune the repo after an indeterminate remove. */
@@ -222,6 +239,13 @@ export class WorktreeView {
       const row = (ev.target as HTMLElement | null)?.closest<HTMLElement>(NAV_ROWS);
       if (row) {
         this.focusedKey = this.keyOf(row);
+        // The stop moves with the focus, whatever brought it here. A row's action
+        // control is only tabbable while its row holds the stop, so a pointer press
+        // that skipped `focusRow` would otherwise leave the action unreachable by
+        // the Tab that follows it.
+        for (const other of this.navRows()) {
+          setRowTabStop(other, other === row);
+        }
       }
     });
     // Delegated, because render() replaces every row: rows carry `data-tip` and
@@ -952,7 +976,13 @@ export class WorktreeView {
     const collapsed = multiRepo && this.collapsed.has(repo.repoId);
     if (multiRepo) {
       this.element.appendChild(
-        renderRepoHeader(repo, visible.length, collapsed, () => this.toggleCollapsed(repo.repoId)),
+        renderRepoHeader(
+          repo,
+          visible.length,
+          collapsed,
+          () => this.toggleCollapsed(repo.repoId),
+          this.deps.onCreateForRepo ? () => this.deps.onCreateForRepo?.(repo.repoId) : undefined,
+        ),
       );
     }
     if (collapsed) {
@@ -1298,7 +1328,7 @@ export class WorktreeView {
       this.focusedKey = focused ? this.keyOf(focused) : null;
     }
     for (const row of rows) {
-      row.tabIndex = row === focused ? 0 : -1;
+      setRowTabStop(row, row === focused);
     }
   }
 
@@ -1367,7 +1397,7 @@ export class WorktreeView {
       return;
     }
     for (const other of this.navRows()) {
-      other.tabIndex = other === row ? 0 : -1;
+      setRowTabStop(other, other === row);
     }
     this.focusedKey = this.keyOf(row);
     row.focus();
@@ -1378,7 +1408,12 @@ export class WorktreeView {
     if (rows.length === 0) {
       return;
     }
-    const active = document.activeElement as HTMLElement | null;
+    // A row's action control can hold focus, and it is not a row. Resolving it
+    // to its owner first is what keeps every arrow working from there: indexing
+    // the control itself yields -1, which sends both vertical arrows to the top
+    // of the tree and hands the horizontal pair something that is not a row.
+    const target = document.activeElement as HTMLElement | null;
+    const active = target?.closest<HTMLElement>(NAV_ROWS) ?? null;
     const index = active ? rows.indexOf(active) : -1;
     switch (ev.key) {
       case "ArrowDown":
