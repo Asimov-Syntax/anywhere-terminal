@@ -412,45 +412,20 @@ describe("TerminalEditorProvider — the workbench rollout flag", () => {
     __messageHandlers: Array<(msg: unknown) => void>;
   }
 
-  it("carries the flag on init, exactly as the sidebar surface does", async () => {
-    // This surface mounts the worktree host too. A flag that reached only the
-    // sidebar left the editor silently inert with the setting on (round-1 B3).
-    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
+  it("carries no flag on init, and a stale one in settings changes nothing", async () => {
+    // Same retirement as the sidebar: nothing reads the key, so a settings.json
+    // that still holds it reaches neither init nor a listener.
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": false });
     const { posts, sm } = await readyPanel();
 
     const init = posts.find((m) => m.type === "init");
     expect(init).toBeDefined();
-    expect(init?.worktreeWorkbench).toBe(true);
-    sm.dispose();
-  });
-
-  it("treats every value that is not exactly true as off", async () => {
-    for (const stored of [undefined, "true", "false", 1, 0, {}, []]) {
-      __setConfigValues({ "anywhereTerminal.worktree.workbench": stored });
-      const { posts, sm } = await readyPanel();
-      const init = posts.find((m) => m.type === "init");
-      expect(init?.worktreeWorkbench, `stored: ${JSON.stringify(stored)}`).toBe(false);
-      sm.dispose();
-    }
-  });
-
-  it("re-sends the flag after init, closing the same construction race the sidebar closes", async () => {
-    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
-    const { posts, sm } = await readyPanel();
-
-    expect(posts.filter((m) => m.type === "worktreeWorkbench")).toEqual([{ type: "worktreeWorkbench", enabled: true }]);
-    sm.dispose();
-  });
-
-  it("reaches an open panel when the setting moves, without a reload", async () => {
-    __setConfigValues({ "anywhereTerminal.worktree.workbench": false });
-    const { posts, sm } = await readyPanel();
+    expect(init).not.toHaveProperty("worktreeWorkbench");
     posts.length = 0;
 
-    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
     __fireConfigChange(["anywhereTerminal.worktree.workbench"]);
 
-    expect(posts.filter((m) => m.type === "worktreeWorkbench")).toEqual([{ type: "worktreeWorkbench", enabled: true }]);
+    expect(posts.filter((m) => m.type === "worktreeWorkbench")).toEqual([]);
     sm.dispose();
   });
 });

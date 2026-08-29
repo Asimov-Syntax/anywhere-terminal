@@ -113,11 +113,6 @@
           "default": ".claude/worktrees",
           "description": "Where new worktrees are created. A relative path is resolved against the repository's main worktree. Leave unset to use the layout this repository's existing worktrees already follow, falling back to .claude/worktrees when there is none."
         },
-        "anywhereTerminal.worktree.workbench": {
-          "type": "boolean",
-          "default": false,
-          "description": "Preview the worktree workbench: selecting a worktree scopes that surface's tab bar to the panes running inside it. Off while the composition is still being built — turning it on opts into an incomplete layout."
-        },
         "anywhereTerminal.cursorAgent.hooks.enabled": {
           "type": "boolean",
           "default": false,

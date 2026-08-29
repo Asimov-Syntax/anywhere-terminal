@@ -47,7 +47,7 @@
     2. Delete the OFF fixture value from `src/webview/messaging/MessageRouter.test.ts`.
     3. Grep `src/webview/` for the retired names and clear whatever is left.
 
-- [ ] 2_2 Retire the setting
+- [x] 2_2 Retire the setting — verified: pnpm exec vitest run 'src/providers/TerminalViewProvider.worktree.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#{a-setting-the-panel-no-longer-reads-decides-nothing} <!-- design.md D1, D6 -->
   - **Acceptance**:
@@ -58,7 +58,8 @@
     2. In `src/settings/SettingsReader.ts` delete `readWorktreeWorkbench` and `affectsWorktreeWorkbench`.
     3. In `src/providers/TerminalViewProvider.ts` and `src/providers/TerminalEditorProvider.ts` delete the two imports, the change listener, the post-init resend, and the init field on all three open paths each.
     4. In `src/types/messages.ts` delete the init field, the live-change message type, and its membership in the `ExtensionToWebviewMessage` union.
-    5. Delete the rollout cases in `src/providers/TerminalViewProvider.worktree.test.ts` and `src/providers/TerminalEditorProvider.test.ts`, including the non-boolean coverage of the retired reader (design.md D6), and add one case per provider proving a configuration that still holds the key changes nothing.
+    5. Delete the OFF fixture value from `src/webview/messaging/MessageRouter.test.ts`, which fills the required init field until step 4 removes it.
+    6. Delete the rollout cases in `src/providers/TerminalViewProvider.worktree.test.ts` and `src/providers/TerminalEditorProvider.test.ts`, including the non-boolean coverage of the retired reader (design.md D6), and add one case per provider proving a configuration that still holds the key changes nothing.
 
 - [ ] 2_3 Stop describing a setting nothing reads
   - **Deps**: 2_2
