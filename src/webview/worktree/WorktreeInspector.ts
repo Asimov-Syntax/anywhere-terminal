@@ -15,6 +15,7 @@
 import type { ContextMenuItem } from "../shared/contextMenuShell";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
 import { worktreeActionItems } from "./worktreeActionItems";
+import { activationFor } from "./worktreeActivation";
 import { branchLabel, presentedActivity } from "./worktreeFormat";
 import { worktreeScopeSignature } from "./worktreeRenderSignature";
 import type { RosterRequests } from "./worktreeRosterRequests";
@@ -50,8 +51,33 @@ export interface WorktreeInspectorDeps {
   now?: () => number;
 }
 
-/** The `data-focus` value of the control focus should return to after a redraw. */
-const FOCUS_KEY = "data-focus";
+/**
+ * Everything inside the drawer that can hold focus across a redraw.
+ *
+ * The rows carry their own identity already — `data-row-id` on an agent row,
+ * `data-sub-key` on a delegation — and the drawer makes both focusable, so a
+ * scheme that knew only about its own `data-focus` controls left every row it
+ * drew unrestorable (.reviews/round-1.md B1).
+ */
+const FOCUSABLE = "[data-focus],[data-row-id],[data-sub-key]";
+
+/**
+ * One namespaced key per focusable thing. Namespaced because the three sources
+ * are different vocabularies: an action label and a row id that happened to
+ * match would otherwise be the same key.
+ */
+function focusKeyOf(el: HTMLElement): string | null {
+  const own = el.dataset.focus;
+  if (own !== undefined) {
+    return `act\u0000${own}`;
+  }
+  const sub = el.dataset.subKey;
+  if (sub !== undefined) {
+    return `sub\u0000${sub}`;
+  }
+  const row = el.dataset.rowId;
+  return row === undefined ? null : `row\u0000${row}`;
+}
 
 export class WorktreeInspector {
   readonly element: HTMLElement;
@@ -86,11 +112,6 @@ export class WorktreeInspector {
     return this.worktreeId !== null;
   }
 
-  /** The worktree the drawer is describing, or `null`. */
-  openOn(): string | null {
-    return this.worktreeId;
-  }
-
   open(worktreeId: string): void {
     // Opening on the worktree already shown is a no-op by design; every path
     // that empties the DOM — `close`, and an envelope without this worktree —
@@ -110,6 +131,19 @@ export class WorktreeInspector {
     this.element.hidden = true;
     this.element.replaceChildren();
     this.deps.onClosed?.(was, focusWasInside);
+  }
+
+  /**
+   * Redraw on the next `setData`/`refresh` even if the data is identical.
+   *
+   * The guard is over the worktree and its rows, which is everything the drawer
+   * DERIVES its contents from — except the action capabilities, which live in a
+   * record the host mutates in place. A launch target arriving is invisible to
+   * every field in the key, so the drawer went on offering the actions it had
+   * when it opened (.reviews/round-1.md B3).
+   */
+  invalidate(): void {
+    this.signature = null;
   }
 
   /** A new envelope. Redraws only if what this drawer draws actually moved. */
@@ -175,9 +209,10 @@ export class WorktreeInspector {
     // `replaceChildren` below detaches whatever holds focus, and focus falls to
     // <body> — so a poll would throw a keyboard user out of the drawer mid-use.
     // Restored by key, the drawer's analogue of the tree's row key.
-    const restoreTo = this.element.contains(document.activeElement)
-      ? ((document.activeElement as HTMLElement | null)?.closest(`[${FOCUS_KEY}]`)?.getAttribute(FOCUS_KEY) ?? null)
+    const held = this.element.contains(document.activeElement)
+      ? (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(FOCUSABLE)
       : null;
+    const restoreTo = held === null || held === undefined ? null : focusKeyOf(held);
 
     const label = branchLabel(info);
     this.element.setAttribute("aria-label", `${label.text} details`);
@@ -193,8 +228,8 @@ export class WorktreeInspector {
       // Matched by value rather than built into a selector: an action key carries
       // a user-facing label, and there is no need to make a control's name part
       // of a query language to find the control again.
-      for (const el of this.element.querySelectorAll<HTMLElement>(`[${FOCUS_KEY}]`)) {
-        if (el.getAttribute(FOCUS_KEY) === restoreTo) {
+      for (const el of this.element.querySelectorAll<HTMLElement>(FOCUSABLE)) {
+        if (focusKeyOf(el) === restoreTo) {
           el.focus();
           break;
         }
@@ -311,24 +346,25 @@ export class WorktreeInspector {
           },
           {
             onActivate: (target) => {
-              // External rows are never offered focus — there is no pane in this
-              // window to reveal (§ 4). The tree resolves the same way.
-              const activation: WorktreeRowActivation =
-                target.scope === "external" ? "preview" : (this.deps.rowActivation?.() ?? "focus");
-              this.deps.onActivateAgent?.(target, activation);
+              this.deps.onActivateAgent?.(target, activationFor(target, this.deps.rowActivation?.() ?? "focus"));
             },
           },
         ),
       );
-      list.appendChild(
+      // A `list` is not a valid child of a `list`, and a section in any of the
+      // three answerless states lists nothing at all — so the history rides in
+      // its own item, and claims to be a list only when it has rows (round-1 W1).
+      const lists = row.delegations !== undefined && row.delegations.kind === "ok" && row.delegations.rows.length > 0;
+      const item = document.createElement("div");
+      item.setAttribute("role", "listitem");
+      item.appendChild(
         renderSubagentSection(
           row.delegations,
           row,
           (subagent, parent) => this.deps.onActivateSubagent?.(subagent, parent),
           now,
           {
-            role: "list",
-            rowRole: "listitem",
+            ...(lists ? { role: "list", rowRole: "listitem" } : {}),
             focusable: true,
             // Nothing will ever be asked for this row, so an unread roster here
             // is unreadable rather than pending.
@@ -336,6 +372,7 @@ export class WorktreeInspector {
           },
         ),
       );
+      list.appendChild(item);
     }
     return list;
   }

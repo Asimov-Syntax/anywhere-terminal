@@ -50,8 +50,21 @@ export class RosterRequests {
     // would otherwise re-enter this while it is still iterating what it sent.
     const queued = this.pending;
     this.pending = new Map();
-    for (const row of queued.values()) {
-      send(row);
+    for (const [key, row] of queued) {
+      try {
+        send(row);
+      } catch (err) {
+        // Every key is already in `asked`, so a row dropped here can never be
+        // wanted again and sits on "Reading…" for the session. The rows behind
+        // the failure were never even attempted (.reviews/round-1.md W3).
+        queued.delete(key);
+        for (const [pendingKey, pendingRow] of queued) {
+          this.pending.set(pendingKey, pendingRow);
+        }
+        this.asked.delete(key);
+        throw err;
+      }
+      queued.delete(key);
     }
   }
 

@@ -153,13 +153,12 @@ export function worktreeScopeSignature(
   degraded: readonly PresenceDegradation[],
   now: number,
 ): string {
-  return [
-    worktreeFields(info),
-    rows.map((r) => agentRowFields(r, degraded, now)).join(ROW_SEP),
-    // The drawer presents rows whose state is derived from this list, so a
-    // degradation that changes what a glyph claims has to move the key.
-    degraded.map((d) => [d.source, d.reason, String(d.since)].join(FIELD_SEP)).join(ROW_SEP),
-  ].join(SECTION_SEP);
+  // `degraded` reaches the key only THROUGH `presentedActivity`, which folds in
+  // the sources that actually change a row's glyph. Hashing the raw list as well
+  // moved the guard for a failure in a source no drawn row reads — which is the
+  // whole-tree coupling this scoped signature exists to remove, reintroduced one
+  // field lower down (.reviews/round-1.md B5).
+  return [worktreeFields(info), rows.map((r) => agentRowFields(r, degraded, now)).join(ROW_SEP)].join(SECTION_SEP);
 }
 
 /**

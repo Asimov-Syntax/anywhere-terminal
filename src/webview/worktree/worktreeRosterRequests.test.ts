@@ -92,6 +92,29 @@ describe("RosterRequests", () => {
     expect(drain(reqs)).toEqual([]);
   });
 
+  it("leaves the rows behind a failed send askable", () => {
+    // Every key is written to `asked` by `want`, so a row dropped by a throwing
+    // callback can never be wanted again and sits on "Reading…" for the session
+    // — including the rows that were never even attempted (round-1 W3).
+    const reqs = new RosterRequests();
+    reqs.want(withSession("a"));
+    reqs.want(withSession("b"));
+    reqs.want(withSession("c"));
+    expect(() =>
+      reqs.flush((row) => {
+        if (row.rowId === "a") {
+          throw new Error("host gone");
+        }
+      }),
+    ).toThrow("host gone");
+
+    // b and c were queued and never sent, so they are still owed…
+    expect(drain(reqs)).toEqual(["b", "c"]);
+    // …and a, which failed, can be asked for again.
+    reqs.want(withSession("a"));
+    expect(drain(reqs)).toEqual(["a"]);
+  });
+
   it("survives a send that queues another want", () => {
     // A synchronous answer is what the deferral exists for; it must not lose the
     // request it makes, nor replay the one being sent.

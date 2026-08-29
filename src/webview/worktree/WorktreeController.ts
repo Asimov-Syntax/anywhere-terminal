@@ -453,11 +453,7 @@ export class WorktreeController {
       persistIdleSeeded: (ids) => deps.store.updateState({ worktreeIdleTailSeeded: ids }),
       // The reply is the next tree+presence envelope, carrying the roster on the
       // row itself — there is no response message to correlate here.
-      onRequestSubagents: (row) => {
-        if (row.entryId !== undefined) {
-          this.deps.postMessage({ type: "requestWorktreeSubagents", rowId: row.rowId, entryId: row.entryId });
-        }
-      },
+      onRequestSubagents: (row) => this.requestRoster(row),
       // Ids only — the host resolves them against its own tree and presence, so
       // a path or session the view guessed can never reach an action (D2).
       onActivateAgent: (row, activation) => this.activateAgent(row, activation),
@@ -489,11 +485,7 @@ export class WorktreeController {
       // The view's set, not a second one: the window asks once per row and
       // session, whichever surface wants it first (design.md D6).
       rosters: this.view.rosterRequests(),
-      onRequestSubagents: (row) => {
-        if (row.entryId !== undefined) {
-          this.deps.postMessage({ type: "requestWorktreeSubagents", rowId: row.rowId, entryId: row.entryId });
-        }
-      },
+      onRequestSubagents: (row) => this.requestRoster(row),
       onActivateAgent: (row, activation) => this.activateAgent(row, activation),
       onActivateSubagent: (_subagent, parent) => this.activateSubagentParent(parent),
       rowActivation: () => this.rowActivation,
@@ -869,6 +861,11 @@ export class WorktreeController {
    * offered, rather than offered and refused.
    */
   private syncLaunchActions(): void {
+    // Both directions: the drawer must gain the item when a target arrives and
+    // lose it when the last one goes, and neither moves any field in its guard
+    // (.reviews/round-1.md B3). The tree rebuilds its menu at click time, so it
+    // has never needed this.
+    this.inspector.invalidate();
     if (this.launchAgents.length === 0) {
       delete this.menuActions.launchAgentHere;
       delete this.menuActions.resumeHere;
@@ -1172,6 +1169,13 @@ export class WorktreeController {
     }
     const { worktreeId: _gone, ...rest } = result;
     return { ...rest, orphanedLabel: result.orphanedLabel ?? this.departed.get(worktreeId) ?? worktreeId };
+  }
+
+  /** The reply is the next envelope, carrying the roster on the row itself. */
+  private requestRoster(row: WorktreeAgentRow): void {
+    if (row.entryId !== undefined) {
+      this.deps.postMessage({ type: "requestWorktreeSubagents", rowId: row.rowId, entryId: row.entryId });
+    }
   }
 
   /** Ids only — the host resolves them against its own tree and presence (D2). */

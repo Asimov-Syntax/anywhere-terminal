@@ -386,8 +386,18 @@ describe("[1_3] a signature scoped to one worktree", () => {
     expect(scoped()).not.toBe(scoped(INFO, []));
   });
 
-  it("moves for a degradation that changes what a glyph claims", () => {
-    expect(scoped()).not.toBe(scoped(INFO, ROWS, [{ source: "registry", reason: "unreadable", since: NOW }]));
+  it("moves for a degradation that changes what a drawn row claims", () => {
+    // The fixture row's activity comes from hooks, so a hook failure is what
+    // turns its glyph to `unknown` — and the key has to move with it.
+    expect(scoped()).not.toBe(scoped(INFO, ROWS, [{ source: "hook", reason: "unreadable", since: NOW }]));
+  });
+
+  it("ignores a degradation no row it draws reads", () => {
+    // Round-1 B5: hashing the raw degradation list as well as the rows moved the
+    // guard for a failure in a source no drawn row consults — the whole-tree
+    // coupling this signature exists to remove, one field lower down. Every row
+    // here is hook-backed, so a registry failure changes no glyph in the drawer.
+    expect(scoped()).toBe(scoped(INFO, ROWS, [{ source: "registry", reason: "unreadable", since: NOW }]));
   });
 
   it("still strips decorative frames, so a spinner alone changes nothing", () => {

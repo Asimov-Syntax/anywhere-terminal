@@ -234,6 +234,83 @@ describe("what closes it besides the user", () => {
   });
 });
 
+describe("[3_1] closing when the tree has nothing left to focus", () => {
+  it("stays inside the tree when every row is filtered out", () => {
+    // `focusRow(undefined)` is a no-op, so the no-match state had no fallback at
+    // all and focus fell to `<body>` — the top of the document (round-1 B2).
+    const h = mount();
+    row(PANEL).click();
+    drawer()?.querySelector<HTMLButtonElement>(".wt-idismiss")?.focus();
+    h.controller.setQuery("zzz-matches-nothing");
+    expect(document.querySelectorAll(".wt-row").length).toBe(0);
+
+    dismiss();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(document.querySelector(".wt-tree"));
+  });
+});
+
+describe("[3_1] a capability the guard cannot see", () => {
+  const item = (label: string): HTMLElement | null =>
+    drawer()?.querySelector<HTMLElement>(`.wt-ibtn[data-act="${label}"]`) ?? null;
+
+  it("gains the launch action when the host's answer arrives", () => {
+    // The reply mutates the shared action record in place and moves no field in
+    // the drawer's key, so the drawer went on offering what it opened with
+    // (round-1 B3). The tree rebuilds its menu at click time and never saw this.
+    const h = mount();
+    row(PANEL).click();
+    expect(item("Start an Agent Here…")).toBeNull();
+
+    h.controller.handleLaunchTargets({
+      type: "vaultLaunchTargets",
+      capability: "start",
+      offerId: "offer-1",
+      targets: [{ agent: "claude", displayName: "Claude", permissionChoices: [], canSeedPrompt: true }],
+    });
+    expect(item("Start an Agent Here…")).not.toBeNull();
+  });
+
+  it("withdraws it again when the host reports none", () => {
+    const h = mount();
+    row(PANEL).click();
+    h.controller.handleLaunchTargets({
+      type: "vaultLaunchTargets",
+      capability: "start",
+      offerId: "offer-1",
+      targets: [{ agent: "claude", displayName: "Claude", permissionChoices: [], canSeedPrompt: true }],
+    });
+    expect(item("Start an Agent Here…")).not.toBeNull();
+
+    h.controller.handleLaunchTargets({
+      type: "vaultLaunchTargets",
+      capability: "start",
+      offerId: "offer-2",
+      targets: [],
+    });
+    expect(item("Start an Agent Here…")).toBeNull();
+  });
+});
+
+describe("[3_1] an activation means the same thing on both surfaces", () => {
+  it("focuses a sessionless window row rather than previewing nothing", () => {
+    // The tree forces `focus` for a row with no transcript to preview; the
+    // drawer applied the setting regardless, so the same row worked in one
+    // surface and was a dead click in the other (round-1 B4).
+    const sessionless = agentRow({ rowId: "main-nosession", agent: "claude", paneId: "pane-7" });
+    const h = mount({
+      presence: { scannedAt: NOW, degradedSources: [], rowsByWorktreeId: { [MAIN]: [sessionless] } },
+    });
+    h.controller.setRowActivation("preview");
+    row(MAIN).click();
+
+    const before = h.posts.length;
+    drawer()?.querySelector<HTMLElement>(".wt-arow")?.click();
+    const sent = h.posts.slice(before);
+    expect(sent.map((m) => m.type)).toEqual(["worktreeFocusPane"]);
+  });
+});
+
 describe("the drawer and the tree agree", () => {
   it("sits below the tree in one body, so the tree keeps the room above it", () => {
     const h = mount();

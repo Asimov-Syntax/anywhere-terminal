@@ -92,3 +92,18 @@
     5. Give the inspector an `onClosed` that focuses the worktree row for that id inside the tree when focus was within the drawer, falling back to the tree itself when that row is no longer rendered.
     6. In `src/webview/main.ts` pass `overlayOpen: () => vaultPanel?.isPreviewOpen() === true` to the controller.
     7. Write `src/webview/worktree/WorktreeController.inspector.test.ts` covering: selecting opens the drawer and leaves focus on the row; selecting another replaces the contents; closing keeps the selection and posts no scope message; re-activating the selected row reopens it; Escape closes it; Escape does nothing while `overlayOpen` is true; clearing the selection closes it; a selected worktree leaving the tree closes it; turning the rollout off closes it; the rollout off leaves it mounted but hidden; and the close control returns focus to the row, and to the tree when that row was filtered out.
+
+- [x] 3_1 Fix the accepted round-1 findings — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeInspector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_2
+  - **Refs**: .reviews/round-1.md#{B1, B2, B3, B4, B5, W1, W3, S2, S3} <!-- design.md D2, D5, D6, D7 -->
+  - **Acceptance**:
+    - Outcome: focus survives every drawer redraw and every close, the drawer offers exactly the actions the menu offers, and an activation means the same thing on both surfaces
+    - Verify: unit src/webview/worktree/WorktreeInspector.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeInspector.ts` resolve the redraw focus key from `data-focus`, `data-row-id` and `data-sub-key` rather than `data-focus` alone, so agent and subagent rows are restorable (B1); add `invalidate()` and drop the unused `openOn()` (B3, S3); wrap each delegation history in its own `listitem` and declare the list role only where there are rows (W1).
+    2. Add `src/webview/worktree/worktreeActivation.ts` with the one activation decision — external, then sessionless, then the setting — and call it from both `WorktreeView` and `WorktreeInspector` (B4).
+    3. In `src/webview/worktree/WorktreeView.ts` make the tree container a programmatic fallback stop so a close with no rows drawn cannot land on `<body>` (B2).
+    4. In `src/webview/worktree/worktreeRenderSignature.ts` drop the raw degradation suffix from `worktreeScopeSignature` — the drawer renders no degradation of its own (B5).
+    5. In `src/webview/worktree/worktreeRosterRequests.ts` return unsent rows to `pending` when a send throws (W3).
+    6. In `src/webview/worktree/WorktreeController.ts` invalidate the inspector wherever the launch capability moves (B3) and route both roster callbacks through one method (S2).
+    7. Cover each fix in `src/webview/worktree/WorktreeInspector.test.ts`, `src/webview/worktree/WorktreeController.inspector.test.ts`, `src/webview/worktree/worktreeRosterRequests.test.ts` and `src/webview/worktree/worktreeRenderSignature.test.ts`: a redraw with an agent row and a subagent row focused, a close under a query that matches nothing, both launch-capability transitions, a sessionless window row's activation on both surfaces, a throwing send that leaves the rows behind it askable, and a degradation no drawn row reads.

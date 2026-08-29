@@ -17,6 +17,7 @@ import { openWorktreeCreateDialog, type WorktreeCreateDialogDeps } from "./Workt
 import { openWorktreeLaunchDialog, type WorktreeLaunchRequest } from "./WorktreeLaunchDialog";
 import { openWorktreePruneDialog, type PruneDialogDeps } from "./WorktreePruneDialog";
 import { openWorktreeRemoveDialog, type WorktreeRemoveDialogDeps } from "./WorktreeRemoveDialog";
+import { activationFor as sharedActivationFor } from "./worktreeActivation";
 import {
   agentCountLabel,
   agentRowTitle,
@@ -261,6 +262,11 @@ export class WorktreeView {
     this.element.className = "wt-tree";
     this.element.setAttribute("role", "tree");
     this.element.setAttribute("aria-label", "Worktrees");
+    // A programmatic stop, never a Tab stop: the roving row owns Tab. It exists
+    // so a close with nothing drawn — every row filtered out by a query — has
+    // somewhere inside the tree to land instead of `<body>`, which is the top of
+    // the whole document (.reviews/round-1.md B2).
+    this.element.tabIndex = -1;
     this.element.addEventListener("keydown", (ev) => this.onKeyDown(ev));
     // Focus retention was written only where the KEYBOARD moves focus, so a pointer
     // press — which focuses the row it lands on without `onKeyDown` running — left the
@@ -415,6 +421,10 @@ export class WorktreeView {
       rows.find((r) => r.dataset.worktreeId === worktreeId) ??
       rows.find((r) => this.keyOf(r) === this.focusedKey) ??
       rows[0];
+    if (target === undefined) {
+      this.element.focus();
+      return;
+    }
     this.focusRow(target);
   }
 
@@ -669,21 +679,9 @@ export class WorktreeView {
     this.repaint();
   }
 
-  /**
-   * What this row's activation does. The setting is consulted for window rows
-   * only: an external row has no pane in this window to focus, so `preview` is
-   * not the setting being overridden — the setting is never read (design.md D5).
-   */
+  /** What this row's activation does — the one decision, shared with the drawer. */
   private activationFor(row: WorktreeAgentRow): WorktreeRowActivation {
-    if (row.scope === "external") {
-      return "preview";
-    }
-    // A window row with no vault entry has no preview to open, so `preview`
-    // would be a dead click; its pane is the one thing it always has (B3).
-    if (row.entryId === undefined) {
-      return "focus";
-    }
-    return this.deps.rowActivation?.() ?? "focus";
+    return sharedActivationFor(row, this.deps.rowActivation?.() ?? "focus");
   }
 
   /**

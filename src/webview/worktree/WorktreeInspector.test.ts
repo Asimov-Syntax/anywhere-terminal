@@ -439,6 +439,135 @@ describe("dismissal", () => {
   });
 });
 
+describe("[3_1] focus survives a redraw of any row kind", () => {
+  const roster = {
+    kind: "ok" as const,
+    rows: [{ name: "reviewer", status: "completed" as const, live: false }],
+  };
+
+  function openedOn(title: string): Mounted {
+    const m = mount();
+    m.inspector.setData(
+      treeWith(worktree({ id: WT, branch: "feat/x" })),
+      presenceWith({
+        [WT]: [agentRow({ rowId: "a", agent: "claude", entryId: "claude:s1", title, delegations: roster })],
+      }),
+    );
+    m.inspector.open(WT);
+    return m;
+  }
+
+  const redrawWith = (m: Mounted, title: string): void =>
+    m.inspector.setData(
+      treeWith(worktree({ id: WT, branch: "feat/x" })),
+      presenceWith({
+        [WT]: [agentRow({ rowId: "a", agent: "claude", entryId: "claude:s1", title, delegations: roster })],
+      }),
+    );
+
+  it("keeps a focused agent row focused", () => {
+    // The rows are tab stops the drawer created; restoring only its own buttons
+    // left every one of them unrestorable (round-1 B1).
+    const m = openedOn("Building");
+    m.inspector.element.querySelector<HTMLElement>(".wt-arow")?.focus();
+    redrawWith(m, "Building something else");
+    expect(document.activeElement).toBe(m.inspector.element.querySelector(".wt-arow"));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("keeps a focused delegation row focused", () => {
+    const m = openedOn("Building");
+    m.inspector.element.querySelector<HTMLElement>(".wt-srow")?.focus();
+    redrawWith(m, "Building something else");
+    expect(document.activeElement).toBe(m.inspector.element.querySelector(".wt-srow"));
+  });
+
+  it("does not confuse an action key with a row of the same name", () => {
+    // Three vocabularies share one restore pass, so the keys are namespaced.
+    const m = openedOn("Building");
+    const btn = button(m.inspector.element, "Copy Path");
+    btn?.focus();
+    redrawWith(m, "Building something else");
+    expect(document.activeElement).toBe(button(m.inspector.element, "Copy Path"));
+  });
+});
+
+describe("[3_1] what the guard cannot see", () => {
+  it("redraws its actions when told the capabilities moved", () => {
+    // A launch target arriving mutates the shared action record and moves no
+    // field in the key, so the drawer went on offering what it had (round-1 B3).
+    const calls: string[] = [];
+    const actions: WorktreeMenuActions = { copyWorktreePath: () => calls.push("copy") };
+    const inspector = WorktreeInspector.mount({ actions, rosters: new RosterRequests(), now: () => NOW });
+    document.body.appendChild(inspector.element);
+    inspector.setData(treeWith(worktree({ id: WT, branch: "feat/x" })), null);
+    inspector.open(WT);
+    expect(labels(inspector.element)).not.toContain("Start an Agent Here…");
+
+    actions.launchAgentHere = () => calls.push("launch");
+    inspector.setData(treeWith(worktree({ id: WT, branch: "feat/x" })), null);
+    expect(labels(inspector.element)).not.toContain("Start an Agent Here…");
+
+    inspector.invalidate();
+    inspector.setData(treeWith(worktree({ id: WT, branch: "feat/x" })), null);
+    expect(labels(inspector.element)).toContain("Start an Agent Here…");
+  });
+
+  it("withdraws an action the same way when the capability goes", () => {
+    const actions: WorktreeMenuActions = { launchAgentHere: () => {} };
+    const inspector = WorktreeInspector.mount({ actions, rosters: new RosterRequests(), now: () => NOW });
+    document.body.appendChild(inspector.element);
+    inspector.setData(treeWith(worktree({ id: WT, branch: "feat/x" })), null);
+    inspector.open(WT);
+    expect(labels(inspector.element)).toContain("Start an Agent Here…");
+
+    delete actions.launchAgentHere;
+    inspector.invalidate();
+    inspector.setData(treeWith(worktree({ id: WT, branch: "feat/x" })), null);
+    expect(labels(inspector.element)).toEqual([]);
+  });
+});
+
+describe("[3_1] a delegation history is a valid part of the list", () => {
+  const listOf = (delegations: DelegationRoster | undefined): HTMLElement => {
+    const m = mount();
+    m.inspector.setData(
+      treeWith(worktree({ id: WT, branch: "feat/x" })),
+      presenceWith({ [WT]: [agentRow({ rowId: "a", entryId: "claude:s1", ...(delegations ? { delegations } : {}) })] }),
+    );
+    m.inspector.open(WT);
+    const list = m.inspector.element.querySelector<HTMLElement>(".wt-iagents");
+    if (list === null) {
+      throw new Error("no agent list");
+    }
+    return list;
+  };
+
+  it("puts every direct child of the list in a list item", () => {
+    // A `list` is not a valid child of a `list` (round-1 W1).
+    const list = listOf({ kind: "ok", rows: [{ name: "reviewer", status: "completed", live: false }] });
+    expect(list.getAttribute("role")).toBe("list");
+    const roles = Array.from(list.children).map((c) => c.getAttribute("role"));
+    expect(roles.every((r) => r === "listitem")).toBe(true);
+  });
+
+  it("claims to be a list only where there is something to list", () => {
+    // Empty, unread and failed sections carry a note, not rows.
+    for (const roster of [
+      undefined,
+      { kind: "ok" as const, rows: [] },
+      { kind: "failed" as const, reason: "EACCES" },
+    ]) {
+      expect(listOf(roster).querySelector(".wt-hist")?.getAttribute("role")).not.toBe("list");
+    }
+    expect(
+      listOf({ kind: "ok", rows: [{ name: "reviewer", status: "completed", live: false }] })
+        .querySelector(".wt-hist")
+        ?.getAttribute("role"),
+    ).toBe("list");
+  });
+});
+
 describe("the cap that keeps the tree scannable", () => {
   it("bounds the drawer and keeps the tree scrolling, per the stylesheet", () => {
     // jsdom applies no stylesheet, so the layout contract is read from source —
