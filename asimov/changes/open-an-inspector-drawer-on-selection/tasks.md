@@ -27,7 +27,7 @@
     4. Add `opts` to `renderSubagentSection` per design.md § Interfaces: `role`, `rowRole`, `focusable`, and `noSession` — the last drawing the explicit "no session to read" state for a row that can never have a roster, instead of the indefinite "Reading…".
     5. Add tests to `src/webview/worktree/worktreeTreeView.test.ts` covering: every default is unchanged; `role: "listitem"` applied; `focusable` raises the tab stop on agent and subagent rows; `disclosure: false` leaves no `aria-expanded` and no clickable chevron; `showModel` prints the model inside the title cell and adds no root child; `showModel` with no model prints no element and no placeholder; `noSession` draws its own state.
 
-- [ ] 1_3 Key the model into the render signature and expose a scoped one
+- [x] 1_3 Key the model into the render signature and expose a scoped one — verified: pnpm exec vitest run 'src/webview/worktree/worktreeRenderSignature.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#a-push-that-changes-nothing-changes-no-pixel-of-the-inspector <!-- design.md D7, D8 -->
   - **Acceptance**:

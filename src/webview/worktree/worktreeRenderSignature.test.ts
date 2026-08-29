@@ -3,8 +3,8 @@
 // rate and destroys scroll position and expansion state.
 
 import { describe, expect, it } from "vitest";
-import { agentRow, singleRepoPresence, singleRepoTree } from "./worktreeFixtures";
-import { worktreeSignature } from "./worktreeRenderSignature";
+import { agentRow, singleRepoPresence, singleRepoTree, worktree } from "./worktreeFixtures";
+import { worktreeScopeSignature, worktreeSignature } from "./worktreeRenderSignature";
 import type {
   PresenceDegradation,
   WorktreeAgentRow,
@@ -335,5 +335,99 @@ describe("roster states are distinguishable in the signature", () => {
     // which is the exact cost this guard exists to avoid.
     const moved: WorktreeTree = { ...FULL_TREE, repos: [{ ...FULL_REPO, generation: FULL_REPO.generation + 1 }] };
     expect(worktreeSignature(moved, null)).toBe(worktreeSignature(FULL_TREE, null));
+  });
+});
+
+describe("[1_3] the model is keyed again", () => {
+  it("moves the signature when only the model changed", () => {
+    // It left the key when it left the list row (WT-009.2). The inspector draws
+    // it, so a guard blind to it would hold a stale model on screen for ever.
+    const base = agentRow({ rowId: "a", agent: "claude", model: "claude-opus-5" });
+    expect(signatureFor([base])).not.toBe(signatureFor([{ ...base, model: "claude-sonnet-5" }]));
+  });
+
+  it("tells an unknown model apart from a named one", () => {
+    const bare = agentRow({ rowId: "a", agent: "claude" });
+    expect(signatureFor([bare])).not.toBe(signatureFor([{ ...bare, model: "claude-opus-5" }]));
+  });
+
+  it("does not let an empty model hash like a real one", () => {
+    // An absent and an empty model both render nothing, so they may hash alike;
+    // what must not happen is either hashing like a row that names one.
+    const bare = agentRow({ rowId: "a", agent: "claude" });
+    const named = signatureFor([{ ...bare, model: "x" }]);
+    expect(signatureFor([bare])).not.toBe(named);
+    expect(signatureFor([{ ...bare, model: "" }])).not.toBe(named);
+  });
+});
+
+describe("[1_3] a signature scoped to one worktree", () => {
+  const INFO = worktree({ id: "/repo/wt", branch: "feat/x" });
+  const ROWS = [agentRow({ rowId: "a", agent: "claude", title: "Building", model: "claude-opus-5" })];
+  const scoped = (
+    info: WorktreeInfo = INFO,
+    rows: readonly WorktreeAgentRow[] = ROWS,
+    degraded: readonly PresenceDegradation[] = [],
+  ): string => worktreeScopeSignature(info, rows, degraded, NOW);
+
+  it("moves for the worktree's own fields", () => {
+    expect(scoped()).not.toBe(scoped({ ...INFO, branch: "feat/y" }));
+    expect(scoped()).not.toBe(scoped({ ...INFO, locked: true }));
+    expect(scoped()).not.toBe(scoped({ ...INFO, missing: true }));
+  });
+
+  it("moves for its agents' fields, including the model", () => {
+    const first = ROWS[0];
+    if (first === undefined) {
+      throw new Error("fixture lost its row");
+    }
+    expect(scoped()).not.toBe(scoped(INFO, [{ ...first, model: "claude-sonnet-5" }]));
+    expect(scoped()).not.toBe(scoped(INFO, [{ ...first, title: "Something else" }]));
+    expect(scoped()).not.toBe(scoped(INFO, []));
+  });
+
+  it("moves for a degradation that changes what a glyph claims", () => {
+    expect(scoped()).not.toBe(scoped(INFO, ROWS, [{ source: "registry", reason: "unreadable", since: NOW }]));
+  });
+
+  it("still strips decorative frames, so a spinner alone changes nothing", () => {
+    const first = ROWS[0];
+    if (first === undefined) {
+      throw new Error("fixture lost its row");
+    }
+    expect(scoped(INFO, [{ ...first, title: "⠋ Building" }])).toBe(scoped());
+  });
+
+  it("ignores everything outside the worktree it is about", () => {
+    // This is the whole reason it exists: guarding the drawer on the full-tree
+    // signature would rebuild it when an unrelated repository's listing failed,
+    // when a repo label moved, or when git went away — none of which it draws.
+    // Both sides are scoped OUT of a real tree, so the claim is that one
+    // worktree hashes alike in a healthy tree and a sick one.
+    const healthy = singleRepoTree();
+    const sick: WorktreeTree = {
+      ...healthy,
+      gitAvailable: false,
+      unreadable: { count: 3, reasons: ["EACCES"] },
+      repos: healthy.repos.map((r: WorktreeRepo) => ({ ...r, label: "renamed", degraded: "listing failed" })),
+    };
+    const presence: WorktreePresence = { scannedAt: NOW, degradedSources: [], rowsByWorktreeId: { "/repo": ROWS } };
+    // The full signature DOES move, which is what proves those fields are real
+    // inputs and the scoped one holding still is a decision, not an inert test.
+    expect(worktreeSignature(healthy, presence, NOW)).not.toBe(worktreeSignature(sick, presence, NOW));
+
+    const pick = (t: WorktreeTree): WorktreeInfo => {
+      const found = t.repos[0]?.worktrees[0];
+      if (found === undefined) {
+        throw new Error("fixture has no worktree to scope to");
+      }
+      return found;
+    };
+    expect(scoped(pick(healthy))).toBe(scoped(pick(sick)));
+  });
+
+  it("ignores another worktree's rows entirely", () => {
+    const other = [agentRow({ rowId: "z", agent: "codex", title: "Elsewhere" })];
+    expect(scoped()).not.toBe(scoped(INFO, other));
   });
 });

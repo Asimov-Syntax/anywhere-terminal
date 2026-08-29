@@ -11,7 +11,14 @@
 // order-sensitive: the tree renders in array order, so a reorder is a change.
 
 import { presentedActivity, stripDecorations } from "./worktreeFormat";
-import type { DelegationRoster, WorktreePresence, WorktreeTree } from "./worktreeViewTypes";
+import type {
+  DelegationRoster,
+  PresenceDegradation,
+  WorktreeAgentRow,
+  WorktreeInfo,
+  WorktreePresence,
+  WorktreeTree,
+} from "./worktreeViewTypes";
 
 // Low control chars that cannot appear in branches, paths, ids, or titles, so
 // distinct field layouts can't collide into one signature.
@@ -34,24 +41,7 @@ export function worktreeSignature(
         repo.label,
         repo.mainPath,
         repo.degraded ?? "",
-        repo.worktrees
-          .map((w) =>
-            [
-              w.id,
-              w.displayPath,
-              w.kind,
-              w.branch ?? "",
-              w.head ?? "",
-              w.bare ? "1" : "0",
-              w.detached ? "1" : "0",
-              w.locked ? "1" : "0",
-              w.lockReason ?? "",
-              w.prunable ? "1" : "0",
-              w.missing ? "1" : "0",
-              w.inWorkspace ? "1" : "0",
-            ].join(FIELD_SEP),
-          )
-          .join(ROW_SEP),
+        repo.worktrees.map(worktreeFields).join(ROW_SEP),
       ].join(SECTION_SEP),
     )
     .join(ROW_SEP);
@@ -75,47 +65,7 @@ export function worktreeSignature(
     .sort()
     .map((worktreeId) => {
       const list = presence.rowsByWorktreeId[worktreeId] ?? [];
-      return [
-        worktreeId,
-        list
-          .map((r) =>
-            [
-              r.rowId,
-              r.scope,
-              r.paneId ?? "",
-              // Keyed though nothing renders them: a row's listeners close over
-              // the row object, so a guarded-out render hands the old routing
-              // value back at click time (review round 1, B1).
-              r.viewId ?? "",
-              // Stripped, so a spinner tick alone leaves the signature unchanged.
-              stripDecorations(r.title),
-              // Raw: a preview is message text, so its leading `- ` is content and
-              // must move the signature like any other change (D4).
-              r.preview ?? "",
-              r.agent ?? "",
-              r.agentSource,
-              r.activity,
-              r.activitySource,
-              // The PRESENTED state, not just the wire one: confidence is derived
-              // from the clock, so a row that crosses the confirmation ceiling
-              // changes what it draws while every field above stays identical.
-              // Without this the guard would hold the old glyph on screen forever.
-              presentedActivity(r, presence.degradedSources, now),
-              // A prompt that changed while the activity did not is still a
-              // different question in front of the user.
-              r.interactivePrompt ?? "",
-              r.entryId ?? "",
-              // Every clock `ageTimestamp` can fall back to, or a row whose only
-              // moving timestamp is a fallback renders a frozen age.
-              String(r.stateStartedAt ?? ""),
-              String(r.finishedAt ?? ""),
-              String(r.lastActivityAt ?? ""),
-              String(r.startedAt ?? ""),
-              delegationSignature(r.delegations),
-            ].join(FIELD_SEP),
-          )
-          .join(ROW_SEP),
-      ].join(SECTION_SEP);
+      return [worktreeId, list.map((r) => agentRowFields(r, presence.degradedSources, now)).join(ROW_SEP)].join(SECTION_SEP);
     })
     .join(ROW_SEP);
 
@@ -124,6 +74,90 @@ export function worktreeSignature(
     .join(ROW_SEP);
 
   return [treePart, rows, degraded].join(SECTION_SEP);
+}
+
+/** One worktree's own fields, in the order the tree renders them. */
+function worktreeFields(w: WorktreeInfo): string {
+  return [
+    w.id,
+    w.displayPath,
+    w.kind,
+    w.branch ?? "",
+    w.head ?? "",
+    w.bare ? "1" : "0",
+    w.detached ? "1" : "0",
+    w.locked ? "1" : "0",
+    w.lockReason ?? "",
+    w.prunable ? "1" : "0",
+    w.missing ? "1" : "0",
+    w.inWorkspace ? "1" : "0",
+  ].join(FIELD_SEP);
+}
+
+/** One agent row's fields. `degraded` and `now` only reach `presentedActivity`. */
+function agentRowFields(r: WorktreeAgentRow, degraded: readonly PresenceDegradation[], now: number): string {
+  return [
+    r.rowId,
+    r.scope,
+    r.paneId ?? "",
+    // Keyed though nothing renders them: a row's listeners close over
+    // the row object, so a guarded-out render hands the old routing
+    // value back at click time (review round 1, B1).
+    r.viewId ?? "",
+    // Stripped, so a spinner tick alone leaves the signature unchanged.
+    stripDecorations(r.title),
+    // Raw: a preview is message text, so its leading `- ` is content and
+    // must move the signature like any other change (D4).
+    r.preview ?? "",
+    r.agent ?? "",
+    r.agentSource,
+    r.activity,
+    r.activitySource,
+    // Back in the key because the inspector draws it. It left when the model
+    // left the list row (WT-009.2), which made a model change invisible to the
+    // guard — and the drawer is a surface that would then show a stale one.
+    r.model ?? "",
+    // The PRESENTED state, not just the wire one: confidence is derived
+    // from the clock, so a row that crosses the confirmation ceiling
+    // changes what it draws while every field above stays identical.
+    // Without this the guard would hold the old glyph on screen forever.
+    presentedActivity(r, degraded, now),
+    // A prompt that changed while the activity did not is still a
+    // different question in front of the user.
+    r.interactivePrompt ?? "",
+    r.entryId ?? "",
+    // Every clock `ageTimestamp` can fall back to, or a row whose only
+    // moving timestamp is a fallback renders a frozen age.
+    String(r.stateStartedAt ?? ""),
+    String(r.finishedAt ?? ""),
+    String(r.lastActivityAt ?? ""),
+    String(r.startedAt ?? ""),
+    delegationSignature(r.delegations),
+  ].join(FIELD_SEP);
+}
+
+/**
+ * The signature over ONE worktree and the rows drawn for it.
+ *
+ * The inspector draws one worktree, so guarding it on `worktreeSignature` would
+ * rebuild it whenever an unrelated repository's listing failed, its label moved,
+ * or git became unavailable — none of which the drawer renders. It shares the
+ * field encoders above rather than defining a second vocabulary, so a field added
+ * to a row cannot reach one surface's guard and miss the other's.
+ */
+export function worktreeScopeSignature(
+  info: WorktreeInfo,
+  rows: readonly WorktreeAgentRow[],
+  degraded: readonly PresenceDegradation[],
+  now: number,
+): string {
+  return [
+    worktreeFields(info),
+    rows.map((r) => agentRowFields(r, degraded, now)).join(ROW_SEP),
+    // The drawer presents rows whose state is derived from this list, so a
+    // degradation that changes what a glyph claims has to move the key.
+    degraded.map((d) => [d.source, d.reason, String(d.since)].join(FIELD_SEP)).join(ROW_SEP),
+  ].join(SECTION_SEP);
 }
 
 /**
