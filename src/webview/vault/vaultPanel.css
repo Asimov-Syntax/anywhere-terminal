@@ -2407,3 +2407,24 @@ body:has(#tab-bar.visible) .vault-preview--max {
 .vault-empty-action:hover {
   background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
 }
+
+/* ── Empty scope region ────────────────────────────────────────────────── */
+/* Shown in place of the terminal when the selected worktree holds no pane. It
+   fills that space so the surface does not read as a blank panel, and carries
+   no error colour: an empty worktree is a normal selection. */
+.empty-scope {
+  height: 100%;
+  justify-content: center;
+}
+/* The stacked offers are one group; only the first needs the gap above it. */
+.empty-scope .vault-empty-action + .vault-empty-action {
+  margin-top: 0;
+}
+/* Last is the way out rather than something to do here, so it reads quieter. */
+.empty-scope .vault-empty-action:last-child {
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+.empty-scope .vault-empty-action:last-child:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}

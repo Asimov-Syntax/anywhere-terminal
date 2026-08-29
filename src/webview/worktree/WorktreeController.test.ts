@@ -910,6 +910,30 @@ describe("the launch entry paths WT-005.3 supplies", () => {
     expect(menuActions(h).launchAgentHere).toBeUndefined();
   });
 
+  it("offers a launch to the empty-scope region only when one can happen", () => {
+    // The region's offer and the menu's ride the same host answer, so a region
+    // can never show an offer the menu has already withdrawn.
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    expect(h.controller.launchOfferFor(firstWorktree().id)).toBeUndefined();
+    h.controller.handleLaunchTargets(STARTABLE);
+    expect(h.controller.launchOfferFor(firstWorktree().id)).toBeInstanceOf(Function);
+    h.controller.handleLaunchTargets({ ...STARTABLE, targets: [] });
+    expect(h.controller.launchOfferFor(firstWorktree().id)).toBeUndefined();
+  });
+
+  it("offers no launch for a worktree the tree does not carry", () => {
+    expect(launchable().controller.launchOfferFor("/wt/not-in-the-tree")).toBeUndefined();
+  });
+
+  it("opens the dialog for the worktree the region names, not the last menu target", () => {
+    const h = launchable();
+    const info = firstWorktree();
+    h.controller.launchOfferFor(info.id)?.();
+    const subject = document.querySelector(".wt-dialog-subject");
+    expect(subject?.textContent).toBe(info.branch ?? info.displayPath);
+  });
+
   it("posts what the dialog collected against the worktree the menu was opened on", () => {
     const h = launchable();
     const info = firstWorktree();

@@ -600,6 +600,31 @@ export class WorktreeController {
     this.view.openLaunchDialog(info.branch ?? info.displayPath, this.launchAgents);
   }
 
+  /**
+   * The launch offer for one worktree, or `undefined` when there is none to make.
+   *
+   * Gate and action are one value on purpose: a caller that has to ask whether
+   * launching is possible before offering it can render the offer inert, which is
+   * the one thing `syncLaunchActions` already refuses to do (design.md D4).
+   */
+  launchOfferFor(worktreeId: string): (() => void) | undefined {
+    if (this.launchAgents.length === 0) {
+      return undefined;
+    }
+    const info = this.infoOf(worktreeId);
+    return info === undefined ? undefined : () => this.openLaunchFor(info);
+  }
+
+  private infoOf(worktreeId: string): WorktreeInfo | undefined {
+    for (const repo of this.tree?.repos ?? []) {
+      const found = repo.worktrees.find((wt) => wt.id === worktreeId);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
   /** The registration token the tree currently publishes for this worktree. */
   private generationOf(worktreeId: string): number | undefined {
     return this.tree?.repos.find((repo) => repo.worktrees.some((wt) => wt.id === worktreeId))?.generation;

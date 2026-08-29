@@ -29,7 +29,7 @@
     4. `main.ts` calls `buildTabBarData` twice (the render, and the rename lookup in `startInlineRename`); the second wants only the map. Keep both honest rather than leaving the second reading a field it does not use.
     5. Cover: a count over hidden waiting tabs; zero rendering nothing; each source alone raising the count; an unattributed waiting pane raising nothing and staying visible; a hidden split holding two waiting panes counted once; clearing from the marked control presenting every counted tab; the mark carrying no animation.
 
-- [ ] 1_3 Build the region a scope with nothing in it shows
+- [x] 1_3 Build the region a scope with nothing in it shows — verified: pnpm exec vitest run 'src/webview/emptyScopeRegion.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/tab-bar-component/spec.md#a-scope-holding-no-pane-says-so-and-offers-what-is-worth-doing · design.md#d4-the-empty-scope-region-hides-the-terminal-container-without-unmounting-it
   - **Acceptance**:

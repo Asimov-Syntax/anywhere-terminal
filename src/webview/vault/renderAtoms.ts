@@ -599,17 +599,26 @@ export function activityStep(step: VaultActivityStep): HTMLElement {
   return wrap;
 }
 
+/** One thing worth doing in an empty state. */
+export interface EmptyStateAction {
+  label: string;
+  onClick: () => void;
+}
+
 /** Build an empty / no-match panel (icon + title + body), all via textContent. */
 export function emptyState(
   iconSvg: string,
   title: string,
   body: string,
   /**
-   * The action that resolves what the state describes. Optional and absent by
+   * The actions that resolve what the state describes. Optional and absent by
    * default: most empty states describe something the panel cannot resolve, and
    * offering an action there would claim otherwise.
+   *
+   * A list is accepted as well as a single action — a state can have more than
+   * one thing worth doing in it, and an empty list is the same as none.
    */
-  action?: { label: string; onClick: () => void },
+  action?: EmptyStateAction | readonly EmptyStateAction[],
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "vault-empty";
@@ -624,12 +633,12 @@ export function emptyState(
   bodyEl.className = "vault-empty-body";
   bodyEl.textContent = body;
   wrap.append(icon, titleEl, bodyEl);
-  if (action) {
+  for (const one of action === undefined ? [] : Array.isArray(action) ? action : [action as EmptyStateAction]) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "vault-empty-action";
-    btn.textContent = action.label;
-    btn.addEventListener("click", action.onClick);
+    btn.textContent = one.label;
+    btn.addEventListener("click", one.onClick);
     wrap.appendChild(btn);
   }
   return wrap;
