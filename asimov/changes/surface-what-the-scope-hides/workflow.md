@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -54,3 +54,9 @@ Blueprint: docs/PLAN.md task WT-010.2
 - The oracle wanted activation and the empty region as ONE task; the validator wanted the resulting
   10-file task split. Split on rendering vs decision instead — 1_3 builds the region, 1_4 owns the
   single calculation — so the decision that must not fork is still in one task.
+- Lint gate: `biome check src --max-diagnostics=200` diffed against a detached worktree at 7128f51c.
+  Nineteen pre-existing diagnostics, zero new. The four this change added (formatter + import order
+  in `main.ts`, `TabBar.test.ts`, `tabBarScope.test.ts`) were fixed, not waived.
+- 1_4's Plan gained `emptyScopeRegion.ts` / `.test.ts`: the container hide it owes an assertion for
+  was written into `main.ts`, which no test imports, so the putting-up and taking-down moved beside
+  the region itself.
