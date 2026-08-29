@@ -137,6 +137,11 @@ Header shows: repo label, worktree count, a `degraded` affordance when that repo
 failed, and a create control on hover or focus (§ 3.2.2 of
 [worktree-actions.md](worktree-actions.md)). Collapsible; collapse state persisted by `repoId`.
 
+The header is a `treeitem`, which takes its accessible name from its contents — so it names itself
+explicitly, or the create control's label is read out as part of every header. The control stops
+the activation it handles: the header binds a bubbling click and Enter/Space, so without that one
+gesture would create AND collapse.
+
 ### 3.2 Worktree row
 
 | Element | Content | Rule |
@@ -304,7 +309,7 @@ These are not stylistic preferences; each one prevents a specific false claim.
 | Empty — no folder | No workspace folders | "Open a folder to see its worktrees" |
 | Empty — no repo | Folders present, none is a git repo | Explains the view needs a git repository |
 | Empty — git missing | `gitAvailable: false` | Explains git is required, no error styling |
-| Empty — one worktree | A repo with only its main checkout | Explains what a worktree buys, and carries the create action as the body CTA |
+| Empty — one worktree | A repo holding exactly one worktree, and it is the main checkout, with no degraded reason | Explains what a worktree buys, and carries the create action as the body CTA, beside the main row rather than instead of it. Read off the repository, never off what got drawn: a filter, the display cap and the idle fold each reduce the rows without saying anything about what the repository holds. It sits inside the tree, so it carries a row's rhythm and not a panel's — a multi-repo workspace can show several at once |
 | Populated | ≥1 repo | The tree |
 | Degraded | A non-empty `degradedSources`, or a repo's `degraded` | Tree plus a stale affordance naming the source and reason, scoped to what failed, with a retry |
 | Action error | outcome `error` | Inline, attached to the row it concerns, dismissible |

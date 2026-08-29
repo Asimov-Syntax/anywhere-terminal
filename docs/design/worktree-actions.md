@@ -222,13 +222,28 @@ Four entry points, each for a different way the intent arrives:
 
 | Entry point | Rule |
 |-------------|------|
-| Toolbar "+" | The primary affordance, matching VS Code view-title conventions. Rendered **only** while the Worktrees body is active — a "+" in the sessions toolbar has nothing to create |
+| Toolbar "+" | The primary affordance, matching VS Code view-title conventions. Rendered **only** while the Worktrees body is active — a "+" in the sessions toolbar has nothing to create — and only while the tree holds a repository, because an action the view cannot perform is absent rather than present and inert. Availability comes from the tree itself; the workspace's initial "has a repo" hint is deliberately looser than git's own answer, so seeding from it showed a dead button on every cold open |
 | Repo group header "+" | On hover or keyboard focus of the group header. It pre-answers the repo the dialog needs in a multi-repo workspace, matching the native SCM view's per-repo actions. Rendered only where group headers are (§ 3.1 of [worktree-panel-ui.md](worktree-panel-ui.md)) |
-| Empty-state CTA | The "no worktrees yet" and "one worktree so far" states carry the create action in the body. Asking a user to find a 20 px icon in a toolbar is not an empty state doing its job |
+| Empty-state CTA | The state for a repository holding only its main checkout carries the create action in its body. Asking a user to find a 20 px icon in a toolbar is not an empty state doing its job. "No worktrees yet" and "one worktree so far" are one state under two names — a repository holds its main checkout unless its listing FAILED, and that is a degraded repository, not an unbranched one. The CTA renders beside the main row, never instead of it: every supplied worktree stays reachable exactly once, and that row carries the context-menu door |
 | Row context menu | "New Worktree…" already exists — kept, as the discoverable path for keyboard and menu users |
 
 All four open the same dialog and run the same action. The repo-scoped ones differ only in which
-repo the form opens on.
+repo the form opens on — which means **every door asks the host about every repository**, not only
+the one it names. The form builds its repository picker once from the seed it opened with, so a
+door that asked about one would offer one, and the doors would differ in more than the selection.
+
+Two rules the create-defaults conversation depends on:
+
+- **An open form's asks carry a branch; an opening ask does not.** That is what tells an answer
+  meant to OPEN a form from one meant to UPDATE the open one. The form's own staleness guard
+  compares the branch an answer is for, so it cannot catch a branch-less leftover — one reaching an
+  open form cleared its wait and rewrote the destination for a branch the user had already typed.
+  The convention is currently unenforced by any type; a `kind` tag on the request and its answer is
+  the follow-up that would enforce it.
+- **A create that can no longer open says so.** The repositories a door asked about can leave the
+  tree while the host resolves. The panel reports that nothing was attempted and names them, using
+  the `unavailable` outcome; a control that silently does nothing when pressed is worse than one
+  that is absent.
 
 ### 3.3 Remove worktree
 
