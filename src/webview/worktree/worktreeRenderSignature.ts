@@ -10,7 +10,7 @@
 // a change the UI would reflect must never be masked by the guard. It is
 // order-sensitive: the tree renders in array order, so a reorder is a change.
 
-import { stripDecorations } from "./worktreeFormat";
+import { presentedActivity, stripDecorations } from "./worktreeFormat";
 import type { DelegationRoster, WorktreePresence, WorktreeTree } from "./worktreeViewTypes";
 
 // Low control chars that cannot appear in branches, paths, ids, or titles, so
@@ -19,7 +19,11 @@ const FIELD_SEP = String.fromCharCode(1);
 const ROW_SEP = String.fromCharCode(2);
 const SECTION_SEP = String.fromCharCode(3);
 
-export function worktreeSignature(tree: WorktreeTree | null, presence: WorktreePresence | null): string {
+export function worktreeSignature(
+  tree: WorktreeTree | null,
+  presence: WorktreePresence | null,
+  now: number = Date.now(),
+): string {
   if (!tree) {
     return "";
   }
@@ -91,6 +95,11 @@ export function worktreeSignature(tree: WorktreeTree | null, presence: WorktreeP
               r.agentSource,
               r.activity,
               r.activitySource,
+              // The PRESENTED state, not just the wire one: confidence is derived
+              // from the clock, so a row that crosses the confirmation ceiling
+              // changes what it draws while every field above stays identical.
+              // Without this the guard would hold the old glyph on screen forever.
+              presentedActivity(r, presence.degradedSources, now),
               // A prompt that changed while the activity did not is still a
               // different question in front of the user.
               r.interactivePrompt ?? "",

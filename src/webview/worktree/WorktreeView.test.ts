@@ -474,6 +474,136 @@ describe("tree structure", () => {
     expect(unconfirmedHint(undefined)).not.toContain("Unchanged");
   });
 
+  it("repaints a row that crosses the ceiling with no push, and does not when none crosses", () => {
+    vi.useFakeTimers();
+    try {
+      let clock = NOW;
+      const { view } = mount({ now: () => clock });
+      const presence: WorktreePresence = {
+        scannedAt: NOW,
+        degradedSources: [],
+        rowsByWorktreeId: {
+          [PANEL_WT]: [
+            agentRow({
+              rowId: "soon",
+              agent: "claude",
+              activity: "running",
+              activitySource: "output",
+              title: "worker",
+              stateStartedAt: NOW - 4 * 60_000,
+            }),
+          ],
+        },
+      };
+      view.setData({ tree: singleRepoTree(), presence });
+      const sel = () => rowFor(view, "feat/worktree-panel")?.querySelector(".wt-glyph .wt-state")?.className ?? "";
+      expect(sel()).toContain("wt-state--running");
+      expect(sel()).not.toContain("unconfirmed");
+
+      // Nothing pushes; the row crosses on the view's own deadline.
+      clock = NOW + 60_000;
+      vi.advanceTimersByTime(60_000);
+      expect(sel()).toContain("wt-state--running-unconfirmed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("performs no DOM work when a re-derivation moves nothing", () => {
+    vi.useFakeTimers();
+    try {
+      let clock = NOW;
+      const { view } = mount({ now: () => clock });
+      view.setData(populated());
+      const before = rowFor(view, "main");
+      // A push carrying identical data, one second later: no row can have crossed,
+      // so the tree must be the very same nodes — a guard that always repaints
+      // would pass the crossing test above and defeat this one.
+      clock = NOW + 1_000;
+      view.setData(populated());
+      expect(rowFor(view, "main")).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("arms no timer when no row can cross, and clears a pending one on disposal", () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = mount({ now: () => NOW });
+      // Hook-backed and already past the ceiling: neither can cross, so neither
+      // earns a timer. (The shared fixture does hold an output-inferred run, so
+      // it is deliberately not used here.)
+      view.setData({
+        tree: singleRepoTree(),
+        presence: {
+          scannedAt: NOW,
+          degradedSources: [],
+          rowsByWorktreeId: {
+            [PANEL_WT]: [
+              agentRow({ rowId: "h", activity: "running", activitySource: "hook", stateStartedAt: NOW - 60 * 60_000 }),
+              agentRow({
+                rowId: "past",
+                activity: "running",
+                activitySource: "output",
+                stateStartedAt: NOW - 60 * 60_000,
+              }),
+            ],
+          },
+        },
+      });
+      expect(vi.getTimerCount()).toBe(0);
+
+      view.setData({
+        tree: singleRepoTree(),
+        presence: {
+          scannedAt: NOW,
+          degradedSources: [],
+          rowsByWorktreeId: {
+            [PANEL_WT]: [agentRow({ rowId: "s", activity: "running", activitySource: "output", stateStartedAt: NOW })],
+          },
+        },
+      });
+      expect(vi.getTimerCount()).toBe(1);
+      view.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-arms after firing, so a second crossing behind the first is still drawn", () => {
+    vi.useFakeTimers();
+    try {
+      let clock = NOW;
+      const { view } = mount({ now: () => clock });
+      view.setData({
+        tree: singleRepoTree(),
+        presence: {
+          scannedAt: NOW,
+          degradedSources: [],
+          rowsByWorktreeId: {
+            [PANEL_WT]: [
+              agentRow({ rowId: "a", activity: "running", activitySource: "output", stateStartedAt: NOW - 4 * 60_000 }),
+              agentRow({ rowId: "b", activity: "running", activitySource: "output", stateStartedAt: NOW - 60_000 }),
+            ],
+          },
+        },
+      });
+      clock = NOW + 60_000;
+      vi.advanceTimersByTime(60_000);
+      // The first crossed; the second is still four minutes out and must be armed.
+      expect(vi.getTimerCount()).toBe(1);
+      clock = NOW + 4 * 60_000;
+      vi.advanceTimersByTime(3 * 60_000);
+      const dots = Array.from(view.element.querySelectorAll(".wt-arow .wt-state")).map((d) => d.className);
+      expect(dots.every((c) => c.includes("running-unconfirmed"))).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a failed worktree LISTING out of it — that says nothing about any agent", () => {
     const { view } = mount();
     const tree = singleRepoTree();

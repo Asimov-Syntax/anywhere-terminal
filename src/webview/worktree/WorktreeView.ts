@@ -21,6 +21,7 @@ import {
   agentCountLabel,
   agentRowTitle,
   branchLabel,
+  CONFIRMATION_CEILING_MS,
   groupPresenceByActivity,
   presentedActivity,
   strongestActivity,
@@ -145,6 +146,8 @@ export class WorktreeView {
   private readonly menu: WorktreeContextMenu | null;
 
   private data: WorktreeViewData = { tree: null, presence: null, loading: true };
+  /** Armed only while some row can still cross the ceiling; cleared on disposal. */
+  private ceilingTimer: ReturnType<typeof setTimeout> | undefined;
   private query = "";
   private signature: string | null = null;
   /** Repo/worktree ids whose children are hidden. */
@@ -212,12 +215,27 @@ export class WorktreeView {
    * `refreshing` and `loading` are render inputs, so they join the key.
    */
   setData(data: WorktreeViewData): void {
+    this.data = data;
+    this.applyAt(this.now());
+  }
+
+  /**
+   * Render if anything moved, then schedule the next moment something can move
+   * on its own.
+   *
+   * ONE reading of the clock serves all three of the signature, what it renders,
+   * and the next deadline. Reading it again between them would let a row be drawn
+   * against one moment and scheduled against another, which is how a crossing
+   * gets skipped by a millisecond.
+   */
+  private applyAt(now: number): void {
+    const { tree, presence, loading, refreshing, noFolder, actionResults } = this.data;
     const stateKey = [
-      worktreeSignature(data.tree, data.presence),
-      data.loading ? "1" : "0",
-      data.refreshing ? "1" : "0",
-      data.noFolder ? "1" : "0",
-      (data.actionResults ?? [])
+      worktreeSignature(tree, presence, now),
+      loading ? "1" : "0",
+      refreshing ? "1" : "0",
+      noFolder ? "1" : "0",
+      (actionResults ?? [])
         .map(
           (r) =>
             // The blocker fingerprint is part of the key: it decides whether the
@@ -227,14 +245,61 @@ export class WorktreeView {
         )
         .join("|"),
     ].join(String.fromCharCode(4));
-    this.data = data;
-    if (stateKey === this.signature) {
+    if (stateKey !== this.signature) {
+      this.signature = stateKey;
+      // Expansion state for a worktree that disappeared is dropped, not resurrected.
+      this.pruneStaleState(this.data);
+      this.render();
+    }
+    this.armCeiling(now);
+  }
+
+  /**
+   * One deadline timer at the earliest crossing — never an interval, and no timer
+   * at all when no row can cross. Re-armed after it fires as well as on every
+   * push, or a second crossing behind the first would never be drawn.
+   */
+  private armCeiling(now: number): void {
+    if (this.ceilingTimer !== undefined) {
+      clearTimeout(this.ceilingTimer);
+      this.ceilingTimer = undefined;
+    }
+    const at = this.nextCeilingCrossing(now);
+    if (at === undefined) {
       return;
     }
-    this.signature = stateKey;
-    // Expansion state for a worktree that disappeared is dropped, not resurrected.
-    this.pruneStaleState(data);
-    this.render();
+    this.ceilingTimer = setTimeout(
+      () => {
+        this.ceilingTimer = undefined;
+        this.applyAt(this.now());
+      },
+      Math.max(0, at - now),
+    );
+  }
+
+  /**
+   * When the earliest still-confirmed claim will outlive its evidence, or
+   * undefined if none can. A row already presented as something else — crossed,
+   * or `unknown` because its source failed — has nothing left to cross.
+   */
+  private nextCeilingCrossing(now: number): number | undefined {
+    const degraded = this.degradedSources();
+    let soonest: number | undefined;
+    for (const rows of Object.values(this.data.presence?.rowsByWorktreeId ?? {})) {
+      for (const row of rows) {
+        if (row.stateStartedAt === undefined || presentedActivity(row, degraded, now) !== "running") {
+          continue;
+        }
+        if (row.activitySource !== "output") {
+          continue;
+        }
+        const at = row.stateStartedAt + CONFIRMATION_CEILING_MS;
+        if (at > now && (soonest === undefined || at < soonest)) {
+          soonest = at;
+        }
+      }
+    }
+    return soonest;
   }
 
   /** Filter the tree by branch, path, and agent title. Ancestors of a match stay. */
@@ -325,6 +390,10 @@ export class WorktreeView {
   }
 
   dispose(): void {
+    if (this.ceilingTimer !== undefined) {
+      clearTimeout(this.ceilingTimer);
+      this.ceilingTimer = undefined;
+    }
     this.closeDialog?.();
     this.closeDialog = null;
     this.menu?.close();

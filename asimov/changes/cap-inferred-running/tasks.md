@@ -23,7 +23,7 @@
     2. In `src/webview/worktree/worktreeTreeView.ts`, draw it at each state-glyph call site and give it a hint through the delegated tooltip widget. The hint is written into an attribute at render and read at hover, so an exact elapsed figure decays between the two: phrase it as a lower bound that stays true however long it sits unread.
     3. Confirm the shape guard covers the new member rather than merely admitting it — including under reduced motion, where a static unconfirmed shape and a stopped running animation are most at risk of converging.
 
-- [ ] 1_3 Repaint the moment a claim crosses, and only then
+- [x] 1_3 Repaint the moment a claim crosses, and only then — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-claim-that-outlives-its-evidence-stops-animating-without-being-told, one-reading-of-the-clock-serves-the-whole-cycle, a-push-that-changed-nothing-changes-no-pixels}
   - **Acceptance**:
