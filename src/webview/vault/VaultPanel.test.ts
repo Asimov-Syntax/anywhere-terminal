@@ -4349,7 +4349,9 @@ describe("the two-level view control", () => {
     const bar = host.querySelector<HTMLElement>(".vault-groupbar");
     expect(bar).not.toBeNull();
     expect(bar?.parentElement?.className).toBe("vault-body");
-    expect(host.querySelector(".vault-toolbar .vault-segmented")).toBeNull();
+    // The contract is that grouping is not in the toolbar — stated as the absence
+    // of its values, not of a class the body toggle happens to share for styling.
+    expect(host.querySelectorAll(".vault-toolbar button[data-mode]")).toHaveLength(0);
     expect(host.querySelectorAll(".vault-groupbar .vault-segmented button")).toHaveLength(3);
   });
 

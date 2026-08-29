@@ -461,7 +461,11 @@ export class VaultPanel {
       // never in one row: five tab-shaped controls where four already did not fit
       // would make the squeeze worse rather than remove it.
       this.viewToggleEl = document.createElement("div");
-      this.viewToggleEl.className = "vault-view-toggle";
+      // Both classes: `vault-segmented` IS the segment styling, and re-declaring
+      // it under a second selector only adds a descending-specificity rule beside
+      // the one the file already carries. `vault-view-toggle` is the hook that
+      // names this level, and what the tests address it by.
+      this.viewToggleEl.className = "vault-segmented vault-view-toggle";
       this.viewToggleEl.setAttribute("role", "tablist");
       this.viewToggleEl.setAttribute("aria-label", "View");
       for (const [view, label, icon, hint] of [

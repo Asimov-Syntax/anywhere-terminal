@@ -215,10 +215,7 @@
   padding: 4px 12px 8px;
   min-width: 0;
 }
-/* Level 1 — which body. Shares the segment styling; it differs only in living in
-   the toolbar while the grouping control lives in the body it groups. */
-.vault-segmented,
-.vault-view-toggle {
+.vault-segmented {
   display: inline-flex;
   gap: 2px;
 }
@@ -231,8 +228,7 @@
 .vault-groupbar[hidden] {
   display: none;
 }
-.vault-segmented button,
-.vault-view-toggle button {
+.vault-segmented button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -245,23 +241,19 @@
   border-radius: 4px;
   cursor: pointer;
 }
-.vault-segmented button svg,
-.vault-view-toggle button svg {
+.vault-segmented button svg {
   width: 12px;
   height: 12px;
 }
-.vault-segmented button:hover,
-.vault-view-toggle button:hover {
+.vault-segmented button:hover {
   background: var(--vscode-list-hoverBackground);
   color: var(--vscode-foreground);
 }
-.vault-segmented button[aria-selected="true"],
-.vault-view-toggle button[aria-selected="true"] {
+.vault-segmented button[aria-selected="true"] {
   background: var(--vscode-list-hoverBackground);
   color: var(--vscode-foreground);
 }
-.vault-segmented button:focus-visible,
-.vault-view-toggle button:focus-visible {
+.vault-segmented button:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: -1px;
 }
