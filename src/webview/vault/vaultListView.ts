@@ -73,7 +73,7 @@ export function renderRow(
   // compact and scannable).
   const dot = document.createElement("span");
   dot.className = "vault-row-dot";
-  dot.title = agentLabel(entry.agent);
+  dot.dataset.tip = agentLabel(entry.agent);
   dot.setAttribute("aria-label", agentLabel(entry.agent));
   // Known accents only — a session-derived agent string never becomes a class (W6).
   const accent = getAgentAccent(entry.agent);
@@ -97,7 +97,9 @@ export function renderRow(
   // A user rename overrides the derived title (enhance-vault-sessions D1).
   const shownTitle = entry.customName || entry.title;
   titleEl.textContent = shownTitle || "(untitled session)";
-  titleEl.title = shownTitle;
+  if (shownTitle) {
+    titleEl.dataset.tip = shownTitle;
+  }
   const sourceLabel = cursorSourceLabel(entry);
   if (sourceLabel) {
     const sourceBadge = document.createElement("span");
@@ -111,7 +113,9 @@ export function renderRow(
   if (!opts.hideCwd) {
     const cwdEl = document.createElement("span");
     cwdEl.className = "vault-row-cwd";
-    cwdEl.title = entry.cwd;
+    if (entry.cwd) {
+      cwdEl.dataset.tip = entry.cwd;
+    }
     const folderIcon = document.createElement("span");
     folderIcon.className = "vault-row-cwd-icon";
     folderIcon.innerHTML = ICON_FOLDER;
@@ -142,7 +146,7 @@ export function renderRow(
     const resumeBtn = document.createElement("button");
     resumeBtn.type = "button";
     resumeBtn.className = "vault-action vault-action--resume";
-    resumeBtn.title = "Resume";
+    resumeBtn.dataset.tip = "Resume";
     resumeBtn.setAttribute("aria-label", "Resume");
     resumeBtn.innerHTML = ICON_RESUME;
     resumeBtn.addEventListener("click", (ev) => {
@@ -287,7 +291,7 @@ export function renderGroupHeader(
   header.setAttribute("role", "button");
   header.tabIndex = 0;
   header.setAttribute("aria-expanded", collapsed ? "false" : "true");
-  header.title = collapsed ? `Expand ${label}` : `Collapse ${label}`;
+  header.dataset.tip = collapsed ? `Expand ${label}` : `Collapse ${label}`;
   header.addEventListener("click", onToggle);
   header.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {

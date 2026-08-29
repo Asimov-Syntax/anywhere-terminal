@@ -27,7 +27,7 @@ import type {
 } from "../../types/messages";
 import type { VaultListResult, VaultSessionEntry } from "../../vault/types";
 import type { VaultPreviewGeometry } from "../state/WebviewState";
-import { attachTooltip } from "../ui/Tooltip";
+import { attachTooltip, attachTooltipDelegate } from "../ui/Tooltip";
 import { ICON_BRANCH, ICON_PLUS } from "../worktree/worktreeIcons";
 import { agentLabel, isWithin } from "./format";
 import { type GroupMode, groupEntries } from "./grouping";
@@ -476,6 +476,11 @@ export class VaultPanel {
     this.listEl.className = "vault-list";
     this.listEl.setAttribute("role", "listbox");
     this.listEl.setAttribute("aria-label", "Sessions");
+    // Delegated: renderList() rebuilds every row, so rows carry `data-tip` and
+    // nothing is attached or disposed per render. The two `attachTooltip` calls
+    // above stay per-element — their targets are never rebuilt and their text is
+    // dynamic.
+    this.disposers.push(attachTooltipDelegate(this.listEl));
     this.bodyEl.appendChild(this.listEl);
     if (this.worktreeBodyEl) {
       this.bodyEl.appendChild(this.worktreeBodyEl);

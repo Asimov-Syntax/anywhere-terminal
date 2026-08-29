@@ -269,6 +269,27 @@ describe("VaultPanel row rendering (redesign 4_1)", () => {
     expect(titleEl?.querySelector("img")).toBeNull();
   });
 
+  it("presents a truncated row's full title on hover", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const long = "a session title far too long to fit inside a sidebar row at any width";
+    panel.render(result([entry({ id: "claude:a", title: long })]));
+    // Asserted by hovering rather than by reading an attribute: the row used to
+    // carry a native `title`, which VS Code webviews never render.
+    vi.useFakeTimers();
+    try {
+      host
+        .querySelector(".vault-row-title")
+        ?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(300);
+      const tip = document.body.querySelector<HTMLElement>(".webview-tooltip");
+      expect(tip?.style.display).toBe("block");
+      expect(tip?.textContent).toBe(long);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("posts vaultResume with the entry id when the icon-only Resume is clicked", () => {
     const host = createHost();
     const posted: { type: string; entryId?: string | null }[] = [];

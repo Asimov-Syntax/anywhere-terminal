@@ -36,7 +36,7 @@
     2. Attach the delegate once to the tree root in `src/webview/worktree/WorktreeView.ts` and dispose it with the view; the root survives `replaceChildren`, so no per-render bookkeeping is added.
     3. Retarget the existing assertions in `WorktreeView.test.ts` that read `.title` — they pass today while nothing renders — and add one that the hint is actually presented on hover.
 
-- [ ] 2_3 Deliver the vault session list's hints through the delegate
+- [x] 2_3 Deliver the vault session list's hints through the delegate — verified: pnpm exec vitest run 'src/webview/vault/VaultPanel.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/vault-panel/spec.md#a-row-s-abbreviated-content-is-reachable-on-hover-and-on-focus
   - **Acceptance**:
