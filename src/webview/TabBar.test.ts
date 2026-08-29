@@ -725,7 +725,7 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     expect(data.hiddenWaiting).toBe(0);
   });
 
-  it("counts a hidden tab that only PRESENCE calls waiting", () => {
+  it("[I19] counts a hidden tab that only PRESENCE calls waiting", () => {
     // The two sources have different coverage, and either one alone must be able
     // to raise the count — a source that can be silenced by the other's ignorance
     // is the silence this badge exists to break.
@@ -734,7 +734,7 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     expect(data.hiddenWaiting).toBe(1);
   });
 
-  it("counts a hidden tab that only the SURFACE's own status calls waiting", () => {
+  it("[I19] counts a hidden tab that only the SURFACE's own status calls waiting", () => {
     const store = leavesWaiting(["here", "gone"], ["gone"]);
     const data = buildTabBarData(store, scopeWaiting([["here", HERE], ["gone", ELSEWHERE]], []));
     expect(data.hiddenWaiting).toBe(1);
@@ -905,7 +905,7 @@ describe("a scope is named wherever it is in force", () => {
       ["b", { name: "b" }],
     ]);
 
-  it("carries a chip naming the worktree exactly while scoped, and none when not", () => {
+  it("[I19] carries a chip naming the worktree exactly while scoped, and none when not", () => {
     const deps = createMockDeps({ terminals: two(), scope: { label: "feat/here", onClear: vi.fn() } });
     renderTabBar(deps);
     expect(chip(deps.tabBarEl)?.textContent).toContain("feat/here");

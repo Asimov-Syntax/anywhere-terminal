@@ -60,7 +60,7 @@
     5. Showing the region hides `#terminal-container` without unmounting it; nothing else hides it on this path, so a hidden worktree's terminal would otherwise stay on screen beside the region.
     6. Cover: an out-of-scope active pane moving to the first presented in-scope pane; an in-scope active pane not moving; the mixed split whose visible tab holds an out-of-scope active leaf; an empty scope showing the region AND hiding the container while leaving it connected; the previously active pane still in the store and presented again once the scope clears.
 
-- [ ] 1_5 Put the no-invisible-filter invariant in the table with tests that can fail
+- [x] 1_5 Put the no-invisible-filter invariant in the table with tests that can fail — verified: pnpm run test:unit && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2, 1_4
   - **Refs**: design.md#d5-i19-is-conjunctive-so-both-clauses-are-tagged
   - **Acceptance**:

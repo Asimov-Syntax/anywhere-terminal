@@ -362,17 +362,13 @@ specific false claim the view could otherwise make.
 | I16 | Agent-reported identity is a lookup key only; no reported path is opened on the report's authority |
 | I17 | The confirmation ceiling degrades an unconfirmed `running` rather than animating it or calling it idle |
 | I18 | A scoped tab bar hides only a pane proven to belong elsewhere; a pane the evidence does not place is presented in every scope |
+| I19 | No filter is invisible, and none silences an attention state |
 
 **An invariant enters this table with the task that proves it, never ahead of it.**
 `src/test/invariants/registry.ts` mirrors every row here and is checked against this section on
 every run; its own gate forbids the statuses `uncovered` and `deferred`, so a row added before its
-covering test exists turns the suite red rather than recording an intention. One invariant is
-therefore committed but not yet listed. It is stated in its design doc and is added here, with its
-registry row and its covering test, by the task that owns it:
-
-| Planned | Owning task | Stated in |
-|---------|-------------|-----------|
-| No filter is invisible, and none silences an attention state | WT-010.2 | [worktree-scope.md](design/worktree-scope.md) § 4.2 |
+covering test exists turns the suite red rather than recording an intention. Nothing is currently
+committed but unlisted.
 
 ### 8.5 Security posture
 

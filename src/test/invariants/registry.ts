@@ -169,4 +169,15 @@ export const INVARIANTS: readonly InvariantRow[] = [
     stimulus: "Hide a tab whose pane the attribution map does not hold, rather than presenting it in every scope",
     status: "covered",
   },
+  {
+    id: "I19",
+    statement: "No filter is invisible, and none silences an attention state",
+    // Both tasks: WT-010.1 shipped the chip, WT-010.2 the count it carries. The
+    // statement is conjunctive, so each clause has its own tagged test — one tag
+    // would leave the other half asserting itself.
+    owners: ["WT-010.1", "WT-010.2"],
+    stimulus:
+      "Omit the chip while a scope is set, or silence the badge for a tab only one of the two sources reports waiting",
+    status: "covered",
+  },
 ];
