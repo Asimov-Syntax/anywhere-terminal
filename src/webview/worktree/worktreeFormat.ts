@@ -208,7 +208,7 @@ export function unchangedFor(row: WorktreeAgentRow, now: number): number | undef
  * collapsed pill groups by it, so a state missing from here is a set of rows the
  * pill silently drops.
  */
-const PRESENTED_ORDER: readonly PresentedActivity[] = [
+export const PRESENTED_ORDER: readonly PresentedActivity[] = [
   "waiting",
   "running",
   "running-unconfirmed",
@@ -227,7 +227,7 @@ const PRESENTED_ORDER: readonly PresentedActivity[] = [
  * own: it sits directly below it, so a worktree holding one confirmed run reads as
  * running, and one whose every run is unconfirmed reads as unconfirmed.
  */
-const PRESENTED_STRENGTH: readonly PresentedActivity[] = [
+export const PRESENTED_STRENGTH: readonly PresentedActivity[] = [
   "waiting",
   "running",
   "running-unconfirmed",

@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { isRemoveRefused, openWorktreeRemoveDialog } from "./WorktreeRemoveDialog";
 import { agentRow, confirmableBlocker, refusedBlocker, worktree } from "./worktreeFixtures";
+import { CONFIRMATION_CEILING_MS } from "./worktreeFormat";
 import type { PresenceDegradation, WorktreeAgentRow, WorktreeInfo, WorktreeRemoveBlocker } from "./worktreeViewTypes";
 
 const SPIKE: WorktreeInfo = worktree({
@@ -22,7 +23,12 @@ afterEach(() => {
 
 function open(
   blocker: WorktreeRemoveBlocker,
-  over: { info?: WorktreeInfo; agentRows?: WorktreeAgentRow[]; degradedSources?: PresenceDegradation[] } = {},
+  over: {
+    info?: WorktreeInfo;
+    agentRows?: WorktreeAgentRow[];
+    degradedSources?: PresenceDegradation[];
+    now?: number;
+  } = {},
 ) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -33,6 +39,7 @@ function open(
     blocker,
     agentRows: over.agentRows,
     degradedSources: over.degradedSources ?? [],
+    now: over.now,
     onConfirm: (fingerprint) => confirmed.push(fingerprint),
     onShowAgent: (row) => shown.push(row.rowId),
   });
@@ -181,6 +188,28 @@ describe("remove worktree — refused (§ 12)", () => {
     expect(host.querySelector(".wt-arow .wt-atitle")?.textContent).toContain("INTEGRATE-WORKTREE");
     host.querySelector<HTMLButtonElement>(".wt-btn--primary")?.click();
     expect(shown).toEqual(["busy"]);
+  });
+
+  it("stops asserting a turn is in progress when every readable row is unconfirmed", () => {
+    const NOW = 1_700_000_000_000;
+    const stale = agentRow({
+      rowId: "stale",
+      agent: "claude",
+      activity: "running",
+      activitySource: "output",
+      title: "worker",
+      stateStartedAt: NOW - CONFIRMATION_CEILING_MS,
+    });
+    const { host } = open(refusedBlocker, { agentRows: [stale], now: NOW });
+    const copy = host.querySelector(".wt-refusebox")?.textContent ?? "";
+    // The refusal STAYS — warning about a possibly-working agent is the safe side
+    // of deleting a folder. What must not stay is the certainty: this same dialog
+    // draws that row with the `~` hint saying a busy terminal is not proof of a
+    // turn in progress, and the lead sentence sat directly above it saying it was.
+    expect(host.querySelector(".wt-btn--danger")).toBeNull();
+    expect(copy).toContain("may be mid-turn");
+    expect(copy).toContain("outlived what can confirm it");
+    expect(copy).not.toContain("An agent is mid-turn");
   });
 
   it("shows only the rows that are actually mid-turn", () => {

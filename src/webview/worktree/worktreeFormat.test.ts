@@ -13,6 +13,8 @@ import {
   groupPresenceByActivity,
   hasProvenIdentity,
   isFallbackActivity,
+  PRESENTED_ORDER,
+  PRESENTED_STRENGTH,
   presentedActivity,
   stripDecorations,
   strongestActivity,
@@ -219,6 +221,17 @@ describe("presentedActivity", () => {
     for (const activity of ["running", "waiting", "idle", "exited"] as const) {
       expect(presentedActivity(agentRow({ rowId: "1", activity }), [], NOW)).toBe(activity);
     }
+  });
+});
+
+describe("the two presented orders", () => {
+  // They answer different questions — exact display vocabulary versus aggregate
+  // rank — and the design says they may diverge in ORDER. What they may never
+  // diverge in is MEMBERSHIP: a state missing from the vocabulary is dropped from
+  // the collapsed pill, and one missing from the rank cannot win a worktree row.
+  // Byte-identical today is exactly what makes that easy to miss.
+  it("hold the same members, whatever order each puts them in", () => {
+    expect([...PRESENTED_ORDER].sort()).toEqual([...PRESENTED_STRENGTH].sort());
   });
 });
 

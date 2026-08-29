@@ -102,7 +102,45 @@ export function unconfirmedHint(elapsedMs: number | undefined): string {
   // rendered here rather than by passing an epoch that is really an interval.
   const minutes = Math.floor(elapsedMs / 60_000);
   const span = minutes >= 120 ? `${Math.floor(minutes / 60)} hours` : `${minutes} minutes`;
-  return `Unchanged for over ${span}. ${base}`;
+  // "at least", not "over": the timer fires AT the ceiling, so the first hint a
+  // crossing writes is the exact figure, and "over 5 minutes" would be false by a
+  // hair at the one moment the change is most visibly making a claim.
+  return `Unchanged for at least ${span}. ${base}`;
+}
+
+/** The single `~` builder — three near-copies of this drifted apart once already. */
+function confidenceMarker(tip: string): HTMLElement {
+  const marker = document.createElement("span");
+  marker.className = "wt-confidence";
+  marker.textContent = "~";
+  marker.dataset.tip = tip;
+  return marker;
+}
+
+/**
+ * What the `~` says, or undefined when the row makes no qualified claim. Keyed off
+ * the PRESENTED state: an inference the glyph has already withdrawn must not be
+ * re-asserted in present tense beside it.
+ */
+export function confidenceHint(row: WorktreeAgentRow, activity: PresentedActivity, now?: number): string | undefined {
+  if (activity === "running-unconfirmed") {
+    return unconfirmedHint(unchangedFor(row, now ?? Date.now()));
+  }
+  if (activity === "unknown") {
+    // Names the FAILING source, the same word the stale affordance uses, rather
+    // than the row's own label — `output` and `title` are both read off `panes`,
+    // and pointing at a name the degradation list never mentions is a dead end.
+    const failing = ACTIVITY_EVIDENCE[row.activitySource];
+    return failing === undefined
+      ? "No source reported this row's activity"
+      : `Activity came from ${failing}, which is not currently reporting`;
+  }
+  if (isFallbackActivity(row.activitySource)) {
+    return row.activitySource === "output"
+      ? "Activity inferred from terminal output — the terminal is busy, which is not proof of an agent turn"
+      : `Activity inferred from ${row.activitySource} — not a published agent state`;
+  }
+  return undefined;
 }
 
 /** A leading-slot glyph carrying one of the state shapes (§ 7.2), `unknown` included. */
@@ -418,34 +456,9 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // Keyed off the PRESENTED state: an inference the glyph has already withdrawn
   // must not be re-asserted in present tense beside it. When the state is
   // `unknown` the marker names the failure instead of the inference.
-  if (activity === "running-unconfirmed") {
-    const marker = document.createElement("span");
-    marker.className = "wt-confidence";
-    marker.textContent = "~";
-    marker.dataset.tip = unconfirmedHint(unchangedFor(row, opts.now ?? Date.now()));
-    title.append(document.createTextNode(" "), marker);
-  } else if (activity === "unknown") {
-    const marker = document.createElement("span");
-    marker.className = "wt-confidence";
-    marker.textContent = "~";
-    // Names the FAILING source, the same word the stale affordance uses, rather
-    // than the row's own label — `output` and `title` are both read off `panes`,
-    // and pointing at a name the degradation list never mentions is a dead end.
-    const failing = ACTIVITY_EVIDENCE[row.activitySource];
-    marker.dataset.tip =
-      failing === undefined
-        ? "No source reported this row's activity"
-        : `Activity came from ${failing}, which is not currently reporting`;
-    title.append(document.createTextNode(" "), marker);
-  } else if (isFallbackActivity(row.activitySource)) {
-    const marker = document.createElement("span");
-    marker.className = "wt-confidence";
-    marker.textContent = "~";
-    marker.dataset.tip =
-      row.activitySource === "output"
-        ? "Activity inferred from terminal output — the terminal is busy, which is not proof of an agent turn"
-        : `Activity inferred from ${row.activitySource} — not a published agent state`;
-    title.append(document.createTextNode(" "), marker);
+  const confidenceTip = confidenceHint(row, activity, opts.now);
+  if (confidenceTip !== undefined) {
+    title.append(document.createTextNode(" "), confidenceMarker(confidenceTip));
   }
   el.appendChild(title);
 
@@ -477,7 +490,13 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // Same reason as the worktree row above: `el` is what the roving tabindex
   // focuses, and its title / preview live on descendants closest() cannot reach
   // from here.
-  el.dataset.tip = row.preview ? `${titleText}\n${row.preview}` : titleText;
+  // The confidence hint joins it rather than living only on the marker: `Tooltip`
+  // resolves `closest('[data-tip]')` and focus lands on `el`, which walks UPWARD
+  // and can never reach the marker span inside it. Pointer-only delivery does not
+  // satisfy a requirement that makes the elapsed figure and the evidence mandatory
+  // parts of the statement. The pointer still gets the marker's own tip, being
+  // nearer. Composed last, because this line is what any earlier write loses to.
+  el.dataset.tip = [titleText, row.preview, confidenceTip].filter(Boolean).join("\n");
 
   // 7 — collapsed child count. Disappears when expanded; the children show instead.
   const count = document.createElement("span");

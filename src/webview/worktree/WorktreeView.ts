@@ -59,6 +59,9 @@ import type {
  *  visible affordance, never a silent truncation. */
 export const MAX_WORKTREES_PER_REPO = 20;
 
+/** setTimeout's delay is a signed 32-bit int; anything larger wraps and fires now. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 export interface WorktreeViewData {
   tree: WorktreeTree | null;
   presence: WorktreePresence | null;
@@ -148,6 +151,7 @@ export class WorktreeView {
   private data: WorktreeViewData = { tree: null, presence: null, loading: true };
   /** Armed only while some row can still cross the ceiling; cleared on disposal. */
   private ceilingTimer: ReturnType<typeof setTimeout> | undefined;
+  private disposed = false;
   private query = "";
   private signature: string | null = null;
   /** Repo/worktree ids whose children are hidden. */
@@ -215,6 +219,12 @@ export class WorktreeView {
    * `refreshing` and `loading` are render inputs, so they join the key.
    */
   setData(data: WorktreeViewData): void {
+    // A discarded view accepts no further work. Before the ceiling timer this was
+    // harmless — a push wrote into a detached element and stopped there — but a
+    // push now PLANTS a timer, which would keep repainting a view nobody holds.
+    if (this.disposed) {
+      return;
+    }
     this.data = data;
     this.applyAt(this.now());
   }
@@ -249,8 +259,21 @@ export class WorktreeView {
       this.signature = stateKey;
       // Expansion state for a worktree that disappeared is dropped, not resurrected.
       this.pruneStaleState(this.data);
-      this.render();
+      this.render(now);
     }
+    this.armCeiling(now);
+  }
+
+  /**
+   * A repaint forced by an interaction rather than by data — collapsing a repo,
+   * lifting the display cap, expanding a row. `applyAt` cannot serve these: the
+   * signature covers the DATA, and none of this moves it, so the render would be
+   * skipped. Still one reading of the clock, and still re-armed, because what is
+   * drawn is what can cross.
+   */
+  private repaint(): void {
+    const now = this.now();
+    this.render(now);
     this.armCeiling(now);
   }
 
@@ -273,7 +296,13 @@ export class WorktreeView {
         this.ceilingTimer = undefined;
         this.applyAt(this.now());
       },
-      Math.max(0, at - now),
+      // Clamped, because a `stateStartedAt` in the future is CONFIRMED — an
+      // impossible clock must not manufacture staleness — which is exactly what
+      // makes such a row an accepted crossing candidate. Unbounded, `at - now`
+      // overflows setTimeout's 32-bit delay past ~24.8 days and fires at once,
+      // re-deriving the same crossing and re-arming: a tight loop. Clamping ends
+      // it — the wake-up re-derives and arms the remainder, which terminates.
+      Math.min(Math.max(0, at - now), MAX_TIMEOUT_MS),
     );
   }
 
@@ -284,8 +313,15 @@ export class WorktreeView {
    */
   private nextCeilingCrossing(now: number): number | undefined {
     const degraded = this.degradedSources();
+    // Scoped to what is drawn. `render` opens with `replaceChildren()`, so waking
+    // for a row behind a collapsed repo, a filtered-out worktree, or one past the
+    // display cap would tear the whole list down to change nothing a user can see.
+    const drawn = this.renderedWorktreeIds();
     let soonest: number | undefined;
-    for (const rows of Object.values(this.data.presence?.rowsByWorktreeId ?? {})) {
+    for (const [worktreeId, rows] of Object.entries(this.data.presence?.rowsByWorktreeId ?? {})) {
+      if (!drawn.has(worktreeId)) {
+        continue;
+      }
       for (const row of rows) {
         if (row.stateStartedAt === undefined || presentedActivity(row, degraded, now) !== "running") {
           continue;
@@ -309,7 +345,7 @@ export class WorktreeView {
       return;
     }
     this.query = next;
-    this.render();
+    this.repaint();
   }
 
   /** Open the create form over the panel. No-op without `createDialogDeps`. */
@@ -390,6 +426,7 @@ export class WorktreeView {
   }
 
   dispose(): void {
+    this.disposed = true;
     if (this.ceilingTimer !== undefined) {
       clearTimeout(this.ceilingTimer);
       this.ceilingTimer = undefined;
@@ -426,7 +463,7 @@ export class WorktreeView {
       this.collapsed.add(id);
     }
     this.deps.persistCollapsed?.([...this.collapsed]);
-    this.render();
+    this.repaint();
   }
 
   /**
@@ -463,7 +500,7 @@ export class WorktreeView {
       this.expandedRows.add(rowId);
     }
     this.deps.persistExpandedRows?.([...this.expandedRows]);
-    this.render();
+    this.repaint();
   }
 
   /** The set is a real collapsed set, so this is the whole rule. */
@@ -564,7 +601,7 @@ export class WorktreeView {
 
   // -- Render --------------------------------------------------------------
 
-  private render(): void {
+  private render(now: number): void {
     const scrollTop = this.element.scrollTop;
     // `replaceChildren` detaches the focused row, and focus falls to <body> — a
     // keyboard user loses their place on every disclosure toggle. Restored below
@@ -645,7 +682,7 @@ export class WorktreeView {
     const multiRepo = tree.repos.length > 1;
     let rendered = 0;
     for (const repo of tree.repos) {
-      rendered += this.renderRepo(repo, multiRepo);
+      rendered += this.renderRepo(repo, multiRepo, now);
     }
     if (rendered === 0 && this.query) {
       this.element.appendChild(worktreeEmptyState("noMatch"));
@@ -659,8 +696,38 @@ export class WorktreeView {
     }
   }
 
+  /**
+   * The worktrees this repo actually DRAWS: none when it is collapsed, otherwise
+   * the matching ones up to the display cap. Sole owner of the collapse-and-cap
+   * rule, so the ceiling scheduler and the render cannot come to different
+   * conclusions about what is on screen.
+   */
+  private shownWorktrees(repo: WorktreeRepo, multiRepo: boolean): WorktreeInfo[] {
+    if (multiRepo && this.collapsed.has(repo.repoId)) {
+      return [];
+    }
+    const visible = repo.worktrees.filter((w) => this.matches(w));
+    return this.uncapped.has(repo.repoId) ? visible : visible.slice(0, MAX_WORKTREES_PER_REPO);
+  }
+
+  /** Every worktree id currently on screen — the only rows a crossing can repaint. */
+  private renderedWorktreeIds(): Set<string> {
+    const tree = this.data.tree;
+    const ids = new Set<string>();
+    if (!tree || !tree.gitAvailable || tree.repos.length === 0) {
+      return ids;
+    }
+    const multiRepo = tree.repos.length > 1;
+    for (const repo of tree.repos) {
+      for (const info of this.shownWorktrees(repo, multiRepo)) {
+        ids.add(info.id);
+      }
+    }
+    return ids;
+  }
+
   /** Returns how many worktree rows this repo contributed (0 → filtered away). */
-  private renderRepo(repo: WorktreeRepo, multiRepo: boolean): number {
+  private renderRepo(repo: WorktreeRepo, multiRepo: boolean, now: number): number {
     const visible = repo.worktrees.filter((w) => this.matches(w));
     if (visible.length === 0 && !repo.degraded) {
       return 0;
@@ -692,9 +759,9 @@ export class WorktreeView {
       );
     }
 
-    const shown = this.uncapped.has(repo.repoId) ? visible : visible.slice(0, MAX_WORKTREES_PER_REPO);
+    const shown = this.shownWorktrees(repo, multiRepo);
     for (const info of shown) {
-      this.renderWorktree(info);
+      this.renderWorktree(info, now);
       for (const result of this.resultsFor(info.id)) {
         this.element.appendChild(this.buildActionNotice(result, info));
       }
@@ -703,7 +770,7 @@ export class WorktreeView {
       this.element.appendChild(
         renderShowAll(visible.length, () => {
           this.uncapped.add(repo.repoId);
-          this.render();
+          this.repaint();
         }),
       );
     }
@@ -713,7 +780,7 @@ export class WorktreeView {
     return visible.length;
   }
 
-  private renderWorktree(info: WorktreeInfo): void {
+  private renderWorktree(info: WorktreeInfo, now: number): void {
     const rows = this.rowsFor(info.id);
     const expanded = rows.length > 0 && this.isExpanded(info);
     // The card wraps the branch row together with its agent rows, so ownership
@@ -729,7 +796,7 @@ export class WorktreeView {
       renderWorktreeRow(
         info,
         {
-          activity: strongestActivity(rows, this.degradedSources(), this.now()),
+          activity: strongestActivity(rows, this.degradedSources(), now),
           hasAgents: rows.length > 0,
           expanded,
           agentSummary: rows.length > 0 ? agentCountLabel(rows.length) : undefined,
@@ -755,7 +822,7 @@ export class WorktreeView {
     }
     if (!expanded) {
       container.appendChild(
-        renderPresencePill(groupPresenceByActivity(rows, this.degradedSources(), this.now()), () =>
+        renderPresencePill(groupPresenceByActivity(rows, this.degradedSources(), now), () =>
           this.toggleCollapsed(info.id),
         ),
       );
@@ -775,9 +842,9 @@ export class WorktreeView {
         renderAgentRow(
           row,
           {
-            activity: presentedActivity(row, this.degradedSources(), this.now()),
+            activity: presentedActivity(row, this.degradedSources(), now),
             expanded: rowExpanded,
-            now: this.now(),
+            now,
           },
           {
             onActivate: (r) => this.deps.onActivateAgent?.(r, this.activationFor(r)),
@@ -795,7 +862,7 @@ export class WorktreeView {
             row.delegations,
             row,
             (sub, parent) => this.deps.onActivateSubagent?.(sub, parent),
-            this.now(),
+            now,
           ),
         );
       }

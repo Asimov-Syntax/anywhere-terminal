@@ -45,3 +45,22 @@
     1. Add the invariant to `docs/DESIGN.md` § 8.4 verbatim and remove its row from the planned-invariants table above § 8.5, since it is no longer planned.
     2. Add the matching row to `src/test/invariants/registry.ts` with this blueprint task as its owner and a covering stimulus, and tag the proving tests so the coverage reporter sees them run — the derivation half in `src/webview/worktree/worktreeFormat.test.ts` and the still-shape half in `src/webview/worktree/WorktreeView.test.ts`, since the invariant claims both.
     3. Verify with the whole suite, not the registry test alone: `src/test/invariants/coverageReporter.ts` skips its enforcement on a filtered run, so a targeted run cannot prove the tagged test executed.
+
+## 2. Review round 1 fixes
+
+- [x] 2_1 Prove the still shape, and read the clock once — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_4
+  - **Refs**: specs/worktree-panel/spec.md#{one-reading-of-the-clock-serves-the-whole-cycle, an-inferred-running-claim-stops-animating-once-it-outlives-its-evidence, a-claim-that-outlived-its-evidence-says-how-long-and-on-what, a-claim-that-outlives-its-evidence-stops-animating-without-being-told}
+  - **Acceptance**:
+    - Outcome: the shape guard fails when the unconfirmed state animates, and one clock reading serves each cycle
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/worktreeFormat.ts`, `src/webview/worktree/worktreeFormat.test.ts`, `src/webview/worktree/WorktreeRemoveDialog.ts`, `src/webview/worktree/WorktreeRemoveDialog.test.ts`, `src/webview/worktree/worktreePanel.css`.
+    1. B1 — in `src/webview/worktree/WorktreeView.test.ts`, make the guard apply the real reduced-motion cascade instead of deleting every animation declaration, so a state the media query does not name keeps its motion and collides with `running`. Tag the failing-capable test `[I17]`.
+    2. B2 + S2 — thread the one `now` from `applyAt` through `render`, `renderRepo` and `renderWorktree`; resolve the dialog's clock once per paint.
+    3. W2 — scope the crossing walk to the worktrees the render actually draws, sharing one visibility helper with the render so the two cannot drift.
+    4. W4 — bound the armed delay so a future `stateStartedAt` cannot overflow `setTimeout` into a tight re-arm loop.
+    5. W5 — a terminal flag on `dispose`, so a later push plants no timer on a discarded view.
+    6. W1 — the refusal keeps refusing, but stops asserting a turn is in progress when every readable row is unconfirmed.
+    7. W3 + S3 — one confidence-marker builder, and its hint reachable by keyboard, not only by pointer.
+    8. S4 + S5 — assert the two presented orders hold the same membership; stop saying "over N minutes" at exactly N.

@@ -177,8 +177,15 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     // this refusal — warning about a possibly-working agent is the safe side of
     // deleting a folder. What the source decides is the CLAIM made about each row.
     const busy = (deps.agentRows ?? []).filter((r) => r.activity === "running" || r.activity === "waiting");
-    const presented = busy.map((row) => [row, presentedActivity(row, degraded, deps.now ?? Date.now())] as const);
+    // ONE reading for the whole paint: the copy below and the rows further down
+    // describe the same instant, and `renderAgentRow` would otherwise resolve its
+    // own `Date.now()` when `deps.now` is absent.
+    const now = deps.now ?? Date.now();
+    const presented = busy.map((row) => [row, presentedActivity(row, degraded, now)] as const);
     const confirmed = presented.filter(([, a]) => a !== "unknown").length;
+    // A claim past the ceiling is readable but not vouched for. It still blocks —
+    // that is the safe side — but the prose must not promote it to certainty.
+    const vouched = presented.filter(([, a]) => a !== "unknown" && a !== "running-unconfirmed").length;
     const box = document.createElement("div");
     box.className = "wt-refusebox";
     const lead = document.createElement("b");
@@ -221,6 +228,12 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       } else {
         if (confirmed === 0) {
           lead.textContent = "An agent may be mid-turn in this worktree, and nothing can currently confirm it.";
+        } else if (vouched === 0) {
+          // Readable, but every readable one has outlived its evidence. Saying "is
+          // mid-turn" here would contradict the `~` hint on the very row below,
+          // which says a busy terminal is not proof of a turn in progress.
+          lead.textContent =
+            "An agent may be mid-turn in this worktree, and the activity here has outlived what can confirm it.";
         } else if (unread === 0) {
           lead.textContent = "An agent is mid-turn in this worktree.";
         } else {
@@ -239,7 +252,7 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     for (const [row, activity] of presented) {
       const el = renderAgentRow(
         row,
-        { activity, now: deps.now },
+        { activity, now },
         {
           onActivate: () => deps.onShowAgent?.(row),
           onContextMenu: () => {},

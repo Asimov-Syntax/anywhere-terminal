@@ -29,6 +29,7 @@ import {
   worktree,
 } from "./worktreeFixtures";
 import type { PresentedActivity } from "./worktreeFormat";
+import { CONFIRMATION_CEILING_MS } from "./worktreeFormat";
 import { unconfirmedHint } from "./worktreeTreeView";
 import type {
   DelegationRoster,
@@ -358,7 +359,10 @@ describe("tree structure", () => {
      * must not keep a state alive, and one that paints must not mask a base
      * collision, so the base layer is asserted on its own as well.
      */
-    const shapeOf = (state: string, dropMotion: boolean): { key: string; base: string; baseInked: boolean } => {
+    const shapeOf = (
+      state: string,
+      dropMotion: boolean,
+    ): { key: string; base: string; baseInked: boolean; motion: string } => {
       const baseDecls = declsOf(css, state);
       expect(baseDecls, `no rule for .wt-state--${state}`).not.toEqual([]);
       const layers: [string, string[]][] = [
@@ -372,6 +376,9 @@ describe("tree structure", () => {
       ];
       const keys = new Map<string, Map<string, string>>();
       let baseInked = false;
+      // What the cascade ACTUALLY leaves running, as opposed to what the shape key
+      // deliberately ignores. Last write wins, exactly as the media query does.
+      let motion = "none";
       for (const [layer, decls] of layers) {
         const kept = new Map<string, string>();
         const edges = new Map<string, Edge>();
@@ -380,7 +387,16 @@ describe("tree structure", () => {
           const [rawProp = "", ...rest] = decl.split(":");
           const prop = rawProp.trim();
           const value = flatten(rest.join(":"));
-          if (dropMotion && /^(animation|transition)/.test(prop)) {
+          if (/^animation/.test(prop)) {
+            // Motion is not shape, so it never enters the key — but a state that
+            // keeps moving once the media query has spoken is a separate lie, and
+            // the assertion below is the only thing that can see it. Deleting this
+            // outright, as this guard used to, made that assertion unaskable: an
+            // animated `running-unconfirmed` stayed green through every pass.
+            motion = prop === "animation-name" || prop === "animation" ? value : motion;
+            continue;
+          }
+          if (/^transition/.test(prop)) {
             continue;
           }
           if (prop === "background" || prop === "background-color") {
@@ -408,7 +424,7 @@ describe("tree structure", () => {
           .sort()
           .map(([k, v]) => `${k}:${v}`)
           .join(";");
-      return { key: `${render("")}|${render("after")}`, base: render(""), baseInked };
+      return { key: `${render("")}|${render("after")}`, base: render(""), baseInked, motion };
     };
 
     // Keyed by the presented vocabulary itself, so § 7.2's reserved sixth member
@@ -437,6 +453,21 @@ describe("tree structure", () => {
         // distinction the base does not have.
         const keys = shapes.map((sh) => (layer === "base" ? sh.base : sh.key));
         expect(new Set(keys).size, `two states share a ${layer} shape (${where})`).toBe(keys.length);
+      }
+      if (dropMotion) {
+        // The distinctness passes above cannot ask this: they strip motion from the
+        // key on purpose, so a state that animates and one that does not compare
+        // equal, and the reduced-motion cascade is never consulted. The media query
+        // names the states it stops BY HAND, so a new animated state is silently
+        // exempt from it — which is exactly the shape of the defect this asserts
+        // against. `running-unconfirmed` is the whole point of the ceiling: a claim
+        // whose evidence ran out must stop moving.
+        for (const [i, shape] of shapes.entries()) {
+          expect(
+            shape.motion,
+            `.wt-state--${STATES[i]} still animates under prefers-reduced-motion — the media query does not name it`,
+          ).toBe("none");
+        }
       }
     }
   });
@@ -468,10 +499,15 @@ describe("tree structure", () => {
   it("writes the elapsed gap as a bound, so a hint read an hour later is still true", () => {
     // The hint is written at render and read at hover. An exact figure would be
     // false by the time anyone sees it, and the row does not repaint again.
-    expect(unconfirmedHint(9 * 60_000)).toContain("over 9 minutes");
-    expect(unconfirmedHint(3 * 60 * 60_000)).toContain("over 3 hours");
+    expect(unconfirmedHint(9 * 60_000)).toContain("at least 9 minutes");
+    expect(unconfirmedHint(3 * 60 * 60_000)).toContain("at least 3 hours");
     expect(unconfirmedHint(9 * 60_000)).toContain("not proof of a turn in progress");
     expect(unconfirmedHint(undefined)).not.toContain("Unchanged");
+    // "at least", not "over": the timer fires AT the ceiling, so the very first
+    // hint a crossing writes carries the exact figure — and "over 5 minutes"
+    // would be false by a hair at the one moment the claim is newest.
+    expect(unconfirmedHint(CONFIRMATION_CEILING_MS)).toContain("at least 5 minutes");
+    expect(unconfirmedHint(CONFIRMATION_CEILING_MS)).not.toContain("over");
   });
 
   it("repaints a row that crosses the ceiling with no push, and does not when none crosses", () => {
@@ -507,6 +543,189 @@ describe("tree structure", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reads the clock ONCE per cycle, so a row's glyph and its own hint agree", () => {
+    // Every other test freezes `now`, which is exactly why the five re-reads in the
+    // render path were invisible: a frozen clock makes them indistinguishable from
+    // one reading. Here the clock advances on EVERY call, so any second read lands
+    // at a different moment than the first.
+    let ticks = 0;
+    const { view } = mount({ now: () => NOW + ticks++ * CONFIRMATION_CEILING_MS });
+    view.setData({
+      tree: singleRepoTree(),
+      presence: {
+        scannedAt: NOW,
+        degradedSources: [],
+        rowsByWorktreeId: {
+          [MAIN_PATH]: [
+            agentRow({
+              rowId: "one",
+              agent: "claude",
+              activity: "running",
+              activitySource: "output",
+              title: "worker",
+              stateStartedAt: NOW,
+            }),
+          ],
+        },
+      },
+    });
+    const row = view.element.querySelector<HTMLElement>(".wt-arow");
+    expect(row, "fixture drew no agent row").not.toBeNull();
+    const glyph = row?.querySelector(".wt-state")?.className ?? "";
+    // The FIRST reading is `NOW`, and the row started its activity at `NOW`: zero
+    // elapsed, so the cycle must draw it confirmed. Any later read inside the
+    // render is a whole ceiling further on and would draw the withdrawn glyph
+    // instead — a row scheduled against one moment and drawn against another.
+    expect(glyph).toContain("wt-state--running");
+    expect(glyph).not.toContain("unconfirmed");
+    expect(row?.querySelector<HTMLElement>(".wt-confidence")?.dataset.tip ?? "").not.toContain(
+      "Unchanged for at least",
+    );
+  });
+
+  it("arms no crossing for a row the render does not draw", () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = mount({ now: () => NOW });
+      view.setData({
+        tree: singleRepoTree(),
+        presence: {
+          scannedAt: NOW,
+          degradedSources: [],
+          rowsByWorktreeId: {
+            [PANEL_WT]: [
+              agentRow({
+                rowId: "hidden",
+                agent: "claude",
+                activity: "running",
+                activitySource: "output",
+                title: "worker",
+                stateStartedAt: NOW - 4 * 60_000,
+              }),
+            ],
+          },
+        },
+      });
+      expect(vi.getTimerCount()).toBe(1);
+      // Filtered off screen. `render` opens with `replaceChildren()`, so waking for
+      // this row would tear down and rebuild the whole list to change nothing
+      // anybody can see.
+      view.setQuery("no-such-branch-anywhere");
+      expect(rowFor(view, "feat/worktree-panel")).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not spin when a start time lies in the future", () => {
+    vi.useFakeTimers();
+    try {
+      let ticks = 0;
+      const { view } = mount({
+        now: () => {
+          ticks++;
+          return NOW;
+        },
+      });
+      // Confirmed, per the spec — an impossible clock must not manufacture
+      // staleness — which is precisely what makes it an accepted candidate. A year
+      // out, `at - now` overflows setTimeout's 32-bit delay, fires immediately, and
+      // re-derives the same crossing forever.
+      view.setData({
+        tree: singleRepoTree(),
+        presence: {
+          scannedAt: NOW,
+          degradedSources: [],
+          rowsByWorktreeId: {
+            [PANEL_WT]: [
+              agentRow({
+                rowId: "future",
+                agent: "claude",
+                activity: "running",
+                activitySource: "output",
+                title: "worker",
+                stateStartedAt: NOW + 365 * 24 * 60 * 60_000,
+              }),
+            ],
+          },
+        },
+      });
+      // Counting timers cannot see this: the loop re-arms, so the count is always
+      // 1. What gives it away is the FIRING — an overflowed delay wraps to about a
+      // millisecond, so a second of fake time is a thousand wake-ups, each one
+      // re-reading the clock. A bounded delay fires not once in that second.
+      const settled = ticks;
+      vi.advanceTimersByTime(1_000);
+      expect(ticks - settled, "the ceiling timer is re-firing in a tight loop").toBe(0);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("plants no timer when data arrives after disposal", () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = mount({ now: () => NOW });
+      view.dispose();
+      view.setData({
+        tree: singleRepoTree(),
+        presence: {
+          scannedAt: NOW,
+          degradedSources: [],
+          rowsByWorktreeId: {
+            [PANEL_WT]: [
+              agentRow({
+                rowId: "late",
+                agent: "claude",
+                activity: "running",
+                activitySource: "output",
+                title: "worker",
+                stateStartedAt: NOW - 4 * 60_000,
+              }),
+            ],
+          },
+        },
+      });
+      // Before the ceiling a late push wrote into a detached element and stopped.
+      // It now installs a timer, which would repaint a view nobody holds.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers the confidence hint to the keyboard, not only to the pointer", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({
+      tree: singleRepoTree(),
+      presence: {
+        scannedAt: NOW,
+        degradedSources: [],
+        rowsByWorktreeId: {
+          [MAIN_PATH]: [
+            agentRow({
+              rowId: "stale",
+              agent: "claude",
+              activity: "running",
+              activitySource: "output",
+              title: "worker",
+              stateStartedAt: NOW - CONFIRMATION_CEILING_MS,
+            }),
+          ],
+        },
+      },
+    });
+    const row = view.element.querySelector<HTMLElement>(".wt-arow");
+    // `Tooltip` resolves `closest('[data-tip]')`, and focus lands on the ROW —
+    // which walks upward and can never reach the marker span inside it. The
+    // elapsed figure and the evidence are mandatory parts of the statement, so a
+    // keyboard user has to be able to get them.
+    expect(row?.dataset.tip ?? "").toContain("Unchanged for at least");
+    expect(row?.dataset.tip ?? "").toContain("not proof of a turn in progress");
   });
 
   it("performs no DOM work when a re-derivation moves nothing", () => {
