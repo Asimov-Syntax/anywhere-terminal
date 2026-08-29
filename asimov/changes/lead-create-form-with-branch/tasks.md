@@ -57,3 +57,15 @@
     4. W3: the override is one-way and should not be. Clearing it returns the line to the derivation, because a face showing a derivation that is switched off is worse than no override at all.
     5. W6: the apply callback replaces the repo record wholesale, agents included, and refreshes only the destination. The posture gate now reads that list, so it has to be refreshed with it.
     6. Fixtures and assertions (W4, W5): the default fixture must be able to stand in for production, which always supplies both callbacks and a resolved path — seven tests currently submit through a branch production never reaches. Delete the two assertions that cannot fail, and assert the tooltip that W1 says nothing asserts: deleting the attach must turn the suite red.
+
+- [x] 1_5 Round-2 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_4
+  - **Refs**: ../../../specs/worktree-panel/spec.md#{a-launch-is-submitted-as-the-offer-it-was-shown, a-dangerous-posture-is-offered-but-never-preselected}, specs/worktree-panel/spec.md#{the-destination-is-stated-once-and-its-exact-value-stays-reachable}
+  - **Acceptance**:
+    - Outcome: an open create dialog keeps the offer and the posture it was opened against
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeCreateDialog.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`.
+    1. R1: my round-1 fix for W6 repealed an unmodified base requirement — a dialog submits the offer it was OPENED against, and I admitted a refreshed one into it. The chair withdrew its own W6 on that reading. Revert the refresh, and stop the live list reaching the dialog at all: the answer carries a destination, so splice the destination and keep the agents the dialog opened with. That also removes the per-keystroke posture wipe, because nothing calls `setAgents` any more.
+    2. R2: clearing the override refilled the field from the derivation in the same event, so the next characters typed append to a value the user believes is empty. The line and the submitted path may be derived-plus-typed. Withdrawing the override must not put text back into the field the user is editing — the placeholder already carries the shape.
+    3. R3: the tooltip test pins that something was attached, not what it says. Exercise the show path with the timer it actually uses, so a `getText` returning the shortened text fails.

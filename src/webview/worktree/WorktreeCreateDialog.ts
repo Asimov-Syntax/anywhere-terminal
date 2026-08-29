@@ -427,7 +427,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * names the collided path AND the suffixed one the create will actually use —
    * showing only the pretty default would be a claim the form cannot keep.
    */
-  function syncDerived(): void {
+  function syncDerived(opts: { keepPathInput?: boolean } = {}): void {
     const repo = currentRepo();
     repoHint.textContent = repo.mainPath;
 
@@ -448,7 +448,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const derived = repo.resolvedPath ?? (slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "");
     if (pathIsDerived) {
       draft.path = derived;
-      pathInput.value = derived;
+      if (opts.keepPathInput !== true) {
+        pathInput.value = derived;
+      }
     }
     pathInput.placeholder = `…/${repo.pathPrefix}-<branch>`;
 
@@ -530,9 +532,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const edited = (): void => {
     syncDerived();
   };
-  nameInput.addEventListener("input", syncDerived);
+  nameInput.addEventListener("input", () => syncDerived());
   nameInput.addEventListener("change", edited);
-  baseInput.addEventListener("input", syncDerived);
+  baseInput.addEventListener("input", () => syncDerived());
   baseInput.addEventListener("change", edited);
   pathInput.addEventListener("input", () => {
     // Clearing the field is not an override of "nowhere" — it is withdrawing the
@@ -540,7 +542,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // and Create was disabled with the explaining control behind the disclosure.
     pathIsDerived = pathInput.value.trim() === "";
     draft.path = pathInput.value;
-    syncDerived();
+    // Withdrawn, not undone: the derivation takes the line and the submission,
+    // but the FIELD stays as the user left it. Writing the derived path back into
+    // the input they are editing is invisible to them, so the next characters
+    // they type append to a value they believe is gone.
+    syncDerived({ keepPathInput: true });
   });
   shell.dialog.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
@@ -562,18 +568,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     const at = repos.findIndex((r) => r.repoId === next.repoId);
     if (at >= 0) {
-      repos[at] = next;
+      // The DESTINATION is what was asked for, and the only part of the answer
+      // this dialog may take. `createRepos()` stamps the panel's live agent list
+      // into every answer, and the host answers per keystroke — splicing the
+      // record wholesale would relabel the user's choice as they type, and
+      // `A launch is submitted as the offer it was shown` says a dialog submits
+      // what it was OPENED against. An earlier fix here took the whole record
+      // and did exactly that; keeping the agents is what makes the refresh safe.
+      const opened = repos[at];
+      repos[at] = opened === undefined ? next : { ...next, agents: opened.agents };
     } else {
       repos.push(next);
     }
     outstanding = false;
-    // The answer replaces the repo record wholesale, agents included, and the
-    // posture gate reads that list — an offer refreshed into an all-dangerous one
-    // would otherwise leave Create enabled on a posture nobody chose.
-    if (next.repoId === draft.repoId) {
-      agentBox.setAgents(currentRepo().agents);
-      rebuildAfterOptions();
-    }
     syncDerived();
   });
 

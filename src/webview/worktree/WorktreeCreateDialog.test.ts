@@ -3,7 +3,7 @@
 // The create form, against docs/ui/worktree.html § 9 (default) and § 10 (invalid
 // branch, collided path, agent picker expanded).
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openWorktreeCreateDialog, sanitizeBranchForPath } from "./WorktreeCreateDialog";
 import { createDefaults } from "./worktreeFixtures";
 import type { WorktreeCreateDraft } from "./worktreeViewTypes";
@@ -727,30 +727,134 @@ describe("round-1 review fixes", () => {
     // gone behind the disclosure.
     type(path, "   ");
     expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(FULL_A);
-    expect(path.value).toBe(FULL_A);
+    // The LINE returns to the derivation; the field stays as the user left it.
+    // What happens inside the field is [R2]'s.
+    expect(path.value).toBe("   ");
     expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
   });
 
-  it("[W6] refreshes the agent block when an answer carries a different agent list", () => {
-    const RECKLESS = {
-      id: "reckless",
-      label: "Reckless",
-      canSeedPrompt: true,
-      permissionChoices: [{ id: "yolo", label: "Skip every prompt", dangerous: true }],
-    };
-    const h = twoRepos();
+});
+
+describe("round-2 review fixes", () => {
+  const RECKLESS = {
+    id: "reckless",
+    label: "Reckless",
+    canSeedPrompt: true,
+    permissionChoices: [{ id: "yolo", label: "Skip every prompt", dangerous: true }],
+  };
+
+  function wired(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
+    let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+    const h = open({
+      onBranchChange: () => {},
+      bindDefaults: (fn) => {
+        apply = fn;
+      },
+      ...over,
+    });
+    return { ...h, answer: (next: ReturnType<typeof createDefaults>) => apply?.(next) };
+  }
+
+  function commit(input: HTMLInputElement, value: string): void {
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  it("[R1] keeps the posture the user chose across the answers a branch edit provokes", () => {
+    const h = wired();
     const after = h.q<HTMLSelectElement>("#wt-after");
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
+    const perm = h.q<HTMLSelectElement>("#wt-perm");
+    perm.value = "acceptEdits";
+    perm.dispatchEvent(new Event("change"));
+
     commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
-    h.answer(createDefaults({ resolvedPath: FULL_A, answersBranch: "feat/x" }));
-    // Enabled on the offer that HAS a safe posture, so the disable below is the
-    // refreshed list and not the destination the form was still waiting for.
-    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
-    // The answer replaces the repo record wholesale, agents included. The posture
-    // gate reads that list, so an offer that became all-dangerous must re-gate.
-    h.answer(createDefaults({ resolvedPath: FULL_A, answersBranch: "feat/x", agents: [RECKLESS] }));
-    expect([...h.q<HTMLSelectElement>("#wt-agent").options].map((o) => o.value)).toEqual(["reckless"]);
-    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
+    h.answer(createDefaults({ resolvedPath: "/trees/x", answersBranch: "feat/x" }));
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/xy");
+    h.answer(createDefaults({ resolvedPath: "/trees/xy", answersBranch: "feat/xy" }));
+
+    // The host answers per keystroke. Rebuilding the block on each answer reset
+    // the posture to the first safe one every time the user touched the branch.
+    expect(h.q<HTMLSelectElement>("#wt-perm").value).toBe("acceptEdits");
+    h.q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(h.submitted[0]?.permissionChoiceId).toBe("acceptEdits");
+  });
+
+  it("[R1] submits the offer the dialog was opened against, not a refreshed one", () => {
+    // The base requirement is explicit: what a dialog submits is what it was
+    // OPENED against. `createRepos()` stamps the panel's live agent list into
+    // every answer, so admitting it here relabels the choice under the user.
+    const h = wired();
+    const after = h.q<HTMLSelectElement>("#wt-after");
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    const opened = [...h.q<HTMLSelectElement>("#wt-agent").options].map((o) => o.value);
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: "/trees/x", answersBranch: "feat/x", agents: [RECKLESS] }));
+    expect([...h.q<HTMLSelectElement>("#wt-agent").options].map((o) => o.value)).toEqual(opened);
+    // And the destination the answer DID carry still lands — the splice keeps the
+    // agents, not the whole stale record.
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/x");
+  });
+
+  it("[R1] a repo switch restores the agents that repo was opened with", () => {
+    // The answer is spliced, not swapped, so the record the repo-switch handler
+    // re-reads still carries the opening agents. Without that, an answer whose
+    // list is empty withdraws the agent choice the next time the user comes back
+    // to this repo — a relabelling of the offer one step removed from the answer.
+    let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+    const h = open({
+      repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
+      onBranchChange: () => {},
+      bindDefaults: (fn) => {
+        apply = fn;
+      },
+    });
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    apply?.(createDefaults({ resolvedPath: "/trees/x", answersBranch: "feat/x", agents: [] }));
+    const repoSelect = h.q<HTMLSelectElement>("#wt-repo-select");
+    repoSelect.value = "/other/.git";
+    repoSelect.dispatchEvent(new Event("change"));
+    repoSelect.value = createDefaults().repoId;
+    repoSelect.dispatchEvent(new Event("change"));
+    expect([...h.q<HTMLSelectElement>("#wt-after").options].map((o) => o.value)).toContain("agent");
+  });
+
+  it("[R2] clearing the override leaves the field empty for what the user types next", () => {
+    const h = wired();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-x", answersBranch: "feat/x" }));
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    const path = h.q<HTMLInputElement>("#wt-path");
+    type(path, "/custom/place");
+    // Select-all-Delete. Refilling the field from the derivation in this same
+    // event is invisible to the user, so their next characters append to a value
+    // they believe is gone.
+    type(path, "");
+    expect(path.value).toBe("");
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/repo-feat-x");
+    type(path, "/elsewhere");
+    expect(path.value).toBe("/elsewhere");
+    h.q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(h.submitted[0]?.path).toBe("/elsewhere");
+  });
+
+  it("[R3] the tooltip shows the exact path, not the shortened one", () => {
+    vi.useFakeTimers();
+    try {
+      const h = wired();
+      commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+      h.answer(createDefaults({ resolvedPath: "/trees/deep/repo-feat-x", answersBranch: "feat/x" }));
+      const dest = h.q<HTMLElement>(".wt-dest");
+      dest.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+      vi.advanceTimersByTime(400);
+      // Asserting that SOMETHING was attached leaves a getText returning the
+      // shortened text green, which is the whole content of the promise.
+      expect(document.getElementById("webview-tooltip-widget")?.textContent).toBe("/trees/deep/repo-feat-x");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
