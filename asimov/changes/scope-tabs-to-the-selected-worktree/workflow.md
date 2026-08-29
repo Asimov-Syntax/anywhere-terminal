@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -30,6 +30,14 @@
 - 1_7's planned Verify (`vitest run src/webview/TabBar.test.ts src/test/invariants`) could not prove its own Outcome: the invariant reporter treats ANY filtered run as partial, so stripping the `[I18]` tag stays green under it. Changed to the unfiltered `pnpm run test:unit`, which exits 1 on the same strip. Outcome unchanged.
 - Verify Gate, round-1 fix round: type check, `pnpm run test:unit` (4977 pass) and `pnpm run gate:fs-deletion` all green. `biome check src` still exits 1, on 17 findings, none of them in any of this change's 28 touched files — verified by intersecting the finding list with `git diff --name-only 6cd31e8c..HEAD -- src` (empty). The base-commit diff was not repeated because the base worktree resolves a different biome than the main checkout, which is a known condition here and would have compared two linters rather than two trees.
 - Correction to the line above: `biome check` prints at most 20 diagnostics, and the file list I fed `comm` was unsorted, so BOTH sides of that check were wrong. Re-run with `--max-diagnostics=200` and sorted input: 19 findings, two of them in files this change touches — `worktreePanel.css:539` (`.wt-hist-label`, authored by `404d4c15`) and `WorktreeController.test.ts:1160` (formatter drift, authored by `7704860c`), neither on a line this change wrote. A third, `MessageRouter.ts`'s import order, WAS this change's (`b20355f0`) and had been hidden by the same two errors; fixed in 2_2.
+- Verify Gate, round-2 fix round (task 2_2): check-types, `pnpm run test:unit` (4988 pass) and `pnpm run gate:fs-deletion` green — recorded in `.build/verified.ndjson` at `exit: 0`. `biome check --max-diagnostics=200 src` exits 1 on 17 findings across 7 files; exactly one is in a file this change touches, `worktreePanel.css:539` (`.wt-hist-label`, `git log -L` → `404d4c15`), and not on a line this change wrote. Re-derived independently by the round-3 chair.
+- Round 3 returned APPROVE — 0 blocking, 0 warnings, 7 suggestions, none gating. Not fixed, and each recorded here rather than silently dropped:
+  - S1 (P3): the chip's focus handoff to `.tab-add` is inert when clearing the scope also hides the bar (0-1 unscoped tabs) — focus falls to `<body>`. Not trivial: it needs a focus target outside the tab bar's own knowledge. The chair overruled a specialist's BLOCK on it because reachability went down, not up.
+  - S2 (P4): a notice staged before a `handleTreeResponse` that throws survives to be painted beside a live row by an unrelated later push. The chair's own instruction is NOT to answer this with a fourth ordering patch: the durable form is a contradiction guard in `placeResults` that suppresses a `scope` result whose worktree is still drawn, and leaving it recorded is explicitly legitimate.
+  - S3 (P5): a worktree that leaves, returns, is reselected and leaves again produces two notices. Traced through both the old and the new ordering — pre-existing, not caused by the staging change.
+  - S5 (P5): `reportScopeCleared` now has no production caller; the seam uses `stageScopeCleared`. Kept as the push-ing public form rather than deleted mid-approval.
+  - S6 (P5): my round-3 impact manifest claimed a surface with a controller but no seam. It cannot occur — both are constructed in the same `if (vaultHost)` block. The seam's `panel: () => null` path is still a real unit contract, and is tested as one.
+  - S7 (P5): the V1 announce-before-commit inversion turns a synchronously re-entrant `select` from a benign overwrite into a lost update. Unreachable today; recorded because "unreachable today" is the argument V7 was accepted to retire.
 - 2_1's Plan paths cover the whole fix round, including the new `tabBarScopeWiring.ts` seam the chair's P2 suggestion called for. D8 is unchanged and the design doc records where the wiring now lives; the fix mints no new invariant owner, so no handback.
 - 1_5's Plan paths grew by five files (`worktreeViewTypes.ts`, `WorktreeView.ts`, `WorktreeController.ts` and their tests): D7 routes the "said" through the panel's action-result surface, so the `scope` action kind, its notice branch and the controller entry point all had to exist for step 4 to land.
 

@@ -235,7 +235,7 @@ worktreeScope?: string   // a WorktreeInfo.id; absent means All
 | Scope set, one tab unattributable | That tab is shown (§ 3.2) and is not counted by the badge — it was never hidden |
 | Scoped worktree removed or pruned | Scope drops to `All`, with a reason |
 | Scoped worktree goes `missing` | Scope is kept — the registration exists and panes may still be attributed to it |
-| Presence degraded for the pane source | Last attribution stands; scope is not recomputed from an empty result |
+| Presence degraded for the pane source | Attribution is recomputed from the push like any other, and is unchanged by the degradation: it is derived from each pane's own `cwd` against the tree's worktree ids, so a failing source weakens what a row says about its *agent* without moving the row between worktrees (§ 3.4). There is no retained last-known map, and nothing to retain one for |
 | Selecting a scope while an out-of-scope pane is active | The filter applies to it like any other tab; the first in-scope pane becomes active, or the empty-scope region is shown (§ 3.3). The pane keeps running and returns with `All` |
 | Two surfaces, different scopes | Both legal; neither is reconciled |
 | Sidebar, rail auto-collapsed | The chip and `All` live on the tab bar, so the escape survives the collapse |

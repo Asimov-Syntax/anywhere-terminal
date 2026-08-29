@@ -14,9 +14,9 @@ import { TabBarScopeCoordinator, type TabBarScopeStore } from "./tabBarScope";
 import type { WorktreeTree } from "./worktree/worktreeViewTypes";
 
 /**
- * The worktree panel, as this seam needs it. Two methods, both of them things the
- * TAB BAR asks of the panel — the traffic in the other direction is the callbacks
- * below, and keeping them apart is what stops the two from calling each other.
+ * The worktree panel, as this seam needs it — only what the seam ASKS OF the
+ * panel. The traffic in the other direction is the callbacks below, and keeping
+ * the two apart is what stops them from calling each other.
  */
 export interface TabBarScopePanel {
   /**
