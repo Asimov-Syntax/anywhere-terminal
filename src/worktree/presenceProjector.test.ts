@@ -33,6 +33,7 @@ function makeProjector(initial: Pane[] = []) {
   let lookup: (paneId: string) => SessionLookup = () => ({ kind: "absent" });
   let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
+  let vaultPreview: ((entryId: string) => Promise<string | undefined>) | undefined;
   let vaultUnderCwd: ((agent: VaultAgentId, cwd: string) => Promise<string | undefined>) | undefined;
   let standingReport: ((paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) | undefined;
   let snapshots = 0;
@@ -60,6 +61,7 @@ function makeProjector(initial: Pane[] = []) {
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
+    sessionPreview: (entryId) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
     resolveReportedSession: async (sessionId) => {
       reportedAsked.push(sessionId);
       return reportedSessions[sessionId] ?? null;
@@ -84,6 +86,9 @@ function makeProjector(initial: Pane[] = []) {
     },
     setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
       vaultTitle = next;
+    },
+    setVaultPreview(next: (entryId: string) => Promise<string | undefined>) {
+      vaultPreview = next;
     },
     setVaultUnderCwd(next: (agent: VaultAgentId, cwd: string) => Promise<string | undefined>) {
       vaultUnderCwd = next;
@@ -658,6 +663,90 @@ describe("what a row is called", () => {
     startedAt: 1_600_000_000_000,
     name: "hadern-analysis-a7",
     ...over,
+  });
+
+  describe("the row's preview line", () => {
+    it("carries the session's last activity", async () => {
+      const h = makeProjector();
+      h.setRegistry({ kind: "ok", sessions: [named()] });
+      h.setVaultPreview(async (entryId) => (entryId === "claude:s1" ? "- Approve the git worktree add?" : undefined));
+
+      const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+      expect(row.preview).toBe("- Approve the git worktree add?");
+    });
+
+    it("leaves a row the reader does not cover with no preview key at all", async () => {
+      // Absent, not empty: an empty string is a placeholder, and the layout draws
+      // a second line's worth of height for one.
+      const h = makeProjector();
+      h.setRegistry({ kind: "ok", sessions: [named()] });
+      h.setVaultPreview(async () => undefined);
+
+      const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+      expect("preview" in row).toBe(false);
+    });
+
+    it("never asks about a row with no resolved session", async () => {
+      const asked: string[] = [];
+      const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+      h.setVaultPreview(async (entryId) => {
+        asked.push(entryId);
+        return "should not appear";
+      });
+
+      const [row] = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+      expect(row.entryId).toBeUndefined();
+      expect("preview" in row).toBe(false);
+      expect(asked).toEqual([]);
+    });
+
+    it("reports no degraded source for rows it cannot preview", async () => {
+      const h = makeProjector([pane({ paneId: "a", title: "zsh" })]);
+      h.setRegistry({ kind: "ok", sessions: [named()] });
+      h.setVaultPreview(async () => undefined);
+
+      const presence = await h.projector.project([WT]);
+
+      expect(presence.degradedSources).toEqual([]);
+    });
+
+    it("leaves identity, activity and ranking untouched either way", async () => {
+      const withPreview = makeProjector([pane({ paneId: "a" })]);
+      const without = makeProjector([pane({ paneId: "a" })]);
+      for (const h of [withPreview, without]) {
+        h.setRegistry({ kind: "ok", sessions: [named()] });
+        h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
+      }
+      withPreview.setVaultPreview(async () => "a line of transcript");
+
+      const a = (await withPreview.projector.project([WT])).rowsByWorktreeId[WT];
+      const b = (await without.projector.project([WT])).rowsByWorktreeId[WT];
+
+      expect(a.map((r) => ({ ...r, preview: undefined }))).toEqual(b.map((r) => ({ ...r, preview: undefined })));
+      expect(a[0].preview).toBe("a line of transcript");
+    });
+
+    it("projects at all with no preview dep supplied", async () => {
+      const panes = [pane({ paneId: "a" })];
+      const projector = createPresenceProjector({
+        panes: () => panes,
+        activityFor: () => ({ activity: "idle", rule: "quiet" }),
+        openSnapshot: async () => ({
+          resolve: async () => ({ kind: "absent" }),
+          sessions: async () => ({ kind: "ok", sessions: [] }),
+          sessionUnderCwd: async () => undefined,
+        }),
+        normalize: (path) => path,
+        now: () => clock,
+      });
+
+      const [row] = (await projector.project([WT])).rowsByWorktreeId[WT];
+
+      expect("preview" in row).toBe(false);
+    });
   });
 
   it("titles a row from the vault, not from the slug the registry derived", async () => {

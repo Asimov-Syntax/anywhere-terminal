@@ -146,6 +146,16 @@ export interface PresenceProjectorDeps {
    */
   sessionTitle?(entryId: string): Promise<string | undefined>;
   /**
+   * That session's last activity, for the row's second line. Same optional shape
+   * as `sessionTitle` and for the same reason — it opens a transcript.
+   *
+   * The projector holds NO stamp and NO cache for this: freshness, rate and
+   * eviction belong to the service behind the call, which is the only thing that
+   * can see the file (source-the-agent-row-preview D2). Absence is not
+   * degradation — a row with no answer simply carries no preview (D3).
+   */
+  sessionPreview?(entryId: string): Promise<string | undefined>;
+  /**
    * Point-resolve a session id an agent reported, against the store that
    * already holds it (§ 4.6).
    *
@@ -437,6 +447,33 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       .then(async (next) => next ?? (previous === undefined ? undefined : await previous));
     vaultTitles.set(entryId, { at: now, title });
     return title;
+  }
+
+  /**
+   * The row's second line: what its session last did. Mirrors the pass above in
+   * shape only — this one owns nothing, asking once per resolved row and writing
+   * back whatever comes.
+   *
+   * A row with no answer gets no `preview` key rather than an empty string: the
+   * layout draws no second line only when nothing is there, and a placeholder is
+   * exactly what a row that cannot prove something must not show.
+   */
+  async function previewFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>): Promise<void> {
+    const read = deps.sessionPreview;
+    if (!read) {
+      return;
+    }
+    for (const [worktreeId, rows] of Object.entries(rowsByWorktreeId)) {
+      rowsByWorktreeId[worktreeId] = await Promise.all(
+        rows.map(async (row) => {
+          if (row.entryId === undefined) {
+            return row;
+          }
+          const preview = await read(row.entryId).catch(() => undefined);
+          return preview ? { ...row, preview } : row;
+        }),
+      );
+    }
   }
 
   /** Prefer the vault's session title; registry and pane titles are fallbacks. */
@@ -953,6 +990,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       }
 
       await titleFromVault(rowsByWorktreeId, now);
+      await previewFromVault(rowsByWorktreeId);
 
       // A source that answered this rebuild clears its entry; one still failing
       // keeps the epoch of the FIRST failure in the run, so the affordance can

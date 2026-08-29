@@ -28,7 +28,7 @@
     3. Resolving an `entryId` to a transcript path and its format is the service's, and it covers exactly the sources the Ref names — a session it has no path for is answered `undefined` without a syscall.
     4. Cover: a first ask reading once; a second ask inside the re-check interval making NO syscall at all; an ask after the interval with an unchanged stamp doing one `stat` and no open; a moved stamp doing exactly one read; a size-only change and an mtime-only change each counting as moved; concurrent asks for one session sharing a single read; an uncovered source answered without touching the filesystem; the cache bounded rather than growing per session seen.
 
-- [ ] 1_3 Put the preview on the row
+- [x] 1_3 Put the preview on the row — verified: pnpm exec vitest run 'src/worktree/presenceProjector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-agent-presence/spec.md#{an-agent-row-s-preview-line-says-what-its-session-last-did, a-missing-preview-is-a-normal-row-not-a-degraded-scan} · design.md#d3-absence-is-not-degradation
   - **Acceptance**:

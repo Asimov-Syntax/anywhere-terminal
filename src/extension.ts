@@ -64,6 +64,7 @@ import { normalizeWorktreePath } from "./worktree/normalizePath";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
+import { createSessionPreviewService } from "./worktree/sessionPreviewService";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import type { MutationOutcome } from "./worktree/worktreeMutationService";
@@ -666,6 +667,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // differ between reading the tree and changing it.
   const worktreeTreeDeps = createWorktreeTreeDeps();
 
+  // One owner of every preview the agent rows show — the stamp, the re-check
+  // interval, the in-flight de-duplication and the bound all live behind it.
+  const sessionPreviews = createSessionPreviewService({
+    entry: async (entryId) => {
+      const entry = await vaultService.getEntry(entryId);
+      return entry === null
+        ? null
+        : {
+            agent: entry.agent,
+            sessionId: entry.sessionId,
+            ...(entry.sessionPath ? { sessionPath: entry.sessionPath } : {}),
+          };
+    },
+  });
+
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
     // The two evidence sources a removal blocker set needs and the tree does
@@ -713,6 +729,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const entry = await vaultService.getEntry(entryId);
           return entry?.customName || entry?.title || undefined;
         },
+        // The row's second line. The service behind this owns the stamp, the
+        // re-check rate and its own bound, so presence rebuilding at the 150 ms
+        // cap costs no filesystem work for a session that has said nothing.
+        sessionPreview: (entryId) => sessionPreviews.preview(entryId),
         reportedSession: (paneId) => {
           const report = reportedSessions.get(paneId);
           return report === undefined
