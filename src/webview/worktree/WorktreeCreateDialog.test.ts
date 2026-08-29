@@ -466,3 +466,114 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     expect(submitted).toHaveLength(0);
   });
 });
+
+describe("After creating offers four choices (§ 3.2.1)", () => {
+  const choices = (q: (sel: string) => HTMLElement): string[] =>
+    [...(q("#wt-after") as HTMLSelectElement).options].map((o) => o.value);
+
+  function choose(q: <T extends HTMLElement>(sel: string) => T, value: string): void {
+    const after = q<HTMLSelectElement>("#wt-after");
+    after.value = value;
+    after.dispatchEvent(new Event("change"));
+  }
+
+  it("offers one folder choice, not two window-shaped ones", () => {
+    const { q } = open();
+    expect(choices(q)).toEqual(["none", "terminal", "agent", "folder"]);
+  });
+
+  it("reveals the window-or-workspace control on the folder choice only", () => {
+    const { q } = open();
+    expect(q<HTMLElement>(".wt-folder-mode").hidden).toBe(true);
+    choose(q, "folder");
+    expect(q<HTMLElement>(".wt-folder-mode").hidden).toBe(false);
+    choose(q, "terminal");
+    expect(q<HTMLElement>(".wt-folder-mode").hidden).toBe(true);
+  });
+
+  it("defaults the folder choice to adding to the workspace", () => {
+    // Opening a second window on a folder the user is already in is the more
+    // disruptive of the two, so it is the one they have to ask for.
+    const { q, submitted } = open();
+    choose(q, "folder");
+    expect(q<HTMLSelectElement>("#wt-folder-mode").value).toBe("addToWorkspace");
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(submitted[0]?.openAfter).toBe("addToWorkspace");
+  });
+
+  it("submits the new-window mode when the secondary control asks for it", () => {
+    const { q, submitted } = open();
+    choose(q, "folder");
+    const mode = q<HTMLSelectElement>("#wt-folder-mode");
+    mode.value = "newWindow";
+    mode.dispatchEvent(new Event("change"));
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(submitted[0]?.openAfter).toBe("newWindow");
+  });
+
+  it("leaves no open-after mode unreachable from the form", () => {
+    // Four choices over five wire values is exactly where one goes missing, so
+    // the assertion is on the wire values the form can actually submit.
+    const reached = new Set<string>();
+    for (const [choice, mode] of [
+      ["none", undefined],
+      ["terminal", undefined],
+      ["agent", undefined],
+      ["folder", "addToWorkspace"],
+      ["folder", "newWindow"],
+    ] as const) {
+      document.body.replaceChildren();
+      const { q, submitted } = open();
+      choose(q, choice);
+      if (mode !== undefined) {
+        const sel = q<HTMLSelectElement>("#wt-folder-mode");
+        sel.value = mode;
+        sel.dispatchEvent(new Event("change"));
+      }
+      type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+      q<HTMLButtonElement>(".wt-btn--primary").click();
+      const openAfter = submitted[0]?.openAfter;
+      if (openAfter !== undefined) {
+        reached.add(openAfter);
+      }
+    }
+    expect(reached).toEqual(new Set(["none", "terminal", "agent", "newWindow", "addToWorkspace"]));
+  });
+
+  it("keeps the folder choice and its mode when a repo switch withdraws the agent one", () => {
+    // `rebuildAfterOptions` resets the draft when the SELECTED choice is
+    // withdrawn. The folder choice is always performable, so it must survive a
+    // rebuild that removes a different one.
+    const { q } = open({
+      repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other", agents: [] })],
+    });
+    choose(q, "folder");
+    const mode = q<HTMLSelectElement>("#wt-folder-mode");
+    mode.value = "newWindow";
+    mode.dispatchEvent(new Event("change"));
+    const repo = q<HTMLSelectElement>("#wt-repo-select");
+    repo.value = "/other/.git";
+    repo.dispatchEvent(new Event("change"));
+    expect(choices(q)).not.toContain("agent");
+    expect(q<HTMLSelectElement>("#wt-after").value).toBe("folder");
+    expect(q<HTMLSelectElement>("#wt-folder-mode").value).toBe("newWindow");
+    expect(q<HTMLElement>(".wt-folder-mode").hidden).toBe(false);
+  });
+
+  it("keeps the agent block out of the focus order while no agent was asked for", () => {
+    // The reveal rule was implemented but unpinned by anything that would notice
+    // it moving, and a restructure is exactly what moves it.
+    const { host, q } = open();
+    const reachable = (): string[] =>
+      [...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea")]
+        .filter((el) => !el.closest("[hidden]"))
+        .map((el) => el.id);
+    expect(reachable()).not.toContain("wt-agent");
+    expect(reachable()).not.toContain("wt-perm");
+    choose(q, "agent");
+    expect(reachable()).toContain("wt-agent");
+    expect(reachable()).toContain("wt-perm");
+  });
+});

@@ -986,6 +986,10 @@
   flex-direction: column;
   gap: 8px;
 }
+/* The folder choice's secondary control — revealed by that choice alone. */
+.wt-folder-mode {
+  margin-top: -2px;
+}
 .wt-agentbox {
   display: flex;
   flex-direction: column;

@@ -45,21 +45,35 @@ const BRANCH_MODES: readonly { id: WorktreeBranchMode; label: string }[] = [
 ];
 
 /**
- * `agent` is offered only where something can perform it — the option is built
- * from the repo's own agent list, so a host that reported none leaves it absent
- * rather than selectable-and-refused.
+ * What the form OFFERS, which is not the wire vocabulary. Opening the folder is
+ * one intent with two destinations, and listing them as two peers of "Nothing"
+ * made the choice read as four ways to open something. The pair is reached
+ * through a secondary control instead; no wire value becomes unreachable.
  */
-function openAfterOptions(canLaunch: boolean): { value: WorktreeOpenAfter; label: string }[] {
-  return OPEN_AFTER.filter((o) => o.value !== "agent" || canLaunch);
-}
+type AfterChoice = "none" | "terminal" | "agent" | "folder";
 
-const OPEN_AFTER: readonly { value: WorktreeOpenAfter; label: string }[] = [
+const AFTER_CHOICES: readonly { value: AfterChoice; label: string }[] = [
   { value: "none", label: "Nothing" },
   { value: "terminal", label: "Open a terminal here" },
   { value: "agent", label: "Start an agent" },
-  { value: "newWindow", label: "Open folder in a new window" },
-  { value: "addToWorkspace", label: "Add folder to workspace" },
+  { value: "folder", label: "Open the folder" },
 ];
+
+/** The two the folder choice resolves to. Adding to the workspace leads: opening
+ *  a second window on a folder the user is already in is the disruptive one. */
+const FOLDER_MODES: readonly { value: WorktreeOpenAfter; label: string }[] = [
+  { value: "addToWorkspace", label: "Add to this workspace" },
+  { value: "newWindow", label: "Open in a new window" },
+];
+
+/**
+ * `agent` is offered only where something can perform it — the option is built
+ * from the repo's own agent list, so a host that reported none leaves it absent
+ * rather than selectable-and-refused. The folder choice is always performable.
+ */
+function openAfterOptions(canLaunch: boolean): { value: AfterChoice; label: string }[] {
+  return AFTER_CHOICES.filter((o) => o.value !== "agent" || canLaunch);
+}
 
 export interface WorktreeCreateDialogDeps {
   /** One entry per repo; a single entry suppresses the picker entirely (§ 3.2). */
@@ -109,6 +123,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   };
   /** True until the user edits the path themselves; after that we stop deriving it. */
   let pathIsDerived = true;
+  /** What the user picked, in the form's vocabulary. `draft.openAfter` is derived
+   *  from this and `folderMode` — one wire value, never two sources for it. */
+  let afterChoice: AfterChoice = "none";
+  let folderMode: WorktreeOpenAfter = "addToWorkspace";
 
   const currentRepo = (): WorktreeCreateDefaults => repos.find((r) => r.repoId === draft.repoId) ?? first;
 
@@ -237,15 +255,26 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const afterSelect = selectControl(
     "wt-after",
     openAfterOptions(currentRepo().agents.length > 0).map((o) => ({ value: o.value, label: o.label })),
-    draft.openAfter,
+    afterChoice,
   );
   afterSelect.addEventListener("change", () => {
-    draft.openAfter = afterSelect.value as WorktreeOpenAfter;
-    syncAgentBox();
-    shell.refreshFocusTrap();
+    afterChoice = afterSelect.value as AfterChoice;
+    syncOpenAfter();
   });
   afterField.appendChild(afterSelect);
-  shell.dialog.appendChild(afterField);
+
+  // The secondary control on the folder choice, revealed by it the same way the
+  // agent block is revealed by the agent choice.
+  const folderField = field("Where", "wt-folder-mode");
+  folderField.classList.add("wt-folder-mode");
+  const folderSelect = selectControl("wt-folder-mode", [...FOLDER_MODES], folderMode);
+  folderSelect.addEventListener("change", () => {
+    folderMode = folderSelect.value as WorktreeOpenAfter;
+    syncOpenAfter();
+  });
+  folderField.appendChild(folderSelect);
+  folderField.hidden = true;
+  shell.dialog.append(afterField, folderField);
 
   // ── Agent box — shown only for `openAfter: "agent"` ─────────────────────
   // The block itself is shared with the standalone launch dialog, so create-then-
@@ -293,24 +322,32 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (createBtn.disabled) {
       return;
     }
-    const launch = draft.openAfter === "agent" ? agentBox.read() : {};
+    const launch = afterChoice === "agent" ? agentBox.read() : {};
     deps.onSubmit({ ...draft, ...launch });
     disposeAll();
   }
 
   /**
-   * Two different questions, and the box keeps them apart: "this create is not
-   * launching" is ours, "there is nothing to launch" is its own.
+   * The one place the offered choice becomes a wire value, and the one place the
+   * two reveals it drives are applied. Two different questions, and the agent box
+   * keeps them apart: "this create is not launching" is ours, "there is nothing
+   * to launch" is its own.
    */
-  function syncAgentBox(): void {
-    agentBox.setVisible(draft.openAfter === "agent");
+  function syncOpenAfter(): void {
+    draft.openAfter = afterChoice === "folder" ? folderMode : afterChoice;
+    agentBox.setVisible(afterChoice === "agent");
+    folderField.hidden = afterChoice !== "folder";
+    shell.refreshFocusTrap();
   }
 
   /** A repo switch can withdraw the launch — the mode goes with it, not just the box. */
   function rebuildAfterOptions(): void {
     const offered = openAfterOptions(currentRepo().agents.length > 0);
-    if (!offered.some((o) => o.value === draft.openAfter)) {
-      draft.openAfter = "none";
+    // Only a choice the rebuild actually withdrew is reset. The folder choice is
+    // always offered, so a repo switch that drops the agent one must leave it —
+    // and its secondary selection — exactly where the user put them.
+    if (!offered.some((o) => o.value === afterChoice)) {
+      afterChoice = "none";
     }
     afterSelect.replaceChildren(
       ...offered.map((o) => {
@@ -320,8 +357,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
         return opt;
       }),
     );
-    afterSelect.value = draft.openAfter;
-    syncAgentBox();
+    afterSelect.value = afterChoice;
+    syncOpenAfter();
   }
 
   /** The branch the last host request was made for, so edits do not re-ask. */
@@ -480,7 +517,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     syncDerived();
   });
 
-  syncAgentBox();
+  syncOpenAfter();
   syncDerived();
   shell.focusInitial(nameInput);
 

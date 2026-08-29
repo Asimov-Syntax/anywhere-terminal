@@ -16,7 +16,7 @@
     5. The disclosure follows the mechanism this dialog already has, not a second one: a toggle carrying `aria-expanded` over a region carrying `hidden`, the way the agent block is revealed. `openDialogShell`'s focus trap already filters on `[hidden]`, and a native `<details>` would need that filter widened to a construct it does not know. Refresh the trap on every toggle, as the "After creating" change already does.
     6. Cover: the opening order and initial focus; that a collapsed disclosure contributes nothing tabbable and an open one does; that the override is both what the form states and what submits, and that it withdraws the collision line; that a resolved destination is stated exactly once and the exact value is reachable by focus as well as by pointer; that an unresolved destination is not stated shortened; the collision line; detached mode gating submit on the base ref while the lead input is disabled. Dismissal and the trap are named by the blueprint's acceptance, so assert the whole set rather than the two that are easy: Tab wrapping forward and backward, focus restored to the opener, Cancel, the title's dismiss control, Escape, the scrim, and ⌘↵.
 
-- [ ] 1_2 One folder choice, both of its modes
+- [x] 1_2 One folder choice, both of its modes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{every-open-after-mode-is-reachable-from-the-offered-choices, the-agent-block-is-revealed-only-when-an-agent-was-asked-for}, docs/design/worktree-actions.md#321-form-presentation
   - **Acceptance**:
