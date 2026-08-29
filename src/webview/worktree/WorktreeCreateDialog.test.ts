@@ -76,6 +76,7 @@ describe("create worktree — default state (§ 9)", () => {
   it("derives the path from the branch name", () => {
     const { q } = open();
     type(q<HTMLInputElement>("#wt-branch"), "feat/worktree-ui");
+    // The override still carries the derived value; it just no longer leads.
     expect(q<HTMLInputElement>("#wt-path").value).toBe("/Users/dev/Projects/ai-oss/anywhere-terminal-feat-worktree-ui");
   });
 
@@ -244,10 +245,10 @@ describe("create worktree — invalid and collided (§ 10)", () => {
     // would tell the user the create lands where it cannot.
     const { q } = open({ repos: [createDefaults({ collidedWith: "-worktree-ui" })] });
     type(q<HTMLInputElement>("#wt-branch"), "feat/worktree-ui");
-    const hint = q<HTMLElement>(".wt-fhint").textContent ?? "";
-    expect(hint).toContain("-worktree-ui already exists");
-    expect(hint).not.toContain("will be created as");
-    expect(hint).toContain("a free suffix is chosen");
+    const note = q<HTMLElement>(".wt-dest-note").textContent ?? "";
+    expect(note).toContain("-worktree-ui already exists");
+    expect(note).not.toContain("created as");
+    expect(note).toContain("a free suffix is chosen");
   });
 
   it("names the destination once the host has resolved one", () => {
@@ -255,13 +256,20 @@ describe("create worktree — invalid and collided (§ 10)", () => {
       repos: [createDefaults({ collidedWith: "-worktree-ui", resolvedPath: "/Users/dev/Projects/ai-oss/x-2" })],
     });
     type(q<HTMLInputElement>("#wt-branch"), "feat/worktree-ui");
-    const hint = q<HTMLElement>(".wt-fhint").textContent ?? "";
-    expect(hint).toContain("will be created as");
-    expect(hint).toContain("/Users/dev/Projects/ai-oss/x-2");
+    // One line, naming the result — and NOT a second full path. The destination
+    // line above it already carries the path; repeating it in full here is the
+    // duplication this requirement removed.
+    const note = q<HTMLElement>(".wt-dest-note").textContent ?? "";
+    expect(note).toContain("-worktree-ui already exists");
+    expect(note).toContain("x-2");
+    expect(note).not.toContain("/Users/dev/Projects/ai-oss/x-2");
+    expect(q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/Users/dev/Projects/ai-oss/x-2");
   });
 
   it("switches the required field to the base ref in detached mode", () => {
     const { host, q, submitted } = open();
+    // Branch source moved into the disclosure, so reaching it is now a step.
+    q<HTMLButtonElement>(".wt-advanced-toggle").click();
     const detached = Array.from(host.querySelectorAll<HTMLButtonElement>(".vault-segmented button")).find(
       (b) => b.dataset.mode === "detached",
     );
@@ -329,5 +337,132 @@ describe("the form waits for the destination it is going to submit (round-4 B12)
 
     h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-b", answersBranch: "feat/b" }));
     expect(createButton(h.host).disabled).toBe(false);
+  });
+});
+
+describe("the form is a worktree form (§ 3.2.1)", () => {
+  const FULL = "/Users/dev/Projects/ai-oss/anywhere-terminal-feat-x";
+
+  /** Open with the host wiring, already answered for one branch. */
+  function resolved(answer: Partial<ReturnType<typeof createDefaults>> = {}) {
+    let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+    const h = open({
+      onBranchChange: () => {},
+      bindDefaults: (fn) => {
+        apply = fn;
+      },
+    });
+    type(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.q<HTMLInputElement>("#wt-branch").dispatchEvent(new Event("change", { bubbles: true }));
+    // The answer REPLACES the seed for its repo, so a collision has to arrive on
+    // the answer — setting it on the opening `repos` is overwritten right here.
+    apply?.(createDefaults({ resolvedPath: FULL, answersBranch: "feat/x", ...answer }));
+    return h;
+  }
+
+  it("leads with the branch name — no control sits above it", () => {
+    const { host, q } = open();
+    const controls = [...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea")];
+    expect(controls[0]?.id).toBe("wt-branch");
+    expect(document.activeElement).toBe(q("#wt-branch"));
+  });
+
+  it("keeps the branch first even where the repository picker exists", () => {
+    // The picker is the one control that used to sit above the lead input, and a
+    // single-repo fixture is exactly what would hide its return.
+    const { host } = open({
+      repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
+    });
+    const controls = [...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea")];
+    expect(controls[0]?.id).toBe("wt-branch");
+    expect(controls.map((c) => c.id)).toContain("wt-repo-select");
+  });
+
+  it("states the destination once, shortened, with the exact value on the element", () => {
+    const { host, q } = resolved();
+    const dest = q<HTMLElement>(".wt-dest");
+    expect(host.querySelectorAll(".wt-dest")).toHaveLength(1);
+    // Shortened for reading; the exact value is what the element announces and
+    // what its tooltip carries, so it never leaves the dialog to be checked.
+    expect(dest.textContent).toBe("…/ai-oss/anywhere-terminal-feat-x");
+    expect(dest.getAttribute("aria-label")).toBe(FULL);
+    // `attachTooltip` listens for focus but does not make its target focusable —
+    // without this the exact value is reachable by mouse only.
+    expect(dest.tabIndex).toBe(0);
+  });
+
+  it("does not state a full path outside the advanced override", () => {
+    const { host } = resolved();
+    const advanced = host.querySelector(".wt-advanced-body");
+    const statesFull = [...host.querySelectorAll<HTMLElement>(".wt-dialog *")].filter(
+      (el) => el.children.length === 0 && (el.textContent ?? "").includes(FULL) && !advanced?.contains(el),
+    );
+    expect(statesFull).toHaveLength(0);
+  });
+
+  it("follows the override, and withdraws the collision note with it", () => {
+    const { host, q, submitted } = resolved({ collidedWith: "-feat-x" });
+    expect(q<HTMLElement>(".wt-dest-note").hidden).toBe(false);
+    q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    type(q<HTMLInputElement>("#wt-path"), "/custom/place");
+    // The statement is of the path the create will take, so an override moves it.
+    // Showing the host's default while submitting the override is the failure
+    // this asserts against.
+    expect(q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/custom/place");
+    expect(q<HTMLElement>(".wt-dest-note").hidden).toBe(true);
+    expect(q<HTMLElement>(".wt-dest-note").textContent).toBe("");
+    expect(host).toBeDefined();
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(submitted[0]?.path).toBe("/custom/place");
+  });
+
+  it("keeps the advanced inputs out of the focus order until they are opened", () => {
+    const { host, q } = open();
+    const toggle = q<HTMLButtonElement>(".wt-advanced-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const tabbable = (): string[] =>
+      [...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog button")]
+        .filter((el) => !el.closest("[hidden]"))
+        .map((el) => el.id)
+        .filter(Boolean);
+    expect(tabbable()).not.toContain("wt-base");
+    expect(tabbable()).not.toContain("wt-path");
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(tabbable()).toContain("wt-base");
+    expect(tabbable()).toContain("wt-path");
+  });
+
+  it("holds the focus trap and its dismissals through the restructure", () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    const { host, q } = open();
+    const trapped = (): HTMLElement[] =>
+      [...host.querySelectorAll<HTMLElement>('.wt-dialog input, .wt-dialog select, .wt-dialog button, .wt-dialog [tabindex]:not([tabindex="-1"])')].filter(
+        (el) => !el.closest("[hidden]") && !(el instanceof HTMLButtonElement && el.disabled),
+      );
+    const first = trapped()[0];
+    const last = trapped()[trapped().length - 1];
+    expect(first).toBeDefined();
+    expect(last).toBeDefined();
+    // Forward off the last wraps to the first; backward off the first wraps to the last.
+    last?.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(document.activeElement).toBe(first);
+    first?.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+    expect(document.activeElement).toBe(last);
+    // And dismissal still returns focus to whatever opened the dialog.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.activeElement).toBe(opener);
+    expect(q === undefined).toBe(false);
+  });
+
+  it("dismisses from the title control as well as from Cancel", () => {
+    const { host, submitted } = open();
+    host.querySelector<HTMLButtonElement>(".wt-dismiss")?.click();
+    expect(host.querySelector(".wt-dialog")).toBeNull();
+    expect(submitted).toHaveLength(0);
   });
 });

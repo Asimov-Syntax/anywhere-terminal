@@ -1,6 +1,6 @@
 ## 1. The form
 
-- [ ] 1_1 Lead with the branch, state the destination once, and collapse the rest
+- [x] 1_1 Lead with the branch, state the destination once, and collapse the rest — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{the-create-form-leads-with-the-branch-name, the-destination-is-stated-once-and-its-exact-value-stays-reachable, a-destination-is-named-only-once-it-is-known, derived-and-overriding-inputs-sit-behind-one-disclosure}, docs/design/worktree-actions.md#321-form-presentation
   - **Acceptance**:

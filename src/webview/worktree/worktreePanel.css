@@ -913,6 +913,79 @@
   color: var(--vscode-editorWarning-foreground);
   background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 16%, transparent);
 }
+/* The destination: one derived line under the lead input, shortened. The exact
+   value rides on `aria-label` and the tooltip, so shortening costs no truth. */
+.wt-dest-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.wt-dest {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  overflow-wrap: anywhere;
+  border-radius: 3px;
+  outline: none;
+}
+.wt-dest:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+/* Nothing is resolved yet, so the line shows a shape and not a claim. */
+.wt-dest--pending {
+  color: var(--vscode-descriptionForeground);
+}
+.wt-dest-note {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow-wrap: anywhere;
+}
+.wt-dest-note b {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+/* Derived and overriding inputs, behind one disclosure. `hidden` on the body is
+   what keeps them out of the dialog's focus trap while it is closed. */
+.wt-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wt-advanced-toggle {
+  align-self: flex-start;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+.wt-advanced-toggle::before {
+  content: "▸";
+  margin-right: 5px;
+  font-size: 9px;
+}
+.wt-advanced-toggle[aria-expanded="true"]::before {
+  content: "▾";
+}
+.wt-advanced-toggle:hover {
+  color: var(--vscode-foreground);
+}
+.wt-advanced-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+.wt-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .wt-agentbox {
   display: flex;
   flex-direction: column;

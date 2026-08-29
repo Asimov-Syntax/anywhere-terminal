@@ -14,6 +14,7 @@
 //  - The repo picker appears only once the workspace holds more than one repo.
 
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
+import { attachTooltip } from "../ui/Tooltip";
 import { createWorktreeAgentBox } from "./worktreeAgentBox";
 import { dialogTitle, field, keyHint, openDialogShell, selectControl, textButton } from "./worktreeDialogShell";
 import type {
@@ -22,6 +23,20 @@ import type {
   WorktreeCreateDraft,
   WorktreeOpenAfter,
 } from "./worktreeViewTypes";
+
+/**
+ * The destination, shortened for reading. Two trailing segments: one is not
+ * enough to tell `…/anywhere-terminal-feat-x` in one root from the same name in
+ * another, and the exact value is a focus or a hover away regardless.
+ */
+function shortPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
+}
+
+function lastSegment(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
 
 const BRANCH_MODES: readonly { id: WorktreeBranchMode; label: string }[] = [
   { id: "new", label: "New branch" },
@@ -101,16 +116,62 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     label: "Create worktree",
     wide: true,
     dismissOnScrim: true,
-    onDismiss: () => deps.onCancel?.(),
+    // Escape and the scrim dispose the shell from inside it, so the tooltip has
+    // to be released here too — `disposeAll` is not on that path.
+    onDismiss: () => {
+      disposeDestTip();
+      deps.onCancel?.();
+    },
   });
   const cancel = (): void => {
     deps.onCancel?.();
-    shell.dispose();
+    disposeAll();
+  };
+  /** Every exit goes through here — the tooltip outlives `shell.dispose` alone. */
+  const disposeAll = (restoreFocus = true): void => {
+    disposeDestTip();
+    shell.dispose(restoreFocus);
   };
 
   shell.dialog.appendChild(dialogTitle("Create worktree", undefined, cancel));
 
+  // ── Branch name — the lead input, with nothing above it ──────────────────
+  // It is the one thing only the user can supply; everything else on this form
+  // is derived, defaulted, or advanced (worktree-actions § 3.2.1).
+  const nameField = field("Branch name", "wt-branch");
+  const nameInput = document.createElement("input");
+  nameInput.className = "wt-input";
+  nameInput.id = "wt-branch";
+  nameInput.type = "text";
+  nameInput.placeholder = "feat/…";
+  const nameError = document.createElement("span");
+  nameError.className = "wt-ferror";
+  nameError.hidden = true;
+  nameField.append(nameInput, nameError);
+  shell.dialog.appendChild(nameField);
+
+  // ── Destination — one derived line, not a field ─────────────────────────
+  // Stated once, shortened. `aria-label` and the tooltip carry the exact value,
+  // so shortening costs nothing: the safety property is that the user sees where
+  // the write lands before authorizing it, not that they read it in full.
+  const destWrap = document.createElement("div");
+  destWrap.className = "wt-dest-wrap";
+  const dest = document.createElement("div");
+  dest.className = "wt-dest";
+  // `attachTooltip` exposes its target on focus, but does not make it focusable.
+  // Without this the exact value is a mouse-only affordance.
+  dest.tabIndex = 0;
+  const destNote = document.createElement("div");
+  destNote.className = "wt-dest-note";
+  destNote.hidden = true;
+  destWrap.append(dest, destNote);
+  shell.dialog.appendChild(destWrap);
+  /** The exact path the line is currently shortening; read on every show. */
+  let destExact = "";
+  const disposeDestTip = attachTooltip(dest, { getText: () => destExact });
+
   // ── Repository (only with more than one) ────────────────────────────────
+  // Below the destination it derives, never above the lead input.
   const repoHint = document.createElement("span");
   repoHint.className = "wt-fhint";
   if (repos.length > 1) {
@@ -130,8 +191,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     shell.dialog.appendChild(repoField);
   }
 
-  // ── Branch mode ─────────────────────────────────────────────────────────
-  const modeField = field("Branch");
+  // ── Branch source — inside the disclosure (built below) ─────────────────
+  const modeField = field("Branch source");
   const segmented = document.createElement("div");
   segmented.className = "vault-segmented";
   segmented.setAttribute("role", "tablist");
@@ -153,22 +214,6 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     segmented.appendChild(btn);
   }
   modeField.appendChild(segmented);
-  shell.dialog.appendChild(modeField);
-
-  // ── Name + base ref, side by side ───────────────────────────────────────
-  const cols = document.createElement("div");
-  cols.className = "wt-cols";
-
-  const nameField = field("Name", "wt-branch");
-  const nameInput = document.createElement("input");
-  nameInput.className = "wt-input";
-  nameInput.id = "wt-branch";
-  nameInput.type = "text";
-  nameInput.placeholder = "feat/…";
-  const nameError = document.createElement("span");
-  nameError.className = "wt-ferror";
-  nameError.hidden = true;
-  nameField.append(nameInput, nameError);
 
   const baseField = field("Base ref", "wt-base", true);
   const baseInput = document.createElement("input");
@@ -178,19 +223,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   baseInput.placeholder = "HEAD";
   baseField.appendChild(baseInput);
 
-  cols.append(nameField, baseField);
-  shell.dialog.appendChild(cols);
-
-  // ── Path ────────────────────────────────────────────────────────────────
-  const pathField = field("Path", "wt-path");
+  // The override, which is a different thing from a statement of where the
+  // worktree will go — hence its home here rather than on the form's face.
+  const pathField = field("Destination override", "wt-path", true);
   const pathInput = document.createElement("input");
   pathInput.className = "wt-input wt-input--mono";
   pathInput.id = "wt-path";
   pathInput.type = "text";
-  const pathHint = document.createElement("span");
-  pathHint.className = "wt-fhint";
-  pathField.append(pathInput, pathHint);
-  shell.dialog.appendChild(pathField);
+  pathField.appendChild(pathInput);
 
   // ── After creating ──────────────────────────────────────────────────────
   const afterField = field("After creating", "wt-after");
@@ -215,6 +255,33 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   agentBox.setVisible(false);
   shell.dialog.appendChild(agentBox.element);
 
+  // ── Advanced — collapsed, and out of the focus order while it is ────────
+  // The same reveal idiom the agent block uses: a toggle carrying `aria-expanded`
+  // over a region carrying `hidden`. `openDialogShell`'s focus trap already
+  // filters on `[hidden]`, so nothing inside reaches Tab until it opens — which a
+  // native `<details>` would not have given us without widening that filter.
+  const advanced = document.createElement("div");
+  advanced.className = "wt-advanced";
+  const advToggle = document.createElement("button");
+  advToggle.type = "button";
+  advToggle.className = "wt-advanced-toggle";
+  advToggle.id = "wt-advanced-toggle";
+  advToggle.setAttribute("aria-expanded", "false");
+  advToggle.setAttribute("aria-controls", "wt-advanced-body");
+  advToggle.textContent = "Advanced";
+  const advBody = document.createElement("div");
+  advBody.className = "wt-advanced-body";
+  advBody.id = "wt-advanced-body";
+  advBody.hidden = true;
+  advBody.append(modeField, baseField, pathField);
+  advToggle.addEventListener("click", () => {
+    advBody.hidden = !advBody.hidden;
+    advToggle.setAttribute("aria-expanded", advBody.hidden ? "false" : "true");
+    shell.refreshFocusTrap();
+  });
+  advanced.append(advToggle, advBody);
+  shell.dialog.appendChild(advanced);
+
   // ── Actions ─────────────────────────────────────────────────────────────
   const cancelBtn = textButton("Cancel", "plain", cancel);
   const createBtn = textButton("Create worktree", "primary", () => submit());
@@ -228,7 +295,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     const launch = draft.openAfter === "agent" ? agentBox.read() : {};
     deps.onSubmit({ ...draft, ...launch });
-    shell.dispose();
+    disposeAll();
   }
 
   /**
@@ -306,28 +373,45 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     pathInput.placeholder = `…/${repo.pathPrefix}-<branch>`;
 
-    pathHint.replaceChildren();
-    if (repo.collidedWith) {
+    // The line states the path the SUBMISSION carries, which is the override the
+    // moment there is one. Two values — the host's answer and `draft.path` — can
+    // disagree the instant the display stops being the input, and a line showing
+    // the host default over a submitted override is the worse of the two lies.
+    const overridden = !pathIsDerived;
+    const stated = overridden ? draft.path : repo.resolvedPath;
+    dest.replaceChildren();
+    if (stated) {
+      destExact = stated;
+      dest.setAttribute("aria-label", stated);
+      dest.textContent = shortPath(stated);
+      dest.classList.remove("wt-dest--pending");
+    } else {
+      // Nothing is resolved yet, so nothing is claimed. The default SHAPE is not
+      // a destination and is not shortened as though it were one.
+      destExact = "";
+      dest.removeAttribute("aria-label");
+      dest.textContent = `Defaults to …/${repo.pathPrefix}-<branch>`;
+      dest.classList.add("wt-dest--pending");
+    }
+
+    // One line, and it names the RESULT. The destination above already carries
+    // the path, so repeating it in full here is the second statement the form
+    // exists to stop making. An override retires the note with the derived path
+    // it described.
+    destNote.hidden = true;
+    destNote.replaceChildren();
+    if (repo.collidedWith && !overridden) {
+      destNote.hidden = false;
       const taken = document.createElement("b");
       taken.textContent = repo.collidedWith;
-      pathHint.append(document.createTextNode("…"), taken, document.createTextNode(" already exists"));
-      // Only the host can resolve the suffix it will actually take. Naming the
-      // derived path here would point at the directory that is already occupied.
+      destNote.append(document.createTextNode("…"), taken, document.createTextNode(" already exists"));
       if (repo.resolvedPath) {
         const final = document.createElement("b");
-        final.textContent = repo.resolvedPath;
-        pathHint.append(document.createTextNode(", so this will be created as "), final, document.createTextNode("."));
+        final.textContent = lastSegment(repo.resolvedPath);
+        destNote.append(document.createTextNode(", so this is created as "), final, document.createTextNode("."));
       } else {
-        pathHint.append(document.createTextNode("; a free suffix is chosen when the worktree is created."));
+        destNote.append(document.createTextNode("; a free suffix is chosen when the worktree is created."));
       }
-    } else {
-      const b = document.createElement("b");
-      b.textContent = `…/${repo.pathPrefix}-<branch>`;
-      pathHint.append(
-        document.createTextNode("Defaults to "),
-        b,
-        document.createTextNode(" once the branch is named."),
-      );
     }
 
     const error = detached ? undefined : deps.validateBranch?.(draft.branchName);
@@ -400,5 +484,5 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   syncDerived();
   shell.focusInitial(nameInput);
 
-  return shell.dispose;
+  return disposeAll;
 }
