@@ -14,7 +14,7 @@
     3. In `src/webview/main.ts`, read the stacked-layout condition from the `webview-layout` element's `file-tree--top` / `file-tree--bottom` class the way `runAuxCollapseAnimation` already does, so one definition of the axis serves both and a user who docked the rail to a side keeps it open.
     4. In `src/webview/vault/VaultPanel.test.ts`, cover: an automatic collapse does not call `persistCollapsed`; it is inert when the rail is already collapsed; and the user's own header toggle still persists.
 
-- [ ] 1_2 Keep presence flowing to a surface that holds a scope — REVERTED by 2_1 (round-1 B1/B2/S2). The behaviour is still owed by this change; it is re-earned by the dependency change that separates a presence subscription from a drawn body, and this change does not archive before that lands (round-2 B4).
+- [-] 1_2 Keep presence flowing to a surface that holds a scope — reverted by 2_1 (round-1 B1/B2/S2), then DELIVERED by the dependency change separate-presence-subscription-from-view-visibility, archived at 01b1227b. The behaviour this task names now ships: main.ts supplies presenceNeeded and revalidatePresence, and a collapsed rail holding a scope stays subscribed at the presence level. Not re-implemented here (round-2 B4).
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-surface-holding-a-scope-keeps-receiving-presence, scope-does-not-depend-on-the-layout}
   - **Acceptance**:
