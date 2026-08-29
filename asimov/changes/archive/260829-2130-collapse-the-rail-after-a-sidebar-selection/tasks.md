@@ -16,16 +16,17 @@
 
 - [-] 1_2 Keep presence flowing to a surface that holds a scope — reverted by 2_1 (round-1 B1/B2/S2), then DELIVERED by the dependency change separate-presence-subscription-from-view-visibility, archived at 01b1227b. The behaviour this task names now ships: main.ts supplies presenceNeeded and revalidatePresence, and a collapsed rail holding a scope stays subscribed at the presence level. Not re-implemented here (round-2 B4).
   - **Deps**: 1_1
-  - **Refs**: specs/worktree-panel/spec.md#{a-surface-holding-a-scope-keeps-receiving-presence, scope-does-not-depend-on-the-layout}
+  - **Refs**: specs/worktree-panel/spec.md#scope-does-not-depend-on-the-layout
   - **Acceptance**:
     - Outcome: a scoped surface keeps receiving presence with the rail collapsed
-    - Verify: unit src/webview/worktree/WorktreeController.state.test.ts
-  - **Plan**:
-    1. In `src/webview/worktree/WorktreeController.ts`, add an optional dep `presenceNeeded?: () => boolean` and keep the value last passed to `setVisible` in a field separate from the effective one.
-    2. In `src/webview/worktree/WorktreeController.ts`, make `setVisible` compute the effective value as the requested value OR `presenceNeeded()`, and post `worktreeViewVisibility` only when the effective value changes, so an idempotent call still posts nothing.
-    3. In `src/webview/worktree/WorktreeController.ts`, add a public `revalidateVisibility()` that recomputes the effective value from the stored request and the current `presenceNeeded()`, for the edge where a scope is set or cleared while the rail state has not moved.
-    4. In `src/webview/main.ts`, pass `presenceNeeded: () => tabBarScope?.effectiveScope() !== undefined` when mounting the controller, and call `worktreeController?.revalidateVisibility()` from the `render` callback the scope wiring already invokes on every scope change.
-    5. In `src/webview/worktree/WorktreeController.state.test.ts`, cover: collapsing while scoped posts no `worktreeViewVisibility: false`; clearing the scope while collapsed posts it then; a scope set while collapsed posts `true` and requests the tree; and the shipped behaviour with no `presenceNeeded` dep is unchanged.
+    - Verify: none — nothing is built here; the dependency change carries the tests for this behaviour
+  - **Plan**: SUPERSEDED — do not follow. Every step below described widening the
+    `worktreeViewVisibility` boolean to mean "still draws from presence", which the round-1 review rejected as blockers one and two and suggestion two: the same value arms the external scan, so it kept uncapped per-row enrichment alive
+    for a body drawing nothing, and it put the `pendingCreate` cleanup behind an early return. The
+    shipped mechanism is a subscription LEVEL on that message, designed and built in
+    `separate-presence-subscription-from-view-visibility` (archived 01b1227b); read its design.md
+    D1-D4 rather than anything here. The dead spec anchor this task used to cite went with the
+    revert (round-2 review S1).
 
 ## 2. Round-1 review fixes
 

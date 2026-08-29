@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -116,3 +116,7 @@ in the design doc rather than left as an emergent effect.
   from a drawn body is a new protocol concept and a new invariant owner. 1_2 is reverted here and
   re-earned by the dependency change below, which lands BEFORE this change archives.
 - Depends on: separate-presence-subscription-from-view-visibility
+
+- Review closed APPROVE at cycle 2 / round 3, after the dependency landed. Cycle 1's three rounds
+  are in .reviews/round-1.md and round-2.md; cycle 1 closed as superseded when the fix moved to
+  its own change, per the remediation boundary.

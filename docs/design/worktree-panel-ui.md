@@ -134,6 +134,40 @@ and the disabling edge. A resend carrying the value already held changes nothing
 that read the flag only when it was built would leave half the composition on the other side of the
 flip.
 
+The flip has to reach the **gate on every behaviour it owns**, not just the composition. The
+after-selection collapse below reads it live at selection time rather than from the value the
+webview was built with: a captured copy cannot see the change, so enabling it would never start
+collapsing and — the half that matters — disabling it would keep collapsing after the user turned
+it off, which is the one thing "the shipped layout stands unchanged while off" forbids.
+
+### 2.4 Handing the room back after a selection
+
+Where the rail is **stacked above or below the terminal** — the sidebar's composition, never a
+docked one — selecting a worktree collapses the rail, so the selection reads as *choose, then
+view* rather than leaving the two halves fighting for the same column. A docked rail is not taking
+the terminal's room and stays open. One definition of "stacked" serves both this and the collapse
+animator's axis choice.
+
+Three properties make the collapse the user's servant rather than a preference they never set:
+
+- It is **not persisted.** `vaultCollapsed` is what the panel seeds from on every open, and
+  writing it here would mean a user who once selected a worktree opens collapsed forever for a
+  reason they never chose.
+- It is **reversible by the same control that performed it**, and a reopened rail stays open until
+  the next selection.
+- It **animates through the shared path**, including its reduced-motion branch. Persistence and
+  animation are separate decisions; fusing them made the automatic collapse snap in every motion
+  mode.
+
+Only an explicit selection collapses. Clearing a scope is not a selection — escaping a scope must
+not close the thing you escaped to. And because the collapse hides whatever the user was
+keyboarding in, focus moves to the header, which is the control that survives the collapse and the
+one that undoes it.
+
+The collapse does **not** end the surface's presence subscription. It reports the body hidden,
+which demotes the surface to the `presence` level rather than unsubscribing, so the scope's escape
+control keeps its live count — see `worktree-agent-presence.md` § 3.7.
+
 ## 3. Tree structure
 
 | Level | Row kind | Purpose | Rendered when |

@@ -366,6 +366,25 @@ than the thing being paced, and the cost of getting the tiers wrong exceeds anyt
 three surfaces render this view independently, so the scan pauses only when none of them is
 showing it.
 
+**A surface reports what it draws, not whether the rail is on screen.** Its declaration carries a
+level: `rows` while agent rows are drawn, `presence` when the rail is closed but something else
+drawn from presence is not — a scope's chip, its escape control, and the count carried on that
+control all survive a collapsed rail (`worktree-panel-ui.md` § 7.1). Both levels are "active": a
+surface that goes silent under a scope freezes the presence half of the hidden-waiting count,
+which `tab-bar-component` § "The count reads every source that can say a pane is waiting"
+forbids.
+
+What the level changes is the projection's work set, not the cadence. **Per-row title and preview
+enrichment runs only while some surface is drawing rows**, because rows are the only thing that
+reads either; the registry pass, the external rows, their waiting state and the ranking are
+unconditional, and the count is built from those. So a collapsed scoped rail keeps a live count
+and stops paying roughly one preview lookup and stat per live external session per poll — the
+axis that grows with the user's session history rather than with anything on screen.
+
+A surface promoted back to `rows` against an envelope built without enrichment gets a fresh
+projection rather than a replay of that envelope: the host records whether what it published was
+enriched, since a rebroadcast would draw the reopened rail with no titles and no previews.
+
 **Worktree ordering by presence is owned here**, not by the tree. The listing in
 [worktree-model.md](worktree-model.md) § 3.4 ranks worktrees with live panes above the rest,
 newest activity first; the ranking key is `max(lastActivityAt)` over that worktree's rows,
