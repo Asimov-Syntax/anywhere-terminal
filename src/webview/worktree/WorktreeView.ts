@@ -27,6 +27,7 @@ import {
   strongestActivity,
 } from "./worktreeFormat";
 import { worktreeSignature } from "./worktreeRenderSignature";
+import { RosterRequests, rosterKey } from "./worktreeRosterRequests";
 import {
   confidenceHint,
   type NoticeSpec,
@@ -190,11 +191,6 @@ function delegatedRows(row: WorktreeAgentRow): readonly WorktreeSubagentRow[] {
   return row.delegations?.kind === "ok" ? row.delegations.rows : [];
 }
 
-/** One row's session, as the host keys its roster. Absent → nothing to ask for. */
-function rosterKey(row: WorktreeAgentRow): string | undefined {
-  return row.entryId === undefined ? undefined : `${row.rowId}\u0000${row.entryId}`;
-}
-
 export class WorktreeView {
   /** The scrollable tree. Appended into the panel body by the owner. */
   readonly element: HTMLElement;
@@ -235,7 +231,7 @@ export class WorktreeView {
    * Row+session pairs already asked for. Keyed by both, so re-expanding asks
    * nothing while a pane that started a NEW session asks again.
    */
-  private readonly requestedRosters = new Set<string>();
+  private readonly rosters = new RosterRequests();
 
   constructor(deps: WorktreeViewDeps) {
     this.deps = deps;
@@ -639,14 +635,18 @@ export class WorktreeView {
     return this.deps.rowActivation?.() ?? "focus";
   }
 
-  /** At most one request per row per session, whoever expanded it. */
+  /**
+   * Queue a roster request. Dispatched by `flushRosterRequests` once the DOM is
+   * built — never from here, because this is called from inside the render loop
+   * and a dep that answered synchronously would re-enter it (see `renderListing`).
+   */
   private requestSubagents(row: WorktreeAgentRow): void {
-    const key = rosterKey(row);
-    if (key === undefined || this.requestedRosters.has(key)) {
-      return;
-    }
-    this.requestedRosters.add(key);
-    this.deps.onRequestSubagents?.(row);
+    this.rosters.want(row);
+  }
+
+  /** Send what the render queued, after `replaceChildren` has settled. */
+  private flushRosterRequests(): void {
+    this.rosters.flush((row) => this.deps.onRequestSubagents?.(row));
   }
 
   private toggleRow(rowId: string): void {
@@ -762,11 +762,7 @@ export class WorktreeView {
     // Dropping the asked-key is what lets a row that left and returned under the
     // same identity ask again — the host evicted its roster, so a view that
     // remembers asking leaves the row on "Reading…" with nothing coming.
-    for (const key of this.requestedRosters) {
-      if (!liveRosterKeys.has(key)) {
-        this.requestedRosters.delete(key);
-      }
-    }
+    this.rosters.reconcile(liveRosterKeys);
   }
 
   // -- Search --------------------------------------------------------------
@@ -797,6 +793,11 @@ export class WorktreeView {
     // runs here, once, on every path.
     const restoreFocusTo = this.renderListing(now);
     this.placeResults();
+    // After the DOM is in place, never from inside the loop that queued them:
+    // a dep answering synchronously re-enters `renderListing`, which replaces
+    // the half-built tree and places every notice twice. Runs on every path,
+    // including the early exits below — a queued request is owed either way.
+    this.flushRosterRequests();
     if (restoreFocusTo === undefined) {
       return;
     }
@@ -814,12 +815,12 @@ export class WorktreeView {
    * no tree to lay out. Returned rather than parked on the instance so the key
    * belongs to the render that computed it.
    *
-   * This does NOT make the render re-entrant. `renderWorktree` asks for subagent
-   * rosters from inside the repo loop, and a dep that answered synchronously would
-   * re-enter here, replace the half-built DOM and place every notice twice —
-   * `repoAnchors` and `placeResults` are both unguarded against that. The shipped
-   * host answers over `postMessage`, so nothing reaches it today; a synchronous
-   * answer would need a guard, not just this return value.
+   * This does NOT make the render re-entrant, and no longer needs to: subagent
+   * rosters are QUEUED from inside the repo loop and dispatched by `render` once
+   * this has returned, so a dep that answers synchronously can no longer replace
+   * the half-built DOM or make `placeResults` run twice over `repoAnchors`. The
+   * shipped host answers over `postMessage`, so nothing reached it before; the
+   * inspector adds a second caller, which is why the ordering became a rule.
    */
   private renderListing(now: number): string | null | undefined {
     // `replaceChildren` detaches the focused row, and focus falls to <body> — a

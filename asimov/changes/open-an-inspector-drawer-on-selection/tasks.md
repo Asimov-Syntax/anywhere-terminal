@@ -38,7 +38,7 @@
     2. Lift the per-worktree and per-row field encoders into `worktreeScopeSignature(info, rows, degraded, now)` with the signature in design.md § Interfaces, and have `worktreeSignature` keep composing those same encoders so both answers stay derived from one definition.
     3. Add tests asserting: the full signature moves when only `model` changes; an absent model and an empty one are distinguished from a real id; and the scoped signature does **not** move for a change to `gitAvailable`, to `unreadable`, to a repo label, main path or degradation, or to another worktree's rows — while it does move for the selected worktree's own fields and its agents'.
 
-- [ ] 1_4 Give the two surfaces one reconciled roster-request set
+- [x] 1_4 Give the two surfaces one reconciled roster-request set — verified: pnpm exec vitest run 'src/webview/worktree/worktreeRosterRequests.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#a-history-is-requested-once-per-session-and-again-if-that-session-returns <!-- design.md D6 -->
   - **Acceptance**:
