@@ -1111,7 +1111,12 @@ function handleInit(msg: InitMessage): void {
       workbench: msg.worktreeWorkbench,
       panel: () => worktreeController,
       source: () => store,
-      render: () => updateTabBar(),
+      render: () => {
+        updateTabBar();
+        // Every route a scope can be set or cleared by lands here, including the
+        // ones the panel's own visibility never sees.
+        worktreeController?.revalidateVisibility();
+      },
       activePane: () => {
         const tabId = store.activeTabId;
         return tabId === null ? null : (store.tabActivePaneIds.get(tabId) ?? tabId);
@@ -1140,6 +1145,10 @@ function handleInit(msg: InitMessage): void {
       // The toolbar create is absent, not inert, when there is nothing to create
       // in — and only the tree knows that.
       onCreateAvailability: (available) => vaultPanel?.setCreateWorktreeAvailable(available),
+      // A scope keeps this surface subscribed to presence even with the rail
+      // collapsed: its chip, escape control and hidden-waiting count are all drawn
+      // from presence (WorktreeController.applyVisibility).
+      presenceNeeded: () => tabBarScope?.effectiveScope() !== undefined,
       onSelectWorktree: (worktreeId) => {
         tabBarScope?.onSelectWorktree(worktreeId);
         // Only an actual selection, only under the rollout, and only where two

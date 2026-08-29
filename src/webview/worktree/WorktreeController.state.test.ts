@@ -91,3 +91,78 @@ describe("what a reload restores", () => {
     expect(state.worktreeExpandedRows).not.toContain("row-that-vanished");
   });
 });
+
+describe("a surface that holds a scope keeps receiving presence", () => {
+  function mountWith(scoped: () => boolean) {
+    const posts: WebViewToExtensionMessage[] = [];
+    const state = {} as WebviewState;
+    const controller = WorktreeController.mount({
+      host: document.body,
+      postMessage: (msg) => posts.push(msg),
+      store: { getState: () => state, updateState: (patch) => Object.assign(state, patch) },
+      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: true },
+      now: () => 1_000_000,
+      presenceNeeded: scoped,
+    });
+    document.body.replaceChildren(controller.element);
+    return { controller, posts };
+  }
+
+  const visibility = (posts: WebViewToExtensionMessage[]): boolean[] =>
+    posts.filter((m) => m.type === "worktreeViewVisibility").map((m) => (m as { visible: boolean }).visible);
+
+  it("[1_2] does not go quiet when the rail collapses under a scope", () => {
+    // `worktreeViewVisibility` never meant "pixels are on screen" — it means this
+    // surface still draws something from presence. A scope's escape control is
+    // exactly that, and it survives a collapsed rail. Going quiet here freezes
+    // the presence half of the hidden-waiting count.
+    let scoped = false;
+    const { controller, posts } = mountWith(() => scoped);
+    controller.setVisible(true);
+    expect(visibility(posts)).toEqual([true]);
+
+    scoped = true;
+    controller.setVisible(false); // the rail collapsed after a selection
+    expect(visibility(posts)).toEqual([true]);
+  });
+
+  it("[1_2] stops asking once the scope it was drawing for is cleared", () => {
+    let scoped = true;
+    const { controller, posts } = mountWith(() => scoped);
+    controller.setVisible(true);
+    controller.setVisible(false);
+    expect(visibility(posts)).toEqual([true]);
+
+    scoped = false;
+    controller.revalidateVisibility();
+    expect(visibility(posts)).toEqual([true, false]);
+  });
+
+  it("[1_2] starts asking when a scope is set while the rail is already collapsed", () => {
+    let scoped = false;
+    const { controller, posts } = mountWith(() => scoped);
+    controller.setVisible(false);
+    expect(visibility(posts)).toEqual([]);
+
+    scoped = true;
+    controller.revalidateVisibility();
+    expect(visibility(posts)).toEqual([true]);
+    expect(posts.some((m) => m.type === "requestWorktreeTree")).toBe(true);
+  });
+
+  it("[1_2] leaves a surface with no scope source exactly as it was", () => {
+    const posts: WebViewToExtensionMessage[] = [];
+    const state = {} as WebviewState;
+    const controller = WorktreeController.mount({
+      host: document.body,
+      postMessage: (msg) => posts.push(msg),
+      store: { getState: () => state, updateState: (patch) => Object.assign(state, patch) },
+      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: false },
+      now: () => 1_000_000,
+    });
+    document.body.replaceChildren(controller.element);
+    controller.setVisible(true);
+    controller.setVisible(false);
+    expect(visibility(posts)).toEqual([true, false]);
+  });
+});

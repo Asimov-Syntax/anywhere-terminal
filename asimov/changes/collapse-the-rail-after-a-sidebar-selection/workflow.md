@@ -88,3 +88,21 @@ so the gap predates this change. What this change does is make it the routine pa
 occasional one. That is worth stating plainly at the gate: the honest options include fixing the
 pre-existing gap as its own change and having this one depend on it.
 
+## Handback resolved — option 2, narrowed
+
+Taken under the standing instruction to decide rather than ask, after the user reaffirmed it.
+
+Of the three options, 3 is a scope cut and 1 makes `worktreeViewVisibility` lie. Option 2 is
+correct AND narrow, because the message never meant "pixels are on screen" — it means "this surface
+still renders presence-derived UI". A surface holding a scope does exactly that: WT-010.1 requires
+the escape control to be reachable while the panel is collapsed, and that control is drawn from
+presence. Reporting invisible there was already wrong, which is why the pre-existing gap exists. So
+this RESTORES `tab-bar-component` § "The count reads every source that can say a pane is waiting"
+rather than weakening it, and the rule lives where the message is formed — the controller — not
+split across `main.ts`.
+
+Durable consequence for blueprint sync: `worktree-agent-presence.md` § 3.7's scan-cadence rule reads
+this same visibility, so a surface holding a scope now also keeps the external scan alive. That is
+the intended trade — a scope is a live filter whose badge depends on presence — and it is recorded
+in the design doc rather than left as an emergent effect.
+

@@ -56,6 +56,12 @@ export interface WorktreeControllerDeps {
    */
   onAttribution?: (report: PaneReport) => void;
   /**
+   * Whether this surface still needs presence for something other than the rail —
+   * a scope's chip, its escape control and its hidden-waiting count are drawn
+   * from presence and outlive a collapsed rail. Absent → the rail alone decides.
+   */
+  presenceNeeded?: () => boolean;
+  /**
    * Open the session-preview overlay for a host-resolved entry. Returns false
    * when this surface holds no such entry — the host resolved against presence,
    * which can name a session this webview's own list does not have.
@@ -211,6 +217,11 @@ export class WorktreeController {
   private readonly deps: WorktreeControllerDeps;
   private readonly view: WorktreeView;
   private visible = false;
+  /**
+   * What the panel last ASKED for, kept apart from the effective value above. A
+   * scope can hold the surface subscribed while the panel is asking for nothing.
+   */
+  private visibleRequested = false;
   private tree: WorktreeTree | null = null;
   private presence: WorktreePresence | null = null;
   private loading: boolean;
@@ -466,6 +477,27 @@ export class WorktreeController {
    * so this is what starts and stops the flow — nothing polls.
    */
   setVisible(visible: boolean): void {
+    this.visibleRequested = visible;
+    this.applyVisibility();
+  }
+
+  /**
+   * Recompute from the panel's last request and the current scope. For the edge
+   * the panel cannot see: a scope set or cleared while the rail's own state has
+   * not moved.
+   */
+  revalidateVisibility(): void {
+    this.applyVisibility();
+  }
+
+  private applyVisibility(): void {
+    // `worktreeViewVisibility` does not mean "pixels are on screen" — it means
+    // this surface still draws something from presence. A scope's chip and its
+    // escape control are exactly that, and they survive a collapsed rail
+    // (worktree-scope.md § 7.1). Going quiet under a scope freezes the presence
+    // half of the hidden-waiting count, which `tab-bar-component` § "The count
+    // reads every source that can say a pane is waiting" forbids.
+    const visible = this.visibleRequested || this.deps.presenceNeeded?.() === true;
     if (visible === this.visible) {
       return;
     }
