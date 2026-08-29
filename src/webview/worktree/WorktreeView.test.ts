@@ -38,6 +38,7 @@ import type {
   WorktreeAgentRow,
   WorktreeInfo,
   WorktreePresence,
+  WorktreeRepo,
   WorktreeRowActivation,
   WorktreeTree,
 } from "./worktreeViewTypes";
@@ -2476,5 +2477,174 @@ describe("the idle tail", () => {
     row?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     expect(branchesInOrder(view)).toHaveLength(5);
     expect(document.activeElement?.className).toContain("wt-idle");
+  });
+});
+
+describe("every action result is placed", () => {
+  const REPO2 = "/repo/.git";
+
+  function repo(id: string, label: string, branches: string[]): WorktreeRepo {
+    return {
+      repoId: id,
+      label,
+      mainPath: `/${label}`,
+      worktrees: branches.map((b) => worktree({ id: `${id}:${b}`, branch: b, head: "a".repeat(40) })),
+    };
+  }
+
+  const treeOf = (...repos: WorktreeRepo[]): WorktreeTree => ({
+    gitAvailable: true,
+    unreadable: { count: 0, reasons: [] },
+    repos,
+  });
+
+  const failure = (worktreeId: string, error: string): WorktreeActionResult => ({
+    action: "remove",
+    worktreeId,
+    outcome: "error",
+    error,
+  });
+
+  const marks = (view: WorktreeView, needle: string): number =>
+    (view.element.textContent?.split(needle).length ?? 1) - 1;
+
+  const rowFor = (view: WorktreeView, id: string) =>
+    Array.from(view.element.querySelectorAll<HTMLElement>("[data-worktree-id]")).find(
+      (el) => el.dataset.worktreeId === id,
+    ) ?? null;
+
+  it("renders a result whose row the cap excluded", () => {
+    const many = Array.from({ length: MAX_WORKTREES_PER_REPO + 4 }, (_, i) => `b${i}`);
+    const { view } = mount({ now: () => NOW });
+    const target = `${REPO2}:b${MAX_WORKTREES_PER_REPO + 3}`;
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", many)),
+      presence: null,
+      actionResults: [failure(target, "capped-away-failure")],
+    });
+    expect(rowFor(view, target)).toBeNull();
+    expect(marks(view, "capped-away-failure")).toBe(1);
+  });
+
+  it("renders a result whose row a fold hid, without opening the fold", () => {
+    const { view } = mount({ now: () => NOW });
+    const target = `${REPO2}:c`;
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", ["a", "b", "c", "d", "e"])),
+      presence: {
+        scannedAt: NOW,
+        degradedSources: [],
+        rowsByWorktreeId: { [`${REPO2}:a`]: [agentRow({ rowId: "r1", agent: "claude", title: "a" })] },
+      },
+      actionResults: [failure(target, "folded-away-failure")],
+    });
+    expect(view.element.querySelector(".wt-idle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(rowFor(view, target)).toBeNull();
+    expect(marks(view, "folded-away-failure")).toBe(1);
+  });
+
+  it("renders a result whose row an active filter excluded", () => {
+    const { view } = mount({ now: () => NOW });
+    const target = `${REPO2}:zebra`;
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", ["alpha", "zebra"])),
+      presence: null,
+      actionResults: [failure(target, "filtered-away-failure")],
+    });
+    view.setQuery("alpha");
+    expect(rowFor(view, target)).toBeNull();
+    expect(marks(view, "filtered-away-failure")).toBe(1);
+  });
+
+  it("renders a repo-scoped result on a collapsed repository", () => {
+    const { view } = mount({ now: () => NOW, getInitialCollapsed: () => [REPO2] });
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", ["a"]), repo("/other/.git", "other", ["b"])),
+      presence: null,
+      actionResults: [{ action: "prune", repoId: REPO2, outcome: "error", error: "collapsed-repo-failure" }],
+    });
+    expect(rowFor(view, `${REPO2}:a`)).toBeNull();
+    expect(marks(view, "collapsed-repo-failure")).toBe(1);
+  });
+
+  it("renders a result held while the tree could not be listed at all", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({
+      tree: { gitAvailable: true, unreadable: { count: 0, reasons: [] }, repos: [] },
+      presence: null,
+      actionResults: [failure("/gone/wt", "unlisted-tree-failure")],
+    });
+    expect(marks(view, "unlisted-tree-failure")).toBe(1);
+  });
+
+  it("renders exactly one notice across a drawn -> undrawn -> drawn pair of pushes", () => {
+    const { view } = mount({ now: () => NOW });
+    const target = `${REPO2}:zebra`;
+    const results = [failure(target, "travelling-failure")];
+    const data = { tree: treeOf(repo(REPO2, "repo", ["alpha", "zebra"])), presence: null, actionResults: results };
+    view.setData(data);
+    expect(marks(view, "travelling-failure")).toBe(1);
+    view.setQuery("alpha");
+    expect(marks(view, "travelling-failure")).toBe(1);
+    view.setQuery("");
+    expect(marks(view, "travelling-failure")).toBe(1);
+  });
+
+  it("tells two undrawn failures apart even when their row labels collide", () => {
+    const { view } = mount({ now: () => NOW, getInitialCollapsed: () => ["/one/.git", "/two/.git"] });
+    view.setData({
+      tree: treeOf(repo("/one/.git", "one", ["main"]), repo("/two/.git", "two", ["main"])),
+      presence: null,
+      actionResults: [failure("/one/.git:main", "first-failure"), failure("/two/.git:main", "second-failure")],
+    });
+    const notices = Array.from(view.element.querySelectorAll(".wt-notice--error")).map((n) => n.textContent ?? "");
+    expect(notices).toHaveLength(2);
+    const names = notices.map((t) => t.replace(/first-failure|second-failure/g, ""));
+    expect(names[0]).not.toBe(names[1]);
+  });
+
+  it("keeps several results on one row in the order they were supplied", () => {
+    const { view } = mount({ now: () => NOW });
+    const target = `${REPO2}:solo`;
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", ["solo"])),
+      presence: null,
+      actionResults: [failure(target, "first-of-two"), failure(target, "second-of-two")],
+    });
+    const text = view.element.textContent ?? "";
+    expect(text).toContain("first-of-two");
+    // Inserting each after the SAME anchor would reverse them.
+    expect(text.indexOf("first-of-two")).toBeLessThan(text.indexOf("second-of-two"));
+  });
+
+  it("lands a repo-scoped result inside its own repository's section", () => {
+    const { view } = mount({ now: () => NOW, getInitialCollapsed: () => [REPO2] });
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", ["a"]), repo("/other/.git", "other", ["b"])),
+      presence: null,
+      actionResults: [{ action: "prune", repoId: REPO2, outcome: "error", error: "belongs-to-first-repo" }],
+    });
+    const children = Array.from(view.element.children);
+    const noticeAt = children.findIndex((el) => el.textContent?.includes("belongs-to-first-repo"));
+    const headers = children.flatMap((el, i) => (el.classList.contains("wt-repo") ? [i] : []));
+    expect(headers).toHaveLength(2);
+    // After its own repo's header and before the next one — not swept to the end,
+    // where it would read as belonging to whichever repository rendered last.
+    expect(noticeAt).toBeGreaterThan(headers[0] ?? -1);
+    expect(noticeAt).toBeLessThan(headers[1] ?? -1);
+  });
+
+  it("does not repeat the branch on a result whose row is drawn", () => {
+    const { view } = mount({ now: () => NOW });
+    const target = `${REPO2}:solo`;
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", ["solo"])),
+      presence: null,
+      actionResults: [failure(target, "drawn-failure")],
+    });
+    const notice = view.element.querySelector(".wt-notice--error");
+    expect(notice).not.toBeNull();
+    expect(rowFor(view, target)).not.toBeNull();
+    expect(notice?.textContent ?? "").not.toContain("solo");
   });
 });

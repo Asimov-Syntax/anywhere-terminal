@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -52,3 +52,9 @@ Lane: light — one concern, one owner, no new API/data/security surface; flags:
   `WorktreeController` from the previous tree, not supplied by the host — over labels
   that do not identify one worktree. Placement now owns every result and naming is by
   row presence with qualification.
+- Verify gate: lint check mode, 17 findings, identical set to the pre-change baseline.
+  Removing the three emission sites left `resultsFor` dead and biome said so; deleted
+  rather than suppressed.
+- `render` gained a single exit so placement cannot sit behind the listing's four early
+  returns. Focus restoration moved to a key captured before `replaceChildren` rather than
+  read from a DOM that has already been replaced.

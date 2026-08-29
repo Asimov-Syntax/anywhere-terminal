@@ -184,6 +184,12 @@ export class WorktreeView {
   private readonly disposeTooltips: () => void;
   /** Roving tabindex target — the row keyboard navigation last landed on. */
   private focusedKey: string | null = null;
+  /** Set while a render is in flight, so focus restoration survives the listing's
+   *  early exits without being read off a DOM that has already been replaced. */
+  private restoreFocusTo: string | null = null;
+  /** repoId → the last node of that repository's section, so a result with no
+   *  drawn row still lands with its repository. */
+  private readonly repoAnchors = new Map<string, HTMLElement>();
   /**
    * Row+session pairs already asked for. Keyed by both, so re-expanding asks
    * nothing while a pane that started a NEW session asks again.
@@ -664,34 +670,63 @@ export class WorktreeView {
 
   private render(now: number): void {
     const scrollTop = this.element.scrollTop;
+    // `renderListing` keeps its early exits — a skeleton and an empty state have
+    // no tree to lay out — but placement must not sit behind any of them, so it
+    // runs here, once, on every path this method can take.
+    const hadListing = this.renderListingAndPlace(now, scrollTop);
+    if (!hadListing) {
+      return;
+    }
+  }
+
+  /** Draws the tree, then places every result. Returns whether a tree was drawn. */
+  private renderListingAndPlace(now: number, scrollTop: number): boolean {
+    const drew = this.renderListing(now);
+    this.placeResults();
+    if (!drew) {
+      return false;
+    }
+    this.element.scrollTop = scrollTop;
+    this.syncRovingTabindex();
+    if (this.restoreFocusTo !== null) {
+      const key = this.restoreFocusTo;
+      this.restoreFocusTo = null;
+      this.navRows()
+        .find((r) => this.keyOf(r) === key)
+        ?.focus();
+    }
+    return true;
+  }
+
+  private renderListing(now: number): boolean {
     // `replaceChildren` detaches the focused row, and focus falls to <body> — a
     // keyboard user loses their place on every disclosure toggle. Restored below
     // by key, which is why subagent rows had to gain one.
-    const hadFocus = this.element.contains(document.activeElement);
+    this.restoreFocusTo = this.element.contains(document.activeElement) ? this.focusedKey : null;
     this.element.replaceChildren();
     const { tree, presence, loading, refreshing, noFolder } = this.data;
 
     if (loading && !tree) {
       this.element.setAttribute("aria-busy", "true");
       this.element.appendChild(renderSkeleton());
-      return;
+      return false;
     }
     this.element.removeAttribute("aria-busy");
 
     if (noFolder) {
       this.element.appendChild(worktreeEmptyState("noFolder"));
-      return;
+      return false;
     }
     // Only when nothing was retained: an unusable git with a last good listing
     // is a stale tree, not an empty one, and hiding it behind this state was
     // what made the cache's retention invisible.
     if (tree && !tree.gitAvailable && tree.repos.length === 0) {
       this.element.appendChild(worktreeEmptyState("gitMissing"));
-      return;
+      return false;
     }
     if (!tree || tree.repos.length === 0) {
       this.element.appendChild(worktreeEmptyState("noRepo"));
-      return;
+      return false;
     }
 
     // A refresh that already holds a tree keeps it and marks itself quietly (§ 5).
@@ -742,19 +777,22 @@ export class WorktreeView {
     // A group header per repo, but ONLY when the tree holds more than one (§ 3.1).
     const multiRepo = tree.repos.length > 1;
     let rendered = 0;
+    this.repoAnchors.clear();
     for (const repo of tree.repos) {
       rendered += this.renderRepo(repo, multiRepo, now);
+      // Where this repo's section ends, so a repo-scoped result still lands with
+      // its repository. Recorded here rather than inside `renderRepo` because
+      // that method has an early return of its own, and an anchor missing for
+      // exactly the collapsed case is how the collapsed hole opened.
+      const last = this.element.lastElementChild;
+      if (last instanceof HTMLElement) {
+        this.repoAnchors.set(repo.repoId, last);
+      }
     }
     if (rendered === 0 && this.query) {
       this.element.appendChild(worktreeEmptyState("noMatch"));
     }
-    this.element.scrollTop = scrollTop;
-    this.syncRovingTabindex();
-    if (hadFocus) {
-      this.navRows()
-        .find((r) => this.keyOf(r) === this.focusedKey)
-        ?.focus();
-    }
+    return true;
   }
 
   /**
@@ -907,27 +945,18 @@ export class WorktreeView {
       if (folds && this.isIdle(info)) {
         continue;
       }
-      this.renderWorktreeWithNotices(info, now, false);
+      this.renderWorktree(info, now, false);
     }
     if (folds) {
       this.element.appendChild(
         renderIdleDisclosure(repo.repoId, tail.length, folded, () => this.toggleIdleTail(repo.repoId)),
       );
-      if (folded) {
-        // Folded hides the ROW, never what an action did to it. A newly created
-        // worktree is agentless by construction, so it lands in the tail — and a
-        // failure it never reported is the same silence the notice exists to break.
-        for (const info of tail) {
-          for (const result of this.resultsFor(info.id)) {
-            this.element.appendChild(this.buildActionNotice(result, info));
-          }
-        }
-      } else {
+      if (!folded) {
         for (const info of tail) {
           // Notices travel with the row they concern wherever it is drawn: a
           // worktree does not stop reporting what an action did to it because
           // it happens to be quiet enough to sit under the disclosure.
-          this.renderWorktreeWithNotices(info, now, true);
+          this.renderWorktree(info, now, true);
         }
       }
     }
@@ -939,17 +968,7 @@ export class WorktreeView {
         }),
       );
     }
-    for (const result of this.resultsFor(undefined, repo.repoId)) {
-      this.element.appendChild(this.buildActionNotice(result));
-    }
     return visible.length;
-  }
-
-  private renderWorktreeWithNotices(info: WorktreeInfo, now: number, inTail: boolean): void {
-    this.renderWorktree(info, now, inTail);
-    for (const result of this.resultsFor(info.id)) {
-      this.element.appendChild(this.buildActionNotice(result, info));
-    }
   }
 
   private renderWorktree(info: WorktreeInfo, now: number, inTail = false): void {
@@ -1048,10 +1067,103 @@ export class WorktreeView {
     }
   }
 
-  private resultsFor(worktreeId?: string, repoId?: string): WorktreeActionResult[] {
-    return (this.data.actionResults ?? []).filter((r) =>
-      worktreeId !== undefined ? r.worktreeId === worktreeId : !r.worktreeId && r.repoId === repoId,
+  /**
+   * The ONE place a result becomes a notice. Deliberately blind to every display
+   * rule: it asks the DOM which rows were actually drawn rather than re-deciding
+   * what `shownWorktrees` decided. Three earlier attempts each put this judgement
+   * inside a branch that decides what to DRAW — the lead loop, the folded tail,
+   * the cap — and each left a different hole. A rule added later cannot open a
+   * new one here, because this pass never learns the rules exist.
+   */
+  private placeResults(): void {
+    const results = this.data.actionResults ?? [];
+    if (results.length === 0) {
+      return;
+    }
+    const drawn = new Map<string, HTMLElement>();
+    for (const el of this.element.querySelectorAll<HTMLElement>("[data-worktree-id]")) {
+      const id = el.dataset.worktreeId;
+      if (id !== undefined && !drawn.has(id)) {
+        drawn.set(id, el);
+      }
+    }
+    // Several results can share one anchor, so each insert walks the cursor
+    // forward; appending them all `after` the same node would reverse them.
+    const cursors = new Map<HTMLElement, HTMLElement>();
+    for (const result of results) {
+      const row = result.worktreeId === undefined ? undefined : drawn.get(result.worktreeId);
+      const info = result.worktreeId === undefined ? undefined : this.infoFor(result.worktreeId);
+      // A drawn row already says which worktree this is about, directly above.
+      const notice = this.buildActionNotice(result, info, row ? undefined : this.nameFor(result));
+      const anchor = row ? this.groupEndFor(row) : this.repoAnchorFor(result, info);
+      if (anchor === undefined) {
+        this.element.appendChild(notice);
+        continue;
+      }
+      const at = cursors.get(anchor) ?? anchor;
+      at.after(notice);
+      cursors.set(anchor, notice);
+    }
+  }
+
+  /** The last node belonging to a row: its card when expanded, else its pill. */
+  private groupEndFor(row: HTMLElement): HTMLElement {
+    const card = row.closest<HTMLElement>(".wt-card");
+    if (card) {
+      return card;
+    }
+    const next = row.nextElementSibling;
+    return next instanceof HTMLElement && next.classList.contains("wt-presence") ? next : row;
+  }
+
+  /** Where a result with no drawn row goes: with its repository when we can place
+   *  it there, else at the end, which is the only honest place left. */
+  private repoAnchorFor(result: WorktreeActionResult, info?: WorktreeInfo): HTMLElement | undefined {
+    const repoId = result.repoId ?? (info ? this.repoIdOf(info.id) : undefined);
+    return repoId === undefined ? undefined : this.repoAnchors.get(repoId);
+  }
+
+  private repoIdOf(worktreeId: string): string | undefined {
+    for (const repo of this.data.tree?.repos ?? []) {
+      if (repo.worktrees.some((w) => w.id === worktreeId)) {
+        return repo.repoId;
+      }
+    }
+    return undefined;
+  }
+
+  private infoFor(worktreeId: string): WorktreeInfo | undefined {
+    for (const repo of this.data.tree?.repos ?? []) {
+      const found = repo.worktrees.find((w) => w.id === worktreeId);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * What to call a worktree whose row is not on screen. A row label alone does
+   * not identify one — `main`, `bare`, `(no branch)` and a short sha all repeat,
+   * across repositories especially — so a label shared with another worktree the
+   * panel holds is qualified until it separates them.
+   */
+  private nameFor(result: WorktreeActionResult): string | undefined {
+    if (result.worktreeId === undefined) {
+      return undefined;
+    }
+    const info = this.infoFor(result.worktreeId);
+    if (!info) {
+      // Left the tree: the last thing the panel knew of it, reconstructed by the
+      // controller rather than supplied by the host, so it is a fallback and not
+      // an authority.
+      return result.orphanedLabel;
+    }
+    const label = branchLabel(info).text;
+    const shared = (this.data.tree?.repos ?? []).some((repo) =>
+      repo.worktrees.some((w) => w.id !== info.id && branchLabel(w).text === label),
     );
+    return shared ? `${label} — ${info.displayPath}` : label;
   }
 
   /**
@@ -1059,11 +1171,11 @@ export class WorktreeView {
    * names what was observed, so the user knows there is state to resolve. Rendering
    * it as a failure would tell them nothing happened, which is the false claim.
    */
-  private buildActionNotice(result: WorktreeActionResult, info?: WorktreeInfo): HTMLElement {
+  private buildActionNotice(result: WorktreeActionResult, info?: WorktreeInfo, name?: string): HTMLElement {
     const dismiss = this.deps.onDismissActionResult ? () => this.deps.onDismissActionResult?.(result) : undefined;
     // A notice re-scoped to its repository has no row above it to say what it
     // is about, so it says so itself.
-    const about = result.orphanedLabel;
+    const about = name ?? result.orphanedLabel;
     const withAbout = (body?: string): string | undefined =>
       about === undefined ? body : body === undefined ? about : `${about} — ${body}`;
     if (result.outcome === "ok") {

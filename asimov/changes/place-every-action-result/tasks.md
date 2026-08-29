@@ -1,6 +1,6 @@
 ## 1. One owner for notice reach
 
-- [ ] 1_1 Place every action result from one pass
+- [x] 1_1 Place every action result from one pass — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{every-action-result-is-rendered-whatever-the-tree-chose-to-draw, a-result-whose-row-is-not-on-screen-says-which-worktree-it-is-about, a-name-in-a-notice-identifies-one-worktree}
   - **Acceptance**:
