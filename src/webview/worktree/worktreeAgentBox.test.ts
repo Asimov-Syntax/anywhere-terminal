@@ -154,3 +154,80 @@ describe("createWorktreeAgentBox", () => {
     expect(onChange).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("an agent whose every posture is dangerous", () => {
+  /** No safe posture exists to fall back to. The type permits it; nothing until
+   *  now exercised it, and the select quietly showed the first option. */
+  const ALL_DANGEROUS: WorktreeLaunchAgent = {
+    id: "reckless",
+    label: "Reckless",
+    canSeedPrompt: true,
+    permissionChoices: [
+      { id: "yolo", label: "Skip every prompt", dangerous: true },
+      { id: "yolo-plus", label: "Skip every prompt and every check", dangerous: true },
+    ],
+  };
+
+  it("selects none of them, and reports none", () => {
+    // `initialPosture` already returned undefined here; the RENDERING lost it.
+    // A `<select>` with no option carrying `selected` displays and submits its
+    // first, which in this case is the dangerous one the rule forbids.
+    const box = createWorktreeAgentBox([ALL_DANGEROUS]);
+    document.body.appendChild(box.element);
+    const perm = document.querySelector<HTMLSelectElement>("#wt-perm");
+    expect(perm?.value).toBe("");
+    expect(box.read().permissionChoiceId).toBeUndefined();
+    expect(box.needsPosture()).toBe(true);
+  });
+
+  it("still offers them, each labelled as what it is", () => {
+    const box = createWorktreeAgentBox([ALL_DANGEROUS]);
+    document.body.appendChild(box.element);
+    const labels = [...(document.querySelector<HTMLSelectElement>("#wt-perm")?.options ?? [])].map(
+      (o) => o.textContent,
+    );
+    expect(labels).toContain("Skip every prompt (dangerous)");
+    expect(labels).toContain("Skip every prompt and every check (dangerous)");
+  });
+
+  it("accepts one the user picks deliberately", () => {
+    const box = createWorktreeAgentBox([ALL_DANGEROUS]);
+    document.body.appendChild(box.element);
+    const perm = document.querySelector<HTMLSelectElement>("#wt-perm");
+    if (perm) {
+      perm.value = "yolo";
+      perm.dispatchEvent(new Event("change"));
+    }
+    expect(box.read().permissionChoiceId).toBe("yolo");
+    expect(box.needsPosture()).toBe(false);
+  });
+
+  it("leaves an agent that has a safe posture opening on it", () => {
+    // The negative that gives the rule its meaning: nothing about the fix makes
+    // every agent open unselected.
+    const box = createWorktreeAgentBox([CLAUDE]);
+    document.body.appendChild(box.element);
+    expect(document.querySelector<HTMLSelectElement>("#wt-perm")?.value).toBe("default");
+    expect(box.needsPosture()).toBe(false);
+  });
+
+  it("drops a carried selection when the chosen agent has no safe posture", () => {
+    const box = createWorktreeAgentBox([CLAUDE, ALL_DANGEROUS]);
+    document.body.appendChild(box.element);
+    const agent = document.querySelector<HTMLSelectElement>("#wt-agent");
+    if (agent) {
+      agent.value = "reckless";
+      agent.dispatchEvent(new Event("change"));
+    }
+    expect(document.querySelector<HTMLSelectElement>("#wt-perm")?.value).toBe("");
+    expect(box.needsPosture()).toBe(true);
+  });
+
+  it("needs nothing from an agent that declares no postures at all", () => {
+    // No axis to choose on is not an unmade choice — the control is absent, and
+    // gating submit on it would make that agent unlaunchable.
+    const box = createWorktreeAgentBox([BARE]);
+    document.body.appendChild(box.element);
+    expect(box.needsPosture()).toBe(false);
+  });
+});

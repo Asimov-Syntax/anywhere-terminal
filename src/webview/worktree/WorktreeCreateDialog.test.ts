@@ -577,3 +577,34 @@ describe("After creating offers four choices (§ 3.2.1)", () => {
     expect(reachable()).toContain("wt-perm");
   });
 });
+
+describe("a create that cannot name a posture cannot be submitted", () => {
+  const RECKLESS = {
+    id: "reckless",
+    label: "Reckless",
+    canSeedPrompt: true,
+    permissionChoices: [{ id: "yolo", label: "Skip every prompt", dangerous: true }],
+  };
+
+  it("holds Create while a revealed posture list has nothing selected", () => {
+    const { q, submitted } = open({ repos: [createDefaults({ agents: [RECKLESS] })] });
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    const after = q<HTMLSelectElement>("#wt-after");
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
+    const perm = q<HTMLSelectElement>("#wt-perm");
+    perm.value = "yolo";
+    perm.dispatchEvent(new Event("change"));
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(submitted[0]?.permissionChoiceId).toBe("yolo");
+  });
+
+  it("does not hold Create on a create that is not launching", () => {
+    // The gate belongs to the revealed block, not to the form.
+    const { q } = open({ repos: [createDefaults({ agents: [RECKLESS] })] });
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+});

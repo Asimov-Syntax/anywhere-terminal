@@ -112,3 +112,46 @@ describe("openWorktreeLaunchDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("the second door the posture rule names", () => {
+  const RECKLESS: WorktreeLaunchAgent = {
+    id: "reckless",
+    label: "Reckless",
+    canSeedPrompt: true,
+    permissionChoices: [{ id: "yolo", label: "Skip every prompt", dangerous: true }],
+  };
+
+  it("holds Start until a posture is chosen, and launches under the chosen one", () => {
+    // Fixing only the create form would leave this dialog stating the opposite;
+    // the requirement names both doors.
+    const { onConfirm, q } = open([RECKLESS]);
+    const start = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /start agent/i.test(b.textContent ?? ""),
+    );
+    expect(start?.disabled).toBe(true);
+    start?.click();
+    expect(onConfirm).not.toHaveBeenCalled();
+    const perm = q<HTMLSelectElement>("#wt-perm");
+    perm.value = "yolo";
+    perm.dispatchEvent(new Event("change"));
+    expect(start?.disabled).toBe(false);
+    start?.click();
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ permissionChoiceId: "yolo" }));
+  });
+
+  it("leaves Start available for an agent that opens on a safe posture", () => {
+    open([CLAUDE]);
+    const start = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /start agent/i.test(b.textContent ?? ""),
+    );
+    expect(start?.disabled).toBe(false);
+  });
+
+  it("leaves Start available for an agent that declares no postures", () => {
+    open([BARE]);
+    const start = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /start agent/i.test(b.textContent ?? ""),
+    );
+    expect(start?.disabled).toBe(false);
+  });
+});

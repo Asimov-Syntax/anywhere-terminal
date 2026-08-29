@@ -42,10 +42,18 @@ export function openWorktreeLaunchDialog(root: HTMLElement, deps: WorktreeLaunch
 
   shell.dialog.appendChild(dialogTitle("Start an agent", deps.worktreeLabel, cancel));
 
-  const box = createWorktreeAgentBox(deps.agents, () => shell.refreshFocusTrap());
+  const box = createWorktreeAgentBox(deps.agents, () => {
+    shell.refreshFocusTrap();
+    syncStart();
+  });
   shell.dialog.appendChild(box.element);
 
   const startBtn = textButton("Start agent", "primary", () => submit());
+  // The same gate the create form applies: an offered posture list with nothing
+  // selected is an unmade choice, and this is the second door the rule names.
+  const syncStart = (): void => {
+    startBtn.disabled = box.needsPosture();
+  };
   startBtn.appendChild(keyHint("⌘↵"));
   shell.dialog.appendChild(shell.actions);
   shell.actions.append(textButton("Cancel", "plain", cancel), startBtn);
@@ -55,7 +63,7 @@ export function openWorktreeLaunchDialog(root: HTMLElement, deps: WorktreeLaunch
   let launched = false;
 
   function submit(): void {
-    if (launched) {
+    if (launched || startBtn.disabled) {
       return;
     }
     const choice = box.read();
@@ -73,6 +81,7 @@ export function openWorktreeLaunchDialog(root: HTMLElement, deps: WorktreeLaunch
     });
   }
 
+  syncStart();
   shell.dialog.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
       ev.preventDefault();

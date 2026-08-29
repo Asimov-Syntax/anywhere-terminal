@@ -280,7 +280,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // The block itself is shared with the standalone launch dialog, so create-then-
   // launch and launch-here collect the same thing rather than two things that
   // happen to look alike (design.md D7).
-  const agentBox = createWorktreeAgentBox(currentRepo().agents);
+  const agentBox = createWorktreeAgentBox(currentRepo().agents, () => syncDerived());
   agentBox.setVisible(false);
   shell.dialog.appendChild(agentBox.element);
 
@@ -337,7 +337,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     draft.openAfter = afterChoice === "folder" ? folderMode : afterChoice;
     agentBox.setVisible(afterChoice === "agent");
     folderField.hidden = afterChoice !== "folder";
-    shell.refreshFocusTrap();
+    // The submit gate reads the revealed block, so revealing one has to re-ask
+    // it. `syncDerived` does not call back here, so this does not recurse.
+    syncDerived();
   }
 
   /** A repo switch can withdraw the launch — the mode goes with it, not just the box. */
@@ -472,7 +474,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const named = detached ? draft.baseRef.trim().length > 0 : draft.branchName.trim().length > 0;
     // `outstanding`: the destination on screen is not yet the one the host
     // resolved for this branch, so submitting now submits a stale path.
-    createBtn.disabled = Boolean(error) || !named || draft.path.trim().length === 0 || outstanding;
+    // A revealed posture list with nothing selected is an unmade choice, not a
+    // default — submitting here would launch under a posture the user never
+    // picked, which is the whole point of never preselecting one.
+    const postureMissing = afterChoice === "agent" && agentBox.needsPosture();
+    createBtn.disabled =
+      Boolean(error) || !named || draft.path.trim().length === 0 || outstanding || postureMissing;
     shell.refreshFocusTrap();
   }
 
@@ -518,7 +525,6 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   });
 
   syncOpenAfter();
-  syncDerived();
   shell.focusInitial(nameInput);
 
   return disposeAll;

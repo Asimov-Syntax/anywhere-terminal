@@ -30,14 +30,14 @@
     4. The agent block's reveal rule is already implemented and unpinned by any test that would notice it moving. Pin it here rather than trusting the restructure left it alone — including that nothing agent-shaped is tabbable while it is absent, and that a non-agent create submits no agent details.
     5. Cover: both folder modes submitting their own wire value; every open-after mode reachable from the form; the secondary control absent for the other three choices; a repo switch that withdraws the agent choice leaving the folder choice and its selection intact.
 
-- [ ] 1_3 A posture list with no safe choice selects nothing
+- [x] 1_3 A posture list with no safe choice selects nothing — verified: pnpm exec vitest run 'src/webview/worktree/worktreeAgentBox.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-posture-list-with-no-safe-choice-preselects-nothing}, ../../../specs/worktree-panel/spec.md#{a-dangerous-posture-is-offered-but-never-preselected}
   - **Acceptance**:
     - Outcome: an agent offering only dangerous postures opens with none selected and cannot submit
     - Verify: unit src/webview/worktree/worktreeAgentBox.test.ts
   - **Plan**:
-    0. Files: `src/webview/worktree/worktreeAgentBox.ts`, `src/webview/worktree/worktreeAgentBox.test.ts`, `src/webview/worktree/WorktreeCreateDialog.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/WorktreeLaunchDialog.test.ts`.
+    0. Files: `src/webview/worktree/worktreeAgentBox.ts`, `src/webview/worktree/worktreeAgentBox.test.ts`, `src/webview/worktree/WorktreeCreateDialog.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/WorktreeLaunchDialog.ts`, `src/webview/worktree/WorktreeLaunchDialog.test.ts`.
     1. `initialPosture` already refuses to preselect a dangerous choice by returning undefined, and the rendering then loses that: a `<select>` with no option carrying `selected` displays and submits its first, which in this case is dangerous. The intent is right and only the rendering betrays it — fix where the choice becomes a selection, not by changing which choice is initial.
     2. Not selected is a state the control has to be able to hold, so it needs something to sit on that is not a posture. Whatever carries it must not be submittable as one, and `read()` must return no `permissionChoiceId` while it is showing.
     3. The block is shared with the launch dialog, so both doors get this. Both submit paths gate on it — the base requirement names both, and fixing one leaves the other stating the opposite.

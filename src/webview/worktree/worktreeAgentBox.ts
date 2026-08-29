@@ -35,6 +35,13 @@ export interface WorktreeAgentBox {
   setVisible(visible: boolean): void;
   /** What the box currently holds. `agentId` is undefined when nothing is offered. */
   read(): WorktreeAgentChoice;
+  /**
+   * A posture is offered and none is selected — true only where every choice the
+   * agent declares is dangerous, since that is the one case with nothing safe to
+   * open on. Both dialogs gate their submit on it: preselecting nothing is only
+   * half the rule if the unselected state can still be submitted.
+   */
+  needsPosture(): boolean;
 }
 
 /**
@@ -108,6 +115,19 @@ export function createWorktreeAgentBox(
     // absent rather than present and empty.
     permField.hidden = choices.length === 0;
     permSelect.replaceChildren();
+    // "Never preselected" has to survive the rendering. With no safe choice to
+    // open on, `initialPosture` leaves nothing selected — and a `<select>` whose
+    // options all lack `selected` displays and submits its FIRST, which here is
+    // dangerous. The unselected state needs something of its own to sit on, and
+    // that something must not be choosable as a posture.
+    if (choices.length > 0 && permissionChoiceId === undefined) {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Choose a permission mode…";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      permSelect.appendChild(placeholder);
+    }
     for (const choice of choices) {
       const opt = document.createElement("option");
       opt.value = choice.id;
@@ -155,7 +175,11 @@ export function createWorktreeAgentBox(
     onChange?.();
   });
   permSelect.addEventListener("change", () => {
-    permissionChoiceId = permSelect.value;
+    // The placeholder is disabled, so this cannot arrive from a user choice —
+    // but a caller resetting the control by value would otherwise record "" as a
+    // posture id and defeat the gate.
+    permissionChoiceId = permSelect.value === "" ? undefined : permSelect.value;
+    renderPostures();
     onChange?.();
   });
   promptInput.addEventListener("input", () => onChange?.());
@@ -169,6 +193,7 @@ export function createWorktreeAgentBox(
       wanted = visible;
       syncVisible();
     },
+    needsPosture: () => (current()?.permissionChoices.length ?? 0) > 0 && permissionChoiceId === undefined,
     read: () => ({
       agentId,
       ...(permissionChoiceId === undefined ? {} : { permissionChoiceId }),
