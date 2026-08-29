@@ -45,6 +45,11 @@ export interface WorktreeControllerDeps {
   /** Init fields this controller boots from. */
   init: { workspaceRoot: string | null; rowActivation: WorktreeRowActivation; workbench: boolean };
   /**
+   * The user selected a worktree, or `null` when the selected one left the tree.
+   * The scope consumer subscribes here; the controller only relays and holds.
+   */
+  onSelectWorktree?: (worktreeId: string | null) => void;
+  /**
    * Open the session-preview overlay for a host-resolved entry. Returns false
    * when this surface holds no such entry — the host resolved against presence,
    * which can name a session this webview's own list does not have.
@@ -210,6 +215,8 @@ export class WorktreeController {
    * slices that do arrive behind it, and it is false unless configured.
    */
   private workbench: boolean;
+  /** The worktree the panel has selected, or `null`. Never seeded. */
+  private selectedWorktreeId: string | null = null;
   /** The host's resolved create destination, per repo. Only it can know one. */
   private readonly createDefaults = new Map<string, WorktreeCreateDefaultsMessage>();
   /** The repo a create was invoked for, waiting on its defaults. */
@@ -437,6 +444,11 @@ export class WorktreeController {
       // A getter, not a value: the setting is live, and re-reading it at the
       // click is what lets an update reach a view already painted.
       rowActivation: () => this.rowActivation,
+      workbench: () => this.workbench,
+      onSelectWorktree: (worktreeId) => {
+        this.selectedWorktreeId = worktreeId;
+        this.deps.onSelectWorktree?.(worktreeId);
+      },
       now: deps.now,
     });
     this.element = this.view.element;
@@ -804,12 +816,24 @@ export class WorktreeController {
 
   /** The rollout flag moved after `init`. */
   setWorkbench(enabled: boolean): void {
+    if (this.workbench === enabled) {
+      return;
+    }
     this.workbench = enabled;
+    // Unlike `rowActivation`, this one changes what is DRAWN — the card marks
+    // selection only while it is on. Nothing in the data moved, so the push
+    // guard would skip the render that has to happen.
+    this.view.refresh();
   }
 
   /** Whether the workbench composition is on for this surface. */
   isWorkbenchEnabled(): boolean {
     return this.workbench;
+  }
+
+  /** The worktree the panel has selected, or `null` for none. */
+  selectedWorktree(): string | null {
+    return this.selectedWorktreeId;
   }
 
   dispose(): void {

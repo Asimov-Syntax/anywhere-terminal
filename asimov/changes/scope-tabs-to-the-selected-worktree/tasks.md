@@ -15,7 +15,7 @@
     5. Route the live message in `src/webview/messaging/MessageRouter.ts` beside `onWorktreeRowActivation`, then in `src/webview/main.ts` pass the init value into `WorktreeController`'s `init` and the live one to its setter; in `WorktreeController.ts` store it and add the setter the listener drives, mirroring `setRowActivation`.
     6. Cover: every init branch carrying the flag; absent, `true`, `false`, and three malformed values; the exact `affectsConfiguration` key; a live change reaching the controller.
 
-- [ ] 1_2 Let a worktree be selected, and mark only that one
+- [x] 1_2 Let a worktree be selected, and mark only that one — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-worktree-can-be-selected-and-selection-is-an-explicit-act, the-selected-worktree-is-the-only-one-marked-as-selected}, ../../../specs/worktree-panel/spec.md#{an-open-worktree-is-marked-without-claiming-exclusivity, keyboard-traversal-follows-the-declared-hierarchy}, design.md#d5-the-card-treatment-marks-selection-and-stops-marking-expansion
   - **Acceptance**:
@@ -23,7 +23,7 @@
     - Verify: unit src/webview/worktree/WorktreeView.test.ts
   - **Plan**:
     0. Files: `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/worktreePanel.css`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`.
-    1. Hold `selectedWorktreeId: string | null` in `WorktreeView`, defaulting to `null`, and expose a dep `onSelectWorktree?: (worktreeId: string) => void` the controller supplies.
+    1. Hold `selectedWorktreeId: string | null` in `WorktreeView`, defaulting to `null`, and expose a dep `onSelectWorktree?: (worktreeId: string | null) => void` the controller supplies — `null` reports the drop in step 5, without which the holder outside goes on naming a worktree that has left the tree.
     2. Gate selection on the workbench flag: with it off, activating a row selects nothing and `.wt-card` keeps its current expansion-keyed behaviour. With it on, `.wt-card` is keyed off selection and the grouping that expansion needs takes its own class in `worktreePanel.css` carrying no selection weight.
     3. Add `aria-selected` on the selected row, and the selection treatment on it alone.
     4. Bind selection on the worktree row's existing activation path in `worktreeTreeView.ts` so it works from the pointer and from both activation keys, without disturbing the row's disclosure toggle.

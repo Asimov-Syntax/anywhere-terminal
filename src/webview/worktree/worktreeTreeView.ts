@@ -256,6 +256,13 @@ export interface WorktreeRowOptions {
   idle?: boolean;
   /** Sits under the idle disclosure, which owns its depth and its reveal. */
   inTail?: boolean;
+  /**
+   * Whether this worktree is the selected one. `undefined` means the tree is not
+   * selectable at all and the row says nothing about selection — announcing
+   * `aria-selected="false"` on every row would tell a screen reader there is a
+   * selection to make where there is none.
+   */
+  selected?: boolean;
 }
 
 /**
@@ -277,6 +284,9 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   row.setAttribute("role", "treeitem");
   row.tabIndex = -1;
   row.dataset.worktreeId = info.id;
+  if (opts.selected !== undefined) {
+    row.setAttribute("aria-selected", opts.selected ? "true" : "false");
+  }
   // The qualification travels WITH the glyph. A collapsed worktree shows a state
   // shape and a pill that assistive tech and the arrow keys both skip, so this row
   // is the only thing a keyboard user reaches — and a `~`-worthy glyph here with no

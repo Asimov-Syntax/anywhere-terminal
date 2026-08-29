@@ -122,6 +122,19 @@ export interface WorktreeViewDeps {
    * is live; absent → `focus`, the manifest default.
    */
   rowActivation?: () => WorktreeRowActivation;
+  /**
+   * Whether the workbench composition is on. A getter for the same reason
+   * `rowActivation` is one: the setting is live, and re-reading it at the click
+   * is what lets a flip reach a view already painted. Absent → off, and no
+   * worktree is selectable at all.
+   */
+  workbench?: () => boolean;
+  /**
+   * The selection moved. `null` when the selected worktree left the tree — the
+   * holder outside needs the drop as much as it needs the pick, or it goes on
+   * naming a worktree that is gone.
+   */
+  onSelectWorktree?: (worktreeId: string | null) => void;
   /** Activating an agent row — focus its pane, or open its preview (§ 6). */
   onActivateAgent?: (row: WorktreeAgentRow, activation: WorktreeRowActivation) => void;
   /** Activating a subagent row targets the PARENT's pane; it has none of its own. */
@@ -210,6 +223,11 @@ export class WorktreeView {
   private readonly disposeTooltips: () => void;
   /** Roving tabindex target — the row keyboard navigation last landed on. */
   private focusedKey: string | null = null;
+  /**
+   * The worktree the user selected, or `null` for none. Never seeded: selection
+   * is an act, so a first render, a reload and a push all leave it alone.
+   */
+  private selectedWorktreeId: string | null = null;
   /** repoId → the last node of that repository's section, so a result with no
    *  drawn row still lands with its repository. */
   private readonly repoAnchors = new Map<string, HTMLElement>();
@@ -352,6 +370,30 @@ export class WorktreeView {
     const now = this.now();
     this.render(now);
     this.armCeiling(now);
+  }
+
+  /**
+   * The workbench flag moved. The card changes what it marks, and nothing in the
+   * data moved — so `setData`'s signature guard would skip the render that has to
+   * happen.
+   */
+  refresh(): void {
+    this.repaint();
+  }
+
+  /**
+   * Select a worktree, or nothing at all while the workbench is off. Returns
+   * whether the selection moved so the caller can decide who repaints:
+   * activation also toggles disclosure, and two repaints for one click would
+   * rebuild the tree twice and throw focus away in between.
+   */
+  private select(worktreeId: string): boolean {
+    if (this.deps.workbench?.() !== true || this.selectedWorktreeId === worktreeId) {
+      return false;
+    }
+    this.selectedWorktreeId = worktreeId;
+    this.deps.onSelectWorktree?.(worktreeId);
+    return true;
   }
 
   /**
@@ -657,6 +699,13 @@ export class WorktreeView {
           }
         }
       }
+    }
+    // A selection whose worktree LEFT the tree is dropped, and the drop is
+    // reported. A worktree reported `missing` is still in the tree and keeps it —
+    // the registration exists and panes may still be attributed to it (D7).
+    if (this.selectedWorktreeId !== null && !liveIds.has(this.selectedWorktreeId)) {
+      this.selectedWorktreeId = null;
+      this.deps.onSelectWorktree?.(null);
     }
     this.restored = false;
     for (const id of this.seeded) {
@@ -1070,11 +1119,17 @@ export class WorktreeView {
   private renderWorktree(info: WorktreeInfo, now: number, inTail = false): void {
     const rows = this.rowsFor(info.id);
     const expanded = rows.length > 0 && this.isExpanded(info);
-    // The card wraps the branch row together with its agent rows, so ownership
-    // stays legible when several worktrees are expanded at once (§ 7.3).
-    const container = expanded ? document.createElement("div") : this.element;
-    if (expanded) {
-      container.className = "wt-card";
+    const workbench = this.deps.workbench?.() === true;
+    const selected = workbench && this.selectedWorktreeId === info.id;
+    // Grouping and selection are two jobs that shared one class. `.wt-card` used
+    // to mean "expanded", and it is the loudest treatment in the tree — so once
+    // selection exists it reads as a selection nobody made (design.md D5). With
+    // the workbench on the card marks selection alone and `.wt-group` does the
+    // grouping; with it off nothing is selectable and the card stays where it was.
+    const grouped = expanded || selected;
+    const container = grouped ? document.createElement("div") : this.element;
+    if (grouped) {
+      container.className = !workbench || selected ? "wt-group wt-card" : "wt-group";
       container.setAttribute("role", "none");
       this.element.appendChild(container);
     }
@@ -1093,12 +1148,19 @@ export class WorktreeView {
           idle: this.isIdle(info),
           inTail,
           expanded,
+          // `undefined` while the workbench is off: a tree that cannot be
+          // selected must not announce a selection state at all, and `false`
+          // everywhere would tell a screen reader there is one to make.
+          selected: workbench ? selected : undefined,
           agentSummary: rows.length > 0 ? agentCountLabel(rows.length) : undefined,
         },
         {
           onActivate: () => {
+            const moved = this.select(info.id);
             if (rows.length > 0) {
               this.toggleCollapsed(info.id);
+            } else if (moved) {
+              this.repaint();
             }
           },
           onContextMenu: this.menu ? (i, ev, row) => this.menu?.openForWorktree(i, ev, row) : undefined,
@@ -1201,9 +1263,11 @@ export class WorktreeView {
     }
   }
 
-  /** The last node belonging to a row: its card when expanded, else its pill. */
+  /** The last node belonging to a row: its group when it has one, else its pill. */
   private groupEndFor(row: HTMLElement): HTMLElement {
-    const card = row.closest<HTMLElement>(".wt-card");
+    // `.wt-group`, not `.wt-card`: the card is a selection mark now and an
+    // expanded-but-unselected worktree carries only the group.
+    const card = row.closest<HTMLElement>(".wt-group");
     if (card) {
       return card;
     }

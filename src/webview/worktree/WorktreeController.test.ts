@@ -26,7 +26,8 @@ function mount(
   over: {
     workspaceRoot?: string | null;
     rowActivation?: WorktreeRowActivation;
-  workbench?: boolean;
+    workbench?: boolean;
+    onSelectWorktree?: (worktreeId: string | null) => void;
     showPreview?: (entryId: string) => boolean;
     activatePane?: (paneId: string) => boolean;
     /** Persisted before mount — the view reads it once, at construction. */
@@ -47,6 +48,7 @@ function mount(
       rowActivation: over.rowActivation ?? "focus",
       workbench: over.workbench ?? false,
     },
+    onSelectWorktree: over.onSelectWorktree,
     showPreview: over.showPreview,
     activatePane: over.activatePane,
     now: () => 1_000_000,
@@ -165,6 +167,71 @@ describe("the tree", () => {
     controller.setVisible(true);
     expect(document.querySelector(".wt-skel")).toBeNull();
     expect(document.body.textContent).toContain("No folder open");
+  });
+});
+
+describe("the worktree the panel has selected", () => {
+  /** The row for a branch, from whatever the controller drew. */
+  function row(branch: string): HTMLElement | undefined {
+    return [...document.querySelectorAll<HTMLElement>(".wt-row")].find(
+      (r) => r.querySelector(".wt-branch")?.textContent === branch,
+    );
+  }
+
+  it("holds nothing until the user selects, then relays what they picked", () => {
+    const picked: (string | null)[] = [];
+    const { controller } = mount({ workbench: true, onSelectWorktree: (id) => picked.push(id) });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    expect(controller.selectedWorktree()).toBeNull();
+    expect(picked).toEqual([]);
+
+    row("main")?.click();
+    expect(controller.selectedWorktree()).toBe("/Users/dev/Projects/ai-oss/anywhere-terminal");
+    expect(picked).toEqual(["/Users/dev/Projects/ai-oss/anywhere-terminal"]);
+  });
+
+  it("relays the drop when the selected worktree leaves the tree", () => {
+    const picked: (string | null)[] = [];
+    const { controller } = mount({ workbench: true, onSelectWorktree: (id) => picked.push(id) });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    row("main")?.click();
+    picked.length = 0;
+
+    const tree = singleRepoTree();
+    const repo = tree.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    repo.worktrees = repo.worktrees.filter((w) => w.branch !== "main");
+    controller.handleTreeResponse({ ...response(), tree });
+    expect(controller.selectedWorktree()).toBeNull();
+    expect(picked).toEqual([null]);
+  });
+
+  it("redraws when the rollout flag flips, since the card changes what it marks", () => {
+    // The flag is not data, so the view's push guard cannot see it move. Turning
+    // it off has to take the card off the selected worktree without a reload.
+    const { controller } = mount({ workbench: true });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+    // `main` opens expanded, so activating it also collapses it: what stays is a
+    // COLLAPSED selected worktree, which carries the card for selection alone.
+    row("main")?.click();
+    expect(row("main")?.getAttribute("aria-expanded")).toBe("false");
+    expect(row("main")?.parentElement?.classList.contains("wt-card")).toBe(true);
+
+    controller.setWorkbench(false);
+    expect(controller.isWorkbenchEnabled()).toBe(false);
+    // Off is what it was before selection existed: the card rides on expansion,
+    // and a collapsed worktree has none.
+    expect(document.querySelectorAll(".wt-card")).toHaveLength(0);
+    expect(row("main")?.hasAttribute("aria-selected")).toBe(false);
+
+    controller.setWorkbench(true);
+    expect(row("main")?.parentElement?.classList.contains("wt-card")).toBe(true);
+    expect(row("main")?.getAttribute("aria-selected")).toBe("true");
   });
 });
 

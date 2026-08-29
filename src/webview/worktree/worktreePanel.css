@@ -179,9 +179,21 @@
   opacity: 0.85;
 }
 
-/* ── Active worktree card (§ 7.3) ───────────────────────────────────────── */
-/* Wraps the branch row together with its agent rows, so ownership stays legible
-   when several worktrees are expanded at once. */
+/* ── Worktree group and selection card (§ 7.3, design.md D5) ────────────── */
+/* Grouping only: keeps a branch row visually attached to its agent rows, so
+   ownership stays legible when several worktrees are expanded at once. It carries
+   no selection weight — the card does that, and one treatment answers one
+   question. */
+.wt-group {
+  margin: 3px 4px;
+  padding: 1px 0 3px;
+}
+.wt-group > .wt-row {
+  margin: 0 1px;
+}
+/* The loudest treatment in the tree, and therefore the selection mark. While the
+   workbench is off nothing is selectable and it rides on expansion instead, which
+   is what it meant before selection existed. */
 .wt-card {
   margin: 3px 4px;
   padding: 1px 0 3px;

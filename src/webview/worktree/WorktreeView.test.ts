@@ -47,6 +47,7 @@ const NOW = 1_700_000_000_000;
 const REPO_ID = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
 const MAIN_PATH = "/Users/dev/Projects/ai-oss/anywhere-terminal";
 const PANEL_WT = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel";
+const RELEASE_WT = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/release";
 
 afterEach(() => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
@@ -2076,6 +2077,126 @@ describe("row activation", () => {
   });
 });
 
+// ── § 7.3 + design.md D5: selection, and the treatment that marks it ──────
+
+describe("worktree selection", () => {
+  function selectable(over: Partial<WorktreeViewDeps> = {}) {
+    const selected: (string | null)[] = [];
+    const { view } = mount({ workbench: () => true, onSelectWorktree: (id) => selected.push(id), ...over });
+    return { view, selected };
+  }
+
+  function cardFor(view: WorktreeView, branch: string): HTMLElement | null {
+    return rowFor(view, branch)?.closest<HTMLElement>(".wt-card") ?? null;
+  }
+
+  it("marks nothing on a first render, and nothing after a push", () => {
+    // Selection is an act, never an inference: neither the workspace folder, nor
+    // the busiest worktree, nor whatever the user last disclosed gets marked on
+    // their behalf.
+    const { view } = selectable();
+    view.setData(populated());
+    expect(view.element.querySelectorAll(".wt-card")).toHaveLength(0);
+    expect(view.element.querySelector("[aria-selected='true']")).toBeNull();
+
+    view.setData({ ...populated(), refreshing: true });
+    expect(view.element.querySelectorAll(".wt-card")).toHaveLength(0);
+  });
+
+  it("moves the mark rather than adding one", () => {
+    const { view, selected } = selectable();
+    view.setData(populated());
+
+    rowFor(view, "main")?.click();
+    expect(cardFor(view, "main")).not.toBeNull();
+
+    rowFor(view, "release/0.4.x")?.click();
+    expect(view.element.querySelectorAll(".wt-card")).toHaveLength(1);
+    expect(cardFor(view, "release/0.4.x")).not.toBeNull();
+    expect(cardFor(view, "main")).toBeNull();
+    expect(selected).toEqual([MAIN_PATH, RELEASE_WT]);
+  });
+
+  it("keeps the card off a worktree that is merely expanded", () => {
+    // The card used to mean "expanded", which once selection exists reads as a
+    // selection nobody made. Grouping keeps happening — under its own class.
+    const { view } = selectable({ getInitialCollapsed: () => [] });
+    view.setData(populated());
+
+    const panel = rowFor(view, "feat/worktree-panel");
+    expect(panel?.getAttribute("aria-expanded")).toBe("true");
+    expect(panel?.parentElement?.classList.contains("wt-group")).toBe(true);
+    expect(panel?.parentElement?.classList.contains("wt-card")).toBe(false);
+    expect(panel?.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("does not displace the open-folder mark", () => {
+    const { view } = selectable();
+    view.setData(populated());
+    rowFor(view, "release/0.4.x")?.click();
+
+    expect(cardFor(view, "release/0.4.x")).not.toBeNull();
+    expect(rowFor(view, "main")?.querySelector(".wt-pill--open")).not.toBeNull();
+    expect(rowFor(view, "main")?.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("selects from the pointer and from both activation keys", () => {
+    for (const activate of [
+      (row: HTMLElement) => row.click(),
+      (row: HTMLElement) => row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+      (row: HTMLElement) => row.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })),
+    ]) {
+      const { view, selected } = selectable();
+      view.setData(populated());
+      const row = rowFor(view, "release/0.4.x");
+      if (!row) {
+        throw new Error("no row to activate");
+      }
+      activate(row);
+      expect(selected).toHaveLength(1);
+      expect(cardFor(view, "release/0.4.x")).not.toBeNull();
+    }
+  });
+
+  it("keeps a selection whose worktree is still in the tree, and drops one that left", () => {
+    const { view, selected } = selectable();
+    view.setData(populated());
+    rowFor(view, "release/0.4.x")?.click();
+    selected.length = 0;
+
+    // A push carrying the same worktree keeps it — including a `missing` one,
+    // which is still registered (design.md D7).
+    view.setData({ ...populated(), refreshing: true });
+    expect(cardFor(view, "release/0.4.x")).not.toBeNull();
+    expect(selected).toEqual([]);
+
+    const tree = singleRepoTree();
+    const repo = tree.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    repo.worktrees = repo.worktrees.filter((w) => w.branch !== "release/0.4.x");
+    view.setData({ ...populated({ tree }) });
+    expect(view.element.querySelectorAll(".wt-card")).toHaveLength(0);
+    expect(selected).toEqual([null]);
+  });
+
+  it("selects nothing while the workbench is off, and leaves the card on expansion", () => {
+    // Off is inert, not hidden (design.md D6): the panel marks exactly what it
+    // marked before selection existed.
+    const selected: (string | null)[] = [];
+    const { view } = mount({ workbench: () => false, onSelectWorktree: (id) => selected.push(id) });
+    view.setData(populated());
+
+    rowFor(view, "release/0.4.x")?.click();
+    expect(selected).toEqual([]);
+    expect(cardFor(view, "release/0.4.x")).toBeNull();
+    expect(rowFor(view, "release/0.4.x")?.hasAttribute("aria-selected")).toBe(false);
+    // The expanded worktree still carries the card, exactly as it did before.
+    expect(rowFor(view, "main")?.parentElement?.classList.contains("wt-card")).toBe(true);
+  });
+});
+
 describe("a mutation's outcome reads as what it was (design.md D11)", () => {
   it("renders a re-scoped notice under its repository, naming the row it outlived", () => {
     // The row is gone — that is what a successful removal means — so there is
@@ -2658,6 +2779,24 @@ describe("every action result is placed", () => {
     });
     expect(rowFor(view, target)).toBeNull();
     expect(marks(view, "capped-away-failure")).toBe(1);
+  });
+
+  it("places a notice after an expanded worktree's group, not inside it", () => {
+    // The group, not the card, is what a worktree's rows belong to now: with the
+    // workbench on an expanded-but-unselected worktree carries only `.wt-group`,
+    // and anchoring on the card would drop the notice between the branch row and
+    // the agent rows it owns.
+    const { view } = mount({ now: () => NOW, workbench: () => true, getInitialCollapsed: () => [] });
+    view.setData({ ...populated(), actionResults: [failure(MAIN_PATH, "grouped-failure")] });
+
+    const group = rowFor(view, MAIN_PATH)?.closest(".wt-group");
+    expect(group?.classList.contains("wt-card")).toBe(false);
+    const notice = [...view.element.querySelectorAll(".wt-notice")].find((n) =>
+      n.textContent?.includes("grouped-failure"),
+    );
+    expect(notice).toBeDefined();
+    expect(group?.contains(notice ?? null)).toBe(false);
+    expect(group?.nextElementSibling).toBe(notice);
   });
 
   it("renders a result whose row a fold hid, without opening the fold", () => {
