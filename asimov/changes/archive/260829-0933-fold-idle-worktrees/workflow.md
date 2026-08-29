@@ -20,18 +20,14 @@
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
-
-Blueprint: none
-Lane: light
-Planned at: b9467406
 
 Blueprint: docs/PLAN.md task WT-009.1
 Lane: light — one concern (the idle tail), reuses the existing disclosure and persistence; flags: user-visible-ui
