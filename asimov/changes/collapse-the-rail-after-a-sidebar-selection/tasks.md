@@ -2,7 +2,7 @@
 
 ## 1. Hand the room back after a selection
 
-- [ ] 1_1 Collapse the rail on an explicit selection in the stacked layout
+- [x] 1_1 Collapse the rail on an explicit selection in the stacked layout — verified: pnpm exec vitest run 'src/webview/vault/VaultPanel.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-selection-in-the-narrow-layout-hands-the-room-back, a-collapse-the-user-did-not-ask-for-is-not-their-choice}
   - **Acceptance**:

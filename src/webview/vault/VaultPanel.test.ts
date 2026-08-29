@@ -4615,3 +4615,63 @@ describe("round-1 review fixes", () => {
     expect(panel.getView()).toBe("worktree");
   });
 });
+
+describe("the rail hands the room back after a selection", () => {
+  function build(over: { collapsed?: boolean } = {}): {
+    host: HTMLElement;
+    panel: VaultPanel;
+    persisted: boolean[];
+  } {
+    const host = createHost();
+    const body = document.createElement("div");
+    body.className = "wt-tree";
+    const persisted: boolean[] = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: body,
+      workbench: true,
+      getInitialCollapsed: () => over.collapsed ?? false,
+      persistCollapsed: (c) => persisted.push(c),
+    });
+    persisted.length = 0; // the constructor seed is not a user choice either
+    return { host, panel, persisted };
+  }
+
+  it("[1_1] collapses the rail, without recording it as the user's choice", () => {
+    // `vaultCollapsed` is what the panel seeds from on every open. Writing it
+    // here would mean a user who once selected a worktree opens collapsed
+    // forever, for a reason they never chose.
+    const { panel, persisted } = build();
+    expect(panel.isCollapsed()).toBe(false);
+
+    panel.collapseAfterSelection();
+    expect(panel.isCollapsed()).toBe(true);
+    expect(persisted).toEqual([]);
+  });
+
+  it("[1_1] leaves the user's own toggle recording as it did", () => {
+    const { panel, persisted } = build();
+    panel.setCollapsed(true);
+    expect(persisted).toEqual([true]);
+  });
+
+  it("[1_1] changes nothing when the rail is already collapsed", () => {
+    const { panel, persisted } = build({ collapsed: true });
+    panel.collapseAfterSelection();
+    expect(panel.isCollapsed()).toBe(true);
+    expect(persisted).toEqual([]);
+  });
+
+  it("[1_1] leaves a reopened rail open until the next selection", () => {
+    const { panel, persisted } = build();
+    panel.collapseAfterSelection();
+    panel.setCollapsed(false); // the same control the collapse used
+    expect(panel.isCollapsed()).toBe(false);
+    expect(persisted).toEqual([false]);
+
+    // Nothing but another selection closes it again.
+    panel.collapseAfterSelection();
+    expect(panel.isCollapsed()).toBe(true);
+  });
+});

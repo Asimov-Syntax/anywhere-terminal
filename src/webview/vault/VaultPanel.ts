@@ -741,6 +741,20 @@ export class VaultPanel {
     }
   }
 
+  /**
+   * Hand the room back after the user selects a worktree in the stacked layout.
+   * Deliberately NOT persisted: `vaultCollapsed` is the state the panel seeds
+   * from on every open, and a collapse the user did not ask for must not become
+   * the panel they get next time.
+   */
+  collapseAfterSelection(): void {
+    // No already-collapsed guard: `setCollapsed` writes the same class, the same
+    // aria state and the same visibility, animates only on a real transition,
+    // and refreshes only on collapsed→expanded. Adding one would be dead code
+    // that reads as load-bearing.
+    this.setCollapsed(true, { persist: false });
+  }
+
   /** Whether the vault section is collapsed to its header strip. */
   isCollapsed(): boolean {
     return this.collapsed;

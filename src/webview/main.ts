@@ -186,6 +186,16 @@ const splitRenderer = new SplitTreeRenderer({
  * state reverts to the class-based flex; a failed/early-cleared tween therefore
  * degrades to the correct final layout, never a stuck size.
  */
+/**
+ * Whether the aux region is stacked above/below the terminal rather than docked
+ * beside it. One definition serves the collapse animator (which axis to measure)
+ * and the after-selection collapse (whether the rail is taking the room the
+ * terminal needs). A user who docked it to a side keeps it open.
+ */
+function isStackedLayout(layout: HTMLElement): boolean {
+  return layout.classList.contains("file-tree--top") || layout.classList.contains("file-tree--bottom");
+}
+
 function runAuxCollapseAnimation(apply: () => void): void {
   const region = document.getElementById("aux-region");
   const layout = document.getElementById("webview-layout");
@@ -198,7 +208,7 @@ function runAuxCollapseAnimation(apply: () => void): void {
     return;
   }
   // Region axis follows the dock: height for top/bottom, width for left/right.
-  const vertical = layout.classList.contains("file-tree--top") || layout.classList.contains("file-tree--bottom");
+  const vertical = isStackedLayout(layout);
   const all = [region, ...Array.from(region.children)] as HTMLElement[];
   const measure = (el: HTMLElement): number =>
     vertical ? el.getBoundingClientRect().height : el.getBoundingClientRect().width;
@@ -1130,7 +1140,16 @@ function handleInit(msg: InitMessage): void {
       // The toolbar create is absent, not inert, when there is nothing to create
       // in — and only the tree knows that.
       onCreateAvailability: (available) => vaultPanel?.setCreateWorktreeAvailable(available),
-      onSelectWorktree: (worktreeId) => tabBarScope?.onSelectWorktree(worktreeId),
+      onSelectWorktree: (worktreeId) => {
+        tabBarScope?.onSelectWorktree(worktreeId);
+        // Only an actual selection, only under the rollout, and only where two
+        // columns do not fit. Clearing a scope (`null`) is not a selection, and
+        // a docked rail is not taking the terminal's room.
+        const layout = document.getElementById("webview-layout");
+        if (msg.worktreeWorkbench && worktreeId !== null && layout && isStackedLayout(layout)) {
+          vaultPanel?.collapseAfterSelection();
+        }
+      },
       onAttribution: (map) => tabBarScope?.onAttribution(map),
     });
     vaultPanel = new VaultPanel({
