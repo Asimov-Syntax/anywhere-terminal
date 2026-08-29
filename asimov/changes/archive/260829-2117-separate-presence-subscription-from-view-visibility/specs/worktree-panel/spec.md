@@ -1,6 +1,6 @@
 # Spec Delta: worktree-panel
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: A surface subscribes to presence for what it draws, not for the rail
 

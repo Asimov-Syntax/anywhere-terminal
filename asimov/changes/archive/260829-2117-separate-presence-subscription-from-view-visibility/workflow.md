@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change; the design-doc consequence for the scan/enrichment split belongs to WT-010.4's sync, which owns the PLAN task
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -39,3 +39,10 @@ Planned at: 8d1d7d72
 - Scope boundary: the preview service's own freshness and rate policy is NOT touched. Enrichment
   is skipped when nobody draws rows; when somebody does it behaves exactly as today. Whether that
   resolution-and-rate seam should be extracted remains open and is not decided here.
+
+- Review: cycle 1 closed at round 3 with WARN, 0 blockers. W1 accepted and DEFERRED to its own
+  change: `anyDrawingRows()` has two more false-to-true routes (`setDisplayed(true)`, and a
+  promotion that joins an in-flight bare pass) and needs one owned definition of "the window
+  gained its first row-drawing surface" rather than a fourth case-by-case fix. Non-gating —
+  reopened rows can be up to one 5s scan late to their titles and previews, and nothing WT-010.4
+  owes depends on it.

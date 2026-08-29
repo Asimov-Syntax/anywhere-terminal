@@ -106,3 +106,13 @@ this same visibility, so a surface holding a scope now also keeps the external s
 the intended trade — a scope is a live filter whose badge depends on presence — and it is recorded
 in the design doc rather than left as an emergent effect.
 
+- HANDBACK, round-2 B4: this change owes "the same count is carried on it ... whether the rail is
+  collapsed to its header strip" (its own spec, Requirement: Scope does not depend on the layout)
+  and WT-010.4's "the escape control survives a collapsed rail". Task 1_2 implemented that by
+  widening `worktreeViewVisibility` to mean "still draws from presence", and round 1 showed the
+  widening also armed the 5s external scan and its uncapped per-row preview I/O (B1) and put the
+  pendingCreate cleanup behind an early return (B2). `reconcileScan` reads the same value and
+  presence has no separate channel, so there is no in-contract lever: telling a subscription apart
+  from a drawn body is a new protocol concept and a new invariant owner. 1_2 is reverted here and
+  re-earned by the dependency change below, which lands BEFORE this change archives.
+- Depends on: separate-presence-subscription-from-view-visibility

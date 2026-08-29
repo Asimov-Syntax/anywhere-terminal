@@ -14,7 +14,7 @@
     3. In `src/webview/main.ts`, read the stacked-layout condition from the `webview-layout` element's `file-tree--top` / `file-tree--bottom` class the way `runAuxCollapseAnimation` already does, so one definition of the axis serves both and a user who docked the rail to a side keeps it open.
     4. In `src/webview/vault/VaultPanel.test.ts`, cover: an automatic collapse does not call `persistCollapsed`; it is inert when the rail is already collapsed; and the user's own header toggle still persists.
 
-- [x] 1_2 Keep presence flowing to a surface that holds a scope — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.state.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+- [ ] 1_2 Keep presence flowing to a surface that holds a scope — REVERTED by 2_1 (round-1 B1/B2/S2). The behaviour is still owed by this change; it is re-earned by the dependency change that separates a presence subscription from a drawn body, and this change does not archive before that lands (round-2 B4).
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-surface-holding-a-scope-keeps-receiving-presence, scope-does-not-depend-on-the-layout}
   - **Acceptance**:
@@ -33,7 +33,7 @@
   - **Deps**: 1_1, 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-selection-in-the-narrow-layout-hands-the-room-back, a-collapse-the-user-did-not-ask-for-is-not-their-choice}
   - **Acceptance**:
-    - Outcome: the rollout gate is read live in both directions, an automatic collapse animates and keeps focus on a surviving control, and the controller reports visibility exactly as it did before this change
+    - Outcome: round-1 blockers are gone — the gate reads the live rollout, the collapse animates and keeps focus
     - Verify: unit src/webview/vault/VaultPanel.test.ts
   - **Plan**:
     1. Revert task 1_2 in `src/webview/worktree/WorktreeController.ts` — drop the presenceNeeded dep, the separate requested field and revalidateVisibility, restoring the single-valued setVisible so every hide reaches the pendingCreate cleanup (round-1 B1, B2, S2).
