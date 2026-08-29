@@ -57,3 +57,15 @@
     1. In `src/webview/worktree/WorktreeRemoveDialog.ts`, partition the busy rows into confirmed and unreadable and phrase all four cases — all confirmed, all unreadable, mixed, and none listed (N1, N3). Make the two optional presented-state defaults required (N2).
     2. In `src/webview/worktree/worktreeTreeView.ts`, name the failing source in the `unknown` tooltip rather than the row's own label, matching the stale affordance, and drop the now-required default (N7, N2).
     3. In `src/webview/worktree/WorktreeView.test.ts`, pin the certainty branch's own string, and read `::after` and the dropped fill declarations so deleting a state's fill fails the shape guard (N1, N8).
+
+## 4. Review round 3
+
+- [x] 4_1 Make the refusal coherent and the shape guard mean what it says — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/worktree-panel/spec.md#an-activity-no-source-could-determine-is-not-presented-as-idle
+  - **Acceptance**:
+    - Outcome: no refusal sentence presupposes a row the one before it disclaimed
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeRemoveDialog.ts`, move the follow-on sentence into the four-case chain and give the empty case a retry rather than an order to stop what it cannot show; make the degradation dep required; singularise the mixed sentence for one unreadable row; point "Show the agent" at a row the copy vouches for (M1, M4, M5, M6).
+    2. In `src/webview/worktree/WorktreeView.test.ts`, ink an edge only when width, style and colour all paint it, require the base layer to ink and to be distinct on its own, and derive the state list from a type so a new member cannot ship unguarded (M2, M3, M7).

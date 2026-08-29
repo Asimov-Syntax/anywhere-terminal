@@ -28,6 +28,7 @@ import {
   twoRepoTree,
   worktree,
 } from "./worktreeFixtures";
+import type { PresentedActivity } from "./worktreeFormat";
 import type {
   DelegationRoster,
   WorktreeActionResult,
@@ -307,17 +308,60 @@ describe("tree structure", () => {
         .trim();
 
     const SIDES = ["top", "right", "bottom", "left"] as const;
+    type Edge = { width: string; style: string; colour: string };
+    const BLANK: Edge = { width: "medium", style: "none", colour: "C" };
+    /** An edge paints only when it has all three: a width, a style, and a colour. */
+    const paints = (e: Edge): boolean =>
+      !/^0\w*$/.test(e.width) && !/^(none|hidden)$/.test(e.style) && !e.colour.includes("NONE");
     /**
-     * What the rule actually draws: which of the four edges are inked, whether it
-     * carries a fill, and every non-colour declaration. Which EDGES exist is shape;
-     * which hue an existing edge takes is not — the arc is two sides of four, and
-     * the ring it replaced was four, which is why they must not compare equal.
+     * Apply one declaration to the four edges, in cascade order — `border` and
+     * `border-<side>` set all three parts, the longhands set one. Modelling the
+     * parts separately is what makes `border: 0` and `border-style: none` read as
+     * no paint; treating any non-`transparent` value as ink did not.
      */
-    const shapeOf = (state: string, dropMotion: boolean): { key: string; inked: boolean } => {
-      const base = declsOf(css, state);
-      expect(base, `no rule for .wt-state--${state}`).not.toEqual([]);
+    const applyBorder = (edges: Map<string, Edge>, prop: string, value: string): boolean => {
+      const side = SIDES.find((sd) => prop === `border-${sd}` || prop.startsWith(`border-${sd}-`));
+      const targets = side === undefined ? SIDES : [side];
+      const part = /-(width|style|color)$/.exec(prop)?.[1];
+      if (prop !== "border" && side === undefined && part === undefined) {
+        return false;
+      }
+      for (const sd of targets) {
+        const cur = edges.get(sd) ?? { ...BLANK };
+        if (part === "width") {
+          cur.width = value;
+        } else if (part === "style") {
+          cur.style = value;
+        } else if (part === "color") {
+          cur.colour = value;
+        } else {
+          // Shorthand: `1.5px solid C`, or `0`. Unstated parts reset to initial.
+          const [w = "medium", st = "none", ...c] = value.split(/\s+/);
+          cur.width = w;
+          cur.style = /^\d/.test(w) || w === "medium" || w === "thin" || w === "thick" ? st : w;
+          cur.colour = c.join(" ") || (/^\d/.test(w) ? "C" : st);
+          if (value.trim() === "0" || value.trim() === "none") {
+            cur.style = "none";
+          }
+        }
+        edges.set(sd, cur);
+      }
+      return true;
+    };
+    /**
+     * What the rule actually draws: which of the four edges paint, whether it
+     * carries a fill, and every non-colour declaration. Which EDGES exist is
+     * shape; which hue an existing edge takes is not — the arc is two sides of
+     * four, and the ring it replaced was four, which is why they must not compare
+     * equal. Base and `::after` are kept apart: an `::after` that paints nothing
+     * must not keep a state alive, and one that paints must not mask a base
+     * collision, so the base layer is asserted on its own as well.
+     */
+    const shapeOf = (state: string, dropMotion: boolean): { key: string; base: string; baseInked: boolean } => {
+      const baseDecls = declsOf(css, state);
+      expect(baseDecls, `no rule for .wt-state--${state}`).not.toEqual([]);
       const layers: [string, string[]][] = [
-        ["", dropMotion ? [...base, ...declsOf(reduced, state)] : base],
+        ["", dropMotion ? [...baseDecls, ...declsOf(reduced, state)] : baseDecls],
         [
           "after",
           dropMotion
@@ -325,10 +369,11 @@ describe("tree structure", () => {
             : declsOf(css, `${state}::after`),
         ],
       ];
-      const kept = new Map<string, string>();
-      let inked = false;
+      const keys = new Map<string, Map<string, string>>();
+      let baseInked = false;
       for (const [layer, decls] of layers) {
-        const edges = new Map<string, string>();
+        const kept = new Map<string, string>();
+        const edges = new Map<string, Edge>();
         let fill = "none";
         for (const decl of decls) {
           const [rawProp = "", ...rest] = decl.split(":");
@@ -341,48 +386,56 @@ describe("tree structure", () => {
             fill = value.includes("NONE") ? "none" : "filled";
             continue;
           }
-          // `border: w style c` inks every side; `border-<side>[-color]` one.
-          const side = SIDES.find((sd) => prop.startsWith(`border-${sd}`));
-          if (prop === "border" || side !== undefined) {
-            const lit = value.includes("NONE") ? "" : "ink";
-            for (const sd of side === undefined ? SIDES : [side]) {
-              edges.set(sd, lit);
-            }
-            if (prop === "border" || prop === `border-${side}`) {
-              kept.set(`${layer}/style`, value.replace(/\bC\b|\bNONE\b/g, "").trim());
-            }
+          if (prop.startsWith("border") && !prop.startsWith("border-radius") && applyBorder(edges, prop, value)) {
             continue;
           }
           if (/color|opacity/.test(prop)) {
             continue;
           }
-          kept.set(`${layer}/${prop}`, value);
+          kept.set(prop, value);
         }
-        const profile = SIDES.map((sd) => (edges.get(sd) === "ink" ? sd[0] : "-")).join("");
-        kept.set(`${layer}/edges`, profile);
-        kept.set(`${layer}/fill`, fill);
-        inked ||= fill === "filled" || profile !== "----";
+        const painted = SIDES.filter((sd) => paints(edges.get(sd) ?? BLANK));
+        kept.set("edges", painted.map((sd) => `${sd}/${edges.get(sd)?.style ?? ""}`).join(",") || "none");
+        kept.set("fill", fill);
+        if (layer === "") {
+          baseInked = fill === "filled" || painted.length > 0;
+        }
+        keys.set(layer, kept);
       }
-      return {
-        key: [...kept.entries()]
+      const render = (layer: string): string =>
+        [...(keys.get(layer) ?? new Map())]
           .sort()
           .map(([k, v]) => `${k}:${v}`)
-          .join(";"),
-        inked,
-      };
+          .join(";");
+      return { key: `${render("")}|${render("after")}`, base: render(""), baseInked };
     };
 
-    const STATES = ["running", "waiting", "idle", "unknown", "exited"];
+    // Keyed by the presented vocabulary itself, so § 7.2's reserved sixth member
+    // cannot ship without a shape: adding it to `PresentedActivity` fails to
+    // compile here until it also has a rule.
+    const STATE_RULES: Record<PresentedActivity, string> = {
+      running: "running",
+      waiting: "waiting",
+      idle: "idle",
+      unknown: "unknown",
+      exited: "exited",
+    };
+    const STATES = Object.values(STATE_RULES);
     for (const dropMotion of [false, true]) {
       const shapes = STATES.map((st) => shapeOf(st, dropMotion));
-      // Distinct is not enough: a rule that draws nothing at all is distinct from
-      // every other rule and invisible on screen. Each state must carry ink of its
-      // own — a fill, or at least one edge that is not transparent.
+      const where = `motion dropped: ${dropMotion}`;
       for (const [i, shape] of shapes.entries()) {
-        expect(shape.inked, `.wt-state--${STATES[i]} draws nothing (motion dropped: ${dropMotion})`).toBe(true);
+        // Distinct is not enough: a rule that draws nothing is distinct from every
+        // other rule and invisible on screen. The BASE must paint on its own — a
+        // decorative `::after` is not what makes a state legible.
+        expect(shape.baseInked, `.wt-state--${STATES[i]} draws nothing (${where})`).toBe(true);
       }
-      const keys = shapes.map((sh) => sh.key);
-      expect(new Set(keys).size, `two states share a shape (motion dropped: ${dropMotion})`).toBe(keys.length);
+      for (const layer of ["base", "full"] as const) {
+        // Both, so an `::after` can neither mask a base collision nor create a
+        // distinction the base does not have.
+        const keys = shapes.map((sh) => (layer === "base" ? sh.base : sh.key));
+        expect(new Set(keys).size, `two states share a ${layer} shape (${where})`).toBe(keys.length);
+      }
     }
   });
 
@@ -1222,7 +1275,7 @@ describe("dialogs", () => {
     if (!info) {
       throw new Error("fixture lost the spike worktree");
     }
-    view.openRemoveDialog({ info, blocker: confirmableBlocker });
+    view.openRemoveDialog({ info, blocker: confirmableBlocker, degradedSources: [] });
     // dirty, untracked, idle panes, an external session, and the lock — all five.
     expect(host.querySelectorAll(".wt-blockers li").length).toBe(5);
     expect(host.querySelector(".wt-btn--danger")?.textContent).toBe("Force remove");
@@ -1239,6 +1292,7 @@ describe("dialogs", () => {
       info,
       blocker: refusedBlocker,
       agentRows: [agentRow({ rowId: "busy", agent: "claude", activity: "waiting", title: "INTEGRATE-WORKTREE" })],
+      degradedSources: [],
     });
     expect(host.querySelector(".wt-refusebox")).not.toBeNull();
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
@@ -1306,7 +1360,7 @@ describe("dialogs", () => {
     // One row draws a live dot and one draws unknown; a single sentence for both
     // would misdescribe whichever half it is not about.
     expect(host.querySelector(".wt-refusebox b")?.textContent).toBe(
-      "An agent is mid-turn in this worktree, and others here cannot be read at all.",
+      "An agent is mid-turn in this worktree, and another here cannot be read at all.",
     );
     const dots = Array.from(host.querySelectorAll(".wt-dialog .wt-arow .wt-state")).map((d) => d.className);
     expect(dots.some((c) => c.includes("wt-state--running"))).toBe(true);
@@ -1320,10 +1374,14 @@ describe("dialogs", () => {
     if (!info) {
       throw new Error("fixture lost the panel worktree");
     }
-    view.openRemoveDialog({ info, blocker: refusedBlocker, agentRows: [] });
-    expect(host.querySelector(".wt-refusebox b")?.textContent).toBe(
-      "An agent was mid-turn in this worktree, and no row can be shown for it now.",
+    view.openRemoveDialog({ info, blocker: refusedBlocker, agentRows: [], degradedSources: [] });
+    // The whole paragraph, not just the lead: "stop it first" presupposes a row
+    // the sentence before it has just said cannot be shown.
+    expect(host.querySelector(".wt-refusebox")?.textContent).toBe(
+      "An agent was mid-turn in this worktree, and no row can be shown for it now." +
+        " It is no longer listed here — retry the removal.",
     );
+    expect(host.querySelector(".wt-dialog .wt-arow")).toBeNull();
   });
 
   it("reopens the confirmation from a blocked action result", () => {

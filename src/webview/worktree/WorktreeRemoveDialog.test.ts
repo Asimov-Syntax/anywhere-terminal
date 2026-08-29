@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { isRemoveRefused, openWorktreeRemoveDialog } from "./WorktreeRemoveDialog";
 import { agentRow, confirmableBlocker, refusedBlocker, worktree } from "./worktreeFixtures";
-import type { WorktreeAgentRow, WorktreeInfo, WorktreeRemoveBlocker } from "./worktreeViewTypes";
+import type { PresenceDegradation, WorktreeAgentRow, WorktreeInfo, WorktreeRemoveBlocker } from "./worktreeViewTypes";
 
 const SPIKE: WorktreeInfo = worktree({
   id: "/Volumes/ext/anywhere-terminal-wt/spike-hooks",
@@ -20,7 +20,10 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-function open(blocker: WorktreeRemoveBlocker, over: { info?: WorktreeInfo; agentRows?: WorktreeAgentRow[] } = {}) {
+function open(
+  blocker: WorktreeRemoveBlocker,
+  over: { info?: WorktreeInfo; agentRows?: WorktreeAgentRow[]; degradedSources?: PresenceDegradation[] } = {},
+) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const confirmed: string[] = [];
@@ -29,6 +32,7 @@ function open(blocker: WorktreeRemoveBlocker, over: { info?: WorktreeInfo; agent
     info: over.info ?? SPIKE,
     blocker,
     agentRows: over.agentRows,
+    degradedSources: over.degradedSources ?? [],
     onConfirm: (fingerprint) => confirmed.push(fingerprint),
     onShowAgent: (row) => shown.push(row.rowId),
   });

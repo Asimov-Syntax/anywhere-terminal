@@ -24,8 +24,12 @@ export interface WorktreeRemoveDialogDeps {
   blocker: WorktreeRemoveBlocker;
   /** Rows in this worktree; the refusal names the busy ones. */
   agentRows?: WorktreeAgentRow[];
-  /** Presence sources currently failing, so a listed row is drawn with what is known about it. */
-  degradedSources?: readonly PresenceDegradation[];
+  /**
+   * Presence sources currently failing, so a listed row is drawn with what is
+   * known about it. Required: a default here is how a caller silently draws the
+   * wire value, which is the omission review found on two other surfaces.
+   */
+  degradedSources: readonly PresenceDegradation[];
   /** Re-sends the remove with `force: true` AND the fingerprint the user was shown. */
   onConfirm: (fingerprint: string) => void;
   /** Reveal the agent that blocks the removal. */
@@ -166,7 +170,7 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   shell.dialog.appendChild(path);
 
   if (refused) {
-    const degraded = deps.degradedSources ?? [];
+    const degraded = deps.degradedSources;
     // Named before the copy branches, because the copy asks whether any listed
     // row is one no live source can vouch for.
     // The filter stays on the WIRE value, so a source going down never shrinks
@@ -207,21 +211,26 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       // one sentence for the whole list would misdescribe whichever part it is not
       // about. Nothing listed is the LEAST evidenced case, so it gets the weakest
       // claim — the blocker counted an agent that no row can now show.
+      // The follow-on sentence belongs INSIDE the chain: "stop it first" presupposes
+      // a row the user can act on, and the empty branch has just said there is none.
+      const stopIt = " Stop it first — there is no confirmation that removes a folder out from under a working agent.";
+      const unread = presented.length - confirmed;
       if (presented.length === 0) {
         lead.textContent = "An agent was mid-turn in this worktree, and no row can be shown for it now.";
-      } else if (confirmed === 0) {
-        lead.textContent = "An agent may be mid-turn in this worktree, and nothing can currently confirm it.";
-      } else if (confirmed === presented.length) {
-        lead.textContent = "An agent is mid-turn in this worktree.";
+        box.append(lead, document.createTextNode(" It is no longer listed here — retry the removal."));
       } else {
-        lead.textContent = "An agent is mid-turn in this worktree, and others here cannot be read at all.";
+        if (confirmed === 0) {
+          lead.textContent = "An agent may be mid-turn in this worktree, and nothing can currently confirm it.";
+        } else if (unread === 0) {
+          lead.textContent = "An agent is mid-turn in this worktree.";
+        } else {
+          lead.textContent =
+            unread === 1
+              ? "An agent is mid-turn in this worktree, and another here cannot be read at all."
+              : "An agent is mid-turn in this worktree, and others here cannot be read at all.";
+        }
+        box.append(lead, document.createTextNode(stopIt));
       }
-      box.append(
-        lead,
-        document.createTextNode(
-          " Stop it first — there is no confirmation that removes a folder out from under a working agent.",
-        ),
-      );
     }
     shell.dialog.appendChild(box);
 
@@ -243,8 +252,11 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
 
     const close = textButton("Close", "plain", cancel);
     shell.actions.append(close);
-    if (busy[0] && deps.onShowAgent) {
-      const firstBusy = busy[0];
+    // Point at a row the copy vouches for where there is one: offering to show an
+    // agent the paragraph just said it cannot read is the same claim it withdrew.
+    const showable = presented.find(([, a]) => a !== "unknown")?.[0] ?? busy[0];
+    if (showable && deps.onShowAgent) {
+      const firstBusy = showable;
       shell.actions.append(
         textButton("Show the agent", "primary", () => {
           deps.onShowAgent?.(firstBusy);
