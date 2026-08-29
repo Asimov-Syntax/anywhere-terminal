@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -48,3 +48,5 @@ Planned at: b22eb683
 - Merged 1_1 and 1_2 into one task on the oracle's advice: they shared every file, and correctness depends on ordering, cap, fold, search, persistence and keyboard behaving together rather than on an intermediate state that gets reworked.
 - A filter reveals the tail at RENDER time only, never by writing the fold open: the spec requires clearing the filter to return the tail to the user's own choice.
 - Must not: no filter state, no popover, no "hide sleeping" toggle. § 7.5 keeps that deferred and this task is the 80% that pays for itself without it.
+
+- Verify gate: lint runs in check mode; 17 findings, byte-identical to the same run on a detached worktree at HEAD before this change. Zero introduced.
