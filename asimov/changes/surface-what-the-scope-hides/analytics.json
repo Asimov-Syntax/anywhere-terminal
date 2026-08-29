@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "surface-what-the-scope-hides"
+  },
+  "sessions": [
+    {
+      "sessionId": "069d5382-fa6a-4334-aecd-ad19660fbb1e",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788018270337,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788018270337,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788018270337
+        }
+      ],
+      "firstAt": 1788018270337,
+      "lastAt": 1788019332055,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-finder",
+          "model": "gpt-5.6-luna",
+          "messages": 26,
+          "inputTokens": 221383,
+          "outputTokens": 9552,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 1580032,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-oracle",
+          "model": "gpt-5.6-sol",
+          "messages": 14,
+          "inputTokens": 114298,
+          "outputTokens": 23201,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 1019392,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 30,
+          "inputTokens": 60,
+          "outputTokens": 38159,
+          "reasoningTokens": 7548,
+          "cacheWriteTokens": 57619,
+          "cacheReadTokens": 7182672,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 57619,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}
