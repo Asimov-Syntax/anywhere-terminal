@@ -127,10 +127,17 @@ export function worktreeBadges(info: WorktreeInfo): { kind: WorktreeBadgeKind; t
 }
 
 /**
- * The activity a row is DRAWN with (§ 7.2): the wire vocabulary plus `unknown`.
- * Presentation only — it is derived on every render, never stored and never sent.
+ * The activity a row is DRAWN with (§ 7.2): the wire vocabulary plus the two states
+ * the view derives. Presentation only — derived on every render, never stored and
+ * never sent.
  */
-export type PresentedActivity = WorktreeActivity | "unknown";
+export type PresentedActivity = WorktreeActivity | "unknown" | "running-unconfirmed";
+
+/**
+ * How long an inferred `running` may stand unchanged before it stops claiming to be
+ * confirmed (worktree-activity-ceiling.md § 2).
+ */
+export const CONFIRMATION_CEILING_MS = 5 * 60_000;
 
 /**
  * `unknown` when no source spoke for the row, or when the source that would have
@@ -145,6 +152,7 @@ export type PresentedActivity = WorktreeActivity | "unknown";
 export function presentedActivity(
   row: WorktreeAgentRow,
   degradedSources: readonly PresenceDegradation[],
+  now: number,
 ): PresentedActivity {
   // The mapping is `ACTIVITY_EVIDENCE`, shared with the host so the glyph and
   // delegation decay cannot disagree about which failure undermines which row.
@@ -152,15 +160,81 @@ export function presentedActivity(
   if (deciding === undefined) {
     return "unknown";
   }
-  return degradedSources.some((d) => d.source === deciding) ? "unknown" : row.activity;
+  // `unknown` outranks the ceiling: a source that failed cannot support a claim of
+  // running at all, so there is nothing left to qualify as unconfirmed.
+  if (degradedSources.some((d) => d.source === deciding)) {
+    return "unknown";
+  }
+  return isUnconfirmed(row, now) ? "running-unconfirmed" : row.activity;
 }
+
+/**
+ * A `running` claim that has outlived what its evidence can support: all three of
+ * running, inferred from output, and standing unchanged past the ceiling.
+ *
+ * The clock is `stateStartedAt`, which moves only when the projected activity
+ * CHANGES. It measures how long this row has claimed the same activity — not time
+ * since confirmation, which is a different rule needing a field the host does not
+ * keep. `lastActivityAt` is the wrong clock and must never be substituted: it
+ * advances on every byte, including the bytes of the animation this ceiling exists
+ * to see through, so a ceiling built on it would never fire in its own case.
+ *
+ * An absent clock, or one in the future, is confirmed. Neither is proof of
+ * staleness, and a negative age must never manufacture it.
+ */
+function isUnconfirmed(row: WorktreeAgentRow, now: number): boolean {
+  return (
+    row.activity === "running" &&
+    row.activitySource === "output" &&
+    row.stateStartedAt !== undefined &&
+    now - row.stateStartedAt >= CONFIRMATION_CEILING_MS
+  );
+}
+
+/**
+ * How long the row has been claiming this activity, for a hint that must not
+ * understate it. Undefined when there is no clock to read.
+ */
+export function unchangedFor(row: WorktreeAgentRow, now: number): number | undefined {
+  if (row.stateStartedAt === undefined) {
+    return undefined;
+  }
+  const elapsed = now - row.stateStartedAt;
+  return elapsed >= 0 ? elapsed : undefined;
+}
+
+/**
+ * Every presented state, in display order. This is the EXACT vocabulary: the
+ * collapsed pill groups by it, so a state missing from here is a set of rows the
+ * pill silently drops.
+ */
+const PRESENTED_ORDER: readonly PresentedActivity[] = [
+  "waiting",
+  "running",
+  "running-unconfirmed",
+  "unknown",
+  "idle",
+  "exited",
+];
 
 /**
  * Loudest first: the state that needs a human wins the glyph (§ 7.2). `unknown`
  * sits above `idle` — a row nothing could read is a louder fact than one settled
  * at rest — and below `running`, which is still an evidenced claim.
+ *
+ * A separate order from `PRESENTED_ORDER`, because these answer different
+ * questions. `running-unconfirmed` is a confidence ON `running`, not a rank of its
+ * own: it sits directly below it, so a worktree holding one confirmed run reads as
+ * running, and one whose every run is unconfirmed reads as unconfirmed.
  */
-const PRESENTED_STRENGTH: readonly PresentedActivity[] = ["waiting", "running", "unknown", "idle", "exited"];
+const PRESENTED_STRENGTH: readonly PresentedActivity[] = [
+  "waiting",
+  "running",
+  "running-unconfirmed",
+  "unknown",
+  "idle",
+  "exited",
+];
 
 /**
  * The strongest state among a worktree's agents (§ 7.2). One waiting agent among
@@ -173,8 +247,9 @@ const PRESENTED_STRENGTH: readonly PresentedActivity[] = ["waiting", "running", 
 export function strongestActivity(
   rows: readonly WorktreeAgentRow[],
   degradedSources: readonly PresenceDegradation[],
+  now: number,
 ): PresentedActivity | undefined {
-  const presented = rows.map((r) => presentedActivity(r, degradedSources));
+  const presented = rows.map((r) => presentedActivity(r, degradedSources, now));
   for (const activity of PRESENTED_STRENGTH) {
     if (presented.includes(activity)) {
       return activity;
@@ -202,12 +277,15 @@ export interface PresenceGroup {
 export function groupPresenceByActivity(
   rows: readonly WorktreeAgentRow[],
   degradedSources: readonly PresenceDegradation[],
+  now: number,
 ): PresenceGroup[] {
   const groups: PresenceGroup[] = [];
   // Grouped on the PRESENTED state: the pill is what a collapsed worktree shows,
   // so a row no source could read must not be counted into `idle` here either.
-  const presented = rows.map((r) => [r, presentedActivity(r, degradedSources)] as const);
-  for (const activity of PRESENTED_STRENGTH) {
+  const presented = rows.map((r) => [r, presentedActivity(r, degradedSources, now)] as const);
+  // The exact vocabulary, not the rank order — a summary that folded unconfirmed
+  // into `running` would report a confidence the row does not have.
+  for (const activity of PRESENTED_ORDER) {
     const inGroup = presented.filter(([, a]) => a === activity).map(([r]) => r);
     if (inGroup.length === 0) {
       continue;

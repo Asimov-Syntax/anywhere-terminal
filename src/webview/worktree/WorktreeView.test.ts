@@ -415,6 +415,7 @@ describe("tree structure", () => {
     // compile here until it also has a rule.
     const STATE_RULES: Record<PresentedActivity, string> = {
       running: "running",
+      "running-unconfirmed": "running-unconfirmed",
       waiting: "waiting",
       idle: "idle",
       unknown: "unknown",

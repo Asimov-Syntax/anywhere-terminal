@@ -217,6 +217,14 @@
   border-right-color: color-mix(in srgb, var(--vscode-charts-blue) 55%, transparent);
   animation: wt-spin 0.9s linear infinite;
 }
+/* The same claim with its animation withdrawn: a full ring, like `idle`, but
+   carrying the run's own accent and a centre mark that `idle` has not. It must
+   read as "running, unconfirmed" rather than as a fifth unrelated state — and it
+   must not converge on the running arc once reduced motion stops the spin. */
+.wt-state--running-unconfirmed {
+  border-radius: 50%;
+  border: 3px double var(--vscode-charts-blue);
+}
 /* No source could say. A broken ring reads as an incomplete answer, and it is
    recessive on purpose — `unknown` reports missing evidence, it does not ask for
    attention. Distinct from `idle`, which is a positive claim of rest. */

@@ -372,7 +372,7 @@ describe("a spinner frame proves activity, never identity", () => {
 
     const icon = renderAgentRow(
       row as WorktreeAgentRow,
-      { activity: presentedActivity(row as WorktreeAgentRow, []), now: NOW },
+      { activity: presentedActivity(row as WorktreeAgentRow, [], NOW), now: NOW },
       { onActivate: () => {} },
     ).querySelector<HTMLElement>(".wt-aicon");
     // Through a parse on both sides: jsdom rewrites `<rect …/>` to `<rect …></rect>`, so

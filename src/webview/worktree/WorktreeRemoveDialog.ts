@@ -177,7 +177,7 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     // this refusal — warning about a possibly-working agent is the safe side of
     // deleting a folder. What the source decides is the CLAIM made about each row.
     const busy = (deps.agentRows ?? []).filter((r) => r.activity === "running" || r.activity === "waiting");
-    const presented = busy.map((row) => [row, presentedActivity(row, degraded)] as const);
+    const presented = busy.map((row) => [row, presentedActivity(row, degraded, deps.now ?? Date.now())] as const);
     const confirmed = presented.filter(([, a]) => a !== "unknown").length;
     const box = document.createElement("div");
     box.className = "wt-refusebox";

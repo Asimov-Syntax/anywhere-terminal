@@ -8,6 +8,7 @@ import {
   agentCountLabel,
   ageTimestamp,
   branchLabel,
+  CONFIRMATION_CEILING_MS,
   compactAge,
   groupPresenceByActivity,
   hasProvenIdentity,
@@ -19,7 +20,7 @@ import {
   worktreePills,
   worktreeTooltip,
 } from "./worktreeFormat";
-import type { PresenceDegradation } from "./worktreeViewTypes";
+import type { PresenceDegradation, WorktreeAgentRow } from "./worktreeViewTypes";
 
 const NOW = 1_700_000_000_000;
 const MINUTE = 60_000;
@@ -146,11 +147,11 @@ describe("strongestActivity", () => {
       agentRow({ rowId: "4", activity: "running" }),
       agentRow({ rowId: "5", activity: "running" }),
     ];
-    expect(strongestActivity(rows, [])).toBe("waiting");
+    expect(strongestActivity(rows, [], NOW)).toBe("waiting");
   });
 
   it("is undefined for a worktree with no agents, so the row keeps its branch glyph", () => {
-    expect(strongestActivity([], [])).toBeUndefined();
+    expect(strongestActivity([], [], NOW)).toBeUndefined();
   });
 
   it("ranks unknown above idle — a row nothing could read outranks one settled at rest", () => {
@@ -158,12 +159,12 @@ describe("strongestActivity", () => {
       agentRow({ rowId: "1", activity: "idle", activitySource: "hook" }),
       agentRow({ rowId: "2", activity: "exited", activitySource: "hook" }),
     ];
-    expect(strongestActivity(rows, [{ source: "hook", reason: "boom", since: NOW }])).toBe("unknown");
+    expect(strongestActivity(rows, [{ source: "hook", reason: "boom", since: NOW }], NOW)).toBe("unknown");
   });
 
   it("ranks what is shown, not what was sent — a degraded running row does not read as running", () => {
     const rows = [agentRow({ rowId: "1", activity: "running", activitySource: "output" })];
-    expect(strongestActivity(rows, [{ source: "panes", reason: "boom", since: NOW }])).toBe("unknown");
+    expect(strongestActivity(rows, [{ source: "panes", reason: "boom", since: NOW }], NOW)).toBe("unknown");
   });
 
   it("still lets a waiting row from a live source outrank an unknown one", () => {
@@ -171,14 +172,14 @@ describe("strongestActivity", () => {
       agentRow({ rowId: "1", activity: "running", activitySource: "output" }),
       agentRow({ rowId: "2", activity: "waiting", activitySource: "hook" }),
     ];
-    expect(strongestActivity(rows, [{ source: "panes", reason: "boom", since: NOW }])).toBe("waiting");
+    expect(strongestActivity(rows, [{ source: "panes", reason: "boom", since: NOW }], NOW)).toBe("waiting");
   });
 
   it("ignores a repo's own listing failure — that says which worktrees exist, not what agents do", () => {
     // `degraded` on a repo never reaches here; only presence sources do. Guards the inversion
     // where one failed git listing turns every row in the repo unknown.
     const rows = [agentRow({ rowId: "1", activity: "running", activitySource: "output" })];
-    expect(strongestActivity(rows, [])).toBe("running");
+    expect(strongestActivity(rows, [], NOW)).toBe("running");
   });
 });
 
@@ -189,31 +190,110 @@ describe("presentedActivity", () => {
 
   it("reads unknown when no source spoke for the row at all", () => {
     const row = agentRow({ rowId: "1", activity: "idle", activitySource: "none" });
-    expect(presentedActivity(row, [])).toBe("unknown");
+    expect(presentedActivity(row, [], NOW)).toBe("unknown");
   });
 
   it("reads unknown when the source that would have decided the row is degraded", () => {
     // One mapping per row: hook → hook, output and title → panes, registry → registry.
-    expect(presentedActivity(agentRow({ rowId: "1", activitySource: "hook" }), degraded("hook"))).toBe("unknown");
-    expect(presentedActivity(agentRow({ rowId: "2", activitySource: "output" }), degraded("panes"))).toBe("unknown");
-    expect(presentedActivity(agentRow({ rowId: "3", activitySource: "title" }), degraded("panes"))).toBe("unknown");
-    expect(presentedActivity(agentRow({ rowId: "4", activitySource: "registry" }), degraded("registry"))).toBe(
+    expect(presentedActivity(agentRow({ rowId: "1", activitySource: "hook" }), degraded("hook"), NOW)).toBe("unknown");
+    expect(presentedActivity(agentRow({ rowId: "2", activitySource: "output" }), degraded("panes"), NOW)).toBe(
+      "unknown",
+    );
+    expect(presentedActivity(agentRow({ rowId: "3", activitySource: "title" }), degraded("panes"), NOW)).toBe(
+      "unknown",
+    );
+    expect(presentedActivity(agentRow({ rowId: "4", activitySource: "registry" }), degraded("registry"), NOW)).toBe(
       "unknown",
     );
   });
 
   it("keeps the activity when some OTHER source is the degraded one", () => {
     const row = agentRow({ rowId: "1", activity: "running", activitySource: "hook" });
-    expect(presentedActivity(row, degraded("panes"))).toBe("running");
-    expect(presentedActivity(row, degraded("registry"))).toBe("running");
+    expect(presentedActivity(row, degraded("panes"), NOW)).toBe("running");
+    expect(presentedActivity(row, degraded("registry"), NOW)).toBe("running");
     // `vault` decides no row's activity, so it never turns one unknown.
-    expect(presentedActivity(row, degraded("vault"))).toBe("running");
+    expect(presentedActivity(row, degraded("vault"), NOW)).toBe("running");
   });
 
   it("passes the activity through when nothing is degraded", () => {
     for (const activity of ["running", "waiting", "idle", "exited"] as const) {
-      expect(presentedActivity(agentRow({ rowId: "1", activity }), [])).toBe(activity);
+      expect(presentedActivity(agentRow({ rowId: "1", activity }), [], NOW)).toBe(activity);
     }
+  });
+});
+
+describe("the confirmation ceiling", () => {
+  const stale = (over: Partial<WorktreeAgentRow> = {}) =>
+    agentRow({
+      rowId: "r",
+      activity: "running",
+      activitySource: "output",
+      stateStartedAt: NOW - CONFIRMATION_CEILING_MS,
+      ...over,
+    });
+
+  it("stops confirming an output-inferred run once the state has stood unchanged past the ceiling", () => {
+    expect(presentedActivity(stale(), [], NOW)).toBe("running-unconfirmed");
+  });
+
+  it("still confirms the same row one millisecond under the ceiling", () => {
+    expect(presentedActivity(stale({ stateStartedAt: NOW - CONFIRMATION_CEILING_MS + 1 }), [], NOW)).toBe("running");
+  });
+
+  it("never marks a reported or external row, at any age", () => {
+    // `hook` is a declaration and `registry` is a claim that a session is live,
+    // not that a turn is in progress. Neither is manufacturable by a spinner.
+    for (const source of ["hook", "registry"] as const) {
+      expect(presentedActivity(stale({ activitySource: source, stateStartedAt: 0 }), [], NOW)).toBe("running");
+    }
+  });
+
+  it("never marks a state other than running", () => {
+    for (const activity of ["waiting", "idle", "exited"] as const) {
+      expect(presentedActivity(stale({ activity, stateStartedAt: 0 }), [], NOW)).toBe(activity);
+    }
+  });
+
+  it("treats an absent or impossible clock as confirmed rather than manufacturing staleness", () => {
+    expect(presentedActivity(stale({ stateStartedAt: undefined }), [], NOW)).toBe("running");
+    expect(presentedActivity(stale({ stateStartedAt: NOW + 60_000 }), [], NOW)).toBe("running");
+  });
+
+  it("lets unknown win — a source that failed cannot support a claim of running at all", () => {
+    const degraded = [{ source: "panes" as const, reason: "scan failed", since: NOW }];
+    expect(presentedActivity(stale(), degraded, NOW)).toBe("unknown");
+    // And the clock never paused: clearing the failure lands straight on unconfirmed.
+    expect(presentedActivity(stale(), [], NOW)).toBe("running-unconfirmed");
+  });
+
+  it("restarts on a change of activity but not on a change of source", () => {
+    // A hook report confirms the row outright...
+    expect(presentedActivity(stale({ activitySource: "hook" }), [], NOW)).toBe("running");
+    // ...and when it ages out, the claim is unconfirmed immediately: `stateStartedAt`
+    // did not move when the source changed, so there is no fresh grace period.
+    expect(presentedActivity(stale(), [], NOW)).toBe("running-unconfirmed");
+    // A genuine activity change moves the clock, so the row is confirmed again.
+    expect(presentedActivity(stale({ stateStartedAt: NOW }), [], NOW)).toBe("running");
+  });
+
+  it("ranks as running, and loses to a confirmed run", () => {
+    const rows = [stale({ rowId: "a" }), agentRow({ rowId: "b", activity: "running", activitySource: "hook" })];
+    expect(strongestActivity(rows, [], NOW)).toBe("running");
+    expect(strongestActivity([...rows].reverse(), [], NOW)).toBe("running");
+  });
+
+  it("reads as unconfirmed only when every running claim it holds is", () => {
+    const rows = [stale({ rowId: "a" }), agentRow({ rowId: "b", activity: "idle", activitySource: "hook" })];
+    expect(strongestActivity(rows, [], NOW)).toBe("running-unconfirmed");
+    expect(
+      strongestActivity([...rows, agentRow({ rowId: "c", activity: "waiting", activitySource: "hook" })], [], NOW),
+    ).toBe("waiting");
+  });
+
+  it("counts into the collapsed pill under its own state, never omitted", () => {
+    const rows = [stale({ rowId: "a", agent: "claude" }), agentRow({ rowId: "b", agent: "claude", activity: "idle" })];
+    const groups = groupPresenceByActivity(rows, [], NOW);
+    expect(groups.map((g) => g.activity)).toEqual(["running-unconfirmed", "idle"]);
   });
 });
 
@@ -223,7 +303,7 @@ describe("groupPresenceByActivity", () => {
       ...Array.from({ length: 7 }, (_, i) => agentRow({ rowId: `r${i}`, agent: "claude", activity: "running" })),
       agentRow({ rowId: "i1", agent: "cursor", activity: "idle" }),
     ];
-    const groups = groupPresenceByActivity(rows, []);
+    const groups = groupPresenceByActivity(rows, [], NOW);
     expect(groups.map((g) => g.activity)).toEqual(["running", "idle"]);
     expect(groups[0]?.agents).toHaveLength(3);
     expect(groups[0]?.overflow).toBe(4);
@@ -237,6 +317,7 @@ describe("groupPresenceByActivity", () => {
         agentRow({ rowId: "b", agent: "claude", agentSource: "title", activity: "idle" }),
       ],
       [],
+      NOW,
     );
     expect(groups[0]?.agents).toEqual([]);
     expect(groups[0]?.overflow).toBe(2);

@@ -660,7 +660,7 @@ export class WorktreeView {
       renderWorktreeRow(
         info,
         {
-          activity: strongestActivity(rows, this.degradedSources()),
+          activity: strongestActivity(rows, this.degradedSources(), this.now()),
           hasAgents: rows.length > 0,
           expanded,
           agentSummary: rows.length > 0 ? agentCountLabel(rows.length) : undefined,
@@ -686,7 +686,9 @@ export class WorktreeView {
     }
     if (!expanded) {
       container.appendChild(
-        renderPresencePill(groupPresenceByActivity(rows, this.degradedSources()), () => this.toggleCollapsed(info.id)),
+        renderPresencePill(groupPresenceByActivity(rows, this.degradedSources(), this.now()), () =>
+          this.toggleCollapsed(info.id),
+        ),
       );
       return;
     }
@@ -703,7 +705,11 @@ export class WorktreeView {
       container.appendChild(
         renderAgentRow(
           row,
-          { activity: presentedActivity(row, this.degradedSources()), expanded: rowExpanded, now: this.now() },
+          {
+            activity: presentedActivity(row, this.degradedSources(), this.now()),
+            expanded: rowExpanded,
+            now: this.now(),
+          },
           {
             onActivate: (r) => this.deps.onActivateAgent?.(r, this.activationFor(r)),
             onContextMenu: this.menu ? (r, ev, el) => this.menu?.openForAgent(r, ev, el) : undefined,
