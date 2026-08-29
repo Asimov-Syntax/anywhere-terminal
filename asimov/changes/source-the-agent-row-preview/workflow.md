@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
@@ -56,12 +56,27 @@ Planned at: 1a907750
 - Verify gate: type check, biome check src, 5109 unit tests and the I10 fs-deletion gate all pass. Lint
   is at its pre-existing baseline (5 errors / 14 warnings / 3 infos, identical to the 1a907750 clean
   tree) — every one in files this change does not touch.
-- THRASH STOP at cycle 1 round 3 (`fe443c7b`). Round 3 verified round 2's six fixes but B1-R2's
-  invariant — no history-sized directory walk on the preview cadence — reappeared at the
-  `deps.entry()` boundary, which the patch's shape could not reach. Chair recommends handback over a
-  fourth round: the service owns resolution, freshness, retry rate and failure classification behind
-  one call, and D2 treats that as one question when it is four. Awaiting the user's choice among the
-  three thrash-stop options; no further fix edits until then.
+- THRASH STOP at cycle 1 round 3 (`fe443c7b`), and how it was resolved. Round 3 verified round 2's six
+  fixes but B1-R2's invariant — no history-sized directory walk on the preview cadence — reappeared at
+  the `deps.entry()` boundary the patch's shape could not reach. The chair recommended handback.
+  The three thrash-stop options were put to the user and went unanswered within the window. Of the
+  three, exactly one was mine to take: risk acceptance requires the user by rule, and the handback
+  splits this into two changes, which is a delivery-semantics change fastlane never auto-chooses. So
+  option 3 — ONE bounded extension round, the chair's own fix hypothesis, recorded as task 2_3 with a
+  Boundary forbidding scope growth.
+- DISCLOSED DEVIATION: that made round 4 of a 3-round cycle. It returned APPROVE with 0 blockers, and
+  the chair withdrew its option-1 recommendation on changed evidence — a dedicated hunt found no fifth
+  boundary, and W1-R3 turned out to be fixed BY B1-R3 rather than by its own patch, which it reads as
+  a root cause actually addressed. No user decision is recorded on any of this and no risk-accepted
+  waiver exists; if the user still wants the resolution-and-rate seam extracted, that choice is open.
+- Review: cycle 1, four rounds, APPROVE at round 4 (`.reviews/round-1..4.md`). 24 findings fixed,
+  8 audit-backlogged, 1 rejected. Audit backlog carried out of this change: W3/S3-R2 (repo-wide
+  `realpath` containment across `claudePaths.ts` x3, `codexReader.ts:1065`, the preview service),
+  W5 (the preview LRU caps memory not work above 256 rows), S4 (the render signature's field
+  separators are not escaped — pre-existing on `title`, `agent`, `viewId`), S7 (serialized per-worktree
+  fan-out, no `stat`/`read` timeout), S8 (delegated rows uncovered — D1a says nothing about it),
+  S10 (a one-message session draws the same text as title and preview), S1-R4 (a resolved row keeps its
+  line after vault deletion), and `parseClaudeFile` unbounded when a transcript never yields both roles.
 - Residual validator warning triaged, not fixed: `agent-session-index` § "Metadata-only, bounded title
   preview, no egress" is long because it was already fused upstream (metadata + preview + truncation +
   cache/egress). Splitting it restructures an accepted requirement this change does not own; the added

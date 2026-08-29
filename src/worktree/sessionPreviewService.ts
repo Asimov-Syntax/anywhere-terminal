@@ -203,17 +203,23 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       // fallback and finds where the transcript moved to (round-1 B2/W2).
       // Codex only, and deliberately: `resolve(entry, false)` drops the hint, and
       // the hint is ALL the Claude branch has, so there it would always answer
-      // `unresolved`. A Claude row recovers a moved transcript on the next ask
-      // instead — `deps.entry()` re-derives its path by id every look (S1-R2).
+      // `unresolved`. A Claude row recovers on the NEXT ask instead, and only
+      // because the branch below clears `current.entry` — that is what sends the
+      // next look back to the vault for a freshly derived path (S1-R2, S2-R4).
       const again = entry.agent === "codex" ? await resolve(entry, false) : { kind: "unresolved" as const };
       stamp = again.kind === "resolved" && again.path !== target.path ? await stat(again.path) : null;
       if (!stamp) {
         // Nothing readable now. Unresolved rather than uncovered, so a transcript
         // that reappears is found — and no line, because the spec says one that
-        // cannot be read carries no preview at all (W1). The entry goes too: the
-        // next look must ask the vault where this session lives now.
-        current.target = { kind: "unresolved" };
-        current.entry = undefined;
+        // cannot be read carries no preview at all (W1).
+        //
+        // Dropping the target is what carries recovery: the guard at the top of
+        // `look` re-fetches the entry whenever the target is not resolved, so the
+        // next look asks the vault for a freshly derived path rather than
+        // re-resolving from a hint already known to be dead. Clearing the cached
+        // entry alongside it is tidiness, not the mechanism — the two fields
+        // simply must not be left disagreeing (S2-R4).
+        clearTarget(current);
         return forget(current);
       }
       current.target = again;
@@ -233,6 +239,16 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
     current.line = line ?? undefined;
     current.progressed = true;
     return current.line;
+  }
+
+  /**
+   * Give up on where this session's transcript is. A held entry is only
+   * meaningful beside the resolved target it produced, so they are dropped
+   * together — the target is the half `look`'s guard actually reads.
+   */
+  function clearTarget(current: Held): void {
+    current.target = { kind: "unresolved" };
+    current.entry = undefined;
   }
 
   /** No preview, and none remembered — a row must not keep text whose source it

@@ -21,6 +21,8 @@ let reads: string[];
 let stats: string[];
 let clock: number;
 
+const claudeAssistant = (text: string): string =>
+  JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } });
 const codexEvent = (message: string): string =>
   JSON.stringify({ type: "event_msg", payload: { type: "agent_message", message } });
 
@@ -320,6 +322,43 @@ describe("createSessionPreviewService", () => {
     expect(lookups).toBe(1); // but the vault was asked exactly once
   });
 
+  it("goes back to the vault after losing a transcript rather than keeping a dead target", async () => {
+    // What carries recovery is dropping the TARGET: `look`'s guard re-fetches the
+    // entry whenever the target is not resolved. A failed recovery that left the
+    // target resolved would strand the row on a path that no longer exists. The
+    // paired `entry = undefined` is tidiness — reverting it alone fails nothing,
+    // which is why this test does not claim to guard it (S2-R4).
+    let lookups = 0;
+    let sessionPath = rollout;
+    const svc = createSessionPreviewService({
+      entry: async () => {
+        lookups += 1;
+        return { agent: "claude", sessionId: "c1", sessionPath };
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+    });
+
+    const first = path.join(projectsDir, "c1.jsonl");
+    await fs.writeFile(first, `${claudeAssistant("said here")}\n`);
+    sessionPath = first;
+    expect(await svc.preview("claude:c1")).toBe("said here");
+    expect(lookups).toBe(1);
+
+    // The transcript moves and the vault will report the new path.
+    const moved = path.join(projectsDir, "moved", "c1.jsonl");
+    await fs.mkdir(path.dirname(moved), { recursive: true });
+    await fs.rename(first, moved);
+    sessionPath = moved;
+
+    clock += 5000;
+    expect(await svc.preview("claude:c1")).toBeUndefined(); // the held path is gone
+    clock += 60_000;
+    expect(await svc.preview("claude:c1")).toBe("said here"); // asked the vault again
+    expect(lookups).toBeGreaterThan(1);
+  });
+
   it("backs off a row whose lookup keeps returning nothing", async () => {
     // Not a guard for W1-R3: once B1-R3 cached the entry, a null lookup over a
     // stale resolved target became unreachable, so both the old and the new
@@ -397,7 +436,14 @@ describe("createSessionPreviewService", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let firstRead = true;
+    let reachedGate: (() => void) | undefined;
+    const atGate = new Promise<void>((resolve) => {
+      reachedGate = resolve;
+    });
+    // Gate s1's FIRST read by path, not by a counter: which of the two sessions
+    // reaches the reader first is scheduling-dependent, and a counter blocked
+    // whichever arrived, deadlocking the awaited one.
+    let gateS1 = true;
     const other = path.join(sessionsDir, "rollout-other.jsonl");
     await fs.writeFile(other, `${codexEvent("another session")}\n`);
 
@@ -411,8 +457,9 @@ describe("createSessionPreviewService", () => {
         // Read FIRST, then block: the stale look must come back holding the
         // content it actually saw, not what the file said once it was released.
         const line = await readLastActivityLine(file, format);
-        if (firstRead) {
-          firstRead = false;
+        if (file === rollout && gateS1) {
+          gateS1 = false;
+          reachedGate?.();
           await gate;
         }
         return line;
@@ -423,7 +470,8 @@ describe("createSessionPreviewService", () => {
       cap: 1,
     });
 
-    const stale = svc.preview("codex:s1"); // reads "the first answer", then blocks
+    const stale = svc.preview("codex:s1");
+    await atGate; // it has read "the first answer" and is now held there
     await svc.preview("codex:other"); // cap 1 — evicts the in-flight s1 entry
 
     // s1 says something new before the newer entry reads it.

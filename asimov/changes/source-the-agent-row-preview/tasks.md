@@ -106,3 +106,14 @@
     4. S1-R3 — the eviction test is rewritten to observe the clobber it was supposed to catch, which needs the two entries to hold different lines. Revert-check it this time.
     5. S2-R3 and S3-R3 — the design's published signature matches the code, and the retry rate is filed under the decision that owns rates.
     6. Cover: a healthy repeat look asking the vault nothing; a look that resolves nothing still backing off; a null entry over a stale target not resetting the retry; a rejecting lookup gated at the cadence rather than eight times inside it; a newer entry surviving a stale one whose read was still in flight.
+
+- [x] 2_4 State the invariant the recovery path rests on — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_3
+  - **Refs**: .reviews/round-4.md#s2-r4-the-comment-credits-a-mechanism-this-commit-removed
+  - **Acceptance**:
+    - Outcome: the paired clear that makes recovery work is named and enforced, not incidental
+    - Verify: unit src/worktree/sessionPreviewService.test.ts
+  - **Plan**:
+    0. Files: `src/worktree/sessionPreviewService.ts`, `src/worktree/sessionPreviewService.test.ts`.
+    1. The comment explains recovery by a mechanism the previous task deleted. Replace it with what actually carries it, and make the paired clear read as load-bearing rather than as a line beside it that looks redundant.
+    2. The pairing is what the whole cache rests on, so it gets an assertion of its own rather than being left to a reader's care.
