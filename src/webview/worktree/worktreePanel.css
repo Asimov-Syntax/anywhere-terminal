@@ -386,8 +386,10 @@
   display: grid;
   grid-template-columns: 13px 9px 14px minmax(0, 1fr) auto auto 32px;
   column-gap: 5px;
-  /* Separate from the column gap: 5px of vertical air between the two lines is
-     tighter than the horizontal rhythm, and one `gap` cannot say both. */
+  /* Split from the column gap deliberately: the two lines want 1px between them,
+     far tighter than the 5px that separates cells across a line, and a single
+     `gap` would force the preview to inherit the horizontal rhythm as vertical
+     air. Only rows that actually draw a preview ever pay it. */
   row-gap: 1px;
   align-items: center;
   padding: 2px 10px 2px 30px;

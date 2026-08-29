@@ -43,5 +43,14 @@ Lane: light (small) — six files in one domain, no new state, no protocol, LOW 
 - Lint: `biome check src --max-diagnostics=200` reports 10 files. One is a file this change touches —
   `worktreePanel.css` `lint/style/noDescendingSpecificity` at `.wt-hist-label` — and it reproduces
   identically on a clean worktree at HEAD~1, in selectors this change does not go near.
+- Review round 1 (cycle 1, discovery): WARN — 0 blocking, 1 warning, 4 suggestions, all five accepted.
+  S2/S3/S4 fixed as task 1_3. S1 (search matches the raw preview) was decided as-is and left raw:
+  raw is a superset, so search can never miss displayed text, and binding it to `stripDecorations`
+  now would fix in place the very transform W1 questions.
+- W1's fix is owed by WT-009.5, not by this change: `stripDecorations` strips a leading `- ` or `* `,
+  which is content in a prose preview, but the same helper governs `row.title` and the host strips the
+  same frames (worktree-agent-presence § 3.4) — narrowing it here would move an accepted contract this
+  change does not own. Unreachable today, since the projector sets `preview` on no row. Blueprint sync
+  must carry this obligation into WT-009.5's PLAN Notes, with the `"* item"` / `"- item"` cases named.
 
 Planned at: cdfa932e

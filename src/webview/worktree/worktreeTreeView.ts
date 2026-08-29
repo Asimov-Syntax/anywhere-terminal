@@ -567,7 +567,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   const previewText = stripDecorations(row.preview);
   el.dataset.tip = [titleText, previewText, confidenceTip].filter(Boolean).join("\n");
 
-  // 7 — collapsed child count. Disappears when expanded; the children show instead.
+  // 6 — collapsed child count. Disappears when expanded; the children show instead.
   const count = document.createElement("span");
   if (hasChildren && !opts.expanded) {
     count.className = "wt-count";
@@ -575,15 +575,16 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   }
   el.appendChild(count);
 
-  // 8 — age, right-aligned against a fixed edge that never truncates.
+  // 7 — age, right-aligned against a fixed edge that never truncates.
   const age = document.createElement("span");
   age.className = "wt-age";
   age.textContent = compactAge(ageTimestamp(row), opts.now);
   el.appendChild(age);
 
-  // 9 — the second line. Appended only when something survives stripping: an empty
-  // span still claims the row gap and a line's worth of height, so a decoration-only
-  // preview would cost exactly the vertical space it has nothing to put in.
+  // The SECOND LINE — not an eighth column. Appended after all seven first-line
+  // cells, and only when something survives stripping: an empty span still claims
+  // the row gap and a line's worth of height, so a decoration-only preview would
+  // cost exactly the vertical space it has nothing to put in.
   if (previewText !== "") {
     const preview = document.createElement("span");
     preview.className = "wt-apreview";
