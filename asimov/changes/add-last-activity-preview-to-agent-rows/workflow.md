@@ -36,4 +36,12 @@ Lane: light (small) — six files in one domain, no new state, no protocol, LOW 
 - Orca was not researched again: `docs/audit/2026-08-29-worktree-ui-vs-orca.md` § B3 already owns the comparison this task came from.
 - `model` stays declared on `WorktreeAgentRow` and only leaves the row and the signature. The projector never set it either, so the chip was already unreachable; the inspector (WT-010.5) is its stated home, and that task has to put `model` back into the signature when it actually renders it.
 - Oracle review: 7 findings, all accepted, all applied before Gate 2. The load-bearing three: an explicit `grid-template-rows: auto auto` would still reserve the 5px row gap on a preview-less row, so the second row is created implicitly by the preview itself; the preview is placed from the title column rather than `1 / -1`, which would sit it under the glyphs; and "the preview truncates before the title" stopped being enforceable the moment the two occupied different rows — the spec and the PLAN acceptance now say the two lines ellipsize independently instead. It also caught that `renderAgentRow` has a second caller in `WorktreeRemoveDialog`, and that 1_1/1_2 as originally split produced no independently reviewable state.
+- 1_2 is a `manual` Verify I cannot run — it needs the panel open in VS Code at two widths, and the
+  project has no harness that lays CSS out (jsdom measures nothing; `@vscode/test-electron` cannot
+  reach inside the webview iframe). It stays `[ ]`, the Verify Gate stays unticked, and its steps go
+  to the user in the Approval block.
+- Lint: `biome check src --max-diagnostics=200` reports 10 files. One is a file this change touches —
+  `worktreePanel.css` `lint/style/noDescendingSpecificity` at `.wt-hist-label` — and it reproduces
+  identically on a clean worktree at HEAD~1, in selectors this change does not go near.
+
 Planned at: cdfa932e
