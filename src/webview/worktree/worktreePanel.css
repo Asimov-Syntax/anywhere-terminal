@@ -15,9 +15,11 @@
  * Emphasis ladder, four steps only: repo → branch → preview → age.
  */
 
-/* Four segments no longer fit at sidebar width with icon + label, so unselected
-   segments keep the icon only. The selected one always shows its label — the
-   control has to answer "which view am I in" without a hover. */
+/* The SHIPPED flat control fuses body and grouping into four segments, which no
+   longer fit at sidebar width with icon + label, so its unselected segments keep
+   the icon only. Scoped to `--flat` deliberately: the rule is a symptom of that
+   fusion, so it retires with the control rather than surviving to hide labels on
+   the two-level control, whose values are always named (worktree-panel-ui § 2). */
 .vault-toolbar {
   container-type: inline-size;
   container-name: vaultbar;
@@ -26,7 +28,7 @@
   display: inline;
 }
 @container vaultbar (max-width: 400px) {
-  .vault-segmented button[aria-selected="false"] .vault-segmented-label {
+  .vault-segmented--flat button[aria-selected="false"] .vault-segmented-label {
     display: none;
   }
 }

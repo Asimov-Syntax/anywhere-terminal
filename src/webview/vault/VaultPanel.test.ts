@@ -4506,3 +4506,25 @@ describe("the two-level control's keyboard", () => {
     expect(focusOrder(host, ".vault-segmented--flat")).toEqual([0, 0, 0, 0]);
   });
 });
+
+describe("the label squeeze retires with the control that caused it", () => {
+  function build(workbench: boolean): HTMLElement {
+    const host = createHost();
+    const body = document.createElement("div");
+    body.className = "wt-tree";
+    new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench });
+    return host;
+  }
+
+  it("[1_3] marks the flat control, and only it, as the rule's target", () => {
+    // The container query hides unselected labels below 400px. It is scoped to
+    // this marker so it dies with the flat control instead of surviving to hide
+    // the grouping labels the two-level control always shows.
+    expect(build(false).querySelector(".vault-segmented--flat")).not.toBeNull();
+
+    const on = build(true);
+    expect(on.querySelector(".vault-segmented--flat")).toBeNull();
+    expect(on.querySelector(".vault-groupbar .vault-segmented")).not.toBeNull();
+    expect(on.querySelector(".vault-view-toggle")).not.toBeNull();
+  });
+});

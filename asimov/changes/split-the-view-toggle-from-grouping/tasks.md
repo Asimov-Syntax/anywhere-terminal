@@ -28,7 +28,7 @@
     3. In `wireTablist`, bind `keydown`: `ArrowRight`/`ArrowDown` move to the next button and `ArrowLeft`/`ArrowUp` to the previous, both wrapping; `Home` and `End` move to the first and last; each calls `select` on the button it lands on and then focuses it, and calls `preventDefault()`.
     4. Call `wireTablist` for both the `.vault-view-toggle` and the `.vault-groupbar` tablist, and only when `workbench` is true — the shipped control keeps the focus behaviour it has today.
 
-- [ ] 1_3 Retire the label squeeze with the control that caused it
+- [x] 1_3 Retire the label squeeze with the control that caused it — verified: pnpm exec vitest run 'src/webview/vault/VaultPanel.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm exec biome check src/webview/vault/vaultPanel.css src/webview/worktree/worktreePanel.css exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#the-control-that-swaps-the-body-is-separate-from-the-one-that-groups-a-body
   - **Acceptance**:
