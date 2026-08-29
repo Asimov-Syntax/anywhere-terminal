@@ -99,9 +99,18 @@ describe("markers", () => {
   it("pills name which worktree it is", () => {
     expect(worktreePills(worktree({ id: "/a", kind: "main", inWorkspace: true }))).toEqual([
       { text: "main", kind: "main" },
-      { text: "here", kind: "here" },
+      { text: "open", kind: "open" },
     ]);
     expect(worktreePills(worktree({ id: "/a" }))).toEqual([]);
+  });
+
+  it("marks every worktree the workspace holds open, not just one", () => {
+    // A multi-root workspace can hold two worktrees of one repo. The mark says
+    // "open as a workspace folder", so carrying it twice is correct — the old
+    // wording ("here") read as the user's single current location.
+    for (const id of ["/a", "/b"]) {
+      expect(worktreePills(worktree({ id, inWorkspace: true }))).toEqual([{ text: "open", kind: "open" }]);
+    }
   });
 
   it("shows missing instead of prunable when both are true", () => {

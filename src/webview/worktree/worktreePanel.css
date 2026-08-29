@@ -148,7 +148,7 @@
   background: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
   white-space: nowrap;
 }
-.wt-pill--here {
+.wt-pill--open {
   color: var(--vscode-charts-blue);
   background: color-mix(in srgb, var(--vscode-charts-blue) 16%, transparent);
 }

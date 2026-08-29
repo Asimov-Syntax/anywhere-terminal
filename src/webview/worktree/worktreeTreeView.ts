@@ -171,10 +171,12 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   marks.className = "wt-marks";
   for (const pill of worktreePills(info)) {
     const el = document.createElement("span");
-    el.className = pill.kind === "here" ? "wt-pill wt-pill--here" : "wt-pill";
+    el.className = pill.kind === "open" ? "wt-pill wt-pill--open" : "wt-pill";
     el.textContent = pill.text;
-    if (pill.kind === "here") {
-      el.dataset.tip = "This worktree is a workspace folder";
+    if (pill.kind === "open") {
+      // Every worktree the workspace holds open carries this, so several rows can
+      // — the hint has to say so, or the mark reads as "the one you are in".
+      el.dataset.tip = "This worktree is open as a workspace folder";
     }
     marks.appendChild(el);
   }

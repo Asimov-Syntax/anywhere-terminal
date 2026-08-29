@@ -48,7 +48,7 @@
 
 ## 3. The workspace-folder mark reads honestly
 
-- [ ] 3_1 Rename the `here` pill so it cannot be read as the user's location
+- [x] 3_1 Rename the `here` pill so it cannot be read as the user's location — verified: pnpm exec vitest run 'src/webview/worktree/worktreeFormat.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#an-open-worktree-is-marked-without-claiming-exclusivity
   - **Acceptance**:

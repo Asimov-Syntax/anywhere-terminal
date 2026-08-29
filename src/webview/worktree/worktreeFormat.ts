@@ -89,13 +89,13 @@ export function branchLabel(info: WorktreeInfo): { text: string; variant: "branc
 }
 
 /** Pills name WHICH worktree this is. Never mixed with the state badges. */
-export function worktreePills(info: WorktreeInfo): { text: string; kind: "main" | "here" }[] {
-  const pills: { text: string; kind: "main" | "here" }[] = [];
+export function worktreePills(info: WorktreeInfo): { text: string; kind: "main" | "open" }[] {
+  const pills: { text: string; kind: "main" | "open" }[] = [];
   if (info.kind === "main") {
     pills.push({ text: "main", kind: "main" });
   }
   if (info.inWorkspace) {
-    pills.push({ text: "here", kind: "here" });
+    pills.push({ text: "open", kind: "open" });
   }
   return pills;
 }
