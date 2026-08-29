@@ -528,6 +528,66 @@ describe("the row-activation setting reaches the view", () => {
     view.close();
   });
 
+  it("carries the workbench rollout flag in init, and it is off unless configured", async () => {
+    // The composition WT-010.1 begins is gated, and the gate defaults closed:
+    // an unconfigured user must meet the shipped layout, not a half-built one.
+    const view = await readyView();
+    expect(view.posts("init")[0]?.worktreeWorkbench).toBe(false);
+    view.close();
+
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
+    const on = await readyView();
+    expect(on.posts("init")[0]?.worktreeWorkbench).toBe(true);
+    on.close();
+  });
+
+  it("treats every value that is not exactly true as off", async () => {
+    // A hand-edited settings.json is the case: a truthy STRING must not turn a
+    // rollout on. `Boolean("false")` is true, which is the bug this pins.
+    for (const stored of ["true", "false", 1, 0, {}, []]) {
+      __setConfigValues({ "anywhereTerminal.worktree.workbench": stored });
+      const view = await readyView();
+      expect(view.posts("init")[0]?.worktreeWorkbench, `stored: ${JSON.stringify(stored)}`).toBe(false);
+      view.close();
+    }
+  });
+
+  it("reaches a view that is already open when the workbench flag changes", async () => {
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": false });
+    const view = await readyView();
+    view.forget();
+
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
+    __fireConfigChange(["anywhereTerminal.worktree.workbench"]);
+    await settle();
+
+    expect(view.posts("worktreeWorkbench")).toEqual([{ type: "worktreeWorkbench", enabled: true }]);
+    view.close();
+  });
+
+  it("re-sends the workbench flag after init, closing the construction race", async () => {
+    // `_ready` flips before init is delivered and the webview builds its worktree
+    // controller only when init arrives, so a change landing in between reaches a
+    // controller that does not exist and is then overwritten by init's value. The
+    // re-send is what closes that window, and it is idempotent.
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
+    const view = await readyView();
+
+    expect(view.posts("worktreeWorkbench")).toEqual([{ type: "worktreeWorkbench", enabled: true }]);
+    view.close();
+  });
+
+  it("stays quiet for a configuration change that is not the workbench flag", async () => {
+    const view = await readyView();
+    view.forget();
+
+    __fireConfigChange(["anywhereTerminal.fontSize"]);
+    await settle();
+
+    expect(view.posts("worktreeWorkbench")).toEqual([]);
+    view.close();
+  });
+
   it("reaches an editor panel too, which owns its own listener", async () => {
     __setConfigValues({ "anywhereTerminal.worktree.rowActivation": "focus" });
     const spy = vi.spyOn(SessionManager.prototype, "getAllSessionsForView").mockReturnValue([{ id: "t1" }] as never);

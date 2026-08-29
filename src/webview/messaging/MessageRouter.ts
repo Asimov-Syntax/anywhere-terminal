@@ -50,6 +50,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeMutationResultMessage,
   WorktreeRowActivationMessage,
+  WorktreeWorkbenchMessage,
   WorktreeShowPreviewMessage,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
@@ -115,6 +116,7 @@ export interface MessageHandlers {
   onWorktreeTreeResponse?(msg: WorktreeTreeResponseMessage): void;
   /** The row-activation setting changed after `init` carried its first value. */
   onWorktreeRowActivation?(msg: WorktreeRowActivationMessage): void;
+  onWorktreeWorkbench?(msg: WorktreeWorkbenchMessage): void;
   /** Halves of an action only a webview can perform, answered back to it. */
   onWorktreeShowPreview?(msg: WorktreeShowPreviewMessage): void;
   onWorktreeActivatePane?(msg: WorktreeActivatePaneMessage): void;
@@ -265,6 +267,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeRowActivation":
         handlers.onWorktreeRowActivation?.(msg);
+        break;
+      case "worktreeWorkbench":
+        handlers.onWorktreeWorkbench?.(msg);
         break;
       case "worktreeShowPreview":
         handlers.onWorktreeShowPreview?.(msg);

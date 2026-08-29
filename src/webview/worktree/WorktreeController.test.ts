@@ -26,6 +26,7 @@ function mount(
   over: {
     workspaceRoot?: string | null;
     rowActivation?: WorktreeRowActivation;
+  workbench?: boolean;
     showPreview?: (entryId: string) => boolean;
     activatePane?: (paneId: string) => boolean;
     /** Persisted before mount — the view reads it once, at construction. */
@@ -44,6 +45,7 @@ function mount(
     init: {
       workspaceRoot: over.workspaceRoot === undefined ? "/repo" : over.workspaceRoot,
       rowActivation: over.rowActivation ?? "focus",
+      workbench: over.workbench ?? false,
     },
     showPreview: over.showPreview,
     activatePane: over.activatePane,
@@ -241,7 +243,7 @@ describe("persisted disclosure state", () => {
       host: document.body,
       postMessage: (msg) => posts.push(msg),
       store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
-      init: { workspaceRoot: "/repo", rowActivation: "focus" },
+      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: false },
       now: () => 1_000_000,
     });
     document.body.appendChild(controller.element);
@@ -1023,7 +1025,7 @@ describe("the create a toolbar with no repository opens", () => {
       host: document.body,
       postMessage: (msg) => posts.push(msg),
       store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
-      init: { workspaceRoot: "/repo", rowActivation: "focus" },
+      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: false },
       onCreateAvailability: (available) => seen.push(available),
       now: () => 1_000_000,
     });

@@ -198,6 +198,22 @@ export function affectsWorktreeRowActivation(e: vscode.ConfigurationChangeEvent)
   return e.affectsConfiguration("anywhereTerminal.worktree.rowActivation");
 }
 
+/**
+ * Whether the worktree workbench composition is turned on. Default `false`.
+ *
+ * Strictly `=== true`, not truthy: a hand-edited `settings.json` can hold the
+ * STRING "false", and `Boolean("false")` is `true` — which would turn a rollout
+ * on for a user who wrote it off.
+ */
+export function readWorktreeWorkbench(): boolean {
+  return vscode.workspace.getConfiguration("anywhereTerminal").get<unknown>("worktree.workbench") === true;
+}
+
+/** Check whether a configuration change event affects the workbench flag. */
+export function affectsWorktreeWorkbench(e: vscode.ConfigurationChangeEvent): boolean {
+  return e.affectsConfiguration("anywhereTerminal.worktree.workbench");
+}
+
 // ─── Private: Resolution Chains ─────────────────────────────────────
 
 /**

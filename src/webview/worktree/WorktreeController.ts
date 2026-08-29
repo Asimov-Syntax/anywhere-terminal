@@ -43,7 +43,7 @@ export interface WorktreeControllerDeps {
   postMessage(msg: WebViewToExtensionMessage): void;
   store: WorktreeStateStore;
   /** Init fields this controller boots from. */
-  init: { workspaceRoot: string | null; rowActivation: WorktreeRowActivation };
+  init: { workspaceRoot: string | null; rowActivation: WorktreeRowActivation; workbench: boolean };
   /**
    * Open the session-preview overlay for a host-resolved entry. Returns false
    * when this surface holds no such entry — the host resolved against presence,
@@ -205,6 +205,11 @@ export class WorktreeController {
   private loading: boolean;
   private refreshing = false;
   private rowActivation: WorktreeRowActivation;
+  /**
+   * Whether the worktree workbench composition is on. Nothing reads it yet; the
+   * slices that do arrive behind it, and it is false unless configured.
+   */
+  private workbench: boolean;
   /** The host's resolved create destination, per repo. Only it can know one. */
   private readonly createDefaults = new Map<string, WorktreeCreateDefaultsMessage>();
   /** The repo a create was invoked for, waiting on its defaults. */
@@ -303,6 +308,7 @@ export class WorktreeController {
     // the workspace cannot keep.
     this.loading = deps.init.workspaceRoot !== null;
     this.rowActivation = deps.init.rowActivation;
+    this.workbench = deps.init.workbench;
     this.view = new WorktreeView({
       host: deps.host,
       // Both launch items start absent: nothing here can launch until the host
@@ -794,6 +800,16 @@ export class WorktreeController {
   /** The setting moved after `init`. Nothing re-renders — the next click reads it. */
   setRowActivation(activation: WorktreeRowActivation): void {
     this.rowActivation = activation;
+  }
+
+  /** The rollout flag moved after `init`. */
+  setWorkbench(enabled: boolean): void {
+    this.workbench = enabled;
+  }
+
+  /** Whether the workbench composition is on for this surface. */
+  isWorkbenchEnabled(): boolean {
+    return this.workbench;
   }
 
   dispose(): void {

@@ -38,7 +38,7 @@ L (≤2w)
 - Add a second pane→worktree attribution path; the presence projection is the only one
 - Start, stop, close, or detach any pane as a consequence of scoping
 - Hide a tab the attribution evidence does not place
-- Change any wire message shape, or add a field to the tree or presence envelope
+- Add a field to the tree or presence envelope, or send scope over any message. The rollout flag does travel on `init` and on its own live-change message, exactly as `worktreeRowActivation` does — that is the only wire addition this change makes
 - Let anything in this change take effect while the rollout setting is off
 
 ## Risk Level

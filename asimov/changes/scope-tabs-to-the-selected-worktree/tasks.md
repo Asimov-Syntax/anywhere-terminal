@@ -1,18 +1,18 @@
 ## 1. A surface that can be scoped
 
-- [ ] 1_1 Register the rollout setting and carry it to the view
+- [x] 1_1 Register the rollout setting and carry it to the view — verified: pnpm exec vitest run 'src/providers/TerminalViewProvider.worktree.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/tab-bar-component/spec.md#scoping-is-offered-only-where-it-has-been-turned-on, design.md#d6-the-rollout-setting-follows-the-rowactivation-path-exactly
   - **Acceptance**:
     - Outcome: the view is told whether the workbench is on, and it is off unless configured
     - Verify: unit src/providers/TerminalViewProvider.worktree.test.ts
   - **Plan**:
-    0. Files: `package.json`, `src/settings/SettingsReader.ts`, `src/settings/SettingsReader.test.ts`, `src/types/messages.ts`, `src/providers/TerminalViewProvider.ts`, `src/providers/TerminalViewProvider.worktree.test.ts`, `src/webview/main.ts`, `src/webview/worktree/WorktreeController.ts`.
+    0. Files: `package.json`, `src/settings/SettingsReader.ts`, `src/settings/SettingsReader.test.ts`, `src/types/messages.ts`, `src/webview/messaging/MessageRouter.ts`, `src/providers/TerminalViewProvider.ts`, `src/providers/TerminalViewProvider.worktree.test.ts`, `src/webview/main.ts`, `src/webview/worktree/WorktreeController.ts`.
     1. Declare `anywhereTerminal.worktree.workbench` in `package.json` under `contributes.configuration.properties`: type boolean, default `false`, with a description saying the composition is in rollout.
     2. Add `readWorktreeWorkbench()` and `affectsWorktreeWorkbench()` to `src/settings/SettingsReader.ts`. Accept only `value === true`; a string, a number, an object, or an absent value all yield `false`.
     3. Carry the value on the init message in `src/types/messages.ts` beside `worktreeRowActivation`, and send it from every init branch in `src/providers/TerminalViewProvider.ts` that already sends `worktreeRowActivation` — the row-activation wiring tested at `src/providers/TerminalViewProvider.worktree.test.ts:489-564` is the shape to match.
     4. Register the `affectsConfiguration` listener beside the existing `affectsWorktreeRowActivation` one so a live change reaches an open view.
-    5. In `src/webview/main.ts` pass it into `WorktreeController`'s `init`; in `WorktreeController.ts` store it and add the setter the listener drives, mirroring `setRowActivation`.
+    5. Route the live message in `src/webview/messaging/MessageRouter.ts` beside `onWorktreeRowActivation`, then in `src/webview/main.ts` pass the init value into `WorktreeController`'s `init` and the live one to its setter; in `WorktreeController.ts` store it and add the setter the listener drives, mirroring `setRowActivation`.
     6. Cover: every init branch carrying the flag; absent, `true`, `false`, and three malformed values; the exact `affectsConfiguration` key; a live change reaching the controller.
 
 - [ ] 1_2 Let a worktree be selected, and mark only that one

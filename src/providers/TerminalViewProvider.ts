@@ -5,9 +5,11 @@ import { type ResolveClaudeSessionDeps, resolveClaudeSession } from "../session/
 import type { SessionManager } from "../session/SessionManager";
 import {
   affectsWorktreeRowActivation,
+  affectsWorktreeWorkbench,
   readTerminalConfig,
   readTerminalSettings,
   readWorktreeRowActivation,
+  readWorktreeWorkbench,
 } from "../settings/SettingsReader";
 import type {
   ThemeChangedMessage,
@@ -249,6 +251,20 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         this.safePostMessage(webviewView.webview, {
           type: "worktreeRowActivation",
           activation: readWorktreeRowActivation(),
+        });
+      }),
+    );
+
+    // 4a-quinquies. The workbench rollout flag, on the same bridge and for the
+    // same reason: a view already open must not need reopening to pick it up.
+    disposables.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!affectsWorktreeWorkbench(event) || !this._ready) {
+          return;
+        }
+        this.safePostMessage(webviewView.webview, {
+          type: "worktreeWorkbench",
+          enabled: readWorktreeWorkbench(),
         });
       }),
     );
@@ -1435,6 +1451,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    */
   private postRowActivation(webview: vscode.Webview): void {
     this.safePostMessage(webview, { type: "worktreeRowActivation", activation: readWorktreeRowActivation() });
+    // Same race, same close: a flag change landing between `_ready` and the
+    // controller's construction would otherwise be overwritten by init's value.
+    this.safePostMessage(webview, { type: "worktreeWorkbench", enabled: readWorktreeWorkbench() });
   }
 
   private async onReady(webviewView: vscode.WebviewView): Promise<void> {
@@ -1490,6 +1509,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           // change arrives as its own message, and one that raced this send is
           // re-sent below rather than lost (design.md D5, round-1 W2).
           worktreeRowActivation: readWorktreeRowActivation(),
+          worktreeWorkbench: readWorktreeWorkbench(),
           vaultActionsAvailable: true,
         });
         this.postRowActivation(webviewView.webview);
@@ -1544,6 +1564,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           // change arrives as its own message, and one that raced this send is
           // re-sent below rather than lost (design.md D5, round-1 W2).
           worktreeRowActivation: readWorktreeRowActivation(),
+          worktreeWorkbench: readWorktreeWorkbench(),
           vaultActionsAvailable: true,
         });
         this.postRowActivation(webviewView.webview);
@@ -1605,6 +1626,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           // change arrives as its own message, and one that raced this send is
           // re-sent below rather than lost (design.md D5, round-1 W2).
           worktreeRowActivation: readWorktreeRowActivation(),
+          worktreeWorkbench: readWorktreeWorkbench(),
           vaultActionsAvailable: true,
         });
         // Await delivery before the activation post, as the reloaded and restored

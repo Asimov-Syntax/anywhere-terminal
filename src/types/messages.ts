@@ -1144,6 +1144,12 @@ export interface InitMessage {
    */
   worktreeRowActivation: WorktreeRowActivation;
   /**
+   * Whether the worktree workbench composition is on. The INITIAL value only —
+   * a later change arrives as `worktreeWorkbench`, for the same reason row
+   * activation does.
+   */
+  worktreeWorkbench: boolean;
+  /**
    * Whether this surface can perform the vault actions a user can INVOKE —
    * resume, rename, reveal, copy, open, continue, raw record, launch. False on an
    * editor surface, which answers `requestVaultSessions` and
@@ -1746,6 +1752,12 @@ export interface WorktreeRowActivationMessage {
   activation: WorktreeRowActivation;
 }
 
+/** A live change to the workbench rollout flag, for a view that is already open. */
+export interface WorktreeWorkbenchMessage {
+  type: "worktreeWorkbench";
+  enabled: boolean;
+}
+
 /**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
@@ -1860,7 +1872,8 @@ export type ExtensionToWebViewMessage =
   | WorktreeTreeResponseMessage
   | WorktreeShowPreviewMessage
   | WorktreeActivatePaneMessage
-  | WorktreeRowActivationMessage;
+  | WorktreeRowActivationMessage
+  | WorktreeWorkbenchMessage;
 
 /**
  * Extension → Webview. Visual feedback for title-bar "export" click — briefly

@@ -802,6 +802,9 @@ const routeMessage = createMessageRouter({
   onWorktreeRowActivation(msg) {
     worktreeController?.setRowActivation(msg.activation);
   },
+  onWorktreeWorkbench(msg) {
+    worktreeController?.setWorkbench(msg.enabled);
+  },
   onWorktreeShowPreview(msg) {
     worktreeController?.showPreview(msg.entryId);
   },
@@ -1039,7 +1042,11 @@ function handleInit(msg: InitMessage): void {
       host: vaultHost,
       postMessage: (m) => vscode.postMessage(m),
       store,
-      init: { workspaceRoot: msg.workspaceRoot, rowActivation: msg.worktreeRowActivation },
+      init: {
+        workspaceRoot: msg.workspaceRoot,
+        rowActivation: msg.worktreeRowActivation,
+        workbench: msg.worktreeWorkbench,
+      },
       // The overlay and the panes belong to the surfaces that hold them; the
       // controller only forwards, so neither is rebuilt here (D2).
       showPreview: (entryId) => vaultPanel?.openPreviewById(entryId) ?? false,
