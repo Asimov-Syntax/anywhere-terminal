@@ -326,9 +326,11 @@ visible above it.
 |----------|------|
 | Placement | A drawer below the tree, never a replacement for the body. At ~300 px, swapping the body makes selection destructive — the user loses the list they were comparing against and needs a back control to return |
 | Height | Capped at roughly half the panel, so the rail stays scannable while one worktree is read in full |
-| Content | Branch, the full path, the row's actions, its agent rows with the model id each carries, and the historical delegations section |
+| Content | Branch, the full path, the row's actions, its agent rows with the model id each carries, and the historical delegations section. The history is drawn outright: this is the detail surface, so putting it behind a second disclosure would leave the drawer saying nothing the row above it does not already say |
 | Path | This is the second of the two places a path is shown in full (the other is the row hint). Rows never show one (§ 3.2) |
-| Dismissal | An explicit close control, and selecting nothing. Selecting a different worktree replaces the contents rather than stacking |
+| Actions | Only what this one worktree can be acted on with. Repository-scoped items — create, prune — are absent here rather than silently acting on its repo, and every other withdrawal comes from the same builder the context menu uses, so the two can never disagree |
+| Dismissal | An explicit close control, `Escape` while no overlay above the panel body owns it, and selecting nothing. A selection cleared elsewhere — the scope chip, or the worktree leaving the tree — closes it too. Selecting a different worktree replaces the contents rather than stacking |
+| Focus | The drawer is **not modal and traps nothing**: the tree above it stays reachable, so a trap would make the very list the height cap preserves unusable. It takes no focus when it opens, keeps focus where it is across a redraw, and on closing returns focus to the row it was describing — but only when focus was inside it |
 | Relationship to scope | Selection drives both the drawer and the tab-bar scope ([worktree-scope.md](worktree-scope.md)). One selection, two consequences, no second control |
 
 ## 4. Truthfulness rules the UI must encode
