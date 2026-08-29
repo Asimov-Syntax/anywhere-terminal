@@ -69,3 +69,15 @@
     1. R1: my round-1 fix for W6 repealed an unmodified base requirement — a dialog submits the offer it was OPENED against, and I admitted a refreshed one into it. The chair withdrew its own W6 on that reading. Revert the refresh, and stop the live list reaching the dialog at all: the answer carries a destination, so splice the destination and keep the agents the dialog opened with. That also removes the per-keystroke posture wipe, because nothing calls `setAgents` any more.
     2. R2: clearing the override refilled the field from the derivation in the same event, so the next characters typed append to a value the user believes is empty. The line and the submitted path may be derived-plus-typed. Withdrawing the override must not put text back into the field the user is editing — the placeholder already carries the shape.
     3. R3: the tooltip test pins that something was attached, not what it says. Exercise the show path with the timer it actually uses, so a `getText` returning the shortened text fails.
+
+- [x] 1_6 Round-3 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_5
+  - **Refs**: specs/worktree-panel/spec.md#{the-destination-is-stated-once-and-its-exact-value-stays-reachable}
+  - **Acceptance**:
+    - Outcome: nothing writes the derivation into the destination field while the user is typing in it, from any caller
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeCreateDialog.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`.
+    1. R2 again, one door along. Round 2 named the write site and I guarded a caller, which leaves the other eight unguarded by construction — the answer callback is the one that can fire while the field is focused, so `derived + typed` comes back through it. Guard the write itself on who owns the caret, and `keepPathInput` becomes redundant: delete it rather than keep two mechanisms for one rule.
+    2. Typing means the field is focused. The helper that stands in for typing does not focus, so the tests cannot see a caret-ownership rule at all — that is why round 2's fix looked complete. Make the stand-in faithful first, or the new guard is untestable.
+    3. S1: `[R1] submits the offer…` never submits, so its name claims more than it checks. Give it the submission and assert the agent that was carried.

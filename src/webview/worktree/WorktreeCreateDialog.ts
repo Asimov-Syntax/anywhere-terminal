@@ -427,7 +427,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * names the collided path AND the suffixed one the create will actually use —
    * showing only the pretty default would be a claim the form cannot keep.
    */
-  function syncDerived(opts: { keepPathInput?: boolean } = {}): void {
+  function syncDerived(): void {
     const repo = currentRepo();
     repoHint.textContent = repo.mainPath;
 
@@ -448,7 +448,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const derived = repo.resolvedPath ?? (slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "");
     if (pathIsDerived) {
       draft.path = derived;
-      if (opts.keepPathInput !== true) {
+      // Whoever owns the caret owns the text. Guarding the CALLERS was the
+      // round-2 fix and it left the other eight unguarded by construction — the
+      // answer callback arrives on the host's schedule, so it is the one that can
+      // land while the user is mid-edit, and the characters they type next append
+      // to a value they cannot see. The rule belongs at the write.
+      if (document.activeElement !== pathInput) {
         pathInput.value = derived;
       }
     }
@@ -542,11 +547,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // and Create was disabled with the explaining control behind the disclosure.
     pathIsDerived = pathInput.value.trim() === "";
     draft.path = pathInput.value;
-    // Withdrawn, not undone: the derivation takes the line and the submission,
-    // but the FIELD stays as the user left it. Writing the derived path back into
-    // the input they are editing is invisible to them, so the next characters
-    // they type append to a value they believe is gone.
-    syncDerived({ keepPathInput: true });
+    syncDerived();
   });
   shell.dialog.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {

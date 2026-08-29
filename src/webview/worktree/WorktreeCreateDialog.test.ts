@@ -40,6 +40,9 @@ function open(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}
 }
 
 function type(input: HTMLInputElement, value: string): void {
+  // Focus is part of typing, and the destination field now has a rule that reads
+  // it — a stand-in that skips the focus cannot see that rule at all.
+  input.focus();
   input.value = value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
@@ -797,6 +800,10 @@ describe("round-2 review fixes", () => {
     // And the destination the answer DID carry still lands — the splice keeps the
     // agents, not the whole stale record.
     expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/x");
+    // Submitted, not just displayed: the name of this test is a claim about what
+    // leaves the dialog, and reading the options alone does not check it.
+    h.q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(h.submitted[0]?.agentId).toBe(opened[0]);
   });
 
   it("[R1] a repo switch restores the agents that repo was opened with", () => {
@@ -839,6 +846,28 @@ describe("round-2 review fixes", () => {
     expect(path.value).toBe("/elsewhere");
     h.q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(h.submitted[0]?.path).toBe("/elsewhere");
+  });
+
+  it("[R2] an answer landing mid-edit does not refill the field under the caret", () => {
+    // The round-2 fix guarded the input's own handler, which is the one caller
+    // that cannot be the problem: the user is not typing during it, they just
+    // typed. The answer callback is the one that arrives on its own schedule,
+    // and it lands while the field is focused and empty.
+    const h = wired();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: "/trees/x", answersBranch: "feat/x" }));
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    const path = h.q<HTMLInputElement>("#wt-path");
+    type(path, "/custom/place");
+    type(path, "");
+    // Editing the branch asks again; the reply lands with the caret still in the
+    // path field the user has just emptied.
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/xy");
+    h.answer(createDefaults({ resolvedPath: "/trees/xy", answersBranch: "feat/xy" }));
+    expect(path.value).toBe("");
+    type(path, "mine");
+    h.q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(h.submitted[0]?.path).toBe("mine");
   });
 
   it("[R3] the tooltip shows the exact path, not the shortened one", () => {
