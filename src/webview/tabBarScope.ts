@@ -20,6 +20,8 @@ export interface TabBarScopeStore {
 
 export interface TabBarScopeDeps {
   store: TabBarScopeStore;
+  /** Whether the workbench composition is on at construction. Default `false`. */
+  workbench?: boolean;
   /**
    * The scoped worktree left the tree. `label` is what the panel last knew it as,
    * falling back to its id for a scope restored from persistence that no tree ever
@@ -36,6 +38,12 @@ const FIELD = "\u0003";
 
 export class TabBarScopeCoordinator {
   private readonly deps: TabBarScopeDeps;
+  /**
+   * The one gate. Everything that could disagree about whether scoping is on —
+   * the filter, the visibility rule, the chip — reads the effective scope, and
+   * the effective scope is `null` while this is false (design.md D6).
+   */
+  private workbench: boolean;
   private scope: string | null;
   /** What the tree last called the scoped worktree; `null` until one confirmed it. */
   private scopeLabel: string | null = null;
@@ -49,6 +57,7 @@ export class TabBarScopeCoordinator {
     // (`WebviewStateStore.getState`), so a non-string here is not a scope — and
     // failing closed would leave a surface filtered by something it could not
     // read (design.md D9).
+    this.workbench = deps.workbench === true;
     const stored = this.readStored();
     this.scope = typeof stored === "string" && stored !== "" ? stored : null;
   }
@@ -61,19 +70,34 @@ export class TabBarScopeCoordinator {
     }
   }
 
-  /** The worktree this surface is filtered to, or `null`. */
+  /**
+   * The worktree this surface is filtered to, or `null`. `null` whenever the
+   * workbench is off, whatever is persisted — off is inert, not merely hidden: a
+   * setting that hid the chip but kept the filter would be the invisible filter
+   * with extra steps (design.md D6).
+   */
   scopedWorktreeId(): string | null {
-    return this.scope;
+    return this.workbench ? this.scope : null;
   }
 
   /** Whether this surface is filtered — the tab bar's second reason to be visible. */
   isScoped(): boolean {
-    return this.scope !== null;
+    return this.scopedWorktreeId() !== null;
   }
 
-  /** What `buildTabBarData` filters by; `undefined` while unscoped. */
+  /** What `buildTabBarData` filters by; `undefined` while unscoped or off. */
   effectiveScope(): TabBarScope | undefined {
-    return this.scope === null ? undefined : { worktreeId: this.scope, attribution: this.attribution };
+    const worktreeId = this.scopedWorktreeId();
+    return worktreeId === null ? undefined : { worktreeId, attribution: this.attribution };
+  }
+
+  /**
+   * The rollout flag moved. The persisted value is left ALONE while off — turning
+   * the flag back on re-applies it without a reload, which is what makes the flag
+   * a rollout rather than a reset.
+   */
+  setWorkbench(enabled: boolean): void {
+    this.workbench = enabled;
   }
 
   /** The panel selected a worktree, or cleared its selection. */
@@ -104,7 +128,10 @@ export class TabBarScopeCoordinator {
    */
   applyTree(tree: WorktreeTree | null): void {
     const scoped = this.scope;
-    if (scoped === null || !tree) {
+    // Nothing at all while off, the notice included: a dropped-scope statement
+    // about a feature the user has not turned on is an effect of that feature.
+    // The next push after it is turned on re-resolves against a current tree.
+    if (!this.workbench || scoped === null || !tree) {
       return;
     }
     for (const repo of tree.repos) {
@@ -149,7 +176,7 @@ export class TabBarScopeCoordinator {
     const membership = [...tabLayouts]
       .map(([tabId, layout]) => `${tabId}${UNIT}${getAllSessionIds(layout).join(LEAF)}`)
       .join(RECORD);
-    return [this.scope ?? "", attribution, membership].join(FIELD);
+    return [this.scopedWorktreeId() ?? "", attribution, membership].join(FIELD);
   }
 
   private setScope(worktreeId: string | null): void {

@@ -817,6 +817,12 @@ const routeMessage = createMessageRouter({
   },
   onWorktreeWorkbench(msg) {
     worktreeController?.setWorkbench(msg.enabled);
+    // The bar reads the EFFECTIVE scope, so the flip changes what it draws even
+    // though no tab, tree or attribution moved.
+    tabBarScope?.setWorkbench(msg.enabled);
+    if (tabBarScope?.shouldRender(store.tabLayouts) === true) {
+      updateTabBar();
+    }
   },
   onWorktreeShowPreview(msg) {
     worktreeController?.showPreview(msg.entryId);
@@ -1055,6 +1061,7 @@ function handleInit(msg: InitMessage): void {
     // coordinator has to be holding the persisted scope when that arrives.
     tabBarScope = new TabBarScopeCoordinator({
       store,
+      workbench: msg.worktreeWorkbench,
       onScopeDropped: (worktreeId, label) => worktreeController?.reportScopeCleared(worktreeId, label),
     });
     worktreeController = WorktreeController.mount({

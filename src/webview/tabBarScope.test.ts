@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createBranch, createLeaf, type SplitNode } from "./SplitModel";
-import { TabBarScopeCoordinator, type TabBarScopeStore } from "./tabBarScope";
+import { TabBarScopeCoordinator, type TabBarScopeDeps, type TabBarScopeStore } from "./tabBarScope";
 import type { WorktreeInfo, WorktreeTree } from "./worktree/worktreeViewTypes";
 
 const HERE = "/wt/here";
@@ -46,9 +46,18 @@ function storeOf(initial: Record<string, unknown> = {}): TabBarScopeStore & { st
 
 const layouts = (...ids: string[]): Map<string, SplitNode> => new Map(ids.map((id) => [id, createLeaf(id)]));
 
+/**
+ * A coordinator with the workbench ON. The rollout gate is 1_8's subject and has
+ * its own describe block; everywhere else it would only be noise between the
+ * behaviour and the assertion.
+ */
+function coordinator(deps: Omit<TabBarScopeDeps, "workbench"> & { workbench?: boolean }): TabBarScopeCoordinator {
+  return new TabBarScopeCoordinator({ workbench: true, ...deps });
+}
+
 describe("what a reload restores", () => {
   it("restores a scope the tree still holds", () => {
-    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
     scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
     expect(scope.scopedWorktreeId()).toBe(HERE);
     expect(scope.isScoped()).toBe(true);
@@ -59,14 +68,14 @@ describe("what a reload restores", () => {
     // anything that is not a worktree id is not a scope. Failing closed would leave
     // a surface filtered by something it could not read (design.md D9).
     for (const stored of [undefined, 42, {}, [], true, null, ""]) {
-      const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: stored }) });
+      const scope = coordinator({ store: storeOf({ worktreeScope: stored }) });
       expect(scope.scopedWorktreeId(), `stored: ${JSON.stringify(stored)}`).toBeNull();
       expect(scope.effectiveScope()).toBeUndefined();
     }
   });
 
   it("lands unscoped when the read itself throws", () => {
-    const scope = new TabBarScopeCoordinator({
+    const scope = coordinator({
       store: {
         getState: () => {
           throw new Error("state unreadable");
@@ -80,7 +89,7 @@ describe("what a reload restores", () => {
   it("resolves a persisted id the tree no longer holds to unscoped, and says so", () => {
     const dropped: [string, string][] = [];
     const store = storeOf({ worktreeScope: "/wt/deleted" });
-    const scope = new TabBarScopeCoordinator({ store, onScopeDropped: (id, label) => dropped.push([id, label]) });
+    const scope = coordinator({ store, onScopeDropped: (id, label) => dropped.push([id, label]) });
 
     scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
     expect(scope.scopedWorktreeId()).toBeNull();
@@ -94,7 +103,7 @@ describe("a scope re-resolved against the tree", () => {
   it("keeps a worktree the tree reports missing", () => {
     // Still registered, and panes may still be attributed to it (design.md D7).
     const dropped: string[] = [];
-    const scope = new TabBarScopeCoordinator({
+    const scope = coordinator({
       store: storeOf({ worktreeScope: HERE }),
       onScopeDropped: (id) => dropped.push(id),
     });
@@ -106,7 +115,7 @@ describe("a scope re-resolved against the tree", () => {
   it("drops one that was removed, naming it by the branch the tree last showed", () => {
     const dropped: [string, string][] = [];
     const store = storeOf();
-    const scope = new TabBarScopeCoordinator({ store, onScopeDropped: (id, label) => dropped.push([id, label]) });
+    const scope = coordinator({ store, onScopeDropped: (id, label) => dropped.push([id, label]) });
 
     scope.select(HERE);
     scope.applyTree(treeOf(worktree({ id: HERE, branch: "feat/here" }), worktree({ id: ELSEWHERE })));
@@ -121,7 +130,7 @@ describe("a scope re-resolved against the tree", () => {
 
   it("says nothing while unscoped, and nothing when no tree has arrived", () => {
     const dropped: string[] = [];
-    const scope = new TabBarScopeCoordinator({
+    const scope = coordinator({
       store: storeOf({ worktreeScope: HERE }),
       onScopeDropped: (id) => dropped.push(id),
     });
@@ -136,7 +145,7 @@ describe("a scope re-resolved against the tree", () => {
 describe("what the surface writes", () => {
   it("preserves every unrelated key across a scope write", () => {
     const store = storeOf({ vaultView: "worktree", worktreeCollapsed: ["/a"], worktreeExpandedRows: ["r1"] });
-    const scope = new TabBarScopeCoordinator({ store });
+    const scope = coordinator({ store });
 
     scope.select(HERE);
     scope.clear();
@@ -151,7 +160,7 @@ describe("what the surface writes", () => {
   it("writes once per move, and not at all for a set that changes nothing", () => {
     const store = storeOf();
     const writes = vi.spyOn(store, "updateState");
-    const scope = new TabBarScopeCoordinator({ store });
+    const scope = coordinator({ store });
 
     scope.select(HERE);
     scope.select(HERE);
@@ -163,7 +172,7 @@ describe("what the surface writes", () => {
     // the surface could not persist would be the lie; the old one is a legal state
     // (design.md D9).
     let armed = false;
-    const scope = new TabBarScopeCoordinator({
+    const scope = coordinator({
       store: {
         getState: () => ({ worktreeScope: HERE }),
         updateState: () => {
@@ -181,7 +190,7 @@ describe("what the surface writes", () => {
 
 describe("what counts as a reason to redraw", () => {
   const scoped = () => {
-    const s = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const s = coordinator({ store: storeOf({ worktreeScope: HERE }) });
     s.setAttribution(new Map([["pane-1", HERE]]));
     s.shouldRender(layouts("tab-1"));
     return s;
@@ -262,7 +271,7 @@ describe("a push that moved no attribution charges nothing", () => {
     // The envelope carries far more than attribution — a scan timestamp, activity,
     // titles, delegations — and a new object every time. None of it is in the
     // signature, so none of it is a reason to re-enter renderTabBar.
-    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
     const tabs = layouts("tab-1", "tab-2");
     expect(push(scope, placed(), tree(), tabs)).toBe(true);
     for (let i = 0; i < 5; i++) {
@@ -271,7 +280,7 @@ describe("a push that moved no attribution charges nothing", () => {
   });
 
   it("draws nothing for a tree that moved without moving any attribution", () => {
-    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
     const tabs = layouts("tab-1");
     push(scope, placed(), tree(), tabs);
 
@@ -289,7 +298,7 @@ describe("a push that moved no attribution charges nothing", () => {
   });
 
   it("draws exactly once for each thing that does move it", () => {
-    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
     const tabs = layouts("tab-1");
     push(scope, placed(), tree(), tabs);
 
@@ -323,5 +332,81 @@ describe("a push that moved no attribution charges nothing", () => {
     scope.clear();
     expect(push(scope, fewer, tree(), tabs)).toBe(true);
     expect(push(scope, fewer, tree(), tabs)).toBe(false);
+  });
+});
+
+describe("every part of this is inert while the setting is off", () => {
+  const off = (state: Record<string, unknown> = { worktreeScope: HERE }) =>
+    coordinator({ store: storeOf(state), workbench: false });
+
+  it("hides no tab and offers no chip, whatever is persisted", () => {
+    // One gate, so the filter, the chip and the visibility rule cannot disagree
+    // about whether scoping is on. `effectiveScope()` is what all three read.
+    const scope = off();
+    expect(scope.scopedWorktreeId()).toBeNull();
+    expect(scope.isScoped()).toBe(false);
+    expect(scope.effectiveScope()).toBeUndefined();
+  });
+
+  it("says nothing when the scoped worktree leaves the tree", () => {
+    // A dropped-scope statement about a feature the user never turned on is an
+    // effect of that feature.
+    const dropped: string[] = [];
+    const scope = coordinator({
+      store: storeOf({ worktreeScope: HERE }),
+      workbench: false,
+      onScopeDropped: (id) => dropped.push(id),
+    });
+    scope.applyTree(treeOf(worktree({ id: ELSEWHERE })));
+    expect(dropped).toEqual([]);
+  });
+
+  it("keeps the persisted scope through being off, and applies it the moment it is on", () => {
+    const store = storeOf({ worktreeScope: HERE });
+    const scope = coordinator({ store, workbench: false });
+
+    // Off: untouched, both in the store and as far as anything drawing is concerned.
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
+    expect(store.state.worktreeScope).toBe(HERE);
+    expect(scope.effectiveScope()).toBeUndefined();
+
+    scope.setWorkbench(true);
+    expect(scope.scopedWorktreeId()).toBe(HERE);
+    expect(scope.effectiveScope()).toEqual({ worktreeId: HERE, attribution: new Map() });
+
+    // And back off again, without losing it.
+    scope.setWorkbench(false);
+    expect(scope.isScoped()).toBe(false);
+    expect(store.state.worktreeScope).toBe(HERE);
+  });
+
+  it("redraws the bar on the flip, in both directions", () => {
+    // The scope the signature covers is the EFFECTIVE one, so flipping the flag
+    // changes what the bar would draw even though nothing else moved.
+    const scope = off();
+    const tabs = layouts("tab-1");
+    scope.setAttribution(new Map([["tab-1", ELSEWHERE]]));
+    expect(scope.shouldRender(tabs)).toBe(true);
+    expect(scope.shouldRender(tabs)).toBe(false);
+
+    scope.setWorkbench(true);
+    expect(scope.shouldRender(tabs)).toBe(true);
+    expect(scope.shouldRender(tabs)).toBe(false);
+
+    scope.setWorkbench(false);
+    expect(scope.shouldRender(tabs)).toBe(true);
+  });
+
+  it("leaves the unscoped visibility rule intact while off", () => {
+    // `isScoped` is the bar's SECOND reason to be visible; off, it never supplies
+    // one, so the bar falls back to the tab count exactly as it always did.
+    const scope = off();
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
+    expect(scope.isScoped()).toBe(false);
+  });
+
+  it("defaults to off when nothing says otherwise", () => {
+    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    expect(scope.isScoped()).toBe(false);
   });
 });

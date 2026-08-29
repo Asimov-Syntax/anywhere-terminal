@@ -96,7 +96,7 @@
     3. Put the literal `[I18]` tag in the Vitest test NAME in `src/webview/TabBar.test.ts`. The reporter discovers tags from test names and treats ANY filtered run as partial — naming two paths does not un-filter it (`coverageReporter.ts:69-73`), so a run that names files at all prints "coverage not checked" and the missing tag goes unnoticed. Verified: stripping the tag and running the two named paths is green; the same strip under the unfiltered script exits 1. The Verify is therefore the unfiltered `pnpm run test:unit`.
     4. The case: a scope set, a pane absent from the attribution map, its tab asserted present.
 
-- [ ] 1_8 Keep every part of this inert while the setting is off
+- [x] 1_8 Keep every part of this inert while the setting is off — verified: pnpm exec vitest run 'src/webview/tabBarScope.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_5, 1_6, 1_7
   - **Refs**: specs/tab-bar-component/spec.md#scoping-is-offered-only-where-it-has-been-turned-on, specs/worktree-panel/spec.md#a-worktree-can-be-selected-and-selection-is-an-explicit-act, design.md#d6-the-rollout-setting-follows-the-rowactivation-path-exactly
   - **Acceptance**:
