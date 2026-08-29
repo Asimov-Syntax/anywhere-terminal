@@ -45,6 +45,14 @@ export interface TabBarScopeWiringDeps {
   tabLayouts: () => ReadonlyMap<string, SplitNode>;
   /** Redraw the tab bar. */
   render: () => void;
+  /** Every pane the surface holds, in the order the bar presents their tabs. */
+  presentedPanes: () => readonly string[];
+  /** The pane currently active, or `null`. */
+  activePane: () => string | null;
+  /** Bring this pane forward. Never called with the pane already active. */
+  activatePane: (paneId: string) => void;
+  /** Show the empty-scope region for this worktree, or take it down with `null`. */
+  showEmptyScope: (worktree: { id: string; label: string } | null) => void;
 }
 
 export interface TabBarScopeWiring {
@@ -82,6 +90,44 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
     onScopeDropped: (worktreeId, label) => dropped.push([worktreeId, label]),
   });
 
+  /**
+   * Where a selection lands: the first pane the new scope presents, or the region
+   * saying it holds none. ONE calculation with two exhaustive outcomes — split it
+   * and two definitions of "the scope holds a pane" appear, one for the bar and
+   * one for the activation (design.md D3).
+   */
+  const settleScope = (): void => {
+    const worktreeId = coordinator.scopedWorktreeId();
+    if (worktreeId === null) {
+      deps.showEmptyScope(null);
+      return;
+    }
+    const first = deps.presentedPanes().find((paneId) => coordinator.presents(paneId));
+    if (first === undefined) {
+      deps.showEmptyScope({ id: worktreeId, label: coordinator.scopedLabel() ?? worktreeId });
+      return;
+    }
+    deps.showEmptyScope(null);
+    const active = deps.activePane();
+    // `first` is presented and `active` is not, so they cannot be the same pane —
+    // the "never with the pane already active" contract holds without a guard.
+    if (active === null || !coordinator.presents(active)) {
+      deps.activatePane(first);
+    }
+  };
+
+  /**
+   * A scope that went by some route other than a selection takes the region with
+   * it. Activation is deliberately NOT re-decided here: a tree push is not a
+   * selection, and moving the active pane on one would take focus nobody asked to
+   * move.
+   */
+  const takeDownIfUnscoped = (): void => {
+    if (coordinator.scopedWorktreeId() === null) {
+      deps.showEmptyScope(null);
+    }
+  };
+
   const renderIfMoved = (): void => {
     if (coordinator.shouldRender(deps.tabLayouts())) {
       deps.render();
@@ -91,6 +137,9 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
   return {
     onSelectWorktree(worktreeId) {
       coordinator.select(worktreeId);
+      // Between the new scope and the one draw: the in-scope test runs against the
+      // scope being adopted, and the whole selection costs a single render.
+      settleScope();
       renderIfMoved();
     },
 
@@ -118,6 +167,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       try {
         deliver();
       } finally {
+        takeDownIfUnscoped();
         renderIfMoved();
       }
     },
@@ -151,6 +201,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
           // inert once the callback already did it (round-1 B2).
           deps.panel()?.clearSelection();
           coordinator.clear();
+          takeDownIfUnscoped();
           // Gated, so the signature records the cleared state. Rendering
           // unconditionally left it unrecorded on a surface with no panel, and
           // drew the bar twice on one with a panel (round-2 V4).

@@ -37,3 +37,26 @@ export function renderEmptyScopeRegion(deps: EmptyScopeRegionDeps): HTMLElement 
   region.setAttribute("aria-label", `Nothing running in ${deps.label}`);
   return region;
 }
+
+const REGION_ID = "empty-scope-region";
+
+/**
+ * Put the region up beside a container, or take it down with `null`.
+ *
+ * The container is hidden while the region stands, and left MOUNTED: unmounting
+ * would discard xterm's viewport state and make clearing the scope a rebuild,
+ * which is "scope changes rendering, never process state" violated one layer
+ * down. Nothing else on the selection path hides it, so without this the region
+ * would appear beside the still-visible terminal the scope is hiding (D4).
+ */
+export function mountEmptyScopeRegion(container: HTMLElement, deps: EmptyScopeRegionDeps | null): void {
+  container.ownerDocument.getElementById(REGION_ID)?.remove();
+  if (deps === null) {
+    container.style.removeProperty("display");
+    return;
+  }
+  const region = renderEmptyScopeRegion(deps);
+  region.id = REGION_ID;
+  container.style.display = "none";
+  container.parentElement?.insertBefore(region, container);
+}

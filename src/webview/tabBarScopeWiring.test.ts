@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { WorktreeTreeResponseMessage } from "../types/messages";
-import { createLeaf, type SplitNode } from "./SplitModel";
+import { createBranch, createLeaf, getAllSessionIds, type SplitNode } from "./SplitModel";
 import { buildTabBarData, renderTabBar } from "./TabBarUtils";
 import { type TabBarScopeWiring, wireTabBarScope } from "./tabBarScopeWiring";
 import { WorktreeController } from "./worktree/WorktreeController";
@@ -61,6 +61,12 @@ interface Surface {
   paints: number;
   /** The panel's notices, as text, at each paint. */
   paintedNotices: string[][];
+  /** One entry per pane the seam brought forward, in order. */
+  activations: string[];
+  /** The pane the surface considers active. */
+  activePane: string | null;
+  /** The worktree the empty-scope region is standing for, or `null`. */
+  emptyScope: { id: string; label: string } | null;
   state: Record<string, unknown>;
 }
 
@@ -68,14 +74,23 @@ interface Surface {
  * A whole surface: the panel, the seam, and a tab bar over three panes — one in
  * `main`, one in `worktree-panel`, one the evidence does not place.
  */
-function surface(over: { workbench?: boolean; persisted?: string; tabIds?: string[] } = {}): Surface {
+function surface(
+  over: {
+    workbench?: boolean;
+    persisted?: string;
+    tabIds?: string[];
+    layouts?: Map<string, SplitNode>;
+    activePane?: string;
+  } = {},
+): Surface {
   const tabIds = over.tabIds ?? ["pane-main", "pane-panel", "pane-loose"];
   const state: Record<string, unknown> = over.persisted === undefined ? {} : { worktreeScope: over.persisted };
-  const tabLayouts = new Map<string, SplitNode>(tabIds.map((id) => [id, createLeaf(id)]));
+  const tabLayouts = over.layouts ?? new Map<string, SplitNode>(tabIds.map((id) => [id, createLeaf(id)]));
+  const panes = [...tabLayouts.values()].flatMap((layout) => getAllSessionIds(layout));
   const source = {
     tabLayouts,
     tabActivePaneIds: new Map<string, string>(),
-    terminals: new Map(tabIds.map((id) => [id, { name: id, exited: false, activityStatus: "idle" }])) as never,
+    terminals: new Map(panes.map((id) => [id, { name: id, exited: false, activityStatus: "idle" }])) as never,
   };
 
   const tabBarEl = document.createElement("div");
@@ -83,7 +98,12 @@ function surface(over: { workbench?: boolean; persisted?: string; tabIds?: strin
   document.body.appendChild(tabBarEl);
 
   let controller: WorktreeController | null = null;
-  const out = { renders: 0 } as Surface;
+  const out = {
+    renders: 0,
+    activations: [] as string[],
+    activePane: over.activePane ?? null,
+    emptyScope: null,
+  } as unknown as Surface;
 
   const draw = (): void => {
     out.renders += 1;
@@ -110,6 +130,15 @@ function surface(over: { workbench?: boolean; persisted?: string; tabIds?: strin
     panel: () => controller,
     tabLayouts: () => tabLayouts,
     render: draw,
+    presentedPanes: () => panes,
+    activePane: () => out.activePane,
+    activatePane: (paneId) => {
+      out.activations.push(paneId);
+      out.activePane = paneId;
+    },
+    showEmptyScope: (worktree) => {
+      out.emptyScope = worktree;
+    },
   });
 
   controller = WorktreeController.mount({
@@ -422,6 +451,10 @@ describe("a surface with no worktree panel mounted", () => {
       render: () => {
         renders += 1;
       },
+      presentedPanes: () => ["pane-main"],
+      activePane: () => "pane-main",
+      activatePane: () => {},
+      showEmptyScope: () => {},
     });
     return { seam, tabLayouts, count: () => renders };
   }
@@ -530,5 +563,86 @@ describe("a hidden tab that needs a human is counted", () => {
     });
     expect(s.chip()).toBeNull();
     expect(s.badge()).toBeNull();
+  });
+});
+
+describe("a selection lands on a pane of the worktree it named", () => {
+  /** A surface whose panes are already placed, with `active` the active one. */
+  function placed(active: string, over: Parameters<typeof surface>[0] = {}) {
+    const s = surface({ ...over, activePane: active });
+    s.push();
+    return s;
+  }
+
+  it("moves to the first presented pane when the active one belongs elsewhere", () => {
+    const s = placed("pane-panel");
+    s.seam.onSelectWorktree(MAIN);
+
+    expect(s.activations).toEqual(["pane-main"]);
+    expect(s.emptyScope).toBeNull();
+  });
+
+  it("leaves an active pane that is itself in scope alone", () => {
+    const s = placed("pane-main");
+    s.seam.onSelectWorktree(MAIN);
+
+    expect(s.activations).toEqual([]);
+  });
+
+  it("moves inside a split whose visible tab holds an out-of-scope active leaf", () => {
+    // The tab is presented because ONE of its leaves is in scope, while the leaf
+    // active inside it is attributed elsewhere. Tab identity cannot answer this:
+    // bringing the tab forward would leave the wrong leaf showing.
+    const s = placed("pane-panel", {
+      layouts: new Map<string, SplitNode>([
+        ["pane-main", createBranch("horizontal", createLeaf("pane-main"), createLeaf("pane-panel"))],
+      ]),
+    });
+    s.seam.onSelectWorktree(MAIN);
+
+    expect(s.tabs()).toHaveLength(1);
+    expect(s.activations).toEqual(["pane-main"]);
+  });
+
+  it("shows the region, naming the worktree, when the scope holds no pane at all", () => {
+    const s = placed("pane-main", { tabIds: ["pane-main"] });
+    // Every pane the surface holds is attributed to MAIN, so PANEL holds none.
+    s.seam.onSelectWorktree(PANEL);
+
+    expect(s.emptyScope).toEqual({ id: PANEL, label: "feat/worktree-panel" });
+    expect(s.activations).toEqual([]);
+  });
+
+  it("takes the region down again once the scope is cleared", () => {
+    const s = placed("pane-main", { tabIds: ["pane-main"] });
+    s.seam.onSelectWorktree(PANEL);
+    expect(s.emptyScope).not.toBeNull();
+
+    s.seam.onSelectWorktree(null);
+    expect(s.emptyScope).toBeNull();
+    // The pane the scope hid is presented again, from the same store — clearing
+    // restores it rather than rebuilding it.
+    expect(s.tabs()).toEqual(["pane-main"]);
+  });
+
+  it("takes the region down when the scoped worktree leaves the tree", () => {
+    // Not a selection, so nothing is activated — a tree push must not move focus
+    // the user did not ask to move.
+    const s = placed("pane-main", { tabIds: ["pane-main"] });
+    s.seam.onSelectWorktree(PANEL);
+    s.activations.length = 0;
+
+    s.push({ tree: treeWithout(PANEL) });
+
+    expect(s.emptyScope).toBeNull();
+    expect(s.activations).toEqual([]);
+  });
+
+  it("costs one draw for the whole selection", () => {
+    const s = placed("pane-panel");
+    const before = s.renders;
+    s.seam.onSelectWorktree(MAIN);
+
+    expect(s.renders - before).toBe(1);
   });
 });

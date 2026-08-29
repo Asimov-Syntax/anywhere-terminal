@@ -44,14 +44,15 @@
     4. Launching needs the controller's offer-gated dialog, not a bare message: add the method that opens it for a given worktree. Omit the offer entirely when no launch target is available, matching the controller's existing rule — never an inert one.
     5. Cover: both offers posting for the scoped worktree; the launch offer absent with no target; the clearing control present and calling back; no error class; nothing in the region clearing the scope by itself; `renderAtoms` still rendering a single action for an existing caller.
 
-- [ ] 1_4 Send a selection to a pane of the worktree it selected, or to that region
+- [x] 1_4 Send a selection to a pane of the worktree it selected, or to that region — verified: pnpm exec vitest run 'src/webview/tabBarScopeWiring.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2, 1_3
   - **Refs**: specs/tab-bar-component/spec.md#selecting-a-worktree-goes-to-a-pane-of-that-worktree · design.md#d3-selection-activates-a-pane-through-the-primitive-that-already-resolves-one
   - **Acceptance**:
     - Outcome: a selection lands on a pane of the worktree it named
     - Verify: unit src/webview/tabBarScopeWiring.test.ts
   - **Plan**:
-    0. Files: `src/webview/tabBarScopeWiring.ts`, `src/webview/main.ts`, `src/webview/tabBarScopeWiring.test.ts`.
+    0. Files: `src/webview/tabBarScopeWiring.ts`, `src/webview/main.ts`, `src/webview/tabBarScopeWiring.test.ts`, `src/webview/emptyScopeRegion.ts`, `src/webview/emptyScopeRegion.test.ts`.
+    0b. The putting-up and taking-down half of step 5 lives in `emptyScopeRegion.ts` beside the region it shows, not in `main.ts` — a bootstrap no test imports cannot carry the container assertion this task owes.
     1. Activation and the region are the two exhaustive outcomes of ONE calculation — find the first presented pane of the new scope, else there is none — so one task decides both. Splitting the decision is what lets two definitions of "the scope holds a pane" appear.
     2. Add the four deps from the Ref. `main.ts` satisfies `activatePane` with its existing `activatePaneById`, NOT `switchTab`: a mixed split is presented for one leaf while another leaf is active inside it, and only the pane-level primitive moves the right one.
     3. Decide inside `onSelectWorktree`, after `coordinator.select` and before `renderIfMoved`, so the test runs against the scope being adopted and the selection costs one draw. Never call `activatePane` with the pane already active.

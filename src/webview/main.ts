@@ -39,9 +39,11 @@ import { preloadSyntaxHighlighter } from "./links/syntaxRenderer";
 import { createMessageRouter } from "./messaging/MessageRouter";
 import { createScrollbackDumpHandler } from "./messaging/scrollbackDumpHandler";
 import { ResizeCoordinator } from "./resize/ResizeCoordinator";
+import { mountEmptyScopeRegion } from "./emptyScopeRegion";
 import { SplitTreeRenderer } from "./split/SplitTreeRenderer";
 import { resolveTabDisplayPane } from "./split/tabDisplay";
 import { WebviewStateStore } from "./state/WebviewStateStore";
+import { getAllSessionIds } from "./SplitModel";
 import { buildTabBarData, handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 import { type TabBarScopeWiring, wireTabBarScope } from "./tabBarScopeWiring";
 import { hideRenameOverlay, repositionRenameOverlay, showRenameOverlay } from "./tabRenameOverlay";
@@ -463,6 +465,34 @@ function switchTab(newTabId: string): void {
   updateTabBar();
   syncVaultToActivePane();
   vscode.postMessage({ type: "switchTab", tabId: newTabId });
+}
+
+/** Every pane the surface holds, tab by tab, in the order the bar draws them. */
+function panesInBarOrder(): string[] {
+  const panes: string[] = [];
+  for (const [tabId, layout] of store.tabLayouts) {
+    panes.push(...(layout.type === "branch" ? getAllSessionIds(layout) : [tabId]));
+  }
+  return panes.filter((paneId) => store.terminals.has(paneId));
+}
+
+/** Resolve what the empty-scope region offers here, and hand it to the mount. */
+function showEmptyScope(worktree: { id: string; label: string } | null): void {
+  const containerEl = document.getElementById("terminal-container");
+  if (containerEl === null) {
+    return;
+  }
+  if (worktree === null) {
+    mountEmptyScopeRegion(containerEl, null);
+    return;
+  }
+  const launch = worktreeController?.launchOfferFor(worktree.id);
+  mountEmptyScopeRegion(containerEl, {
+    label: worktree.label,
+    onOpenTerminal: () => vscode.postMessage({ type: "worktreeOpenTerminal", worktreeId: worktree.id }),
+    ...(launch === undefined ? {} : { onLaunchAgent: launch }),
+    onClear: () => worktreeController?.clearSelection(),
+  });
 }
 
 /** Bring a pane forward; the resolution itself lives in worktree/activatePane.ts. */
@@ -1071,6 +1101,18 @@ function handleInit(msg: InitMessage): void {
       panel: () => worktreeController,
       tabLayouts: () => store.tabLayouts,
       render: () => updateTabBar(),
+      presentedPanes: () => panesInBarOrder(),
+      activePane: () => {
+        const tabId = store.activeTabId;
+        return tabId === null ? null : (store.tabActivePaneIds.get(tabId) ?? tabId);
+      },
+      // The pane-level primitive, NOT `switchTab`: a mixed split is presented for
+      // one leaf while another leaf is active inside it, and only this moves the
+      // right one (design.md D3).
+      activatePane: (paneId) => {
+        activatePaneById(paneId);
+      },
+      showEmptyScope,
     });
     worktreeController = WorktreeController.mount({
       host: vaultHost,

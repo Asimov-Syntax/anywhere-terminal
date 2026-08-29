@@ -7,7 +7,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { renderEmptyScopeRegion } from "./emptyScopeRegion";
+import { mountEmptyScopeRegion, renderEmptyScopeRegion } from "./emptyScopeRegion";
 
 function labels(region: HTMLElement): string[] {
   return [...region.querySelectorAll("button")].map((b) => b.textContent ?? "");
@@ -77,5 +77,55 @@ describe("renderEmptyScopeRegion", () => {
     expect(region.className).toContain("empty-scope");
     expect(region.outerHTML).not.toMatch(/error|danger|warning/i);
     expect(region.getAttribute("role")).toBe("region");
+  });
+});
+
+describe("mountEmptyScopeRegion", () => {
+  function surface(): HTMLElement {
+    document.body.innerHTML = "";
+    const container = document.createElement("div");
+    container.id = "terminal-container";
+    container.appendChild(document.createElement("canvas"));
+    document.body.appendChild(container);
+    return container;
+  }
+
+  const deps = { label: "feat/x", onOpenTerminal: () => {}, onClear: () => {} };
+
+  it("hides the container it stands in front of, so the hidden worktree is not still on screen", () => {
+    const container = surface();
+    mountEmptyScopeRegion(container, deps);
+
+    expect(container.style.display).toBe("none");
+    expect(document.querySelector(".empty-scope")).not.toBeNull();
+  });
+
+  it("leaves the container MOUNTED, with its terminal intact", () => {
+    // Unmounting would discard xterm's viewport state and make clearing the scope
+    // a rebuild rather than a reveal.
+    const container = surface();
+    const canvas = container.firstElementChild;
+    mountEmptyScopeRegion(container, deps);
+
+    expect(container.isConnected).toBe(true);
+    expect(canvas?.isConnected).toBe(true);
+  });
+
+  it("gives the container back, and takes the region away, when the scope goes", () => {
+    const container = surface();
+    mountEmptyScopeRegion(container, deps);
+    mountEmptyScopeRegion(container, null);
+
+    expect(container.style.display).toBe("");
+    expect(document.querySelector(".empty-scope")).toBeNull();
+  });
+
+  it("stands one region however often it is asked for", () => {
+    const container = surface();
+    mountEmptyScopeRegion(container, deps);
+    mountEmptyScopeRegion(container, { ...deps, label: "feat/y" });
+
+    expect(document.querySelectorAll(".empty-scope")).toHaveLength(1);
+    expect(document.querySelector(".empty-scope")?.textContent).toContain("feat/y");
   });
 });
