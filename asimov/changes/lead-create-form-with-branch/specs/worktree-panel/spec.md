@@ -14,7 +14,7 @@ WHEN the derived create path is already taken, the form SHALL say so, and SHALL 
 
 ### Requirement: The create form leads with the branch name
 
-The branch name SHALL be the form's first input, with no other control above it, and it SHALL hold initial focus. Submission SHALL stay unavailable until the branch name validates.
+The branch name SHALL be the form's first input, with no other control above it, and it SHALL hold initial focus. Submission SHALL stay unavailable until the value the chosen branch source requires is supplied and valid — the branch name for a new or existing branch, the base ref when detaching, which is the one case the lead input is not the value being validated.
 
 #### Scenario: The branch field is what the form opens on
 
@@ -26,15 +26,28 @@ The branch name SHALL be the form's first input, with no other control above it,
 - **WHEN** the branch name fails validation
 - **THEN** submission is unavailable
 
+#### Scenario: Detaching validates the ref it detaches at
+
+- **WHEN** the branch source is detached and no base ref is supplied
+- **THEN** submission is unavailable, and the empty branch name does not make it available
+
 ### Requirement: The destination is stated once, and its exact value stays reachable
 
 The form SHALL state the resolved destination exactly once, shortened for reading. The exact value SHALL be reachable without leaving the dialog. A shortened statement SHALL NOT be shown for a destination the host has not resolved.
+
+The stated destination SHALL be the path the submission carries. WHEN the user overrides the destination, the statement SHALL follow the override, and any collision message SHALL be withdrawn — it described a derived path the create will no longer take.
 
 #### Scenario: One shortened statement, exact value reachable
 
 - **WHEN** the host has resolved a destination for the named branch
 - **THEN** exactly one element states it, shortened
 - **AND** the exact value is obtainable from within the dialog
+
+#### Scenario: An override is what the form states and what it submits
+
+- **WHEN** the user overrides the destination after the host resolved one
+- **THEN** the stated destination is the overridden value, and it is the value submitted
+- **AND** a collision message about the derived path is no longer shown
 
 ### Requirement: The agent block is revealed only when an agent was asked for
 
@@ -73,3 +86,13 @@ Base ref, branch source, and the destination override SHALL sit inside a disclos
 
 - **WHEN** the user opens the disclosure and edits the destination
 - **THEN** the edited value is what the submitted draft carries
+
+### Requirement: A posture list with no safe choice preselects nothing
+
+WHERE every permission posture an agent offers is dangerous, the form SHALL preselect none of them and SHALL NOT submit one that was never chosen. Submission SHALL stay unavailable until the user selects a posture.
+
+#### Scenario: All choices dangerous
+
+- **WHEN** the chosen agent offers only dangerous postures
+- **THEN** no posture is selected when the block is revealed
+- **AND** submission is unavailable until the user selects one
