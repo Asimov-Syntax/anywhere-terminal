@@ -67,6 +67,8 @@ interface Surface {
   activePane: string | null;
   /** The worktree the empty-scope region is standing for, or `null`. */
   emptyScope: { id: string; label: string } | null;
+  /** A pane arriving the way `onTabCreated` delivers one — a redraw, no selection. */
+  addPane(paneId: string, worktreeId: string): void;
   state: Record<string, unknown>;
 }
 
@@ -86,7 +88,7 @@ function surface(
   const tabIds = over.tabIds ?? ["pane-main", "pane-panel", "pane-loose"];
   const state: Record<string, unknown> = over.persisted === undefined ? {} : { worktreeScope: over.persisted };
   const tabLayouts = over.layouts ?? new Map<string, SplitNode>(tabIds.map((id) => [id, createLeaf(id)]));
-  const panes = [...tabLayouts.values()].flatMap((layout) => getAllSessionIds(layout));
+  const panes: string[] = [...tabLayouts.values()].flatMap((layout) => getAllSessionIds(layout));
   const source = {
     tabLayouts,
     tabActivePaneIds: new Map<string, string>(),
@@ -110,6 +112,7 @@ function surface(
     // Built once and read twice, exactly as `main.ts` does it: the bar draws the
     // tabs, and the chip's badge counts what that same pass dropped.
     const data = buildTabBarData(source, seam.effectiveScope());
+    seam.syncEmptyScope();
     renderTabBar({
       tabBarEl,
       terminals: data.tabs,
@@ -128,9 +131,8 @@ function surface(
     },
     workbench: over.workbench ?? true,
     panel: () => controller,
-    tabLayouts: () => tabLayouts,
+    source: () => source,
     render: draw,
-    presentedPanes: () => panes,
     activePane: () => out.activePane,
     activatePane: (paneId) => {
       out.activations.push(paneId);
@@ -181,6 +183,20 @@ function surface(
     [...document.querySelectorAll<HTMLElement>(".wt-row")].find(
       (r) => r.querySelector(".wt-branch")?.textContent === branch,
     );
+  out.addPane = (paneId, worktreeId) => {
+    tabLayouts.set(paneId, createLeaf(paneId));
+    panes.push(paneId);
+    (source.terminals as unknown as Map<string, unknown>).set(paneId, {
+      name: paneId,
+      exited: false,
+      activityStatus: "idle",
+    });
+    seam.onAttribution({
+      placement: new Map([...panes.map((id) => [id, id === paneId ? worktreeId : MAIN] as [string, string])]),
+      waiting: new Set(),
+    });
+    draw();
+  };
   out.chip = () => tabBarEl.querySelector<HTMLElement>(".tab-scope");
   out.badge = () => tabBarEl.querySelector<HTMLElement>(".tab-scope-badge")?.textContent ?? null;
   out.tabs = () => [...tabBarEl.querySelectorAll(".tab-name")].map((t) => t.textContent ?? "");
@@ -447,11 +463,14 @@ describe("a surface with no worktree panel mounted", () => {
       },
       workbench: true,
       panel: () => null,
-      tabLayouts: () => tabLayouts,
+      source: () => ({
+        tabLayouts,
+        tabActivePaneIds: new Map<string, string>(),
+        terminals: new Map([["pane-main", { name: "pane-main", exited: false, activityStatus: "idle" }]]) as never,
+      }),
       render: () => {
         renders += 1;
       },
-      presentedPanes: () => ["pane-main"],
       activePane: () => "pane-main",
       activatePane: () => {},
       showEmptyScope: () => {},
@@ -644,5 +663,59 @@ describe("a selection lands on a pane of the worktree it named", () => {
     s.seam.onSelectWorktree(MAIN);
 
     expect(s.renders - before).toBe(1);
+  });
+});
+
+describe("round-1: the region follows the presented set, not just the selection", () => {
+  it("takes the region down when a pane appears in the scope by a route no selection passes", () => {
+    // B1: the region's OWN "Open a terminal" offer arrives this way. Deciding only
+    // at selection left it standing over the terminal it had just opened.
+    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
+    s.push();
+    s.seam.onSelectWorktree(PANEL);
+    expect(s.emptyScope).not.toBeNull();
+
+    s.addPane("pane-new", PANEL);
+
+    expect(s.emptyScope).toBeNull();
+  });
+
+  it("puts the region up when the scope's last pane is re-attributed elsewhere", () => {
+    // W2: a push, not a selection. The requirement is unconditional.
+    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
+    s.push();
+    s.seam.onSelectWorktree(MAIN);
+    expect(s.emptyScope).toBeNull();
+
+    s.push({ rows: { [PANEL]: [pane("a", "pane-main")] } });
+
+    expect(s.emptyScope).toEqual({ id: MAIN, label: "main" });
+  });
+
+  it("takes the region down when the rollout flag goes off", () => {
+    // W1: off is inert. A scope that reads "off" while the container stays hidden
+    // has no selection left that can restore it.
+    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
+    s.push();
+    s.seam.onSelectWorktree(PANEL);
+    expect(s.emptyScope).not.toBeNull();
+
+    s.seam.setWorkbench(false);
+
+    expect(s.emptyScope).toBeNull();
+  });
+
+  it("sees the live leaf of a split collapsed onto its non-original pane", () => {
+    // W3: `closeSplitPaneById` leaves tabLayouts[A] = leaf{B} with A's instance
+    // gone. Reading tab ids reported nothing, and the region claimed a running
+    // worktree was empty.
+    const s = surface({
+      layouts: new Map<string, SplitNode>([["pane-main", createLeaf("pane-collapsed")]]),
+      activePane: "pane-collapsed",
+    });
+    s.push({ rows: { [MAIN]: [pane("a", "pane-collapsed")] } });
+    s.seam.onSelectWorktree(MAIN);
+
+    expect(s.emptyScope).toBeNull();
   });
 });

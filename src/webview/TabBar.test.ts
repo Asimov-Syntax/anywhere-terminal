@@ -758,6 +758,19 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     expect(data.hiddenWaiting).toBe(1);
   });
 
+  it("counts a hidden leaf the surface has not built an instance for yet", () => {
+    // Round-1 W5: the split branch counts on presence evidence alone, and the leaf
+    // branch required an instance. A tab hidden by the scope is hidden whether or
+    // not this surface has caught up with it.
+    const store = source({
+      tabLayouts: new Map([["gone", createLeaf("gone")]]),
+      tabActivePaneIds: new Map(),
+      terminals: new Map() as never,
+    });
+    const data = buildTabBarData(store, scopeWaiting([["gone", ELSEWHERE]], ["gone"]));
+    expect(data.hiddenWaiting).toBe(1);
+  });
+
   it("counts no pane the evidence cannot place — it was never hidden", () => {
     const store = leavesWaiting(["here", "unplaced"], ["unplaced"]);
     const data = buildTabBarData(store, scopeWaiting([["here", HERE]], ["unplaced"]));

@@ -10,7 +10,7 @@
 
 import { attributionKey, type PaneAttribution, type PaneReport } from "./paneAttribution";
 import { getAllSessionIds, type SplitNode } from "./SplitModel";
-import type { TabBarScope } from "./TabBarUtils";
+import { inScope, type TabBarScope } from "./TabBarUtils";
 import type { WorktreeTree } from "./worktree/worktreeViewTypes";
 
 /** The slice of the surface's persisted state this coordinator owns. */
@@ -172,12 +172,7 @@ export class TabBarScopeCoordinator {
    * they come to disagree about which panes a scope holds.
    */
   presents(paneId: string): boolean {
-    const worktreeId = this.scopedWorktreeId();
-    if (worktreeId === null) {
-      return true;
-    }
-    const held = this.attribution.get(paneId);
-    return held === undefined || held === worktreeId;
+    return inScope(this.effectiveScope(), paneId);
   }
 
   /**
@@ -231,8 +226,8 @@ export class TabBarScopeCoordinator {
    * activity change or a retitled agent move none of them, so none of them is a
    * reason to re-enter `renderTabBar`.
    */
-  shouldRender(tabLayouts: ReadonlyMap<string, SplitNode>): boolean {
-    const next = this.signatureOf(tabLayouts);
+  shouldRender(tabLayouts: ReadonlyMap<string, SplitNode>, hiddenWaiting: number): boolean {
+    const next = this.signatureOf(tabLayouts, hiddenWaiting);
     if (next === this.signature) {
       return false;
     }
@@ -240,7 +235,7 @@ export class TabBarScopeCoordinator {
     return true;
   }
 
-  private signatureOf(tabLayouts: ReadonlyMap<string, SplitNode>): string {
+  private signatureOf(tabLayouts: ReadonlyMap<string, SplitNode>, hiddenWaiting: number): string {
     // Membership, not identity: a split gaining or losing a leaf changes which
     // panes a tab is judged by, and the join would otherwise keep the old answer.
     const membership = [...tabLayouts]
@@ -258,35 +253,13 @@ export class TabBarScopeCoordinator {
       // on a presented pane, or any at all while unscoped, moves nothing the bar
       // shows, and keying the set would redraw for both (spec: a push that moves
       // no attribution redraws no tab bar, as narrowed by this change).
-      String(this.hiddenWaitingFromPresence(tabLayouts)),
+      //
+      // Handed in rather than derived here. Deriving it took the coordinator's own
+      // view of "hidden and waiting", which had no way to see an exited pane and
+      // so counted one the badge does not — a disagreement that suppressed the
+      // very redraw the count exists to trigger (round-1 B2).
+      String(hiddenWaiting),
     ].join(FIELD);
-  }
-
-  /**
-   * Hidden tabs holding a pane presence calls waiting.
-   *
-   * Presence only — the surface's own `activityStatus` is not readable from here,
-   * and needs no guard: the activity tracker calls `updateTabBar` directly on
-   * every status change (`main.ts:112`), so this signature answers for the
-   * presence push and nothing else. A tab counts once however many panes it holds,
-   * and is hidden only when every one of them is placed elsewhere — the same set
-   * rule its visibility already uses (design.md D2).
-   */
-  private hiddenWaitingFromPresence(tabLayouts: ReadonlyMap<string, SplitNode>): number {
-    if (this.scopedWorktreeId() === null) {
-      return 0;
-    }
-    let count = 0;
-    for (const [, layout] of tabLayouts) {
-      const panes = getAllSessionIds(layout);
-      if (panes.some((paneId) => this.presents(paneId))) {
-        continue;
-      }
-      if (panes.some((paneId) => this.waiting.has(paneId))) {
-        count += 1;
-      }
-    }
-    return count;
   }
 
   private setScope(worktreeId: string | null): void {

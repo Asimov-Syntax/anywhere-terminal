@@ -72,3 +72,20 @@
     2. Add the registry row with `status: "covered"` and both owners. The `statement` is compared verbatim against the doc, so the two must be byte-identical.
     3. Tag BOTH clauses: the existing chip-presence test, and the source-union test 1_2 added. The stimulus names both failures, so a tag on only one leaves half the invariant asserting itself.
     4. Verify is the unfiltered script on purpose: the coverage reporter is attached from `test:unit` and skips a filtered run, so `vitest run <file>` would prove nothing here.
+
+## 2. Review round 1
+
+- [x] 2_1 Make the region follow the same predicate the bar filters by, and the guard the same count the badge draws — verified: pnpm exec vitest run 'src/webview/tabBarScopeWiring.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_5
+  - **Refs**: design.md#d1-placement-and-waiting-travel-in-one-report-the-render-guard-keys-the-badge-not-the-set · design.md#d3-selection-activates-a-pane-through-the-primitive-that-already-resolves-one
+  - **Acceptance**:
+    - Outcome: the region goes up and down with the presented set, and the guard moves for every change the badge would draw
+    - Verify: unit src/webview/tabBarScopeWiring.test.ts
+  - **Plan**:
+    0. Files: `src/webview/TabBarUtils.ts`, `src/webview/tabBarScope.ts`, `src/webview/tabBarScopeWiring.ts`, `src/webview/main.ts`, `src/webview/emptyScopeRegion.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/TabBar.test.ts`, `src/webview/tabBarScope.test.ts`, `src/webview/tabBarScopeWiring.test.ts`.
+    1. The first blocker and its two warnings are one defect: the region's visibility is decided only at selection. Split the one calculation into the region half, which runs on every redraw, and the activation half, which stays gated to a selection.
+    2. The second blocker and the split-predicate warning: one owner for both derivations. `buildTabBarData` exports its scope predicate and produces the count the guard keys; the coordinator delegates to the first and is handed the second.
+    3. Presented panes come from the same traversal the bar uses, so a split collapsed onto its non-original pane is visible to both.
+    4. The leaf branch counts on hiddenness, not on holding an instance.
+    5. Cover: a pane appearing in a standing region taking it down; the flag going off taking it down; a hidden tab whose only waiting pane is exited moving the guard when a live one joins it; a collapsed split reported to the selection; a hidden leaf counted on presence alone.
+

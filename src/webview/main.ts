@@ -40,7 +40,6 @@ import { preloadSyntaxHighlighter } from "./links/syntaxRenderer";
 import { createMessageRouter } from "./messaging/MessageRouter";
 import { createScrollbackDumpHandler } from "./messaging/scrollbackDumpHandler";
 import { ResizeCoordinator } from "./resize/ResizeCoordinator";
-import { getAllSessionIds } from "./SplitModel";
 import { SplitTreeRenderer } from "./split/SplitTreeRenderer";
 import { resolveTabDisplayPane } from "./split/tabDisplay";
 import { WebviewStateStore } from "./state/WebviewStateStore";
@@ -385,6 +384,10 @@ function updateTabBar(): void {
       }
     },
   });
+  // Every route a pane arrives or leaves by ends in a redraw: the region's own
+  // offers, the `+` button, a split, a close, a tree push. Deciding the region at
+  // selection alone left it standing over the terminal it had just opened.
+  tabBarScope?.syncEmptyScope();
 }
 
 function startInlineRename(tabId: string, tabEl: HTMLElement, tabBarEl: HTMLElement): void {
@@ -465,15 +468,6 @@ function switchTab(newTabId: string): void {
   updateTabBar();
   syncVaultToActivePane();
   vscode.postMessage({ type: "switchTab", tabId: newTabId });
-}
-
-/** Every pane the surface holds, tab by tab, in the order the bar draws them. */
-function panesInBarOrder(): string[] {
-  const panes: string[] = [];
-  for (const [tabId, layout] of store.tabLayouts) {
-    panes.push(...(layout.type === "branch" ? getAllSessionIds(layout) : [tabId]));
-  }
-  return panes.filter((paneId) => store.terminals.has(paneId));
 }
 
 /** Resolve what the empty-scope region offers here, and hand it to the mount. */
@@ -1099,9 +1093,8 @@ function handleInit(msg: InitMessage): void {
       store,
       workbench: msg.worktreeWorkbench,
       panel: () => worktreeController,
-      tabLayouts: () => store.tabLayouts,
+      source: () => store,
       render: () => updateTabBar(),
-      presentedPanes: () => panesInBarOrder(),
       activePane: () => {
         const tabId = store.activeTabId;
         return tabId === null ? null : (store.tabActivePaneIds.get(tabId) ?? tabId);

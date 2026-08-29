@@ -55,8 +55,14 @@ export function mountEmptyScopeRegion(container: HTMLElement, deps: EmptyScopeRe
     container.style.removeProperty("display");
     return;
   }
+  const parent = container.parentElement;
+  if (parent === null) {
+    // Hiding first would have left a blank surface: the container gone and no
+    // region in its place (round-1 suggestion).
+    return;
+  }
   const region = renderEmptyScopeRegion(deps);
   region.id = REGION_ID;
+  parent.insertBefore(region, container);
   container.style.display = "none";
-  container.parentElement?.insertBefore(region, container);
 }

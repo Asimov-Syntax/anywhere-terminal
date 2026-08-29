@@ -8,8 +8,8 @@
 // hands them over — this is the wiring, not a second controller (design.md D8).
 
 import type { PaneReport } from "./paneAttribution";
-import type { SplitNode } from "./SplitModel";
-import type { TabBarScope } from "./TabBarUtils";
+import { getAllSessionIds } from "./SplitModel";
+import { buildTabBarData, type TabBarDataSource, type TabBarScope } from "./TabBarUtils";
 import { TabBarScopeCoordinator, type TabBarScopeStore } from "./tabBarScope";
 import type { WorktreeTree } from "./worktree/worktreeViewTypes";
 
@@ -41,12 +41,14 @@ export interface TabBarScopeWiringDeps {
    * to be holding the persisted scope by then.
    */
   panel: () => TabBarScopePanel | null;
-  /** What the bar is currently drawing from. */
-  tabLayouts: () => ReadonlyMap<string, SplitNode>;
+  /**
+   * What the bar is currently drawing from. The SAME source `buildTabBarData`
+   * reads, so the guard's count, the presented panes and the drawn tabs are three
+   * readings of one state rather than three derivations of it (round-1 B2/W3/W4).
+   */
+  source: () => TabBarDataSource;
   /** Redraw the tab bar. */
   render: () => void;
-  /** Every pane the surface holds, in the order the bar presents their tabs. */
-  presentedPanes: () => readonly string[];
   /** The pane currently active, or `null`. */
   activePane: () => string | null;
   /** Bring this pane forward. Never called with the pane already active. */
@@ -73,6 +75,12 @@ export interface TabBarScopeWiring {
   /** What `buildTabBarData` filters by, or `undefined`. */
   effectiveScope(): TabBarScope | undefined;
   /**
+   * Re-decide whether the region stands, without touching the active pane. Called
+   * from the render path, which is the only place that sees every route a pane can
+   * arrive or leave by.
+   */
+  syncEmptyScope(): void;
+  /**
    * The chip the bar carries while this surface is filtered, or `undefined`. One
    * value for both the chip and the bar's second reason to be visible, so a filter
    * without its own escape hatch is not expressible.
@@ -96,18 +104,51 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
    * and two definitions of "the scope holds a pane" appear, one for the bar and
    * one for the activation (design.md D3).
    */
-  const settleScope = (): void => {
+  /**
+   * The pane a selection would land on, or `null` when the scope holds none.
+   *
+   * Traversed with `getAllSessionIds`, exactly as `buildTabBarData` traverses it: a
+   * split collapsed onto its non-original pane keeps the ORIGINAL tab id while the
+   * live leaf carries another, so reading tab ids reported nothing for it and the
+   * region claimed a running worktree was empty (round-1 W3).
+   */
+  const firstPresentedPane = (): string | null => {
+    const source = deps.source();
+    for (const layout of source.tabLayouts.values()) {
+      for (const paneId of getAllSessionIds(layout)) {
+        if (source.terminals.has(paneId) && coordinator.presents(paneId)) {
+          return paneId;
+        }
+      }
+    }
+    return null;
+  };
+
+  /**
+   * Whether the scope holds a pane, and what follows — ONE calculation with two
+   * exhaustive outcomes (design.md D3).
+   *
+   * The region half runs on EVERY redraw; the activation half only on a selection.
+   * Deciding the region at selection alone left it standing over a hidden terminal
+   * the moment its own "Open a terminal" offer was taken — the pane arrives by a
+   * path no selection passes through (round-1 B1/W2). Activation stays gated
+   * because a tree push is not a selection and must not take focus.
+   */
+  const settleScope = (activateIfNeeded: boolean): void => {
     const worktreeId = coordinator.scopedWorktreeId();
     if (worktreeId === null) {
       deps.showEmptyScope(null);
       return;
     }
-    const first = deps.presentedPanes().find((paneId) => coordinator.presents(paneId));
-    if (first === undefined) {
+    const first = firstPresentedPane();
+    if (first === null) {
       deps.showEmptyScope({ id: worktreeId, label: coordinator.scopedLabel() ?? worktreeId });
       return;
     }
     deps.showEmptyScope(null);
+    if (!activateIfNeeded) {
+      return;
+    }
     const active = deps.activePane();
     // `first` is presented and `active` is not, so they cannot be the same pane —
     // the "never with the pane already active" contract holds without a guard.
@@ -116,20 +157,12 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
     }
   };
 
-  /**
-   * A scope that went by some route other than a selection takes the region with
-   * it. Activation is deliberately NOT re-decided here: a tree push is not a
-   * selection, and moving the active pane on one would take focus nobody asked to
-   * move.
-   */
-  const takeDownIfUnscoped = (): void => {
-    if (coordinator.scopedWorktreeId() === null) {
-      deps.showEmptyScope(null);
-    }
-  };
-
   const renderIfMoved = (): void => {
-    if (coordinator.shouldRender(deps.tabLayouts())) {
+    const source = deps.source();
+    // The count the badge would draw, from the pass that draws it — see D2 and the
+    // guard's own note on why deriving it twice suppressed a redraw.
+    const { hiddenWaiting } = buildTabBarData(source, coordinator.effectiveScope());
+    if (coordinator.shouldRender(source.tabLayouts, hiddenWaiting)) {
       deps.render();
     }
   };
@@ -139,7 +172,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       coordinator.select(worktreeId);
       // Between the new scope and the one draw: the in-scope test runs against the
       // scope being adopted, and the whole selection costs a single render.
-      settleScope();
+      settleScope(true);
       renderIfMoved();
     },
 
@@ -167,7 +200,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       try {
         deliver();
       } finally {
-        takeDownIfUnscoped();
+        settleScope(false);
         renderIfMoved();
       }
     },
@@ -178,10 +211,16 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       // about it is exactly what the single gate exists to prevent (round-2 V2).
       deps.panel()?.setWorkbench(enabled);
       coordinator.setWorkbench(enabled);
+      // The flag going off makes the scope inert, which takes the region with it —
+      // without this the surface read "scoping off" while staying fully filtered
+      // behind a hidden container, with no selection able to restore it (W1).
+      settleScope(false);
       renderIfMoved();
     },
 
     effectiveScope: () => coordinator.effectiveScope(),
+
+    syncEmptyScope: () => settleScope(false),
 
     // The count is passed IN rather than computed here: `buildTabBarData` derives
     // it from the same pass that drops the tab, and a second derivation is a
@@ -201,7 +240,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
           // inert once the callback already did it (round-1 B2).
           deps.panel()?.clearSelection();
           coordinator.clear();
-          takeDownIfUnscoped();
+          settleScope(false);
           // Gated, so the signature records the cleared state. Rendering
           // unconditionally left it unrecorded on a surface with no panel, and
           // drew the bar twice on one with a panel (round-2 V4).

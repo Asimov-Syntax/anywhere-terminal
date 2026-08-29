@@ -52,7 +52,7 @@ export interface TabBarScope {
  * else — placed here, or not placed at all — is presented: the bar hides only
  * what it can prove belongs elsewhere.
  */
-function inScope(scope: TabBarScope | undefined, paneId: string): boolean {
+export function inScope(scope: TabBarScope | undefined, paneId: string): boolean {
   if (!scope) {
     return true;
   }
@@ -155,7 +155,10 @@ export function buildTabBarData(store: TabBarDataSource, scope?: TabBarScope): T
           exited: instance.exited,
           activityStatus: instance.activityStatus,
         });
-      } else if (instance && tabIsWaiting([tabId], store, waiting)) {
+      } else if (!inScope(scope, tabId) && tabIsWaiting([tabId], store, waiting)) {
+        // Gated on HIDDENNESS, not on holding an instance: the split branch counts
+        // a pane on presence evidence alone, and a leaf the surface has not built
+        // an instance for yet is the same hidden waiting thing (round-1 W5).
         hiddenWaiting += 1;
       }
     }

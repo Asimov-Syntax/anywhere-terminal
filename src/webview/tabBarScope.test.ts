@@ -6,7 +6,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { PaneAttribution, PaneReport } from "./paneAttribution";
-import { createBranch, createLeaf, type SplitNode } from "./SplitModel";
+import { createBranch, createLeaf, getAllSessionIds, type SplitNode } from "./SplitModel";
+import { buildTabBarData } from "./TabBarUtils";
 import { TabBarScopeCoordinator, type TabBarScopeDeps, type TabBarScopeStore } from "./tabBarScope";
 import type { WorktreeInfo, WorktreeTree } from "./worktree/worktreeViewTypes";
 
@@ -51,6 +52,28 @@ function report(placement: PaneAttribution, waiting: Iterable<string> = []): Pan
 }
 
 const layouts = (...ids: string[]): Map<string, SplitNode> => new Map(ids.map((id) => [id, createLeaf(id)]));
+
+/**
+ * Ask the guard the way the seam asks it: the count comes from `buildTabBarData`,
+ * the same pass that draws the badge. Deriving it inside the coordinator is what
+ * let the two disagree about an exited pane and suppress a real redraw
+ * (round-1 B2), so the tests go through the real derivation too.
+ */
+function ask(
+  scope: TabBarScopeCoordinator,
+  tabLayouts: Map<string, SplitNode>,
+  exited: readonly string[] = [],
+): boolean {
+  const panes = [...tabLayouts.values()].flatMap((layout) => getAllSessionIds(layout));
+  const source = {
+    tabLayouts,
+    tabActivePaneIds: new Map<string, string>(),
+    terminals: new Map(
+      panes.map((id) => [id, { name: id, exited: exited.includes(id), activityStatus: "idle" }]),
+    ) as never,
+  };
+  return scope.shouldRender(tabLayouts, buildTabBarData(source, scope.effectiveScope()).hiddenWaiting);
+}
 
 /**
  * A coordinator with the workbench ON. The rollout gate is 1_8's subject and has
@@ -227,25 +250,25 @@ describe("what counts as a reason to redraw", () => {
     const s = coordinator({ store: storeOf({ worktreeScope: HERE }) });
     s.applyTree(treeOf(worktree({ id: HERE, branch: "here" }), worktree({ id: ELSEWHERE, branch: "there" })));
     s.setAttribution(report(new Map([["pane-1", HERE]])));
-    s.shouldRender(layouts("tab-1"));
+    ask(s, layouts("tab-1"));
     return s;
   };
 
   it("draws once on the first ask and never again for the same state", () => {
     const scope = scoped();
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(false);
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(false);
+    expect(ask(scope, layouts("tab-1"))).toBe(false);
+    expect(ask(scope, layouts("tab-1"))).toBe(false);
   });
 
   it("draws once for an attribution that moved a pane, and once for a changed scope", () => {
     const scope = scoped();
     scope.setAttribution(report(new Map([["pane-1", ELSEWHERE]])));
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(true);
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(false);
+    expect(ask(scope, layouts("tab-1"))).toBe(true);
+    expect(ask(scope, layouts("tab-1"))).toBe(false);
 
     scope.select(ELSEWHERE);
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(true);
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(false);
+    expect(ask(scope, layouts("tab-1"))).toBe(true);
+    expect(ask(scope, layouts("tab-1"))).toBe(false);
   });
 
   it("ignores the order the attribution arrived in", () => {
@@ -258,7 +281,7 @@ describe("what counts as a reason to redraw", () => {
         ]),
       ),
     );
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(true);
+    expect(ask(scope, layouts("tab-1"))).toBe(true);
 
     scope.setAttribution(
       report(
@@ -268,7 +291,7 @@ describe("what counts as a reason to redraw", () => {
         ]),
       ),
     );
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(false);
+    expect(ask(scope, layouts("tab-1"))).toBe(false);
   });
 
   // The narrowed requirement: a waiting change redraws only where the bar PRESENTS
@@ -278,23 +301,23 @@ describe("what counts as a reason to redraw", () => {
   it("draws when a HIDDEN tab's pane starts waiting", () => {
     const scope = scoped();
     scope.setAttribution(report(new Map([["tab-2", ELSEWHERE]]), ["tab-2"]));
-    expect(scope.shouldRender(layouts("tab-1", "tab-2"))).toBe(true);
-    expect(scope.shouldRender(layouts("tab-1", "tab-2"))).toBe(false);
+    expect(ask(scope, layouts("tab-1", "tab-2"))).toBe(true);
+    expect(ask(scope, layouts("tab-1", "tab-2"))).toBe(false);
   });
 
   it("draws when the last hidden waiting pane stops waiting, so the mark can go", () => {
     const scope = scoped();
     scope.setAttribution(report(new Map([["tab-2", ELSEWHERE]]), ["tab-2"]));
-    scope.shouldRender(layouts("tab-1", "tab-2"));
+    ask(scope, layouts("tab-1", "tab-2"));
     scope.setAttribution(report(new Map([["tab-2", ELSEWHERE]])));
-    expect(scope.shouldRender(layouts("tab-1", "tab-2"))).toBe(true);
+    expect(ask(scope, layouts("tab-1", "tab-2"))).toBe(true);
   });
 
   it("does NOT draw when a PRESENTED pane starts waiting", () => {
     // It was never hidden, so no count moves and nothing on the bar changes.
     const scope = scoped();
     scope.setAttribution(report(new Map([["pane-1", HERE]]), ["pane-1"]));
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(false);
+    expect(ask(scope, layouts("tab-1"))).toBe(false);
   });
 
   it("does NOT draw when a pane the evidence cannot place starts waiting", () => {
@@ -304,9 +327,9 @@ describe("what counts as a reason to redraw", () => {
     const scope = scoped();
     const placement = new Map([["pane-1", HERE]]);
     scope.setAttribution(report(placement));
-    scope.shouldRender(layouts("tab-1", "tab-9"));
+    ask(scope, layouts("tab-1", "tab-9"));
     scope.setAttribution(report(placement, ["tab-9"]));
-    expect(scope.shouldRender(layouts("tab-1", "tab-9"))).toBe(false);
+    expect(ask(scope, layouts("tab-1", "tab-9"))).toBe(false);
   });
 
   it("does NOT draw for any waiting change while the surface is unscoped", () => {
@@ -316,9 +339,9 @@ describe("what counts as a reason to redraw", () => {
     const placement = new Map([["tab-2", ELSEWHERE]]);
     scope.clear();
     scope.setAttribution(report(placement));
-    scope.shouldRender(layouts("tab-1", "tab-2"));
+    ask(scope, layouts("tab-1", "tab-2"));
     scope.setAttribution(report(placement, ["tab-2"]));
-    expect(scope.shouldRender(layouts("tab-1", "tab-2"))).toBe(false);
+    expect(ask(scope, layouts("tab-1", "tab-2"))).toBe(false);
   });
 
   it("ignores the order the waiting set arrived in", () => {
@@ -328,9 +351,9 @@ describe("what counts as a reason to redraw", () => {
       ["tab-3", ELSEWHERE],
     ]);
     scope.setAttribution(report(placement, ["tab-2", "tab-3"]));
-    expect(scope.shouldRender(layouts("tab-1", "tab-2", "tab-3"))).toBe(true);
+    expect(ask(scope, layouts("tab-1", "tab-2", "tab-3"))).toBe(true);
     scope.setAttribution(report(placement, ["tab-3", "tab-2"]));
-    expect(scope.shouldRender(layouts("tab-1", "tab-2", "tab-3"))).toBe(false);
+    expect(ask(scope, layouts("tab-1", "tab-2", "tab-3"))).toBe(false);
   });
 
   it("exposes the waiting panes for the badge to count with its own second source", () => {
@@ -346,9 +369,9 @@ describe("what counts as a reason to redraw", () => {
     const split = new Map<string, SplitNode>([
       ["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-2"))],
     ]);
-    expect(scope.shouldRender(split)).toBe(true);
-    expect(scope.shouldRender(split)).toBe(false);
-    expect(scope.shouldRender(layouts("tab-1"))).toBe(true);
+    expect(ask(scope, split)).toBe(true);
+    expect(ask(scope, split)).toBe(false);
+    expect(ask(scope, layouts("tab-1"))).toBe(true);
   });
 });
 
@@ -365,7 +388,7 @@ describe("a push that moved no attribution charges nothing", () => {
   ): boolean {
     scope.applyTree(tree);
     scope.setAttribution(report(new Map(entries)));
-    return scope.shouldRender(tabLayouts);
+    return ask(scope, tabLayouts);
   }
 
   const tree = () => treeOf(worktree({ id: HERE, branch: "here" }), worktree({ id: ELSEWHERE, branch: "there" }));
@@ -508,15 +531,15 @@ describe("every part of this is inert while the setting is off", () => {
     const tabs = layouts("tab-1");
     scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
     scope.setAttribution(report(new Map([["tab-1", ELSEWHERE]])));
-    expect(scope.shouldRender(tabs)).toBe(true);
-    expect(scope.shouldRender(tabs)).toBe(false);
+    expect(ask(scope, tabs)).toBe(true);
+    expect(ask(scope, tabs)).toBe(false);
 
     scope.setWorkbench(true);
-    expect(scope.shouldRender(tabs)).toBe(true);
-    expect(scope.shouldRender(tabs)).toBe(false);
+    expect(ask(scope, tabs)).toBe(true);
+    expect(ask(scope, tabs)).toBe(false);
 
     scope.setWorkbench(false);
-    expect(scope.shouldRender(tabs)).toBe(true);
+    expect(ask(scope, tabs)).toBe(true);
   });
 
   it("leaves the unscoped visibility rule intact while off", () => {
@@ -567,5 +590,44 @@ describe("what the chip is told to call the scope", () => {
   it("names nothing while unscoped or while the workbench is off", () => {
     expect(coordinator({ store: storeOf() }).scopedLabel()).toBeNull();
     expect(coordinator({ store: storeOf({ worktreeScope: HERE }), workbench: false }).scopedLabel()).toBeNull();
+  });
+});
+
+describe("round-1: the guard moves for every change the badge would draw", () => {
+  it("draws when a LIVE pane joins the waiting set of a tab whose other waiting pane has exited", () => {
+    // B2: the coordinator used to count "hidden and waiting" itself, with no way
+    // to see an exited pane. It answered 1 for the exited pane alone and 1 again
+    // once the live one joined — a byte-identical signature, and the badge's move
+    // from 0 to 1 never rendered.
+    const split = new Map<string, SplitNode>([
+      ["tab-1", createLeaf("tab-1")],
+      ["tab-2", createBranch("horizontal", createLeaf("gone"), createLeaf("live"))],
+    ]);
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" }), worktree({ id: ELSEWHERE, branch: "there" })));
+    scope.setAttribution(
+      report(
+        new Map([
+          ["tab-1", HERE],
+          ["gone", ELSEWHERE],
+          ["live", ELSEWHERE],
+        ]),
+        ["gone"],
+      ),
+    );
+    ask(scope, split, ["gone"]);
+
+    scope.setAttribution(
+      report(
+        new Map([
+          ["tab-1", HERE],
+          ["gone", ELSEWHERE],
+          ["live", ELSEWHERE],
+        ]),
+        ["gone", "live"],
+      ),
+    );
+
+    expect(ask(scope, split, ["gone"])).toBe(true);
   });
 });

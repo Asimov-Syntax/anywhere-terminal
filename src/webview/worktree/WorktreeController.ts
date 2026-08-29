@@ -608,21 +608,23 @@ export class WorktreeController {
    * the one thing `syncLaunchActions` already refuses to do (design.md D4).
    */
   launchOfferFor(worktreeId: string): (() => void) | undefined {
-    if (this.launchAgents.length === 0) {
+    if (this.launchAgents.length === 0 || this.infoOf(worktreeId) === undefined) {
       return undefined;
     }
-    const info = this.infoOf(worktreeId);
-    return info === undefined ? undefined : () => this.openLaunchFor(info);
+    // Re-resolved when the offer is TAKEN, not when the region was built: the
+    // region outlives several tree pushes, and the dialog would otherwise be
+    // titled with a branch the worktree has since been renamed off
+    // (round-1 suggestion).
+    return () => {
+      const info = this.infoOf(worktreeId);
+      if (info !== undefined) {
+        this.openLaunchFor(info);
+      }
+    };
   }
 
   private infoOf(worktreeId: string): WorktreeInfo | undefined {
-    for (const repo of this.tree?.repos ?? []) {
-      const found = repo.worktrees.find((wt) => wt.id === worktreeId);
-      if (found !== undefined) {
-        return found;
-      }
-    }
-    return undefined;
+    return this.tree?.repos.flatMap((repo) => repo.worktrees).find((wt) => wt.id === worktreeId);
   }
 
   /** The registration token the tree currently publishes for this worktree. */
