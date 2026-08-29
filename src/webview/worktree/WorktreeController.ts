@@ -15,7 +15,7 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
-import { attributionKey, type PaneAttribution } from "../paneAttribution";
+import { attributionKey, type PaneReport, waitingKey } from "../paneAttribution";
 import type { WebviewState } from "../state/WebviewState";
 import type { VaultView } from "../vault/VaultPanel";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
@@ -54,7 +54,7 @@ export interface WorktreeControllerDeps {
    * Which worktree each of this window's panes is running in. Emitted on every
    * push whose attribution moved, and never otherwise.
    */
-  onAttribution?: (paneToWorktree: PaneAttribution) => void;
+  onAttribution?: (report: PaneReport) => void;
   /**
    * Open the session-preview overlay for a host-resolved entry. Returns false
    * when this surface holds no such entry — the host resolved against presence,
@@ -648,8 +648,16 @@ export class WorktreeController {
    * last-write-wins. Two answers to a question the evidence did not settle is not
    * proof, and the consumer hides only what it can prove belongs elsewhere.
    */
-  private buildAttribution(): Map<string, string> {
+  /**
+   * Where presence puts each pane, and which panes it says are waiting — from ONE
+   * walk, reported together (design.md D1). The two halves answer different
+   * questions and neither gates the other: a contested pane is dropped from the
+   * placement but keeps whatever it said about waiting, because "we cannot say
+   * which worktree this is in" is not a claim about whether it needs a human.
+   */
+  private buildAttribution(): PaneReport {
     const map = new Map<string, string>();
+    const waiting = new Set<string>();
     const contested = new Set<string>();
     for (const [worktreeId, rows] of Object.entries(this.presence?.rowsByWorktreeId ?? {})) {
       // External rows name agents this window does not host — they carry no pane
@@ -658,6 +666,9 @@ export class WorktreeController {
       for (const row of rows.filter((r) => r.scope === "window")) {
         if (row.paneId === undefined) {
           continue;
+        }
+        if (row.activity === "waiting") {
+          waiting.add(row.paneId);
         }
         const held = map.get(row.paneId);
         if (held !== undefined && held !== worktreeId) {
@@ -669,7 +680,7 @@ export class WorktreeController {
     for (const paneId of contested) {
       map.delete(paneId);
     }
-    return map;
+    return { placement: map, waiting };
   }
 
   /**
@@ -679,10 +690,11 @@ export class WorktreeController {
    */
   private emitAttribution(): void {
     const next = this.buildAttribution();
-    // The SAME canonicaliser the render signature uses. Both suppress a duplicate
+    // The SAME canonicalisers the render signature uses. Both suppress a duplicate
     // on the same question and were byte-identical copies of this encoding, which
-    // is one edit away from disagreeing about it (round-1 W3).
-    const key = attributionKey(next);
+    // is one edit away from disagreeing about it (round-1 W3). BOTH halves are in
+    // the key: either moving is a report, and neither moving is silence.
+    const key = `${attributionKey(next.placement)}\u0002${waitingKey(next.waiting)}`;
     if (key === this.lastAttribution) {
       return;
     }

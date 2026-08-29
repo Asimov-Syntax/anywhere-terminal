@@ -1,6 +1,6 @@
 ## 1. What the scope hides, said out loud
 
-- [ ] 1_1 Report what presence says is waiting alongside where it says the pane is
+- [x] 1_1 Report what presence says is waiting alongside where it says the pane is — verified: pnpm exec vitest run 'src/webview/tabBarScope.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/tab-bar-component/spec.md#a-push-that-moves-no-attribution-redraws-no-tab-bar · design.md#d1-placement-and-waiting-travel-in-one-report-the-render-guard-keys-the-badge-not-the-set
   - **Acceptance**:

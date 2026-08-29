@@ -6,6 +6,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
+import type { PaneAttribution, PaneReport } from "../paneAttribution";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
 import { agentRow, noRepoTree, singleRepoPresence, singleRepoTree, twoRepoTree, worktree } from "./worktreeFixtures";
 import type {
@@ -29,7 +30,7 @@ function mount(
     rowActivation?: WorktreeRowActivation;
     workbench?: boolean;
     onSelectWorktree?: (worktreeId: string | null) => void;
-    onAttribution?: (paneToWorktree: ReadonlyMap<string, string>) => void;
+    onAttribution?: (report: PaneReport) => void;
     showPreview?: (entryId: string) => boolean;
     activatePane?: (paneId: string) => boolean;
     /** Persisted before mount — the view reads it once, at construction. */
@@ -251,17 +252,31 @@ describe("which worktree each of this window's panes is in", () => {
     };
   }
 
-  function pane(rowId: string, paneId: string | undefined, scope: "window" | "external" = "window"): WorktreeAgentRow {
-    const row = agentRow({ rowId, agent: "claude", activity: "running", title: rowId });
+  function pane(
+    rowId: string,
+    paneId: string | undefined,
+    scope: "window" | "external" = "window",
+    activity: WorktreeAgentRow["activity"] = "running",
+  ): WorktreeAgentRow {
+    const row = agentRow({ rowId, agent: "claude", activity, title: rowId });
     return { ...row, scope, ...(paneId === undefined ? {} : { paneId }) };
   }
 
   function capture(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>, degraded = false) {
-    const maps: ReadonlyMap<string, string>[] = [];
-    const { controller } = mount({ onAttribution: (m) => maps.push(m) });
+    const reports: PaneReport[] = [];
+    // `maps` is the placement half, which most of these cases are about; the
+    // waiting half has its own block below. Filled in the SAME callback rather
+    // than derived at return — a later push has to grow both, not just one.
+    const maps: PaneAttribution[] = [];
+    const { controller } = mount({
+      onAttribution: (r) => {
+        reports.push(r);
+        maps.push(r.placement);
+      },
+    });
     controller.setVisible(true);
     controller.handleTreeResponse({ ...response(), presence: presenceOf(rowsByWorktreeId, degraded) });
-    return { controller, maps };
+    return { controller, reports, maps };
   }
 
   it("places every window pane under the worktree that published it", () => {
@@ -316,6 +331,49 @@ describe("which worktree each of this window's panes is in", () => {
     controller.handleTreeResponse({ ...response(), presence: presenceOf({ [PANEL]: [pane("a", "pane-1")] }) });
     expect(maps).toHaveLength(2);
     expect([...(maps.at(-1) ?? [])]).toEqual([["pane-1", PANEL]]);
+  });
+
+  it("reports which panes presence says are waiting, in the same report", () => {
+    const { reports } = capture({
+      [MAIN]: [pane("a", "pane-1", "window", "waiting"), pane("b", "pane-2")],
+    });
+    expect([...(reports.at(-1)?.waiting ?? [])]).toEqual(["pane-1"]);
+  });
+
+  it("raises no waiting pane for a row this window does not host", () => {
+    // An external row's agent waits in ANOTHER window, on a pane that is not one
+    // of our tabs. Counting it would put a mark on an escape hatch that leads
+    // nowhere (spec: the count and what clearing produces cannot disagree).
+    const { reports } = capture({
+      [MAIN]: [pane("ext", "pane-9", "external", "waiting"), pane("ok", "pane-1")],
+    });
+    expect([...(reports.at(-1)?.waiting ?? [])]).toEqual([]);
+  });
+
+  it("keeps a contested pane's waiting even though its placement is dropped", () => {
+    // "We cannot say which worktree this is in" is not a claim about whether it
+    // needs a human. The pane is unplaced, so it is presented in every scope and
+    // never counted — but the two halves answer different questions.
+    const { reports } = capture({
+      [MAIN]: [pane("a", "pane-1", "window", "waiting")],
+      [PANEL]: [pane("c", "pane-1")],
+    });
+    const last = reports.at(-1);
+    expect([...(last?.placement ?? [])]).toEqual([]);
+    expect([...(last?.waiting ?? [])]).toEqual(["pane-1"]);
+  });
+
+  it("reports again when only the waiting half moved", () => {
+    const rows = { [MAIN]: [pane("a", "pane-1")] };
+    const { controller, reports } = capture(rows);
+    expect(reports).toHaveLength(1);
+
+    controller.handleTreeResponse({
+      ...response(),
+      presence: presenceOf({ [MAIN]: [pane("a", "pane-1", "window", "waiting")] }),
+    });
+    expect(reports).toHaveLength(2);
+    expect([...(reports.at(-1)?.waiting ?? [])]).toEqual(["pane-1"]);
   });
 
   it("reports what a degraded envelope still carries", () => {

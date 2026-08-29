@@ -8,7 +8,7 @@
 //
 // See: docs/design/worktree-scope.md, design.md D1 / D7 / D8 / D9.
 
-import { attributionKey, type PaneAttribution } from "./paneAttribution";
+import { attributionKey, type PaneAttribution, type PaneReport } from "./paneAttribution";
 import { getAllSessionIds, type SplitNode } from "./SplitModel";
 import type { TabBarScope } from "./TabBarUtils";
 import type { WorktreeTree } from "./worktree/worktreeViewTypes";
@@ -77,6 +77,8 @@ export class TabBarScopeCoordinator {
    */
   private resolved = false;
   private attribution: PaneAttribution = new Map();
+  /** Panes the last presence scan called waiting. One half of the badge's union. */
+  private waiting: ReadonlySet<string> = new Set();
   /** The last signature `shouldRender` reported on. `null` → nothing drawn yet. */
   private signature: string | null = null;
 
@@ -149,9 +151,33 @@ export class TabBarScopeCoordinator {
     this.setScope(null);
   }
 
-  /** A fresh pane→worktree attribution from the presence projection. */
-  setAttribution(attribution: PaneAttribution): void {
-    this.attribution = attribution;
+  /** A fresh report from the presence projection — both halves, one call (D1). */
+  setAttribution(report: PaneReport): void {
+    this.attribution = report.placement;
+    this.waiting = report.waiting;
+  }
+
+  /**
+   * Panes presence says are waiting. The badge unions this with the surface's own
+   * tracked status, which has different coverage (design.md D2) — exposed rather
+   * than counted here, so there is exactly one definition of the count.
+   */
+  waitingPanes(): ReadonlySet<string> {
+    return this.waiting;
+  }
+
+  /**
+   * Whether this scope can prove the pane belongs elsewhere. THE predicate — the
+   * bar filters by it and the selection navigates by it, and two copies is how
+   * they come to disagree about which panes a scope holds.
+   */
+  presents(paneId: string): boolean {
+    const worktreeId = this.scopedWorktreeId();
+    if (worktreeId === null) {
+      return true;
+    }
+    const held = this.attribution.get(paneId);
+    return held === undefined || held === worktreeId;
   }
 
   /**
@@ -223,9 +249,44 @@ export class TabBarScopeCoordinator {
     // The LABEL is in here too. It moves only when the tree renames the scoped
     // worktree, so it can never cause a spurious render — and leaving it out left
     // the chip naming a branch that no longer exists (round-1, accepted suggestion).
-    return [this.scopedWorktreeId() ?? "", this.scopedLabel() ?? "", attributionKey(this.attribution), membership].join(
-      FIELD,
-    );
+    return [
+      this.scopedWorktreeId() ?? "",
+      this.scopedLabel() ?? "",
+      attributionKey(this.attribution),
+      membership,
+      // The count the badge would draw, NOT the raw waiting set: a waiting change
+      // on a presented pane, or any at all while unscoped, moves nothing the bar
+      // shows, and keying the set would redraw for both (spec: a push that moves
+      // no attribution redraws no tab bar, as narrowed by this change).
+      String(this.hiddenWaitingFromPresence(tabLayouts)),
+    ].join(FIELD);
+  }
+
+  /**
+   * Hidden tabs holding a pane presence calls waiting.
+   *
+   * Presence only — the surface's own `activityStatus` is not readable from here,
+   * and needs no guard: the activity tracker calls `updateTabBar` directly on
+   * every status change (`main.ts:112`), so this signature answers for the
+   * presence push and nothing else. A tab counts once however many panes it holds,
+   * and is hidden only when every one of them is placed elsewhere — the same set
+   * rule its visibility already uses (design.md D2).
+   */
+  private hiddenWaitingFromPresence(tabLayouts: ReadonlyMap<string, SplitNode>): number {
+    if (this.scopedWorktreeId() === null) {
+      return 0;
+    }
+    let count = 0;
+    for (const [, layout] of tabLayouts) {
+      const panes = getAllSessionIds(layout);
+      if (panes.some((paneId) => this.presents(paneId))) {
+        continue;
+      }
+      if (panes.some((paneId) => this.waiting.has(paneId))) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   private setScope(worktreeId: string | null): void {

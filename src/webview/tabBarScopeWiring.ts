@@ -7,7 +7,7 @@
 // join here is what makes those provable. `main.ts` keeps the surface objects and
 // hands them over — this is the wiring, not a second controller (design.md D8).
 
-import type { PaneAttribution } from "./paneAttribution";
+import type { PaneReport } from "./paneAttribution";
 import type { SplitNode } from "./SplitModel";
 import type { TabBarScope } from "./TabBarUtils";
 import { TabBarScopeCoordinator, type TabBarScopeStore } from "./tabBarScope";
@@ -51,7 +51,7 @@ export interface TabBarScopeWiring {
   /** For `WorktreeController`'s `onSelectWorktree`. */
   onSelectWorktree(worktreeId: string | null): void;
   /** For `WorktreeController`'s `onAttribution`. */
-  onAttribution(attribution: PaneAttribution): void;
+  onAttribution(report: PaneReport): void;
   /**
    * A tree arrived. `deliver` hands the same tree to the panel, and it runs in the
    * middle on purpose: the coordinator has to re-resolve BEFORE the panel prunes,
@@ -94,8 +94,8 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
       renderIfMoved();
     },
 
-    onAttribution(attribution) {
-      coordinator.setAttribution(attribution);
+    onAttribution(report) {
+      coordinator.setAttribution(report);
       // Gated like every other mutator. Today the only caller is followed by the
       // tree push that would have caught it anyway, so this is a no-op — and not
       // relying on that is the point (round-2 V7).
