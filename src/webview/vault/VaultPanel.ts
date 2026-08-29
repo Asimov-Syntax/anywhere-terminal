@@ -1209,6 +1209,19 @@ export class VaultPanel {
    * the overlay it does not own. False when this list holds no such entry, which
    * is what a session outside the current filter or scope looks like from here.
    */
+  /**
+   * Whether the session preview is open over this panel.
+   *
+   * The Worktree drawer's Escape handler defers to it: `FloatingPreviewShell`
+   * never moves focus, so an Escape pressed with the preview up still targets
+   * the row underneath, and the drawer would otherwise close the wrong layer —
+   * and stop the preview closing at all, since the preview listens on `document`
+   * in the bubble phase.
+   */
+  isPreviewOpen(): boolean {
+    return this.preview.isOpen();
+  }
+
   openPreviewById(entryId: string): boolean {
     this.expand();
     const entry = this.entries.find((e) => e.id === entryId);

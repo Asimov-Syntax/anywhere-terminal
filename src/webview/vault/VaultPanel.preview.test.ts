@@ -150,3 +150,31 @@ describe("a surface that cannot perform vault actions", () => {
     expect(document.querySelectorAll(".vault-action--resume").length).toBeGreaterThan(0);
   });
 });
+
+describe("[1_5] whether a preview is open over the panel", () => {
+  it("reads false before an open, true while open, false after Escape", () => {
+    // The Worktree drawer's Escape handler defers to this. The shell never moves
+    // focus, so an Escape with the preview up still targets the row underneath —
+    // without this the drawer would close instead of the preview, and its
+    // stopPropagation would keep the preview open.
+    const { panel: p } = panel();
+    expect(p.isPreviewOpen()).toBe(false);
+
+    p.openPreviewById("claude:s1");
+    p.render(list("claude:s1"));
+    expect(shownEntryId(p)).toBe("claude:s1");
+    expect(p.isPreviewOpen()).toBe(true);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(p.isPreviewOpen()).toBe(false);
+  });
+
+  it("stays false for an entry the list never brought", () => {
+    // Pending is not open: the drawer must not defer to an overlay that is not
+    // on screen, or Escape would do nothing at all.
+    const { panel: p } = panel();
+    p.openPreviewById("claude:gone");
+    p.render(list("claude:s1"));
+    expect(p.isPreviewOpen()).toBe(false);
+  });
+});

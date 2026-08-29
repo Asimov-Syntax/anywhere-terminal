@@ -214,6 +214,17 @@ export class PreviewController {
   }
 
   /** Keep the active entry reference live when a host push skips the DOM re-render. */
+  /**
+   * Whether the card is on screen right now.
+   *
+   * Asked by surfaces that must not act on a keypress this overlay owns. It
+   * reads the shell's own flag rather than a copy, because `hide` can be reached
+   * without going back through here.
+   */
+  isOpen(): boolean {
+    return this.shell.isOpen();
+  }
+
   refreshActiveEntry(entry: VaultSessionEntry): void {
     this.activePreviewEntry = entry;
     // A rename commits through the host and lands back here. Patch the mounted

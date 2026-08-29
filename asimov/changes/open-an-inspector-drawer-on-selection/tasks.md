@@ -50,7 +50,7 @@
     3. In `src/webview/worktree/WorktreeView.ts` replace the private `requestedRosters` set and its inline eviction with one `RosterRequests` instance, calling `want` where the view asks today and `flush` **after** `renderListing` has committed the DOM — not from inside the repo loop, which `renderListing`'s own docstring warns re-enters the render.
     4. Write `src/webview/worktree/worktreeRosterRequests.test.ts` covering: one send for two `want` calls on one key; no send for a row with no session; a key dropped by `reconcile` can be wanted again; and nothing is sent before `flush`.
 
-- [ ] 1_5 Let the panel say whether a preview is open over it
+- [x] 1_5 Let the panel say whether a preview is open over it — verified: pnpm exec vitest run 'src/webview/vault/VaultPanel.preview.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#dismissing-the-inspector-leaves-the-selection-and-the-scope-alone <!-- design.md D9 -->
   - **Acceptance**:
