@@ -145,11 +145,7 @@ describe("createSessionPreviewService", () => {
 
   it("shares one read between concurrent asks for the same session", async () => {
     const svc = service({ "codex:s1": { ...CODEX, sessionPath: rollout } });
-    const [a, b, c] = await Promise.all([
-      svc.preview("codex:s1"),
-      svc.preview("codex:s1"),
-      svc.preview("codex:s1"),
-    ]);
+    const [a, b, c] = await Promise.all([svc.preview("codex:s1"), svc.preview("codex:s1"), svc.preview("codex:s1")]);
     expect([a, b, c]).toEqual(["the first answer", "the first answer", "the first answer"]);
     expect(reads).toEqual([rollout]);
     expect(stats).toEqual([rollout]);

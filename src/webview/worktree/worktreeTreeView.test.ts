@@ -10,9 +10,11 @@ import type { WorktreeAgentRow } from "./worktreeViewTypes";
 const NOW = 1_700_000_000_000;
 
 function render(over: Partial<WorktreeAgentRow>): HTMLElement {
-  return renderAgentRow(agentRow({ rowId: "row-1", title: "Building", ...over }), { activity: "idle", now: NOW }, {
-    onActivate: () => undefined,
-  });
+  return renderAgentRow(
+    agentRow({ rowId: "row-1", title: "Building", ...over }),
+    { activity: "idle", now: NOW },
+    { onActivate: () => undefined },
+  );
 }
 
 const previewOf = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".wt-apreview");

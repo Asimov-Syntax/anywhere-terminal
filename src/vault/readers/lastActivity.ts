@@ -38,10 +38,7 @@ export const MAX_WINDOW_BYTES = 1024 * 1024;
  * which provider the entry came from, and guessing would let one format's records
  * answer for the other.
  */
-export async function readLastActivityLine(
-  transcriptPath: string,
-  format: LastActivityFormat,
-): Promise<string | null> {
+export async function readLastActivityLine(transcriptPath: string, format: LastActivityFormat): Promise<string | null> {
   let handle: fs.FileHandle | undefined;
   try {
     handle = await fs.open(transcriptPath, "r");

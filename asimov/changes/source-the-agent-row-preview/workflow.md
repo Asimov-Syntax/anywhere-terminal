@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -53,6 +53,9 @@ Planned at: 1a907750
   service split out as its own task 1_2; coverage limited to file-backed sources and stated; 1_2
   verified against a real temporary file because a mocked dep cannot prove a file was not opened;
   1_4's file list widened to the two suites whose fixtures assume a stripped preview).
+- Verify gate: type check, biome check src, 5109 unit tests and the I10 fs-deletion gate all pass. Lint
+  is at its pre-existing baseline (5 errors / 14 warnings / 3 infos, identical to the 1a907750 clean
+  tree) — every one in files this change does not touch.
 - Residual validator warning triaged, not fixed: `agent-session-index` § "Metadata-only, bounded title
   preview, no egress" is long because it was already fused upstream (metadata + preview + truncation +
   cache/egress). Splitting it restructures an accepted requirement this change does not own; the added
