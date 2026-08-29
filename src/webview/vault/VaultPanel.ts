@@ -105,6 +105,13 @@ export interface VaultPanelDeps {
    * the host can supply a tree.
    */
   worktreeBody?: HTMLElement;
+  /**
+   * The workbench rollout (`anywhereTerminal.worktree.workbench`). On, the panel
+   * builds two controls — a body toggle in the toolbar and a grouping control
+   * inside the sessions body. Off, it builds the shipped flat control of four
+   * segments, unchanged (docs/design/worktree-panel-ui.md § 2, § 2.3).
+   */
+  workbench?: boolean;
   /** Toolbar "+" while the Worktree view is active. Absent → no create affordance. */
   onCreateWorktree?: () => void;
   /** The search box filters the worktree tree too — branch, path, agent title. */
@@ -174,6 +181,11 @@ export class VaultPanel {
   private readonly folderToggleEl: HTMLLabelElement;
   private readonly folderCheckboxEl: HTMLInputElement;
   private readonly segmentedEl: HTMLElement;
+  /** Level 1 — which body. Null before the workbench rollout. */
+  private readonly viewToggleEl: HTMLElement | null;
+  /** Level 2's home: a strip inside the sessions body. Null before the rollout. */
+  private readonly groupBarEl: HTMLElement | null;
+  private readonly workbench: boolean;
   private readonly statusEl: HTMLElement;
   private readonly bodyEl: HTMLElement;
   private readonly listEl: HTMLElement;
@@ -399,14 +411,22 @@ export class VaultPanel {
       attachTooltip(refreshBtn, { text: "Refresh — re-read sessions from disk now" }),
     );
 
-    // Toolbar: grouping segmented control (left) + "This folder only" (right).
+    // Toolbar: the body toggle (or, before the rollout, the flat control that
+    // fuses body and grouping) on the left + "This folder only" on the right.
     const toolbar = document.createElement("div");
     toolbar.className = "vault-toolbar";
+    this.workbench = deps.workbench === true;
     this.segmentedEl = document.createElement("div");
-    this.segmentedEl.className = "vault-segmented";
+    this.segmentedEl.className = this.workbench ? "vault-segmented" : "vault-segmented vault-segmented--flat";
     this.segmentedEl.setAttribute("role", "tablist");
     this.segmentedEl.setAttribute("aria-label", "Group by");
-    const segment = (label: string, icon: string, hint: string, onClick: () => void): HTMLButtonElement => {
+    const segment = (
+      into: HTMLElement,
+      label: string,
+      icon: string,
+      hint: string,
+      onClick: () => void,
+    ): HTMLButtonElement => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.title = hint;
@@ -416,13 +436,14 @@ export class VaultPanel {
       iconSpan.innerHTML = icon;
       iconSpan.setAttribute("aria-hidden", "true");
       const labelSpan = document.createElement("span");
-      // Four segments no longer fit at sidebar width, so CSS drops the label on
-      // unselected ones; the class is what it hooks onto.
+      // The flat control's four segments no longer fit at sidebar width, so CSS
+      // drops the label on its unselected ones; the class is what it hooks onto.
+      // Neither of the two-level controls ever drops a label.
       labelSpan.className = "vault-segmented-label";
       labelSpan.textContent = label;
       btn.append(iconSpan, labelSpan);
       btn.addEventListener("click", onClick);
-      this.segmentedEl.appendChild(btn);
+      into.appendChild(btn);
       return btn;
     };
     for (const [mode, label, icon, hint] of [
@@ -430,16 +451,43 @@ export class VaultPanel {
       ["agent", "Agent", ICON_AGENT, "Group by agent (Claude / Codex / OpenCode)"],
       ["folder", "Folder", ICON_FOLDER, "Group by working folder"],
     ] as const) {
-      const btn = segment(label, icon, hint, () => this.setGroupMode(mode));
+      const btn = segment(this.segmentedEl, label, icon, hint, () => this.setGroupMode(mode));
       btn.dataset.mode = mode;
     }
     this.worktreeBodyEl = deps.worktreeBody ?? null;
     this.onWorktreeVisibility = deps.onWorktreeVisibility;
-    if (this.worktreeBodyEl) {
-      const btn = segment("Worktree", ICON_BRANCH, "Worktrees", () => this.setView("worktree"));
-      btn.dataset.view = "worktree";
+    if (this.workbench) {
+      // Level 1 — which body. Level 2 lives in the body it groups, so the two are
+      // never in one row: five tab-shaped controls where four already did not fit
+      // would make the squeeze worse rather than remove it.
+      this.viewToggleEl = document.createElement("div");
+      this.viewToggleEl.className = "vault-view-toggle";
+      this.viewToggleEl.setAttribute("role", "tablist");
+      this.viewToggleEl.setAttribute("aria-label", "View");
+      for (const [view, label, icon, hint] of [
+        ["worktree", "Worktrees", ICON_BRANCH, "Show the workspace's worktrees"],
+        ["sessions", "Sessions", ICON_RECENT, "Show agent sessions"],
+      ] as const) {
+        const btn = segment(this.viewToggleEl, label, icon, hint, () => this.setView(view));
+        btn.dataset.view = view;
+      }
+      // A toggle whose worktree half leads nowhere would be a control offering a
+      // body that does not exist, so it is built only once one is supplied.
+      if (this.worktreeBodyEl) {
+        toolbar.appendChild(this.viewToggleEl);
+      }
+      this.groupBarEl = document.createElement("div");
+      this.groupBarEl.className = "vault-groupbar";
+      this.groupBarEl.appendChild(this.segmentedEl);
+    } else {
+      this.viewToggleEl = null;
+      this.groupBarEl = null;
+      if (this.worktreeBodyEl) {
+        const btn = segment(this.segmentedEl, "Worktree", ICON_BRANCH, "Worktrees", () => this.setView("worktree"));
+        btn.dataset.view = "worktree";
+      }
+      toolbar.appendChild(this.segmentedEl);
     }
-    toolbar.appendChild(this.segmentedEl);
 
     // Create lives next to the segmented control and only while the Worktree view
     // is up — a "+" in the sessions toolbar would have nothing to create.
@@ -483,6 +531,9 @@ export class VaultPanel {
     // above stay per-element — their targets are never rebuilt and their text is
     // dynamic.
     this.disposers.push(attachTooltipDelegate(this.listEl));
+    if (this.groupBarEl) {
+      this.bodyEl.appendChild(this.groupBarEl);
+    }
     this.bodyEl.appendChild(this.listEl);
     if (this.worktreeBodyEl) {
       this.bodyEl.appendChild(this.worktreeBodyEl);
@@ -542,6 +593,11 @@ export class VaultPanel {
     if (this.worktreeBodyEl) {
       this.worktreeBodyEl.style.display = worktree ? "" : "none";
     }
+    // Grouping buckets sessions and the Worktree body holds none, so the control
+    // is withdrawn rather than left present and inert.
+    if (this.groupBarEl) {
+      this.groupBarEl.hidden = worktree;
+    }
     // The worktree tree is already folder-scoped, so "This folder only" has
     // nothing to scope and is hidden rather than shown doing nothing.
     this.folderToggleEl.hidden = worktree;
@@ -565,9 +621,12 @@ export class VaultPanel {
 
   /** Set the grouping mode (segmented control). Persists unless seeding. */
   setGroupMode(mode: GroupMode, opts: { persist?: boolean } = {}): void {
-    // Picking a grouping is also how the user leaves the Worktree body — the three
-    // grouping segments and the Worktree segment share one `role="tablist"`.
-    const leavingWorktree = this.view === "worktree";
+    // Under the FLAT control, picking a grouping is also how the user leaves the
+    // Worktree body: its three grouping segments and its Worktree segment share
+    // one `role="tablist"`. The two-level control has no such coupling — its
+    // grouping tablist is not rendered in that body, so the only caller from
+    // there is a programmatic seed, which must not swap the body under the user.
+    const leavingWorktree = !this.workbench && this.view === "worktree";
     if (leavingWorktree) {
       this.setView("sessions", opts);
     }
@@ -587,11 +646,15 @@ export class VaultPanel {
 
   private syncSegmented(): void {
     // role="tab" → active state is communicated via aria-selected, not aria-pressed (W7).
-    for (const btn of Array.from(this.segmentedEl.querySelectorAll<HTMLButtonElement>("button"))) {
-      const selected = btn.dataset.view
-        ? this.view === btn.dataset.view
-        : this.view === "sessions" && btn.dataset.mode === this.groupMode;
-      btn.setAttribute("aria-selected", selected ? "true" : "false");
+    for (const el of [this.segmentedEl, this.viewToggleEl]) {
+      for (const btn of Array.from(el?.querySelectorAll<HTMLButtonElement>("button") ?? [])) {
+        const selected = btn.dataset.view
+          ? this.view === btn.dataset.view
+          : // Under the two-level control the grouping tablist is only shown in the
+            // sessions body, so its selection is the grouping alone.
+            (this.workbench || this.view === "sessions") && btn.dataset.mode === this.groupMode;
+        btn.setAttribute("aria-selected", selected ? "true" : "false");
+      }
     }
   }
 

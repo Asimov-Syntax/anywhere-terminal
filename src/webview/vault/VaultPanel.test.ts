@@ -4309,3 +4309,111 @@ describe("the create-worktree toolbar control", () => {
     expect(btn(host)?.hidden).toBe(false);
   });
 });
+
+describe("the two-level view control", () => {
+  function worktreeBody(): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "wt-tree";
+    return el;
+  }
+
+  function panelWith(over: { workbench?: boolean } = {}): { host: HTMLElement; panel: VaultPanel } {
+    const host = createHost();
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: worktreeBody(),
+      workbench: over.workbench ?? true,
+    });
+    return { host, panel };
+  }
+
+  const viewBtn = (host: HTMLElement, view: string) =>
+    host.querySelector<HTMLButtonElement>(`.vault-view-toggle button[data-view="${view}"]`);
+  const modeBtn = (host: HTMLElement, mode: string) =>
+    host.querySelector<HTMLButtonElement>(`.vault-segmented button[data-mode="${mode}"]`);
+
+  it("[1_1] names both bodies on a control of their own", () => {
+    const { host } = panelWith();
+    expect(host.querySelectorAll(".vault-view-toggle button")).toHaveLength(2);
+    // Every value labelled at every width: the control has to answer "which body
+    // am I in" without a hover. The flat control dropped unselected labels.
+    for (const view of ["worktree", "sessions"]) {
+      expect(viewBtn(host, view)?.querySelector(".vault-segmented-label")?.textContent).toBeTruthy();
+    }
+    expect(host.querySelectorAll(".vault-view-toggle button[data-mode]")).toHaveLength(0);
+  });
+
+  it("[1_1] keeps grouping out of the toolbar and inside the sessions body", () => {
+    const { host } = panelWith();
+    const bar = host.querySelector<HTMLElement>(".vault-groupbar");
+    expect(bar).not.toBeNull();
+    expect(bar?.parentElement?.className).toBe("vault-body");
+    expect(host.querySelector(".vault-toolbar .vault-segmented")).toBeNull();
+    expect(host.querySelectorAll(".vault-groupbar .vault-segmented button")).toHaveLength(3);
+  });
+
+  it("[1_1] withdraws the grouping control in the body that has nothing to group", () => {
+    const { host, panel } = panelWith();
+    const bar = host.querySelector<HTMLElement>(".vault-groupbar");
+    expect(bar?.hidden).toBe(false);
+
+    panel.setView("worktree", { persist: false });
+    // Absent, not inert — and the body control still names both of its values.
+    expect(bar?.hidden).toBe(true);
+    expect(host.querySelectorAll(".vault-view-toggle button")).toHaveLength(2);
+  });
+
+  it("[1_1] restores the grouping that was in effect before the user left", () => {
+    const { host, panel } = panelWith();
+    modeBtn(host, "folder")?.click();
+    panel.setView("worktree", { persist: false });
+    panel.setView("sessions", { persist: false });
+
+    expect(modeBtn(host, "folder")?.getAttribute("aria-selected")).toBe("true");
+    expect(modeBtn(host, "recent")?.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("[1_1] does not leave the worktree body when a grouping is set programmatically", () => {
+    // Under the flat control, picking a grouping WAS how the user left the
+    // worktree body — the four segments shared one tablist. The grouping control
+    // is unreachable from that body now, so a seeded grouping must not swap it.
+    const { panel } = panelWith();
+    panel.setView("worktree", { persist: false });
+    panel.setGroupMode("agent", { persist: false });
+    expect(panel.getView()).toBe("worktree");
+  });
+
+  it("[1_1] marks the chosen body on the control that chose it", () => {
+    const { host, panel } = panelWith();
+    expect(viewBtn(host, "sessions")?.getAttribute("aria-selected")).toBe("true");
+    expect(viewBtn(host, "worktree")?.getAttribute("aria-selected")).toBe("false");
+
+    viewBtn(host, "worktree")?.click();
+    expect(panel.getView()).toBe("worktree");
+    expect(viewBtn(host, "worktree")?.getAttribute("aria-selected")).toBe("true");
+    expect(viewBtn(host, "sessions")?.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("[1_1] honours a body and a grouping recorded before the split", () => {
+    const host = createHost();
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: worktreeBody(),
+      workbench: true,
+      getInitialView: () => "worktree",
+      getInitialGroupMode: () => "folder",
+    });
+    expect(panel.getView()).toBe("worktree");
+    panel.setView("sessions", { persist: false });
+    expect(modeBtn(host, "folder")?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("[1_1] renders the shipped flat control while the setting is off", () => {
+    const { host } = panelWith({ workbench: false });
+    expect(host.querySelector(".vault-view-toggle")).toBeNull();
+    expect(host.querySelector(".vault-groupbar")).toBeNull();
+    expect(host.querySelectorAll(".vault-toolbar .vault-segmented button")).toHaveLength(4);
+  });
+});

@@ -1133,6 +1133,7 @@ function handleInit(msg: InitMessage): void {
       host: vaultHost,
       actionsAvailable: msg.vaultActionsAvailable,
       worktreeBody: worktreeController.element,
+      workbench: msg.worktreeWorkbench,
       // Supplying this is what CONSTRUCTS the toolbar control: `VaultPanel` builds
       // it only when a create callback exists, and nothing here supplied one, so
       // the primary create affordance had never been rendered.
