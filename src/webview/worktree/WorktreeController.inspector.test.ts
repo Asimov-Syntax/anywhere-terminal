@@ -27,12 +27,7 @@ interface Harness {
 }
 
 function mount(
-  over: {
-    workbench?: boolean;
-    overlayOpen?: () => boolean;
-    expandedRows?: string[];
-    presence?: WorktreePresence;
-  } = {},
+  over: { workbench?: boolean; overlayOpen?: () => boolean; expandedRows?: string[]; presence?: WorktreePresence } = {},
 ): Harness {
   const posts: WebViewToExtensionMessage[] = [];
   const selections: (string | null)[] = [];
@@ -192,7 +187,7 @@ describe("dismissal", () => {
   it("leaves focus where the user put it when the drawer never held it", () => {
     // Returning focus unconditionally would yank a keyboard user out of
     // wherever they actually were.
-    const h = mount();
+    mount();
     row(PANEL).click();
     row(MAIN).focus();
     dismiss();

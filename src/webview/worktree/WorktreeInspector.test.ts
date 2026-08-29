@@ -109,7 +109,10 @@ describe("what the drawer shows", () => {
 
   it("replaces its contents rather than stacking on a second selection", () => {
     const { inspector } = mount();
-    inspector.setData(treeWith(worktree({ id: WT, branch: "feat/x" }), worktree({ id: "/repo/b", branch: "feat/y" })), null);
+    inspector.setData(
+      treeWith(worktree({ id: WT, branch: "feat/x" }), worktree({ id: "/repo/b", branch: "feat/y" })),
+      null,
+    );
     inspector.open(WT);
     inspector.open("/repo/b");
     expect(inspector.element.querySelectorAll(".wt-ibranch").length).toBe(1);
