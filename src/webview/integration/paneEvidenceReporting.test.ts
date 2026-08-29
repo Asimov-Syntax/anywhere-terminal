@@ -21,6 +21,7 @@ import { createPaneEvidenceReporter } from "../terminal/paneEvidenceReporter";
 import { TerminalActivityTracker } from "../terminal/TerminalActivityTracker";
 import { TerminalFactory } from "../terminal/TerminalFactory";
 import { ICON_TERMINAL } from "../vault/icons";
+import { presentedActivity } from "../worktree/worktreeFormat";
 import { renderAgentRow } from "../worktree/worktreeTreeView";
 import type { WorktreeAgentRow } from "../worktree/worktreeViewTypes";
 
@@ -371,7 +372,7 @@ describe("a spinner frame proves activity, never identity", () => {
 
     const icon = renderAgentRow(
       row as WorktreeAgentRow,
-      { now: NOW },
+      { activity: presentedActivity(row as WorktreeAgentRow, []), now: NOW },
       { onActivate: () => {} },
     ).querySelector<HTMLElement>(".wt-aicon");
     // Through a parse on both sides: jsdom rewrites `<rect …/>` to `<rect …></rect>`, so

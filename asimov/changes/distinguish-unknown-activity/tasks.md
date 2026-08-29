@@ -44,3 +44,16 @@
     4. In `src/webview/worktree/WorktreeRemoveDialog.ts`, draw each busy row with its presented state; keep the filter inclusive (W1).
     5. In `src/webview/worktree/worktreeTreeView.ts`, key the `~` confidence marker off the presented state and give the worktree row's phrasing a named helper (W3, S2).
     6. In `src/webview/worktree/WorktreeView.test.ts`, normalize the shape rules a second time with `animation` stripped and read the reduced-motion override, so the guard fails on the pre-change ring (W2).
+
+## 3. Review round 2
+
+- [x] 3_1 Say exactly how much of the busy list is confirmed — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: specs/worktree-panel/spec.md#an-activity-no-source-could-determine-is-not-presented-as-idle
+  - **Acceptance**:
+    - Outcome: the refusal's certainty matches the rows listed under it
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeRemoveDialog.ts`, partition the busy rows into confirmed and unreadable and phrase all four cases — all confirmed, all unreadable, mixed, and none listed (N1, N3). Make the two optional presented-state defaults required (N2).
+    2. In `src/webview/worktree/worktreeTreeView.ts`, name the failing source in the `unknown` tooltip rather than the row's own label, matching the stale affordance, and drop the now-required default (N7, N2).
+    3. In `src/webview/worktree/WorktreeView.test.ts`, pin the certainty branch's own string, and read `::after` and the dropped fill declarations so deleting a state's fill fails the shape guard (N1, N8).

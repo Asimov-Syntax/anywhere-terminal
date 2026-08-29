@@ -294,8 +294,8 @@ describe("tree structure", () => {
         .filter((d) => d.length > 0);
     };
     // A hue is a colour; `transparent` is the absence of an edge, which is shape.
-    // Collapsing both to the same token is what let the pre-change tinted ring
-    // pass as distinct from `idle` — it did not have to be, and it was not.
+    // Collapsing both to one token is what let the pre-change tinted ring pass as
+    // distinct from `idle` — it did not have to be, and it was not.
     const flatten = (value: string): string =>
       value
         // Innermost first: a `var()` inside a `color-mix()` has to collapse before
@@ -305,31 +305,84 @@ describe("tree structure", () => {
         .replace(/color-mix\([^)]*\)/g, "C")
         .replace(/\btransparent\b/g, "NONE")
         .trim();
-    const shapeOf = (state: string, dropMotion: boolean): string => {
+
+    const SIDES = ["top", "right", "bottom", "left"] as const;
+    /**
+     * What the rule actually draws: which of the four edges are inked, whether it
+     * carries a fill, and every non-colour declaration. Which EDGES exist is shape;
+     * which hue an existing edge takes is not — the arc is two sides of four, and
+     * the ring it replaced was four, which is why they must not compare equal.
+     */
+    const shapeOf = (state: string, dropMotion: boolean): { key: string; inked: boolean } => {
       const base = declsOf(css, state);
       expect(base, `no rule for .wt-state--${state}`).not.toEqual([]);
-      // The reduced-motion block overrides, so its declarations win where present.
+      const layers: [string, string[]][] = [
+        ["", dropMotion ? [...base, ...declsOf(reduced, state)] : base],
+        [
+          "after",
+          dropMotion
+            ? [...declsOf(css, `${state}::after`), ...declsOf(reduced, `${state}::after`)]
+            : declsOf(css, `${state}::after`),
+        ],
+      ];
       const kept = new Map<string, string>();
-      for (const decl of dropMotion ? [...base, ...declsOf(reduced, state)] : base) {
-        const [prop = "", ...rest] = decl.split(":");
-        const value = flatten(rest.join(":"));
-        if (/color|background|opacity/.test(prop) && !value.includes("NONE")) {
-          continue;
+      let inked = false;
+      for (const [layer, decls] of layers) {
+        const edges = new Map<string, string>();
+        let fill = "none";
+        for (const decl of decls) {
+          const [rawProp = "", ...rest] = decl.split(":");
+          const prop = rawProp.trim();
+          const value = flatten(rest.join(":"));
+          if (dropMotion && /^(animation|transition)/.test(prop)) {
+            continue;
+          }
+          if (prop === "background" || prop === "background-color") {
+            fill = value.includes("NONE") ? "none" : "filled";
+            continue;
+          }
+          // `border: w style c` inks every side; `border-<side>[-color]` one.
+          const side = SIDES.find((sd) => prop.startsWith(`border-${sd}`));
+          if (prop === "border" || side !== undefined) {
+            const lit = value.includes("NONE") ? "" : "ink";
+            for (const sd of side === undefined ? SIDES : [side]) {
+              edges.set(sd, lit);
+            }
+            if (prop === "border" || prop === `border-${side}`) {
+              kept.set(`${layer}/style`, value.replace(/\bC\b|\bNONE\b/g, "").trim());
+            }
+            continue;
+          }
+          if (/color|opacity/.test(prop)) {
+            continue;
+          }
+          kept.set(`${layer}/${prop}`, value);
         }
-        if (dropMotion && /animation|transition/.test(prop)) {
-          continue;
-        }
-        kept.set(prop.trim(), value);
+        const profile = SIDES.map((sd) => (edges.get(sd) === "ink" ? sd[0] : "-")).join("");
+        kept.set(`${layer}/edges`, profile);
+        kept.set(`${layer}/fill`, fill);
+        inked ||= fill === "filled" || profile !== "----";
       }
-      return [...kept.entries()]
-        .sort()
-        .map(([k, v]) => `${k}:${v}`)
-        .join(";");
+      return {
+        key: [...kept.entries()]
+          .sort()
+          .map(([k, v]) => `${k}:${v}`)
+          .join(";"),
+        inked,
+      };
     };
 
+    const STATES = ["running", "waiting", "idle", "unknown", "exited"];
     for (const dropMotion of [false, true]) {
-      const shapes = ["running", "waiting", "idle", "unknown", "exited"].map((st) => shapeOf(st, dropMotion));
-      expect(new Set(shapes).size, `two states share a shape (motion dropped: ${dropMotion})`).toBe(shapes.length);
+      const shapes = STATES.map((st) => shapeOf(st, dropMotion));
+      // Distinct is not enough: a rule that draws nothing at all is distinct from
+      // every other rule and invisible on screen. Each state must carry ink of its
+      // own — a fill, or at least one edge that is not transparent.
+      for (const [i, shape] of shapes.entries()) {
+        expect(shape.inked, `.wt-state--${STATES[i]} draws nothing (motion dropped: ${dropMotion})`).toBe(true);
+      }
+      const keys = shapes.map((sh) => sh.key);
+      expect(new Set(keys).size, `two states share a shape (motion dropped: ${dropMotion})`).toBe(keys.length);
     }
   });
 
@@ -1212,6 +1265,65 @@ describe("dialogs", () => {
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
     expect(host.querySelector(".wt-refusebox b")?.textContent).toContain("nothing can currently confirm it");
     expect(host.querySelector(".wt-dialog .wt-arow .wt-state")?.className).toContain("wt-state--unknown");
+  });
+
+  it("keeps the certain sentence when every listed row is confirmed", () => {
+    const { view, host } = mount();
+    view.setData(populated());
+    const info = singleRepoTree().repos[0]?.worktrees[1];
+    if (!info) {
+      throw new Error("fixture lost the panel worktree");
+    }
+    // Pinned so a regression that hedges everything cannot pass by only ever
+    // asserting the hedged string.
+    view.openRemoveDialog({
+      info,
+      blocker: refusedBlocker,
+      agentRows: [
+        agentRow({ rowId: "busy", agent: "claude", activity: "waiting", activitySource: "hook", title: "worker" }),
+      ],
+      degradedSources: [{ source: "panes", reason: "scan failed", since: NOW }],
+    });
+    expect(host.querySelector(".wt-refusebox b")?.textContent).toBe("An agent is mid-turn in this worktree.");
+  });
+
+  it("says which part of a mixed list it can vouch for", () => {
+    const { view, host } = mount();
+    view.setData(populated());
+    const info = singleRepoTree().repos[0]?.worktrees[1];
+    if (!info) {
+      throw new Error("fixture lost the panel worktree");
+    }
+    view.openRemoveDialog({
+      info,
+      blocker: refusedBlocker,
+      agentRows: [
+        agentRow({ rowId: "seen", agent: "claude", activity: "running", activitySource: "hook", title: "a" }),
+        agentRow({ rowId: "blind", agent: "claude", activity: "running", activitySource: "output", title: "b" }),
+      ],
+      degradedSources: [{ source: "panes", reason: "scan failed", since: NOW }],
+    });
+    // One row draws a live dot and one draws unknown; a single sentence for both
+    // would misdescribe whichever half it is not about.
+    expect(host.querySelector(".wt-refusebox b")?.textContent).toBe(
+      "An agent is mid-turn in this worktree, and others here cannot be read at all.",
+    );
+    const dots = Array.from(host.querySelectorAll(".wt-dialog .wt-arow .wt-state")).map((d) => d.className);
+    expect(dots.some((c) => c.includes("wt-state--running"))).toBe(true);
+    expect(dots.some((c) => c.includes("wt-state--unknown"))).toBe(true);
+  });
+
+  it("makes the weakest claim when the blocker counted an agent no row can show", () => {
+    const { view, host } = mount();
+    view.setData(populated());
+    const info = singleRepoTree().repos[0]?.worktrees[1];
+    if (!info) {
+      throw new Error("fixture lost the panel worktree");
+    }
+    view.openRemoveDialog({ info, blocker: refusedBlocker, agentRows: [] });
+    expect(host.querySelector(".wt-refusebox b")?.textContent).toBe(
+      "An agent was mid-turn in this worktree, and no row can be shown for it now.",
+    );
   });
 
   it("reopens the confirmation from a blocked action result", () => {

@@ -169,7 +169,12 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     const degraded = deps.degradedSources ?? [];
     // Named before the copy branches, because the copy asks whether any listed
     // row is one no live source can vouch for.
+    // The filter stays on the WIRE value, so a source going down never shrinks
+    // this refusal — warning about a possibly-working agent is the safe side of
+    // deleting a folder. What the source decides is the CLAIM made about each row.
     const busy = (deps.agentRows ?? []).filter((r) => r.activity === "running" || r.activity === "waiting");
+    const presented = busy.map((row) => [row, presentedActivity(row, degraded)] as const);
+    const confirmed = presented.filter(([, a]) => a !== "unknown").length;
     const box = document.createElement("div");
     box.className = "wt-refusebox";
     const lead = document.createElement("b");
@@ -198,14 +203,19 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       }
       box.appendChild(nested);
     } else {
-      // The filter below stays on the WIRE value, so a source going down never
-      // shrinks this refusal — warning about a possibly-working agent is the safe
-      // side of deleting a folder. What the source decides is the CLAIM: with no
-      // live evidence, the dialog says it cannot tell rather than that it knows.
-      const anyUnreadable = busy.some((r) => presentedActivity(r, degraded) === "unknown");
-      lead.textContent = anyUnreadable
-        ? "An agent may be mid-turn in this worktree, and nothing can currently confirm it."
-        : "An agent is mid-turn in this worktree.";
+      // Four cases, because a list can be part confirmed and part unreadable, and
+      // one sentence for the whole list would misdescribe whichever part it is not
+      // about. Nothing listed is the LEAST evidenced case, so it gets the weakest
+      // claim — the blocker counted an agent that no row can now show.
+      if (presented.length === 0) {
+        lead.textContent = "An agent was mid-turn in this worktree, and no row can be shown for it now.";
+      } else if (confirmed === 0) {
+        lead.textContent = "An agent may be mid-turn in this worktree, and nothing can currently confirm it.";
+      } else if (confirmed === presented.length) {
+        lead.textContent = "An agent is mid-turn in this worktree.";
+      } else {
+        lead.textContent = "An agent is mid-turn in this worktree, and others here cannot be read at all.";
+      }
       box.append(
         lead,
         document.createTextNode(
@@ -217,10 +227,10 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
 
     // Name the agent rather than the count: "stop it first" is only actionable if
     // the user can see which one.
-    for (const row of busy) {
+    for (const [row, activity] of presented) {
       const el = renderAgentRow(
         row,
-        { activity: presentedActivity(row, degraded), now: deps.now },
+        { activity, now: deps.now },
         {
           onActivate: () => deps.onShowAgent?.(row),
           onContextMenu: () => {},

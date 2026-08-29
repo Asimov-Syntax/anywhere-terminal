@@ -8,6 +8,7 @@
 // UNTRUSTED. Every one of them is written via `textContent`; the only innerHTML
 // is a static icon constant or the closed agent-icon map (D1).
 
+import { ACTIVITY_EVIDENCE } from "../../worktree/presenceTypes";
 import { getAgentAccent, getAgentIcon } from "../vault/agentIcons";
 import { ICON_CHEVRON_DOWN, ICON_FOLDER, ICON_TERMINAL } from "../vault/icons";
 import { emptyState } from "../vault/renderAtoms";
@@ -303,10 +304,10 @@ export function renderAgentsHeader(count: number, onCollapse: () => void): HTMLE
 export interface AgentRowOptions {
   /**
    * The state to DRAW, which the caller derives because only it holds the
-   * degradation list. Absent falls back to the row's own activity — honest for a
-   * caller with no presence to consult, never a claim that no source failed.
+   * degradation list. Required: a default here is how a caller silently draws the
+   * wire value, which is the omission round 1 found on two separate surfaces.
    */
-  activity?: PresentedActivity;
+  activity: PresentedActivity;
   /** Subagent disclosure state — independent of the worktree's own collapse (§ 3.5). */
   expanded?: boolean;
   selected?: boolean;
@@ -356,7 +357,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   el.appendChild(gutter);
 
   // 2 — state dot. Colour from the state, never from the agent.
-  const activity = opts.activity ?? row.activity;
+  const activity = opts.activity;
   el.appendChild(stateShape(activity, activityLabel(activity)));
 
   // 3 — agent icon. Absent without a proven identity: `agentSource: "none"` is a
@@ -393,10 +394,14 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
     const marker = document.createElement("span");
     marker.className = "wt-confidence";
     marker.textContent = "~";
+    // Names the FAILING source, the same word the stale affordance uses, rather
+    // than the row's own label — `output` and `title` are both read off `panes`,
+    // and pointing at a name the degradation list never mentions is a dead end.
+    const failing = ACTIVITY_EVIDENCE[row.activitySource];
     marker.dataset.tip =
-      row.activitySource === "none"
+      failing === undefined
         ? "No source reported this row's activity"
-        : `Activity came from ${row.activitySource}, which is not currently reporting`;
+        : `Activity came from ${failing}, which is not currently reporting`;
     title.append(document.createTextNode(" "), marker);
   } else if (isFallbackActivity(row.activitySource)) {
     const marker = document.createElement("span");
