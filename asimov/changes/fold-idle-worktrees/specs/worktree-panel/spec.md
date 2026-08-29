@@ -43,14 +43,19 @@ WHEN the number of agentless worktrees a repository renders reaches the folding 
 - **WHEN** a repository holds three agentless worktrees
 - **THEN** each renders as its own line and no disclosure row is rendered
 
-### Requirement: The idle fold and the display cap never describe the same rows
+### Requirement: The display cap is resolved before the idle fold
 
-WHERE a display cap also applies to a repository, the cap SHALL be resolved before the fold. The capping affordance SHALL report only what the cap excludes, and the idle disclosure SHALL count only rows the cap admitted.
+WHERE a display cap also applies to a repository, the cap SHALL be resolved before the fold, and the idle disclosure SHALL count only rows the cap admitted. What the capping affordance itself states is unchanged and remains owned by [A capped listing says it is capped](../../../../specs/worktree-panel/spec.md). Revealing the capped remainder SHALL expose every excluded row exactly once.
 
 #### Scenario: A capped listing that also has an idle tail
 
 - **WHEN** a repository holds more worktrees than the cap admits, and the admitted ones include enough agentless worktrees to fold
-- **THEN** the idle disclosure counts only the agentless rows the cap admitted, and the capping affordance separately reports the worktrees the cap excluded
+- **THEN** the idle disclosure counts only the agentless rows the cap admitted, and the capping affordance states the repository's full count
+
+#### Scenario: Revealing the remainder admits the rows the cap withheld
+
+- **WHEN** the user reveals the capped remainder on a repository that also folds an idle tail
+- **THEN** every worktree of that repository is reachable exactly once, and the idle disclosure now counts every agentless row among them
 
 ### Requirement: A worktree whose presence cannot be read is never folded away
 

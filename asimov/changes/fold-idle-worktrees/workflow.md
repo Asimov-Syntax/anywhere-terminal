@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -31,11 +31,11 @@
 
 Blueprint: none
 Lane: light
-Planned at: b22eb683
+Planned at: b9467406
 
 Blueprint: docs/PLAN.md task WT-009.1
 Lane: light — one concern (the idle tail), reuses the existing disclosure and persistence; flags: user-visible-ui
-Planned at: b22eb683
+Planned at: b9467406
 
 - Fastlane: no fork. docs/design/worktree-panel-ui.md § 3.6 settles the threshold, the treatment, the ordering, the counting rule and the search behaviour; nothing was left open for planning to choose.
 - Idleness is a POSITIVE determination — no rows, presence loaded, no source degraded — not `rows.length === 0`. The blueprint names this as the task's trap: absence of evidence would fold away precisely the worktrees the degradation marker exists to surface.
@@ -50,3 +50,18 @@ Planned at: b22eb683
 - Must not: no filter state, no popover, no "hide sleeping" toggle. § 7.5 keeps that deferred and this task is the 80% that pays for itself without it.
 
 - Verify gate: lint runs in check mode; 17 findings, byte-identical to the same run on a detached worktree at HEAD before this change. Zero introduced.
+
+- Handback (review round 2, B3): reopened Gate 2. An ADDED clause cannot repeal an
+  unmodified base requirement, and mine did — "the capping affordance SHALL report only
+  what the cap excludes" against `A capped listing says it is capped` ("stating the full
+  count"). Gate 2, tasks and verify unticked; the verify evidence was earned against the
+  contradicting behaviour.
+- Cap-clause fork settled toward the BASE requirement, not the delta: the double-
+  description the ADDED clause exists to prevent is already fully carried by its other
+  half ("the idle disclosure SHALL count only rows the cap admitted"). A total that
+  happens to include idle rows is a count of the repository, not a claim about them, so
+  the "reports only what the cap excludes" half was overreach — it bought nothing the
+  clause did not already have and cost an accepted requirement plus `docs/design/
+  worktree-panel-ui.md` § 8. Narrowing the delta and reverting the label.
+- Notice reach is NOT planned here: it mints an invariant owner, so it is its own change
+  and this one depends on it.
