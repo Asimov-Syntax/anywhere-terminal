@@ -905,11 +905,21 @@ export class WorktreeController {
    * happened — rather than a second channel the user has to learn (design.md D7).
    */
   reportScopeCleared(worktreeId: string, label: string): void {
+    this.stageScopeCleared(worktreeId, label);
+    this.push();
+  }
+
+  /**
+   * The same statement, without the repaint. The seam stages it before handing the
+   * tree over, so ONE push carries the notice and the tree that caused it — the
+   * notice is never painted beside the row it contradicts, and the panel is not
+   * rebuilt twice for one event (round-2 V5).
+   */
+  stageScopeCleared(worktreeId: string, label: string): void {
     this.actionResults = [
       ...this.actionResults.filter((r) => !(r.action === "scope" && r.worktreeId === worktreeId)),
       { action: "scope", worktreeId, outcome: "ok", orphanedLabel: label },
     ];
-    this.push();
   }
 
   dispose(): void {

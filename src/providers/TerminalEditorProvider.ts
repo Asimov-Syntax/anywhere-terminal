@@ -1116,10 +1116,10 @@ export class TerminalEditorProvider {
    * Safely post a message to the webview, handling both sync throws and async rejections.
    */
   /**
-   * `ExtensionToWebViewMessage`, not `unknown`: this took `unknown`, and a REQUIRED
-   * init field missing from all three of this provider's branches type-checked
-   * clean for a whole change (round-1 B3). The union is what makes an omission a
-   * compile error instead of a surface that is silently inert.
+   * `ExtensionToWebViewMessage`, not `unknown`. `init` does NOT come through here —
+   * it goes through `safeSendWithRetry`, which is where round-1 B3 actually lived
+   * and where round-2 V0 found the narrowing still missing. Typed all the same, so
+   * the two senders cannot drift apart again.
    */
   private safePostMessage(message: ExtensionToWebViewMessage): void {
     try {
@@ -1138,7 +1138,19 @@ export class TerminalEditorProvider {
    * implementation in TerminalViewProvider so editor + sidebar/panel
    * providers share the same delivery guarantee. See .reviews/round-4.md [W1].
    */
-  private async safeSendWithRetry(message: unknown, maxRetries = 2, shouldAbort?: () => boolean): Promise<boolean> {
+  /**
+   * `ExtensionToWebViewMessage`, not `unknown`. THIS is the sender every `init`
+   * goes through, and while it took `unknown` a REQUIRED init field missing from
+   * all three of this provider's branches type-checked clean — for a whole change
+   * (round-1 B3), and then for a whole fix round after the narrowing went to the
+   * wrong function (round-2 V0). The union is what makes an omission a compile
+   * error instead of a surface that is silently inert.
+   */
+  private async safeSendWithRetry(
+    message: ExtensionToWebViewMessage,
+    maxRetries = 2,
+    shouldAbort?: () => boolean,
+  ): Promise<boolean> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // Bail before every attempt, including before a retry: a late retry must
       // not overwrite newer data the caller has since posted.

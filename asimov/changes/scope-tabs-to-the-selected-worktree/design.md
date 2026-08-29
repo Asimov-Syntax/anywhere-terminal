@@ -100,7 +100,17 @@ filter with extra steps.
 | It is absent (removed, pruned, or never there — including a persisted id) | Cleared, and said |
 
 "Said" reuses the panel's existing action-result surface — the same one a create that could not
-open reports through — rather than a second notice channel.
+open reports through — rather than a second notice channel. It is *staged* into that surface just
+before the tree is handed to the panel, so a single repaint carries the notice and the tree that
+caused it: the notice is never painted beside a row for the worktree it says is gone.
+
+**A restored scope marks no row, and this is required rather than missing.** After a reload the
+chip names a worktree while the panel marks nothing — `specs/worktree-panel/spec.md` forbids
+selecting a worktree on the user's behalf on a reload, and `specs/tab-bar-component/spec.md`
+requires the scope to survive one. The two together mandate exactly this state, so seeding the
+panel's mark from the restored scope would repeal the first clause. Pinned by a negative assertion
+in `tabBarScopeWiring.test.ts` (round-2 V6), because it reads like an omission and a later round
+would otherwise "fix" it.
 
 **No attribution retention, and this is deliberate.** A degraded presence source cannot empty
 attribution, so there is nothing to retain. Attribution is `attribute(normalize(pane.cwd),

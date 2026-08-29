@@ -139,3 +139,18 @@
     5. B3: `worktreeWorkbench` on every `TerminalEditorProvider` init branch, its `affectsConfiguration` listener, and its post-init re-send — the same three pieces `worktreeRowActivation` has there. Cover them the way `TerminalViewProvider.worktree.test.ts` covers its own. Then close the reason the omission compiled: both providers' `safePostMessage` took `unknown`, so a REQUIRED init field missing from three branches type-checked clean. Both now take `ExtensionToWebViewMessage`.
     6. W2: the drop notice is reported after the controller holds the tree that dropped it. W3: one exported canonicaliser in `paneAttribution.ts` that both the dedup key and the render signature call.
     7. The accepted suggestions: `scopedLabel()` joins the signature so a rename redraws; `role="group"` on the chip; `position: sticky` so the escape hatch cannot scroll away; `buildAttribution` filters to window scope once; `.wt-group` keeps a container treatment rather than spacing alone.
+
+- [x] 2_2 Close round 2 — the init type guard, and the halves round 1 left — verified: pnpm exec vitest run 'src/webview/tabBarScopeWiring.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-2.md, specs/worktree-panel/spec.md#the-selected-worktree-is-the-only-one-marked-as-selected, design.md#d8-the-tab-bar-gets-its-own-signature-in-its-own-coordinator
+  - **Acceptance**:
+    - Outcome: deleting a required init field from any provider branch fails the type check, and every seam mutator is driven through the seam
+    - Verify: unit src/webview/tabBarScopeWiring.test.ts
+  - **Plan**:
+    0. Files: `src/providers/TerminalEditorProvider.ts`, `src/providers/TerminalEditorProvider.test.ts`, `src/providers/TerminalViewProvider.ts`, `src/providers/webviewHtml.ts`, `src/webview/TabBarUtils.ts`, `src/webview/TabBar.test.ts`, `src/webview/tabBarScopeWiring.ts`, `src/webview/tabBarScopeWiring.test.ts`, `src/webview/main.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/messaging/MessageRouter.ts`, `asimov/changes/scope-tabs-to-the-selected-worktree/design.md`.
+    0a. Added mid-task: `MessageRouter.ts` carries a lint finding THIS change introduced (`b20355f0`), missed at the last gate because the file list fed to `comm` was unsorted.
+    1. V0: `safeSendWithRetry` takes `ExtensionToWebViewMessage` on both providers — that is the function `init` actually goes through. Correct the two doc comments that claim otherwise.
+    2. V1: the view announces before it commits, so a thrown persist cannot leave the panel marking a row the coordinator refused.
+    3. V2: the flag flip goes through the seam like everything else — `setWorkbench` joins `TabBarScopePanel` — and the test drives the seam rather than the controller.
+    4. V3 guards `deliver` so a throw still drains the queue; V4 and V7 use the render gate; V5 stages the notice before `deliver` so one repaint carries both.
+    5. V6: record in D7 that a restored scope leaves the panel marking nothing, and pin it with the negative assertion. V8 focus, V9 opaque fallback.

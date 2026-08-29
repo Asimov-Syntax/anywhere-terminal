@@ -227,10 +227,12 @@ export function getTerminalHtml(
       flex-shrink: 0;
       white-space: nowrap;
       color: var(--vscode-badge-foreground, #fff);
-      background: var(--vscode-badge-background, rgba(255,255,255,0.12));
+      /* OPAQUE, and it has to be: a scrolled tab passes underneath the sticky
+         chip below, and a translucent fallback would show it through. */
+      background: var(--vscode-badge-background, #4d4d4d);
       border-right: 1px solid var(--vscode-tab-border, transparent);
       /* The bar scrolls; the only visual way out of the filter must not scroll
-         away with it. Opaque background above, so tabs pass underneath. */
+         away with it. */
       position: sticky;
       left: 0;
       z-index: 1;

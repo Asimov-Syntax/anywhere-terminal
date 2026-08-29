@@ -395,8 +395,9 @@ export class WorktreeView {
     if (this.selectedWorktreeId === null) {
       return;
     }
-    this.selectedWorktreeId = null;
+    // Announced BEFORE the field moves, for the reason `select` gives.
     this.deps.onSelectWorktree?.(null);
+    this.selectedWorktreeId = null;
     this.repaint();
   }
 
@@ -410,8 +411,13 @@ export class WorktreeView {
     if (this.deps.workbench?.() !== true || this.selectedWorktreeId === worktreeId) {
       return false;
     }
-    this.selectedWorktreeId = worktreeId;
+    // Announced BEFORE the field moves, and the throw is not caught. The listener
+    // persists the scope, and a write that throws must not leave this panel marking
+    // a row the scope never took — the equality guard above would then make the
+    // very row that fixes it a no-op, so the mark would stand until a third row or
+    // the chip cleared it (round-2 V1).
     this.deps.onSelectWorktree?.(worktreeId);
+    this.selectedWorktreeId = worktreeId;
     return true;
   }
 

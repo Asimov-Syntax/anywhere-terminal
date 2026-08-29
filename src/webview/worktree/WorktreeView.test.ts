@@ -2090,6 +2090,45 @@ describe("worktree selection", () => {
     return rowFor(view, branch)?.closest<HTMLElement>(".wt-card") ?? null;
   }
 
+  it("announces the selection before it commits to it", () => {
+    // The listener persists the scope, and a write that throws must not leave this
+    // panel marking a row the scope never took — the equality guard in `select`
+    // would then make the very row that fixes it a no-op (round-2 V1). Observable
+    // without a throw: at the moment the listener runs, nothing is committed yet.
+    let committedWhenTold: string | null | undefined;
+    const { view } = mount({
+      workbench: () => true,
+      onSelectWorktree: () => {
+        committedWhenTold = view.selectedWorktree();
+      },
+    });
+    view.setData(populated());
+
+    rowFor(view, "main")?.click();
+    expect(committedWhenTold, "committed before the listener could refuse").toBeNull();
+    expect(view.selectedWorktree()).toBe("/Users/dev/Projects/ai-oss/anywhere-terminal");
+  });
+
+  it("keeps the mark it had when a refused clear throws", () => {
+    // The other direction, and this one can be driven to the throw directly.
+    let armed = false;
+    const { view } = mount({
+      workbench: () => true,
+      onSelectWorktree: () => {
+        if (armed) {
+          throw new Error("setState failed");
+        }
+      },
+    });
+    view.setData(populated());
+    rowFor(view, "main")?.click();
+
+    armed = true;
+    expect(() => view.clearSelection()).toThrow("setState failed");
+    expect(view.selectedWorktree()).toBe("/Users/dev/Projects/ai-oss/anywhere-terminal");
+    expect(rowFor(view, "main")?.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("marks nothing on a first render, and nothing after a push", () => {
     // Selection is an act, never an inference: neither the workspace folder, nor
     // the busiest worktree, nor whatever the user last disclosed gets marked on

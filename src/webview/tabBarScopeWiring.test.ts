@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { WorktreeTreeResponseMessage } from "../types/messages";
 import { createLeaf, type SplitNode } from "./SplitModel";
 import { buildTabBarData, renderTabBar } from "./TabBarUtils";
-import { wireTabBarScope } from "./tabBarScopeWiring";
+import { type TabBarScopeWiring, wireTabBarScope } from "./tabBarScopeWiring";
 import { WorktreeController } from "./worktree/WorktreeController";
 import { agentRow, singleRepoTree } from "./worktree/worktreeFixtures";
 import type { WorktreeAgentRow, WorktreeInfo, WorktreePresence, WorktreeTree } from "./worktree/worktreeViewTypes";
@@ -51,8 +51,14 @@ interface Surface {
   /** The tab labels the bar is currently showing. */
   tabs(): string[];
   controller: WorktreeController;
+  /** The seam itself — every join the surface has goes through it. */
+  seam: TabBarScopeWiring;
   /** One entry per redraw the seam asked for. */
   renders: number;
+  /** One entry per panel rebuild, so a doubled repaint is visible. */
+  paints: number;
+  /** The panel's notices, as text, at each paint. */
+  paintedNotices: string[][];
   state: Record<string, unknown>;
 }
 
@@ -114,6 +120,19 @@ function surface(over: { workbench?: boolean; persisted?: string; tabIds?: strin
   controller.setVisible(true);
   draw();
 
+  // The view is what rebuilds the panel, so counting its pushes is what makes a
+  // doubled repaint observable at all.
+  out.paints = 0;
+  out.paintedNotices = [];
+  const view = (controller as unknown as { view: { setData: (...a: never[]) => void } }).view;
+  const setData = view.setData.bind(view);
+  view.setData = (...args: never[]) => {
+    setData(...args);
+    out.paints += 1;
+    out.paintedNotices.push([...document.querySelectorAll(".wt-notice")].map((n) => n.textContent ?? ""));
+  };
+
+  out.seam = seam;
   out.controller = controller;
   out.state = state;
   out.push = (pushOver = {}) => {
@@ -197,7 +216,9 @@ describe("clearing the chip", () => {
     s.row("main")?.click();
     expect(s.row("main")?.getAttribute("aria-selected")).toBe("true");
 
+    const drawn = s.renders;
     s.chip()?.querySelector<HTMLButtonElement>(".tab-scope-clear")?.click();
+    expect(s.renders, "one clear drew the bar more than once").toBe(drawn + 1);
     expect(s.chip()).toBeNull();
     expect(s.tabs()).toEqual(["pane-main", "pane-panel", "pane-loose"]);
     expect(s.row("main")?.getAttribute("aria-selected")).toBe("false");
@@ -239,26 +260,43 @@ describe("a scope that arrived from persistence", () => {
     // beside it (round-1 W2).
     const s = surface({ persisted: MAIN });
     s.push();
-
-    // What the panel was drawing AT THE MOMENT it was told. Asserted then rather
-    // than afterwards: reported too early the notice still ends up on screen, and
-    // only the panel's state at the call distinguishes the two orders.
-    let drawnWhenTold: string[] | null = null;
-    const told = s.controller.reportScopeCleared.bind(s.controller);
-    s.controller.reportScopeCleared = (worktreeId, label) => {
-      drawnWhenTold = [...document.querySelectorAll(".wt-branch")].map((b) => b.textContent ?? "");
-      told(worktreeId, label);
-    };
+    const before = s.paints;
 
     s.push({ tree: treeWithout(MAIN), rows: { [PANEL]: [pane("b", "pane-panel")] } });
 
-    expect(drawnWhenTold, "the drop was never reported").not.toBeNull();
-    expect(drawnWhenTold, "reported to a panel still drawing the worktree it is about").not.toContain("main");
     expect(s.chip()).toBeNull();
     expect(s.state.worktreeScope).toBeUndefined();
     const notice = [...document.querySelectorAll(".wt-notice")].find((n) => n.textContent?.includes("Scope cleared"));
     expect(notice?.textContent).toContain("main");
     expect(s.row("main")).toBeUndefined();
+
+    // ONE paint, and the notice was in it. Staged too late the panel is rebuilt
+    // twice and the first of the two carries no notice; staged against the old
+    // tree, the paint that first carries it still draws a `main` row beside it.
+    expect(s.paints, "the drop rebuilt the panel twice").toBe(before + 1);
+    expect(s.paintedNotices.at(-1)?.join(" ")).toContain("Scope cleared");
+  });
+
+  it("does not paint the notice beside a row for the worktree it says is gone", () => {
+    const s = surface({ persisted: MAIN });
+    s.push();
+    const paintsWithNotice: number[] = [];
+    const view = (s.controller as unknown as { view: { setData: (...a: never[]) => void } }).view;
+    const setData = view.setData.bind(view);
+    view.setData = (...args: never[]) => {
+      setData(...args);
+      if ([...document.querySelectorAll(".wt-notice")].some((n) => n.textContent?.includes("Scope cleared"))) {
+        paintsWithNotice.push(
+          [...document.querySelectorAll(".wt-branch")].filter((b) => b.textContent === "main").length,
+        );
+      }
+    };
+
+    s.push({ tree: treeWithout(MAIN), rows: {} });
+    expect(paintsWithNotice, "the notice was never painted").not.toHaveLength(0);
+    expect(paintsWithNotice, "painted beside a row for the worktree it says is gone").toEqual(
+      paintsWithNotice.map(() => 0),
+    );
   });
 
   it("announces the drop once, not again on the next tree", () => {
@@ -282,11 +320,129 @@ describe("the flag the whole thing hangs off", () => {
   });
 
   it("cannot arm a scope the tree lost while it was off", () => {
+    // Through the SEAM, not the controller: the controller's own `setWorkbench`
+    // reaches `view.refresh()` and nothing else, so a test that calls it reads a
+    // tab bar drawn while the coordinator was still off and stays green with the
+    // fix reverted (round-2 V2).
     const s = surface({ workbench: false, persisted: MAIN });
+    s.push();
     s.push({ tree: treeWithout(MAIN), rows: {} });
-    s.controller.setWorkbench(true);
+    s.seam.setWorkbench(true);
 
     expect(s.chip()).toBeNull();
+    expect(s.tabs()).toEqual(["pane-main", "pane-panel", "pane-loose"]);
+  });
+
+  it("reaches the panel and the bar from one flip", () => {
+    const s = surface({ workbench: false, persisted: MAIN });
+    s.push();
+    expect(s.chip()).toBeNull();
+    expect(s.controller.isWorkbenchEnabled()).toBe(false);
+
+    s.seam.setWorkbench(true);
+    expect(s.controller.isWorkbenchEnabled()).toBe(true);
+    expect(s.chip()?.textContent).toContain("main");
+    expect(s.tabs()).toEqual(["pane-main", "pane-loose"]);
+  });
+});
+
+describe("what a failure inside the push leaves behind", () => {
+  it("still drops the scope and still says so when the panel handoff throws", () => {
+    // The queue is drained in a `finally`, or a notice queued for a tree that
+    // failed fires against the NEXT one — W2's own failure, reached through the
+    // error path (round-2 V3).
+    const s = surface({ persisted: MAIN });
+    s.push();
+
+    expect(() =>
+      s.seam.applyTree(treeWithout(MAIN), () => {
+        throw new Error("panel push failed");
+      }),
+    ).toThrow("panel push failed");
+
+    expect(s.chip(), "the bar went on drawing a scope that is gone").toBeNull();
+    expect(s.state.worktreeScope).toBeUndefined();
+
+    // And the next tree does not re-announce it.
+    s.push({ tree: treeWithout(MAIN), rows: {} });
+    expect(
+      [...document.querySelectorAll(".wt-notice")].filter((n) => n.textContent?.includes("Scope cleared")),
+    ).toHaveLength(1);
+  });
+});
+
+describe("where the keyboard lands", () => {
+  it("hands focus to the surviving control when the clear destroys its own button", () => {
+    const s = surface();
+    s.push();
+    s.row("main")?.click();
+    const clear = s.chip()?.querySelector<HTMLButtonElement>(".tab-scope-clear");
+    clear?.focus();
+    clear?.click();
+
+    expect(document.activeElement?.className).toBe("tab-add");
+  });
+});
+
+describe("what a reload restores, and what it must not", () => {
+  it("filters the bar without marking a row in the panel", () => {
+    // Both specs at once: the scope survives a reload, and no worktree is selected
+    // on the user's behalf on one. The panel marking nothing while the chip names
+    // a worktree is what the two REQUIRE together, not a gap to be closed by
+    // seeding the mark (round-2 V6).
+    const s = surface({ persisted: MAIN });
+    s.push();
+
+    expect(s.chip()?.textContent).toContain("main");
+    expect(s.controller.selectedWorktree(), "a reload selected a worktree on the user's behalf").toBeNull();
+    expect(s.row("main")?.getAttribute("aria-selected")).toBe("false");
+  });
+});
+
+describe("a surface with no worktree panel mounted", () => {
+  /** The seam alone, as `main.ts` builds it when there is no `#vault-panel`. */
+  function bare() {
+    const state: Record<string, unknown> = {};
+    const tabLayouts = new Map<string, SplitNode>([["pane-main", createLeaf("pane-main")]]);
+    let renders = 0;
+    const seam = wireTabBarScope({
+      store: {
+        getState: () => state as { worktreeScope?: unknown },
+        updateState: (patch) => Object.assign(state, patch),
+      },
+      workbench: true,
+      panel: () => null,
+      tabLayouts: () => tabLayouts,
+      render: () => {
+        renders += 1;
+      },
+    });
+    return { seam, tabLayouts, count: () => renders };
+  }
+
+  it("records the cleared state, so the next ask is not a second redraw", () => {
+    // The clear rendered unconditionally, which left `shouldRender` never seeing
+    // the post-clear signature — so the very next push redrew for a change that
+    // had already been drawn (round-2 V4).
+    const b = bare();
+    b.seam.applyTree(singleRepoTree(), () => {});
+    b.seam.onSelectWorktree(MAIN);
+    b.seam.chip()?.onClear();
+    const drawn = b.count();
+
+    b.seam.applyTree(singleRepoTree(), () => {});
+    expect(b.count(), "the cleared state was never recorded").toBe(drawn);
+  });
+
+  it("clears without a panel to clear through", () => {
+    const b = bare();
+    b.seam.applyTree(singleRepoTree(), () => {});
+    b.seam.onSelectWorktree(MAIN);
+    expect(b.seam.chip()).toBeDefined();
+
+    b.seam.chip()?.onClear();
+    expect(b.seam.chip()).toBeUndefined();
+    expect(b.seam.effectiveScope()).toBeUndefined();
   });
 });
 

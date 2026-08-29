@@ -208,7 +208,16 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
     if (clear) {
       clear.setAttribute("aria-label", `Clear the ${scope.label} scope`);
       // Rebound on every render, so a stale closure never outlives the scope it named.
-      clear.onclick = () => scope.onClear();
+      clear.onclick = () => {
+        const hadFocus = document.activeElement === clear;
+        scope.onClear();
+        // The click destroys the button it came from, so focus would land on
+        // `<body>` and a keyboard user would restart from the top of the document.
+        // Handed to the nearest surviving control in the same widget (round-2 V8).
+        if (hadFocus) {
+          tabBarEl.querySelector<HTMLButtonElement>(".tab-add")?.focus();
+        }
+      };
     }
   } else if (chip) {
     chip.remove();

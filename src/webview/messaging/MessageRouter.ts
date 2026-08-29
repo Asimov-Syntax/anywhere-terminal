@@ -50,9 +50,9 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeMutationResultMessage,
   WorktreeRowActivationMessage,
-  WorktreeWorkbenchMessage,
   WorktreeShowPreviewMessage,
   WorktreeTreeResponseMessage,
+  WorktreeWorkbenchMessage,
 } from "../../types/messages";
 
 // ─── Types ──────────────────────────────────────────────────────────

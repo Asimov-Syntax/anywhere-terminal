@@ -1655,10 +1655,10 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    * Returns void — fire-and-forget with error logging.
    */
   /**
-   * Typed, not `unknown`: the sibling provider took `unknown` here and a REQUIRED
-   * init field missing from all three of its branches type-checked clean for a
-   * whole change (round-1 B3). The union is what makes an omission a compile
-   * error rather than a surface that is silently inert.
+   * Typed, not `unknown`. `init` does NOT come through here — it goes through
+   * `safeSendWithRetry`, which is where round-1 B3 lived and where round-2 V0
+   * found the narrowing still missing. Typed all the same, so the two senders
+   * cannot drift apart again.
    */
   private safePostMessage(webview: vscode.Webview, message: ExtensionToWebViewMessage): void {
     try {
@@ -1676,9 +1676,15 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    * Returns true if the message was delivered, false if all attempts failed.
    * Used for critical messages (init, tabCreated, splitPaneCreated, error).
    */
+  /**
+   * `ExtensionToWebViewMessage`, not `unknown`. THIS is the sender every `init`
+   * goes through, and while it took `unknown` a REQUIRED init field missing from
+   * all three of this provider's branches type-checked clean (round-1 B3, and
+   * still after the first fix — round-2 V0).
+   */
   private async safeSendWithRetry(
     webview: vscode.Webview,
-    message: unknown,
+    message: ExtensionToWebViewMessage,
     maxRetries = 2,
     shouldAbort?: () => boolean,
   ): Promise<boolean> {

@@ -815,10 +815,14 @@ const routeMessage = createMessageRouter({
     worktreeController?.setRowActivation(msg.activation);
   },
   onWorktreeWorkbench(msg) {
+    // The seam reaches the panel as well as the coordinator. The bar reads the
+    // EFFECTIVE scope, so the flip changes what it draws even though no tab, tree
+    // or attribution moved. See: webview/tabBarScopeWiring.ts.
+    if (tabBarScope) {
+      tabBarScope.setWorkbench(msg.enabled);
+      return;
+    }
     worktreeController?.setWorkbench(msg.enabled);
-    // The bar reads the EFFECTIVE scope, so the flip changes what it draws even
-    // though no tab, tree or attribution moved.
-    tabBarScope?.setWorkbench(msg.enabled);
   },
   onWorktreeShowPreview(msg) {
     worktreeController?.showPreview(msg.entryId);
