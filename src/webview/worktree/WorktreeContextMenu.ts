@@ -12,8 +12,8 @@
 import { type ContextMenuItem, ContextMenuShell } from "../shared/contextMenuShell";
 import { collapseSeparators } from "../vault/format";
 import { ICON_COPY, ICON_FOLDER, ICON_RESUME, ICON_REVEAL, ICON_TERMINAL } from "../vault/icons";
-import { ICON_WINDOW } from "./worktreeIcons";
 import { menuItem, worktreeActionItems } from "./worktreeActionItems";
+import { ICON_WINDOW } from "./worktreeIcons";
 import type { WorktreeAgentRow, WorktreeInfo } from "./worktreeViewTypes";
 
 /** Every action the menus can raise. The owner decides what each one does. */

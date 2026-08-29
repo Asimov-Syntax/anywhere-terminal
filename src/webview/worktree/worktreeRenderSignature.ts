@@ -65,7 +65,9 @@ export function worktreeSignature(
     .sort()
     .map((worktreeId) => {
       const list = presence.rowsByWorktreeId[worktreeId] ?? [];
-      return [worktreeId, list.map((r) => agentRowFields(r, presence.degradedSources, now)).join(ROW_SEP)].join(SECTION_SEP);
+      return [worktreeId, list.map((r) => agentRowFields(r, presence.degradedSources, now)).join(ROW_SEP)].join(
+        SECTION_SEP,
+      );
     })
     .join(ROW_SEP);
 

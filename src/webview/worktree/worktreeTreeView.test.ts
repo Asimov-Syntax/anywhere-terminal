@@ -96,10 +96,13 @@ describe("[1_2] an agent row outside a tree", () => {
 
   it("claims no collapsed children where nothing is collapsed", () => {
     // `+2` beside two visible delegations counts them twice.
-    const roster = { kind: "ok" as const, rows: [
-      { name: "a", status: "completed" as const, live: false },
-      { name: "b", status: "completed" as const, live: false },
-    ] };
+    const roster = {
+      kind: "ok" as const,
+      rows: [
+        { name: "a", status: "completed" as const, live: false },
+        { name: "b", status: "completed" as const, live: false },
+      ],
+    };
     expect(renderWith({ entryId: "claude:s1", delegations: roster }, {}).querySelector(".wt-count")?.textContent).toBe(
       "+2",
     );

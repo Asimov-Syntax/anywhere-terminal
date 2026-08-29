@@ -7,8 +7,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { WebViewToExtensionMessage } from "../../types/messages";
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
-import { worktreeActionItems } from "./worktreeActionItems";
 import { worktreeMenuActions } from "./WorktreeController";
+import { worktreeActionItems } from "./worktreeActionItems";
 import { agentRow, worktree } from "./worktreeFixtures";
 
 afterEach(() => {

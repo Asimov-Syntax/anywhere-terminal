@@ -14,8 +14,8 @@
 import type { ContextMenuItem } from "../shared/contextMenuShell";
 import { collapseSeparators } from "../vault/format";
 import { ICON_COPY, ICON_RESUME, ICON_REVEAL, ICON_TERMINAL } from "../vault/icons";
-import { ICON_LOCK, ICON_PLUS, ICON_TRASH, ICON_WINDOW } from "./worktreeIcons";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
+import { ICON_LOCK, ICON_PLUS, ICON_TRASH, ICON_WINDOW } from "./worktreeIcons";
 import type { WorktreeInfo } from "./worktreeViewTypes";
 
 export interface WorktreeActionItemOptions {
