@@ -1,6 +1,12 @@
 // src/providers/TerminalEditorProvider.test.ts — Unit tests for TerminalEditorProvider
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { __resetAll, __setAppRoot, __setWorkspaceFolders } from "../test/__mocks__/vscode";
+import {
+  __fireConfigChange,
+  __resetAll,
+  __setAppRoot,
+  __setConfigValues,
+  __setWorkspaceFolders,
+} from "../test/__mocks__/vscode";
 
 // Mock PtyManager so no real PTY is spawned
 vi.mock("../pty/PtyManager", () => ({
@@ -356,6 +362,95 @@ describe("TerminalEditorProvider — worktree display reporting", () => {
     }
 
     expect(reported).toEqual([true, false, true]);
+    sm.dispose();
+  });
+});
+
+// ─── The workbench rollout flag on THIS surface (round-1 B3) ─────────
+
+describe("TerminalEditorProvider — the workbench rollout flag", () => {
+  const worktreeHost = {
+    initPayload: () => ({ worktreeHasRepo: false }),
+    attach: () => ({ dispose: () => {}, setDisplayed: () => {} }),
+    handleMessage: () => {},
+    dispose: () => {},
+  };
+
+  /** Create a panel, make it ready, and collect everything it posted. */
+  async function readyPanel(): Promise<{ posts: Record<string, unknown>[]; sm: SessionManager; panel: MockPanel }> {
+    const ctx = createMockContext();
+    const sm = new SessionManager();
+    const vscode = await import("vscode");
+    const createSpy = vi.spyOn(vscode.window, "createWebviewPanel");
+
+    TerminalEditorProvider.createPanel(
+      ctx,
+      sm,
+      null,
+      null,
+      worktreeHost as unknown as Parameters<typeof TerminalEditorProvider.createPanel>[4],
+    );
+
+    // `.at(-1)`, not `[0]`: the spy accumulates across calls within one test, so
+    // indexing the first result hands back a panel from an earlier iteration whose
+    // postMessage is already redirected somewhere else.
+    const panel = createSpy.mock.results.at(-1)?.value as MockPanel;
+    const posts: Record<string, unknown>[] = [];
+    panel.webview.postMessage = (msg: unknown) => {
+      posts.push(msg as Record<string, unknown>);
+      return Promise.resolve(true);
+    };
+    for (const handler of panel.__messageHandlers) {
+      handler({ type: "ready" });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { posts, sm, panel };
+  }
+
+  interface MockPanel {
+    webview: { postMessage: (msg: unknown) => Promise<boolean> };
+    __messageHandlers: Array<(msg: unknown) => void>;
+  }
+
+  it("carries the flag on init, exactly as the sidebar surface does", async () => {
+    // This surface mounts the worktree host too. A flag that reached only the
+    // sidebar left the editor silently inert with the setting on (round-1 B3).
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
+    const { posts, sm } = await readyPanel();
+
+    const init = posts.find((m) => m.type === "init");
+    expect(init).toBeDefined();
+    expect(init?.worktreeWorkbench).toBe(true);
+    sm.dispose();
+  });
+
+  it("treats every value that is not exactly true as off", async () => {
+    for (const stored of [undefined, "true", "false", 1, 0, {}, []]) {
+      __setConfigValues({ "anywhereTerminal.worktree.workbench": stored });
+      const { posts, sm } = await readyPanel();
+      const init = posts.find((m) => m.type === "init");
+      expect(init?.worktreeWorkbench, `stored: ${JSON.stringify(stored)}`).toBe(false);
+      sm.dispose();
+    }
+  });
+
+  it("re-sends the flag after init, closing the same construction race the sidebar closes", async () => {
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
+    const { posts, sm } = await readyPanel();
+
+    expect(posts.filter((m) => m.type === "worktreeWorkbench")).toEqual([{ type: "worktreeWorkbench", enabled: true }]);
+    sm.dispose();
+  });
+
+  it("reaches an open panel when the setting moves, without a reload", async () => {
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": false });
+    const { posts, sm } = await readyPanel();
+    posts.length = 0;
+
+    __setConfigValues({ "anywhereTerminal.worktree.workbench": true });
+    __fireConfigChange(["anywhereTerminal.worktree.workbench"]);
+
+    expect(posts.filter((m) => m.type === "worktreeWorkbench")).toEqual([{ type: "worktreeWorkbench", enabled: true }]);
     sm.dispose();
   });
 });

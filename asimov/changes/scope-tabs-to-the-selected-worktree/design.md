@@ -136,6 +136,15 @@ there could not be verified at all. A small module owning the scope, the map, th
 This is also what makes tasks 1_3, 1_5 and 1_6 verifiable without inventing a composition-test
 harness: each tests the coordinator rather than the bootstrap.
 
+**Where the wiring itself lives (round-1).** The decision above is unchanged, but "leaves `main.ts`
+as wiring" turned out to be the load-bearing half: the four joins left there — `applyTree` before
+`handleTreeResponse`, the label→chip mapping, the `shouldRender` gate, and the flag-flip path — are
+exactly where B1, B2 and W1 landed, each a defect no single-object test could reach. The wiring is
+therefore named and exported as `src/webview/tabBarScopeWiring.ts`, constructed by `main.ts` and
+driven in `tabBarScopeWiring.test.ts` by the real view, controller and coordinator together. It is
+composition, not a second controller: it holds no state of its own beyond the drop queue that
+carries a notice across `deliver`.
+
 ### D9: Failure surface — the persisted surface state
 
 One mutable resource outlives the request: the per-surface webview state holding `worktreeScope`.

@@ -8,6 +8,7 @@
 //
 // See: docs/design/worktree-scope.md, design.md D1 / D7 / D8 / D9.
 
+import { attributionKey, type PaneAttribution } from "./paneAttribution";
 import { getAllSessionIds, type SplitNode } from "./SplitModel";
 import type { TabBarScope } from "./TabBarUtils";
 import type { WorktreeTree } from "./worktree/worktreeViewTypes";
@@ -36,6 +37,17 @@ const RECORD = "\u0001";
 const LEAF = "\u0002";
 const FIELD = "\u0003";
 
+/** Every worktree the tree holds, by id, named the way the panel names it. */
+function labelsOf(tree: WorktreeTree): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  for (const repo of tree.repos) {
+    for (const wt of repo.worktrees) {
+      labels.set(wt.id, wt.branch ?? wt.displayPath);
+    }
+  }
+  return labels;
+}
+
 export class TabBarScopeCoordinator {
   private readonly deps: TabBarScopeDeps;
   /**
@@ -45,9 +57,26 @@ export class TabBarScopeCoordinator {
    */
   private workbench: boolean;
   private scope: string | null;
-  /** What the tree last called the scoped worktree; `null` until one confirmed it. */
+  /**
+   * What the tree last called the scoped worktree, kept so the drop notice can
+   * still name a worktree that has left. `null` while unscoped.
+   */
   private scopeLabel: string | null = null;
-  private attribution: ReadonlyMap<string, string> = new Map();
+  /**
+   * Every id the last tree held, by name. NOT the attribution cache D7 rejects —
+   * that one is about pane PLACEMENT and would keep hiding tabs; this is a naming
+   * table read only for the chip and the drop notice, and it is replaced whole on
+   * every push rather than merged.
+   */
+  private labels: ReadonlyMap<string, string> = new Map();
+  /**
+   * Whether a tree has actually held the scoped id. A scope restored from
+   * persistence has not been resolved against anything yet, and filtering on it
+   * is exactly what "a persisted scope naming an absent worktree resolves to
+   * unscoped" forbids (round-1 W1).
+   */
+  private resolved = false;
+  private attribution: PaneAttribution = new Map();
   /** The last signature `shouldRender` reported on. `null` → nothing drawn yet. */
   private signature: string | null = null;
 
@@ -77,18 +106,17 @@ export class TabBarScopeCoordinator {
    * with extra steps (design.md D6).
    */
   scopedWorktreeId(): string | null {
-    return this.workbench ? this.scope : null;
+    return this.workbench && this.resolved ? this.scope : null;
   }
 
   /**
    * What to call the scoped worktree, or `null` while unscoped or off. The branch
    * the tree last showed, never the path — the panel forbids a path on a row and
-   * the chip is no different (worktree-panel-ui.md § 3.2). Falls back to the id
-   * only for a scope restored from persistence that no tree has confirmed yet.
+   * the chip is no different (worktree-panel-ui.md § 3.2). Nothing is scoped until
+   * a tree confirms it, so there is no unnamed scope to fall back for.
    */
   scopedLabel(): string | null {
-    const worktreeId = this.scopedWorktreeId();
-    return worktreeId === null ? null : (this.scopeLabel ?? worktreeId);
+    return this.scopedWorktreeId() === null ? null : this.scopeLabel;
   }
 
   /** Whether this surface is filtered — the tab bar's second reason to be visible. */
@@ -122,7 +150,7 @@ export class TabBarScopeCoordinator {
   }
 
   /** A fresh pane→worktree attribution from the presence projection. */
-  setAttribution(attribution: ReadonlyMap<string, string>): void {
+  setAttribution(attribution: PaneAttribution): void {
     this.attribution = attribution;
   }
 
@@ -138,24 +166,33 @@ export class TabBarScopeCoordinator {
    * nothing left to report.
    */
   applyTree(tree: WorktreeTree | null): void {
-    const scoped = this.scope;
-    // Nothing at all while off, the notice included: a dropped-scope statement
-    // about a feature the user has not turned on is an effect of that feature.
-    // The next push after it is turned on re-resolves against a current tree.
-    if (!this.workbench || scoped === null || !tree) {
+    if (!tree) {
       return;
     }
-    for (const repo of tree.repos) {
-      for (const wt of repo.worktrees) {
-        if (wt.id === scoped) {
-          this.scopeLabel = wt.branch ?? wt.displayPath;
-          return;
-        }
-      }
+    // Read whatever the flag says: a name recorded while off is what lets the
+    // flag be turned on without a reload, and it hides nothing on its own.
+    this.labels = labelsOf(tree);
+    const scoped = this.scope;
+    if (scoped === null) {
+      return;
     }
-    const label = this.scopeLabel ?? scoped;
+    const label = this.labels.get(scoped);
+    if (label !== undefined) {
+      this.scopeLabel = label;
+      this.resolved = true;
+      return;
+    }
+    // No longer confirmed either way, so a flag flip cannot arm a scope this tree
+    // has already lost.
+    this.resolved = false;
+    // Nothing further while off, the notice included: a dropped-scope statement
+    // about a feature the user has not turned on is an effect of that feature.
+    if (!this.workbench) {
+      return;
+    }
+    const said = this.scopeLabel ?? scoped;
     this.setScope(null);
-    this.deps.onScopeDropped?.(scoped, label);
+    this.deps.onScopeDropped?.(scoped, said);
   }
 
   /**
@@ -178,16 +215,17 @@ export class TabBarScopeCoordinator {
   }
 
   private signatureOf(tabLayouts: ReadonlyMap<string, SplitNode>): string {
-    const attribution = [...this.attribution]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([paneId, worktreeId]) => `${paneId}${UNIT}${worktreeId}`)
-      .join(RECORD);
     // Membership, not identity: a split gaining or losing a leaf changes which
     // panes a tab is judged by, and the join would otherwise keep the old answer.
     const membership = [...tabLayouts]
       .map(([tabId, layout]) => `${tabId}${UNIT}${getAllSessionIds(layout).join(LEAF)}`)
       .join(RECORD);
-    return [this.scopedWorktreeId() ?? "", attribution, membership].join(FIELD);
+    // The LABEL is in here too. It moves only when the tree renames the scoped
+    // worktree, so it can never cause a spurious render — and leaving it out left
+    // the chip naming a branch that no longer exists (round-1, accepted suggestion).
+    return [this.scopedWorktreeId() ?? "", this.scopedLabel() ?? "", attributionKey(this.attribution), membership].join(
+      FIELD,
+    );
   }
 
   private setScope(worktreeId: string | null): void {
@@ -200,8 +238,12 @@ export class TabBarScopeCoordinator {
     // preserves every unrelated key, and it is asserted rather than assumed.
     this.deps.store.updateState({ worktreeScope: worktreeId ?? undefined });
     this.scope = worktreeId;
-    if (worktreeId === null) {
-      this.scopeLabel = null;
-    }
+    // The name moves WITH the scope. `applyTree` was the only writer, so a second
+    // selection kept announcing the first worktree's branch and a first selection
+    // — before any tree had been seen — announced an absolute path (round-1 B1).
+    this.scopeLabel = worktreeId === null ? null : (this.labels.get(worktreeId) ?? worktreeId);
+    // A selection comes off a row the tree drew, so the tree holds it; a clear
+    // resolves nothing. Anything else waits for a tree to confirm it.
+    this.resolved = worktreeId !== null && this.labels.has(worktreeId);
   }
 }

@@ -15,6 +15,7 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
+import { attributionKey, type PaneAttribution } from "../paneAttribution";
 import type { WebviewState } from "../state/WebviewState";
 import type { VaultView } from "../vault/VaultPanel";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
@@ -53,7 +54,7 @@ export interface WorktreeControllerDeps {
    * Which worktree each of this window's panes is running in. Emitted on every
    * push whose attribution moved, and never otherwise.
    */
-  onAttribution?: (paneToWorktree: ReadonlyMap<string, string>) => void;
+  onAttribution?: (paneToWorktree: PaneAttribution) => void;
   /**
    * Open the session-preview overlay for a host-resolved entry. Returns false
    * when this surface holds no such entry — the host resolved against presence,
@@ -220,10 +221,8 @@ export class WorktreeController {
    * slices that do arrive behind it, and it is false unless configured.
    */
   private workbench: boolean;
-  /** The worktree the panel has selected, or `null`. Never seeded. */
-  private selectedWorktreeId: string | null = null;
   /** The last attribution reported, keyed for comparison. `null` → none yet. */
-  private attributionKey: string | null = null;
+  private lastAttribution: string | null = null;
   /** The host's resolved create destination, per repo. Only it can know one. */
   private readonly createDefaults = new Map<string, WorktreeCreateDefaultsMessage>();
   /** The repo a create was invoked for, waiting on its defaults. */
@@ -452,10 +451,9 @@ export class WorktreeController {
       // click is what lets an update reach a view already painted.
       rowActivation: () => this.rowActivation,
       workbench: () => this.workbench,
-      onSelectWorktree: (worktreeId) => {
-        this.selectedWorktreeId = worktreeId;
-        this.deps.onSelectWorktree?.(worktreeId);
-      },
+      // Forwarded, not mirrored: the view owns the selection because the view is
+      // what marks it, and a second copy here is a second thing to keep right.
+      onSelectWorktree: (worktreeId) => this.deps.onSelectWorktree?.(worktreeId),
       now: deps.now,
     });
     this.element = this.view.element;
@@ -654,10 +652,11 @@ export class WorktreeController {
     const map = new Map<string, string>();
     const contested = new Set<string>();
     for (const [worktreeId, rows] of Object.entries(this.presence?.rowsByWorktreeId ?? {})) {
-      for (const row of rows) {
-        // External rows name agents this window does not host — they carry no
-        // pane of ours and so say nothing about where any of our tabs belongs.
-        if (row.scope !== "window" || row.paneId === undefined) {
+      // External rows name agents this window does not host — they carry no pane
+      // of ours and so say nothing about where any of our tabs belongs. Dropped
+      // in one pass rather than tested twice inside the loop below.
+      for (const row of rows.filter((r) => r.scope === "window")) {
+        if (row.paneId === undefined) {
           continue;
         }
         const held = map.get(row.paneId);
@@ -680,14 +679,14 @@ export class WorktreeController {
    */
   private emitAttribution(): void {
     const next = this.buildAttribution();
-    const key = [...next]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([paneId, worktreeId]) => `${paneId}\u0000${worktreeId}`)
-      .join("\u0001");
-    if (key === this.attributionKey) {
+    // The SAME canonicaliser the render signature uses. Both suppress a duplicate
+    // on the same question and were byte-identical copies of this encoding, which
+    // is one edit away from disagreeing about it (round-1 W3).
+    const key = attributionKey(next);
+    if (key === this.lastAttribution) {
       return;
     }
-    this.attributionKey = key;
+    this.lastAttribution = key;
     this.deps.onAttribution?.(next);
   }
 
@@ -892,7 +891,12 @@ export class WorktreeController {
 
   /** The worktree the panel has selected, or `null` for none. */
   selectedWorktree(): string | null {
-    return this.selectedWorktreeId;
+    return this.view.selectedWorktree();
+  }
+
+  /** Drop the panel's selection — the tab bar's chip clearing its own scope. */
+  clearSelection(): void {
+    this.view.clearSelection();
   }
 
   /**

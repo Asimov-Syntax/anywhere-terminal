@@ -229,6 +229,11 @@ export function getTerminalHtml(
       color: var(--vscode-badge-foreground, #fff);
       background: var(--vscode-badge-background, rgba(255,255,255,0.12));
       border-right: 1px solid var(--vscode-tab-border, transparent);
+      /* The bar scrolls; the only visual way out of the filter must not scroll
+         away with it. Opaque background above, so tabs pass underneath. */
+      position: sticky;
+      left: 0;
+      z-index: 1;
     }
     .tab-scope-name {
       overflow: hidden;

@@ -183,6 +183,10 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
     if (!chip) {
       chip = document.createElement("div");
       chip.className = "tab-scope";
+      // A generic div carries no role, and an `aria-label` on one is not a
+      // dependable accessible name — a screen reader would reach the branch and
+      // the clear button without ever being told the list is filtered.
+      chip.setAttribute("role", "group");
       const name = document.createElement("span");
       name.className = "tab-scope-name";
       chip.appendChild(name);

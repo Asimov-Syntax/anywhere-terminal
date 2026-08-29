@@ -381,6 +381,25 @@ export class WorktreeView {
     this.repaint();
   }
 
+  /** The worktree this panel marks as selected, or `null`. The only copy there is. */
+  selectedWorktree(): string | null {
+    return this.selectedWorktreeId;
+  }
+
+  /**
+   * Drop the selection from outside — the tab bar's chip clearing its own scope.
+   * Announced exactly as a click would announce it, and repaints, because the row
+   * that was marked has to stop being marked (round-1 B2).
+   */
+  clearSelection(): void {
+    if (this.selectedWorktreeId === null) {
+      return;
+    }
+    this.selectedWorktreeId = null;
+    this.deps.onSelectWorktree?.(null);
+    this.repaint();
+  }
+
   /**
    * Select a worktree, or nothing at all while the workbench is off. Returns
    * whether the selection moved so the caller can decide who repaints:

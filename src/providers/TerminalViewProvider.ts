@@ -12,6 +12,7 @@ import {
   readWorktreeWorkbench,
 } from "../settings/SettingsReader";
 import type {
+  ExtensionToWebViewMessage,
   ThemeChangedMessage,
   VaultContinueSessionMessage,
   VaultLaunchCapability,
@@ -1653,7 +1654,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    * Safely post a message to the webview, handling both sync throws and async rejections.
    * Returns void — fire-and-forget with error logging.
    */
-  private safePostMessage(webview: vscode.Webview, message: unknown): void {
+  /**
+   * Typed, not `unknown`: the sibling provider took `unknown` here and a REQUIRED
+   * init field missing from all three of its branches type-checked clean for a
+   * whole change (round-1 B3). The union is what makes an omission a compile
+   * error rather than a surface that is silently inert.
+   */
+  private safePostMessage(webview: vscode.Webview, message: ExtensionToWebViewMessage): void {
     try {
       void (webview.postMessage(message) as Thenable<boolean>).then(undefined, () => {
         // Async rejection — webview may be disposed

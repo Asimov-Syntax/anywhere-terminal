@@ -184,9 +184,14 @@
    ownership stays legible when several worktrees are expanded at once. It carries
    no selection weight — the card does that, and one treatment answers one
    question. */
+/* An expanded but unselected worktree while the workbench is on. Still a
+   container — D5 keeps the grouping "as a quieter container", and spacing alone
+   loses the edge that made it one — just without the card's border and fill. */
 .wt-group {
   margin: 3px 4px;
   padding: 1px 0 3px;
+  border-left: 2px solid var(--vscode-widget-border);
+  border-radius: 3px;
 }
 .wt-group > .wt-row {
   margin: 0 1px;

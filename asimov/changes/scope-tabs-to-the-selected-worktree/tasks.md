@@ -121,3 +121,21 @@
     3. Style the chip in `src/providers/webviewHtml.ts` beside the existing `#tab-bar` rules, using VS Code CSS variables only.
     4. Wire the clearing control in `src/webview/main.ts` to the coordinator's `clear`.
     5. Cover: chip present exactly while scoped and naming that worktree; clearing presenting every tab that was hidden; the chip surviving a re-render that changes no tab; the clearing control carrying its accessible name and reachable independently of the vault panel's collapsed state; no chip when unscoped.
+
+## 2. Round-1 review fixes
+
+- [x] 2_1 Close the three blockers and the seam they live in — verified: pnpm exec vitest run 'src/webview/tabBarScopeWiring.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_9
+  - **Refs**: .reviews/round-1.md, specs/tab-bar-component/spec.md#{a-scope-is-named-wherever-it-is-in-force, a-surface-s-scope-survives-a-reload-and-never-outlives-its-worktree, scoping-is-offered-only-where-it-has-been-turned-on}, specs/worktree-panel/spec.md#the-selected-worktree-is-the-only-one-marked-as-selected, design.md#d8-the-tab-bar-gets-its-own-signature-in-its-own-coordinator
+  - **Acceptance**:
+    - Outcome: the chip names the worktree it filters by, clearing it unmarks the panel, and the editor surface gets the flag
+    - Verify: unit src/webview/tabBarScopeWiring.test.ts
+  - **Plan**:
+    0. Files: `src/providers/TerminalEditorProvider.ts`, `src/providers/TerminalEditorProvider.test.ts`, `src/providers/TerminalViewProvider.ts`, `src/webview/paneAttribution.ts`, `src/webview/tabBarScope.ts`, `src/webview/tabBarScope.test.ts`, `src/webview/tabBarScopeWiring.ts`, `src/webview/tabBarScopeWiring.test.ts`, `src/webview/main.ts`, `src/webview/TabBarUtils.ts`, `src/webview/TabBar.test.ts`, `src/providers/webviewHtml.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/worktreePanel.css`, `asimov/changes/scope-tabs-to-the-selected-worktree/design.md`.
+    1. Seam first, because the three blockers are unprovable without it: extract the `main.ts` wiring into `src/webview/tabBarScopeWiring.ts`, driven in its own test by the real view, controller and coordinator together. D8 is unchanged — this is where "leaves `main.ts` as wiring" lands.
+    2. B1: the label moves WITH the scope. The coordinator keeps the last tree's id→label map and `setScope` resolves the name from it, so a selection is never announced by a path and never by the previous worktree's branch.
+    3. W1: a scope no tree has confirmed filters nothing. `resolved` gates the effective scope, is set when a tree holds the id, and is cleared when one does not — so a flag flip cannot arm a scope the tree has since lost.
+    4. B2: clearing the chip clears the panel's selection, through the seam. The controller's mirror field goes; `selectedWorktree()` reads the view, so there is one copy.
+    5. B3: `worktreeWorkbench` on every `TerminalEditorProvider` init branch, its `affectsConfiguration` listener, and its post-init re-send — the same three pieces `worktreeRowActivation` has there. Cover them the way `TerminalViewProvider.worktree.test.ts` covers its own. Then close the reason the omission compiled: both providers' `safePostMessage` took `unknown`, so a REQUIRED init field missing from three branches type-checked clean. Both now take `ExtensionToWebViewMessage`.
+    6. W2: the drop notice is reported after the controller holds the tree that dropped it. W3: one exported canonicaliser in `paneAttribution.ts` that both the dedup key and the render signature call.
+    7. The accepted suggestions: `scopedLabel()` joins the signature so a rename redraws; `role="group"` on the chip; `position: sticky` so the escape hatch cannot scroll away; `buildAttribution` filters to window scope once; `.wt-group` keeps a container treatment rather than spacing alone.

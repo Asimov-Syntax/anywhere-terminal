@@ -7,11 +7,18 @@ import type { SessionManager } from "../session/SessionManager";
 import type { PendingSnapshot } from "../session/SessionSnapshot";
 import {
   affectsWorktreeRowActivation,
+  affectsWorktreeWorkbench,
   readTerminalConfig,
   readTerminalSettings,
   readWorktreeRowActivation,
+  readWorktreeWorkbench,
 } from "../settings/SettingsReader";
-import type { SetPanelIdMessage, ThemeChangedMessage, WebViewToExtensionMessage } from "../types/messages";
+import type {
+  ExtensionToWebViewMessage,
+  SetPanelIdMessage,
+  ThemeChangedMessage,
+  WebViewToExtensionMessage,
+} from "../types/messages";
 import { isWorktreeMessage } from "../types/messages";
 import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
 import { indexRunningSessionsOrEmpty, listRunningClaudeSessions } from "../vault/readers/runningSessions";
@@ -341,6 +348,21 @@ export class TerminalEditorProvider {
         this.safePostMessage({
           type: "worktreeRowActivation",
           activation: readWorktreeRowActivation(),
+        });
+      }),
+    );
+
+    // 3a-quater. The workbench rollout flag, on the same bridge and for the same
+    // reason: this surface mounts the worktree host too, so a flag that reached
+    // only the sidebar would leave the editor silently inert with the setting on.
+    disposables.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!affectsWorktreeWorkbench(event) || !this._ready) {
+          return;
+        }
+        this.safePostMessage({
+          type: "worktreeWorkbench",
+          enabled: readWorktreeWorkbench(),
         });
       }),
     );
@@ -929,6 +951,7 @@ export class TerminalEditorProvider {
   /** See TerminalViewProvider.postRowActivation — same race, same close (W2). */
   private postRowActivation(): void {
     this.safePostMessage({ type: "worktreeRowActivation", activation: readWorktreeRowActivation() });
+    this.safePostMessage({ type: "worktreeWorkbench", enabled: readWorktreeWorkbench() });
   }
 
   private async onReady(): Promise<void> {
@@ -973,6 +996,7 @@ export class TerminalEditorProvider {
           // change arrives as its own message, and one that raced this send is
           // re-sent below rather than lost (design.md D5, round-1 W2).
           worktreeRowActivation: readWorktreeRowActivation(),
+          worktreeWorkbench: readWorktreeWorkbench(),
           vaultActionsAvailable: false,
         });
         this.postRowActivation();
@@ -1016,6 +1040,7 @@ export class TerminalEditorProvider {
           // change arrives as its own message, and one that raced this send is
           // re-sent below rather than lost (design.md D5, round-1 W2).
           worktreeRowActivation: readWorktreeRowActivation(),
+          worktreeWorkbench: readWorktreeWorkbench(),
           vaultActionsAvailable: false,
         });
         this.postRowActivation();
@@ -1067,6 +1092,7 @@ export class TerminalEditorProvider {
           // change arrives as its own message, and one that raced this send is
           // re-sent below rather than lost (design.md D5, round-1 W2).
           worktreeRowActivation: readWorktreeRowActivation(),
+          worktreeWorkbench: readWorktreeWorkbench(),
           vaultActionsAvailable: false,
         });
         // Same ordering as the reloaded and restored branches — see W2 in
@@ -1089,7 +1115,13 @@ export class TerminalEditorProvider {
   /**
    * Safely post a message to the webview, handling both sync throws and async rejections.
    */
-  private safePostMessage(message: unknown): void {
+  /**
+   * `ExtensionToWebViewMessage`, not `unknown`: this took `unknown`, and a REQUIRED
+   * init field missing from all three of this provider's branches type-checked
+   * clean for a whole change (round-1 B3). The union is what makes an omission a
+   * compile error instead of a surface that is silently inert.
+   */
+  private safePostMessage(message: ExtensionToWebViewMessage): void {
     try {
       void (this._panel.webview.postMessage(message) as Thenable<boolean>).then(undefined, () => {
         // Async rejection — webview may be disposed

@@ -135,10 +135,34 @@ describe("a scope re-resolved against the tree", () => {
       onScopeDropped: (id) => dropped.push(id),
     });
     scope.applyTree(null);
-    expect(scope.scopedWorktreeId()).toBe(HERE);
     scope.clear();
     scope.applyTree(treeOf());
     expect(dropped).toEqual([]);
+  });
+
+  it("filters nothing on a persisted scope until a tree has confirmed it", () => {
+    // The drop is announced by `applyTree`, so before any tree has arrived the
+    // coordinator does not yet know whether this id still exists. Filtering on it
+    // in the meantime hides tabs on the strength of a guess, and the guess is
+    // wrong exactly when the worktree is gone (round-1 W1).
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+    expect(scope.scopedWorktreeId()).toBeNull();
+    expect(scope.effectiveScope()).toBeUndefined();
+
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
+    expect(scope.scopedWorktreeId()).toBe(HERE);
+  });
+
+  it("stops filtering on a scope a later tree no longer holds, flag off included", () => {
+    // Off, the drop is not announced — but the id is no longer confirmed either,
+    // so turning the flag on cannot arm a scope the tree has already lost.
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }), workbench: false });
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
+    scope.applyTree(treeOf(worktree({ id: ELSEWHERE })));
+
+    scope.setWorkbench(true);
+    expect(scope.scopedWorktreeId()).toBeNull();
+    expect(scope.effectiveScope()).toBeUndefined();
   });
 });
 
@@ -182,15 +206,20 @@ describe("what the surface writes", () => {
         },
       },
     });
+    // Confirmed first: an unresolved scope is not the "previous scope standing"
+    // this is about, and would pass whether the write threw or not.
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" }), worktree({ id: ELSEWHERE })));
     armed = true;
     expect(() => scope.select(ELSEWHERE)).toThrow("setState failed");
     expect(scope.scopedWorktreeId()).toBe(HERE);
+    expect(scope.scopedLabel()).toBe("here");
   });
 });
 
 describe("what counts as a reason to redraw", () => {
   const scoped = () => {
     const s = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+    s.applyTree(treeOf(worktree({ id: HERE, branch: "here" }), worktree({ id: ELSEWHERE, branch: "there" })));
     s.setAttribution(new Map([["pane-1", HERE]]));
     s.shouldRender(layouts("tab-1"));
     return s;
@@ -284,17 +313,31 @@ describe("a push that moved no attribution charges nothing", () => {
     const tabs = layouts("tab-1");
     push(scope, placed(), tree(), tabs);
 
-    // A worktree appears, and both the scoped one and another are renamed. No pane
-    // changed hands and the scope still names the same worktree, so per the spec
-    // the bar is left untouched — a tree change that moves no attribution and no
-    // scope is not a redraw. The scoped worktree's own LABEL is therefore not in
-    // the signature, and a chip naming it redraws at the next real reason to.
+    // A worktree appears and ANOTHER one is renamed. No pane changed hands, the
+    // scope still names the same worktree, and the chip still says the same word,
+    // so the bar is left untouched — a tree change that moves no attribution and
+    // no scope is not a redraw.
     const moved = treeOf(
-      worktree({ id: HERE, branch: "here-renamed" }),
+      worktree({ id: HERE, branch: "here" }),
       worktree({ id: ELSEWHERE, branch: "renamed" }),
       worktree({ id: "/wt/new", branch: "new" }),
     );
     expect(push(scope, placed(), moved, tabs)).toBe(false);
+  });
+
+  it("draws for a tree that renamed the SCOPED worktree, and nothing more", () => {
+    // The one tree-only reason there is. The chip is on screen naming this branch,
+    // so suppressing the redraw leaves it saying a name that no longer exists —
+    // the same class of lie as a hidden tab (round-1, accepted suggestion).
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const tabs = layouts("tab-1");
+    push(scope, placed(), tree(), tabs);
+    expect(scope.scopedLabel()).toBe("here");
+
+    const renamed = treeOf(worktree({ id: HERE, branch: "feat/here" }), worktree({ id: ELSEWHERE, branch: "there" }));
+    expect(push(scope, placed(), renamed, tabs)).toBe(true);
+    expect(scope.scopedLabel()).toBe("feat/here");
+    expect(push(scope, placed(), renamed, tabs)).toBe(false);
   });
 
   it("draws exactly once for each thing that does move it", () => {
@@ -385,6 +428,7 @@ describe("every part of this is inert while the setting is off", () => {
     // changes what the bar would draw even though nothing else moved.
     const scope = off();
     const tabs = layouts("tab-1");
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
     scope.setAttribution(new Map([["tab-1", ELSEWHERE]]));
     expect(scope.shouldRender(tabs)).toBe(true);
     expect(scope.shouldRender(tabs)).toBe(false);
@@ -420,8 +464,26 @@ describe("what the chip is told to call the scope", () => {
     expect(scope.scopedLabel()).toBe("feat/here");
   });
 
-  it("falls back to the id for a persisted scope no tree has confirmed yet", () => {
-    expect(coordinator({ store: storeOf({ worktreeScope: HERE }) }).scopedLabel()).toBe(HERE);
+  it("names the branch from the first selection on, not from the second tree on", () => {
+    // `applyTree` used to be the only writer of the label, so the FIRST selection
+    // announced whatever the previous scope was called — an absolute path, on a
+    // fresh surface — and the second announced the first one's branch (round-1 B1).
+    const scope = coordinator({ store: storeOf() });
+    scope.applyTree(
+      treeOf(worktree({ id: HERE, branch: "feat/here" }), worktree({ id: ELSEWHERE, branch: "feat/away" })),
+    );
+
+    scope.select(HERE);
+    expect(scope.scopedLabel()).toBe("feat/here");
+    scope.select(ELSEWHERE);
+    expect(scope.scopedLabel()).toBe("feat/away");
+    scope.clear();
+    expect(scope.scopedLabel()).toBeNull();
+  });
+
+  it("names nothing for a persisted scope no tree has confirmed yet", () => {
+    // Nothing is scoped until a tree confirms it, so there is nothing to name.
+    expect(coordinator({ store: storeOf({ worktreeScope: HERE }) }).scopedLabel()).toBeNull();
   });
 
   it("names nothing while unscoped or while the workbench is off", () => {
