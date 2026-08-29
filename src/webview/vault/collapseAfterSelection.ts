@@ -21,10 +21,7 @@ export function isStackedLayout(layout: HTMLElement): boolean {
  * `worktreeId` of `null` is a scope being CLEARED, not a selection: escaping a
  * scope must not collapse the thing you escaped to.
  */
-export function shouldCollapseAfterSelection(args: {
-  worktreeId: string | null;
-  layout: HTMLElement | null;
-}): boolean {
+export function shouldCollapseAfterSelection(args: { worktreeId: string | null; layout: HTMLElement | null }): boolean {
   const { worktreeId, layout } = args;
   return worktreeId !== null && layout !== null && isStackedLayout(layout);
 }

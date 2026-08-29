@@ -667,9 +667,7 @@ export class VaultPanel {
       for (const btn of Array.from(el.querySelectorAll<HTMLButtonElement>("button"))) {
         // The grouping tablist is only shown in the sessions body, so its
         // selection is the grouping alone.
-        const selected = btn.dataset.view
-          ? this.view === btn.dataset.view
-          : btn.dataset.mode === this.groupMode;
+        const selected = btn.dataset.view ? this.view === btn.dataset.view : btn.dataset.mode === this.groupMode;
         btn.setAttribute("aria-selected", selected ? "true" : "false");
         // Roving: focus order follows selection, so Tab lands on the value the
         // control is currently showing rather than always on its first.

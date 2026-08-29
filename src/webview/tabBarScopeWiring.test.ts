@@ -90,12 +90,7 @@ interface Surface {
  * `main`, one in `worktree-panel`, one the evidence does not place.
  */
 function surface(
-  over: {
-    persisted?: string;
-    tabIds?: string[];
-    layouts?: Map<string, SplitNode>;
-    activePane?: string;
-  } = {},
+  over: { persisted?: string; tabIds?: string[]; layouts?: Map<string, SplitNode>; activePane?: string } = {},
 ): Surface {
   const tabIds = over.tabIds ?? ["pane-main", "pane-panel", "pane-loose"];
   const state: Record<string, unknown> = over.persisted === undefined ? {} : { worktreeScope: over.persisted };

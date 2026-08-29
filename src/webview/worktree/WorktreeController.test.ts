@@ -1217,8 +1217,7 @@ describe("the create a toolbar with no repository opens", () => {
     });
 
     expect(document.querySelector("#wt-branch")).toBeNull();
-    const results = (h.controller as unknown as { actionResults: { action: string; outcome: string }[] })
-      .actionResults;
+    const results = (h.controller as unknown as { actionResults: { action: string; outcome: string }[] }).actionResults;
     expect(results).toEqual([expect.objectContaining({ action: "create", outcome: "unavailable" })]);
   });
 
