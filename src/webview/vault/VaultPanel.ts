@@ -752,7 +752,20 @@ export class VaultPanel {
     // aria state and the same visibility, animates only on a real transition,
     // and refreshes only on collapsed→expanded. Adding one would be dead code
     // that reads as load-bearing.
-    this.setCollapsed(true, { persist: false });
+    //
+    // The collapse is about to hide whatever the user was just keyboarding in —
+    // the selected row itself, most of the time. Nothing else would take focus,
+    // so it would fall to the body and the user would lose their place right
+    // after the primary action (round-1 W1). The header is the control the
+    // collapse leaves on screen, and it is the one that undoes it.
+    if (this.bodyEl.contains(document.activeElement)) {
+      this.headerEl.focus();
+    }
+    // Animated but not persisted: the two were fused in one flag, so an
+    // automatic collapse snapped in every motion mode and never reached the
+    // shared reduced-motion path (round-1 S1). Only the write to `vaultCollapsed`
+    // has to stay off — see the doc comment above.
+    this.setCollapsed(true, { persist: false, animate: true });
   }
 
   /** Whether the vault section is collapsed to its header strip. */
@@ -765,8 +778,13 @@ export class VaultPanel {
     return this.folderOnly;
   }
 
-  /** Collapse/expand the section. Persists unless `persist: false`. */
-  setCollapsed(collapsed: boolean, opts: { persist?: boolean } = {}): void {
+  /**
+   * Collapse/expand the section. Persists unless `persist: false`. Animation
+   * follows persistence unless `animate` says otherwise: the two coincide for
+   * every caller except the automatic collapse, which animates without being
+   * recorded as the user's own preference.
+   */
+  setCollapsed(collapsed: boolean, opts: { persist?: boolean; animate?: boolean } = {}): void {
     const wasCollapsed = this.collapsed;
     this.collapsed = collapsed;
     // The class toggle is what changes the flex layout; the animator FLIPs the
@@ -776,7 +794,8 @@ export class VaultPanel {
     const applyVisual = (): void => {
       this.host.classList.toggle("vault-collapsed", collapsed);
     };
-    if (collapsed !== wasCollapsed && opts.persist !== false && this.animateCollapse) {
+    const animate = opts.animate ?? opts.persist !== false;
+    if (collapsed !== wasCollapsed && animate && this.animateCollapse) {
       this.animateCollapse(applyVisual);
     } else {
       applyVisual();

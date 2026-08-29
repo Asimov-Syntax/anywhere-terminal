@@ -53,6 +53,7 @@ import { TerminalActivityTracker } from "./terminal/TerminalActivityTracker";
 import { TerminalFactory } from "./terminal/TerminalFactory";
 import { ThemeManager } from "./theme/ThemeManager";
 import { showBanner } from "./ui/BannerService";
+import { isStackedLayout, shouldCollapseAfterSelection } from "./vault/collapseAfterSelection";
 import { VaultPanel } from "./vault/VaultPanel";
 import { activatePane } from "./worktree/activatePane";
 import { resolveInitialView, WorktreeController } from "./worktree/WorktreeController";
@@ -186,16 +187,6 @@ const splitRenderer = new SplitTreeRenderer({
  * state reverts to the class-based flex; a failed/early-cleared tween therefore
  * degrades to the correct final layout, never a stuck size.
  */
-/**
- * Whether the aux region is stacked above/below the terminal rather than docked
- * beside it. One definition serves the collapse animator (which axis to measure)
- * and the after-selection collapse (whether the rail is taking the room the
- * terminal needs). A user who docked it to a side keeps it open.
- */
-function isStackedLayout(layout: HTMLElement): boolean {
-  return layout.classList.contains("file-tree--top") || layout.classList.contains("file-tree--bottom");
-}
-
 function runAuxCollapseAnimation(apply: () => void): void {
   const region = document.getElementById("aux-region");
   const layout = document.getElementById("webview-layout");
@@ -1111,12 +1102,7 @@ function handleInit(msg: InitMessage): void {
       workbench: msg.worktreeWorkbench,
       panel: () => worktreeController,
       source: () => store,
-      render: () => {
-        updateTabBar();
-        // Every route a scope can be set or cleared by lands here, including the
-        // ones the panel's own visibility never sees.
-        worktreeController?.revalidateVisibility();
-      },
+      render: () => updateTabBar(),
       activePane: () => {
         const tabId = store.activeTabId;
         return tabId === null ? null : (store.tabActivePaneIds.get(tabId) ?? tabId);
@@ -1145,17 +1131,21 @@ function handleInit(msg: InitMessage): void {
       // The toolbar create is absent, not inert, when there is nothing to create
       // in — and only the tree knows that.
       onCreateAvailability: (available) => vaultPanel?.setCreateWorktreeAvailable(available),
-      // A scope keeps this surface subscribed to presence even with the rail
-      // collapsed: its chip, escape control and hidden-waiting count are all drawn
-      // from presence (WorktreeController.applyVisibility).
-      presenceNeeded: () => tabBarScope?.effectiveScope() !== undefined,
       onSelectWorktree: (worktreeId) => {
         tabBarScope?.onSelectWorktree(worktreeId);
         // Only an actual selection, only under the rollout, and only where two
         // columns do not fit. Clearing a scope (`null`) is not a selection, and
         // a docked rail is not taking the terminal's room.
         const layout = document.getElementById("webview-layout");
-        if (msg.worktreeWorkbench && worktreeId !== null && layout && isStackedLayout(layout)) {
+        if (
+          shouldCollapseAfterSelection({
+            // Live, not `msg.worktreeWorkbench` — that snapshot cannot see
+            // `onWorktreeWorkbench` (round-1 B3).
+            workbench: worktreeController?.isWorkbenchEnabled() === true,
+            worktreeId,
+            layout,
+          })
+        ) {
           vaultPanel?.collapseAfterSelection();
         }
       },

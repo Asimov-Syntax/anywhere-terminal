@@ -4674,4 +4674,60 @@ describe("the rail hands the room back after a selection", () => {
     panel.collapseAfterSelection();
     expect(panel.isCollapsed()).toBe(true);
   });
+
+  it("[2_1] animates the automatic collapse without recording it", () => {
+    // `persist: false` was doing two jobs, so the automatic collapse snapped in
+    // every motion mode and never reached the shared reduced-motion path
+    // (round-1 S1). Animation and persistence are separate now.
+    const host = createHost();
+    const body = document.createElement("div");
+    body.className = "wt-tree";
+    const persisted: boolean[] = [];
+    const animated: string[] = [];
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody: body,
+      workbench: true,
+      getInitialCollapsed: () => false,
+      persistCollapsed: (c) => persisted.push(c),
+      animateCollapse: (apply) => {
+        animated.push("ran");
+        apply();
+      },
+    });
+    persisted.length = 0;
+    animated.length = 0;
+
+    panel.collapseAfterSelection();
+    expect(animated, "the automatic collapse skipped the shared animator").toEqual(["ran"]);
+    expect(persisted, "the automatic collapse was recorded as a user choice").toEqual([]);
+    expect(panel.isCollapsed()).toBe(true);
+  });
+
+  it("[2_1] moves focus off the row it is about to hide", () => {
+    // The collapse hides whatever the user was keyboarding in. Nothing else
+    // would claim focus, so it would fall to the body right after the primary
+    // action (round-1 W1).
+    const { host, panel } = build();
+    const row = document.createElement("button");
+    host.querySelector<HTMLElement>(".vault-body")?.appendChild(row);
+    row.focus();
+    expect(document.activeElement).toBe(row);
+
+    panel.collapseAfterSelection();
+    expect(document.activeElement, "focus was left inside the hidden body").toBe(host.querySelector(".vault-header"));
+  });
+
+  it("[2_1] leaves focus alone when it was never inside the body", () => {
+    const { host, panel } = build();
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    panel.collapseAfterSelection();
+    expect(document.activeElement, "the collapse stole focus from another surface").toBe(outside);
+    expect(host.querySelector(".vault-header")).not.toBe(document.activeElement);
+    outside.remove();
+  });
 });

@@ -43,23 +43,6 @@ recorded as the user's own preference, so the panel they open next is the one th
 - **WHEN** the user leaves the rail open, selects a worktree so it collapses, and returns later
 - **THEN** the panel opens with the rail open
 
-### Requirement: A surface holding a scope keeps receiving presence
-
-A surface that holds a scope SHALL continue to receive the presence evidence its scope affordances
-are drawn from, whether or not the rail is showing. Collapsing the rail SHALL NOT be able to
-suppress a count, a chip, or an escape control that a scope has put on screen.
-
-#### Scenario: The rail is collapsed while a scope is set
-
-- **WHEN** the rail is collapsed while a scope is set, and a pane that only presence knows to be
-  waiting becomes hidden by that scope
-- **THEN** the count on the escape control rises, exactly as it would with the rail open
-
-#### Scenario: Clearing the scope while the rail is collapsed
-
-- **WHEN** the last scope on a collapsed rail is cleared
-- **THEN** the surface stops asking for presence it no longer draws anything from
-
 ### Requirement: Scope does not depend on the layout
 
 The tab-bar scope a selection drives SHALL be identical in every layout: the same panes are
