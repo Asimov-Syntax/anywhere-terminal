@@ -188,8 +188,12 @@ time since it finished. For a row still working, it is time since the current st
 clock per row, chosen by state — a row must never rank as freshly done while displaying a stale
 age.
 
-Truncation order under pressure: preview first, then title, never the age, the state glyph, or
-the agent icon. Those two glyphs are the row's whole point at narrow widths.
+Truncation under pressure: the two lines are independent. The preview shares none of the first
+line's width, so it no longer gives way ahead of the title — each ellipsizes within its own line,
+and neither wraps. The age, the state glyph, and the agent icon never truncate at any width; those
+two glyphs are the row's whole point at narrow widths. Nor is the preview hidden by width: on its
+own line it competes with nothing, and § 7.1 forbids withdrawing a row's most useful line to save
+space it is not taking.
 
 ### 3.4 Subagent row
 
@@ -501,7 +505,7 @@ surface in both directions and are recorded so neither side re-introduces them s
 | Mockup showed | Resolution |
 |---------------|------------|
 | A count of dirty tracked files in the remove confirmation | The model carries dirty as **presence**, not a count — only untracked entries are counted |
-| The external scope marker occupying the model column | § 3.3 keeps them as separate elements |
+| The external scope marker occupying the model column | There is no model column: the model left the row entirely (§ 3.3), and the scope marker has the slot to itself |
 | No refresh affordance during a rebuild | § 5 requires a quiet activity marker while a tree is already held |
 
 **Round 2 (the workbench redesign)** — the mockup wins the first three, this document the last two:
@@ -533,7 +537,7 @@ is four (§ 3.6).
 | Expansion or scope state for a worktree that disappeared | Dropped from persisted state on the next push |
 | Search matches only a subagent | Its agent and worktree ancestors stay visible |
 | Search matches a worktree inside the folded tail | The tail unfolds |
-| Panel is very narrow | Truncation order is preview, then title; the age column and the leading glyphs never truncate |
+| Panel is very narrow | Each line ellipsizes within itself — the preview never competes with the title, and is never hidden by width; the age column and the leading glyphs never truncate |
 | One agent `waiting`, four `running` in the same worktree | The worktree glyph reads `waiting` (§ 7.2) |
 | A worktree's only running agent is unconfirmed | The worktree glyph reads running-unconfirmed; it does not change rank |
 | Presence degraded for a worktree | It renders `unknown`, and is not moved into the idle tail |

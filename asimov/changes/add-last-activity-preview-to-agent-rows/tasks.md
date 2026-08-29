@@ -30,7 +30,7 @@
     2. S3: renumber `renderAgentRow`'s slot comments against DOM order; the preview is the second line, not a first-line slot.
     3. S4: add the external row to 1_2's narrow-width step — it is the only row whose scope column is non-empty.
 
-- [ ] 1_2 Confirm the two-line row at the widths jsdom cannot measure
+- [x] 1_2 Confirm the two-line row at the widths jsdom cannot measure — verified: manual — user walked the Worktree panel at a wide and a narrow width with a previewed row, a preview-less row and an external row, and confirmed the preview sits under the title, both lines ellipsize, the glyphs and age stay put, and the preview-less row is one line
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#each-of-an-agent-row-s-lines-truncates-on-its-own
   - **Acceptance**:
