@@ -69,3 +69,25 @@ Neither fix needs a new or changed `D#` and neither mints an invariant owner: B1
 correction inside an accepted composition, B2 makes the panel the third participant in a rollout
 seam the change did not invent. Both are remediation, so they are fixed here rather than handed
 back — landed as one task, `2_1`, because their leases overlap.
+
+## Author's impact manifest — B2 (round 1)
+
+B2 moved control construction out of the constructor into `composeControls()`, which is a shared
+interface change: the constructor now takes the same path a runtime flip takes. Reviewers see the
+fix hunk, so here is everything behaviourally reachable from it, and what I checked.
+
+| Reachable path | Verified |
+|---|---|
+| Construction, `workbench: false` | Every pre-existing VaultPanel test runs through it — 195 pass, including the ones asserting the flat control's four segments and its focus behaviour |
+| Construction, `workbench: true` | The 1_1/1_2/1_3 suites, unchanged |
+| `setWorkbench(true)` at runtime | New test: flat control gone, both levels built, no grouping values left in the toolbar |
+| `setWorkbench(false)` at runtime | New test: both levels gone, four flat segments back in the toolbar |
+| `setWorkbench(x)` with x already held | New test: inert — the same element instance survives. This is the COMMON call: the host resends the flag after initialization to close a race |
+| `view` / `groupMode` across a flip | New test: both survive; the strip stays withdrawn in the worktree body and still remembers the grouping |
+| Keyboard on controls built by a flip | New test: `wireTablist` runs on the rebuilt elements, so an arrow key still works |
+| `onWorktreeVisibility` fired again by the recomposition | `composeControls` ends in `syncView()`, which notifies visibility. `WorktreeController.setVisible` early-returns on an unchanged value (`WorktreeController.ts:468-471`), so the repeat is inert — no spurious tree request |
+| Toolbar order across a recomposition | The control is inserted as `firstChild`, so create and "This folder only" keep their positions. Asserted only by count, not by order |
+| `main.ts` `onWorktreeWorkbench` routing to the panel | **NOT covered by a test.** Nothing in this repo unit-tests `main.ts` — it is the webview bootstrap. The panel behaviour it drives is covered in both directions; the one wiring line is not, and I am not claiming it is |
+
+Not reachable and therefore not exercised: the flag never changes without that message, and no other
+caller constructs a `VaultPanel`.
