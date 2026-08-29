@@ -56,6 +56,12 @@ Planned at: 1a907750
 - Verify gate: type check, biome check src, 5109 unit tests and the I10 fs-deletion gate all pass. Lint
   is at its pre-existing baseline (5 errors / 14 warnings / 3 infos, identical to the 1a907750 clean
   tree) — every one in files this change does not touch.
+- THRASH STOP at cycle 1 round 3 (`fe443c7b`). Round 3 verified round 2's six fixes but B1-R2's
+  invariant — no history-sized directory walk on the preview cadence — reappeared at the
+  `deps.entry()` boundary, which the patch's shape could not reach. Chair recommends handback over a
+  fourth round: the service owns resolution, freshness, retry rate and failure classification behind
+  one call, and D2 treats that as one question when it is four. Awaiting the user's choice among the
+  three thrash-stop options; no further fix edits until then.
 - Residual validator warning triaged, not fixed: `agent-session-index` § "Metadata-only, bounded title
   preview, no egress" is long because it was already fused upstream (metadata + preview + truncation +
   cache/egress). Splitting it restructures an accepted requirement this change does not own; the added
