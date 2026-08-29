@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Worktree view — panel shell for review</title>
-<!-- Shared panel vocabulary comes from the REAL vault stylesheet (copied from the repo).
-     Everything in the <style> block below the LIFT marker is the new Worktree view CSS,
-     i.e. what WT-002.1 would move into src/webview/worktree/worktreePanel.css. -->
+<title>Worktree workbench — redesign for review</title>
+<!-- Shared vocabulary (tokens, badges, session list) comes from the REAL vault stylesheet,
+     copied from the repo. worktree-workbench.css is the NEW panel CSS this redesign proposes
+     in place of src/webview/worktree/worktreePanel.css. -->
 <link rel="stylesheet" href="src/webview/vault/vaultPanel.css" />
+<link rel="stylesheet" href="worktree-workbench.css" />
 <style>
-/* ── page chrome (never shipped) ─────────────────────────────────────────── */
 html,body{margin:0;background:#101010;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:auto}
 .mockup{display:flex;gap:26px;padding:26px;width:max-content;align-items:flex-start}
 .mockup-col{display:flex;flex-direction:column;gap:26px;flex:0 0 auto}
@@ -16,13 +16,12 @@ html,body{margin:0;background:#101010;color:#ccc;font-family:-apple-system,Blink
 .mockup-label b{color:#ddd;font-weight:600;text-transform:none;letter-spacing:0}
 .mockup-label em{color:#9a9a9a;font-style:normal;text-transform:none;letter-spacing:0}
 .mockup-frame{border:1px solid #2a2a2a;border-radius:6px;overflow:hidden;background:var(--vscode-sideBar-background);position:relative;display:flex;flex-direction:column}
-/* .vault-panel is `flex:1 1 0` in the shipped CSS, so it needs a flex parent — without
-   one it collapses to content height and its overflow:hidden clips the context menu. */
-.mockup-frame > .vault-panel,.mockup-frame > .aux-region{flex:1 1 auto;min-height:0}
+.mockup-frame>.wk-window,.mockup-frame>.wk-side{flex:1 1 auto;min-height:0}
 .notes{border:1px solid #2a2a2a;border-radius:6px;padding:14px 16px;background:#161616;font-size:12px;line-height:1.65;color:#b4b4b4}
 .notes h4{margin:0 0 8px;font:11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.05em;text-transform:uppercase;color:#8d8d8d}
-.notes ul{margin:0 0 12px;padding-left:16px}
-.notes li{margin:2px 0}
+.notes h4+ul{margin-top:0}
+.notes ul{margin:0 0 14px;padding-left:16px}
+.notes li{margin:3px 0}
 .notes b{color:#e2e2e2;font-weight:600}
 .notes code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#cfcfcf;background:#222;padding:1px 4px;border-radius:3px}
 :root{
@@ -42,208 +41,9 @@ html,body{margin:0;background:#101010;color:#ccc;font-family:-apple-system,Blink
   --vscode-descriptionForeground:#9d9d9d;
 }
 a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ▼▼▼  LIFT FROM HERE — worktreePanel.css  ▼▼▼
-   Density: every row is one line. One fixed leading slot per level; indentation
-   steps 18px (worktree 8 → agent 30 → subagent 48) so labels align down the tree.
-   Emphasis ladder, four steps only: repo → branch → preview → age.
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* Four segments no longer fit at sidebar width with icon + label, so unselected
-   segments keep the icon only. The selected one always shows its label — the
-   control has to answer "which view am I in" without a hover. */
-.vault-toolbar{container-type:inline-size;container-name:vaultbar}
-.vault-segmented-label{display:inline}
-@container vaultbar (max-width: 400px){
-  .vault-segmented button[aria-selected="false"] .vault-segmented-label{display:none}
-}
-
-.wt-tree{flex:1 1 auto;min-width:0;min-height:0;overflow-y:auto;padding:2px 0 8px}
-
-/* ── Repo group header (only when > 1 repo) ─────────────────────────────── */
-/* Strongest emphasis, no leading glyph slot: reads as a separator, not a row.
-   The disclosure chevron sits on the trailing edge so the label stays flush. */
-.wt-repo{display:grid;grid-template-columns:minmax(0,auto) auto 1fr auto;gap:6px;align-items:center;padding:7px 10px 4px;font-size:12px;font-weight:600;color:var(--vscode-foreground);cursor:pointer;user-select:none}
-.wt-repo:hover{background:var(--vscode-list-hoverBackground)}
-.wt-repo:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
-.wt-repo-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wt-repo-count{font-weight:400;font-size:11px;color:var(--vscode-descriptionForeground);opacity:.8}
-.wt-chev{display:inline-flex;color:var(--vscode-descriptionForeground);transition:transform 120ms ease-out}
-.is-collapsed > .wt-chev,.wt-repo.is-collapsed .wt-chev{transform:rotate(-90deg)}
-
-/* ── Worktree row ───────────────────────────────────────────────────────── */
-.wt-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:6px;align-items:center;padding:3px 10px 3px 8px;margin:0 4px;border-radius:3px;position:relative;cursor:pointer}
-.wt-row:hover{background:var(--vscode-list-hoverBackground)}
-.wt-row:focus-visible,.wt-row.is-focused{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
-.wt-row.is-missing .wt-branch{color:var(--vscode-descriptionForeground);text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--vscode-foreground) 35%,transparent)}
-.wt-glyph{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--vscode-descriptionForeground);flex:0 0 auto}
-.wt-branch{min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-foreground)}
-.wt-branch--sha,.wt-branch--bare{font-family:var(--vscode-editor-font-family,monospace);font-size:12px;color:var(--vscode-descriptionForeground)}
-.wt-marks{display:flex;align-items:center;gap:4px;flex:0 0 auto}
-
-/* Pills name WHICH worktree; badges say HOW it is. Two vocabularies, never mixed. */
-.wt-pill{padding:0 5px;border-radius:3px;font-size:10px;line-height:15px;color:var(--vscode-descriptionForeground);background:color-mix(in srgb,var(--vscode-foreground) 11%,transparent);white-space:nowrap}
-.wt-pill--here{color:var(--vscode-charts-blue);background:color-mix(in srgb,var(--vscode-charts-blue) 16%,transparent)}
-.wt-badge{display:inline-flex;align-items:center;gap:3px;padding:0 5px;border-radius:999px;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;line-height:15px;white-space:nowrap;color:var(--vscode-descriptionForeground);border:1px solid color-mix(in srgb,var(--vscode-foreground) 22%,transparent)}
-.wt-badge--missing{color:var(--vscode-editorError-foreground);border-color:color-mix(in srgb,var(--vscode-editorError-foreground) 45%,transparent)}
-.wt-badge--prunable{opacity:.85}
-.wt-badge svg{width:9px;height:9px}
-
-/* ── Active worktree card (§ 7.3) ───────────────────────────────────────── */
-/* Wraps the branch row together with its agent rows, so ownership stays legible
-   when several worktrees are expanded at once. */
-.wt-card{margin:3px 4px;padding:1px 0 3px;border:1px solid var(--vscode-widget-border);border-radius:5px;background:color-mix(in srgb,var(--vscode-foreground) 4%,transparent)}
-.wt-card > .wt-row{margin:0 1px}
-
-/* ── State vocabulary (§ 7.2): one shape per state, colour only reinforces ── */
-.wt-state{width:9px;height:9px;flex:0 0 auto;justify-self:center;position:relative;box-sizing:border-box}
-.wt-state--idle{border-radius:50%;border:1.5px solid var(--vscode-descriptionForeground);opacity:.8}
-.wt-state--running{border-radius:50%;border:1.5px solid color-mix(in srgb,var(--vscode-charts-blue) 28%,transparent);border-top-color:var(--vscode-charts-blue);animation:wt-spin .9s linear infinite}
-.wt-state--waiting{border-radius:50%;background:var(--vscode-charts-yellow)}
-.wt-state--waiting::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:1px solid var(--vscode-charts-yellow);opacity:.55;animation:wt-pulse 1.6s ease-out infinite}
-.wt-state--exited{height:0;border-top:1.5px solid var(--vscode-disabledForeground);align-self:center}
-@keyframes wt-spin{to{transform:rotate(360deg)}}
-@keyframes wt-pulse{0%{transform:scale(.7);opacity:.6}70%{transform:scale(1.25);opacity:0}100%{opacity:0}}
-@media (prefers-reduced-motion:reduce){.wt-state--running{animation:none}.wt-state--waiting::after{animation:none;opacity:.4}}
-/* The worktree row's glyph slot takes the same shapes when any agent inside is
-   active — one glyph slot, never two. */
-.wt-glyph .wt-state{width:10px;height:10px}
-
-/* ── Collapsed presence pill (§ 3.5) ────────────────────────────────────── */
-/* Grouped by state, then identity; overflow is a count, so nine agents are the
-   same height as two. */
-.wt-presence{display:inline-grid;grid-template-columns:auto auto;gap:8px;align-items:center;margin:1px 4px 2px 30px;padding:1px 5px 1px 7px;border-radius:999px;background:color-mix(in srgb,var(--vscode-foreground) 8%,transparent);cursor:pointer;max-width:calc(100% - 38px)}
-.wt-presence:hover{background:color-mix(in srgb,var(--vscode-foreground) 13%,transparent)}
-.wt-presence:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
-.wt-presence-groups{display:flex;align-items:center;gap:9px;min-width:0}
-.wt-pgroup{display:flex;align-items:center;gap:3px}
-.wt-pgroup-icons{display:flex;align-items:center;gap:2px}
-.wt-pgroup-icons .vault-badge{width:14px;height:14px;border-radius:3px}
-.wt-pgroup-icons .vault-badge svg{width:9px;height:9px}
-.wt-pgroup-more{font-size:10px;color:var(--vscode-descriptionForeground);font-variant-numeric:tabular-nums}
-
-/* ── Expanded presence: header row + one row per agent ──────────────────── */
-.wt-agents{display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;white-space:nowrap;padding:2px 10px 2px 30px;font-size:11px;color:var(--vscode-descriptionForeground);cursor:pointer}
-.wt-agents:hover{color:var(--vscode-foreground)}
-.wt-agents:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
-
-/* ── Agent row (§ 3.3) ──────────────────────────────────────────────────── */
-/* Gutter | state | icon | title | preview | model | +N | age.
-   The gutter always occupies space, so state dots align down a mixed list.
-   Preview is minmax(0,1fr) and title minmax(0,auto): the preview gives way first. */
-.wt-arow{display:grid;grid-template-columns:13px 9px 14px minmax(0,auto) minmax(0,1fr) auto auto 32px;gap:5px;align-items:center;padding:2px 10px 2px 30px;cursor:pointer;position:relative}
-.wt-arow:hover{background:var(--vscode-list-hoverBackground)}
-.wt-arow:focus-visible,.wt-arow.is-focused{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
-.wt-arow.is-selected{background:var(--vscode-list-activeSelectionBackground);color:var(--vscode-list-activeSelectionForeground)}
-.wt-gutter{width:13px;height:13px;display:inline-flex;align-items:center;justify-content:center;color:var(--vscode-descriptionForeground);flex:0 0 auto}
-.wt-gutter svg{width:12px;height:12px;transition:transform 120ms ease-out}
-.wt-arow.is-open .wt-gutter svg{transform:rotate(0)}
-.wt-arow:not(.is-open) .wt-gutter svg{transform:rotate(-90deg)}
-.wt-aicon{width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:var(--vscode-descriptionForeground)}
-.wt-aicon svg{width:12px;height:12px}
-.wt-atitle{min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-foreground)}
-.wt-apreview{min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground)}
-/* A 1-2 character preview is noise, not context: below 380px the preview COLLAPSES
-   ITS TRACK and keeps its grid item. Never `display:none` on a cell here — removing
-   the item re-flows auto-placement and drags the fixed age column off the right edge. */
-@container vault (max-width: 380px){
-  .wt-arow{grid-template-columns:13px 9px 14px minmax(0,1fr) 0 auto auto 32px}
-  .wt-apreview{visibility:hidden;overflow:hidden}
-}
-.wt-model{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--vscode-editor-font-family,monospace);font-size:10px;color:var(--vscode-descriptionForeground);opacity:.85}
-.wt-count{font-size:10px;color:var(--vscode-descriptionForeground);font-variant-numeric:tabular-nums}
-.wt-age{font-size:10px;color:var(--vscode-descriptionForeground);opacity:.75;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-/* Runs outside this window: labelled, and no focus is ever offered. */
-.wt-scope{display:inline-flex;align-items:center;gap:3px;padding:0 4px;border-radius:3px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;line-height:14px;color:var(--vscode-descriptionForeground);background:color-mix(in srgb,var(--vscode-foreground) 10%,transparent);white-space:nowrap}
-/* Activity came from a fallback source — quiet, not an error. */
-.wt-confidence{font-family:var(--vscode-editor-font-family,monospace);font-size:11px;line-height:1;color:var(--vscode-descriptionForeground);opacity:.7;cursor:help}
-
-/* ── Subagent rows: history, deliberately NOT the live dot vocabulary ───── */
-.wt-hist{margin:0 4px 2px 42px;padding-left:8px;border-left:1px solid color-mix(in srgb,var(--vscode-foreground) 14%,transparent)}
-.wt-hist-label{padding:2px 0 1px;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--vscode-descriptionForeground);opacity:.7}
-.wt-srow{display:grid;grid-template-columns:11px minmax(0,1fr) 32px;gap:6px;align-items:center;padding:1px 6px 1px 0;border-radius:3px;cursor:pointer;color:var(--vscode-descriptionForeground)}
-.wt-srow:hover{background:var(--vscode-list-hoverBackground)}
-.wt-srow:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
-.wt-outcome{width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;line-height:1;opacity:.85}
-.wt-outcome--done{color:var(--vscode-descriptionForeground)}
-.wt-outcome--failed{color:color-mix(in srgb,var(--vscode-editorError-foreground) 80%,var(--vscode-descriptionForeground))}
-.wt-stext{min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
-/* ── Notices: degraded, error, indeterminate ────────────────────────────── */
-.wt-notice{display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:6px;align-items:start;margin:2px 6px 4px;padding:5px 7px;border-radius:4px;font-size:11px;line-height:1.45;color:var(--vscode-descriptionForeground);background:color-mix(in srgb,var(--vscode-foreground) 7%,transparent);border-left:2px solid color-mix(in srgb,var(--vscode-foreground) 30%,transparent)}
-.wt-notice svg{width:12px;height:12px;margin-top:2px}
-.wt-notice b{color:var(--vscode-foreground);font-weight:600}
-.wt-notice--warn{border-left-color:var(--vscode-editorWarning-foreground);background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 10%,transparent)}
-.wt-notice--warn svg{color:var(--vscode-editorWarning-foreground)}
-.wt-notice--error{border-left-color:var(--vscode-editorError-foreground);background:color-mix(in srgb,var(--vscode-editorError-foreground) 10%,transparent)}
-.wt-notice--error svg{color:var(--vscode-editorError-foreground)}
-.wt-notice-actions{display:flex;align-items:center;gap:4px}
-.wt-link{background:none;border:0;padding:0;font:inherit;color:var(--vscode-textLink-foreground);cursor:pointer}
-.wt-link:hover{text-decoration:underline}
-.wt-dismiss{background:none;border:0;padding:0 2px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1}
-.wt-dismiss:hover{color:var(--vscode-foreground)}
-.wt-reason{font-family:var(--vscode-editor-font-family,monospace);font-size:10px;opacity:.9;display:block;margin-top:2px;white-space:pre-wrap;overflow-wrap:anywhere}
-
-/* ── Loading skeleton (first load only; a refresh keeps the tree) ───────── */
-.wt-skel{display:grid;grid-template-columns:16px minmax(0,1fr);gap:6px;align-items:center;padding:4px 10px 4px 8px;margin:0 4px}
-.wt-skel span{height:9px;border-radius:3px;background:color-mix(in srgb,var(--vscode-foreground) 12%,transparent);animation:wt-shimmer 1.5s ease-in-out infinite}
-.wt-skel span:first-child{height:11px;width:11px;border-radius:3px;justify-self:center}
-.wt-skel--agent{padding-left:30px;grid-template-columns:9px minmax(0,1fr)}
-@keyframes wt-shimmer{0%,100%{opacity:.5}50%{opacity:.95}}
-@media (prefers-reduced-motion:reduce){.wt-skel span{animation:none}}
-
-/* "Show all" cap rather than silent truncation. */
-.wt-showall{display:block;width:calc(100% - 8px);margin:2px 4px;padding:4px 10px;background:transparent;border:0;border-radius:3px;color:var(--vscode-textLink-foreground);font:inherit;font-size:11px;text-align:left;cursor:pointer}
-.wt-showall:hover{background:var(--vscode-list-hoverBackground)}
-
-/* ── Dialogs: create worktree (§ 3.2) and remove confirmation (§ 3.3) ───── */
-/* A sidebar is too narrow for a six-field form, so the dialog floats over the
-   whole webview like the session preview does, and caps at 380px. */
-.wt-scrim{position:absolute;inset:0;z-index:900;background:rgba(0,0,0,.5)}
-.wt-dialog{position:absolute;z-index:1000;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(380px,calc(100% - 20px));max-height:calc(100% - 20px);overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:14px;font-size:12px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));color:var(--vscode-foreground);border:1px solid var(--vscode-widget-border);border-radius:6px;box-shadow:0 16px 40px rgba(0,0,0,.55)}
-.wt-dialog-title{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;font-weight:600}
-.wt-dialog-title .wt-dismiss{margin-left:auto}
-.wt-dialog-path{margin:0;font-family:var(--vscode-editor-font-family,monospace);font-size:11px;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere}
-.wt-field{display:flex;flex-direction:column;gap:4px;min-width:0}
-.wt-flabel{font-size:11px;color:var(--vscode-descriptionForeground)}
-.wt-input,.wt-select{box-sizing:border-box;width:100%;height:26px;padding:3px 8px;border:1px solid var(--vscode-input-border,transparent);border-radius:3px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font:inherit;font-size:12px;outline:none}
-.wt-input:focus,.wt-select:focus{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
-.wt-input::placeholder{color:var(--vscode-input-placeholderForeground)}
-.wt-input--mono{font-family:var(--vscode-editor-font-family,monospace);font-size:11px}
-.wt-input.is-invalid{border-color:var(--vscode-inputValidation-errorBorder)}
-.wt-textarea{box-sizing:border-box;width:100%;min-height:46px;resize:vertical;padding:5px 8px;border:1px solid var(--vscode-input-border,transparent);border-radius:3px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font:inherit;font-size:12px;outline:none}
-.wt-fhint{font-size:10px;line-height:1.4;color:var(--vscode-descriptionForeground);font-family:var(--vscode-editor-font-family,monospace);overflow-wrap:anywhere}
-.wt-fhint b{color:var(--vscode-foreground);font-weight:600}
-.wt-ferror{font-size:10px;line-height:1.4;color:var(--vscode-editorError-foreground)}
-.wt-repo-opt{display:flex;align-items:center;gap:6px;min-width:0}
-.wt-dialog .vault-segmented button{font-size:11px;padding:3px 7px}
-/* A dangerous permission choice is labelled and never preselected. */
-.wt-danger-tag{margin:0 5px 0 6px;padding:0 4px;border-radius:3px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--vscode-editorWarning-foreground);background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 16%,transparent)}
-.wt-agentbox{display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:4px;border:1px solid color-mix(in srgb,var(--vscode-foreground) 12%,transparent);background:color-mix(in srgb,var(--vscode-foreground) 4%,transparent)}
-.wt-cols{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-/* Blockers are named together, so one confirmation covers the whole risk. */
-.wt-blockers{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
-.wt-blockers li{display:grid;grid-template-columns:12px minmax(0,1fr);gap:7px;align-items:start;font-size:11px;line-height:1.45}
-.wt-blockers svg{width:11px;height:11px;margin-top:2px;color:var(--vscode-descriptionForeground)}
-.wt-warnbox,.wt-refusebox{padding:7px 9px;border-radius:4px;font-size:11px;line-height:1.5}
-.wt-warnbox{border-left:2px solid var(--vscode-editorWarning-foreground);background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 10%,transparent)}
-.wt-refusebox{border-left:2px solid var(--vscode-editorError-foreground);background:color-mix(in srgb,var(--vscode-editorError-foreground) 10%,transparent)}
-.wt-warnbox b,.wt-refusebox b{color:var(--vscode-foreground)}
-.wt-dialog-actions{display:flex;align-items:center;gap:8px;margin-top:2px}
-.wt-btn{padding:4px 12px;border:1px solid transparent;border-radius:3px;font:inherit;font-size:12px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
-.wt-btn:hover{background:var(--vscode-button-secondaryHoverBackground)}
-.wt-btn:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
-.wt-btn--primary{margin-left:auto;background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
-.wt-btn--primary:hover{background:var(--vscode-button-hoverBackground)}
-.wt-btn:disabled{opacity:.5;cursor:default}
-.wt-btn--danger{margin-left:auto;background:color-mix(in srgb,var(--vscode-editorError-foreground) 78%,#000);color:#fff}
-.wt-btn--danger:hover{background:var(--vscode-editorError-foreground)}
-.wt-kbd{margin-left:6px;font-family:var(--vscode-editor-font-family,monospace);font-size:10px;opacity:.65}
 </style>
 </head>
 <body>
-
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-branch" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="4.5" cy="3.5" r="1.6"></circle><circle cx="4.5" cy="12.5" r="1.6"></circle><circle cx="11.5" cy="6" r="1.6"></circle><path d="M4.5 5.1v5.8"></path><path d="M11.5 7.6c0 2.2-2.3 2.9-4.2 3.2"></path></symbol>
 <symbol id="i-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"></path></symbol>
@@ -265,637 +65,622 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <symbol id="a-codex" viewBox="0 0 40 40" fill="currentColor"><path d="M32.8377 17.282C33.2127 16.25 33.3072 15.218 33.2127 14.1875C33.1197 13.1571 32.7447 12.1251 32.2752 11.1876C31.4322 9.78209 30.2127 8.6571 28.8072 8.0001C27.3072 7.34461 25.7127 7.15711 24.1197 7.53211C23.3698 6.78212 22.5253 6.12512 21.5878 5.65713C20.6503 5.18913 19.5253 5.00013 18.4948 5.00013C16.8851 4.99074 15.3125 5.48246 13.9948 6.40712C12.6824 7.34311 11.7449 8.6571 11.2754 10.1571C10.1504 10.4376 9.21289 10.9071 8.27539 11.4696C7.4324 12.1251 6.77541 12.9696 6.21291 13.8126C5.36992 15.2195 5.08792 16.8125 5.27542 18.407C5.46399 19.9968 6.11605 21.496 7.1504 22.718C6.79608 23.7086 6.66795 24.7659 6.77541 25.8124C6.86991 26.8444 7.2449 27.8749 7.7129 28.8124C8.55739 30.2194 9.77538 31.3444 11.1824 31.9999C12.6824 32.6569 14.2753 32.8444 15.8698 32.4694C16.6198 33.2194 17.4628 33.8749 18.4003 34.3444C19.3378 34.8139 20.4628 34.9999 21.4948 34.9999C23.1043 35.0097 24.6769 34.5185 25.9947 33.5944C27.3072 32.6569 28.2447 31.3444 28.7127 29.8444C29.7719 29.6432 30.7682 29.1934 31.6197 28.5319C32.4627 27.8749 33.2127 27.1249 33.6822 26.1874C34.5251 24.7819 34.8071 23.1875 34.6196 21.5945C34.4322 20 33.8697 18.5015 32.8377 17.282ZM21.5878 33.0304C20.0878 33.0304 18.9628 32.5609 17.9323 31.7179C17.9323 31.7179 18.0253 31.6234 18.1198 31.6234L24.1197 28.1554C24.2862 28.0803 24.4196 27.9469 24.4947 27.7804C24.5698 27.636 24.6021 27.4731 24.5877 27.3109V18.875L27.1197 20.375V27.3124C27.1455 28.0547 27.0215 28.7945 26.755 29.4878C26.4885 30.181 26.085 30.8134 25.5687 31.3473C25.0523 31.8811 24.4337 32.3054 23.7497 32.5949C23.0658 32.8843 22.3305 33.0314 21.5878 33.0304ZM9.49488 27.8749C8.83789 26.7499 8.55739 25.4374 8.83789 24.125C8.83789 24.125 8.93239 24.2195 9.02539 24.2195L15.0253 27.6874C15.1693 27.7638 15.3325 27.7966 15.4948 27.7819C15.6823 27.7819 15.8698 27.7819 15.9628 27.6874L23.2753 23.4695V26.3749L17.1823 29.9374C16.5506 30.3042 15.8527 30.5427 15.1287 30.6393C14.4046 30.7358 13.6686 30.6884 12.9629 30.4999C11.4629 30.1249 10.2449 29.1874 9.49488 27.8749ZM7.9004 14.8445C8.56239 13.7234 9.58826 12.8627 10.8074 12.4056V19.532C10.8074 19.718 10.8074 19.907 10.9004 20C10.9755 20.1665 11.1089 20.2998 11.2754 20.375L18.5878 24.5944L16.0573 26.0944L10.0574 22.625C9.41842 22.2639 8.85742 21.7797 8.40684 21.2004C7.95627 20.6211 7.62506 19.9582 7.4324 19.25C7.05741 17.8445 7.1504 16.157 7.9004 14.8445ZM28.6197 19.625L21.3073 15.407L23.8377 13.9071L29.8377 17.375C30.7752 17.9375 31.5252 18.6875 31.9947 19.625C32.4642 20.5625 32.7447 21.5945 32.6502 22.7195C32.5603 23.7755 32.1699 24.7837 31.5252 25.6249C30.8697 26.4694 30.0252 27.1249 28.9947 27.4999V20.375C28.9947 20.1875 28.9947 20 28.9002 19.907C28.9002 19.907 28.8072 19.718 28.6197 19.625ZM31.1502 15.875C31.1502 15.875 31.0572 15.782 30.9627 15.782L24.9627 12.3126C24.7752 12.2196 24.6822 12.2196 24.4947 12.2196C24.3072 12.2196 24.1197 12.2196 24.0252 12.3126L16.7128 16.532V13.6251L22.8073 10.0626C23.7448 9.50009 24.7752 9.31259 25.9002 9.31259C26.9322 9.31259 27.9627 9.68759 28.9002 10.3446C29.7447 11.0001 30.4947 11.8446 30.8697 12.7821C31.2447 13.7196 31.3377 14.8445 31.1502 15.875ZM15.4003 21.125L12.8699 19.625V12.5946C12.8699 11.5626 13.1503 10.4376 13.7128 9.59459C14.2753 8.6571 15.1198 8.0001 16.0573 7.53211C17.0127 7.05249 18.0956 6.88812 19.1503 7.06261C20.1823 7.15711 21.2128 7.62511 22.0573 8.2821C22.0573 8.2821 21.9628 8.3751 21.8698 8.3751L15.8698 11.8446C15.7033 11.9197 15.57 12.0531 15.4948 12.2196C15.4003 12.4071 15.4003 12.5001 15.4003 12.6876V21.125ZM16.7128 18.125L19.9948 16.25L23.2753 18.125V21.875L19.9948 23.75L16.7128 21.875V18.125Z"></path></symbol>
 <symbol id="a-opencode" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 4.8H6.8V19.2H16.4V4.8ZM21.2 24H2V0H21.2V24Z"></path></symbol>
 <symbol id="a-cursor" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1 22 6.5v11L12 23 2 17.5v-11L12 1Zm0 3.1L5 8v8l7 3.9 7-3.9V8l-7-3.9Zm0 2.4 4.8 2.7L12 17.5 7.2 9.2 12 6.5Z"></path></symbol>
+<symbol id="i-main" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="2.6" fill="currentColor" stroke="none"></circle><line x1="8" y1="1.5" x2="8" y2="4.4"></line><line x1="8" y1="11.6" x2="8" y2="14.5"></line></symbol>
+<symbol id="i-missing" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="5.6"></circle><line x1="4.3" y1="11.7" x2="11.7" y2="4.3"></line></symbol>
+<symbol id="i-prunable" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="5.6" stroke-dasharray="2.4 2.2"></circle></symbol>
+<symbol id="i-focus" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="4.6"></circle><circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"></circle><line x1="8" y1="1" x2="8" y2="2.6"></line><line x1="8" y1="13.4" x2="8" y2="15"></line><line x1="1" y1="8" x2="2.6" y2="8"></line><line x1="13.4" y1="8" x2="15" y2="8"></line></symbol>
 </svg>
-
 <div class="mockup">
 
-<!-- ═════════════ COLUMN 1 — the sidebar case (320px) ═════════════ -->
-<div class="mockup-col" style="width:320px">
+<!-- ════════ COLUMN 1 — the whole workbench: rail + scoped terminal ════════ -->
+<div class="mockup-col" style="width:1180px">
 
 <div>
-<div class="mockup-label">1 · <b>Default view, one repo</b> · no group header · active worktree in a card · <em>unselected segments go icon-only at this width</em></div>
-<div class="mockup-frame" style="height:452px">
-<section class="vault-panel">
-  <div class="vault-header" role="button" tabindex="0" aria-expanded="true">
-    <div class="vault-header__main">
-      <span class="vault-header__chevron" aria-hidden="true">›</span>
-      <span class="vault-title">AI Vault</span>
-      <span class="vault-header__count">6</span>
+<div class="mockup-label">1 · <b>Default composition</b> · scope = <em>main</em> · rail open, sessions demoted to the second toggle · create lives in the toolbar <em>and</em> on the repo header</div>
+<div class="mockup-frame" style="height:520px">
+<div class="wk-window">
+  <aside class="wk-side">
+    <div class="wk-phead">
+      <span>Worktrees</span>
+      <span class="wk-phead-sp"></span>
+      <button class="wk-iconbtn is-primary" type="button" title="Create worktree"><svg width="14" height="14"><use href="#i-plus"></use></svg></button>
+      <button class="wk-iconbtn" type="button" title="Rebuild the worktree tree"><svg width="13" height="13"><use href="#i-refresh"></use></svg></button>
+      <button class="wk-iconbtn" type="button" title="Search worktrees and agents"><svg width="13" height="13"><use href="#i-search"></use></svg></button>
     </div>
-    <button class="vault-header__refresh-btn" type="button" title="Rebuild the worktree tree"><svg width="13" height="13"><use href="#i-refresh"></use></svg></button>
-    <button class="vault-header__search-btn" type="button" title="Search worktrees and agents"><svg width="13" height="13"><use href="#i-search"></use></svg></button>
-  </div>
-  <!-- Worktree is a fourth segment that swaps the body; "This folder only" is hidden here. -->
-  <div class="vault-toolbar">
-      <div class="vault-segmented" role="tablist" aria-label="Vault view">
-        <button type="button" role="tab" aria-selected="false" title="Recent sessions"><svg width="12" height="12"><use href="#i-recent"></use></svg><span class="vault-segmented-label">Recent</span></button>
-        <button type="button" role="tab" aria-selected="false" title="Group by agent"><svg width="12" height="12"><use href="#i-agent"></use></svg><span class="vault-segmented-label">Agent</span></button>
-        <button type="button" role="tab" aria-selected="false" title="Group by working folder"><svg width="12" height="12"><use href="#i-folder"></use></svg><span class="vault-segmented-label">Folder</span></button>
-        <button type="button" role="tab" aria-selected="true" title="Worktrees"><svg width="12" height="12"><use href="#i-branch"></use></svg><span class="vault-segmented-label">Worktree</span></button>
-      </div>
-      <button class="vault-header__search-btn" type="button" title="Create worktree" aria-label="Create worktree"><svg width="13" height="13"><use href="#i-plus"></use></svg></button>
-  </div>
-  <div class="vault-body">
-    <div class="wt-tree" role="tree" aria-label="Worktrees">
-      <!-- Active worktree: card wraps the branch row and its agent rows together. -->
-      <div class="wt-card">
-        <div class="wt-row" role="treeitem" aria-expanded="true" tabindex="0" title="main&#10;/Users/huybuidac/Projects/ai-oss/anywhere-terminal">
-          <span class="wt-glyph"><span class="wt-state wt-state--waiting" role="img" aria-label="An agent is waiting"></span></span>
-          <span class="wt-branch">main</span>
-          <span class="wt-marks"><span class="wt-pill">main</span><span class="wt-pill wt-pill--here" title="This worktree is a workspace folder">here</span></span>
-        </div>
-        <div class="wt-agents" role="button" tabindex="0" aria-expanded="true" title="Collapse agents">
-          <span>3 agents</span>
-          <span class="wt-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
-        </div>
-        <div class="wt-arow is-open" role="treeitem" aria-expanded="true" tabindex="0">
-          <span class="wt-gutter" aria-hidden="true"><svg><use href="#i-chev"></use></svg></span>
-          <span class="wt-state wt-state--waiting" role="img" aria-label="Waiting"></span>
-          <span class="wt-aicon vault-badge--claude" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
-          <span class="wt-atitle">INTEGRATE-WORKTREE</span>
-          <span class="wt-apreview">Approve the git worktree add?</span>
-          <span></span><span class="wt-count">+2</span>
-          <span class="wt-age">5m</span>
-        </div>
-        <div class="wt-hist">
-          <div class="wt-hist-label">Past delegations</div>
-          <div class="wt-srow" role="treeitem" tabindex="0" title="Focuses the parent pane — a subagent has no pane of its own">
-            <span class="wt-outcome wt-outcome--done" aria-hidden="true">✓</span>
-            <span class="wt-stext">Review the worktree row anatomy</span>
-            <span class="wt-age">22m</span>
-          </div>
-          <div class="wt-srow" role="treeitem" tabindex="0">
-            <span class="wt-outcome wt-outcome--failed" aria-hidden="true">✕</span>
-            <span class="wt-stext">librarian — locate the presence spec</span>
-            <span class="wt-age">31m</span>
-          </div>
-        </div>
-        <div class="wt-arow" role="treeitem" tabindex="0">
-          <span class="wt-gutter" aria-hidden="true"></span>
-          <span class="wt-state wt-state--running" role="img" aria-label="Running"></span>
-          <span class="wt-aicon" style="color:var(--vault-accent-codex)"><svg><use href="#a-codex"></use></svg></span>
-          <span class="wt-atitle">Backpressure pass</span>
-          <span class="wt-apreview">Bash: npm run test</span>
-          <span></span><span></span>
-          <span class="wt-age">now</span>
-        </div>
-        <!-- agentSource: "none" → a plain terminal row, no guessed icon. -->
-        <div class="wt-arow" role="treeitem" tabindex="0">
-          <span class="wt-gutter" aria-hidden="true"></span>
-          <span class="wt-state wt-state--idle" role="img" aria-label="Idle"></span>
-          <span class="wt-aicon"><svg><use href="#i-terminal"></use></svg></span>
-          <span class="wt-atitle">zsh</span>
-          <span class="wt-apreview"></span>
-          <span></span><span></span>
-          <span class="wt-age">1h</span>
-        </div>
-      </div>
-
-      <!-- Collapsed presence: grouped by state, up to 3 icons each, then +N. -->
-      <div class="wt-row" role="treeitem" aria-expanded="false" tabindex="0" title="feat/worktree-panel&#10;/Users/huybuidac/Projects/ai-oss/anywhere-terminal-wt/worktree-panel">
-        <span class="wt-glyph"><span class="wt-state wt-state--running" role="img" aria-label="An agent is running"></span></span>
-        <span class="wt-branch">feat/worktree-panel</span>
-        <span class="wt-marks"></span>
-      </div>
-      <button class="wt-presence" type="button" aria-expanded="false" title="Show agents">
-        <span class="wt-presence-groups">
-          <span class="wt-pgroup"><span class="wt-state wt-state--running" aria-hidden="true"></span><span class="wt-pgroup-icons"><span class="vault-badge vault-badge--claude"><svg><use href="#a-claude"></use></svg></span><span class="vault-badge vault-badge--claude"><svg><use href="#a-claude"></use></svg></span><span class="vault-badge vault-badge--codex"><svg><use href="#a-codex"></use></svg></span></span><span class="wt-pgroup-more">+4</span></span>
-          <span class="wt-pgroup"><span class="wt-state wt-state--idle" aria-hidden="true"></span><span class="wt-pgroup-icons"><span class="vault-badge vault-badge--opencode"><svg><use href="#a-opencode"></use></svg></span><span class="vault-badge vault-badge--cursor"><svg><use href="#a-cursor"></use></svg></span></span></span>
-        </span>
-        <span class="wt-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
-      </button>
-
-      <!-- Zero agents: row renders, no twisty, no presence element. -->
-      <div class="wt-row" role="treeitem" tabindex="0" title="asimov-validator-autofix&#10;/Users/huybuidac/Projects/ai-oss/anywhere-terminal-wt/validator">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">asimov-validator-autofix</span>
-        <span class="wt-marks"></span>
-      </div>
-      <div class="wt-row" role="treeitem" tabindex="0" title="release/0.4.x&#10;locked: publishing">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">release/0.4.x</span>
-        <span class="wt-marks"><span class="wt-badge" title="locked: publishing"><svg><use href="#i-lock"></use></svg>locked</span></span>
-      </div>
-      <div class="wt-row" role="treeitem" tabindex="0" title="Detached HEAD at 9f2c1ab">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch wt-branch--sha">9f2c1ab</span>
-        <span class="wt-marks"></span>
-      </div>
-      <!-- missing outranks prunable: only one badge shows. -->
-      <div class="wt-row is-missing" role="treeitem" tabindex="0" title="spike/hooks&#10;/Volumes/ext/anywhere-terminal-wt/spike-hooks (directory gone)">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">spike/hooks</span>
-        <span class="wt-marks"><span class="wt-badge wt-badge--missing">missing</span></span>
-      </div>
+    <div class="wk-toggle" role="tablist" aria-label="Panel view">
+      <button type="button" role="tab" aria-selected="true"><svg width="12" height="12"><use href="#i-branch"></use></svg>Worktrees</button>
+      <button type="button" role="tab" aria-selected="false"><svg width="12" height="12"><use href="#i-recent"></use></svg>Sessions</button>
     </div>
-  </div>
-</section>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">2 · <b>Two repos</b> · group headers appear · second repo degraded, naming source + reason</div>
-<div class="mockup-frame" style="height:300px">
-<section class="vault-panel">
-  <div class="vault-body">
-    <div class="wt-tree" role="tree">
-      <div class="wt-repo" role="treeitem" tabindex="0" aria-expanded="true">
-        <span class="wt-repo-name">anywhere-terminal</span>
-        <span class="wt-repo-count">4</span>
+    <div class="wk-tree" role="tree" aria-label="Worktrees">
+      <div class="wk-repo" role="treeitem" aria-expanded="true" tabindex="0" title="/Users/huybuidac/Projects/ai-oss/anywhere-terminal">
+        <span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
+        <span class="wk-repo-name">anywhere-terminal</span>
+        <span class="wk-repo-count">7</span>
         <span></span>
-        <span class="wt-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
+        <button class="wk-iconbtn" type="button" title="Create worktree in anywhere-terminal"><svg width="12" height="12"><use href="#i-plus"></use></svg></button>
       </div>
-      <div class="wt-row" role="treeitem" tabindex="0">
-        <span class="wt-glyph"><span class="wt-state wt-state--running"></span></span>
-        <span class="wt-branch">main</span>
-        <span class="wt-marks"><span class="wt-pill">main</span><span class="wt-pill wt-pill--here">here</span></span>
-      </div>
-      <button class="wt-presence" type="button" aria-expanded="false">
-        <span class="wt-presence-groups"><span class="wt-pgroup"><span class="wt-state wt-state--running"></span><span class="wt-pgroup-icons"><span class="vault-badge vault-badge--claude"><svg><use href="#a-claude"></use></svg></span></span></span></span>
-        <span class="wt-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
-      </button>
-      <div class="wt-row" role="treeitem" tabindex="0">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">worktree-view-more-actions</span>
-        <span class="wt-marks"></span>
-      </div>
-
-      <div class="wt-repo" role="treeitem" tabindex="0" aria-expanded="true">
-        <span class="wt-repo-name">cyberk-skills</span>
-        <span class="wt-repo-count">2</span>
-        <span></span>
-        <span class="wt-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
-      </div>
-      <!-- Degraded is scoped to the repo that failed, and says which source failed and why. -->
-      <div class="wt-notice wt-notice--warn" role="status">
-        <svg aria-hidden="true"><use href="#i-warning"></use></svg>
-        <span><b>Worktree list may be stale.</b><span class="wt-reason">git worktree list: exit 128 — not a git repository (safe.directory)</span></span>
-        <span class="wt-notice-actions"><button class="wt-link" type="button">Retry</button></span>
-      </div>
-      <div class="wt-row" role="treeitem" tabindex="0">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">main</span>
-        <span class="wt-marks"><span class="wt-pill">main</span></span>
-      </div>
-      <div class="wt-row" role="treeitem" tabindex="0">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">bare</span>
-        <span class="wt-marks"><span class="wt-badge wt-badge--prunable">prunable</span></span>
-      </div>
-    </div>
-  </div>
-</section>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">3 · <b>First load</b> · skeleton rows, no spinner in a void</div>
-<div class="mockup-frame" style="height:150px">
-<section class="vault-panel">
-  <div class="vault-body">
-    <div class="wt-tree" aria-busy="true">
-      <div class="wt-skel"><span></span><span style="width:52%"></span></div>
-      <div class="wt-skel wt-skel--agent"><span></span><span style="width:74%"></span></div>
-      <div class="wt-skel wt-skel--agent"><span></span><span style="width:61%"></span></div>
-      <div class="wt-skel"><span></span><span style="width:40%"></span></div>
-      <div class="wt-skel"><span></span><span style="width:66%"></span></div>
-    </div>
-  </div>
-</section>
-</div>
-</div>
-
-</div>
-
-<!-- ═════════════ COLUMN 2 — wide, states, menus ═════════════ -->
-<div class="mockup-col" style="width:620px">
-
-<div>
-<div class="mockup-label">4 · <b>Wide (620px)</b> · the same tree with room for preview, model chip, scope and confidence markers</div>
-<div class="mockup-frame" style="height:326px">
-<section class="vault-panel">
-  <div class="vault-toolbar">
-      <div class="vault-segmented" role="tablist" aria-label="Vault view">
-        <button type="button" role="tab" aria-selected="false"><svg width="12" height="12"><use href="#i-recent"></use></svg><span class="vault-segmented-label">Recent</span></button>
-        <button type="button" role="tab" aria-selected="false"><svg width="12" height="12"><use href="#i-agent"></use></svg><span class="vault-segmented-label">Agent</span></button>
-        <button type="button" role="tab" aria-selected="false"><svg width="12" height="12"><use href="#i-folder"></use></svg><span class="vault-segmented-label">Folder</span></button>
-        <button type="button" role="tab" aria-selected="true"><svg width="12" height="12"><use href="#i-branch"></use></svg><span class="vault-segmented-label">Worktree</span></button>
-      </div>
-      <button class="vault-header__search-btn" type="button" title="Create worktree"><svg width="13" height="13"><use href="#i-plus"></use></svg></button>
-  </div>
-  <div class="vault-body">
-    <div class="wt-tree" role="tree">
-      <div class="wt-card">
-        <div class="wt-row" role="treeitem" aria-expanded="true" tabindex="0">
-          <span class="wt-glyph"><span class="wt-state wt-state--waiting"></span></span>
-          <span class="wt-branch">main</span>
-          <span class="wt-marks"><span class="wt-pill">main</span><span class="wt-pill wt-pill--here">here</span></span>
+      <!-- Worktrees holding agents come first and render in full. -->
+      <div class="wk-wt is-selected">
+        <div class="wk-row" role="treeitem" aria-expanded="true" tabindex="0" title="main">
+          <span class="wk-glyph"><span class="wk-g wk-g--waiting" role="img" aria-label="An agent is waiting"></span></span>
+          <span class="wk-branch">main</span>
+          <span class="wk-marks">
+            <span class="wk-ib" title="Main worktree of this repository"><svg><use href="#i-main"></use></svg></span>
+            <span class="wk-pill" title="This worktree is a workspace folder">open</span>
+          </span>
         </div>
-        <div class="wt-agents" role="button" tabindex="0" aria-expanded="true"><span>4 agents</span><span class="wt-chev"><svg width="12" height="12"><use href="#i-chev"></use></svg></span></div>
-        <div class="wt-arow is-selected" role="treeitem" tabindex="0">
-          <span class="wt-gutter"></span>
-          <span class="wt-state wt-state--waiting"></span>
-          <span class="wt-aicon" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
-          <span class="wt-atitle">INTEGRATE-WORKTREE</span>
-          <span class="wt-apreview">Approve the git worktree add?</span>
-          <span class="wt-model">sonnet-4-6</span><span class="wt-count">+2</span>
-          <span class="wt-age">5m</span>
+        <div class="wk-arow" role="treeitem" tabindex="0">
+          <span class="wk-g wk-g--waiting" role="img" aria-label="waiting"></span>
+          <span class="wk-aicon" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
+          <span class="wk-aname">INTEGRATE-WORKTREE</span>
+          <span class="wk-age">5m</span>
+          <span class="wk-aprev">Approve the git worktree add?</span>
         </div>
-        <div class="wt-arow" role="treeitem" tabindex="0">
-          <span class="wt-gutter"></span>
-          <span class="wt-state wt-state--running"></span>
-          <span class="wt-aicon" style="color:var(--vault-accent-codex)"><svg><use href="#a-codex"></use></svg></span>
-          <span class="wt-atitle">Backpressure pass</span>
-          <span class="wt-apreview">Bash: npm run test -- src/webview</span>
-          <span class="wt-model">gpt-5-codex</span><span></span>
-          <span class="wt-age">now</span>
+        <div class="wk-arow" role="treeitem" tabindex="0">
+          <span class="wk-g wk-g--working" role="img" aria-label="working"></span>
+          <span class="wk-aicon" style="color:var(--vault-accent-codex)"><svg><use href="#a-codex"></use></svg></span>
+          <span class="wk-aname">Backpressure pass</span>
+          <span class="wk-age">now</span>
+          <span class="wk-aprev">Bash: npm run test — 41 passed</span>
         </div>
-        <!-- Fallback activitySource: a quiet marker, next to the state it qualifies. -->
-        <div class="wt-arow" role="treeitem" tabindex="0">
-          <span class="wt-gutter"></span>
-          <span class="wt-state wt-state--running"></span>
-          <span class="wt-aicon" style="color:var(--vault-accent-opencode)"><svg><use href="#a-opencode"></use></svg></span>
-          <span class="wt-atitle">opencode <span class="wt-confidence" title="Activity inferred from terminal output — the terminal is busy, which is not proof of an agent turn">~</span></span>
-          <span class="wt-apreview">writing docs/design/worktree-panel-ui.md</span>
-          <span></span><span></span>
-          <span class="wt-age">2m</span>
-        </div>
-        <!-- External scope: labelled, and no focus affordance is offered anywhere. -->
-        <div class="wt-arow" role="treeitem" tabindex="0">
-          <span class="wt-gutter"></span>
-          <span class="wt-state wt-state--waiting"></span>
-          <span class="wt-aicon" style="color:var(--vault-accent-cursor)"><svg><use href="#a-cursor"></use></svg></span>
-          <span class="wt-atitle">Sash regression hunt</span>
-          <span class="wt-apreview">Which file should I start from?</span>
-          <span class="wt-scope" title="Running in another VS Code window"><svg width="9" height="9"><use href="#i-window"></use></svg>other window</span><span></span>
-          <span class="wt-age">14m</span>
+        <div class="wk-arow" role="treeitem" tabindex="0">
+          <span class="wk-g wk-g--done" role="img" aria-label="done"></span>
+          <span class="wk-aicon"><svg><use href="#i-terminal"></use></svg></span>
+          <span class="wk-aname">zsh</span>
+          <span class="wk-age">1h</span>
+          <span class="wk-aprev">Done — merged 3 files</span>
         </div>
       </div>
-      <div class="wt-row" role="treeitem" tabindex="0">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">feat/agent-hook-server</span>
-        <span class="wt-marks"></span>
-      </div>
-      <button class="wt-showall" type="button">Show all 34 worktrees</button>
-    </div>
-  </div>
-</section>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">5 · <b>Action results</b> · error and indeterminate, attached to the row they concern · dismissible</div>
-<div class="mockup-frame" style="height:214px">
-<section class="vault-panel">
-  <div class="vault-body">
-    <div class="wt-tree" role="tree">
-      <div class="wt-row" role="treeitem" tabindex="0">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">spike/hooks</span>
-        <span class="wt-marks"></span>
-      </div>
-      <div class="wt-notice wt-notice--error" role="alert">
-        <svg aria-hidden="true"><use href="#i-warning"></use></svg>
-        <span><b>Couldn't remove this worktree.</b><span class="wt-reason">fatal: '/Volumes/ext/anywhere-terminal-wt/spike-hooks' contains modified or untracked files, use --force to delete it</span></span>
-        <span class="wt-notice-actions"><button class="wt-link" type="button">Force remove…</button><button class="wt-dismiss" type="button" aria-label="Dismiss">✕</button></span>
-      </div>
-      <div class="wt-row" role="treeitem" tabindex="0">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">release/0.4.x</span>
-        <span class="wt-marks"><span class="wt-badge wt-badge--prunable">prunable</span></span>
-      </div>
-      <!-- Indeterminate is not an error: the repository changed, and the user has to know. -->
-      <div class="wt-notice wt-notice--warn" role="alert">
-        <svg aria-hidden="true"><use href="#i-warning"></use></svg>
-        <span><b>Remove partly applied.</b> The directory was deleted; the registration is still listed. Prune the repo to finish.<span class="wt-reason">observed after: git worktree remove — exit 0, list still reports the path</span></span>
-        <span class="wt-notice-actions"><button class="wt-link" type="button">Prune</button><button class="wt-dismiss" type="button" aria-label="Dismiss">✕</button></span>
-      </div>
-    </div>
-  </div>
-</section>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">6 · <b>Context menus</b> · worktree row (left) and agent row (right) · items per worktree-actions § 3</div>
-<div style="display:flex;gap:12px">
-<div class="mockup-frame" style="width:304px;height:300px">
-<section class="vault-panel">
-  <div class="vault-body">
-    <div class="wt-tree" role="tree">
-      <div class="wt-row" role="treeitem" tabindex="0" style="background:var(--vscode-list-hoverBackground)">
-        <span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span>
-        <span class="wt-branch">feat/worktree-panel</span>
-        <span class="wt-marks"></span>
-      </div>
-      <div class="vault-context-menu" role="menu" style="top:26px;left:26px;min-width:236px">
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-window"></use></svg> Open Folder in New Window</button>
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-plus"></use></svg> Add Folder to Workspace</button>
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-terminal"></use></svg> Open Terminal Here</button>
-        <hr />
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-reveal"></use></svg> Reveal in Finder</button>
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-copy"></use></svg> Copy Path</button>
-        <hr />
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-lock"></use></svg> Lock Worktree</button>
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-trash"></use></svg> Remove Worktree…</button>
-      </div>
-    </div>
-  </div>
-</section>
-</div>
-<div class="mockup-frame" style="width:304px;height:300px">
-<section class="vault-panel">
-  <div class="vault-body">
-    <div class="wt-tree" role="tree">
-      <div class="wt-arow" role="treeitem" tabindex="0" style="background:var(--vscode-list-hoverBackground);padding-left:10px">
-        <span class="wt-gutter"></span>
-        <span class="wt-state wt-state--waiting"></span>
-        <span class="wt-aicon" style="color:var(--vault-accent-cursor)"><svg><use href="#a-cursor"></use></svg></span>
-        <span class="wt-atitle">Sash regression hunt</span>
-        <span class="wt-apreview"></span>
-        <span class="wt-scope"><svg width="9" height="9"><use href="#i-window"></use></svg>other window</span><span></span>
-        <span class="wt-age">14m</span>
-      </div>
-      <!-- External row: Focus Pane is absent, not disabled. There is no pane here to reveal. -->
-      <div class="vault-context-menu" role="menu" style="top:26px;left:26px;min-width:236px">
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-terminal"></use></svg> Open Session Preview</button>
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-resume"></use></svg> Resume Session Here</button>
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-copy"></use></svg> Copy Resume Command</button>
-        <hr />
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-reveal"></use></svg> Reveal in Finder</button>
-        <button type="button" role="menuitem"><svg width="14" height="14"><use href="#i-copy"></use></svg> Copy Path</button>
-      </div>
-    </div>
-  </div>
-</section>
-</div>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">7 · <b>Empty states</b> · one copy per cause, no error styling</div>
-<div style="display:flex;gap:12px">
-<div class="mockup-frame" style="width:198px;min-height:200px">
-<section class="vault-panel"><div class="vault-body"><div class="wt-tree">
-  <div class="vault-empty">
-    <span class="vault-empty-icon"><svg width="26" height="26"><use href="#i-folder"></use></svg></span>
-    <div class="vault-empty-title">No folder open</div>
-    <div class="vault-empty-body">Open a folder to see its worktrees.</div>
-  </div>
-</div></div></section>
-</div>
-<div class="mockup-frame" style="width:198px;min-height:200px">
-<section class="vault-panel"><div class="vault-body"><div class="wt-tree">
-  <div class="vault-empty">
-    <span class="vault-empty-icon"><svg width="26" height="26"><use href="#i-branch"></use></svg></span>
-    <div class="vault-empty-title">No git repository</div>
-    <div class="vault-empty-body">This view lists git worktrees. None of the open folders is a repository.</div>
-  </div>
-</div></div></section>
-</div>
-<div class="mockup-frame" style="width:198px;min-height:200px">
-<section class="vault-panel"><div class="vault-body"><div class="wt-tree">
-  <div class="vault-empty">
-    <span class="vault-empty-icon"><svg width="26" height="26"><use href="#i-terminal"></use></svg></span>
-    <div class="vault-empty-title">Git not found</div>
-    <div class="vault-empty-body">The Worktree view needs git on your PATH.</div>
-  </div>
-</div></div></section>
-</div>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">8 · <b>Narrow (216px)</b> · the preview cell collapses below 380px · title truncates against the fixed age column, which never moves</div>
-<div style="display:flex;gap:12px;align-items:flex-start">
-<div class="mockup-frame" style="width:216px;height:150px">
-<section class="vault-panel"><div class="vault-body"><div class="wt-tree" role="tree">
-  <div class="wt-card">
-    <div class="wt-row" role="treeitem" tabindex="0">
-      <span class="wt-glyph"><span class="wt-state wt-state--waiting"></span></span>
-      <span class="wt-branch">feat/worktree-panel-ui</span>
-      <span class="wt-marks"><span class="wt-pill wt-pill--here">here</span></span>
-    </div>
-    <div class="wt-agents" role="button" tabindex="0" aria-expanded="true"><span>2 agents</span><span class="wt-chev"><svg width="12" height="12"><use href="#i-chev"></use></svg></span></div>
-    <div class="wt-arow" role="treeitem" tabindex="0">
-      <span class="wt-gutter"></span>
-      <span class="wt-state wt-state--waiting"></span>
-      <span class="wt-aicon" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
-      <span class="wt-atitle">INTEGRATE-WORKTREE</span>
-      <span class="wt-apreview">Approve the git worktree add?</span>
-      <span></span><span class="wt-count">+2</span>
-      <span class="wt-age">5m</span>
-    </div>
-    <div class="wt-arow" role="treeitem" tabindex="0">
-      <span class="wt-gutter"></span>
-      <span class="wt-state wt-state--running"></span>
-      <span class="wt-aicon" style="color:var(--vault-accent-codex)"><svg><use href="#a-codex"></use></svg></span>
-      <span class="wt-atitle">Backpressure pass</span>
-      <span class="wt-apreview">Bash: npm run test</span>
-      <span></span><span></span>
-      <span class="wt-age">now</span>
-    </div>
-  </div>
-</div></div></section>
-</div>
-<div class="notes" style="flex:1">
-<h4>Decisions this shell settles (§ 7.6)</h4>
-<ul>
-<li><b>State shapes:</b> idle = hollow ring, running = spinning arc, waiting = filled disc with a pulsing halo (loudest), exited = a flat dash. Shape carries it; colour only reinforces.</li>
-<li><b>Worktree glyph</b> is the branch mark at rest and takes over the strongest agent state — one slot, never two.</li>
-<li><b>Segmented control:</b> four segments don't fit at sidebar width, so unselected ones drop their label below a 420px container. The selected label always shows.</li>
-<li><b>Indentation</b> steps 18px: worktree 8 → agent 30 → subagent 48 (rail-indented under the card).</li>
-<li><b>Subagent history:</b> a left rail, a <code>Past delegations</code> label, and outcome glyphs (✓ ✕) — never the live dot vocabulary.</li>
-<li><b>Markers:</b> pills name which worktree (<code>main</code>, <code>here</code>); outlined badges say how it is (<code>locked</code>, <code>missing</code>, <code>prunable</code>). Confidence is a dim <code>~</code>; external scope is a labelled chip.</li>
-<li><b>Notices</b> carry the failing source and its verbatim reason in mono, and sit on the scope they concern.</li>
-<li><b>Narrow rule (deviation):</b> the spec's truncation order is preview then title, but a preview clipped to one or two characters reads as noise — below a 380px panel the preview cell collapses instead, and the title takes the space. The age column and the leading icons still never move.</li>
-</ul>
-<h4>Open for your call</h4>
-<ul>
-<li>Create-worktree entry point: a <code>+</code> in the toolbar here. It could also live only in the repo header's context menu.</li>
-<li><code>here</code> as the in-workspace word — alternatives: <code>open</code>, or a marker with no text.</li>
-<li>Whether the active worktree card should also apply to a non-active expanded worktree, or only to the one holding the focused pane.</li>
-<li>Create form: <code>Start agent</code> is one option in <em>After creating</em> rather than a separate always-visible agent field. The reference keeps the agent picker permanently on screen.</li>
-</ul>
-</div>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">9 · <b>Create worktree</b> · default state · branch name starts empty by design; the path derives from it · <em>no Run-on host and no Smart/GitHub/Jira modes (§ 7.5)</em></div>
-<div class="mockup-frame" style="height:436px">
-<section class="vault-panel">
-  <div class="vault-body">
-    <div class="wt-tree" role="tree">
-      <div class="wt-row" role="treeitem" tabindex="0"><span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span><span class="wt-branch">main</span><span class="wt-marks"><span class="wt-pill">main</span><span class="wt-pill wt-pill--here">here</span></span></div>
-      <div class="wt-row" role="treeitem" tabindex="0"><span class="wt-glyph"><svg width="13" height="13"><use href="#i-branch"></use></svg></span><span class="wt-branch">feat/agent-hook-server</span><span class="wt-marks"></span></div>
-    </div>
-  </div>
-  <div class="wt-scrim"></div>
-  <div class="wt-dialog" role="dialog" aria-modal="true" aria-label="Create worktree">
-    <h3 class="wt-dialog-title">Create worktree<button class="wt-dismiss" type="button" aria-label="Cancel">✕</button></h3>
-    <!-- Repo picker appears only once the workspace holds more than one repo. -->
-    <div class="wt-field">
-      <label class="wt-flabel" for="wt-repo">Repository</label>
-      <select class="wt-select" id="wt-repo"><option>anywhere-terminal</option><option>cyberk-skills</option></select>
-      <span class="wt-fhint">/Users/huybuidac/Projects/ai-oss/anywhere-terminal</span>
-    </div>
-    <div class="wt-field">
-      <span class="wt-flabel">Branch</span>
-      <div class="vault-segmented" role="tablist" aria-label="Branch mode">
-        <button type="button" role="tab" aria-selected="true">New branch</button>
-        <button type="button" role="tab" aria-selected="false">Existing</button>
-        <button type="button" role="tab" aria-selected="false">Detached</button>
-      </div>
-    </div>
-    <div class="wt-cols">
-      <div class="wt-field">
-        <label class="wt-flabel" for="wt-branch">Name</label>
-        <input class="wt-input" id="wt-branch" type="text" placeholder="feat/…" />
-      </div>
-      <div class="wt-field">
-        <label class="wt-flabel" for="wt-base">Base ref <span style="opacity:.7">(optional)</span></label>
-        <input class="wt-input wt-input--mono" id="wt-base" type="text" placeholder="HEAD" />
-      </div>
-    </div>
-    <div class="wt-field">
-      <label class="wt-flabel" for="wt-path">Path</label>
-      <input class="wt-input wt-input--mono" id="wt-path" type="text" placeholder="…/anywhere-terminal-&lt;branch&gt;" />
-      <span class="wt-fhint">Defaults to <b>…/ai-oss/anywhere-terminal-&lt;branch&gt;</b> once the branch is named.</span>
-    </div>
-    <div class="wt-field">
-      <label class="wt-flabel" for="wt-after">After creating</label>
-      <select class="wt-select" id="wt-after"><option>Nothing</option><option>Open a terminal here</option><option>Start an agent</option><option>Open folder in a new window</option><option>Add folder to workspace</option></select>
-    </div>
-    <div class="wt-dialog-actions">
-      <button class="wt-btn" type="button">Cancel</button>
-      <button class="wt-btn wt-btn--primary" type="button" disabled>Create worktree<span class="wt-kbd">⌘↵</span></button>
-    </div>
-  </div>
-</section>
-</div>
-</div>
-
-<div>
-<div class="mockup-label">10 · <b>Create worktree</b> · invalid branch name · default path collided, so the form shows the final suffixed path · <em>Start an agent</em> expanded</div>
-<div class="mockup-frame" style="height:578px">
-<section class="vault-panel">
-  <div class="vault-body"><div class="wt-tree"></div></div>
-  <div class="wt-scrim"></div>
-  <div class="wt-dialog" role="dialog" aria-modal="true" aria-label="Create worktree">
-    <h3 class="wt-dialog-title">Create worktree<button class="wt-dismiss" type="button" aria-label="Cancel">✕</button></h3>
-    <div class="wt-field">
-      <span class="wt-flabel">Branch</span>
-      <div class="vault-segmented" role="tablist">
-        <button type="button" role="tab" aria-selected="true">New branch</button>
-        <button type="button" role="tab" aria-selected="false">Existing</button>
-        <button type="button" role="tab" aria-selected="false">Detached</button>
-      </div>
-    </div>
-    <div class="wt-cols">
-      <div class="wt-field">
-        <label class="wt-flabel" for="wt-branch2">Name</label>
-        <input class="wt-input is-invalid" id="wt-branch2" type="text" value="feat/worktree ui" aria-invalid="true" />
-        <span class="wt-ferror">git check-ref-format: a branch name cannot contain a space.</span>
-      </div>
-      <div class="wt-field">
-        <label class="wt-flabel" for="wt-base2">Base ref <span style="opacity:.7">(optional)</span></label>
-        <input class="wt-input wt-input--mono" id="wt-base2" type="text" value="origin/main" />
-      </div>
-    </div>
-    <!-- § 6: the suffixed path is what the form shows before submit. -->
-    <div class="wt-field">
-      <label class="wt-flabel" for="wt-path2">Path</label>
-      <input class="wt-input wt-input--mono" id="wt-path2" type="text" value="/Users/huybuidac/Projects/ai-oss/anywhere-terminal-worktree-ui-2" />
-      <span class="wt-fhint">…<b>-worktree-ui</b> already exists, so this will be created as …<b>-worktree-ui-2</b>.</span>
-    </div>
-    <div class="wt-field">
-      <label class="wt-flabel" for="wt-after2">After creating</label>
-      <select class="wt-select" id="wt-after2"><option selected>Start an agent</option><option>Nothing</option><option>Open a terminal here</option><option>Open folder in a new window</option><option>Add folder to workspace</option></select>
-    </div>
-    <!-- Creating a worktree to put an agent in it is one intent, so the picker lives here. -->
-    <div class="wt-agentbox">
-      <div class="wt-cols">
-        <div class="wt-field">
-          <label class="wt-flabel" for="wt-agent">Agent</label>
-          <select class="wt-select" id="wt-agent"><option>Claude Code</option><option>Codex</option><option>OpenCode</option></select>
+      <div class="wk-wt">
+        <div class="wk-row" role="treeitem" aria-expanded="false" tabindex="0" title="feat/agent-hook-server">
+          <span class="wk-glyph"><span class="wk-g wk-g--working" role="img" aria-label="An agent is working"></span></span>
+          <span class="wk-branch">feat/agent-hook-server</span>
+          <span class="wk-marks"><span class="wk-pill" title="This worktree is a workspace folder">open</span></span>
         </div>
-        <div class="wt-field">
-          <label class="wt-flabel" for="wt-perm">Permissions</label>
-          <select class="wt-select" id="wt-perm"><option selected>Ask before edits</option><option>Accept edits</option><option>Skip all prompts (dangerous)</option></select>
+        <button class="wk-presence" type="button" tabindex="-1" aria-hidden="true" title="Show agents">
+          <span class="wk-pgroup"><span class="wk-g wk-g--working"></span><span class="wk-pgroup-icons"><span style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span><span style="color:var(--vault-accent-cursor)"><svg><use href="#a-cursor"></use></svg></span></span></span>
+          <span class="wk-pgroup"><span class="wk-g wk-g--done"></span><span class="wk-pgroup-icons"><span style="color:var(--vault-accent-opencode)"><svg><use href="#a-opencode"></use></svg></span></span><span class="wk-more">+4</span></span>
+          <span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
+        </button>
+      </div>
+      <div class="wk-wt">
+        <div class="wk-row" role="treeitem" tabindex="0" title="spike/hooks">
+          <span class="wk-glyph"><span class="wk-g wk-g--unconfirmed" role="img" aria-label="working, unconfirmed" title="Inferred from terminal output — no update for 12m"></span></span>
+          <span class="wk-branch">spike/hooks</span>
+          <span class="wk-marks"><span class="wk-ib" title="locked: spike, keep until Friday"><svg><use href="#i-lock"></use></svg></span></span>
         </div>
       </div>
-      <div class="wt-field">
-        <label class="wt-flabel" for="wt-prompt">First prompt <span style="opacity:.7">(optional)</span></label>
-        <textarea class="wt-textarea" id="wt-prompt" placeholder="Sent once the agent's composer is ready…"></textarea>
-      </div>
-      <span class="wt-fhint">Only agents whose executable resolves are listed.<span class="wt-danger-tag">dangerous</span>choices are never preselected.</span>
+      <!-- Four or more agentless worktrees collapse into one line. -->
+      <button class="wk-disc" type="button" aria-expanded="false"><span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>4 idle worktrees</button>
     </div>
-    <div class="wt-dialog-actions">
-      <button class="wt-btn" type="button">Cancel</button>
-      <button class="wt-btn wt-btn--primary" type="button" disabled>Create worktree<span class="wt-kbd">⌘↵</span></button>
+  </aside>
+  <div class="wk-main">
+    <div class="wk-tabbar">
+      <span class="wk-chip"><svg><use href="#i-branch"></use></svg>main<button class="wk-chip-all" type="button" title="Show panes from every worktree">All</button></span>
+      <div class="wk-tabs">
+        <button class="wk-tab" type="button" role="tab" aria-selected="true"><span class="wk-g wk-g--waiting"></span><span>INTEGRATE-WORKTREE</span></button>
+        <button class="wk-tab" type="button" role="tab" aria-selected="false"><span class="wk-g wk-g--working"></span><span>Backpressure pass</span></button>
+        <button class="wk-tab" type="button" role="tab" aria-selected="false"><span class="wk-g wk-g--done"></span><span>zsh</span></button>
+      </div>
+      <button class="wk-iconbtn" type="button" title="New terminal in main"><svg width="13" height="13"><use href="#i-plus"></use></svg></button>
+    </div>
+    <div class="wk-termbody">
+      <div class="dim">● Bash(git worktree list --porcelain)</div>
+      <div class="dim">&nbsp;&nbsp;⎿&nbsp;7 worktrees, 2 prunable</div>
+      <div>&nbsp;</div>
+      <div>Do you want me to run <b>git worktree add</b> for feat/worktree-ui?</div>
+      <div class="dim">&nbsp;&nbsp;1. Yes&nbsp;&nbsp;2. Yes, and don't ask again&nbsp;&nbsp;3. No</div>
+      <div>&nbsp;</div>
+      <div>❯ <span class="wk-cursor"></span></div>
     </div>
   </div>
-</section>
+</div>
 </div>
 </div>
 
 <div>
-<div class="mockup-label">11 · <b>Remove worktree</b> · one confirmation naming every blocker · says what force actually authorizes, and what it leaves behind</div>
-<div class="mockup-frame" style="height:344px">
-<section class="vault-panel">
-  <div class="vault-body"><div class="wt-tree"></div></div>
-  <div class="wt-scrim"></div>
-  <div class="wt-dialog" role="dialog" aria-modal="true" aria-label="Remove worktree">
-    <h3 class="wt-dialog-title">Remove <span style="font-weight:400">spike/hooks?</span></h3>
-    <p class="wt-dialog-path">/Volumes/ext/anywhere-terminal-wt/spike-hooks</p>
-    <ul class="wt-blockers">
-      <li><svg aria-hidden="true"><use href="#i-warning"></use></svg><span><b>7 tracked files</b> have uncommitted changes.</span></li>
-      <li><svg aria-hidden="true"><use href="#i-warning"></use></svg><span><b>3 untracked files</b> are in the folder.</span></li>
+<div class="mockup-label">2 · <b>Scoped to one worktree</b> · tab bar holds only its panes · inspector open under the tree — the tree stays visible, so the rail can still be compared</div>
+<div class="mockup-frame" style="height:560px">
+<div class="wk-window">
+  <aside class="wk-side">
+    <div class="wk-phead">
+      <span>Worktrees</span><span class="wk-phead-sp"></span>
+      <button class="wk-iconbtn is-primary" type="button" title="Create worktree"><svg width="14" height="14"><use href="#i-plus"></use></svg></button>
+      <button class="wk-iconbtn" type="button" title="Rebuild the worktree tree"><svg width="13" height="13"><use href="#i-refresh"></use></svg></button>
+      <button class="wk-iconbtn" type="button" title="Search worktrees and agents"><svg width="13" height="13"><use href="#i-search"></use></svg></button>
+    </div>
+    <div class="wk-toggle" role="tablist" aria-label="Panel view">
+      <button type="button" role="tab" aria-selected="true"><svg width="12" height="12"><use href="#i-branch"></use></svg>Worktrees</button>
+      <button type="button" role="tab" aria-selected="false"><svg width="12" height="12"><use href="#i-recent"></use></svg>Sessions</button>
+    </div>
+    <div class="wk-tree" role="tree">
+      <div class="wk-repo" role="treeitem" aria-expanded="true" tabindex="0">
+        <span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
+        <span class="wk-repo-name">anywhere-terminal</span><span class="wk-repo-count">7</span><span></span>
+        <button class="wk-iconbtn" type="button" title="Create worktree in anywhere-terminal"><svg width="12" height="12"><use href="#i-plus"></use></svg></button>
+      </div>
+      <div class="wk-wt">
+        <div class="wk-row" role="treeitem" tabindex="0" title="main">
+          <span class="wk-glyph"><span class="wk-g wk-g--waiting"></span></span>
+          <span class="wk-branch">main</span>
+          <span class="wk-marks"><span class="wk-ib" title="Main worktree of this repository"><svg><use href="#i-main"></use></svg></span><span class="wk-pill" title="This worktree is a workspace folder">open</span></span>
+        </div>
+      </div>
+      <div class="wk-wt is-selected">
+        <div class="wk-row" role="treeitem" aria-expanded="true" tabindex="0" title="feat/agent-hook-server">
+          <span class="wk-glyph"><span class="wk-g wk-g--working" role="img" aria-label="An agent is working"></span></span>
+          <span class="wk-branch">feat/agent-hook-server</span>
+          <span class="wk-marks"><span class="wk-pill" title="This worktree is a workspace folder">open</span></span>
+        </div>
+      </div>
+      <div class="wk-wt">
+        <div class="wk-row" role="treeitem" tabindex="0" title="spike/hooks">
+          <span class="wk-glyph"><span class="wk-g wk-g--unconfirmed" title="Inferred from terminal output — no update for 12m"></span></span>
+          <span class="wk-branch">spike/hooks</span>
+          <span class="wk-marks"><span class="wk-ib" title="locked: spike, keep until Friday"><svg><use href="#i-lock"></use></svg></span></span>
+        </div>
+      </div>
+      <button class="wk-disc" type="button" aria-expanded="false"><span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>4 idle worktrees</button>
+    </div>
+    <!-- Inspector: the second of only two places a path is ever shown. -->
+    <div class="wk-insp" role="region" aria-label="feat/agent-hook-server">
+      <div class="wk-insp-head">
+        <span class="wk-g wk-g--working" aria-hidden="true"></span>
+        <span class="wk-insp-branch">feat/agent-hook-server</span>
+        <button class="wk-dismiss" type="button" aria-label="Close inspector">✕</button>
+      </div>
+      <div class="wk-insp-path" title="/Users/huybuidac/Projects/ai-oss/anywhere-terminal-wt/agent-hook-server">/Users/huybuidac/Projects/ai-oss/anywhere-terminal-wt/agent-hook-server</div>
+      <div class="wk-acts">
+        <button class="wk-act" type="button"><svg><use href="#i-focus"></use></svg>Focus</button>
+        <button class="wk-act" type="button"><svg><use href="#i-folder"></use></svg>Folder</button>
+        <button class="wk-act" type="button"><svg><use href="#i-terminal"></use></svg>Terminal</button>
+        <button class="wk-act" type="button"><svg><use href="#i-agent"></use></svg>Launch agent</button>
+        <button class="wk-act wk-act--danger" type="button"><svg><use href="#i-trash"></use></svg>Remove</button>
+      </div>
+      <div class="wk-sec">Agents</div>
+      <div class="wk-arow" role="button" tabindex="0">
+        <span class="wk-g wk-g--working" role="img" aria-label="working"></span>
+        <span class="wk-aicon" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
+        <span class="wk-aname">Hook identity plumbing</span>
+        <span class="wk-age">2m</span>
+        <span class="wk-aprev">Edit(src/agents/hookIdentity.ts)</span>
+      </div>
+      <div class="wk-hist">
+        <div class="wk-hist-label">Past delegations</div>
+        <div class="wk-srow" role="button" tabindex="0" title="Focuses the parent pane — a subagent has no pane of its own"><span class="wk-out">✓</span><span class="wk-stext">Map the hook payload fields</span><span class="wk-age">18m</span></div>
+        <div class="wk-srow" role="button" tabindex="0"><span class="wk-out wk-out--failed">✕</span><span class="wk-stext">librarian — locate the presence spec</span><span class="wk-age">26m</span></div>
+      </div>
+      <!-- Another window owns this session, so no Focus is offered for it. -->
+      <div class="wk-arow" role="button" tabindex="0">
+        <span class="wk-g wk-g--waiting" role="img" aria-label="waiting"></span>
+        <span class="wk-aicon" style="color:var(--vault-accent-cursor)"><svg><use href="#a-cursor"></use></svg></span>
+        <span class="wk-aname">Sash regression hunt</span>
+        <span class="wk-scope-tag" title="Running in another VS Code window"><svg><use href="#i-window"></use></svg>other window</span>
+        <span class="wk-aprev">Which file should I start from?</span>
+      </div>
+    </div>
+  </aside>
+  <div class="wk-main">
+    <div class="wk-tabbar">
+      <span class="wk-chip"><svg><use href="#i-branch"></use></svg>feat/agent-hook-server<button class="wk-chip-all" type="button" title="Show panes from every worktree">All</button></span>
+      <div class="wk-tabs">
+        <button class="wk-tab" type="button" role="tab" aria-selected="true"><span class="wk-g wk-g--working"></span><span>Hook identity plumbing</span></button>
+      </div>
+      <button class="wk-iconbtn" type="button" title="New terminal in feat/agent-hook-server"><svg width="13" height="13"><use href="#i-plus"></use></svg></button>
+    </div>
+    <div class="wk-termbody">
+      <div class="dim">● Read(asimov/specs/agent-hook-identity/spec.md)</div>
+      <div class="dim">&nbsp;&nbsp;⎿&nbsp;read 148 lines</div>
+      <div>&nbsp;</div>
+      <div class="dim">● Edit(src/agents/hookIdentity.ts)</div>
+      <div class="dim">&nbsp;&nbsp;⎿&nbsp;+34 −6</div>
+      <div>&nbsp;</div>
+      <div>Running the hook identity suite…<span class="wk-cursor"></span></div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">3 · <b>Scoped worktree with no panes</b> · the terminal region carries the two things worth doing here · <em>idle disclosure open, showing the dim tail</em></div>
+<div class="mockup-frame" style="height:480px">
+<div class="wk-window">
+  <aside class="wk-side">
+    <div class="wk-phead">
+      <span>Worktrees</span><span class="wk-phead-sp"></span>
+      <button class="wk-iconbtn is-primary" type="button" title="Create worktree"><svg width="14" height="14"><use href="#i-plus"></use></svg></button>
+      <button class="wk-iconbtn" type="button" title="Rebuild the worktree tree"><svg width="13" height="13"><use href="#i-refresh"></use></svg></button>
+      <button class="wk-iconbtn" type="button" title="Search worktrees and agents"><svg width="13" height="13"><use href="#i-search"></use></svg></button>
+    </div>
+    <div class="wk-toggle" role="tablist" aria-label="Panel view">
+      <button type="button" role="tab" aria-selected="true"><svg width="12" height="12"><use href="#i-branch"></use></svg>Worktrees</button>
+      <button type="button" role="tab" aria-selected="false"><svg width="12" height="12"><use href="#i-recent"></use></svg>Sessions</button>
+    </div>
+    <div class="wk-tree" role="tree">
+      <div class="wk-repo" role="treeitem" aria-expanded="true" tabindex="0">
+        <span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>
+        <span class="wk-repo-name">anywhere-terminal</span><span class="wk-repo-count">7</span><span></span>
+        <button class="wk-iconbtn" type="button" title="Create worktree in anywhere-terminal"><svg width="12" height="12"><use href="#i-plus"></use></svg></button>
+      </div>
+      <div class="wk-wt">
+        <div class="wk-row" role="treeitem" tabindex="0" title="main">
+          <span class="wk-glyph"><span class="wk-g wk-g--waiting"></span></span>
+          <span class="wk-branch">main</span>
+          <span class="wk-marks"><span class="wk-ib" title="Main worktree of this repository"><svg><use href="#i-main"></use></svg></span><span class="wk-pill" title="This worktree is a workspace folder">open</span></span>
+        </div>
+      </div>
+      <button class="wk-disc is-open" type="button" aria-expanded="true"><span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>4 idle worktrees</button>
+      <div class="wk-wt is-selected">
+        <div class="wk-idle" role="treeitem" tabindex="0" title="chore/deps-bump">
+          <span class="wk-glyph"><svg width="12" height="12"><use href="#i-branch"></use></svg></span>
+          <span class="wk-branch">chore/deps-bump</span>
+          <span class="wk-marks"></span>
+        </div>
+      </div>
+      <div class="wk-idle" role="treeitem" tabindex="0" title="fix/tab-rename-overlay">
+        <span class="wk-glyph"><svg width="12" height="12"><use href="#i-branch"></use></svg></span>
+        <span class="wk-branch">fix/tab-rename-overlay</span>
+        <span class="wk-marks"></span>
+      </div>
+      <div class="wk-idle" role="treeitem" tabindex="0" title="2f9c1ab (detached)">
+        <span class="wk-glyph"><svg width="12" height="12"><use href="#i-branch"></use></svg></span>
+        <span class="wk-branch wk-branch--sha">2f9c1ab</span>
+        <span class="wk-marks"><span class="wk-ib wk-ib--warn" title="Registration is stale — the worktree can be pruned"><svg><use href="#i-prunable"></use></svg></span></span>
+      </div>
+      <div class="wk-idle is-missing" role="treeitem" tabindex="0" title="feat/old-spike — directory is missing">
+        <span class="wk-glyph"><svg width="12" height="12"><use href="#i-branch"></use></svg></span>
+        <span class="wk-branch" style="text-decoration:line-through">feat/old-spike</span>
+        <span class="wk-marks"><span class="wk-ib wk-ib--error" title="The directory git registered is gone"><svg><use href="#i-missing"></use></svg></span></span>
+      </div>
+    </div>
+  </aside>
+  <div class="wk-main">
+    <div class="wk-tabbar">
+      <span class="wk-chip"><svg><use href="#i-branch"></use></svg>chore/deps-bump<button class="wk-chip-all" type="button" title="Show panes from every worktree">All</button></span>
+      <div class="wk-tabs"></div>
+    </div>
+    <div class="wk-termempty">
+      <div class="wk-termempty-title">Nothing is running in <b>chore/deps-bump</b></div>
+      <div class="wk-termempty-body">Panes from other worktrees are hidden while this scope is on. <button class="wk-link" type="button">Show all panes</button> to leave it.</div>
+      <div class="wk-ctas">
+        <button class="wk-cta wk-cta--primary" type="button"><svg><use href="#i-agent"></use></svg>Launch an agent here</button>
+        <button class="wk-cta" type="button"><svg><use href="#i-terminal"></use></svg>Open terminal here</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+</div>
+
+<!-- ════════ COLUMN 2 — the panel on its own, at sidebar width ════════ -->
+<div class="mockup-col" style="width:660px">
+
+<div>
+<div class="mockup-label">4 · <b>State vocabulary</b> · one table for worktree rows and agent rows · readable by shape alone</div>
+<div class="mockup-frame" style="width:320px;height:214px">
+<aside class="wk-side">
+  <div class="wk-legend">
+    <span class="wk-g wk-g--working"></span><span><b>working</b> — a published turn is in progress</span>
+    <span class="wk-g wk-g--unconfirmed" title="Inferred from terminal output — no update for 12m"></span><span><b>working (unconfirmed)</b> — inferred from output; static, tooltip names the gap</span>
+    <span class="wk-g wk-g--waiting"></span><span><b>waiting</b> — needs a human; the only strong animation</span>
+    <span class="wk-g wk-g--done"></span><span><b>done / idle</b> — finished, nothing pending</span>
+    <span class="wk-g wk-g--unknown"></span><span><b>unknown</b> — no source could say</span>
+    <span class="wk-g wk-g--exited"></span><span><b>exited</b> — the process is gone</span>
+  </div>
+</aside>
+</div>
+</div>
+
+<div style="display:flex;gap:20px;align-items:flex-start">
+<div>
+<div class="mockup-label">5 · <b>Sessions</b> · second level</div>
+<div class="mockup-frame" style="width:320px;height:300px">
+<aside class="wk-side">
+  <div class="wk-phead"><span>Sessions</span><span class="wk-phead-sp"></span><button class="wk-iconbtn" type="button" title="Refresh"><svg width="13" height="13"><use href="#i-refresh"></use></svg></button><button class="wk-iconbtn" type="button" title="Search"><svg width="13" height="13"><use href="#i-search"></use></svg></button></div>
+  <div class="wk-toggle" role="tablist" aria-label="Panel view">
+    <button type="button" role="tab" aria-selected="false"><svg width="12" height="12"><use href="#i-branch"></use></svg>Worktrees</button>
+    <button type="button" role="tab" aria-selected="true"><svg width="12" height="12"><use href="#i-recent"></use></svg>Sessions</button>
+  </div>
+  <!-- Recent / Agent / Folder only exist inside Sessions now. -->
+  <div class="wk-subtabs" role="tablist" aria-label="Grouping">
+    <button class="wk-subtab" type="button" role="tab" aria-selected="true">Recent</button>
+    <button class="wk-subtab" type="button" role="tab" aria-selected="false">Agent</button>
+    <button class="wk-subtab" type="button" role="tab" aria-selected="false">Folder</button>
+  </div>
+  <div class="wk-tree">
+    <div class="wk-arow" role="button" tabindex="0">
+      <span class="wk-g wk-g--done"></span>
+      <span class="wk-aicon" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
+      <span class="wk-aname">Install claude hooks v1</span><span class="wk-age">32m</span>
+      <span class="wk-aprev">anywhere-terminal · main</span>
+    </div>
+    <div class="wk-arow" role="button" tabindex="0">
+      <span class="wk-g wk-g--done"></span>
+      <span class="wk-aicon" style="color:var(--vault-accent-codex)"><svg><use href="#a-codex"></use></svg></span>
+      <span class="wk-aname">Keep contested session title</span><span class="wk-age">3h</span>
+      <span class="wk-aprev">anywhere-terminal · feat/agent-hook-server</span>
+    </div>
+    <div class="wk-arow" role="button" tabindex="0">
+      <span class="wk-g wk-g--exited"></span>
+      <span class="wk-aicon" style="color:var(--vault-accent-opencode)"><svg><use href="#a-opencode"></use></svg></span>
+      <span class="wk-aname">Verify cross-layer scale</span><span class="wk-age">Aug 28</span>
+      <span class="wk-aprev">cyberk-skills · main</span>
+    </div>
+  </div>
+</aside>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">6 · <b>Degraded + unreadable</b></div>
+<div class="mockup-frame" style="width:320px;height:300px">
+<aside class="wk-side">
+  <div class="wk-tree" role="tree">
+    <div class="wk-repo" role="treeitem" aria-expanded="true" tabindex="0"><span class="wk-chev"><svg width="12" height="12"><use href="#i-chev"></use></svg></span><span class="wk-repo-name">anywhere-terminal</span><span class="wk-repo-count">7</span><span></span><button class="wk-iconbtn" type="button" title="Create worktree"><svg width="12" height="12"><use href="#i-plus"></use></svg></button></div>
+    <!-- Registry unreadable: the rows it fed stay, and say so. Nothing disappears. -->
+    <div class="wk-notice wk-notice--warn" role="status">
+      <svg aria-hidden="true"><use href="#i-warning"></use></svg>
+      <span><b>Agent registry could not be read.</b> Sessions from other windows are shown as last seen.<span class="wk-reason">~/.anywhere-terminal/registry.json: EACCES</span></span>
+      <span><button class="wk-link" type="button">Retry</button></span>
+    </div>
+    <div class="wk-wt">
+      <div class="wk-row" role="treeitem" tabindex="0" title="main"><span class="wk-glyph"><span class="wk-g wk-g--unknown"></span></span><span class="wk-branch">main</span><span class="wk-marks"><span class="wk-ib" title="Main worktree of this repository"><svg><use href="#i-main"></use></svg></span><span class="wk-pill">open</span></span></div>
+      <div class="wk-arow" role="treeitem" tabindex="0">
+        <span class="wk-g wk-g--unknown" role="img" aria-label="unknown"></span>
+        <span class="wk-aicon" style="color:var(--vault-accent-cursor)"><svg><use href="#a-cursor"></use></svg></span>
+        <span class="wk-aname">Sash regression hunt</span>
+        <span class="wk-scope-tag" title="Running in another VS Code window"><svg><use href="#i-window"></use></svg>other window</span>
+        <span class="wk-aprev">last seen 14m ago</span>
+      </div>
+    </div>
+    <div class="wk-repo" role="treeitem" aria-expanded="true" tabindex="0"><span class="wk-chev"><svg width="12" height="12"><use href="#i-chev"></use></svg></span><span class="wk-repo-name">cyberk-skills</span><span class="wk-repo-count">2</span><span></span><button class="wk-iconbtn" type="button" title="Create worktree"><svg width="12" height="12"><use href="#i-plus"></use></svg></button></div>
+    <!-- Degraded is scoped to the repo that failed, and shows git's own words. -->
+    <div class="wk-notice wk-notice--warn" role="status">
+      <svg aria-hidden="true"><use href="#i-warning"></use></svg>
+      <span><b>Worktree list may be stale.</b><span class="wk-reason">git worktree list: exit 128 — not a git repository (safe.directory)</span></span>
+      <span><button class="wk-link" type="button">Retry</button></span>
+    </div>
+    <div class="wk-idle" role="treeitem" tabindex="0" title="main"><span class="wk-glyph"><svg width="12" height="12"><use href="#i-branch"></use></svg></span><span class="wk-branch">main</span><span class="wk-marks"><span class="wk-ib" title="Main worktree of this repository"><svg><use href="#i-main"></use></svg></span></span></div>
+  </div>
+</aside>
+</div>
+</div>
+</div>
+
+<div style="display:flex;gap:20px;align-items:flex-start">
+<div>
+<div class="mockup-label">7 · <b>No worktrees</b> · create is the CTA</div>
+<div class="mockup-frame" style="width:320px;height:230px">
+<aside class="wk-side">
+  <div class="wk-tree">
+    <div class="wk-empty">
+      <span class="wk-empty-icon"><svg width="26" height="26"><use href="#i-branch"></use></svg></span>
+      <div class="wk-empty-title">One worktree so far</div>
+      <div class="wk-empty-body">This repository only has its main checkout. Create a worktree to give an agent its own copy.</div>
+      <button class="wk-cta wk-cta--primary" type="button" style="margin-top:4px"><svg><use href="#i-plus"></use></svg>Create worktree</button>
+    </div>
+  </div>
+</aside>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">8 · <b>First load</b> · skeleton</div>
+<div class="mockup-frame" style="width:320px;height:230px">
+<aside class="wk-side">
+  <div class="wk-tree">
+    <div class="wk-skel"><span></span><span style="width:52%"></span></div>
+    <div class="wk-skel wk-skel--agent"><span></span><span style="width:74%"></span></div>
+    <div class="wk-skel wk-skel--agent"><span></span><span style="width:61%"></span></div>
+    <div class="wk-skel"><span></span><span style="width:40%"></span></div>
+    <div class="wk-skel"><span></span><span style="width:66%"></span></div>
+  </div>
+</aside>
+</div>
+</div>
+</div>
+
+</div>
+
+<!-- ════════ COLUMN 3 — dialogs and the decisions behind them ════════ -->
+<div class="mockup-col" style="width:520px">
+
+<div>
+<div class="mockup-label">9 · <b>Create worktree</b> · one lead input · destination is a single shortened line · <em>Advanced holds existing / detached / base ref</em></div>
+<div class="mockup-frame" style="height:330px">
+<aside class="wk-side">
+  <div class="wk-tree"><div class="wk-idle"><span class="wk-glyph"><svg width="12" height="12"><use href="#i-branch"></use></svg></span><span class="wk-branch">main</span><span class="wk-marks"></span></div></div>
+  <div class="wk-scrim"></div>
+  <div class="wk-dialog" role="dialog" aria-modal="true" aria-label="Create worktree">
+    <h3 class="wk-dtitle">Create worktree<button class="wk-dismiss" type="button" aria-label="Cancel">✕</button></h3>
+    <div class="wk-field">
+      <label class="wk-flabel" for="c-branch">Branch name</label>
+      <input class="wk-input wk-input--lead" id="c-branch" type="text" placeholder="feat/…" />
+      <!-- Path is derived, never a field to fill in the common case. -->
+      <span class="wk-dest" title="/Users/huybuidac/Projects/ai-oss/anywhere-terminal/.claude/worktrees/&lt;name&gt;">…/.claude/worktrees/<b>&lt;name&gt;</b></span>
+    </div>
+    <div class="wk-field">
+      <span class="wk-flabel">After creating</span>
+      <div class="wk-seg" role="tablist" aria-label="After creating">
+        <button type="button" role="tab" aria-selected="true">Nothing</button>
+        <button type="button" role="tab" aria-selected="false">Open folder</button>
+        <button type="button" role="tab" aria-selected="false">Start an agent</button>
+      </div>
+    </div>
+    <div class="wk-adv">
+      <button class="wk-adv-toggle" type="button" aria-expanded="false"><span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>Advanced</button>
+    </div>
+    <div class="wk-dacts">
+      <button class="wk-btn" type="button">Cancel</button>
+      <button class="wk-btn wk-btn--primary" type="button" disabled>Create worktree<span class="wk-kbd">⌘↵</span></button>
+    </div>
+  </div>
+</aside>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">10 · <b>Create</b> · agent block, collision line, Advanced open · <em>dangerous posture is labelled and never preselected</em></div>
+<div class="mockup-frame" style="height:610px">
+<aside class="wk-side">
+  <div class="wk-tree"></div>
+  <div class="wk-scrim"></div>
+  <div class="wk-dialog" role="dialog" aria-modal="true" aria-label="Create worktree">
+    <h3 class="wk-dtitle">Create worktree<button class="wk-dismiss" type="button" aria-label="Cancel">✕</button></h3>
+    <div class="wk-field">
+      <label class="wk-flabel" for="c-branch2">Branch name</label>
+      <input class="wk-input wk-input--lead" id="c-branch2" type="text" value="feat/worktree-ui" />
+      <span class="wk-dest" title="/Users/huybuidac/Projects/ai-oss/anywhere-terminal/.claude/worktrees/feat-worktree-ui-2">…/.claude/worktrees/<b>feat-worktree-ui-2</b></span>
+      <span class="wk-collide">feat-worktree-ui exists → feat-worktree-ui-2</span>
+    </div>
+    <div class="wk-field">
+      <span class="wk-flabel">After creating</span>
+      <div class="wk-seg" role="tablist" aria-label="After creating">
+        <button type="button" role="tab" aria-selected="false">Nothing</button>
+        <button type="button" role="tab" aria-selected="false">Open folder</button>
+        <button type="button" role="tab" aria-selected="true">Start an agent</button>
+      </div>
+    </div>
+    <div class="wk-agentbox">
+      <div class="wk-cols">
+        <div class="wk-field">
+          <label class="wk-flabel" for="c-agent">Agent</label>
+          <select class="wk-select" id="c-agent"><option>Claude Code</option><option>Codex</option><option>OpenCode</option></select>
+        </div>
+        <div class="wk-field">
+          <label class="wk-flabel" for="c-perm">Permissions</label>
+          <select class="wk-select" id="c-perm"><option selected>Ask before edits</option><option>Accept edits</option><option class="wk-opt-danger">Skip all prompts (dangerous)</option></select>
+        </div>
+      </div>
+      <div class="wk-field">
+        <label class="wk-flabel" for="c-prompt">First prompt <span class="wk-flabel-opt">(optional)</span></label>
+        <textarea class="wk-textarea" id="c-prompt" placeholder="Sent once the agent's composer is ready…"></textarea>
+        <span class="wk-fhint">0 / 2000</span>
+      </div>
+      <span class="wk-fhint">Only agents whose executable resolves are listed.<span class="wk-danger-tag">dangerous</span>choices are never preselected.</span>
+    </div>
+    <div class="wk-adv is-open">
+      <button class="wk-adv-toggle" type="button" aria-expanded="true"><span class="wk-chev" aria-hidden="true"><svg width="12" height="12"><use href="#i-chev"></use></svg></span>Advanced</button>
+      <div class="wk-adv-body">
+        <div class="wk-cols">
+          <div class="wk-field">
+            <label class="wk-flabel" for="c-base">Base ref <span class="wk-flabel-opt">(optional)</span></label>
+            <input class="wk-input wk-input--mono" id="c-base" type="text" placeholder="HEAD" value="origin/main" />
+          </div>
+          <div class="wk-field">
+            <label class="wk-flabel" for="c-mode">Branch source</label>
+            <select class="wk-select" id="c-mode"><option selected>Create a new branch</option><option>Check out an existing branch</option><option>Detached at a ref</option></select>
+          </div>
+        </div>
+        <div class="wk-field">
+          <label class="wk-flabel" for="c-path">Path <span class="wk-flabel-opt">(override)</span></label>
+          <input class="wk-input wk-input--mono" id="c-path" type="text" value="/Users/huybuidac/Projects/ai-oss/anywhere-terminal/.claude/worktrees/feat-worktree-ui-2" />
+        </div>
+      </div>
+    </div>
+    <div class="wk-dacts">
+      <button class="wk-btn" type="button">Cancel</button>
+      <button class="wk-btn wk-btn--primary" type="button">Create worktree<span class="wk-kbd">⌘↵</span></button>
+    </div>
+  </div>
+</aside>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">11 · <b>Remove</b> · every blocker named once · the warning says what force authorizes and what it leaves behind</div>
+<div class="mockup-frame" style="height:330px">
+<aside class="wk-side">
+  <div class="wk-tree"></div>
+  <div class="wk-scrim"></div>
+  <div class="wk-dialog" role="dialog" aria-modal="true" aria-label="Remove worktree">
+    <h3 class="wk-dtitle">Remove <span class="wk-dsubject">spike/hooks?</span></h3>
+    <p class="wk-dpath">/Volumes/ext/anywhere-terminal-wt/spike-hooks</p>
+    <ul class="wk-blockers">
+      <li><svg aria-hidden="true"><use href="#i-warning"></use></svg><span><b>Tracked files</b> have uncommitted changes.</span></li>
+      <li><svg aria-hidden="true"><use href="#i-warning"></use></svg><span><b>3 untracked files</b> in the folder.</span></li>
       <li><svg aria-hidden="true"><use href="#i-terminal"></use></svg><span><b>2 idle terminals</b> in this window have it as their working directory.</span></li>
       <li><svg aria-hidden="true"><use href="#i-window"></use></svg><span><b>1 session in another window</b> is rooted here.</span></li>
       <li><svg aria-hidden="true"><use href="#i-lock"></use></svg><span>The worktree is <b>locked</b> — “spike, keep until Friday”.</span></li>
     </ul>
-    <div class="wt-warnbox">
-      <b>Force remove deletes everything under that path, irreversibly</b> — including files written after you confirm. The lock is overridden. The two terminals keep running in a deleted directory, and the branch <b>spike/hooks</b> is kept.
-    </div>
-    <div class="wt-dialog-actions">
-      <button class="wt-btn" type="button">Cancel</button>
-      <button class="wt-btn wt-btn--danger" type="button">Force remove</button>
+    <div class="wk-warnbox"><b>Force remove deletes everything under that path, irreversibly</b> — including files written after you confirm. The lock is overridden. The 2 terminals keep running in a deleted directory. The branch <b>spike/hooks</b> is kept.</div>
+    <div class="wk-dacts">
+      <button class="wk-btn" type="button">Cancel</button>
+      <button class="wk-btn wk-btn--danger" type="button">Force remove</button>
     </div>
   </div>
-</section>
+</aside>
 </div>
 </div>
 
 <div>
-<div class="mockup-label">12 · <b>Remove refused</b> · a running or waiting agent blocks removal outright · <em>no confirm button exists to click</em></div>
-<div class="mockup-frame" style="height:270px">
-<section class="vault-panel">
-  <div class="vault-body"><div class="wt-tree"></div></div>
-  <div class="wt-scrim"></div>
-  <div class="wt-dialog" role="dialog" aria-modal="true" aria-label="Cannot remove worktree">
-    <h3 class="wt-dialog-title">Can't remove <span style="font-weight:400">feat/worktree-panel</span></h3>
-    <p class="wt-dialog-path">/Users/huybuidac/Projects/ai-oss/anywhere-terminal-wt/worktree-panel</p>
-    <div class="wt-refusebox">
-      <b>An agent is mid-turn in this worktree.</b> Stop it first — there is no confirmation that removes a folder out from under a working agent.
+<div class="mockup-label">12 · <b>Refused</b> · agent mid-turn (left) and main worktree (right) · <em>no confirm button exists in either</em></div>
+<div style="display:flex;gap:12px">
+<div class="mockup-frame" style="width:254px;height:296px">
+<aside class="wk-side">
+  <div class="wk-tree"></div>
+  <div class="wk-scrim"></div>
+  <div class="wk-dialog" role="dialog" aria-modal="true" aria-label="Cannot remove worktree">
+    <h3 class="wk-dtitle">Can't remove <span class="wk-dsubject">feat/agent-hook-server</span></h3>
+    <div class="wk-refusebox"><b>An agent is mid-turn in this worktree.</b> Stop it first — there is no confirmation that removes a folder out from under a working agent.</div>
+    <div class="wk-arow" role="button" tabindex="0" style="padding-left:0">
+      <span class="wk-g wk-g--working"></span>
+      <span class="wk-aicon" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
+      <span class="wk-aname">Hook identity plumbing</span><span class="wk-age">2m</span>
+      <span class="wk-aprev">Edit(src/agents/hookIdentity.ts)</span>
     </div>
-    <div class="wt-arow" role="treeitem" tabindex="0" style="padding-left:0;padding-right:0">
-      <span class="wt-gutter"></span>
-      <span class="wt-state wt-state--waiting"></span>
-      <span class="wt-aicon" style="color:var(--vault-accent-claude)"><svg><use href="#a-claude"></use></svg></span>
-      <span class="wt-atitle">INTEGRATE-WORKTREE</span>
-      <span class="wt-apreview">Approve the git worktree add?</span>
-      <span></span><span></span>
-      <span class="wt-age">5m</span>
-    </div>
-    <div class="wt-dialog-actions">
-      <button class="wt-btn" type="button">Close</button>
-      <button class="wt-btn wt-btn--primary" type="button">Show the agent</button>
+    <div class="wk-dacts">
+      <button class="wk-btn" type="button">Close</button>
+      <button class="wk-btn wk-btn--primary" type="button">Show the agent</button>
     </div>
   </div>
-</section>
+</aside>
 </div>
+<div class="mockup-frame" style="width:254px;height:296px">
+<aside class="wk-side">
+  <div class="wk-tree"></div>
+  <div class="wk-scrim"></div>
+  <div class="wk-dialog" role="dialog" aria-modal="true" aria-label="Cannot remove worktree">
+    <h3 class="wk-dtitle">Can't remove <span class="wk-dsubject">main</span></h3>
+    <p class="wk-dpath">/Users/huybuidac/Projects/ai-oss/anywhere-terminal</p>
+    <div class="wk-refusebox"><b>This is the repository's main worktree.</b> It cannot be removed — no confirmation overrides it.</div>
+    <div class="wk-dacts"><button class="wk-btn" type="button">Close</button></div>
+  </div>
+</aside>
+</div>
+</div>
+</div>
+
+<div class="notes">
+<h4>What changed, and why</h4>
+<ul>
+<li><b>Worktrees is the rail.</b> One toggle, <code>Worktrees | Sessions</code>, replaces four equal segments; Recent / Agent / Folder survive as Sessions' own grouping, one level down. The panel now answers "what is running where" before "what did I run".</li>
+<li><b>Scope lives in the tab bar.</b> Selecting a worktree filters panes and puts a chip with its name at the head of the tab bar; <code>All</code> is the only way out, so the filter can never be invisible. Default scope is main.</li>
+<li><b>Inspector is a drawer, not a replacement.</b> Selecting a row opens a detail region under the tree (capped at ~52% of the panel) instead of swapping the body. In a 300px column, replacing the body makes selection destructive: you lose the list you were comparing against and need a back button to return. The drawer keeps the rail scannable while one worktree is read in full — and it is where the path lives, since rows never show one.</li>
+<li><b>Agent rows are two lines</b> — identity + age above, last message below. That is the line users actually read (<code>Approve the git worktree add?</code>), and it no longer competes with a model chip for width.</li>
+<li><b>Idle tail folded.</b> Worktrees with agents sort first and render in full; agentless ones are a dim single line, and from four upward they collapse under <code>N idle worktrees</code>.</li>
+</ul>
+<h4>State table</h4>
+<ul>
+<li>Shape, not colour, carries the state: spinning arc, static broken arc, filled disc, check, dim ring, struck ring. Waiting is the only strong animation, because it is the only state that needs a person.</li>
+<li><b>working (unconfirmed)</b> is a separate state, not a footnote on working: activity inferred from output with no recent confirmation stands still and says how long it has been quiet.</li>
+<li>Reduced motion turns every animation off and leaves each glyph legible as a static shape.</li>
+</ul>
+<h4>Markers</h4>
+<ul>
+<li><code>open</code> replaces <code>here</code> — several worktrees can be workspace folders at once, and <code>here</code> implied one was where you are.</li>
+<li><code>main</code>, locked, missing and prunable are icon badges with tooltips; only <code>open</code> keeps a word, since it has no unambiguous glyph.</li>
+</ul>
+<h4>Open for your call</h4>
+<ul>
+<li>Whether the scope chip should also appear in the panel header (it currently only lives on the tab bar).</li>
+<li>Whether selecting a worktree should scope the terminal immediately, or only on double-click / explicit <em>Focus</em>.</li>
+<li>Idle-tail threshold: four feels right for a 300px column; higher if your repos usually carry many idle worktrees.</li>
+<li>Create's destination default: <code>…/.claude/worktrees/&lt;name&gt;</code> here, versus the shipped sibling-directory default <code>…/&lt;repo&gt;-&lt;branch&gt;</code>.</li>
+</ul>
 </div>
 
 </div>
