@@ -72,6 +72,10 @@ function idleTailKey(repoId: string): string {
   return `\u0000idle-tail:${repoId}`;
 }
 
+/** Every row kind that takes part in traversal. One string, because the roving tab
+ *  stop, the level stamp and the focus delegate must agree on what a row IS. */
+const NAV_ROWS = ".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow";
+
 /** setTimeout's delay is a signed 32-bit int; anything larger wraps and fires now. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -209,6 +213,17 @@ export class WorktreeView {
     this.element.setAttribute("role", "tree");
     this.element.setAttribute("aria-label", "Worktrees");
     this.element.addEventListener("keydown", (ev) => this.onKeyDown(ev));
+    // Focus retention was written only where the KEYBOARD moves focus, so a pointer
+    // press — which focuses the row it lands on without `onKeyDown` running — left the
+    // roving key naming some other row, and the re-render a click causes restored focus
+    // there. Written here instead, where focus actually arrives, so every row kind is
+    // covered at once rather than each toggle path remembering to update the key.
+    this.element.addEventListener("focusin", (ev) => {
+      const row = (ev.target as HTMLElement | null)?.closest<HTMLElement>(NAV_ROWS);
+      if (row) {
+        this.focusedKey = this.keyOf(row);
+      }
+    });
     // Delegated, because render() replaces every row: rows carry `data-tip` and
     // nothing is attached or disposed per render.
     this.disposeTooltips = attachTooltipDelegate(this.element);
@@ -846,7 +861,13 @@ export class WorktreeView {
     // A filter REVEALS the tail; it does not re-decide it. `idleTailFolded` already
     // returns false while a query is up, so the rendered state here is the query's
     // and not the user's — flipping against the stored state would spend a choice
-    // the user never made on this render. Same guard, same place as the reveal.
+    // the user never made on this render.
+    //
+    // Nothing rendered can reach this any more: since W5 no disclosure is drawn while
+    // a query reveals the tail, so no click arrives to guard. Kept because the reveal
+    // rule and this one are the same rule, and a later render that puts the disclosure
+    // back on screen under a filter would otherwise silently spend the fold — the
+    // failure it protects against leaves no trace, only a fold the user did not choose.
     if (this.query) {
       return;
     }
@@ -1265,7 +1286,7 @@ export class WorktreeView {
    *  are excluded: both duplicate the worktree row's own toggle, and both are hidden
    *  from assistive tech because neither is a valid child of `role="tree"`. */
   private navRows(): HTMLElement[] {
-    return Array.from(this.element.querySelectorAll<HTMLElement>(".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow"));
+    return Array.from(this.element.querySelectorAll<HTMLElement>(NAV_ROWS));
   }
 
   /** One tab stop for the whole tree; arrows move within it. */

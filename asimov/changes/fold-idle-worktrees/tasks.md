@@ -39,3 +39,15 @@
     2. W5: a guard that swallows the key is worse than the divergence it replaced. `expandOrDescend` decides a row is expandable from the presence of `aria-expanded` alone, so under a filter ArrowLeft enters the toggle branch, hits the guarded no-op and returns before `parentOf` — the row is inert, not merely un-toggleable. A disclosure that hides nothing has nothing to disclose: prefer not rendering it while a filter reveals the tail, and render the matched rows at their normal depth. If it stays on screen it must stop being expandable at all — no `aria-expanded`, no activation binding, no toggle affordance — and must not keep a tree role while sitting in the roving tab stop.
     3. Two tests this change already carries assert less than their titles claim: the disclosure activation that reads as optional, and the "menu and keyboard reach" test that never dispatches a `contextmenu` event against the requirement promising one. Fix both here rather than leaving them to be re-found.
     4. W8: `aria-level` is declared on two row kinds and implicit on the rest, so multi-repo it announces the disclosure as the header's sibling. Declare it on every navigable kind, from the depth model that already exists rather than a second one. Assert the complete level ladder in both single- and multi-repo trees — asserting only the kinds this change touched is how the partial ladder got here.
+
+- [x] 1_4 Cycle-2 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_3
+  - **Refs**: specs/worktree-panel/spec.md#{the-idle-disclosure-is-a-first-class-row-of-the-tree, a-search-match-inside-the-tail-opens-it, the-tail-s-fold-state-persists-and-defaults-to-folded-exactly-once}
+  - **Acceptance**:
+    - Outcome: a pointer toggle keeps focus, and the level ladder is pinned for every navigable row kind
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`.
+    1. Focus retention is written only where the keyboard writes it, so a pointer toggle re-renders against a key its click never updated. The row kind that carries the explicit clause is not the only one affected — close it once, where focus actually arrives, rather than per kind.
+    2. A test whose subject stopped rendering does not fail; it passes for nothing. The scenario it guarded is now unreachable by construction, so assert the contract that remains reachable — a filter disturbs the fold state in neither direction — and say plainly in the guard's own comment that nothing rendered can reach it.
+    3. The ladder must be pinned for every kind the stamp covers, agent and subagent rows included. A test that enumerates only the kinds a change touched is how the partial ladder arrived, and repeating it here would be the same mistake twice in the same file.

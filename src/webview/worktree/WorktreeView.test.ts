@@ -2266,6 +2266,25 @@ describe("the idle tail", () => {
     return { scannedAt: NOW, degradedSources: degraded, rowsByWorktreeId };
   }
 
+  /** The same presence, with a delegation history on every agent row — the only
+   *  way a `.wt-srow` renders at all, and the ladder has to cover it. */
+  function delegatingPresence(withAgents: string[]): WorktreePresence {
+    const base = presence(withAgents);
+    for (const rows of Object.values(base.rowsByWorktreeId)) {
+      for (const row of rows) {
+        // `entryId` is what makes the row a session, and only a session's expansion
+        // survives reconciliation — without it the expanded key is pruned and the
+        // history never draws.
+        row.entryId = `claude:${row.rowId}`;
+        row.delegations = {
+          kind: "ok",
+          rows: [{ name: "reviewer", title: "review the ladder", status: "completed", live: false }],
+        };
+      }
+    }
+    return base;
+  }
+
   const branchesInOrder = (view: WorktreeView): string[] =>
     Array.from(view.element.querySelectorAll(".wt-row .wt-branch")).map((e) => e.textContent ?? "");
 
@@ -2455,16 +2474,54 @@ describe("the idle tail", () => {
     expect(stops[0]?.className).toContain("wt-idle");
   });
 
-  it("[B1] a filter reveals the tail without letting a click on it spend the fold", () => {
+  it("[B1] a filter disturbs the fold state in neither direction", () => {
+    // This asserted that clicking the revealed disclosure could not spend the fold.
+    // W5 then stopped rendering a disclosure under a filter at all, and the test kept
+    // passing for nothing: `querySelector(".wt-idle")` returned null, the click was a
+    // no-op, and deleting the guard it existed to pin left it green. What is still
+    // reachable is the contract underneath — a filter reveals, and clearing it returns
+    // the tail to whichever state the user left it in.
     const { view } = mount({ now: () => NOW });
     view.setData({ tree: tree(["live", "spike-a", "spike-b", "spike-c", "spike-d"]), presence: presence(["live"]) });
     expect(branchesInOrder(view)).toEqual(["live"]);
     view.setQuery("spike");
-    // The disclosure reads open because the query revealed it — activating it here
-    // must not write that transient state over the fold the user actually chose.
-    view.element.querySelector<HTMLElement>(".wt-idle")?.click();
+    expect(branchesInOrder(view)).toEqual(["spike-a", "spike-b", "spike-c", "spike-d"]);
     view.setQuery("");
     expect(branchesInOrder(view)).toEqual(["live"]);
+    // And the other direction, which the old assertion never covered: a tail the user
+    // opened must not come back folded because a query passed over it.
+    disclosure(view)?.click();
+    expect(branchesInOrder(view)).toHaveLength(5);
+    view.setQuery("spike");
+    view.setQuery("");
+    expect(branchesInOrder(view)).toHaveLength(5);
+  });
+
+  it("[c2-W1] keeps focus on the disclosure when a pointer toggles it", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    // A pointer press focuses the row it lands on without `onKeyDown` running, so the
+    // roving key still named whatever the keyboard last touched — and the re-render
+    // the click causes restored focus to THAT row. Keyboard-only focus retention is
+    // retention for one input device.
+    const row = disclosure(view);
+    row?.focus();
+    row?.click();
+    expect(document.activeElement?.className).toContain("wt-idle");
+    const stops = Array.from(view.element.querySelectorAll<HTMLElement>('[tabindex="0"]'));
+    expect(stops).toHaveLength(1);
+    expect(stops[0]?.className).toContain("wt-idle");
+  });
+
+  it("[c2-W1] keeps focus on a worktree row when a pointer collapses it", () => {
+    // The disclosure carries the explicit clause, but it is not the row kind at
+    // fault — focus arrival was the gap, and every kind that toggles shares it.
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a"]), presence: presence(["live", "a"]) });
+    const row = rowFor(view, "a");
+    row?.focus();
+    row?.click();
+    expect(document.activeElement).toBe(rowFor(view, "a"));
   });
 
   it("[W1] keeps a folded worktree's action notice reachable", () => {
@@ -2495,21 +2552,35 @@ describe("the idle tail", () => {
     expect(rows.every((r) => !r.classList.contains("wt-row--in-tail"))).toBe(true);
   });
 
-  it("[W8] declares the whole level ladder, single-repo and multi-repo alike", () => {
-    // Tail OPEN, so the ladder genuinely spans two levels — folded, every drawn row
-    // sits at depth 1 and the assertion could not tell a ladder from a constant.
-    const single = mount({ now: () => NOW, getInitialCollapsed: () => [], getInitialIdleSeeded: () => [REPO] });
-    single.view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+  it("[W8] declares the whole level ladder, for every navigable kind", () => {
+    // Tail OPEN and an agent row expanded, so the ladder genuinely spans four levels.
+    // Folded, every drawn row sits at depth 1 and the assertion cannot tell a ladder
+    // from a constant; without the delegation history no `.wt-srow` renders anywhere
+    // in this file, and pinning only the kinds this change touched is how the partial
+    // ladder arrived in the first place.
+    const deps = { now: () => NOW, getInitialCollapsed: () => [], getInitialIdleSeeded: () => [REPO] };
+    const single = mount({ ...deps, getInitialExpandedRows: () => ["r-live"] });
+    single.view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: delegatingPresence(["live"]) });
     const levelsOf = (v: WorktreeView) =>
       Array.from(v.element.querySelectorAll<HTMLElement>(".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow")).map((r) =>
         r.getAttribute("aria-level"),
       );
+    const levelOf = (v: WorktreeView, sel: string) => {
+      const row = v.element.querySelector(sel);
+      // The level of a kind that did not render is vacuously whatever you assert.
+      expect(row, `${sel} did not render`).not.toBeNull();
+      return row?.getAttribute("aria-level");
+    };
     // Every navigable kind or none: a partial ladder announces the disclosure as a
     // sibling of the header it actually sits under.
     expect(levelsOf(single.view).every((l) => l !== null)).toBe(true);
-    expect(new Set(levelsOf(single.view))).toEqual(new Set(["1", "2"]));
+    expect(levelOf(single.view, ".wt-row")).toBe("1");
+    expect(levelOf(single.view, ".wt-idle")).toBe("1");
+    expect(levelOf(single.view, ".wt-row--in-tail")).toBe("2");
+    expect(levelOf(single.view, ".wt-arow")).toBe("2");
+    expect(levelOf(single.view, ".wt-srow")).toBe("3");
 
-    const multi = mount({ now: () => NOW, getInitialCollapsed: () => [], getInitialIdleSeeded: () => [REPO] });
+    const multi = mount({ ...deps, getInitialExpandedRows: () => ["r-live"] });
     multi.view.setData({
       tree: {
         ...tree(["live", "a", "b", "c", "d"]),
@@ -2518,15 +2589,16 @@ describe("the idle tail", () => {
           { repoId: "/other/.git", label: "other", mainPath: "/other", worktrees: [] },
         ],
       },
-      presence: presence(["live"]),
+      presence: delegatingPresence(["live"]),
     });
-    const multiLevels = levelsOf(multi.view);
-    expect(multiLevels.every((l) => l !== null)).toBe(true);
+    expect(levelsOf(multi.view).every((l) => l !== null)).toBe(true);
     // Everything shifts down by one, because the repository header now occupies 1.
-    expect(multi.view.element.querySelector(".wt-repo")?.getAttribute("aria-level")).toBe("1");
-    expect(multi.view.element.querySelector(".wt-idle")?.getAttribute("aria-level")).toBe("2");
-    expect(multi.view.element.querySelector(".wt-row")?.getAttribute("aria-level")).toBe("2");
-    expect(multi.view.element.querySelector(".wt-row--in-tail")?.getAttribute("aria-level")).toBe("3");
+    expect(levelOf(multi.view, ".wt-repo")).toBe("1");
+    expect(levelOf(multi.view, ".wt-idle")).toBe("2");
+    expect(levelOf(multi.view, ".wt-row")).toBe("2");
+    expect(levelOf(multi.view, ".wt-row--in-tail")).toBe("3");
+    expect(levelOf(multi.view, ".wt-arow")).toBe("3");
+    expect(levelOf(multi.view, ".wt-srow")).toBe("4");
   });
 
   it("gives the disclosure its own keyboard identity", () => {
