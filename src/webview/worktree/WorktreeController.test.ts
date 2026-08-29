@@ -959,6 +959,30 @@ describe("the create a toolbar with no repository opens", () => {
     expect(document.querySelector<HTMLSelectElement>("#wt-repo-select")?.value).toBe(REPO_B);
   });
 
+  it("[W10] a create whose repositories changed under it says so, rather than evaporating", () => {
+    // Round-1 S2 stopped the frozen offer for a form that never opened; the
+    // other half — telling the user — did not land. W1's fix made `reconcile` a
+    // completion path, so a folder swap mid-ask now reaches it: the defaults are
+    // pruned, both outstanding ids are dropped, and nothing was ever asked of
+    // the repository that arrived.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: {
+        gitAvailable: true,
+        unreadable: { count: 0, reasons: [] },
+        repos: [{ repoId: "/c/.git", label: "c", mainPath: "/c", worktrees: [] }],
+      },
+      presence: singleRepoPresence(1_000_000),
+    });
+
+    expect(document.querySelector("#wt-branch")).toBeNull();
+    const results = (h.controller as unknown as { actionResults: { action: string; outcome: string }[] })
+      .actionResults;
+    expect(results).toEqual([expect.objectContaining({ action: "create", outcome: "unavailable" })]);
+  });
+
   it("[W6] a create resolved after the panel left the worktree body opens nothing", () => {
     const h = ready(twoRepoResponse());
     h.controller.openCreate();

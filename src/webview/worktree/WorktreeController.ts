@@ -214,7 +214,7 @@ export class WorktreeController {
    * repository: the form builds its picker once, from the seed it opened with,
    * so opening on the first reply would offer one repository as the workspace.
    */
-  private pendingCreate: { outstanding: Set<string>; initialRepoId?: string } | null = null;
+  private pendingCreate: { asked: string[]; outstanding: Set<string>; initialRepoId?: string } | null = null;
   /** Push a fresh host answer into the open form. Null when none is open. */
   private applyCreateDefaults: ((next: WorktreeCreateDefaults) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
@@ -518,6 +518,9 @@ export class WorktreeController {
       return;
     }
     this.pendingCreate = {
+      // Kept so a create that cannot open can name what it was waiting on: the
+      // outstanding set is empty by the time that is known.
+      asked: [...targets],
       outstanding: new Set(targets),
       ...(repoId === undefined ? {} : { initialRepoId: repoId }),
     };
@@ -717,12 +720,30 @@ export class WorktreeController {
    * the last answer, and a reconcile that dropped the last repository still
    * outstanding.
    */
-  private openPendingCreate(pending: { outstanding: Set<string>; initialRepoId?: string }): void {
+  /** A repo's label if the tree still holds it, else the id it was asked under. */
+  private labelForRepo(repoId: string): string {
+    return this.tree?.repos.find((r) => r.repoId === repoId)?.label ?? repoId;
+  }
+
+  private openPendingCreate(pending: { asked: string[]; outstanding: Set<string>; initialRepoId?: string }): void {
     this.pendingCreate = null;
     // Frozen only for a form that actually opens: `openCreateDialog` returns on
     // an empty seed, and a standing offer for a form that never opened is a
     // claim about a dialog that is not there (round-1 S2).
     if (this.createRepos().length === 0) {
+      // And SAID, not merely skipped (round-2 W10). Nothing was attempted
+      // because what the create would have acted in could no longer be read —
+      // the repositories it asked about are not the ones the tree now holds.
+      // Silence here is a "+" that does nothing when pressed.
+      this.actionResults = [
+        ...this.actionResults.filter((r) => r.action !== "create" || r.outcome !== "unavailable"),
+        {
+          action: "create",
+          outcome: "unavailable",
+          unreadable: pending.asked.map((repoId) => this.labelForRepo(repoId)),
+        },
+      ];
+      this.push();
       return;
     }
     this.frozenCreateOffer = { ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }) };

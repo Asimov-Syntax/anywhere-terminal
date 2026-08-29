@@ -2934,6 +2934,21 @@ describe("create on the repo group header", () => {
     expect(first?.getAttribute("aria-label")).toBe("anywhere-terminal, 2 worktrees");
   });
 
+  it("[W8] a header counts in the grammar it renders", () => {
+    // "1 worktrees", on exactly the single-checkout repository this change's own
+    // new empty state is about.
+    const { view, host } = mount({ onCreateForRepo: () => {} } as Partial<WorktreeViewDeps>);
+    const tree = twoRepoTree();
+    const first = tree.repos[0];
+    if (!first) {
+      throw new Error("fixture lost its repo");
+    }
+    first.worktrees = first.worktrees.slice(0, 1);
+    view.setData({ tree, presence: singleRepoPresence(NOW) });
+
+    expect(host.querySelector(".wt-repo")?.getAttribute("aria-label")).toBe("anywhere-terminal, 1 worktree");
+  });
+
   it("[W4] one arrow keypress writes the tab stops once, not twice", () => {
     // `focusRow` writes them and then focuses, which fires the delegate that
     // wrote them again — two full-tree passes per keypress.
@@ -2954,9 +2969,10 @@ describe("create on the repo group header", () => {
     view.element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     view.element.querySelectorAll = real;
 
-    // One to read the rows for the keypress, one to write the stops. The pass the
-    // delegate used to add on top of those is what this pins.
-    expect(passes).toBe(2);
+    // A BOUND, not an equality: one read for the keypress and one to write the
+    // stops is what it costs today, and a later change that caches the row list
+    // across the keypress is an improvement, not a regression.
+    expect(passes).toBeLessThanOrEqual(2);
   });
 
   it("[W7] the control is revealed by focus, not by hover alone", () => {
@@ -2966,8 +2982,13 @@ describe("create on the repo group header", () => {
     // the reduced-motion contract above is read.
     const here = path.dirname(fileURLToPath(import.meta.url));
     const css = fs.readFileSync(path.join(here, "worktreePanel.css"), "utf8");
-    const reveal = css.match(/([^}]*)\{\s*visibility: visible;\s*\}/);
-    const selectors = reveal?.[1] ?? "";
+    // EVERY block that reveals a row action, not the first — this file already
+    // learned that lesson for reduced motion, two hundred lines above, and
+    // reading only one is the assumption behind several escapes it paid for.
+    const selectors = [...css.matchAll(/([^{}]*)\{\s*visibility: visible;\s*\}/g)]
+      .map((m) => m[1] ?? "")
+      .filter((sel) => sel.includes(".wt-rowaction"))
+      .join("\n");
 
     expect(selectors).toMatch(/:focus-within \.wt-rowaction/);
     expect(selectors).toMatch(/:hover \.wt-rowaction/);

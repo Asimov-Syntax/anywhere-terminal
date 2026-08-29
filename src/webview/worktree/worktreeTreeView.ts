@@ -236,7 +236,7 @@ export function renderRepoHeader(
   header.appendChild(chev);
   // A `treeitem` with no name takes one from its contents, so the create
   // control's label was read out as part of every header (round-1 W3).
-  header.setAttribute("aria-label", `${repo.label}, ${count} worktrees`);
+  header.setAttribute("aria-label", `${repo.label}, ${count} worktree${count === 1 ? "" : "s"}`);
   header.dataset.tip = collapsed ? `Expand ${repo.label}` : `Collapse ${repo.label}`;
   bindActivation(header, onToggle);
   return header;

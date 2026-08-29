@@ -14,8 +14,8 @@
 
 - [ ] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
@@ -43,3 +43,7 @@ Planned at: 0bb67ab9
 - Keyboard reach for a row-level action is a mechanism fork, auto-chosen under fastlane: the control joins the tab order only while its own row holds focus, which keeps the tree's single tab-stop entry and matches the roving model already in `WorktreeView`. It changes externally verifiable keyboard behaviour, so it is a MODIFIED delta on the traversal requirement rather than a task-local decision.
 - Two validator warnings left standing: both name a MODIFIED requirement whose length is mostly inherited applied text. Splitting them would rewrite contracts this change does not own; each of my added paragraphs is two sentences.
 - 1_1: the spec scenario "with none preselected on the user's behalf" was withdrawn during build — it is not externally verifiable. `WorktreeCreateDialog` resolves `deps.initialRepoId ?? first.repoId`, so a form always opens on some repository; a controller that named the first one and one that let the dialog fall back to it are indistinguishable from outside. A mutation of exactly that survived, which is how it surfaced. The observable claim — an unscoped door offers every repository and narrows nothing — is kept.
+- Review cycle 1: round 1 discovery (2 BLOCK, 7 WARN, 5 SUGGEST), round 2 verification (0 BLOCK, 3 WARN). Ended at round 2 — no BLOCK was fixed or rebutted in round 2, so the cycle closes at re-verify rather than opening round 3.
+- Both round-1 blockers were defects in this change's own new code: a superseded create ask leaking a branch-less answer into an open form past a guard that compares branches, and the toolbar control visible-and-dead on every cold open because availability was seeded from a field looser than git's own answer.
+- Round-1 W2 was the sharpest: my own accepted requirement says the four doors differ only in which repository the form opens on, and a cold scoped door offered one where the toolbar offered three. Every door asks every repository now.
+- Round-2 W9 is accepted and deliberately NOT fixed here — it needs a `kind` tag on the create-defaults request and its answer, which is the host boundary and this change's stated must-not. Carried to the blueprint as a follow-up. Rationale in `.reviews/round-2.md`.

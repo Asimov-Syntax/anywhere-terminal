@@ -61,3 +61,16 @@
     6. W4: `focusRow` writes the stops and then focuses, which fires the delegate that writes them again. One pass per focus change.
     7. Test strength (W5, W7): the multi-repo shape is the only one the header door exists in and no test renders the new state there; and the keyboard-reach rule lives in a stylesheet jsdom does not apply, asserted by a test that stages focus a browser would not grant. Assert both where they actually live.
     8. Loose ends (W6, S2, S3): a create resolved after the panel left the body it acts in; a frozen offer consumed by a form that did not open; a shared atom hard-coding a worktree-prefixed class.
+
+- [x] 1_5 Round-2 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_4
+  - **Refs**: ../../../specs/worktree-panel/spec.md#{a-mutation-that-fails-leaves-the-panel-showing-reality, a-summary-counts-every-state-it-is-summarising}
+  - **Acceptance**:
+    - Outcome: a create that cannot open says so, and a header counts in the grammar it renders
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`.
+    1. W8: the line round 1 asked for reads "1 worktrees", on exactly the single-checkout repository this change's own new state is about.
+    2. W10: round-1 S2 had two halves and one landed. Stopping the frozen offer for a form that did not open left the other half — the create still evaporates in silence while its control stays offered. The panel already has the vocabulary for this: an outcome that attempted nothing because what it would act on could not be read, which is what a repository set that changed under the ask is. Naming what was unreadable needs the asked set, which the pending record does not currently keep.
+    3. S8: the traversal cost contract is a bound, not an equality — a later change that caches the row list across a keypress is an improvement and would turn an equality red.
+    4. S7: the stylesheet assertion reads the first matching block where this same file already learned to read every one. Take the idiom that is two hundred lines above it rather than the one it re-introduced.
