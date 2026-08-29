@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { WebViewToExtensionMessage } from "../../types/messages";
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
+import { worktreeActionItems } from "./worktreeActionItems";
 import { worktreeMenuActions } from "./WorktreeController";
 import { agentRow, worktree } from "./worktreeFixtures";
 
@@ -461,5 +462,57 @@ describe("prune is offered only when there is something to prune", () => {
     const { host, menu } = menuWith(1);
     menu.openForWorktree(worktree({ id: "/wt", branch: "feat/x" }), EVENT, document.createElement("div"));
     expect(labels(host).some((l) => l.includes("Prune 1 Registration…"))).toBe(true);
+  });
+});
+
+describe("[1_1] one builder, two surfaces", () => {
+  /** Every capability a worktree row can raise, so absence is never the default. */
+  const all = (): WorktreeMenuActions => ({
+    openFolderInNewWindow: () => {},
+    addFolderToWorkspace: () => {},
+    openTerminalHere: () => {},
+    revealWorktree: () => {},
+    copyWorktreePath: () => {},
+    toggleLock: () => {},
+    removeWorktree: () => {},
+    createWorktree: () => {},
+    pruneRepo: () => {},
+    launchAgentHere: () => {},
+  });
+
+  const built = (repoScoped: boolean, info = worktree({ id: "/wt", branch: "feat/x" })): string[] =>
+    worktreeActionItems(info, all(), { prunableCount: 2, repoScoped })
+      .filter((i): i is Exclude<typeof i, "sep"> => i !== "sep")
+      .map((i) => i.label);
+
+  it("withholds the two repository-targeted items from a worktree-only surface", () => {
+    // The drawer is about ONE worktree. An item that silently acted on its
+    // repository instead is the same false claim as one that cannot act at all.
+    expect(built(false)).not.toContain("New Worktree…");
+    expect(built(false).some((l) => /^Prune /.test(l))).toBe(false);
+  });
+
+  it("keeps every worktree-targeted item on that surface", () => {
+    // The withholding above must cost nothing else: the drawer is not a reduced
+    // menu, it is the same menu minus the two items that are not about it.
+    const menuOnly = built(true).filter((l) => l !== "New Worktree…" && !/^Prune /.test(l));
+    expect(built(false)).toEqual(menuOnly);
+    expect(built(false)).toContain("Remove Worktree…");
+    expect(built(false)).toContain("Start an Agent Here…");
+  });
+
+  it("applies the same withdrawals to both surfaces", () => {
+    // The gating rules travel with the builder rather than with the menu — this
+    // is the whole reason the extraction happened.
+    const gone = worktree({ id: "/wt", branch: "feat/x", missing: true });
+    expect(built(false, gone)).not.toContain("Open Terminal Here");
+    expect(built(false, gone)).toContain("Copy Path");
+    const main = worktree({ id: "/main", branch: "main", kind: "main" });
+    expect(built(false, main)).not.toContain("Remove Worktree…");
+  });
+
+  it("still offers the repository's own door on the menu", () => {
+    expect(built(true)).toContain("New Worktree…");
+    expect(built(true)).toContain("Prune 2 Registrations…");
   });
 });
