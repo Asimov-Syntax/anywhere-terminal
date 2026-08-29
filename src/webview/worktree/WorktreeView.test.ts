@@ -5,6 +5,9 @@
 // are the truthfulness ones — no path on a row, no icon without proven identity,
 // no live dot on history, no focus offered on an external row.
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetTooltipForTests } from "../ui/Tooltip";
 import { ICON_TERMINAL } from "../vault/icons";
@@ -219,6 +222,89 @@ describe("tree structure", () => {
     // `main` holds one waiting agent among running ones — it must read as waiting.
     const glyph = rowFor(view, "main")?.querySelector(".wt-glyph .wt-state");
     expect(glyph?.className).toContain("wt-state--waiting");
+  });
+
+  it("reads unknown, not idle, when every source that decides a row is failing", () => {
+    const { view } = mount();
+    const presence = singleRepoPresence(NOW);
+    view.setData(
+      populated({
+        presence: {
+          ...presence,
+          degradedSources: [
+            { source: "hook", reason: "socket closed", since: NOW },
+            { source: "panes", reason: "scan failed", since: NOW },
+            { source: "registry", reason: "spawn ENOENT", since: NOW },
+          ],
+        },
+      }),
+    );
+    const glyph = rowFor(view, "main")?.querySelector(".wt-glyph .wt-state");
+    expect(glyph?.className).toContain("wt-state--unknown");
+    expect(glyph?.getAttribute("aria-label")).toBe("An agent's activity is unknown");
+    const dots = Array.from(view.element.querySelectorAll(".wt-arow .wt-state"));
+    expect(dots.length).toBeGreaterThan(0);
+    for (const dot of dots) {
+      expect(dot.className).toContain("wt-state--unknown");
+      expect(dot.getAttribute("aria-label")).toBe("activity unknown");
+    }
+  });
+
+  it("turns unknown only the rows the failed source decided, never the whole tree", () => {
+    const { view } = mount();
+    const presence = singleRepoPresence(NOW);
+    // `main` holds a waiting row the REGISTRY decided. The hook going down cannot
+    // silence it — that would hide an attention state behind an unrelated outage.
+    view.setData(
+      populated({
+        presence: { ...presence, degradedSources: [{ source: "hook", reason: "socket closed", since: NOW }] },
+      }),
+    );
+    expect(rowFor(view, "main")?.querySelector(".wt-glyph .wt-state")?.className).toContain("wt-state--waiting");
+    const dots = Array.from(view.element.querySelectorAll(".wt-arow .wt-state")).map((d) => d.className);
+    expect(dots.some((c) => c.includes("wt-state--unknown"))).toBe(true);
+    expect(dots.some((c) => c.includes("wt-state--waiting"))).toBe(true);
+  });
+
+  it("reads unknown when no source spoke for the row at all", () => {
+    const { view } = mount();
+    // `activitySource: "none"` is unknown on its own — nothing was degraded, and
+    // nothing decided it either, so `idle` would be a claim with no evidence.
+    view.setData(populated());
+    const dots = Array.from(view.element.querySelectorAll(".wt-arow .wt-state")).map((d) => d.className);
+    expect(dots.some((c) => c.includes("wt-state--unknown"))).toBe(true);
+  });
+
+  it("gives each of the five states a shape, so none of them is only a colour", () => {
+    // jsdom loads no stylesheet, so the rules are read from source. What this
+    // guards is the reduced-motion case: with the animations off, `running` and
+    // `idle` were two hollow circles separated by a border colour alone.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, "worktreePanel.css"), "utf8");
+    const shapeOf = (state: string): string => {
+      const rule = new RegExp(`\\.wt-state--${state}\\s*\\{([^}]*)\\}`).exec(css);
+      expect(rule, `no rule for .wt-state--${state}`).not.toBeNull();
+      return (rule?.[1] ?? "")
+        .split(";")
+        .map((d) => d.trim())
+        .filter((d) => d.length > 0 && !/color|background|opacity/.test(d.split(":")[0] ?? ""))
+        // Every colour token collapses to one word, so two rules that differ only
+        // in which colour they name compare as the same shape and fail the set.
+        .map((d) => d.replace(/var\(--[^)]*\)|color-mix\([^)]*\)|transparent|#[0-9a-f]{3,8}/g, "C"))
+        .sort()
+        .join(";");
+    };
+    const shapes = ["running", "waiting", "idle", "unknown", "exited"].map(shapeOf);
+    expect(new Set(shapes).size).toBe(shapes.length);
+  });
+
+  it("keeps a failed worktree LISTING out of it — that says nothing about any agent", () => {
+    const { view } = mount();
+    const tree = singleRepoTree();
+    view.setData(
+      populated({ tree: { ...tree, repos: tree.repos.map((r) => ({ ...r, degraded: "git ls-files failed" })) } }),
+    );
+    expect(rowFor(view, "main")?.querySelector(".wt-glyph .wt-state")?.className).toContain("wt-state--waiting");
   });
 
   it("wraps an expanded worktree and its agent rows in one card", () => {

@@ -22,6 +22,7 @@ import {
   agentRowTitle,
   branchLabel,
   groupPresenceByActivity,
+  presentedActivity,
   strongestActivity,
 } from "./worktreeFormat";
 import { worktreeSignature } from "./worktreeRenderSignature";
@@ -40,6 +41,7 @@ import {
   worktreeEmptyState,
 } from "./worktreeTreeView";
 import type {
+  PresenceDegradation,
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeInfo,
@@ -333,6 +335,15 @@ export class WorktreeView {
 
   private rowsFor(worktreeId: string): WorktreeAgentRow[] {
     return this.data.presence?.rowsByWorktreeId[worktreeId] ?? [];
+  }
+
+  /**
+   * The presence sources currently failing, which is what turns a row's state
+   * into `unknown` (§ 7.2). A repo's own `degraded` flag is deliberately not
+   * here: it says the worktree listing failed, not that any agent is unreadable.
+   */
+  private degradedSources(): readonly PresenceDegradation[] {
+    return this.data.presence?.degradedSources ?? [];
   }
 
   /**
@@ -649,7 +660,7 @@ export class WorktreeView {
       renderWorktreeRow(
         info,
         {
-          activity: strongestActivity(rows),
+          activity: strongestActivity(rows, this.degradedSources()),
           hasAgents: rows.length > 0,
           expanded,
           agentSummary: rows.length > 0 ? agentCountLabel(rows.length) : undefined,
@@ -690,7 +701,7 @@ export class WorktreeView {
       container.appendChild(
         renderAgentRow(
           row,
-          { expanded: rowExpanded, now: this.now() },
+          { activity: presentedActivity(row, this.degradedSources()), expanded: rowExpanded, now: this.now() },
           {
             onActivate: (r) => this.deps.onActivateAgent?.(r, this.activationFor(r)),
             onContextMenu: this.menu ? (r, ev, el) => this.menu?.openForAgent(r, ev, el) : undefined,

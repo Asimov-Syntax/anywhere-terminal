@@ -207,11 +207,23 @@
   border: 1.5px solid var(--vscode-descriptionForeground);
   opacity: 0.8;
 }
+/* An ARC, not a tinted ring: the open sides are transparent, so `running` differs
+   from `idle` in outline and stays distinct when the animation stops and when the
+   theme carries no colour at all. */
 .wt-state--running {
   border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, var(--vscode-charts-blue) 28%, transparent);
+  border: 1.5px solid transparent;
   border-top-color: var(--vscode-charts-blue);
+  border-right-color: color-mix(in srgb, var(--vscode-charts-blue) 55%, transparent);
   animation: wt-spin 0.9s linear infinite;
+}
+/* No source could say. A broken ring reads as an incomplete answer, and it is
+   recessive on purpose — `unknown` reports missing evidence, it does not ask for
+   attention. Distinct from `idle`, which is a positive claim of rest. */
+.wt-state--unknown {
+  border-radius: 50%;
+  border: 1.5px dashed var(--vscode-descriptionForeground);
+  opacity: 0.55;
 }
 .wt-state--waiting {
   border-radius: 50%;

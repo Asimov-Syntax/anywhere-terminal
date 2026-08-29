@@ -64,6 +64,14 @@ function bindActivation(el: HTMLElement, activate: () => void): void {
   });
 }
 
+/**
+ * What the glyph announces. `unknown` is not an activity an agent can be IN, so it
+ * is read as a statement about the evidence rather than about the agent (§ 7.2).
+ */
+export function activityLabel(activity: PresentedActivity): string {
+  return activity === "unknown" ? "activity unknown" : activity;
+}
+
 /** A leading-slot glyph carrying one of the state shapes (§ 7.2), `unknown` included. */
 export function stateShape(activity: PresentedActivity, label?: string): HTMLElement {
   const dot = document.createElement("span");
@@ -155,8 +163,13 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   // agent inside is active.
   const glyph = document.createElement("span");
   glyph.className = "wt-glyph";
-  if (opts.activity) {
-    glyph.appendChild(stateShape(opts.activity, `An agent is ${opts.activity}`));
+  const glyphActivity = opts.activity;
+  if (glyphActivity) {
+    glyph.appendChild(
+      glyphActivity === "unknown"
+        ? stateShape(glyphActivity, "An agent's activity is unknown")
+        : stateShape(glyphActivity, `An agent is ${glyphActivity}`),
+    );
   } else {
     glyph.innerHTML = ICON_BRANCH;
   }
@@ -288,6 +301,12 @@ export function renderAgentsHeader(count: number, onCollapse: () => void): HTMLE
 }
 
 export interface AgentRowOptions {
+  /**
+   * The state to DRAW, which the caller derives because only it holds the
+   * degradation list. Absent falls back to the row's own activity — honest for a
+   * caller with no presence to consult, never a claim that no source failed.
+   */
+  activity?: PresentedActivity;
   /** Subagent disclosure state — independent of the worktree's own collapse (§ 3.5). */
   expanded?: boolean;
   selected?: boolean;
@@ -337,7 +356,8 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   el.appendChild(gutter);
 
   // 2 — state dot. Colour from the state, never from the agent.
-  el.appendChild(stateShape(row.activity, row.activity));
+  const activity = opts.activity ?? row.activity;
+  el.appendChild(stateShape(activity, activityLabel(activity)));
 
   // 3 — agent icon. Absent without a proven identity: `agentSource: "none"` is a
   // plain terminal row, and a guessed glyph would be a claim we cannot support.

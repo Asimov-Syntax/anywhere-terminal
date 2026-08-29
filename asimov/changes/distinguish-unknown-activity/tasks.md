@@ -12,7 +12,7 @@
     3. Leave a repo's own `degraded` flag out of the derivation; only presence-source failures participate.
     4. In `src/webview/worktree/worktreeTreeView.ts`, widen `stateShape`'s parameter and the worktree-row option to the presented type, so the seam type-checks against the widened return. The glyph, aria label, and call sites are 1_2's.
 
-- [ ] 1_2 Give unknown its own shape and stop running collapsing into idle without motion
+- [x] 1_2 Give unknown its own shape and stop running collapsing into idle without motion — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#strongest-state-wins-and-shape-carries-it
   - **Acceptance**:
