@@ -2,7 +2,7 @@
 
 ## 1. Let a surface ask for presence without asking for rows
 
-- [ ] 1_1 Carry a subscription level on the visibility message and read it in the host
+- [x] 1_1 Carry a subscription level on the visibility message and read it in the host — verified: pnpm exec vitest run 'src/providers/WorktreeHost.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md#{d1-the-message-carries-a-level-not-a-second-boolean, d2-the-host-tracks-the-level-per-surface-the-scan-follows-subscription-enrichment-follows-drawing}
   - **Acceptance**:

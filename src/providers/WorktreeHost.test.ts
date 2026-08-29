@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionToWebViewMessage } from "../types/messages";
+import type { WorktreePresence } from "../worktree/presenceTypes";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { GitApiAccessor } from "../worktree/repoRoots";
@@ -654,5 +655,102 @@ describe("WorktreeHost — a re-show whose delivery did not land", () => {
     await settle();
 
     expect(subject.posts).toHaveLength(2);
+  });
+});
+
+describe("[1_1] a surface can subscribe to presence without drawing rows", () => {
+  /** A host whose projector records the options each projection was given. */
+  function scoped() {
+    const { runner } = oneRepo(MAIN, FEAT);
+    const options: ({ external?: boolean; enrich?: boolean } | undefined)[] = [];
+    const presence: WorktreePresence = { rowsByWorktreeId: {}, scannedAt: 1, degradedSources: [] };
+    const worktrees = createWorktreeHost({
+      deps: deps(runner, ["/repo"]),
+      workspaceFolders: () => ["/repo"],
+      pool,
+      now: () => 1000,
+      projector: {
+        project: async (_ids, opts) => {
+          options.push(opts);
+          return presence;
+        },
+        rank: () => undefined,
+        rankRevision: () => 0,
+      },
+    });
+    return { worktrees, options };
+  }
+
+  it("still serves a presence-only subscriber", async () => {
+    // The whole point: a scope's chip, escape control and count survive a
+    // collapsed rail, and they are drawn from presence.
+    const { worktrees } = scoped();
+    const s = surface();
+    attachShown(worktrees, s);
+
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+    worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    await settle();
+
+    expect(s.posts.length, "a presence-only subscriber received nothing").toBeGreaterThan(0);
+  });
+
+  it("tells the projection not to enrich when every subscriber is presence-only", async () => {
+    const { worktrees, options } = scoped();
+    const s = surface();
+    attachShown(worktrees, s);
+
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+    worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    await settle();
+
+    expect(options.length, "no projection ran at all").toBeGreaterThan(0);
+    expect(
+      options.every((o) => o?.enrich === false),
+      "per-row work ran for a body drawing no rows",
+    ).toBe(true);
+  });
+
+  it("enriches for the whole window as soon as one surface draws rows", async () => {
+    // The predicate is an OR across surfaces: presence is broadcast, so one
+    // drawing surface has to be served even while another is collapsed.
+    const { worktrees, options } = scoped();
+    const collapsed = surface();
+    const drawing = surface();
+    attachShown(worktrees, collapsed);
+    attachShown(worktrees, drawing);
+
+    worktrees.handleMessage(collapsed, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+    worktrees.handleMessage(drawing, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    worktrees.handleMessage(drawing, { type: "requestWorktreeTree" });
+    await settle();
+
+    expect(
+      options.some((o) => o?.enrich === true),
+      "a drawing surface was served un-enriched rows",
+    ).toBe(true);
+  });
+
+  it("treats a sender that omits the level as drawing rows", async () => {
+    // The field is additive; every existing sender means what it always meant.
+    const { worktrees, options } = scoped();
+    const s = surface();
+    attachShown(worktrees, s);
+
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    await settle();
+
+    expect(options.some((o) => o?.enrich === true)).toBe(true);
+  });
+
+  it("serves nothing to a surface that never subscribed", async () => {
+    const { worktrees } = scoped();
+    const s = surface();
+    attachShown(worktrees, s);
+    worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    await settle();
+
+    expect(s.posts).toEqual([]);
   });
 });

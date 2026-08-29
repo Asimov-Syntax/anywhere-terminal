@@ -879,17 +879,35 @@ export interface WorktreeCopyAgentPathMessage {
 }
 
 /**
- * WebView → Extension: this surface declares whether its Worktree view is being
- * shown. A surface starts NOT visible and receives no push until it says
- * otherwise — all three surfaces retain their DOM while hidden, so pushing to
- * one that never showed the view pays render cost nobody asked for.
+ * WebView → Extension: this surface declares what it needs from presence. A
+ * surface starts NOT visible and receives no push until it says otherwise — all
+ * three surfaces retain their DOM while hidden, so pushing to one that never
+ * showed the view pays render cost nobody asked for.
  *
- * See: asimov/changes/cache-and-broadcast-worktree-tree/design.md D7.
+ * `visible: false` means no subscription at all. `visible: true` means the
+ * surface draws something from presence, and `level` says how much:
+ *
+ * - `"rows"` — the Worktree view is shown and agent rows are on screen.
+ * - `"presence"` — the rail is not shown, but something else drawn from presence
+ *   is: a scope's chip, its escape control, and the count carried on that
+ *   control all survive a collapsed rail (worktree-panel-ui.md § 7.1). The
+ *   surface still receives presence; the window skips per-row title and preview
+ *   enrichment, which only rows consume.
+ *
+ * The field is optional and defaults to `"rows"`, so a sender that predates it
+ * is unchanged.
+ *
+ * See: asimov/changes/cache-and-broadcast-worktree-tree/design.md D7;
+ * asimov/changes/separate-presence-subscription-from-view-visibility/design.md D1.
  */
 export interface WorktreeViewVisibilityMessage {
   type: "worktreeViewVisibility";
   visible: boolean;
+  level?: WorktreeSubscriptionLevel;
 }
+
+/** What a subscribed surface draws from presence. See the message above. */
+export type WorktreeSubscriptionLevel = "rows" | "presence";
 
 /**
  * WebView → Extension: evidence about one pane that only the surface rendering

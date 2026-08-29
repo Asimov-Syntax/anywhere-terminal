@@ -14,6 +14,7 @@ import type {
   WorktreeAgentLaunchFields,
   WorktreeMutationResultMessage,
   WorktreeOpenAfterMode,
+  WorktreeSubscriptionLevel,
 } from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { VaultLaunchTarget } from "../vault/types";
@@ -400,6 +401,16 @@ interface SurfaceState {
   displayed: boolean;
   /** Last computed `visible && displayed`, so the transition is edge-triggered. */
   showing: boolean;
+  /**
+   * What this surface draws from presence while subscribed. Only `"rows"` needs
+   * per-row title and preview enrichment; a `"presence"` subscriber is drawing a
+   * scope's chip, escape control and count, none of which read either.
+   *
+   * Meaningless while `visible` is false, and deliberately not reset there: a
+   * surface that stops and restarts keeps its last declaration until it sends a
+   * new one, exactly as `visible` and `displayed` already do.
+   */
+  level: WorktreeSubscriptionLevel;
 }
 
 export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
@@ -1202,7 +1213,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return;
     }
     const at = treeVersion;
-    const next = await projector.project(worktreeIds(), externalOnly ? { external: true } : undefined);
+    // Read at call time, not captured: a rail can open or collapse while a
+    // projection is in flight, and the NEXT pass is the one that should react.
+    const enrich = anyDrawingRows();
+    const next = await projector.project(worktreeIds(), { external: externalOnly, enrich });
     if (disposed) {
       return;
     }
@@ -1347,6 +1361,25 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   function anyShowing(): boolean {
     for (const state of surfaces.values()) {
       if (state.visible && state.displayed) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Is any surface actually drawing agent rows right now?
+   *
+   * Narrower than `anyShowing`, and deliberately a separate question. Presence
+   * is what arms the scan, because a scope's count is built from it and that
+   * count outlives the rail. Titles and previews are drawn on rows or not at
+   * all, so a window where every subscriber is presence-only pays the registry
+   * pass and skips roughly one preview lookup and stat per live external
+   * session per poll (design.md D2).
+   */
+  function anyDrawingRows(): boolean {
+    for (const state of surfaces.values()) {
+      if (state.visible && state.displayed && state.level === "rows") {
         return true;
       }
     }
@@ -1562,7 +1595,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   });
 
   function attach(surface: WorktreeSurface): WorktreeAttachment {
-    surfaces.set(surface, { visible: false, displayed: false, showing: false });
+    surfaces.set(surface, { visible: false, displayed: false, showing: false, level: "rows" });
     return {
       dispose: () => {
         surfaces.delete(surface);
@@ -1589,6 +1622,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     switch (msg.type) {
       case "worktreeViewVisibility":
         state.visible = msg.visible;
+        // Absent means `"rows"`: the field is additive and a sender that predates
+        // it is declaring what it always declared.
+        state.level = msg.level ?? "rows";
         reconcileShowing(surface, state, false);
         reconcileScan();
         return;
