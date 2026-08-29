@@ -69,7 +69,7 @@ export interface TabBarScopeWiring {
    * value for both the chip and the bar's second reason to be visible, so a filter
    * without its own escape hatch is not expressible.
    */
-  chip(): { label: string; onClear: () => void } | undefined;
+  chip(hiddenWaiting?: number): { label: string; onClear: () => void; hiddenWaiting?: number } | undefined;
 }
 
 export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring {
@@ -133,13 +133,17 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
 
     effectiveScope: () => coordinator.effectiveScope(),
 
-    chip() {
+    // The count is passed IN rather than computed here: `buildTabBarData` derives
+    // it from the same pass that drops the tab, and a second derivation is a
+    // second definition of "hidden" (design.md D2).
+    chip(hiddenWaiting) {
       const label = coordinator.scopedLabel();
       if (label === null) {
         return undefined;
       }
       return {
         label,
+        ...(hiddenWaiting === undefined || hiddenWaiting === 0 ? {} : { hiddenWaiting }),
         onClear: () => {
           // Through the PANEL, so the row stops being marked as well. Its own
           // callback comes back through `onSelectWorktree`; the direct clear

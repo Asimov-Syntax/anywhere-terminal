@@ -567,7 +567,7 @@ describe("buildTabBarData", () => {
       ]) as never,
     });
 
-    expect(buildTabBarData(store).get("tab-1")?.activityStatus).toBe("running");
+    expect(buildTabBarData(store).tabs.get("tab-1")?.activityStatus).toBe("running");
   });
 
   it("stays idle when every pane is idle, and ignores a running-but-exited pane", () => {
@@ -580,7 +580,7 @@ describe("buildTabBarData", () => {
       ]) as never,
     });
 
-    expect(buildTabBarData(idle).get("tab-1")?.activityStatus).toBe("idle");
+    expect(buildTabBarData(idle).tabs.get("tab-1")?.activityStatus).toBe("idle");
   });
 
   it("falls back to the default name when a program cleared the title", () => {
@@ -589,7 +589,7 @@ describe("buildTabBarData", () => {
       terminals: new Map([["tab-1", { name: "", defaultName: "Terminal 3", customName: null }]]) as never,
     });
 
-    expect(buildTabBarData(store).get("tab-1")?.name).toBe("Terminal 3");
+    expect(buildTabBarData(store).tabs.get("tab-1")?.name).toBe("Terminal 3");
   });
 
   it("keeps a user's name over the fallback when the title is cleared", () => {
@@ -598,7 +598,7 @@ describe("buildTabBarData", () => {
       terminals: new Map([["tab-1", { name: "", defaultName: "Terminal 3", customName: "build" }]]) as never,
     });
 
-    expect(buildTabBarData(store).get("tab-1")?.customName).toBe("build");
+    expect(buildTabBarData(store).tabs.get("tab-1")?.customName).toBe("build");
   });
 
   it("falls back for the active pane of a split tab too", () => {
@@ -611,7 +611,7 @@ describe("buildTabBarData", () => {
       ]) as never,
     });
 
-    expect(buildTabBarData(store).get("tab-1")?.name).toBe("Terminal 2");
+    expect(buildTabBarData(store).tabs.get("tab-1")?.name).toBe("Terminal 2");
   });
 
   it("shows action-required when any non-exited split pane is waiting", () => {
@@ -624,7 +624,7 @@ describe("buildTabBarData", () => {
       ]) as never,
     });
 
-    expect(buildTabBarData(store).get("tab-1")?.activityStatus).toBe("waiting");
+    expect(buildTabBarData(store).tabs.get("tab-1")?.activityStatus).toBe("waiting");
   });
 });
 
@@ -665,18 +665,147 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
         ["here", HERE],
         ["elsewhere", ELSEWHERE],
       ]),
-    );
+    ).tabs;
     expect([...shown.keys()]).toEqual(["here", "unplaced"]);
+  });
+
+  const scopeWaiting = (entries: [string, string][], waiting: string[]): TabBarScope => ({
+    worktreeId: HERE,
+    attribution: new Map(entries),
+    waiting: new Set(waiting),
+  });
+
+  /** Single-pane tabs where the named ids carry the surface's OWN waiting status. */
+  function leavesWaiting(ids: string[], locallyWaiting: string[] = [], exited: string[] = []): TabBarDataSource {
+    return source({
+      tabLayouts: new Map(ids.map((id) => [id, createLeaf(id)])),
+      terminals: new Map(
+        ids.map((id) => [
+          id,
+          {
+            name: id,
+            exited: exited.includes(id),
+            activityStatus: locallyWaiting.includes(id) ? "waiting" : "idle",
+          },
+        ]),
+      ) as never,
+    });
+  }
+
+  it("counts the hidden tabs that hold a waiting pane", () => {
+    const store = leavesWaiting(["here", "gone-1", "gone-2", "gone-3"]);
+    const data = buildTabBarData(
+      store,
+      scopeWaiting(
+        [
+          ["here", HERE],
+          ["gone-1", ELSEWHERE],
+          ["gone-2", ELSEWHERE],
+          ["gone-3", ELSEWHERE],
+        ],
+        ["gone-1", "gone-2"],
+      ),
+    );
+    expect([...data.tabs.keys()]).toEqual(["here"]);
+    expect(data.hiddenWaiting).toBe(2);
+  });
+
+  it("counts nothing when what is hidden is not waiting", () => {
+    const store = leavesWaiting(["here", "gone"]);
+    const data = buildTabBarData(
+      store,
+      scopeWaiting(
+        [
+          ["here", HERE],
+          ["gone", ELSEWHERE],
+        ],
+        [],
+      ),
+    );
+    expect(data.hiddenWaiting).toBe(0);
+  });
+
+  it("counts a hidden tab that only PRESENCE calls waiting", () => {
+    // The two sources have different coverage, and either one alone must be able
+    // to raise the count — a source that can be silenced by the other's ignorance
+    // is the silence this badge exists to break.
+    const store = leavesWaiting(["here", "gone"], []);
+    const data = buildTabBarData(store, scopeWaiting([["here", HERE], ["gone", ELSEWHERE]], ["gone"]));
+    expect(data.hiddenWaiting).toBe(1);
+  });
+
+  it("counts a hidden tab that only the SURFACE's own status calls waiting", () => {
+    const store = leavesWaiting(["here", "gone"], ["gone"]);
+    const data = buildTabBarData(store, scopeWaiting([["here", HERE], ["gone", ELSEWHERE]], []));
+    expect(data.hiddenWaiting).toBe(1);
+  });
+
+  it("counts no pane the evidence cannot place — it was never hidden", () => {
+    const store = leavesWaiting(["here", "unplaced"], ["unplaced"]);
+    const data = buildTabBarData(store, scopeWaiting([["here", HERE]], ["unplaced"]));
+    expect([...data.tabs.keys()]).toEqual(["here", "unplaced"]);
+    expect(data.hiddenWaiting).toBe(0);
+  });
+
+  it("counts no exited pane — a finished process waits on nobody", () => {
+    const store = leavesWaiting(["here", "gone"], ["gone"], ["gone"]);
+    const data = buildTabBarData(store, scopeWaiting([["here", HERE], ["gone", ELSEWHERE]], ["gone"]));
+    expect(data.hiddenWaiting).toBe(0);
+  });
+
+  it("counts a hidden split holding two waiting panes ONCE — the unit is the tab", () => {
+    const store = source({
+      tabLayouts: new Map([["gone", createBranch("horizontal", createLeaf("gone"), createLeaf("gone-b"))]]),
+      tabActivePaneIds: new Map([["gone", "gone"]]),
+      terminals: new Map(
+        ["gone", "gone-b"].map((id) => [id, { name: id, exited: false, activityStatus: "waiting" }]),
+      ) as never,
+    });
+    const data = buildTabBarData(
+      store,
+      scopeWaiting(
+        [
+          ["gone", ELSEWHERE],
+          ["gone-b", ELSEWHERE],
+        ],
+        ["gone", "gone-b"],
+      ),
+    );
+    expect([...data.tabs.keys()]).toEqual([]);
+    expect(data.hiddenWaiting).toBe(1);
+  });
+
+  it("counts nothing for a split that is still presented, however it waits", () => {
+    // It cannot be hidden and counted at once: the count happens at the drop.
+    const store = source({
+      tabLayouts: new Map([["mixed", createBranch("horizontal", createLeaf("mixed"), createLeaf("mixed-b"))]]),
+      tabActivePaneIds: new Map([["mixed", "mixed"]]),
+      terminals: new Map(
+        ["mixed", "mixed-b"].map((id) => [id, { name: id, exited: false, activityStatus: "waiting" }]),
+      ) as never,
+    });
+    const data = buildTabBarData(
+      store,
+      scopeWaiting(
+        [
+          ["mixed", HERE],
+          ["mixed-b", ELSEWHERE],
+        ],
+        ["mixed-b"],
+      ),
+    );
+    expect([...data.tabs.keys()]).toEqual(["mixed"]);
+    expect(data.hiddenWaiting).toBe(0);
   });
 
   it("hides nothing at all when no attribution has arrived", () => {
     const store = leaves("a", "b", "c");
-    expect([...buildTabBarData(store, scope([])).keys()]).toEqual(["a", "b", "c"]);
+    expect([...buildTabBarData(store, scope([])).tabs.keys()]).toEqual(["a", "b", "c"]);
   });
 
   it("hides nothing at all when the surface is unscoped", () => {
     const store = leaves("a", "b");
-    expect([...buildTabBarData(store).keys()]).toEqual(["a", "b"]);
+    expect([...buildTabBarData(store).tabs.keys()]).toEqual(["a", "b"]);
   });
 
   it("keeps a split with any one pane in scope, and drops one with every pane elsewhere", () => {
@@ -709,7 +838,7 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
         ["gone", ELSEWHERE],
         ["gone-b", ELSEWHERE],
       ]),
-    );
+    ).tabs;
     expect([...shown.keys()]).toEqual(["mixed", "unplaced"]);
   });
 
@@ -728,8 +857,8 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
         ["tab-1", HERE],
         ["pane-b", ELSEWHERE],
       ]),
-    ).get("tab-1");
-    expect(scoped).toEqual(buildTabBarData(store).get("tab-1"));
+    ).tabs.get("tab-1");
+    expect(scoped).toEqual(buildTabBarData(store).tabs.get("tab-1"));
     expect(scoped?.activityStatus).toBe("waiting");
     expect(scoped?.customName).toBe("build");
   });
@@ -809,6 +938,72 @@ describe("a scope is named wherever it is in force", () => {
     expect(second).toHaveBeenCalledTimes(1);
   });
 
+  const badge = (el: HTMLElement) => el.querySelector<HTMLElement>(".tab-scope-badge");
+
+  it("marks the clearing control with the count of hidden tabs that need a human", () => {
+    const deps = createMockDeps({
+      terminals: two(),
+      scope: { label: "feat/here", onClear: vi.fn(), hiddenWaiting: 2 },
+    });
+    renderTabBar(deps);
+    expect(badge(deps.tabBarEl)?.textContent).toBe("2");
+    // On the control itself, so the mark and the escape are one target.
+    expect(clearBtn(deps.tabBarEl)?.contains(badge(deps.tabBarEl))).toBe(true);
+    expect(clearBtn(deps.tabBarEl)?.getAttribute("aria-label")).toBe(
+      "Clear the feat/here scope — 2 hidden tabs need you",
+    );
+  });
+
+  it("renders no mark at all at zero, and none when the count is not given", () => {
+    // Not a "0": a badge that is always present is a badge nobody reads.
+    const deps = createMockDeps({
+      terminals: two(),
+      scope: { label: "feat/here", onClear: vi.fn(), hiddenWaiting: 0 },
+    });
+    renderTabBar(deps);
+    expect(badge(deps.tabBarEl)).toBeNull();
+
+    renderTabBar({ ...deps, scope: { label: "feat/here", onClear: vi.fn() } });
+    expect(badge(deps.tabBarEl)).toBeNull();
+  });
+
+  it("removes the mark when the last hidden waiting tab stops waiting", () => {
+    const deps = createMockDeps({
+      terminals: two(),
+      scope: { label: "feat/here", onClear: vi.fn(), hiddenWaiting: 1 },
+    });
+    renderTabBar(deps);
+    expect(badge(deps.tabBarEl)?.textContent).toBe("1");
+
+    renderTabBar({ ...deps, scope: { label: "feat/here", onClear: vi.fn(), hiddenWaiting: 0 } });
+    // Gone, not blanked — an empty badge still reads as a mark.
+    expect(badge(deps.tabBarEl)).toBeNull();
+    expect(clearBtn(deps.tabBarEl)?.getAttribute("aria-label")).toBe("Clear the feat/here scope");
+  });
+
+  it("says one hidden tab in the singular", () => {
+    const deps = createMockDeps({
+      terminals: two(),
+      scope: { label: "feat/here", onClear: vi.fn(), hiddenWaiting: 1 },
+    });
+    renderTabBar(deps);
+    expect(clearBtn(deps.tabBarEl)?.getAttribute("aria-label")).toBe(
+      "Clear the feat/here scope — 1 hidden tab needs you",
+    );
+  });
+
+  it("updates the mark in place rather than rebuilding the chip", () => {
+    const deps = createMockDeps({
+      terminals: two(),
+      scope: { label: "feat/here", onClear: vi.fn(), hiddenWaiting: 1 },
+    });
+    renderTabBar(deps);
+    const before = chip(deps.tabBarEl);
+    renderTabBar({ ...deps, scope: { label: "feat/here", onClear: vi.fn(), hiddenWaiting: 3 } });
+    expect(chip(deps.tabBarEl)).toBe(before);
+    expect(badge(deps.tabBarEl)?.textContent).toBe("3");
+  });
+
   it("keeps the chip as the head of the bar, ahead of every tab and the + button", () => {
     const deps = createMockDeps({ terminals: two(), scope: { label: "feat/here", onClear: vi.fn() } });
     renderTabBar(deps);
@@ -875,13 +1070,13 @@ describe("a scope is named wherever it is in force", () => {
     };
 
     const deps = createMockDeps({
-      terminals: buildTabBarData(store, scope),
+      terminals: buildTabBarData(store, scope).tabs,
       scope: { label: "here", onClear: vi.fn() },
     });
     renderTabBar(deps);
     expect(deps.tabBarEl.querySelectorAll(".tab-item")).toHaveLength(1);
 
-    renderTabBar({ ...deps, terminals: buildTabBarData(store), scope: undefined });
+    renderTabBar({ ...deps, terminals: buildTabBarData(store).tabs, scope: undefined });
     expect(deps.tabBarEl.querySelectorAll(".tab-item")).toHaveLength(2);
     expect(chip(deps.tabBarEl)).toBeNull();
   });

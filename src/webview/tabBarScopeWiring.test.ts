@@ -21,8 +21,8 @@ const MAIN = "/Users/dev/Projects/ai-oss/anywhere-terminal";
 const PANEL = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel";
 
 /** One window pane, published under a worktree. */
-function pane(rowId: string, paneId: string): WorktreeAgentRow {
-  return { ...agentRow({ rowId, agent: "claude", activity: "running", title: rowId }), paneId };
+function pane(rowId: string, paneId: string, activity: WorktreeAgentRow["activity"] = "running"): WorktreeAgentRow {
+  return { ...agentRow({ rowId, agent: "claude", activity, title: rowId }), paneId };
 }
 
 function presenceOf(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>): WorktreePresence {
@@ -48,6 +48,8 @@ interface Surface {
   row(branch: string): HTMLElement | undefined;
   /** The tab bar's scope chip, if it is drawing one. */
   chip(): HTMLElement | null;
+  /** The count on the clearing control, or null when it carries no mark. */
+  badge(): string | null;
   /** The tab labels the bar is currently showing. */
   tabs(): string[];
   controller: WorktreeController;
@@ -85,10 +87,13 @@ function surface(over: { workbench?: boolean; persisted?: string; tabIds?: strin
 
   const draw = (): void => {
     out.renders += 1;
+    // Built once and read twice, exactly as `main.ts` does it: the bar draws the
+    // tabs, and the chip's badge counts what that same pass dropped.
+    const data = buildTabBarData(source, seam.effectiveScope());
     renderTabBar({
       tabBarEl,
-      terminals: buildTabBarData(source, seam.effectiveScope()),
-      scope: seam.chip(),
+      terminals: data.tabs,
+      scope: seam.chip(data.hiddenWaiting),
       activeTabId: null,
       onTabClick: () => {},
       onTabClose: () => {},
@@ -148,6 +153,7 @@ function surface(over: { workbench?: boolean; persisted?: string; tabIds?: strin
       (r) => r.querySelector(".wt-branch")?.textContent === branch,
     );
   out.chip = () => tabBarEl.querySelector<HTMLElement>(".tab-scope");
+  out.badge = () => tabBarEl.querySelector<HTMLElement>(".tab-scope-badge")?.textContent ?? null;
   out.tabs = () => [...tabBarEl.querySelectorAll(".tab-name")].map((t) => t.textContent ?? "");
   return out;
 }
@@ -468,5 +474,61 @@ describe("what counts as a reason to redraw the bar", () => {
     s.push({ rows: { [PANEL]: [pane("a", "pane-main"), pane("b", "pane-panel")] } });
     expect(s.renders).toBe(drawn + 1);
     expect(s.tabs()).toEqual(["pane-loose"]);
+  });
+});
+
+// ─── The count, end to end: presence says waiting, the bar says how many ──
+
+describe("a hidden tab that needs a human is counted", () => {
+  it("marks the control once a hidden pane is waiting, and not before", () => {
+    const s = surface();
+    s.push();
+    s.row("feat/worktree-panel")?.click();
+    // Both panes are running; something is hidden, but nothing hidden needs anyone.
+    // `pane-loose` is unplaced and so presented in every scope (I18).
+    expect(s.tabs()).toEqual(["pane-panel", "pane-loose"]);
+    expect(s.badge()).toBeNull();
+
+    s.push({
+      rows: { [MAIN]: [pane("a", "pane-main", "waiting")], [PANEL]: [pane("b", "pane-panel")] },
+    });
+    expect(s.badge()).toBe("1");
+  });
+
+  it("clears to a bar holding the tab the count named", () => {
+    // The count and what clearing produces cannot disagree — this is that claim,
+    // asserted across the two of them rather than on either alone.
+    const s = surface();
+    s.push({
+      rows: { [MAIN]: [pane("a", "pane-main", "waiting")], [PANEL]: [pane("b", "pane-panel")] },
+    });
+    s.row("feat/worktree-panel")?.click();
+    expect(s.badge()).toBe("1");
+    expect(s.tabs()).not.toContain("pane-main");
+
+    s.chip()?.querySelector<HTMLButtonElement>(".tab-scope-clear")?.click();
+    expect(s.tabs()).toContain("pane-main");
+    expect(s.badge()).toBeNull();
+  });
+
+  it("drops the mark when the hidden pane stops waiting", () => {
+    const s = surface();
+    s.push({
+      rows: { [MAIN]: [pane("a", "pane-main", "waiting")], [PANEL]: [pane("b", "pane-panel")] },
+    });
+    s.row("feat/worktree-panel")?.click();
+    expect(s.badge()).toBe("1");
+
+    s.push();
+    expect(s.badge()).toBeNull();
+  });
+
+  it("raises no mark while unscoped, however many panes are waiting", () => {
+    const s = surface();
+    s.push({
+      rows: { [MAIN]: [pane("a", "pane-main", "waiting")], [PANEL]: [pane("b", "pane-panel", "waiting")] },
+    });
+    expect(s.chip()).toBeNull();
+    expect(s.badge()).toBeNull();
   });
 });

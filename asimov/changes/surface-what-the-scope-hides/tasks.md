@@ -15,14 +15,14 @@
     5. `signatureOf` keys the placement and the DERIVED badge count, not the raw waiting set. That is what keeps the narrowed no-DOM-work requirement true: a waiting change on a presented pane, or any waiting change while unscoped, must leave the signature still.
     6. Cover: waiting reported for a placed pane; an external row's waiting pane raising nothing; a scan where only the waiting half moved still reporting; the same set in a different insertion order reporting once; and — the load-bearing pair — a waiting change on a presented pane and a waiting change while unscoped each leaving the signature unmoved.
 
-- [ ] 1_2 Count the hidden tabs that need a human, and mark the escape control
+- [x] 1_2 Count the hidden tabs that need a human, and mark the escape control — verified: pnpm exec vitest run 'src/webview/TabBar.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/tab-bar-component/spec.md#{a-hidden-tab-that-needs-a-human-is-counted, the-count-reads-every-source-that-can-say-a-pane-is-waiting} · design.md#d2-the-count-is-a-union-over-hidden-tabs-computed-where-both-sources-are-already-in-hand
   - **Acceptance**:
     - Outcome: the clearing control carries a count of hidden waiting tabs, and no mark at zero
     - Verify: unit src/webview/TabBar.test.ts
   - **Plan**:
-    0. Files: `src/webview/TabBarUtils.ts`, `src/webview/tabBarScope.ts`, `src/webview/tabBarScopeWiring.ts`, `src/webview/main.ts`, `src/providers/webviewHtml.ts`, `src/webview/TabBar.test.ts`, `src/webview/tabBarScopeWiring.test.ts`.
+    0. Files: `src/webview/TabBarUtils.ts`, `src/webview/tabBarScope.ts`, `src/webview/tabBarScopeWiring.ts`, `src/webview/main.ts`, `src/providers/webviewHtml.ts`, `src/providers/webviewHtml.test.ts`, `src/webview/TabBar.test.ts`, `src/webview/tabBarScopeWiring.test.ts`.
     1. `buildTabBarData` returns the `TabBarData` shape from the Ref instead of a bare map, counting at the two points it already decides to drop a tab so nothing recomputes what "hidden" means.
     2. A tab counts when any pane it holds is waiting by EITHER source. Exclude an exited pane, as the existing split aggregation already does.
     3. The chip's clearing control renders the count; zero renders no mark, and the mark does not animate. Style it from the same custom property the waiting tab status already uses in `webviewHtml.ts`, not a new error colour — one shape for one meaning.

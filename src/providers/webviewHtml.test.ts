@@ -49,3 +49,32 @@ describe("getTerminalHtml webview.js cache-buster (D11)", () => {
     expect(html).not.toMatch(/<link[^>]*vaultPanel\.css/);
   });
 });
+
+describe("the scope badge speaks the waiting vocabulary, and does not animate", () => {
+  /** The declaration block for one selector, as written in the stylesheet. */
+  function ruleFor(css: string, selector: string): string {
+    const at = css.indexOf(`${selector} {`);
+    expect(at, `no rule for ${selector}`).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf("}", at));
+  }
+
+  it("colours the badge from the same variable a waiting tab uses, not an error one", () => {
+    // One shape for one meaning: a user learns the waiting colour once. An error
+    // treatment would claim something failed, and nothing has.
+    const css = getTerminalHtml(mockWebview(), vscode.Uri.file("/ext"), "sidebar");
+    const badge = ruleFor(css, ".tab-scope-badge");
+    const waitingTab = ruleFor(css, ".tab-status-waiting");
+    expect(waitingTab).toContain("--vscode-editorWarning-foreground");
+    expect(badge).toContain("--vscode-editorWarning-foreground");
+    expect(badge).not.toContain("errorForeground");
+    expect(badge).not.toContain("testing-iconFailed");
+  });
+
+  it("gives the badge no animation, though the running status has one", () => {
+    // A standing count is not work in progress. Asserted against the running
+    // rule, so the test fails if the pulse is ever copied onto the badge.
+    const css = getTerminalHtml(mockWebview(), vscode.Uri.file("/ext"), "sidebar");
+    expect(ruleFor(css, ".tab-status-running")).toContain("animation:");
+    expect(ruleFor(css, ".tab-scope-badge")).not.toContain("animation");
+  });
+});

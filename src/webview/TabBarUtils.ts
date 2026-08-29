@@ -33,6 +33,13 @@ export interface TabBarScope {
   /** The worktree this surface is scoped to. */
   worktreeId: string;
   /**
+   * Panes the last presence scan called waiting. One half of the badge's union —
+   * the other is each pane's own `activityStatus`, which has different coverage
+   * (design.md D2). Optional so a caller that only wants the filter need not
+   * assemble one; absent behaves as empty.
+   */
+  waiting?: ReadonlySet<string>;
+  /**
    * paneId → worktreeId, from the presence projection (design.md D2). An ABSENT
    * key means the evidence does not place that pane, which is presented in every
    * scope — there is no third value, because one would invite a fourth outcome.
@@ -72,8 +79,41 @@ function labelFor(instance: TerminalInstance | undefined): string | undefined {
   return instance.name === "" ? instance.defaultName : instance.name;
 }
 
-export function buildTabBarData(store: TabBarDataSource, scope?: TabBarScope): Map<string, TabInfo> {
+/**
+ * What the bar draws, and what it is holding back.
+ *
+ * One return rather than a map plus a second query: the count is over exactly the
+ * tabs this pass DROPPED, so there is only ever one definition of "hidden". A
+ * separate counter would be a second implementation of the filter, and the two
+ * would drift into a badge naming panes the bar does not agree are missing.
+ */
+export interface TabBarData {
+  tabs: Map<string, TabInfo>;
+  /** Hidden tabs holding a waiting pane. `0` renders no mark at all, never a zero. */
+  hiddenWaiting: number;
+}
+
+/**
+ * Whether any pane of a hidden tab needs a human, by EITHER source.
+ *
+ * An exited pane is excluded the way the split aggregation already excludes it —
+ * a finished process is not waiting on anybody. The unit is the TAB: a split with
+ * two waiting panes is one hidden thing and counts once (worktree-scope.md § 4.2).
+ */
+function tabIsWaiting(paneIds: readonly string[], store: TabBarDataSource, waiting: ReadonlySet<string>): boolean {
+  return paneIds.some((paneId) => {
+    const instance = store.terminals.get(paneId);
+    if (instance?.exited) {
+      return false;
+    }
+    return instance?.activityStatus === "waiting" || waiting.has(paneId);
+  });
+}
+
+export function buildTabBarData(store: TabBarDataSource, scope?: TabBarScope): TabBarData {
   const tabTerminals = new Map<string, TabInfo>();
+  const waiting = scope?.waiting ?? new Set<string>();
+  let hiddenWaiting = 0;
   for (const [tabId, layout] of store.tabLayouts) {
     if (layout.type === "branch") {
       // Split tab — show active pane's name and exited state. Custom name lives
@@ -89,6 +129,11 @@ export function buildTabBarData(store: TabBarDataSource, scope?: TabBarScope): M
       // them is attributed somewhere else.
       const sessionIds = getAllSessionIds(layout);
       if (!sessionIds.some((sid) => inScope(scope, sid))) {
+        // Counted HERE, at the drop, which is why a split can never be presented
+        // and counted at once.
+        if (tabIsWaiting(sessionIds, store, waiting)) {
+          hiddenWaiting += 1;
+        }
         continue;
       }
       const leaves = sessionIds.map((sid) => store.terminals.get(sid));
@@ -110,10 +155,12 @@ export function buildTabBarData(store: TabBarDataSource, scope?: TabBarScope): M
           exited: instance.exited,
           activityStatus: instance.activityStatus,
         });
+      } else if (instance && tabIsWaiting([tabId], store, waiting)) {
+        hiddenWaiting += 1;
       }
     }
   }
-  return tabTerminals;
+  return { tabs: tabTerminals, hiddenWaiting };
 }
 
 interface TabHandlers {
@@ -152,7 +199,15 @@ export interface RenderTabBarDeps {
    * for the bar to be visible — not a reinterpretation of the tab count — so a
    * scope filtering down to one tab cannot hide its own escape hatch (D3, D4).
    */
-  scope?: { label: string; onClear: () => void };
+  scope?: {
+    label: string;
+    onClear: () => void;
+    /**
+     * Hidden tabs holding a waiting pane. `0` or absent renders NO mark — a badge
+     * that is always there is a badge nobody reads (worktree-scope.md § 4.2).
+     */
+    hiddenWaiting?: number;
+  };
 }
 
 /**
@@ -206,7 +261,32 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
     chip.setAttribute("aria-label", `Showing only tabs in ${scope.label}`);
     const clear = chip.querySelector<HTMLButtonElement>(".tab-scope-clear");
     if (clear) {
-      clear.setAttribute("aria-label", `Clear the ${scope.label} scope`);
+      // The count rides ON the escape control, not beside it: the thing that says
+      // something is hidden and the thing that reveals it are one target, so the
+      // count and what clearing produces cannot be reached separately.
+      const hidden = scope.hiddenWaiting ?? 0;
+      let badge = clear.querySelector<HTMLSpanElement>(".tab-scope-badge") ?? undefined;
+      if (hidden > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "tab-scope-badge";
+          clear.appendChild(badge);
+        }
+        const text = String(hidden);
+        if (badge.textContent !== text) {
+          badge.textContent = text;
+        }
+      } else {
+        // Removed, not blanked: an empty badge still occupies the control and
+        // still reads as a mark to anyone scanning for one.
+        badge?.remove();
+      }
+      clear.setAttribute(
+        "aria-label",
+        hidden > 0
+          ? `Clear the ${scope.label} scope — ${hidden} hidden ${hidden === 1 ? "tab needs" : "tabs need"} you`
+          : `Clear the ${scope.label} scope`,
+      );
       // Rebound on every render, so a stale closure never outlives the scope it named.
       clear.onclick = () => {
         const hadFocus = document.activeElement === clear;

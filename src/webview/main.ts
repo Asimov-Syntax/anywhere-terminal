@@ -362,10 +362,14 @@ function updateTabBar(): void {
   if (!tabBarEl) {
     return;
   }
+  // Built once and read twice: the bar draws `tabs`, and the chip's badge counts
+  // what the same pass dropped. Calling it again for the count would be a second
+  // filter to keep in step.
+  const data = buildTabBarData(store, tabBarScope?.effectiveScope());
   renderTabBar({
     tabBarEl,
-    terminals: buildTabBarData(store, tabBarScope?.effectiveScope()),
-    scope: tabBarScope?.chip(),
+    terminals: data.tabs,
+    scope: tabBarScope?.chip(data.hiddenWaiting),
     activeTabId: store.activeTabId,
     onTabClick: (tabId) => switchTab(tabId),
     onTabClose: (tabId) => vscode.postMessage({ type: "closeTab", tabId }),
@@ -382,7 +386,9 @@ function updateTabBar(): void {
 }
 
 function startInlineRename(tabId: string, tabEl: HTMLElement, tabBarEl: HTMLElement): void {
-  const tabInfo = buildTabBarData(store).get(tabId);
+  // Unscoped on purpose: renaming asks about a tab the user is pointing at, and
+  // the count is not part of that question.
+  const tabInfo = buildTabBarData(store).tabs.get(tabId);
   if (!tabInfo) {
     return;
   }

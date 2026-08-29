@@ -489,7 +489,7 @@ describe("every part of this is inert while the setting is off", () => {
 
     scope.setWorkbench(true);
     expect(scope.scopedWorktreeId()).toBe(HERE);
-    expect(scope.effectiveScope()).toEqual({ worktreeId: HERE, attribution: new Map() });
+    expect(scope.effectiveScope()).toEqual({ worktreeId: HERE, attribution: new Map(), waiting: new Set() });
 
     // And back off again, without losing it.
     scope.setWorkbench(false);

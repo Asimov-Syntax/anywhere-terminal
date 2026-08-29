@@ -258,6 +258,26 @@ export function getTerminalHtml(
       padding: 0;
       flex-shrink: 0;
     }
+    /* The same attention vocabulary a waiting tab uses (--vscode-editorWarning-
+       foreground), so one shape means one thing. Deliberately NOT the error
+       colour: nothing has failed. Deliberately not animated either — the running
+       pulse is for work in progress, and this is a standing count. */
+    .tab-scope-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 13px;
+      height: 13px;
+      margin-left: 2px;
+      padding: 0 3px;
+      border-radius: 7px;
+      font-size: 9px;
+      font-weight: 600;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      color: var(--vscode-editor-background, #1e1e1e);
+      background: var(--vscode-editorWarning-foreground, #cca700);
+    }
     .tab-scope-clear:hover {
       background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
     }

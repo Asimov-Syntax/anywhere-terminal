@@ -129,7 +129,7 @@ export class TabBarScopeCoordinator {
   /** What `buildTabBarData` filters by; `undefined` while unscoped or off. */
   effectiveScope(): TabBarScope | undefined {
     const worktreeId = this.scopedWorktreeId();
-    return worktreeId === null ? undefined : { worktreeId, attribution: this.attribution };
+    return worktreeId === null ? undefined : { worktreeId, attribution: this.attribution, waiting: this.waiting };
   }
 
   /**
