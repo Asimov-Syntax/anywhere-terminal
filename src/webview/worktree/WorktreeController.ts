@@ -52,6 +52,12 @@ export interface WorktreeControllerDeps {
   showPreview?(entryId: string): boolean;
   /** Activate a pane this surface holds. False when it holds no such pane. */
   activatePane?(paneId: string): boolean;
+  /**
+   * Whether the tree holds any repository a create could act in. Reported on
+   * every tree, because the toolbar control it gates must be absent — not
+   * present and inert — when there is nothing to create in.
+   */
+  onCreateAvailability?(available: boolean): void;
   /** Injected in tests so ages are deterministic. */
   now?(): number;
 }
@@ -202,7 +208,13 @@ export class WorktreeController {
   /** The host's resolved create destination, per repo. Only it can know one. */
   private readonly createDefaults = new Map<string, WorktreeCreateDefaultsMessage>();
   /** The repo a create was invoked for, waiting on its defaults. */
-  private pendingCreate: string | null = null;
+  /**
+   * The create waiting on the host, and the repositories it has yet to hear
+   * from. A set rather than one id because an unscoped create asks every
+   * repository: the form builds its picker once, from the seed it opened with,
+   * so opening on the first reply would offer one repository as the workspace.
+   */
+  private pendingCreate: { outstanding: Set<string>; initialRepoId?: string } | null = null;
   /** Push a fresh host answer into the open form. Null when none is open. */
   private applyCreateDefaults: ((next: WorktreeCreateDefaults) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
@@ -478,8 +490,31 @@ export class WorktreeController {
     if (repo === undefined) {
       return;
     }
-    this.pendingCreate = repo.repoId;
-    this.deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId: repo.repoId });
+    this.openCreateForRepo(repo.repoId);
+  }
+
+  /**
+   * Ask where a create would go, then open the form on the answer. With a
+   * repository, that one; without, every repository in the tree — a door that
+   * names none must offer them all rather than pick one for the user.
+   */
+  openCreateForRepo(repoId?: string): void {
+    const targets = repoId === undefined ? (this.tree?.repos ?? []).map((r) => r.repoId) : [repoId];
+    if (targets.length === 0) {
+      return;
+    }
+    this.pendingCreate = {
+      outstanding: new Set(targets),
+      ...(repoId === undefined ? {} : { initialRepoId: repoId }),
+    };
+    for (const target of targets) {
+      this.deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId: target });
+    }
+  }
+
+  /** The toolbar door, which names no repository. */
+  openCreate(): void {
+    this.openCreateForRepo();
   }
 
   /**
@@ -640,7 +675,8 @@ export class WorktreeController {
   /** The host's create destination for one repo, and the form it was asked for. */
   handleCreateDefaults(msg: WorktreeCreateDefaultsMessage): void {
     this.createDefaults.set(msg.repoId, msg);
-    if (this.pendingCreate !== msg.repoId) {
+    const pending = this.pendingCreate;
+    if (pending === null || !pending.outstanding.has(msg.repoId)) {
       // Not the answer that opens a form — it answers a branch the OPEN form
       // asked about, so it goes straight into that form.
       const seed = this.createRepos().find((r) => r.repoId === msg.repoId);
@@ -649,9 +685,13 @@ export class WorktreeController {
       }
       return;
     }
+    pending.outstanding.delete(msg.repoId);
+    if (pending.outstanding.size > 0) {
+      return;
+    }
     this.pendingCreate = null;
     this.frozenCreateOffer = { ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }) };
-    this.view.openCreateDialog(msg.repoId);
+    this.view.openCreateDialog(pending.initialRepoId);
   }
 
   /**
@@ -677,6 +717,7 @@ export class WorktreeController {
     this.presence = msg.presence;
     this.loading = false;
     this.refreshing = false;
+    this.deps.onCreateAvailability?.(msg.tree.repos.length > 0);
     this.push();
   }
 

@@ -7,7 +7,7 @@ import type {
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
-import { singleRepoPresence, singleRepoTree, worktree } from "./worktreeFixtures";
+import { noRepoTree, singleRepoPresence, singleRepoTree, twoRepoTree, worktree } from "./worktreeFixtures";
 import type {
   WorktreeActionResult,
   WorktreeAgentRow,
@@ -819,6 +819,109 @@ describe("the launch entry paths WT-005.3 supplies", () => {
       entryId: "claude:ghost",
     } as WorktreeAgentRow);
     expect(h.posts.filter((m) => m.type === "worktreeResumeHere")).toEqual([]);
+  });
+});
+
+describe("the create a toolbar with no repository opens", () => {
+  const REPO_A = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+  const REPO_B = "/Users/dev/Projects/cyberk-skills/.git";
+
+  function answer(repoId: string, root: string): WorktreeCreateDefaultsMessage {
+    return { type: "worktreeCreateDefaults", repoId, root, prefix: "p", path: `${root}/p-x` };
+  }
+  function ready(tree: WorktreeTreeResponseMessage) {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(tree);
+    h.posts.length = 0;
+    return h;
+  }
+  function twoRepoResponse(): WorktreeTreeResponseMessage {
+    return { type: "worktreeTreeResponse", tree: twoRepoTree(), presence: singleRepoPresence(1_000_000) };
+  }
+  const asks = (h: Harness) =>
+    h.posts.filter((m) => m.type === "requestWorktreeCreateDefaults").map((m) => m.repoId);
+  const open = () => document.querySelector("#wt-branch") !== null;
+  const offered = () =>
+    [...(document.querySelectorAll<HTMLOptionElement>("#wt-repo-select option") ?? [])].map((o) => o.value);
+
+  it("[1_1] asks every repository, not the one it happened to see first", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+
+    expect(asks(h)).toEqual([REPO_A, REPO_B]);
+  });
+
+  it("[1_1] waits for every repository it asked before opening", () => {
+    // The picker is built once, from the seed the form opened with. Opening on
+    // the first reply offers a picker holding one repository and calls it the
+    // whole workspace.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    expect(open()).toBe(false);
+
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    expect(open()).toBe(true);
+    expect(offered()).toEqual([REPO_A, REPO_B]);
+  });
+
+  it("[1_1] opens on answers that came back out of order", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+
+    expect(offered()).toEqual([REPO_A, REPO_B]);
+  });
+
+  it("[1_1] a cold single-repo panel still opens", () => {
+    const h = ready({ type: "worktreeTreeResponse", tree: singleRepoTree(), presence: singleRepoPresence(1_000_000) });
+    h.controller.openCreate();
+    expect(open()).toBe(false);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+
+    expect(open()).toBe(true);
+  });
+
+  it("[1_1] an answer that never arrives opens nothing, rather than a partial offer", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+
+    expect(open()).toBe(false);
+  });
+
+  it("[1_1] a repo-scoped create still asks only its own repository", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreateForRepo(REPO_B);
+
+    expect(asks(h)).toEqual([REPO_B]);
+  });
+
+  it("[1_1] reports whether there is any repository to create in", () => {
+    // Absent, not inert: an action the view cannot perform is absent from the
+    // toolbar, and only the controller knows whether a repo exists.
+    const seen: boolean[] = [];
+    const posts: WebViewToExtensionMessage[] = [];
+    const state: Record<string, unknown> = {};
+    const controller = WorktreeController.mount({
+      host: document.body,
+      postMessage: (msg) => posts.push(msg),
+      store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
+      init: { workspaceRoot: "/repo", rowActivation: "focus" },
+      onCreateAvailability: (available) => seen.push(available),
+      now: () => 1_000_000,
+    });
+    controller.setVisible(true);
+    controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: noRepoTree(),
+      presence: singleRepoPresence(1_000_000),
+    });
+    controller.handleTreeResponse(twoRepoResponse());
+
+    expect(seen).toEqual([false, true]);
   });
 });
 

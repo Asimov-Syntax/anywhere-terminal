@@ -211,6 +211,8 @@ export class VaultPanel {
   /** Which body is shown. Independent of `groupMode`, which keeps its meaning. */
   private view: VaultView = "sessions";
   private readonly worktreeBodyEl: HTMLElement | null;
+  /** Whether the tree holds any repository. False until one is reported. */
+  private createAvailable = false;
   private readonly createWorktreeBtn: HTMLButtonElement | null;
   private readonly onWorktreeQuery?: (query: string) => void;
   private readonly onWorktreeRefresh?: () => void;
@@ -509,6 +511,18 @@ export class VaultPanel {
    * Swap the panel body. Grouping is unaffected: `groupMode` keeps its meaning
    * within the sessions body, so returning to it restores the same grouping.
    */
+  /**
+   * Whether there is any repository a create could act in. Only the worktree
+   * controller knows, and it reports on every tree it receives.
+   */
+  setCreateWorktreeAvailable(available: boolean): void {
+    if (this.createAvailable === available) {
+      return;
+    }
+    this.createAvailable = available;
+    this.syncView();
+  }
+
   setView(view: VaultView, opts: { persist?: boolean } = {}): void {
     const next = this.worktreeBodyEl ? view : "sessions";
     if (next === this.view) {
@@ -533,7 +547,10 @@ export class VaultPanel {
     this.folderToggleEl.hidden = worktree;
     this.statusEl.hidden = worktree;
     if (this.createWorktreeBtn) {
-      this.createWorktreeBtn.hidden = !worktree;
+      // Two gates, not one. The body gate says the control acts on what is
+      // showing; the availability gate says there is something to act on at all.
+      // An action the view cannot perform is absent, never present and disabled.
+      this.createWorktreeBtn.hidden = !worktree || !this.createAvailable;
     }
     this.refreshBtnEl.hidden = worktree && !this.onWorktreeRefresh;
     this.refreshBtnEl.setAttribute("aria-label", worktree ? "Refresh worktrees" : "Refresh sessions");

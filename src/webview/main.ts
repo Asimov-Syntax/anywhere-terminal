@@ -1044,11 +1044,18 @@ function handleInit(msg: InitMessage): void {
       // controller only forwards, so neither is rebuilt here (D2).
       showPreview: (entryId) => vaultPanel?.openPreviewById(entryId) ?? false,
       activatePane: (paneId) => activatePaneById(paneId),
+      // The toolbar create is absent, not inert, when there is nothing to create
+      // in — and only the tree knows that.
+      onCreateAvailability: (available) => vaultPanel?.setCreateWorktreeAvailable(available),
     });
     vaultPanel = new VaultPanel({
       host: vaultHost,
       actionsAvailable: msg.vaultActionsAvailable,
       worktreeBody: worktreeController.element,
+      // Supplying this is what CONSTRUCTS the toolbar control: `VaultPanel` builds
+      // it only when a create callback exists, and nothing here supplied one, so
+      // the primary create affordance had never been rendered.
+      onCreateWorktree: () => worktreeController?.openCreate(),
       onWorktreeQuery: (query) => worktreeController?.setQuery(query),
       onWorktreeRefresh: () => worktreeController?.requestRefresh(),
       onWorktreeVisibility: (visible) => worktreeController?.setVisible(visible),
@@ -1085,6 +1092,10 @@ function handleInit(msg: InitMessage): void {
       // the vault doesn't bounce the file tree (the grow-sibling).
       animateCollapse: (apply) => runAuxCollapseAnimation(apply),
     });
+    // The controller reports availability on every tree, but it is mounted first:
+    // seed from the same init field the initial view resolves against, so a tree
+    // that landed before this panel existed does not leave the control hidden.
+    vaultPanel.setCreateWorktreeAvailable(msg.worktreeHasRepo === true);
     // Seed the folder-filter context to the current active pane (optimistic), then
     // ask the host for its authoritative cwd; it updates on every pane select /
     // tab switch / `cd`. A vault that restored expanded refreshes itself via the

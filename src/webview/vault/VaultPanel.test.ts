@@ -4104,6 +4104,9 @@ describe("worktree segment", () => {
       worktreeBody: worktreeBody(),
       onCreateWorktree: () => {},
     });
+    // The body gate is what this test is about, so the availability gate — added
+    // with the toolbar's wiring — is opened first rather than left to confound it.
+    panel.setCreateWorktreeAvailable(true);
     const folderToggle = host.querySelector<HTMLElement>(".vault-folder-toggle");
     const create = host.querySelector<HTMLElement>('[aria-label="Create worktree"]');
     expect(folderToggle?.hidden).toBe(false);
@@ -4215,6 +4218,7 @@ describe("worktree segment", () => {
       worktreeBody: worktreeBody(),
       onCreateWorktree: () => created.push(1),
     });
+    panel.setCreateWorktreeAvailable(true);
     const createBtn = host.querySelector<HTMLButtonElement>('.vault-toolbar button[aria-label="Create worktree"]');
     expect(createBtn?.hidden).toBe(true);
     panel.setView("worktree");
@@ -4257,5 +4261,51 @@ describe("worktree segment", () => {
     expect(persisted).toHaveLength(0); // seeding never persists
     panel.setView("sessions");
     expect(persisted).toEqual(["sessions"]);
+  });
+});
+
+describe("the create-worktree toolbar control", () => {
+  const btn = (host: HTMLElement) =>
+    [...host.querySelectorAll<HTMLButtonElement>(".vault-header__search-btn")].find(
+      (b) => b.getAttribute("aria-label") === "Create worktree",
+    );
+  function panelWith(over: Record<string, unknown> = {}) {
+    const host = createHost();
+    const worktreeBody = document.createElement("div");
+    const panel = new VaultPanel({
+      host,
+      postMessage: () => {},
+      worktreeBody,
+      onCreateWorktree: () => {},
+      ...over,
+    });
+    return { host, panel };
+  }
+
+  it("[1_1] exists once a create callback is supplied", () => {
+    // It never has been: nothing in production passed `onCreateWorktree`, so the
+    // control the applied requirement describes was never constructed.
+    expect(btn(panelWith().host)).toBeDefined();
+  });
+
+  it("[1_1] is absent from a sessions body and present in the Worktree body", () => {
+    const { host, panel } = panelWith();
+    panel.setCreateWorktreeAvailable(true);
+    panel.setView("sessions", { persist: false });
+    expect(btn(host)?.hidden).toBe(true);
+
+    panel.setView("worktree", { persist: false });
+    expect(btn(host)?.hidden).toBe(false);
+  });
+
+  it("[1_1] is absent while there is no repository to create in", () => {
+    // Absent, not inert: a disabled control claims the action exists here and is
+    // merely unavailable.
+    const { host, panel } = panelWith();
+    panel.setView("worktree", { persist: false });
+    expect(btn(host)?.hidden).toBe(true);
+
+    panel.setCreateWorktreeAvailable(true);
+    expect(btn(host)?.hidden).toBe(false);
   });
 });

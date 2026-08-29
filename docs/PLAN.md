@@ -184,7 +184,7 @@ nothing to provision.
 | **Labels** | user-visible-ui |
 | **Notes** | Four entry points, one dialog and one action behind them — a second create path is how the safety model acquires a hole. The header control must be reachable by keyboard, not hover only, or it is invisible to the users most likely to want it. A repo with only its main checkout is a distinct empty state from a workspace with no repo at all, and it is the one that needs the CTA |
 | **Acceptance** | The group header offers create on hover and on keyboard focus, opening the form already scoped to that repo, and appears only where group headers are rendered; the empty states for a repo with one worktree and for a workspace with none carry the create action in the body; the toolbar button and the context-menu item are unchanged; every entry point opens one dialog and runs one action, differing only in the repo it opens on; the toolbar button remains absent from every sessions body |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ---
 
