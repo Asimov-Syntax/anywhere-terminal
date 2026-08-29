@@ -89,7 +89,9 @@ export function worktreeSignature(
               r.viewId ?? "",
               // Stripped, so a spinner tick alone leaves the signature unchanged.
               stripDecorations(r.title),
-              stripDecorations(r.preview),
+              // Raw: a preview is message text, so its leading `- ` is content and
+              // must move the signature like any other change (D4).
+              r.preview ?? "",
               r.agent ?? "",
               r.agentSource,
               r.activity,

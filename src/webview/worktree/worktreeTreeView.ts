@@ -22,7 +22,6 @@ import {
   isFallbackActivity,
   type PresenceGroup,
   type PresentedActivity,
-  stripDecorations,
   unchangedFor,
   worktreeBadges,
   worktreePills,
@@ -461,8 +460,8 @@ export interface AgentRowOptions {
 
 /**
  * One agent row. First line: gutter | state | icon | title | scope | +N | age.
- * Second line, drawn only when there is a preview left after stripping: the
- * preview, starting under the title. The gutter always occupies space even with
+ * Second line, drawn only when there is a preview at all: the preview, starting
+ * under the title. The gutter always occupies space even with
  * no children, which is what keeps the state dots aligned down a mixed list.
  */
 export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb: AgentRowCallbacks): HTMLElement {
@@ -564,7 +563,11 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // satisfy a requirement that makes the elapsed figure and the evidence mandatory
   // parts of the statement. The pointer still gets the marker's own tip, being
   // nearer. Composed last, because this line is what any earlier write loses to.
-  const previewText = stripDecorations(row.preview);
+  // NOT frame-stripped, unlike the title beside it. A preview is transcript
+  // message text, where a leading `- ` is a bullet the model wrote, not an
+  // animation frame an agent printed (source-the-agent-row-preview D4). It
+  // arrives bounded and single-line from its reader.
+  const previewText = row.preview ?? "";
   el.dataset.tip = [titleText, previewText, confidenceTip].filter(Boolean).join("\n");
 
   // 6 — collapsed child count. Disappears when expanded; the children show instead.
@@ -582,9 +585,9 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   el.appendChild(age);
 
   // The SECOND LINE — not an eighth column. Appended after all seven first-line
-  // cells, and only when something survives stripping: an empty span still claims
-  // the row gap and a line's worth of height, so a decoration-only preview would
-  // cost exactly the vertical space it has nothing to put in.
+  // cells, and only when there is text: an empty span still claims the row gap and
+  // a line's worth of height, so a row with nothing to say would cost exactly the
+  // vertical space it has nothing to put in.
   if (previewText !== "") {
     const preview = document.createElement("span");
     preview.className = "wt-apreview";

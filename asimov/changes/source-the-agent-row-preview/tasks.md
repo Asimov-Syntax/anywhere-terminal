@@ -43,7 +43,7 @@
     5. Wire the service at the same place `sessionTitle` is wired.
     6. Cover: a covered row carrying its last activity; an uncovered row carrying no preview key; a scan of only-uncovered rows reporting no degraded source; a row's identity, activity and ranking unchanged by the presence or absence of a preview; the projector running at all with no preview dep supplied.
 
-- [ ] 1_4 Stop treating a preview as a pane title
+- [x] 1_4 Stop treating a preview as a pane title — verified: pnpm exec vitest run 'src/webview/worktree/worktreeTreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-agent-presence/spec.md#a-preview-is-message-text-not-a-pane-title · design.md#d4-the-preview-is-message-text-so-it-never-meets-the-titles-stripper
   - **Acceptance**:

@@ -1265,7 +1265,7 @@ describe("agent rows", () => {
     expect(shell?.querySelector(".wt-apreview")).toBeNull();
   });
 
-  it("renders no preview line when the preview is only decoration", () => {
+  it("renders no preview line when there is no preview", () => {
     const presence = singleRepoPresence(NOW);
     const first = presence.rowsByWorktreeId[MAIN_PATH]?.[0];
     if (!first) {
@@ -1276,14 +1276,14 @@ describe("agent rows", () => {
       populated({
         presence: {
           ...presence,
-          rowsByWorktreeId: { ...presence.rowsByWorktreeId, [MAIN_PATH]: [{ ...first, preview: "⠋ ⠙  " }] },
+          rowsByWorktreeId: { ...presence.rowsByWorktreeId, [MAIN_PATH]: [{ ...first, preview: "" }] },
         },
       }),
     );
     expect(agentRows(view)[0]?.querySelector(".wt-apreview")).toBeNull();
   });
 
-  it("strips decoration from the preview in every place it is presented", () => {
+  it("presents the preview verbatim everywhere, marker and all", () => {
     const presence = singleRepoPresence(NOW);
     const first = presence.rowsByWorktreeId[MAIN_PATH]?.[0];
     if (!first) {
@@ -1296,18 +1296,18 @@ describe("agent rows", () => {
           ...presence,
           rowsByWorktreeId: {
             ...presence.rowsByWorktreeId,
-            [MAIN_PATH]: [{ ...first, preview: "⠋ Approve the git worktree add?" }],
+            [MAIN_PATH]: [{ ...first, preview: "- Approve the git worktree add?" }],
           },
         },
       }),
     );
     const row = agentRows(view)[0];
     const preview = row?.querySelector<HTMLElement>(".wt-apreview");
-    // The line, its own hover text, and the row-level text focus resolves to.
-    expect(preview?.textContent).toBe("Approve the git worktree add?");
-    expect(preview?.dataset.tip).toBe("Approve the git worktree add?");
-    expect(row?.dataset.tip).toContain("Approve the git worktree add?");
-    expect(row?.dataset.tip).not.toContain("⠋");
+    // The line, its own hover text, and the row-level text focus resolves to — the
+    // leading `- ` is a bullet the model wrote, not a frame to discount (D4).
+    expect(preview?.textContent).toBe("- Approve the git worktree add?");
+    expect(preview?.dataset.tip).toBe("- Approve the git worktree add?");
+    expect(row?.dataset.tip).toContain("- Approve the git worktree add?");
   });
 
   // The preview moving off the first line must not disturb what shares it.

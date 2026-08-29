@@ -51,15 +51,19 @@ describe("worktreeSignature", () => {
     );
   });
 
-  it("is unchanged by a spinner-only preview change", () => {
-    expect(signatureFor([agentRow({ rowId: "a", preview: "⠋ Bash: npm test" })])).toBe(
-      signatureFor([agentRow({ rowId: "a", preview: "⠙ Bash: npm test" })]),
+  // A preview is message text, not a pane title, so nothing in it is decoration to
+  // discount — a leading marker is content and every change to it must repaint
+  // (source-the-agent-row-preview D4). The animation-rate risk the stripping above
+  // guards against lives on the title, which still strips.
+  it("moves for any preview change, including a leading marker", () => {
+    expect(signatureFor([agentRow({ rowId: "a", preview: "- run the tests" })])).not.toBe(
+      signatureFor([agentRow({ rowId: "a", preview: "run the tests" })]),
     );
   });
 
   it("still moves when the real preview changes", () => {
-    expect(signatureFor([agentRow({ rowId: "a", preview: "⠋ Bash: npm test" })])).not.toBe(
-      signatureFor([agentRow({ rowId: "a", preview: "⠋ Bash: npm run build" })]),
+    expect(signatureFor([agentRow({ rowId: "a", preview: "Bash: npm test" })])).not.toBe(
+      signatureFor([agentRow({ rowId: "a", preview: "Bash: npm run build" })]),
     );
   });
 
