@@ -51,6 +51,18 @@ describe("worktreeSignature", () => {
     );
   });
 
+  it("is unchanged by a spinner-only preview change", () => {
+    expect(signatureFor([agentRow({ rowId: "a", preview: "⠋ Bash: npm test" })])).toBe(
+      signatureFor([agentRow({ rowId: "a", preview: "⠙ Bash: npm test" })]),
+    );
+  });
+
+  it("still moves when the real preview changes", () => {
+    expect(signatureFor([agentRow({ rowId: "a", preview: "⠋ Bash: npm test" })])).not.toBe(
+      signatureFor([agentRow({ rowId: "a", preview: "⠋ Bash: npm run build" })]),
+    );
+  });
+
   it("is stable across a rescan that found nothing new", () => {
     // `scannedAt` moves on every poll; including it would make the guard buy nothing.
     const a = singleRepoPresence(NOW);
@@ -180,6 +192,8 @@ const FULL_TREE: Required<WorktreeTree> = {
 const NOT_RENDERED: Record<string, string> = {
   "WorktreePresence.scannedAt": "moves on every rescan; keying it would make the guard buy nothing",
   "WorktreeAgentRow.pid": "no renderer reads it",
+  "WorktreeAgentRow.model":
+    "no list row draws it; the inspector is its home, and it returns to the signature when that draws it",
   "WorktreeAgentRow.titleSourceId":
     "names where a disowned row's title came from, never drawn; `title` is what renders, and it moves on its own",
   "WorktreeSubagentRow.live": "typed as the constant false, so it can never move",

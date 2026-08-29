@@ -190,6 +190,13 @@ describe("remove worktree — refused (§ 12)", () => {
     expect(shown).toEqual(["busy"]);
   });
 
+  // The dialog borrows `renderAgentRow`, so the row's second line arrives here too.
+  it("carries the row's preview line into the dialog unchanged", () => {
+    const { host } = open(refusedBlocker, { agentRows: [{ ...busy, preview: "⠋ Approve the git worktree add?" }] });
+    expect(host.querySelector(".wt-arow .wt-apreview")?.textContent).toBe("Approve the git worktree add?");
+    expect(host.querySelector(".wt-arow .wt-model")).toBeNull();
+  });
+
   it("stops asserting a turn is in progress when every readable row is unconfirmed", () => {
     const NOW = 1_700_000_000_000;
     const stale = agentRow({

@@ -377,17 +377,29 @@
 }
 
 /* ── Agent row (§ 3.3) ──────────────────────────────────────────────────── */
-/* Gutter | state | icon | title | preview | model | +N | age.
-   The gutter always occupies space, so state dots align down a mixed list.
-   Preview is minmax(0,1fr) and title minmax(0,auto): the preview gives way first. */
+/* First line: gutter | state | icon | title | scope | +N | age — every cell pinned
+   to row 1. The gutter always occupies space, so state dots align down a mixed list.
+   The preview is the SECOND line, and the row's second track is implicit: declaring
+   `grid-template-rows: auto auto` would reserve the row gap on every preview-less
+   row, which is the vertical space this layout exists to stop spending. */
 .wt-arow {
   display: grid;
-  grid-template-columns: 13px 9px 14px minmax(0, auto) minmax(0, 1fr) auto auto 32px;
-  gap: 5px;
+  grid-template-columns: 13px 9px 14px minmax(0, 1fr) auto auto 32px;
+  column-gap: 5px;
+  /* Separate from the column gap: 5px of vertical air between the two lines is
+     tighter than the horizontal rhythm, and one `gap` cannot say both. */
+  row-gap: 1px;
   align-items: center;
   padding: 2px 10px 2px 30px;
   cursor: pointer;
   position: relative;
+}
+/* Everything but the preview is first-line. Selected by exclusion rather than by
+   class: two of the seven cells (the scope chip and the child count) are unclassed
+   spans when they have nothing to say, and a class list would let those flow onto
+   row 2 and push the preview to a third. */
+.wt-arow > *:not(.wt-apreview) {
+  grid-row: 1;
 }
 .wt-arow:hover {
   background: var(--vscode-list-hoverBackground);
@@ -442,35 +454,20 @@
   text-overflow: ellipsis;
   color: var(--vscode-foreground);
 }
+/* The second line. Starts under the TITLE rather than the row edge, so the leading
+   glyphs read as one column and the preview reads as the title's continuation. It
+   truncates on its own, sharing none of the first line's width — which is why no
+   width breakpoint hides it any more: on its own line it competes with nothing, and
+   hiding a row's most useful line by width contradicts worktree-panel-ui § 7.1. */
 .wt-apreview {
+  grid-row: 2;
+  grid-column: 4 / -1;
   min-width: 0;
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--vscode-descriptionForeground);
-}
-/* A 1-2 character preview is noise, not context: below 380px the preview COLLAPSES
-   ITS TRACK and keeps its grid item. Never `display:none` on a cell here — removing
-   the item re-flows auto-placement and drags the fixed age column off the right edge. */
-@container vault (max-width: 380px) {
-  .wt-arow {
-    grid-template-columns: 13px 9px 14px minmax(0, 1fr) 0 auto auto 32px;
-  }
-  .wt-apreview {
-    visibility: hidden;
-    overflow: hidden;
-  }
-}
-.wt-model {
-  max-width: 88px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.85;
 }
 .wt-count {
   font-size: 10px;

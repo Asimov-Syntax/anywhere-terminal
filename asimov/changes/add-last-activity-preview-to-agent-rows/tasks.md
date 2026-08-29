@@ -1,6 +1,6 @@
 ## 1. The agent row's second line
 
-- [ ] 1_1 Give the agent row a second line, and take the model identifier off it
+- [x] 1_1 Give the agent row a second line, and take the model identifier off it — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{an-agent-row-gives-its-last-activity-a-line-of-its-own, each-of-an-agent-row-s-lines-truncates-on-its-own, a-decorative-frame-is-neither-shown-in-a-preview-nor-a-reason-to-repaint, a-list-row-does-not-name-the-model}
   - **Acceptance**:

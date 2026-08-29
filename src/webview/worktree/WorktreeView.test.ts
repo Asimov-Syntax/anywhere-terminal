@@ -1242,13 +1242,85 @@ describe("agent rows", () => {
     expect(row?.querySelector<HTMLElement>(".wt-aicon")?.style.color).toContain("--vault-accent-opencode");
   });
 
-  it("omits the model chip when the model is unknown, never a placeholder", () => {
+  // The fixture's first row carries a model and the shell row does not, so a list
+  // that named models at all would name one here.
+  it("names no model on any list row, and offers no placeholder for one", () => {
+    const { view } = mount();
+    view.setData(populated());
+    expect(view.element.querySelectorAll(".wt-model")).toHaveLength(0);
+    const rows = agentRows(view);
+    expect(rows.some((r) => r.textContent?.includes("sonnet-4-6"))).toBe(false);
+  });
+
+  // jsdom lays nothing out, so "two lines" is asserted as the second line's
+  // presence; that it actually sits under the title is task 1_2's manual check.
+  it("gives a previewed row a preview line and a preview-less row none", () => {
     const { view } = mount();
     view.setData(populated());
     const rows = agentRows(view);
-    expect(rows[0]?.querySelector(".wt-model")?.textContent).toBe("sonnet-4-6");
-    const noModel = rows.find((r) => r.querySelector(".wt-atitle")?.textContent?.startsWith("zsh"));
-    expect(noModel?.querySelector(".wt-model")).toBeNull();
+    expect(rows[0]?.querySelector(".wt-apreview")?.textContent).toBe("Approve the git worktree add?");
+    const shell = rows.find((r) => r.querySelector(".wt-atitle")?.textContent?.startsWith("zsh"));
+    expect(shell, "no preview-less row in the fixture").toBeDefined();
+    // Absent, not empty: an empty span still claims a row's worth of height.
+    expect(shell?.querySelector(".wt-apreview")).toBeNull();
+  });
+
+  it("renders no preview line when the preview is only decoration", () => {
+    const presence = singleRepoPresence(NOW);
+    const first = presence.rowsByWorktreeId[MAIN_PATH]?.[0];
+    if (!first) {
+      throw new Error("fixture lost its first agent row");
+    }
+    const { view } = mount();
+    view.setData(
+      populated({
+        presence: {
+          ...presence,
+          rowsByWorktreeId: { ...presence.rowsByWorktreeId, [MAIN_PATH]: [{ ...first, preview: "⠋ ⠙  " }] },
+        },
+      }),
+    );
+    expect(agentRows(view)[0]?.querySelector(".wt-apreview")).toBeNull();
+  });
+
+  it("strips decoration from the preview in every place it is presented", () => {
+    const presence = singleRepoPresence(NOW);
+    const first = presence.rowsByWorktreeId[MAIN_PATH]?.[0];
+    if (!first) {
+      throw new Error("fixture lost its first agent row");
+    }
+    const { view } = mount();
+    view.setData(
+      populated({
+        presence: {
+          ...presence,
+          rowsByWorktreeId: {
+            ...presence.rowsByWorktreeId,
+            [MAIN_PATH]: [{ ...first, preview: "⠋ Approve the git worktree add?" }],
+          },
+        },
+      }),
+    );
+    const row = agentRows(view)[0];
+    const preview = row?.querySelector<HTMLElement>(".wt-apreview");
+    // The line, its own hover text, and the row-level text focus resolves to.
+    expect(preview?.textContent).toBe("Approve the git worktree add?");
+    expect(preview?.dataset.tip).toBe("Approve the git worktree add?");
+    expect(row?.dataset.tip).toContain("Approve the git worktree add?");
+    expect(row?.dataset.tip).not.toContain("⠋");
+  });
+
+  // The preview moving off the first line must not disturb what shares it.
+  it("leaves the leading glyphs and the age column on every row", () => {
+    const { view } = mount();
+    view.setData(populated());
+    const rows = agentRows(view);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.querySelector(".wt-gutter")).not.toBeNull();
+      expect(r.querySelector(".wt-aicon")).not.toBeNull();
+      expect(r.querySelector(".wt-age")?.textContent ?? "").not.toBe("");
+    }
   });
 
   it("[I3] labels an external row and gives it no focus affordance", () => {

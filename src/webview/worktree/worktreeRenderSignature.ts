@@ -89,8 +89,7 @@ export function worktreeSignature(
               r.viewId ?? "",
               // Stripped, so a spinner tick alone leaves the signature unchanged.
               stripDecorations(r.title),
-              r.preview ?? "",
-              r.model ?? "",
+              stripDecorations(r.preview),
               r.agent ?? "",
               r.agentSource,
               r.activity,

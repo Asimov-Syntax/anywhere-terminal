@@ -22,6 +22,7 @@ import {
   isFallbackActivity,
   type PresenceGroup,
   type PresentedActivity,
+  stripDecorations,
   unchangedFor,
   worktreeBadges,
   worktreePills,
@@ -459,9 +460,10 @@ export interface AgentRowOptions {
 }
 
 /**
- * One agent row. Grid: gutter | state | icon | title | preview | model | +N | age.
- * The gutter always occupies space even with no children, which is what keeps the
- * state dots aligned down a mixed list.
+ * One agent row. First line: gutter | state | icon | title | scope | +N | age.
+ * Second line, drawn only when there is a preview left after stripping: the
+ * preview, starting under the title. The gutter always occupies space even with
+ * no children, which is what keeps the state dots aligned down a mixed list.
  */
 export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb: AgentRowCallbacks): HTMLElement {
   const el = document.createElement("div");
@@ -540,31 +542,19 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   }
   el.appendChild(title);
 
-  // 5 — preview. Truncates first under width pressure; hidden entirely below 380px.
-  const preview = document.createElement("span");
-  preview.className = "wt-apreview";
-  preview.textContent = row.preview ?? "";
-  if (row.preview) {
-    preview.dataset.tip = row.preview;
-  }
-  el.appendChild(preview);
-
-  // 6 — model chip, or the external-scope chip. Never a placeholder for an
-  // unknown model; an external row is labelled instead, since it offers no focus.
-  const sixth = document.createElement("span");
+  // 5 — external-scope chip. An external row is labelled because it offers no
+  // focus. The model is not named on a list row at all: the inspector has room to
+  // present it, and this width belongs to the row's own last activity.
+  const scope = document.createElement("span");
   if (row.scope === "external") {
-    sixth.className = "wt-scope";
-    sixth.dataset.tip = "Running in another VS Code window";
+    scope.className = "wt-scope";
+    scope.dataset.tip = "Running in another VS Code window";
     const winIcon = document.createElement("span");
     winIcon.innerHTML = ICON_WINDOW;
     winIcon.setAttribute("aria-hidden", "true");
-    sixth.append(winIcon, document.createTextNode("other window"));
-  } else if (row.model) {
-    sixth.className = "wt-model";
-    sixth.textContent = row.model;
-    sixth.dataset.tip = row.model;
+    scope.append(winIcon, document.createTextNode("other window"));
   }
-  el.appendChild(sixth);
+  el.appendChild(scope);
   // Same reason as the worktree row above: `el` is what the roving tabindex
   // focuses, and its title / preview live on descendants closest() cannot reach
   // from here.
@@ -574,7 +564,8 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // satisfy a requirement that makes the elapsed figure and the evidence mandatory
   // parts of the statement. The pointer still gets the marker's own tip, being
   // nearer. Composed last, because this line is what any earlier write loses to.
-  el.dataset.tip = [titleText, row.preview, confidenceTip].filter(Boolean).join("\n");
+  const previewText = stripDecorations(row.preview);
+  el.dataset.tip = [titleText, previewText, confidenceTip].filter(Boolean).join("\n");
 
   // 7 — collapsed child count. Disappears when expanded; the children show instead.
   const count = document.createElement("span");
@@ -589,6 +580,17 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   age.className = "wt-age";
   age.textContent = compactAge(ageTimestamp(row), opts.now);
   el.appendChild(age);
+
+  // 9 — the second line. Appended only when something survives stripping: an empty
+  // span still claims the row gap and a line's worth of height, so a decoration-only
+  // preview would cost exactly the vertical space it has nothing to put in.
+  if (previewText !== "") {
+    const preview = document.createElement("span");
+    preview.className = "wt-apreview";
+    preview.textContent = previewText;
+    preview.dataset.tip = previewText;
+    el.appendChild(preview);
+  }
 
   bindActivation(el, () => cb.onActivate(row, el));
   if (cb.onContextMenu) {
