@@ -1,6 +1,6 @@
 # Agent Hook Runtime Design
 
-> **Ref**: docs/DESIGN.md § 13.2 — the "Authoritative status and live subagent rosters" row
+> **Ref**: docs/DESIGN.md § 8.2 — the "Authoritative status and live subagent rosters" row
 > **Consumer**: `asimov-plan` reads this to turn a PLAN.md task into spec deltas and builder tasks.
 
 A loopback HTTP endpoint that agent CLIs post lifecycle events to, replacing inference with

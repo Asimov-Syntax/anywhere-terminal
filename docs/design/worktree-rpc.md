@@ -1,6 +1,6 @@
 # Worktree Message Protocol Design
 
-> **Ref**: docs/DESIGN.md § 13.2 — the "Message contract and validation" row
+> **Ref**: docs/DESIGN.md § 8.2 — the "Message contract and validation" row
 > **Consumer**: `asimov-plan` reads this to turn a PLAN.md task into spec deltas and builder tasks.
 
 The messages the Worktree view exchanges with the extension host. Extends the existing
@@ -37,7 +37,7 @@ Two invariants carried over from the vault protocol:
   the webview treats every arrival identically and never polls.
 - **There is no single "the webview".** The vault panel is mounted in the same webview
   document as the terminals, and three surfaces load it — sidebar, panel, and editor — each
-  with its own panel instance (`docs/DESIGN.md` § 13.6). Every push is a **broadcast** to all
+  with its own panel instance (`docs/DESIGN.md` § 8.6). Every push is a **broadcast** to all
   live surfaces, including the reply to a request that came from one of them, because they
   all render the same window-scoped truth. A surface whose Worktree view is not the active
   segment is skipped: all three retain their DOM while hidden, so an unfiltered broadcast
@@ -67,6 +67,10 @@ Two invariants carried over from the vault protocol:
   [worktree-actions.md](worktree-actions.md) § 3.2. An earlier draft of this document claimed
   webview paths are *never* action inputs; that claim was false for this message, and stating
   it absolutely would have hidden the only path-trust boundary in the feature.
+
+> **Not in this protocol**: the worktree a surface has *selected*, and the tab-bar scope that
+> selection drives, are webview-local per-surface state. Nothing about scope is sent to the host,
+> and no handler here reads it — see [worktree-scope.md](worktree-scope.md) § 2.1.
 
 ## 2. Messages
 

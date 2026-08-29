@@ -1,6 +1,6 @@
 # Worktree Domain Model Design
 
-> **Ref**: docs/DESIGN.md § 13.2 — the "Repo roots, worktree enumeration, identity, cache, watch" row
+> **Ref**: docs/DESIGN.md § 8.2 — the "Repo roots, worktree enumeration, identity, cache, watch" row
 > **Consumer**: `asimov-plan` reads this to turn a PLAN.md task into spec deltas and builder tasks.
 
 Discovery, identity, and freshness for the git worktrees shown in the AI Vault's Worktree

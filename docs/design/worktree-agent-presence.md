@@ -1,6 +1,6 @@
 # Worktree Agent Presence Design
 
-> **Ref**: docs/DESIGN.md § 13.2 — the "Pane→worktree mapping, agent identity, activity, external rows, subagents" row
+> **Ref**: docs/DESIGN.md § 8.2 — the "Pane→worktree mapping, agent identity, activity, external rows, subagents" row
 > **Consumer**: `asimov-plan` reads this to turn a PLAN.md task into spec deltas and builder tasks.
 
 How a worktree row learns which agents are working inside it. Owns the **evidence model**:

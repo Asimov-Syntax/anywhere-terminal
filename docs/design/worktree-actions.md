@@ -1,6 +1,6 @@
 # Worktree Actions Design
 
-> **Ref**: docs/DESIGN.md § 13.2 — the "Create / remove / lock / prune / launch" row
+> **Ref**: docs/DESIGN.md § 8.2 — the "Create / remove / lock / prune / launch" row
 > **Consumer**: `asimov-plan` reads this to turn a PLAN.md task into spec deltas and builder tasks.
 
 Everything the user can *do* from the Worktree view: navigate, create, remove, and launch
@@ -131,7 +131,11 @@ worktree is what was asked for, and a noisy `git status` is a nuisance, not a fa
 
 **Validation** (before git): per [worktree-rpc.md](worktree-rpc.md) § 4. The branch name
 passes `git check-ref-format --branch`; the path must be absolute, non-existent or empty, and
-outside every existing worktree of the repo.
+outside every **linked** worktree of the repo, and not the main worktree itself. A path *inside*
+the main worktree is allowed — that is where the default root lives — and is the case the
+`info/exclude` handling below exists for. [worktree-rpc.md](worktree-rpc.md) § 4 is the canonical
+statement of this rule; an earlier "outside every existing worktree" wording here contradicted it
+and the default root in the same section.
 
 **The create path is untrusted input, and this is the one action where that is true.** Every
 other action names a host-issued id; create necessarily accepts a path for an object that does
@@ -176,6 +180,42 @@ A failed launch after a **successful** create is reported as exactly that: the w
 exists, the agent did not start. The create is never rolled back to make the compound action
 look atomic — deleting a freshly created worktree because a CLI failed to spawn would destroy
 the thing the user asked for in order to tidy up an error message.
+
+#### 3.2.1 Form presentation
+
+The form is a worktree form, not a git-plumbing form. What the user states is a **branch name**;
+everything else is derived, defaulted, or advanced.
+
+| Element | Rule |
+|---------|------|
+| Lead input | Branch name, and nothing above it. It is the one thing only the user can supply |
+| Destination | **One derived line under the lead input**, shortened, with the full path in its hint. Not a field in the common case, and never stated twice |
+| Collision | When the computed path exists and a suffix was appended, one line says so and names the result. It replaces a second full path, it does not add one |
+| "After creating" | Four choices, mapping onto all five `WorktreeOpenAfter` wire values: `Nothing` → `none`; `Open a terminal` → `terminal`; `Start an agent` → `agent`; `Open the folder` → `newWindow` or `addToWorkspace`, chosen by a secondary control on that choice and defaulting to `addToWorkspace` in a workspace that already has folders. No wire value is unreachable from the form |
+| Agent block | Agent, permission posture, and first prompt are revealed **only when "After creating" is "Start an agent"**. Always-visible with "Nothing" selected states two contradictory things at once |
+| Advanced | Collapsed by default, holding base ref, branch source (new / existing / detached), and the path override. Opened, it is the third and last place a full path appears in the dialog — as an editable override, which is a different thing from a statement of where the worktree will go |
+| Dangerous posture | Offered, labelled, and never preselected |
+| Submit | Disabled until the branch name validates |
+
+**Path transparency is preserved, not traded away.** The host still states the free path it will
+actually take (§ 3.2), because that is a safety property: the user sees the destination before
+authorizing a filesystem write. What changes is that it is stated **once**, shortened, with the
+exact value one hover away — instead of twice in full in a dialog whose tree view deliberately
+shows no path on any row.
+
+#### 3.2.2 Where create is offered
+
+Four entry points, each for a different way the intent arrives:
+
+| Entry point | Rule |
+|-------------|------|
+| Toolbar "+" | The primary affordance, matching VS Code view-title conventions. Rendered **only** while the Worktrees body is active — a "+" in the sessions toolbar has nothing to create |
+| Repo group header "+" | On hover or keyboard focus of the group header. It pre-answers the repo the dialog needs in a multi-repo workspace, matching the native SCM view's per-repo actions. Rendered only where group headers are (§ 3.1 of [worktree-panel-ui.md](worktree-panel-ui.md)) |
+| Empty-state CTA | The "no worktrees yet" and "one worktree so far" states carry the create action in the body. Asking a user to find a 20 px icon in a toolbar is not an empty state doing its job |
+| Row context menu | "New Worktree…" already exists — kept, as the discoverable path for keyboard and menu users |
+
+All four open the same dialog and run the same action. The repo-scoped ones differ only in which
+repo the form opens on.
 
 ### 3.3 Remove worktree
 
@@ -397,6 +437,16 @@ becomes an unrecoverable one.
 ### Test Cases
 
 - [ ] Create with a new branch → `worktree add -b`, tree gains the row, `openAfter` honoured
+- [ ] The create form shows the resolved destination exactly once, shortened, with the full path in its hint
+- [ ] A collision line names the suffixed result and does not restate the full path
+- [ ] The agent block is absent while "After creating" is not "Start an agent", and appears when it is
+- [ ] Every one of the five `WorktreeOpenAfter` values is reachable from the form's choices
+- [ ] A create path under the default root inside the main worktree is accepted; one inside a linked worktree, and the main worktree itself, are rejected
+- [ ] Advanced is collapsed by default; the path override appears only when it is opened
+- [ ] The toolbar "+" is present in the Worktrees body and absent in every sessions body
+- [ ] The repo group header offers create on hover and on keyboard focus, opening the form on that repo
+- [ ] The "no worktrees" and "one worktree" empty states carry the create action in the body
+- [ ] All four entry points open one dialog and run one action
 - [ ] Create with an agent → worktree created, then the agent launched in it through the same path as a standalone launch
 - [ ] Create succeeds, launch fails → reported as created-but-not-started; the worktree is not rolled back
 - [ ] Create with no agent chosen → no launch attempted
