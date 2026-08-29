@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -26,6 +26,7 @@
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
+- Verify Gate: type check, `pnpm run test:unit` (4955 pass) and `pnpm run gate:fs-deletion` all green. `biome check src` exits 1 on 20 findings, every one of which is present on this change's base commit (94135439) — diffed against a clean tree, the only difference is a line-number shift from `worktreePanel.css:522` to `:534` caused by this change's +12 lines. Two are in files this change touches but on lines it did not author: `worktreePanel.css`'s `noDescendingSpecificity` at `.wt-hist-label` (`404d4c15`) and `WorktreeController.test.ts`'s formatter drift at line 1160. No new finding.
 - 1_7's planned Verify (`vitest run src/webview/TabBar.test.ts src/test/invariants`) could not prove its own Outcome: the invariant reporter treats ANY filtered run as partial, so stripping the `[I18]` tag stays green under it. Changed to the unfiltered `pnpm run test:unit`, which exits 1 on the same strip. Outcome unchanged.
 - 1_5's Plan paths grew by five files (`worktreeViewTypes.ts`, `WorktreeView.ts`, `WorktreeController.ts` and their tests): D7 routes the "said" through the panel's action-result surface, so the `scope` action kind, its notice branch and the controller entry point all had to exist for step 4 to land.
 
