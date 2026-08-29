@@ -105,3 +105,17 @@
     4. The region sync runs before the tab-bar element check, so it does not hang off an element unrelated to it.
     5. Cover: a collapsed split whose live leaf is attributed elsewhere counted and dropped; a repeat mount with unchanged offers keeping the same element and its focus; a changed label replacing it; the arrival paths asserted against a REAL container's `display`, not a dep spy.
 
+## 4. Review round 3 — bounded extension
+
+- [x] 4_1 Key the region on the worktree its offers act on — verified: pnpm exec vitest run 'src/webview/emptyScopeRegion.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/tab-bar-component/spec.md#a-scope-holding-no-pane-says-so-and-offers-what-is-worth-doing · design.md#d4-the-empty-scope-region-hides-the-terminal-container-without-unmounting-it
+  - **Acceptance**:
+    - Outcome: a standing region moved to another worktree of the same name offers that worktree, not the one before it
+    - Verify: unit src/webview/emptyScopeRegion.test.ts
+  - **Plan**:
+    0. Files: `src/webview/emptyScopeRegion.ts`, `src/webview/main.ts`, `src/webview/emptyScopeRegion.test.ts`, `src/webview/tabBarScopeWiring.test.ts`.
+    1. The region's identity is what its closures act on, so the worktree id leads it. A label is not unique across repos in a multi-root workspace, and a selection carries no teardown between two worktrees.
+    2. The wiring harness must pass the id through and install callbacks that record it — a stub dropping the id makes two same-named worktrees identical inputs, which is why nothing there could observe this.
+    3. Cover: same label, different worktree, the element replaced and the offer posting the NEW id; a detached container WITH a region already standing leaving both it and the container untouched.
+

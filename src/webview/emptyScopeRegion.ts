@@ -9,6 +9,13 @@ import { ICON_TERMINAL } from "./vault/icons";
 import { type EmptyStateAction, emptyState } from "./vault/renderAtoms";
 
 export interface EmptyScopeRegionDeps {
+  /**
+   * The scoped worktree. What the offers below ACT on, and therefore what the
+   * region's identity is — the label is not it: two repos in a multi-root
+   * workspace can each hold a `main` worktree, and a selection carries no
+   * teardown between them (round-3 B3).
+   */
+  id: string;
   /** The scoped worktree's branch, as the chip names it. Never a path. */
   label: string;
   onOpenTerminal: () => void;
@@ -62,7 +69,8 @@ export function mountEmptyScopeRegion(container: HTMLElement, deps: EmptyScopeRe
   if (parent === null) {
     return;
   }
-  const identity = `${deps.label}\u0002${deps.onLaunchAgent === undefined ? "" : "launch"}`;
+  // Keyed on what the closures capture, id first — see `id` above.
+  const identity = [deps.id, deps.label, deps.onLaunchAgent === undefined ? "" : "launch"].join("\u0002");
   // Idempotent on purpose. This runs from the render path, which fires on every
   // activity transition of any pane in the window — and while the scope is empty
   // every running pane is out of scope, so that is the NORMAL case. Rebuilding

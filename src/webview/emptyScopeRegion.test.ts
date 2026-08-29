@@ -22,6 +22,7 @@ function click(region: HTMLElement, label: string): void {
 describe("renderEmptyScopeRegion", () => {
   it("offers both actions and the way out, naming the scoped worktree", () => {
     const region = renderEmptyScopeRegion({
+      id: "/wt/worktree-panel",
       label: "feat/worktree-panel",
       onOpenTerminal: vi.fn(),
       onLaunchAgent: vi.fn(),
@@ -36,6 +37,7 @@ describe("renderEmptyScopeRegion", () => {
     const onOpenTerminal = vi.fn();
     const onLaunchAgent = vi.fn();
     const region = renderEmptyScopeRegion({
+      id: "/wt/x",
       label: "feat/x",
       onOpenTerminal,
       onLaunchAgent,
@@ -51,14 +53,14 @@ describe("renderEmptyScopeRegion", () => {
   it("omits the launch offer entirely when nothing can be launched", () => {
     // Omitted rather than disabled: an inert button claims a capability the host
     // has already answered it does not have.
-    const region = renderEmptyScopeRegion({ label: "feat/x", onOpenTerminal: vi.fn(), onClear: vi.fn() });
+    const region = renderEmptyScopeRegion({ id: "/wt/x", label: "feat/x", onOpenTerminal: vi.fn(), onClear: vi.fn() });
 
     expect(labels(region)).toEqual(["Open a terminal", "Show all tabs"]);
   });
 
   it("calls back from the clearing control rather than clearing anything itself", () => {
     const onClear = vi.fn();
-    const region = renderEmptyScopeRegion({ label: "feat/x", onOpenTerminal: vi.fn(), onClear });
+    const region = renderEmptyScopeRegion({ id: "/wt/x", label: "feat/x", onOpenTerminal: vi.fn(), onClear });
 
     click(region, "Show all tabs");
     expect(onClear).toHaveBeenCalledTimes(1);
@@ -66,13 +68,13 @@ describe("renderEmptyScopeRegion", () => {
 
   it("clears no scope while merely being rendered", () => {
     const onClear = vi.fn();
-    renderEmptyScopeRegion({ label: "feat/x", onOpenTerminal: vi.fn(), onLaunchAgent: vi.fn(), onClear });
+    renderEmptyScopeRegion({ id: "/wt/x", label: "feat/x", onOpenTerminal: vi.fn(), onLaunchAgent: vi.fn(), onClear });
 
     expect(onClear).not.toHaveBeenCalled();
   });
 
   it("carries no error treatment — an empty worktree is a normal selection", () => {
-    const region = renderEmptyScopeRegion({ label: "feat/x", onOpenTerminal: vi.fn(), onClear: vi.fn() });
+    const region = renderEmptyScopeRegion({ id: "/wt/x", label: "feat/x", onOpenTerminal: vi.fn(), onClear: vi.fn() });
 
     expect(region.className).toContain("empty-scope");
     expect(region.outerHTML).not.toMatch(/error|danger|warning/i);
@@ -90,7 +92,7 @@ describe("mountEmptyScopeRegion", () => {
     return container;
   }
 
-  const deps = { label: "feat/x", onOpenTerminal: () => {}, onClear: () => {} };
+  const deps = { id: "/wt/x", label: "feat/x", onOpenTerminal: () => {}, onClear: () => {} };
 
   it("hides the container it stands in front of, so the hidden worktree is not still on screen", () => {
     const container = surface();
@@ -161,12 +163,41 @@ describe("mountEmptyScopeRegion", () => {
     ]);
   });
 
-  it("touches nothing when the container is detached — no region, and no hidden container", () => {
+  it("leaves a STANDING region alone when the container is detached under it", () => {
+    // With no region already up, both the guarding and the unguarded orders behave
+    // the same — which is why the first version of this test proved nothing
+    // (round-3 W8). The behaviour is only observable once there is something to
+    // take away.
     const container = surface();
-    container.remove();
     mountEmptyScopeRegion(container, deps);
+    const standing = document.querySelector(".empty-scope");
+    container.remove();
 
-    expect(document.querySelector(".empty-scope")).toBeNull();
-    expect(container.style.display).toBe("");
+    mountEmptyScopeRegion(container, { ...deps, label: "feat/other" });
+
+    expect(document.querySelector(".empty-scope")).toBe(standing);
+  });
+
+  it("offers the worktree it is standing for, not the one it stood for before", () => {
+    // Round-3 B3: two repos in a multi-root workspace can each hold a `main`
+    // worktree, and a selection carries no teardown between them. Keyed by label,
+    // the element survived the move and kept offering the FIRST worktree — with no
+    // visual or accessible tell, because the heading is true of both.
+    const container = surface();
+    const opened: string[] = [];
+    const forWorktree = (id: string) => ({
+      id,
+      label: "main",
+      onOpenTerminal: () => opened.push(id),
+      onClear: () => {},
+    });
+    mountEmptyScopeRegion(container, forWorktree("/repo-a/main"));
+    const first = document.querySelector(".empty-scope");
+
+    mountEmptyScopeRegion(container, forWorktree("/repo-b/main"));
+
+    expect(document.querySelector(".empty-scope")).not.toBe(first);
+    document.querySelector<HTMLButtonElement>(".empty-scope button")?.click();
+    expect(opened).toEqual(["/repo-b/main"]);
   });
 });

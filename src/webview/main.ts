@@ -484,6 +484,7 @@ function showEmptyScope(worktree: { id: string; label: string } | null): void {
   }
   const launch = worktreeController?.launchOfferFor(worktree.id);
   mountEmptyScopeRegion(containerEl, {
+    id: worktree.id,
     label: worktree.label,
     onOpenTerminal: () => vscode.postMessage({ type: "worktreeOpenTerminal", worktreeId: worktree.id }),
     ...(launch === undefined ? {} : { onLaunchAgent: launch }),

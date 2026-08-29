@@ -76,6 +76,8 @@ interface Surface {
   containerHidden(): boolean;
   /** The region element currently standing, if any. */
   region(): HTMLElement | null;
+  /** One entry per worktree the region's terminal offer was taken for. */
+  opened: string[];
   /** A pane arriving the way `onTabCreated` delivers one — a redraw, no selection. */
   addPane(paneId: string, worktreeId: string): void;
   state: Record<string, unknown>;
@@ -117,6 +119,7 @@ function surface(
   const out = {
     renders: 0,
     activations: [] as string[],
+    opened: [] as string[],
     activePane: over.activePane ?? null,
     emptyScope: null,
   } as unknown as Surface;
@@ -156,7 +159,17 @@ function surface(
       out.emptyScope = worktree;
       mountEmptyScopeRegion(
         containerEl,
-        worktree === null ? null : { label: worktree.label, onOpenTerminal: () => {}, onClear: () => {} },
+        worktree === null
+          ? null
+          : {
+              id: worktree.id,
+              label: worktree.label,
+              // Records the id, because a stub that drops it makes two same-named
+              // worktrees identical inputs — which is why nothing here could see
+              // the region offering the wrong one (round-3 W8).
+              onOpenTerminal: () => out.opened.push(worktree.id),
+              onClear: () => {},
+            },
       );
     },
   });
@@ -764,6 +777,24 @@ describe("round-1: the region follows the presented set, not just the selection"
 
     expect(s.containerHidden()).toBe(false);
     expect(s.region()).toBeNull();
+  });
+
+  it("moves the region's offer to the worktree just selected, not the one before it", () => {
+    // The end-to-end half of round-3 B3. These two worktrees have different
+    // LABELS, so this does not discriminate on the id axis by itself — the unit
+    // test in emptyScopeRegion.test.ts does that. What it guards is the wiring:
+    // `WorktreeView.select` emits the new worktree with no intervening `null`, so
+    // the region survives the move and must offer the worktree now scoped.
+    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
+    s.push();
+    s.seam.onSelectWorktree(PANEL);
+    s.seam.onSelectWorktree(MAIN);
+    // MAIN holds `pane-main`, so it is not empty — go somewhere that is, to keep a
+    // region standing across the move.
+    s.push({ rows: { [PANEL]: [pane("a", "pane-main")] } });
+    s.region()?.querySelector<HTMLButtonElement>("button")?.click();
+
+    expect(s.opened).toEqual([MAIN]);
   });
 
   it("keeps the standing region, and its focus, across a redraw that changes nothing", () => {
