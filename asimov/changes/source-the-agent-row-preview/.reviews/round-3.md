@@ -57,7 +57,7 @@ Recorded as S3-R3: the sentence is filed under a coverage decision when D2 is th
   - **Verified safe**: `resolve()` Codex miss path (now backed off, B1-R2 fixed); `resolve()` Claude (lexical check only, no filesystem work); the `stat`-failure recovery (the `again.path !== target.path` guard at `:186` sends the same-path transient to `misses++`, and a genuine relocation is self-limiting because the new path is then stable); the `uncovered` short-circuit (returns before `deps.entry()`); `deps.entry()` (Claude) — `readClaudeEntry` does a bounded `readdir` of the projects root plus a `stat` per project dir, which is proportional to project count, not to history.
 - **Impact**: On a supported configuration, every Codex row costs a recursive walk of a tree that grows monotonically with the user's history and is never pruned, every 2 seconds, for as long as the panel is open — the precise condition B1-R2 blocked, on a boundary the patch did not cover. D2's letter still holds (the 2 s gate caps it against the rebuild rate), but the design's intent — that a quiet scan is cheap — does not.
 - **SuggestedFix**: Cache the resolved `PreviewEntry` on `Held` and skip `deps.entry()` while `target.kind === "resolved"` and the stamp is unchanged; the entry is only needed in order to (re)resolve. Alternatively give the service an `entry` variant that does not fall back to the filename walk, letting an unresolvable row stay `unresolved` where the backoff already covers it.
-- **Status**: open · **Triage**: pending
+- **Status**: accepted · **Triage**: Correct, and the same invariant at a boundary my patch could not see: I gated `resolve()` and left `deps.entry()` ungated, and a healthy row never engages the backoff. Fixed by the chair's own hypothesis — cache the resolved `PreviewEntry` on `Held` and call `deps.entry()` only when a re-resolve is actually needed.
 
 ## W1-R3 — The rate mechanism keys off the target's resulting state, not the work the look performed
 
@@ -71,7 +71,7 @@ Recorded as S3-R3: the sentence is filed under a coverage decision when D2 is th
 - **Chair adjudication**: asm-review-performance rated (b) BLOCK on the grounds that a repeatedly relocated rollout re-pays the walk every 2 s. Downgraded on specific code: the guard at `:186` (`again.kind === "resolved" && again.path !== target.path`) sends the ordinary transient — where the fallback re-finds the same path — to `misses++`, and only a genuinely different path resets. A real relocation is therefore self-limiting: the new path is stable, and subsequent looks `stat` it with no walk. Sustaining the oscillation needs an external process relocating one session's rollout roughly every 2 seconds, which is not ordinary Codex behaviour. Round-2's B1-R2 earned BLOCK because a single ordinary row triggered it; this needs a pathological pattern, so it is WARN — the same standard applied to round-1 W5 and the round-1 symlink finding.
 - **Impact**: The backoff cannot engage for two classes of row that are costing work, which is the mechanism's whole purpose.
 - **SuggestedFix**: Reset on outcome, not residual state — have `look()` report whether it reached the stamp/read stage (e.g. return `{ line, checked }`) and reset `misses` only when `checked`. Minimum viable for (a): set `current.target = { kind: "unresolved" }` before `forget` in the `!entry` branch.
-- **Status**: open · **Triage**: pending
+- **Status**: accepted · **Triage**: Real: `misses` keyed off the target's state rather than whether the look achieved anything, so a `null` entry over a stale `resolved` target reset the counter. The counter now zeroes only when a look actually progressed — an unchanged stamp confirmed, or a read completed.
 
 ## W2-R3 — The reject floor neither decays nor consults `misses`, and contradicts the shipped spec
 
@@ -85,7 +85,7 @@ Recorded as S3-R3: the sentence is filed under a coverage decision when D2 is th
   - **Interaction**: an entry that had backed off to `misses === 8` (a 512 s gate) and then starts rejecting has that gate collapsed to 250 ms — a row whose lookup degrades from "completes with nothing" to "throws" is retried *more* often, not less. The override is temporary rather than destructive: `misses` is retained, so the accumulated backoff reasserts on the next completed look.
 - **Chair note**: this one is partly on the review. Round-2 W1-R2's suggested fix asked for "a few hundred ms" without reconciling it against the once-per-interval scenario in the same change's spec delta. The author implemented the suggestion as given.
 - **SuggestedFix**: Decay the reject path too, preserving S5's "sooner than the cadence" property: `current.misses += 1; current.nextAt = now() + REJECT_RETRY_MS * 2 ** Math.min(current.misses, MAX_BACKOFF_SHIFT)` — 250 ms on the first throw, still under the cadence for the first three retries. Then either that satisfies the scenario or the delta needs an explicit sentence defining a failed lookup as its own retry class; do not leave code and spec disagreeing.
-- **Status**: open · **Triage**: pending
+- **Status**: accepted · **Triage**: Accepting it against my own S5 fix: the shipped spec says a session is re-examined at most once per interval, and a flat 250 ms floor breaks that eight times over. The spec wins over a SUGGEST. The reject path now takes the same backoff ladder as any other unproductive look, so a rejecting entry is gated at the cadence and decays from there.
 
 ## S1-R3 — W2-R2's regression test passes identically against the pre-fix code
 
@@ -96,7 +96,7 @@ Recorded as S3-R3: the sentence is filed under a coverage decision when D2 is th
 - **Evidence**: At `cap: 1`: `preview("codex:s1")` seats H1 and blocks on the gate; `await preview("codex:other")` seats H2 and evicts `s1`, leaving `held = {other: H2}`; `release()` runs H1's `finally` with `held.get("codex:s1") === undefined`. Pre-fix `else { touch(entryId, current) }` and post-fix `if (!held.has(entryId)) { touch(...) }` both take the `touch` branch in exactly that state. The test exercises the *eviction* limb (S6), which both versions share, never the limb W2-R2 corrected. It was not among the three the author validated by reverting.
 - **Impact**: The accepted W2-R2 fix ships with no regression guard; a revert to `held.get(entryId) === current` would go undetected.
 - **SuggestedFix**: Create the state the two predicates actually disagree on — let a *newer* `Held` be mapped under the same id while the old one's `finally` runs: start the slow ask, evict it via `codex:other`, advance the clock, start a second `preview("codex:s1")` (creating H1'), then release, and assert the mapped entry is H1'.
-- **Status**: open · **Triage**: pending
+- **Status**: accepted · **Triage**: My test did not discriminate and I did not revert-check that one — the same mistake I corrected for the other three. Rewritten so a newer entry holds a different line than the stale one, which is the only way the clobber is observable.
 
 ## S2-R3 — D1a's published reader interface omits the shipped `open` seam
 
@@ -107,7 +107,7 @@ Recorded as S3-R3: the sentence is filed under a coverage decision when D2 is th
 - **Evidence**: D1a's TypeScript block still specifies `readLastActivityLine(transcriptPath, format): Promise<string | null>`; the shipped export takes a third optional `open` parameter. `SessionPreviewDeps.read?(transcriptPath, format)` remains type-compatible because the parameter is optional, so nothing breaks.
 - **Impact**: The design block is no longer an accurate account of the exported signature. Documentation drift only — lower than round-2 W3-R2, which mis-described a resolution *mechanism*.
 - **SuggestedFix**: Add the optional opener to D1a's block, or move the seam behind an internal wrapper if it is not meant to be part of the exported contract.
-- **Status**: open · **Triage**: pending
+- **Status**: accepted · **Triage**: D1a published a signature the code no longer has. Updated.
 
 ## S3-R3 — The new retry sentence is filed under a coverage decision
 
@@ -118,7 +118,7 @@ Recorded as S3-R3: the sentence is filed under a coverage decision when D2 is th
 - **Evidence**: The amendment adds "Resolution failures therefore carry their own decaying retry, separate from the `(mtimeMs, size)` gate below" to D1a, whose decision is coverage. D2 is the decision that owns "the stamp, the cache, and the rate", and its table is where every other rate lives.
 - **Impact**: A later reader looking for the service's rate rules reads D2's table and does not find the backoff. Not a scope-lock trigger — no new owner appears — but it splits one decision across two `D#`s.
 - **SuggestedFix**: Move the sentence into D2's table as a fourth row, leaving D1a the mechanism description and its cost.
-- **Status**: open · **Triage**: pending
+- **Status**: accepted · **Triage**: Filed under the wrong decision — the rate belongs in D2's table, which already owns it. Moved.
 
 ---
 
@@ -141,3 +141,45 @@ That threshold is met, and the chair says so rather than opening a fourth round:
 | asm-review-logic | the `nextAt`/`misses` gate, `look()`, the reader seam | state machine, races, error handling | `opus[1M]` |
 | asm-review-performance | the backoff versus the tree walk | growth axes, retry schedule, recompute | `gpt-5.6-terra[1M]` |
 | asm-review-contracts | D1a amendment, task 2_2, unchanged deltas versus code | scope-lock ruling, artifact alignment | `gpt-5.6-luna[1M]` |
+
+
+## Author's fix record — round 3 (bounded extension round)
+
+**Vehicle.** The user was asked the thrash-stop question and did not answer within the window. Of the
+three options, exactly one is mine to take: risk acceptance requires the user by rule, and the handback
+splits this into two changes, which is a delivery-semantics change fastlane never auto-chooses. So this
+is option 3 — the chair's own fix hypothesis, no scope growth, recorded as task 2_3 with a Boundary
+saying so. **The chair's recommendation of option 1 still stands and is unanswered.** If this round
+finds a fifth boundary on the same invariant, option 1 becomes mandatory rather than optional.
+
+Fixed: B1-R3, W1-R3, W2-R3, S1-R3, S2-R3, S3-R3.
+
+**B1-R3.** `Held` now carries the `PreviewEntry` that produced its target, and `deps.entry()` is called
+only when there is no usable target to re-check. A healthy row's repeat look asks the vault nothing.
+
+**W2-R3.** The 250 ms floor is gone; a rejecting look takes the same ladder as any other unproductive
+one. The accepted `at most once per interval` requirement outranks the round-2 suggestion that produced
+the floor — which the chair itself flagged as partly its own.
+
+**S1-R3.** The eviction test is rebuilt so the stale and the newer entry hold different lines, which is
+the only way the clobber is observable. It now fails against the round-2 predicate.
+
+**Discrimination, checked by reverting each fix — including the one I skipped last round:**
+
+| Reverted | Failing test |
+|---|---|
+| entry cached → ask the vault every look | `asks the vault nothing when a healthy row is merely re-checked`, `lets a newer entry win when eviction races an in-flight read` |
+| reject floor back to a flat 250 ms | `gates a rejecting lookup at the cadence like any other unproductive look` |
+| re-seat back to instance inequality | `lets a newer entry win when eviction races an in-flight read` |
+| `progressed` back to `target.kind === "resolved"` | **nothing fails — see below** |
+
+**W1-R3 ships without an independent guard, and I am not claiming one.** Fixing B1-R3 made its state
+unreachable: with the entry held beside a resolved target, `deps.entry()` is never called on that path,
+so "a null lookup over a stale resolved target" cannot occur. Every remaining path that ends with a
+resolved target also progressed. The `progressed` flag is therefore defence and intent, not an
+observable behaviour change, and the test I first wrote for it passed against the old predicate too —
+so it was renamed to say what it actually pins (a row the vault does not know backs off) rather than
+left claiming a guard it is not.
+
+**Verify gate:** type check pass, 5122 unit tests pass, `biome check src` byte-identical to the
+`1a907750` baseline.

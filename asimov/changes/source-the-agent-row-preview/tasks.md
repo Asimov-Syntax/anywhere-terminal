@@ -90,3 +90,19 @@
     5. S2-R2 — the short read is testable after all, by the Ref's method. The reader takes one optional seam for opening, used by nothing in production.
     6. W3-R2 — D1a is amended to describe the resolution that ships, including what the fallback costs. The coverage decision itself does not move.
     7. Cover: an unresolvable row's scans falling off rather than recurring per interval; a resolution that succeeds putting the entry back on the freshness cadence; a rejected lookup still rate-limited; a stale entry not displacing a newer one; a file truncated between the reader's own stat and read not losing its newest record.
+
+- [x] 2_3 Ask the vault only when a re-resolve actually needs it — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_2
+  - **Refs**: .reviews/round-3.md#b1-r3-the-tree-walk-invariant-survives-at-the-deps-entry-boundary · specs/worktree-agent-presence/spec.md#a-scan-that-finds-no-new-activity-reads-no-transcript · design.md#d2-the-preview-service-owns-the-stamp-the-cache-and-the-rate
+  - **Boundary**: bounded extension round — the stated hypothesis only. No new capability, no seam extraction, no widening of what a row carries.
+  - **Acceptance**:
+    - Outcome: a healthy row's repeat look asks neither the vault nor the store where its transcript is
+    - Verify: unit src/worktree/sessionPreviewService.test.ts
+  - **Plan**:
+    0. Files: `src/worktree/sessionPreviewService.ts`, `src/worktree/sessionPreviewService.test.ts`, `asimov/changes/source-the-agent-row-preview/design.md`.
+    1. B1-R3 — the entry is needed to RE-resolve, not to re-check. Hold it beside the target it resolved, and go back to the vault only when there is no usable target. The gate the Ref names is what a healthy row must not pay.
+    2. W1-R3 — the retry counter keys off whether a look achieved something, not off what the target happens to say. Confirming an unchanged stamp or completing a read is progress; nothing else is.
+    3. W2-R3 — the reject path stops being special. The Ref's own once-per-interval sentence outranks the faster-retry suggestion that produced the floor, so a rejecting entry decays like any other unproductive look.
+    4. S1-R3 — the eviction test is rewritten to observe the clobber it was supposed to catch, which needs the two entries to hold different lines. Revert-check it this time.
+    5. S2-R3 and S3-R3 — the design's published signature matches the code, and the retry rate is filed under the decision that owns rates.
+    6. Cover: a healthy repeat look asking the vault nothing; a look that resolves nothing still backing off; a null entry over a stale target not resetting the retry; a rejecting lookup gated at the cadence rather than eight times inside it; a newer entry surviving a stale one whose read was still in flight.

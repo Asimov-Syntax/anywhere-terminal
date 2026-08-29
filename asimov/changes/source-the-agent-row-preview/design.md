@@ -28,8 +28,7 @@ This is a property of what the providers expose, not a shortcut. A Codex entry c
 decision — the index's path when it is contained, **else a scan by uuid** over
 `~/.codex/sessions/**` (`codexReader.ts:1071-1094`). The scan is the expensive half: that tree
 grows with history and is never pruned, so a session it cannot resolve must not be retried on the
-freshness cadence. Resolution failures therefore carry their own decaying retry, separate from the
-`(mtimeMs, size)` gate below (round-2 B1-R2). An OpenCode entry exposes no transcript path at all — its content is
+freshness cadence. How often that scan may run is D2's, not this decision's. An OpenCode entry exposes no transcript path at all — its content is
 SQLite `message`/`part` rows (`opencodeReader.ts:157-177`) — and Cursor deliberately exposes none,
 because its own accepted requirements forbid a listing from opening `store.db`
 (`agent-session-index` § "Cursor indexing is metadata-only").
@@ -44,6 +43,8 @@ touch. An uncovered row shows no preview, which § D3 already establishes as a n
 export function readLastActivityLine(
   transcriptPath: string,
   format: "claude" | "codex",
+  /** Test seam only — production always takes the default. */
+  open?: (p: string) => Promise<FileHandle>,
 ): Promise<string | null>;
 ```
 
@@ -81,6 +82,7 @@ Everything the freshness question needs lives behind that call, in a small servi
 | Concern | Answer |
 |---|---|
 | Freshness | `(mtimeMs, size)` against the stamp held for that `entryId`. Equal → return the held line, open nothing. This is the vault list path's own gate (`claudeReader.ts:373-440`, `storeStamp.ts:13-41`), not a new one — `mtimeMs` alone is not enough because coarse mtime granularity can hide two writes in one tick |
+| Retry rate | Separate from the interval below, and deliberately so. Re-checking a known file is a `stat`; resolving one that is not there yet is D1a's uuid scan over a history-sized tree, and the vault lookup that precedes it is another. Consecutive looks that achieve nothing decay their own retry; a look that confirms a stamp or completes a read puts the entry back on the interval. The entry that produced a resolved target is held beside it, so a healthy row's re-check asks neither the vault nor the store where its transcript is (round-3 B1-R3) |
 | Rate | A minimum re-check interval per `entryId`. A full projection can run at the 150 ms cap (`WorktreeHost.ts:55-63`), and without this the `stat` count is rows × ~6.7/s during continuous pane activity. Freshness the user can perceive is seconds, not milliseconds |
 | Duplicate reads | One in-flight promise per `entryId`; concurrent askers await it rather than each opening the file |
 | Eviction | LRU bound on entry count. The projector cannot evict for the service — it holds no stamp and passes no alive set — so the bound is the service's own |

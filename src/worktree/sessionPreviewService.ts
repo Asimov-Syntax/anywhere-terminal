@@ -69,11 +69,13 @@ export const DEFAULT_PREVIEW_CACHE_CAP = 256;
 const MAX_BACKOFF_SHIFT = 8;
 
 /**
- * Floor under a look that REJECTED. A thrown lookup must still leave a rate
- * limit behind — without one the entry has no gate at all and every rebuild
- * retries it (round-2 W1-R2).
+ * A look that rejected is just an unproductive look. It takes the same ladder as
+ * every other one: round 2 gave it a 250 ms floor, which re-examined a
+ * persistently rejecting session eight times inside one interval and so broke
+ * `worktree-agent-presence` § "a session is re-examined at most once per
+ * interval" (round-3 W2-R3). The accepted requirement outranks the faster-retry
+ * suggestion that produced the floor.
  */
-const REJECT_RETRY_MS = 250;
 
 type Target =
   /** This source keeps no transcript at all — never worth another syscall. */
@@ -87,6 +89,21 @@ type Target =
 
 interface Held {
   target: Target;
+  /**
+   * The vault entry that produced `target`, held beside it.
+   *
+   * The entry is what a RE-resolve needs; re-checking a known file does not need
+   * it at all. Asking for it every look sent a Codex row through `readCodexEntry`,
+   * whose no-SQLite branch is the same history-sized tree walk the retry ladder
+   * exists to bound — and a healthy row never engages that ladder, so the walk
+   * ran at the freshness cadence forever (round-3 B1-R3).
+   */
+  entry?: PreviewEntry;
+  /** Whether the look in progress achieved anything: an unchanged stamp confirmed,
+   *  or a read completed. The retry ladder keys off this rather than off what the
+   *  target happens to say, so a lookup that returns nothing over a stale resolved
+   *  target cannot reset it (round-3 W1-R3). */
+  progressed?: boolean;
   stamp?: FileStamp;
   line?: string;
   /** Earliest time another look may run. Every outcome sets it, so no path is ungated. */
@@ -161,10 +178,16 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
     if (current.target.kind === "uncovered") {
       return undefined;
     }
-    const entry = await deps.entry(entryId);
-    if (!entry) {
-      return forget(current);
+    // Only when there is no target to re-check. A resolved one already has the
+    // entry that produced it, and re-checking is a `stat` (B1-R3).
+    if (current.target.kind !== "resolved" || current.entry === undefined) {
+      const fresh = await deps.entry(entryId);
+      if (!fresh) {
+        return forget(current);
+      }
+      current.entry = fresh;
     }
+    const entry = current.entry;
     if (current.target.kind === "unresolved") {
       current.target = await resolve(entry, true);
     }
@@ -187,8 +210,10 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       if (!stamp) {
         // Nothing readable now. Unresolved rather than uncovered, so a transcript
         // that reappears is found — and no line, because the spec says one that
-        // cannot be read carries no preview at all (W1).
+        // cannot be read carries no preview at all (W1). The entry goes too: the
+        // next look must ask the vault where this session lives now.
         current.target = { kind: "unresolved" };
+        current.entry = undefined;
         return forget(current);
       }
       current.target = again;
@@ -200,11 +225,13 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
     }
     const previous = current.stamp;
     if (previous && previous.mtimeMs === stamp.mtimeMs && previous.size === stamp.size) {
+      current.progressed = true;
       return current.line; // nothing wrote to it — do not open
     }
     const line = await read(resolved.path, resolved.format);
     current.stamp = stamp;
     current.line = line ?? undefined;
+    current.progressed = true;
     return current.line;
   }
 
@@ -224,24 +251,28 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
         misses: 0,
       };
       touch(entryId, current);
+      const schedule = (): void => {
+        current.nextAt = now() + recheckMs * 2 ** Math.min(current.misses, MAX_BACKOFF_SHIFT);
+      };
       if (current.inflight) {
         return current.inflight; // one read per session, however many rows ask
       }
       if (now() < current.nextAt) {
         return current.line;
       }
+      current.progressed = false;
       const inflight = look(entryId, current).then(
         (line) => {
-          // A look that ends without a resolved target has just paid whatever
-          // resolution costs and found nothing; the next one waits longer.
-          current.misses = current.target.kind === "resolved" ? 0 : current.misses + 1;
-          current.nextAt = now() + recheckMs * 2 ** Math.min(current.misses, MAX_BACKOFF_SHIFT);
+          // Progress, not the target's state: a look that paid for resolution and
+          // found nothing waits longer, and one that merely reports a stale
+          // target cannot pretend it achieved something (W1-R3).
+          current.misses = current.progressed === true ? 0 : current.misses + 1;
+          schedule();
           return line;
         },
         () => {
-          // A rejected look is not a completed one — it retries sooner than the
-          // cadence, but it still leaves a gate behind (W1-R2).
-          current.nextAt = now() + REJECT_RETRY_MS;
+          current.misses += 1;
+          schedule();
           return forget(current);
         },
       );

@@ -289,6 +289,60 @@ describe("createSessionPreviewService", () => {
     });
   });
 
+  it("asks the vault nothing when a healthy row is merely re-checked", async () => {
+    // `deps.entry()` routes to the provider's own entry reader, whose no-SQLite
+    // branch walks the whole sessions tree. A row that only needs its stamp
+    // re-checked must not pay for that (round-3 B1-R3).
+    let lookups = 0;
+    const svc = createSessionPreviewService({
+      entry: async () => {
+        lookups += 1;
+        return { agent: "codex", sessionId: "s1", sessionPath: rollout };
+      },
+      stat: async (file) => {
+        stats.push(file);
+        const st = await fs.stat(file);
+        return { mtimeMs: st.mtimeMs, size: st.size };
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+    });
+
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(lookups).toBe(1);
+
+    for (let i = 0; i < 5; i++) {
+      clock += 2001;
+      await svc.preview("codex:s1");
+    }
+    expect(stats).toHaveLength(6); // still re-checked every interval
+    expect(lookups).toBe(1); // but the vault was asked exactly once
+  });
+
+  it("backs off a row whose lookup keeps returning nothing", async () => {
+    // Not a guard for W1-R3: once B1-R3 cached the entry, a null lookup over a
+    // stale resolved target became unreachable, so both the old and the new
+    // predicate back this off. What it pins is that an entry the vault does not
+    // know does not stay on the freshness cadence.
+    let lookups = 0;
+    const svc = createSessionPreviewService({
+      entry: async () => {
+        lookups += 1;
+        return null;
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+    });
+
+    for (let i = 0; i < 10; i++) {
+      expect(await svc.preview("codex:s1")).toBeUndefined();
+      clock += 2000;
+    }
+    expect(lookups).toBeLessThan(5);
+  });
+
   it("drops the preview when the transcript is gone", async () => {
     // The spec says a transcript the reader cannot read carries no preview at
     // all, so bounded message text must not outlive its file (round-1 W1).
@@ -299,7 +353,9 @@ describe("createSessionPreviewService", () => {
     expect(await svc.preview("codex:s1")).toBeUndefined();
   });
 
-  it("retries a rejected lookup sooner than the cadence, but still rate-limits it", async () => {
+  it("gates a rejecting lookup at the cadence like any other unproductive look", async () => {
+    // A 250 ms floor re-examined a rejecting session eight times inside one
+    // interval, against the spec's "at most once per interval" (round-3 W2-R3).
     let fail = true;
     let lookups = 0;
     const svc = createSessionPreviewService({
@@ -316,35 +372,50 @@ describe("createSessionPreviewService", () => {
     });
 
     expect(await svc.preview("codex:s1")).toBeUndefined();
-    // A rejection must leave a gate behind — without one the entry has no rate
-    // limit at all and every rebuild retries it (round-2 W1-R2).
+    clock += 1999;
     expect(await svc.preview("codex:s1")).toBeUndefined();
     expect(lookups).toBe(1);
 
+    // And it decays from there rather than retrying every interval forever.
+    for (let i = 0; i < 8; i++) {
+      clock += 2001;
+      await svc.preview("codex:s1");
+    }
+    expect(lookups).toBeLessThan(5);
+
     fail = false;
-    clock += 250;
+    clock += 600_000;
     expect(await svc.preview("codex:s1")).toBe("the first answer");
-    // Sooner than the 2 s cadence, which is what S5 asked for.
-    expect(lookups).toBe(2);
   });
 
   it("lets a newer entry win when eviction races an in-flight read", async () => {
     // The re-seat exists so eviction mid-read does not strand the result, but it
-    // must not put the stale instance back over a newer one (round-2 W2-R2).
+    // must not put the stale instance back over a newer one (round-2 W2-R2). The
+    // clobber is only observable when the two hold DIFFERENT lines — the first
+    // version of this test did not, and passed against the bug (round-3 S1-R3).
     let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     let firstRead = true;
+    const other = path.join(sessionsDir, "rollout-other.jsonl");
+    await fs.writeFile(other, `${codexEvent("another session")}\n`);
+
     const svc = createSessionPreviewService({
-      entry: async () => ({ agent: "codex", sessionId: "s1", sessionPath: rollout }),
+      entry: async (entryId) => {
+        const sessionId = entryId.slice("codex:".length);
+        return { agent: "codex", sessionId };
+      },
       read: async (file, format) => {
+        reads.push(file);
+        // Read FIRST, then block: the stale look must come back holding the
+        // content it actually saw, not what the file said once it was released.
+        const line = await readLastActivityLine(file, format);
         if (firstRead) {
           firstRead = false;
           await gate;
         }
-        reads.push(file);
-        return readLastActivityLine(file, format);
+        return line;
       },
       roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
       now: () => clock,
@@ -352,15 +423,20 @@ describe("createSessionPreviewService", () => {
       cap: 1,
     });
 
-    const slow = svc.preview("codex:s1");
-    await svc.preview("codex:other"); // evicts the in-flight entry at cap 1
-    release?.();
-    expect(await slow).toBe("the first answer");
+    const stale = svc.preview("codex:s1"); // reads "the first answer", then blocks
+    await svc.preview("codex:other"); // cap 1 — evicts the in-flight s1 entry
 
-    // Whatever is mapped now, the next ask must reach a live entry rather than a
-    // stale one holding someone else's state.
+    // s1 says something new before the newer entry reads it.
+    await rewrite("the second answer", 2_000_000_000_000);
     clock += 5000;
-    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(await svc.preview("codex:s1")).toBe("the second answer");
+
+    release?.();
+    expect(await stale).toBe("the first answer");
+
+    // Inside the interval, so this is whatever entry is mapped — the newer one,
+    // unless the stale instance clobbered it on its way out.
+    expect(await svc.preview("codex:s1")).toBe("the second answer");
   });
 
   it("bounds what it holds instead of growing with every session seen", async () => {
