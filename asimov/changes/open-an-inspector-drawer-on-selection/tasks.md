@@ -14,7 +14,7 @@
     3. In `src/webview/worktree/WorktreeContextMenu.ts` delete `worktreeItems` and `item`, and have `openForWorktree` call `worktreeActionItems(info, this.actions, { prunableCount: this.prunableCount(info), repoScoped: true })`.
     4. Add cases to `src/webview/worktree/WorktreeContextMenu.test.ts` asserting `repoScoped: false` withholds New Worktree and Prune while leaving every worktree-targeted item present, and that `repoScoped: true` produces the item list the shipped tests already assert.
 
-- [ ] 1_2 Let the agent renderers draw outside a tree, be focusable, and name the model
+- [x] 1_2 Let the agent renderers draw outside a tree, be focusable, and name the model — verified: pnpm exec vitest run 'src/webview/worktree/worktreeTreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{the-inspector-names-the-model-that-no-row-names, the-inspector-carries-the-delegation-history-of-each-agent-it-presents, the-inspector-does-not-take-focus-and-gives-it-back} <!-- design.md D5, D11 -->
   - **Acceptance**:
