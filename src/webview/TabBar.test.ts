@@ -654,7 +654,7 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     attribution: new Map(entries),
   });
 
-  it("presents a pane the evidence does not place, in every scope", () => {
+  it("[I18] presents a pane the evidence does not place, in every scope", () => {
     // Failing OPEN is the whole invariant: absence of attribution is not proof of
     // absence from this worktree, and a tab hidden on no evidence is a running
     // terminal the user cannot find and cannot tell is hidden.

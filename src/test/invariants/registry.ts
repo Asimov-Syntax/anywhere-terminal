@@ -161,4 +161,12 @@ export const INVARIANTS: readonly InvariantRow[] = [
       "Keep animating an output-inferred run past the ceiling, or downgrade it to idle instead of presenting it as unconfirmed",
     status: "covered",
   },
+  {
+    id: "I18",
+    statement:
+      "A scoped tab bar hides only a pane proven to belong elsewhere; a pane the evidence does not place is presented in every scope",
+    owners: ["WT-010.1"],
+    stimulus: "Hide a tab whose pane the attribution map does not hold, rather than presenting it in every scope",
+    status: "covered",
+  },
 ];

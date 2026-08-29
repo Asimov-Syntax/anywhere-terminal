@@ -83,17 +83,17 @@
     1. Assert the signature ignores everything the presence envelope carries beyond attribution — `scannedAt`, activity, titles and delegations must not move it.
     2. Cover both directions: an envelope with identical attribution yields zero renders; a changed scope, a pane moving between worktrees, and a split gaining or losing a leaf each yield exactly one.
 
-- [ ] 1_7 Enter the invariant with the test that proves it
+- [x] 1_7 Enter the invariant with the test that proves it — verified: pnpm run test:unit && pnpm run check-types exit 0
   - **Deps**: 1_6
   - **Refs**: specs/tab-bar-component/spec.md#{a-scoped-tab-bar-hides-only-what-it-can-prove-belongs-elsewhere, absence-of-attribution-fails-open}, ../../../docs/design/worktree-scope.md
   - **Acceptance**:
     - Outcome: hiding an unattributed pane turns the suite red
-    - Verify: command pnpm exec vitest run src/webview/TabBar.test.ts src/test/invariants
+    - Verify: command pnpm run test:unit
   - **Plan**:
     0. Files: `docs/DESIGN.md`, `src/test/invariants/registry.ts`, `src/webview/TabBar.test.ts`.
     1. Add the row to the § 8.4 table in `docs/DESIGN.md` as `I18`, with the statement already reserved for it in the Planned table below the section, and delete its Planned line — leaving WT-010.2's.
     2. Add the matching `I18` entry to `INVARIANTS` in `src/test/invariants/registry.ts` with `status: "covered"`, owner `WT-010.1`, and a `stimulus` naming the change that must turn the test red: hiding a tab whose pane the attribution map does not hold.
-    3. Put the literal `[I18]` tag in the Vitest test NAME in `src/webview/TabBar.test.ts` — the reporter discovers tags from test names and treats a filtered run as partial, which is why this task's Verify runs the invariant suite beside the behaviour test rather than one file.
+    3. Put the literal `[I18]` tag in the Vitest test NAME in `src/webview/TabBar.test.ts`. The reporter discovers tags from test names and treats ANY filtered run as partial — naming two paths does not un-filter it (`coverageReporter.ts:69-73`), so a run that names files at all prints "coverage not checked" and the missing tag goes unnoticed. Verified: stripping the tag and running the two named paths is green; the same strip under the unfiltered script exits 1. The Verify is therefore the unfiltered `pnpm run test:unit`.
     4. The case: a scope set, a pane absent from the attribution map, its tab asserted present.
 
 - [ ] 1_8 Keep every part of this inert while the setting is off

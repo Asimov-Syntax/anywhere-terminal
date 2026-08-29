@@ -26,6 +26,9 @@
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
+- 1_7's planned Verify (`vitest run src/webview/TabBar.test.ts src/test/invariants`) could not prove its own Outcome: the invariant reporter treats ANY filtered run as partial, so stripping the `[I18]` tag stays green under it. Changed to the unfiltered `pnpm run test:unit`, which exits 1 on the same strip. Outcome unchanged.
+- 1_5's Plan paths grew by five files (`worktreeViewTypes.ts`, `WorktreeView.ts`, `WorktreeController.ts` and their tests): D7 routes the "said" through the panel's action-result surface, so the `scope` action kind, its notice branch and the controller entry point all had to exist for step 4 to land.
+
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
