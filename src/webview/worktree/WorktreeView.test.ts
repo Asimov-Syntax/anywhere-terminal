@@ -3479,3 +3479,63 @@ describe("[3_2] focus never falls out of the tree", () => {
     expect(document.activeElement).toBe(outside);
   });
 });
+
+describe("[3_3] a roster dispatch the host refuses", () => {
+  // `flushRosterRequests` is the only step of a render that reaches the host, so
+  // it is the only one that can throw. The signature is already committed by
+  // then, which turns the next identical envelope into a no-op — and the rows
+  // `RosterRequests` correctly re-queued would never be asked for again
+  // (.reviews/round-3.md W4).
+
+  function mountThrowing(fail: { now: boolean }) {
+    const asked: string[] = [];
+    const { view } = mount({
+      getInitialExpandedRows: () => ["main-claude"],
+      onRequestSubagents: (row) => {
+        asked.push(row.rowId);
+        if (fail.now) {
+          throw new Error("host gone");
+        }
+      },
+    });
+    return { view, asked };
+  }
+
+  it("asks again on the next identical envelope", () => {
+    const fail = { now: true };
+    const { view, asked } = mountThrowing(fail);
+    expect(() => view.setData(populated())).toThrow("host gone");
+    expect(asked).toEqual(["main-claude"]);
+
+    fail.now = false;
+    view.setData(populated());
+    expect(asked).toEqual(["main-claude", "main-claude"]);
+  });
+
+  /** The same pane after a resume: a new session, so a new roster to ask for. */
+  function resumed(): WorktreePresence {
+    const base = singleRepoPresence(NOW);
+    return {
+      ...base,
+      rowsByWorktreeId: Object.fromEntries(
+        Object.entries(base.rowsByWorktreeId).map(([id, rows]) => [
+          id,
+          rows.map((r) => (r.rowId === "main-claude" ? { ...r, entryId: "claude:resumed" } : r)),
+        ]),
+      ),
+    };
+  }
+
+  it("leaves the user inside the tree, not on the body", () => {
+    const fail = { now: false };
+    const { view } = mountThrowing(fail);
+    view.setData(populated());
+    view.element.querySelector<HTMLElement>(".wt-row")?.focus();
+    expect(view.element.contains(document.activeElement)).toBe(true);
+
+    fail.now = true;
+    expect(() => view.setData(populated({ presence: resumed() }))).toThrow("host gone");
+    expect(document.activeElement).not.toBe(document.body);
+    expect(view.element.contains(document.activeElement)).toBe(true);
+  });
+});

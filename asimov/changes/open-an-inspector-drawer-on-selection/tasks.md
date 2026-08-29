@@ -118,3 +118,13 @@
     1. In `src/webview/worktree/WorktreeView.ts` compute "focus was inside" once in `render`, pass it to `renderListing`, and focus the tree's own stop on every path that ends with no row to return to — the four empty-state exits included (B6).
     2. In `src/webview/worktree/WorktreeInspector.ts` give each agent one `listitem` holding its row and its history, label the history with the agent it belongs to, and make the rows activatable by keyboard now that they are buttons (W1); drop the signature when a roster dispatch throws (W4).
     3. Cover all three in `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeInspector.test.ts` and `src/webview/worktree/WorktreeController.inspector.test.ts`.
+
+- [x] 3_3 Carry the round-3 warning into the tree's own caller — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_2
+  - **Refs**: .reviews/round-3.md#{W4} <!-- design.md D6, D7 -->
+  - **Acceptance**:
+    - Outcome: a roster dispatch the host refuses is retried on the next envelope and leaves focus inside the tree
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeView.ts` drop the signature when `render` throws, and restore focus before dispatching roster requests rather than after.
+    2. Cover both in `src/webview/worktree/WorktreeView.test.ts`.

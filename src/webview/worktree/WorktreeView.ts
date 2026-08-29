@@ -363,7 +363,17 @@ export class WorktreeView {
       this.signature = stateKey;
       // Expansion state for a worktree that disappeared is dropped, not resurrected.
       this.pruneStaleState(this.data);
-      this.render(now);
+      try {
+        this.render(now);
+      } catch (err) {
+        // The key above already claims this envelope is drawn. A render that
+        // threw part-way — in practice a roster dispatch the host refused —
+        // leaves `RosterRequests` correctly holding the rows it could not send,
+        // behind a guard that turns the next identical envelope into a no-op, so
+        // nothing ever asks again (.reviews/round-3.md W4).
+        this.signature = null;
+        throw err;
+      }
     }
     this.armCeiling(now);
   }
@@ -846,11 +856,19 @@ export class WorktreeView {
     const focusWasInside = this.element.contains(document.activeElement);
     const restoreFocusTo = this.renderListing(now, focusWasInside);
     this.placeResults();
-    // After the DOM is in place, never from inside the loop that queued them:
-    // a dep answering synchronously re-enters `renderListing`, which replaces
-    // the half-built tree and places every notice twice. Runs on every path,
-    // including the early exits below — a queued request is owed either way.
+    this.restoreFocus(restoreFocusTo, focusWasInside, scrollTop);
+    // Last, and after focus is back: this is the only step here that reaches the
+    // host, so it is the only one that can throw — and a throw before the restore
+    // above would leave the user on `<body>` (.reviews/round-3.md W4). Never from
+    // inside the loop that queued them either: a dep answering synchronously
+    // re-enters `renderListing`, which replaces the half-built tree and places
+    // every notice twice. Runs on every path, including the empty states — a
+    // queued request is owed either way.
     this.flushRosterRequests();
+  }
+
+  /** Put the user back where they were, or at least back inside the tree. */
+  private restoreFocus(restoreFocusTo: string | null | undefined, focusWasInside: boolean, scrollTop: number): void {
     if (restoreFocusTo === undefined) {
       // A skeleton or an empty state. It replaced the children like any other
       // render, so a user who was inside is now on `<body>` — the top of the
