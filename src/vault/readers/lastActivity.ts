@@ -47,15 +47,23 @@ export async function readLastActivityLine(transcriptPath: string, format: LastA
       return null;
     }
     const usable = format === "claude" ? claudeActivity : codexActivity;
-    for (let window = INITIAL_WINDOW_BYTES; ; window *= 2) {
-      const start = Math.max(0, size - window);
+    for (let window = INITIAL_WINDOW_BYTES; ; window = Math.min(window * 2, MAX_WINDOW_BYTES)) {
+      // One byte earlier than the window when there is room, so the boundary
+      // itself says whether the first line is a fragment. Without it a window
+      // that lands exactly on a newline discards a whole record, and at the cap
+      // there is no next doubling to recover it (round-1 S1).
+      const start = Math.max(0, size - window - 1);
       const buf = Buffer.alloc(size - start);
-      await handle.read(buf, 0, buf.length, start);
+      // Decode only what arrived: `Buffer.alloc` is zero-filled, and a short read
+      // on a truncated or network-backed file would otherwise feed NUL padding
+      // into the newest record and lose it (W4).
+      const { bytesRead } = await handle.read(buf, 0, buf.length, start);
       const reachedHead = start === 0;
-      const lines = buf.toString("utf8").split("\n");
-      if (!reachedHead) {
-        // The window almost certainly cut a record in half. Drop that fragment —
-        // growing the window is what brings it back whole.
+      const text = buf.toString("utf8", 0, bytesRead);
+      const lines = text.split("\n");
+      if (!reachedHead && !text.startsWith("\n")) {
+        // The window cut a record in half. Drop that fragment — growing the
+        // window is what brings it back whole.
         lines.shift();
       }
       for (let i = lines.length - 1; i >= 0; i--) {
@@ -65,7 +73,7 @@ export async function readLastActivityLine(transcriptPath: string, format: LastA
         }
       }
       if (reachedHead || window >= MAX_WINDOW_BYTES) {
-        return null;
+        return null; // the head, or a record too large for the cap (D1b)
       }
     }
   } catch {

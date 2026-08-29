@@ -53,7 +53,7 @@ import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
-import { formatEntryId } from "./vault/types";
+import { formatEntryId, VAULT_AGENT_IDS } from "./vault/types";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
@@ -672,10 +672,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const sessionPreviews = createSessionPreviewService({
     entry: async (entryId) => {
       const entry = await vaultService.getEntry(entryId);
-      return entry === null
+      // `VaultSessionEntry.agent` is a bare string because it crosses IPC; the
+      // service takes the union, so an unrecognised provider is answered here
+      // rather than falling through its coverage check as an unknown literal.
+      const agent = VAULT_AGENT_IDS.find((id) => id === entry?.agent);
+      return entry === null || agent === undefined
         ? null
         : {
-            agent: entry.agent,
+            agent,
             sessionId: entry.sessionId,
             ...(entry.sessionPath ? { sessionPath: entry.sessionPath } : {}),
           };

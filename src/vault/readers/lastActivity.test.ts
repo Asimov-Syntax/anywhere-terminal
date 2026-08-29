@@ -67,6 +67,22 @@ describe("readLastActivityLine", () => {
     expect(await readLastActivityLine(file, "claude")).toBeNull();
   });
 
+  it("keeps a record that ends exactly on the cap's window boundary", async () => {
+    // The window's first line is dropped as a half-record. When the boundary
+    // lands ON a newline that line is whole, and at the cap there is no next
+    // doubling to recover it (round-1 S1).
+    const record = claudeAssistant("the record on the boundary");
+    const noiseBase = JSON.stringify({ type: "noise", pad: "" });
+    const padding = MAX_WINDOW_BYTES - (record.length + 1) - (noiseBase.length + 1);
+    const tail = `${record}\n${JSON.stringify({ type: "noise", pad: "p".repeat(padding) })}\n`;
+    expect(tail.length).toBe(MAX_WINDOW_BYTES);
+
+    const file = path.join(dir, "boundary.jsonl");
+    await fs.writeFile(file, `${"h".repeat(5000)}\n${tail}`);
+
+    expect(await readLastActivityLine(file, "claude")).toBe("the record on the boundary");
+  });
+
   describe("the claude rule", () => {
     it("skips sidechain, meta, and non-conversation records", async () => {
       const file = await write("claude-rule.jsonl", [

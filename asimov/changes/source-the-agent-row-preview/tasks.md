@@ -56,3 +56,21 @@
     3. Three existing suites assert the behaviour being reversed: they require a spinner-prefixed PREVIEW to be stripped. Their provenance assumption is what moved, so change the assumption rather than leaving a builder to find unrelated-looking failures. The same suites' TITLE assertions stay exactly as they are.
     4. The signature must still move when the preview moves, and still not move for a title's spinner tick. Two different inputs to one string, and only one of them stops being stripped.
     5. Cover: `"- item"` and `"* item"` surviving intact in the rendered row and its tooltip; a preview that is only a marker still drawing a second line; a spinner tick in the TITLE still stripped and still not moving the signature; a changed preview still moving it.
+
+## 2. Round-1 review fixes
+
+- [x] 2_1 Close the round-1 blockers and their accepted warnings — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_1, 1_2, 1_3, 1_4
+  - **Refs**: .reviews/round-1.md#{b1-spec-delta-silently-deletes-two-accepted-prohibitions-from-a-privacy-requirement, b2-a-null-transcript-resolution-is-cached-for-the-process-lifetime-and-a-resolved-path-is-never-re-resolved} · design.md#{d1b-one-usable-record-predicate-per-format-and-a-stated-scan-budget, d2-the-preview-service-owns-the-stamp-the-cache-and-the-rate}
+  - **Acceptance**:
+    - Outcome: a session whose transcript resolves late gets its preview, and one whose transcript is gone loses it
+    - Verify: unit src/worktree/sessionPreviewService.test.ts
+  - **Plan**:
+    0. Files: `asimov/changes/source-the-agent-row-preview/specs/agent-session-index/spec.md`, `src/worktree/sessionPreviewService.ts`, `src/worktree/sessionPreviewService.test.ts`, `src/vault/readers/lastActivity.ts`, `src/vault/readers/lastActivity.test.ts`, `src/vault/readers/codexReader.ts`, `src/extension.ts`.
+    1. B1 — the delta restates its base in full, so restore every clause the base carries and widen only the one the fork approved. The cache prohibition, its storage-location constraint and the subject all come back.
+    2. B2 — unresolved and uncovered stop being the same state. One retries on the ordinary cadence, the other short-circuits with no syscall forever, and a `stat` that fails on a path already resolved drops back to unresolved rather than pinning it.
+    3. W1 — the code and the test move to the artifacts, not the other way: the spec and the design's failure surface both already say an unreadable transcript carries no preview.
+    4. W2 and W6 — resolution stops being this module's own. The Codex branch calls the repo's existing rollout resolver, fallback and containment included; the Claude branch uses the path the entry already carries, which is also what makes the delta's wording true.
+    5. W4, S1 and S2 — the reader's three bound defects: decode only the bytes actually read, do not discard a record the window boundary happened to align with, and never read past the cap.
+    6. S3, S5 and S6 — the agent field takes the vault's own union, a swallowed lookup stops advancing the cadence as if it had answered, and eviction stops stranding a read still in flight.
+    7. Cover: a session unresolvable on the first ask and resolvable on the next; an uncovered source still costing nothing however often it is asked; a resolved path that disappears re-resolving rather than freezing; a deleted transcript ending with no preview; a Codex rollout found by the repo's fallback when the index path is stale; a short read not eating the newest record; a record ending exactly on a window boundary still found; each format's usable-record rule unchanged.

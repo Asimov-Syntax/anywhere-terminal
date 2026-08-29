@@ -15,6 +15,7 @@ import { createSessionPreviewService, type PreviewEntry } from "./sessionPreview
 
 let dir: string;
 let sessionsDir: string;
+let projectsDir: string;
 let rollout: string;
 let reads: string[];
 let stats: string[];
@@ -30,7 +31,9 @@ async function writeRollout(message: string): Promise<void> {
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "at-preview-svc-"));
   sessionsDir = path.join(dir, "sessions");
+  projectsDir = path.join(dir, "projects");
   await fs.mkdir(sessionsDir, { recursive: true });
+  await fs.mkdir(projectsDir, { recursive: true });
   rollout = path.join(sessionsDir, "rollout-s1.jsonl");
   await writeRollout("the first answer");
   reads = [];
@@ -61,7 +64,7 @@ function service(entries: Record<string, PreviewEntry>, over: { recheckMs?: numb
         return null;
       }
     },
-    roots: { codexSessionsDir: sessionsDir },
+    roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
     now: () => clock,
     recheckMs: over.recheckMs ?? 2000,
     ...(over.cap === undefined ? {} : { cap: over.cap }),
@@ -172,26 +175,99 @@ describe("createSessionPreviewService", () => {
       expect(stats).toEqual([]);
     });
 
-    it("refuses a codex rollout outside the sessions dir", async () => {
+    it("never opens a codex rollout outside the sessions dir", async () => {
       const outside = path.join(dir, "elsewhere.jsonl");
       await fs.writeFile(outside, `${codexEvent("should not be read")}\n`);
-      const svc = service({ "codex:s1": { ...CODEX, sessionPath: outside } });
-      expect(await svc.preview("codex:s1")).toBeUndefined();
+      const svc = service({ "codex:gone": { agent: "codex", sessionId: "gone", sessionPath: outside } });
+      expect(await svc.preview("codex:gone")).toBeUndefined();
       expect(reads).toEqual([]);
     });
 
     it("answers a codex session with no rollout at all", async () => {
-      const svc = service({ "codex:s1": CODEX });
-      expect(await svc.preview("codex:s1")).toBeUndefined();
+      const svc = service({ "codex:gone": { agent: "codex", sessionId: "gone" } });
+      expect(await svc.preview("codex:gone")).toBeUndefined();
+      expect(reads).toEqual([]);
+    });
+
+    it("never opens a claude transcript outside the projects dir", async () => {
+      const outside = path.join(dir, "loose.jsonl");
+      await fs.writeFile(outside, "{}\n");
+      const svc = service({ "claude:c1": { agent: "claude", sessionId: "c1", sessionPath: outside } });
+      expect(await svc.preview("claude:c1")).toBeUndefined();
       expect(reads).toEqual([]);
     });
   });
 
-  it("keeps a preview when the transcript disappears rather than failing", async () => {
+  describe("resolution is a moment, not a verdict", () => {
+    it("finds a codex rollout the index did not name, by the repo's own fallback", async () => {
+      // `rollout_path` is unreliable — `pickRolloutPath` scans by filename when the
+      // index path is stale, and the service must inherit that half too (W2).
+      const stale = path.join(dir, "stale.jsonl");
+      const svc = service({ "codex:s1": { ...CODEX, sessionPath: stale } });
+      expect(await svc.preview("codex:s1")).toBe("the first answer");
+      expect(reads).toEqual([rollout]);
+    });
+
+    it("previews a session whose transcript only appears later", async () => {
+      const svc = service({ "codex:late": { agent: "codex", sessionId: "late" } });
+      expect(await svc.preview("codex:late")).toBeUndefined();
+
+      const later = path.join(sessionsDir, "rollout-late.jsonl");
+      await fs.writeFile(later, `${codexEvent("it finally spoke")}\n`);
+      clock += 5000;
+
+      expect(await svc.preview("codex:late")).toBe("it finally spoke");
+    });
+
+    it("re-resolves a transcript that moved instead of pinning the old path", async () => {
+      const svc = service({ "codex:s1": { ...CODEX, sessionPath: rollout } });
+      await svc.preview("codex:s1");
+
+      const moved = path.join(sessionsDir, "nested", "rollout-s1.jsonl");
+      await fs.mkdir(path.dirname(moved), { recursive: true });
+      await fs.rename(rollout, moved);
+      clock += 5000;
+
+      expect(await svc.preview("codex:s1")).toBe("the first answer");
+      expect(reads).toEqual([rollout, moved]);
+    });
+
+    it("keeps costing nothing for an uncovered source however often it is asked", async () => {
+      const svc = service({ "opencode:s1": { agent: "opencode", sessionId: "s1", sessionPath: rollout } });
+      for (let i = 0; i < 3; i++) {
+        expect(await svc.preview("opencode:s1")).toBeUndefined();
+        clock += 5000;
+      }
+      expect(stats).toEqual([]);
+      expect(reads).toEqual([]);
+    });
+  });
+
+  it("drops the preview when the transcript is gone", async () => {
+    // The spec says a transcript the reader cannot read carries no preview at
+    // all, so bounded message text must not outlive its file (round-1 W1).
     const svc = service({ "codex:s1": { ...CODEX, sessionPath: rollout } });
     await svc.preview("codex:s1");
     await fs.rm(rollout);
     clock += 5000;
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+  });
+
+  it("retries on the next ask rather than waiting out an interval it never used", async () => {
+    let fail = true;
+    const svc = createSessionPreviewService({
+      entry: async () => {
+        if (fail) {
+          throw new Error("vault unavailable");
+        }
+        return { agent: "codex", sessionId: "s1", sessionPath: rollout };
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+    });
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+    fail = false;
     expect(await svc.preview("codex:s1")).toBe("the first answer");
   });
 

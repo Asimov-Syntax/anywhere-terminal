@@ -4,13 +4,15 @@
 
 ### Requirement: Metadata-only, bounded title preview, no egress
 
-A listing SHALL read session metadata (id, cwd, timestamp, model/flags) plus a bounded title preview,
-MAY additionally extract a bounded last-activity preview from a session whose transcript it already
-has a path to, and SHALL NOT read message bodies beyond those two lines. Each preview SHALL be
-truncated to ≤120 characters and newline-stripped **at the point it is read**. Previews and metadata
-MAY be cached locally in an owner-only (`0o600`) store; no vault data SHALL be sent off the machine.
-
-This governs the **listing** path only; detail reads are authorized separately.
+The system SHALL read session metadata (id, cwd, timestamp, model/flags) plus a single title preview,
+and MAY additionally extract a single last-activity preview for a session whose transcript it can
+locate by id. Each preview is transcript-derived and because it originates from message content MAY
+contain sensitive material, so each SHALL be truncated to ≤120 characters and newline-stripped at read
+time. The bounded metadata and previews MAY be cached on the local machine to accelerate display,
+provided the cache is written owner-only (file mode `0o600`) under the extension's storage and is NEVER
+transmitted off the machine. The system SHALL NOT read message bodies beyond those two preview lines,
+SHALL NOT persist or cache any transcript content beyond the two bounded previews, and SHALL NOT send
+any vault data off the machine.
 
 #### Scenario: Only bounded previews leave the reader
 
@@ -25,7 +27,8 @@ This governs the **listing** path only; detail reads are authorized separately.
 - **THEN** what crosses IPC is already one line of at most 120 characters — the full text is never
   held in the listing, sent to a view, or written to a cache
 
-#### Scenario: A source a listing may not open stays unread
+#### Scenario: A source whose store may not be opened stays unread
 
-- **WHEN** a session's own requirements forbid a listing from opening its store
+- **WHEN** a session's own requirements forbid opening its store for a listing, or no transcript can be
+  located for it by id
 - **THEN** no last-activity preview is extracted for it, and its absence is not a failure

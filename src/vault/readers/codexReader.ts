@@ -1291,7 +1291,7 @@ async function resolveCodexRolloutPath(sessionId: string, options: CodexReaderOp
 }
 
 /** The index's rollout_path when it is contained, else a scan by filename. */
-async function pickRolloutPath(
+export async function pickRolloutPath(
   thread: { rolloutPath?: string } | null,
   sessionId: string,
   sessionsDir: string,
