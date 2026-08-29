@@ -12,6 +12,7 @@ import {
   type RenderTabBarDeps,
   renderTabBar,
   type TabBarDataSource,
+  type TabBarScope,
   type TabKeyboardDeps,
 } from "./TabBarUtils";
 
@@ -624,5 +625,142 @@ describe("buildTabBarData", () => {
     });
 
     expect(buildTabBarData(store).get("tab-1")?.activityStatus).toBe("waiting");
+  });
+});
+
+// ─── Scoping the bar to one worktree (WT-010.1) ──────────────────────
+
+describe("a scoped tab bar hides only what it can prove belongs elsewhere", () => {
+  const HERE = "/wt/here";
+  const ELSEWHERE = "/wt/elsewhere";
+
+  const source = (over: Partial<TabBarDataSource>): TabBarDataSource => ({
+    tabLayouts: new Map(),
+    tabActivePaneIds: new Map(),
+    terminals: new Map(),
+    ...over,
+  });
+
+  /** Single-pane tabs, one per id, all idle. */
+  function leaves(...ids: string[]): TabBarDataSource {
+    return source({
+      tabLayouts: new Map(ids.map((id) => [id, createLeaf(id)])),
+      terminals: new Map(ids.map((id) => [id, { name: id, exited: false, activityStatus: "idle" }])) as never,
+    });
+  }
+
+  const scope = (entries: [string, string][]): TabBarScope => ({
+    worktreeId: HERE,
+    attribution: new Map(entries),
+  });
+
+  it("presents a pane the evidence does not place, in every scope", () => {
+    // Failing OPEN is the whole invariant: absence of attribution is not proof of
+    // absence from this worktree, and a tab hidden on no evidence is a running
+    // terminal the user cannot find and cannot tell is hidden.
+    const store = leaves("here", "elsewhere", "unplaced");
+    const shown = buildTabBarData(
+      store,
+      scope([
+        ["here", HERE],
+        ["elsewhere", ELSEWHERE],
+      ]),
+    );
+    expect([...shown.keys()]).toEqual(["here", "unplaced"]);
+  });
+
+  it("hides nothing at all when no attribution has arrived", () => {
+    const store = leaves("a", "b", "c");
+    expect([...buildTabBarData(store, scope([])).keys()]).toEqual(["a", "b", "c"]);
+  });
+
+  it("hides nothing at all when the surface is unscoped", () => {
+    const store = leaves("a", "b");
+    expect([...buildTabBarData(store).keys()]).toEqual(["a", "b"]);
+  });
+
+  it("keeps a split with any one pane in scope, and drops one with every pane elsewhere", () => {
+    const store = source({
+      tabLayouts: new Map([
+        ["mixed", createBranch("horizontal", createLeaf("mixed"), createLeaf("mixed-b"))],
+        ["unplaced", createBranch("horizontal", createLeaf("unplaced"), createLeaf("unplaced-b"))],
+        ["gone", createBranch("horizontal", createLeaf("gone"), createLeaf("gone-b"))],
+      ]),
+      tabActivePaneIds: new Map([
+        ["mixed", "mixed"],
+        ["unplaced", "unplaced"],
+        ["gone", "gone"],
+      ]),
+      terminals: new Map(
+        ["mixed", "mixed-b", "unplaced", "unplaced-b", "gone", "gone-b"].map((id) => [
+          id,
+          { name: id, exited: false, activityStatus: "idle" },
+        ]),
+      ) as never,
+    });
+
+    const shown = buildTabBarData(
+      store,
+      scope([
+        ["mixed", HERE],
+        ["mixed-b", ELSEWHERE],
+        // Every leaf elsewhere but one the evidence does not place at all.
+        ["unplaced", ELSEWHERE],
+        ["gone", ELSEWHERE],
+        ["gone-b", ELSEWHERE],
+      ]),
+    );
+    expect([...shown.keys()]).toEqual(["mixed", "unplaced"]);
+  });
+
+  it("keeps a kept split's label and aggregated activity exactly as before", () => {
+    const store = source({
+      tabLayouts: new Map([["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-b"))]]),
+      tabActivePaneIds: new Map([["tab-1", "tab-1"]]),
+      terminals: new Map([
+        ["tab-1", { name: "Shell", exited: false, activityStatus: "idle", customName: "build" }],
+        ["pane-b", { name: "Codex", exited: false, activityStatus: "waiting" }],
+      ]) as never,
+    });
+    const scoped = buildTabBarData(
+      store,
+      scope([
+        ["tab-1", HERE],
+        ["pane-b", ELSEWHERE],
+      ]),
+    ).get("tab-1");
+    expect(scoped).toEqual(buildTabBarData(store).get("tab-1"));
+    expect(scoped?.activityStatus).toBe("waiting");
+    expect(scoped?.customName).toBe("build");
+  });
+
+  it("presents the bar whatever the tab count while scoped, and hides it below two while not", () => {
+    // The chip is the only thing saying the list is a subset, so a scope filtering
+    // down to one tab must not hide its own escape hatch (design.md D3).
+    const one = new Map([["a", { name: "a" }]]);
+    for (const [size, isScoped, visible] of [
+      [0, true, true],
+      [1, true, true],
+      [0, false, false],
+      [1, false, false],
+    ] as const) {
+      const deps = createMockDeps({
+        terminals: size === 0 ? new Map() : one,
+        ...(isScoped ? { isScoped: true } : {}),
+      });
+      renderTabBar(deps);
+      expect(deps.tabBarEl.classList.contains("visible"), `size ${size}, scoped ${isScoped}`).toBe(visible);
+    }
+  });
+
+  it("leaves the unscoped visibility rule exactly where it was at two tabs", () => {
+    const deps = createMockDeps({
+      terminals: new Map([
+        ["a", { name: "a" }],
+        ["b", { name: "b" }],
+      ]),
+    });
+    renderTabBar(deps);
+    expect(deps.tabBarEl.classList.contains("visible")).toBe(true);
   });
 });

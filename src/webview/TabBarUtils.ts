@@ -26,6 +26,34 @@ export interface TabBarDataSource {
 }
 
 /**
+ * A surface's scope, and the evidence it filters by. Absent → unscoped, and every
+ * tab is presented.
+ */
+export interface TabBarScope {
+  /** The worktree this surface is scoped to. */
+  worktreeId: string;
+  /**
+   * paneId → worktreeId, from the presence projection (design.md D2). An ABSENT
+   * key means the evidence does not place that pane, which is presented in every
+   * scope — there is no third value, because one would invite a fourth outcome.
+   */
+  attribution: ReadonlyMap<string, string>;
+}
+
+/**
+ * Whether a scope can prove this pane belongs to a different worktree. Anything
+ * else — placed here, or not placed at all — is presented: the bar hides only
+ * what it can prove belongs elsewhere.
+ */
+function inScope(scope: TabBarScope | undefined, paneId: string): boolean {
+  if (!scope) {
+    return true;
+  }
+  const held = scope.attribution.get(paneId);
+  return held === undefined || held === scope.worktreeId;
+}
+
+/**
  * Build a filtered terminals map for tab bar rendering.
  * Only includes "root" tabs (those with a tabLayout entry).
  * For split tabs, uses the active pane's name.
@@ -44,7 +72,7 @@ function labelFor(instance: TerminalInstance | undefined): string | undefined {
   return instance.name === "" ? instance.defaultName : instance.name;
 }
 
-export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
+export function buildTabBarData(store: TabBarDataSource, scope?: TabBarScope): Map<string, TabInfo> {
   const tabTerminals = new Map<string, TabInfo>();
   for (const [tabId, layout] of store.tabLayouts) {
     if (layout.type === "branch") {
@@ -55,7 +83,15 @@ export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
       const activePaneId = store.tabActivePaneIds.get(tabId) ?? tabId;
       const activeInstance = store.terminals.get(activePaneId);
       const rootInstance = store.terminals.get(tabId);
-      const leaves = getAllSessionIds(layout).map((sid) => store.terminals.get(sid));
+      // A split is one tab over several panes, so the same "prove it belongs
+      // elsewhere" rule applies to the SET: it survives while any one of its
+      // panes is in scope or unplaced, and is dropped only when every one of
+      // them is attributed somewhere else.
+      const sessionIds = getAllSessionIds(layout);
+      if (!sessionIds.some((sid) => inScope(scope, sid))) {
+        continue;
+      }
+      const leaves = sessionIds.map((sid) => store.terminals.get(sid));
       const anyWaiting = leaves.some((inst) => inst?.activityStatus === "waiting" && !inst.exited);
       const anyRunning = leaves.some((inst) => inst?.activityStatus === "running" && !inst.exited);
       tabTerminals.set(tabId, {
@@ -67,7 +103,7 @@ export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
     } else {
       // Single pane tab
       const instance = store.terminals.get(tabId);
-      if (instance) {
+      if (instance && inScope(scope, tabId)) {
         tabTerminals.set(tabId, {
           name: labelFor(instance) ?? tabId,
           customName: instance.customName,
@@ -108,6 +144,13 @@ export interface RenderTabBarDeps {
    * an active inline-rename overlay over the (possibly re-rendered) tab DOM.
    */
   onAfterRender?: () => void;
+  /**
+   * Whether this surface is scoped. A SECOND, independent reason to be visible —
+   * not a reinterpretation of the tab count. The chip is the only thing on screen
+   * saying the list is a subset, so a scope filtering down to one tab would
+   * otherwise hide its own escape hatch (design.md D3).
+   */
+  isScoped?: boolean;
 }
 
 /**
@@ -116,11 +159,12 @@ export interface RenderTabBarDeps {
  * - Reconciles tab elements by ID so in-flight pointer events survive updates
  * - Updates tab name, status, active state, and close button in place
  * - Appends "+" add button
- * - Hides tab bar when <= 1 tab (clean single-tab UX)
- * - Shows tab bar when 2+ tabs
+ * - Hides tab bar when <= 1 tab and the surface is unscoped (clean single-tab UX)
+ * - Shows tab bar when 2+ tabs, or whatever the count while the surface is scoped
  */
 export function renderTabBar(deps: RenderTabBarDeps): void {
-  const { tabBarEl, terminals, activeTabId, onTabClick, onTabClose, onAddClick, onTabRename, onAfterRender } = deps;
+  const { tabBarEl, terminals, activeTabId, onTabClick, onTabClose, onAddClick, onTabRename, onAfterRender, isScoped } =
+    deps;
 
   const existingTabs = new Map<string, HTMLDivElement>();
   for (const child of Array.from(tabBarEl.children)) {
@@ -245,8 +289,8 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
     cursor = next;
   }
 
-  // Toggle visibility: hide when <= 1 tab, show when 2+
-  if (terminals.size >= 2) {
+  // Toggle visibility: hide when <= 1 tab and unscoped, show when 2+ OR scoped.
+  if (terminals.size >= 2 || isScoped === true) {
     tabBarEl.classList.add("visible");
   } else {
     tabBarEl.classList.remove("visible");

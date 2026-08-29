@@ -44,7 +44,7 @@
     3. Emit it where the envelope is stored (`WorktreeController.ts:769-777`), and only when the map differs from the last one emitted.
     4. Cover: a map built from a multi-worktree envelope; external rows excluded; a row with no `paneId` excluded; a pane under two worktrees omitted; an identical envelope emitting nothing a second time; a degraded envelope still producing the attribution its rows carry.
 
-- [ ] 1_4 Filter the tab bar, and keep it visible while it is filtered
+- [x] 1_4 Filter the tab bar, and keep it visible while it is filtered — verified: pnpm exec vitest run 'src/webview/TabBar.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: specs/tab-bar-component/spec.md#{a-scoped-tab-bar-hides-only-what-it-can-prove-belongs-elsewhere, absence-of-attribution-fails-open, the-tab-bar-is-presented-whenever-it-is-filtered, scope-changes-what-is-drawn-and-nothing-else, tab-bar-rendering}, design.md#d3-a-scoped-tab-bar-is-visible-whatever-the-tab-count
   - **Acceptance**:
