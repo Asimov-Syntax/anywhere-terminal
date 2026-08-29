@@ -128,4 +128,45 @@ describe("mountEmptyScopeRegion", () => {
     expect(document.querySelectorAll(".empty-scope")).toHaveLength(1);
     expect(document.querySelector(".empty-scope")?.textContent).toContain("feat/y");
   });
+
+  it("keeps the element, and the focus on it, when nothing about the region moved", () => {
+    // It is remounted from the render path, which fires on every activity
+    // transition in the window — and while the scope is empty every running pane is
+    // out of scope, so an unconditional rebuild took focus off the region's own
+    // offers about once a second (round-2 W6).
+    const container = surface();
+    mountEmptyScopeRegion(container, deps);
+    const first = document.querySelector(".empty-scope");
+    const offer = first?.querySelector("button");
+    offer?.focus();
+
+    mountEmptyScopeRegion(container, { ...deps });
+
+    expect(document.querySelector(".empty-scope")).toBe(first);
+    expect(document.activeElement).toBe(offer);
+  });
+
+  it("replaces the element when the offers it makes change", () => {
+    const container = surface();
+    mountEmptyScopeRegion(container, deps);
+    const first = document.querySelector(".empty-scope");
+
+    mountEmptyScopeRegion(container, { ...deps, onLaunchAgent: () => {} });
+
+    expect(document.querySelector(".empty-scope")).not.toBe(first);
+    expect([...document.querySelectorAll(".empty-scope button")].map((b) => b.textContent)).toEqual([
+      "Open a terminal",
+      "Launch an agent",
+      "Show all tabs",
+    ]);
+  });
+
+  it("touches nothing when the container is detached — no region, and no hidden container", () => {
+    const container = surface();
+    container.remove();
+    mountEmptyScopeRegion(container, deps);
+
+    expect(document.querySelector(".empty-scope")).toBeNull();
+    expect(container.style.display).toBe("");
+  });
 });

@@ -146,16 +146,21 @@ export function buildTabBarData(store: TabBarDataSource, scope?: TabBarScope): T
         activityStatus: anyWaiting ? "waiting" : anyRunning ? "running" : "idle",
       });
     } else {
-      // Single pane tab
+      // Single pane tab. The scope decision is keyed by the LEAF's session id, not
+      // the tab id: collapsing a split leaves the tab keyed by its original pane
+      // while the surviving leaf carries another, and judging the dead id hid the
+      // live pane from the filter entirely (round-2 W3). The name lookup below is
+      // pre-existing and stays keyed by the tab.
+      const paneId = layout.sessionId;
       const instance = store.terminals.get(tabId);
-      if (instance && inScope(scope, tabId)) {
+      if (instance && inScope(scope, paneId)) {
         tabTerminals.set(tabId, {
           name: labelFor(instance) ?? tabId,
           customName: instance.customName,
           exited: instance.exited,
           activityStatus: instance.activityStatus,
         });
-      } else if (!inScope(scope, tabId) && tabIsWaiting([tabId], store, waiting)) {
+      } else if (!inScope(scope, paneId) && tabIsWaiting([paneId], store, waiting)) {
         // Gated on HIDDENNESS, not on holding an instance: the split branch counts
         // a pane on presence evidence alone, and a leaf the surface has not built
         // an instance for yet is the same hidden waiting thing (round-1 W5).

@@ -359,6 +359,12 @@ let tabBarScope: TabBarScopeWiring | null = null;
 // ─── Orchestration ──────────────────────────────────────────────────
 
 function updateTabBar(): void {
+  // Every route a pane arrives or leaves by ends in a redraw: the region's own
+  // offers, the `+` button, a split, a close, a tree push. Deciding the region at
+  // selection alone left it standing over the terminal it had just opened. Ahead
+  // of the tab-bar check, because the region does not depend on that element
+  // (round-2 suggestion).
+  tabBarScope?.syncEmptyScope();
   const tabBarEl = document.getElementById("tab-bar");
   if (!tabBarEl) {
     return;
@@ -384,10 +390,6 @@ function updateTabBar(): void {
       }
     },
   });
-  // Every route a pane arrives or leaves by ends in a redraw: the region's own
-  // offers, the `+` button, a split, a close, a tree push. Deciding the region at
-  // selection alone left it standing over the terminal it had just opened.
-  tabBarScope?.syncEmptyScope();
 }
 
 function startInlineRename(tabId: string, tabEl: HTMLElement, tabBarEl: HTMLElement): void {

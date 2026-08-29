@@ -771,6 +771,19 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     expect(data.hiddenWaiting).toBe(1);
   });
 
+  it("counts a collapsed split by its LIVE leaf, not by the dead tab id it kept", () => {
+    // Round-2 W3: `closeSplitPaneById` leaves tabLayouts[A] = leaf{B}. Keyed by A,
+    // which carries no attribution, the tab looked in-scope and the count never
+    // fired for a live pane hidden and waiting.
+    const store = source({
+      tabLayouts: new Map([["collapsed", createLeaf("survivor")]]),
+      tabActivePaneIds: new Map(),
+      terminals: new Map([["survivor", { name: "survivor", exited: false, activityStatus: "waiting" }]]) as never,
+    });
+    const data = buildTabBarData(store, scopeWaiting([["survivor", ELSEWHERE]], []));
+    expect(data.hiddenWaiting).toBe(1);
+  });
+
   it("counts no pane the evidence cannot place — it was never hidden", () => {
     const store = leavesWaiting(["here", "unplaced"], ["unplaced"]);
     const data = buildTabBarData(store, scopeWaiting([["here", HERE]], ["unplaced"]));

@@ -50,19 +50,31 @@ const REGION_ID = "empty-scope-region";
  * would appear beside the still-visible terminal the scope is hiding (D4).
  */
 export function mountEmptyScopeRegion(container: HTMLElement, deps: EmptyScopeRegionDeps | null): void {
-  container.ownerDocument.getElementById(REGION_ID)?.remove();
+  const standing = container.ownerDocument.getElementById(REGION_ID);
   if (deps === null) {
+    standing?.remove();
     container.style.removeProperty("display");
     return;
   }
+  // Resolved BEFORE anything is removed: hiding or unmounting first would leave a
+  // detached container with no region in its place (round-1 suggestion).
   const parent = container.parentElement;
   if (parent === null) {
-    // Hiding first would have left a blank surface: the container gone and no
-    // region in its place (round-1 suggestion).
     return;
   }
+  const identity = `${deps.label}\u0002${deps.onLaunchAgent === undefined ? "" : "launch"}`;
+  // Idempotent on purpose. This runs from the render path, which fires on every
+  // activity transition of any pane in the window — and while the scope is empty
+  // every running pane is out of scope, so that is the NORMAL case. Rebuilding
+  // unconditionally destroyed the button focus was on about once a second, which
+  // put the region's own offers out of reach of a keyboard (round-2 W6).
+  if (standing?.dataset.identity === identity) {
+    return;
+  }
+  standing?.remove();
   const region = renderEmptyScopeRegion(deps);
   region.id = REGION_ID;
+  region.dataset.identity = identity;
   parent.insertBefore(region, container);
   container.style.display = "none";
 }

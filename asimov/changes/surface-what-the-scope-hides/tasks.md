@@ -89,3 +89,19 @@
     4. The leaf branch counts on hiddenness, not on holding an instance.
     5. Cover: a pane appearing in a standing region taking it down; the flag going off taking it down; a hidden tab whose only waiting pane is exited moving the guard when a live one joins it; a collapsed split reported to the selection; a hidden leaf counted on presence alone.
 
+## 3. Review round 2
+
+- [x] 3_1 Key the collapsed split by its live leaf, and stop rebuilding the region under the cursor — verified: pnpm exec vitest run 'src/webview/emptyScopeRegion.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: design.md#d4-the-empty-scope-region-hides-the-terminal-container-without-unmounting-it
+  - **Acceptance**:
+    - Outcome: a collapsed split is judged by its live pane, and an unchanged region keeps its element and its focus
+    - Verify: unit src/webview/emptyScopeRegion.test.ts
+  - **Plan**:
+    0. Files: `src/webview/TabBarUtils.ts`, `src/webview/emptyScopeRegion.ts`, `src/webview/main.ts`, `src/webview/TabBar.test.ts`, `src/webview/emptyScopeRegion.test.ts`, `src/webview/tabBarScopeWiring.test.ts`.
+    1. The bar's leaf branch decides scope and waiting by the leaf's own session id. The name lookup stays keyed by the tab id — that is pre-existing and not this change's to move.
+    2. The mount is idempotent: same label and same offer set leaves the element alone. It is now reached from the render path, which fires on every activity transition in the window, so an unconditional rebuild took focus off the region's own offers roughly once a second.
+    3. The detached-container guard resolves the parent before removing anything.
+    4. The region sync runs before the tab-bar element check, so it does not hang off an element unrelated to it.
+    5. Cover: a collapsed split whose live leaf is attributed elsewhere counted and dropped; a repeat mount with unchanged offers keeping the same element and its focus; a changed label replacing it; the arrival paths asserted against a REAL container's `display`, not a dep spy.
+

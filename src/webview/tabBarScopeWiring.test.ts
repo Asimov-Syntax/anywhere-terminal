@@ -10,6 +10,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { WorktreeTreeResponseMessage } from "../types/messages";
+import { mountEmptyScopeRegion } from "./emptyScopeRegion";
 import { createBranch, createLeaf, getAllSessionIds, type SplitNode } from "./SplitModel";
 import { buildTabBarData, renderTabBar } from "./TabBarUtils";
 import { type TabBarScopeWiring, wireTabBarScope } from "./tabBarScopeWiring";
@@ -67,6 +68,14 @@ interface Surface {
   activePane: string | null;
   /** The worktree the empty-scope region is standing for, or `null`. */
   emptyScope: { id: string; label: string } | null;
+  /**
+   * Whether the terminal container is hidden — the state the region's whole point
+   * rests on. Asserted instead of the dep call, because a spy proves the seam
+   * called something and not that the surface changed (round-2 W7).
+   */
+  containerHidden(): boolean;
+  /** The region element currently standing, if any. */
+  region(): HTMLElement | null;
   /** A pane arriving the way `onTabCreated` delivers one — a redraw, no selection. */
   addPane(paneId: string, worktreeId: string): void;
   state: Record<string, unknown>;
@@ -98,6 +107,11 @@ function surface(
   const tabBarEl = document.createElement("div");
   tabBarEl.id = "tab-bar";
   document.body.appendChild(tabBarEl);
+  // The real element the region stands in front of, wired through the real mount:
+  // these tests then assert what the user would see rather than what the seam said.
+  const containerEl = document.createElement("div");
+  containerEl.id = "terminal-container";
+  document.body.appendChild(containerEl);
 
   let controller: WorktreeController | null = null;
   const out = {
@@ -140,6 +154,10 @@ function surface(
     },
     showEmptyScope: (worktree) => {
       out.emptyScope = worktree;
+      mountEmptyScopeRegion(
+        containerEl,
+        worktree === null ? null : { label: worktree.label, onOpenTerminal: () => {}, onClear: () => {} },
+      );
     },
   });
 
@@ -197,6 +215,8 @@ function surface(
     });
     draw();
   };
+  out.containerHidden = () => containerEl.style.display === "none";
+  out.region = () => document.getElementById("empty-scope-region");
   out.chip = () => tabBarEl.querySelector<HTMLElement>(".tab-scope");
   out.badge = () => tabBarEl.querySelector<HTMLElement>(".tab-scope-badge")?.textContent ?? null;
   out.tabs = () => [...tabBarEl.querySelectorAll(".tab-name")].map((t) => t.textContent ?? "");
@@ -717,5 +737,51 @@ describe("round-1: the region follows the presented set, not just the selection"
     s.seam.onSelectWorktree(MAIN);
 
     expect(s.emptyScope).toBeNull();
+    expect(s.containerHidden()).toBe(false);
+  });
+
+  it("hides the real container while the region stands, and gives it back", () => {
+    // Asserted on the container, not on the dep call: a spy proves the seam said
+    // something, not that the surface changed (round-2 W7).
+    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
+    s.push();
+    s.seam.onSelectWorktree(PANEL);
+    expect(s.containerHidden()).toBe(true);
+    expect(s.region()).not.toBeNull();
+
+    s.seam.onSelectWorktree(null);
+    expect(s.containerHidden()).toBe(false);
+    expect(s.region()).toBeNull();
+  });
+
+  it("gives the container back on the arrival path, not only on a selection", () => {
+    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
+    s.push();
+    s.seam.onSelectWorktree(PANEL);
+    expect(s.containerHidden()).toBe(true);
+
+    s.addPane("pane-new", PANEL);
+
+    expect(s.containerHidden()).toBe(false);
+    expect(s.region()).toBeNull();
+  });
+
+  it("keeps the standing region, and its focus, across a redraw that changes nothing", () => {
+    // The render path fires on every activity transition in the window, and while
+    // the scope is empty every running pane is out of scope — so this is the normal
+    // case, not an edge one (round-2 W6).
+    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
+    s.push();
+    s.seam.onSelectWorktree(PANEL);
+    const before = s.region();
+    const offer = before?.querySelector("button");
+    offer?.focus();
+    expect(document.activeElement).toBe(offer);
+
+    s.seam.syncEmptyScope();
+    s.seam.syncEmptyScope();
+
+    expect(s.region()).toBe(before);
+    expect(document.activeElement).toBe(offer);
   });
 });
