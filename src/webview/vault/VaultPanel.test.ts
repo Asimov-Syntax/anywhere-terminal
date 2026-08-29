@@ -4172,22 +4172,22 @@ describe("worktree segment", () => {
     expect(host.querySelector('.vault-segmented button[data-view="worktree"]')).toBeNull();
   });
 
-  it("appears as a fourth segment and swaps the body", () => {
+  it("appears on the body control and swaps the body", () => {
     const host = createHost();
     const body = worktreeBody();
     const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body });
-    const worktreeBtn = host.querySelector<HTMLButtonElement>('.vault-segmented button[data-view="worktree"]');
+    const worktreeBtn = host.querySelector<HTMLButtonElement>('.vault-view-toggle button[data-view="worktree"]');
     expect(worktreeBtn).not.toBeNull();
-    expect(host.querySelectorAll(".vault-segmented button")).toHaveLength(4);
 
     worktreeBtn?.click();
     expect(panel.getView()).toBe("worktree");
     expect(host.querySelector<HTMLElement>(".vault-list")?.style.display).toBe("none");
     expect(body.style.display).toBe("");
     expect(worktreeBtn?.getAttribute("aria-selected")).toBe("true");
-    // The grouping segments deselect: one tablist, four segments, one selection.
+    // The grouping is a separate control, so it keeps its own selection rather
+    // than deselecting to hand the body control its one.
     expect(host.querySelector('.vault-segmented button[data-mode="recent"]')?.getAttribute("aria-selected")).toBe(
-      "false",
+      "true",
     );
   });
 
@@ -4205,6 +4205,7 @@ describe("worktree segment", () => {
     const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: worktreeBody() });
     panel.setGroupMode("agent");
     panel.setView("worktree");
+    panel.setView("sessions");
     host.querySelector<HTMLButtonElement>('.vault-segmented button[data-mode="folder"]')?.click();
     expect(panel.getView()).toBe("sessions");
     expect(host.querySelector('.vault-segmented button[data-mode="folder"]')?.getAttribute("aria-selected")).toBe(
@@ -4320,13 +4321,12 @@ describe("the two-level view control", () => {
     return el;
   }
 
-  function panelWith(over: { workbench?: boolean } = {}): { host: HTMLElement; panel: VaultPanel } {
+  function panelWith(): { host: HTMLElement; panel: VaultPanel } {
     const host = createHost();
     const panel = new VaultPanel({
       host,
       postMessage: () => {},
       worktreeBody: worktreeBody(),
-      workbench: over.workbench ?? true,
     });
     return { host, panel };
   }
@@ -4340,7 +4340,7 @@ describe("the two-level view control", () => {
     const { host } = panelWith();
     expect(host.querySelectorAll(".vault-view-toggle button")).toHaveLength(2);
     // Every value labelled at every width: the control has to answer "which body
-    // am I in" without a hover. The flat control dropped unselected labels.
+    // am I in" without a hover.
     for (const view of ["worktree", "sessions"]) {
       expect(viewBtn(host, view)?.querySelector(".vault-segmented-label")?.textContent).toBeTruthy();
     }
@@ -4406,20 +4406,12 @@ describe("the two-level view control", () => {
       host,
       postMessage: () => {},
       worktreeBody: worktreeBody(),
-      workbench: true,
       getInitialView: () => "worktree",
       getInitialGroupMode: () => "folder",
     });
     expect(panel.getView()).toBe("worktree");
     panel.setView("sessions", { persist: false });
     expect(modeBtn(host, "folder")?.getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("[1_1] renders the shipped flat control while the setting is off", () => {
-    const { host } = panelWith({ workbench: false });
-    expect(host.querySelector(".vault-view-toggle")).toBeNull();
-    expect(host.querySelector(".vault-groupbar")).toBeNull();
-    expect(host.querySelectorAll(".vault-toolbar .vault-segmented button")).toHaveLength(4);
   });
 });
 
@@ -4428,7 +4420,7 @@ describe("the two-level control's keyboard", () => {
     const host = createHost();
     const body = document.createElement("div");
     body.className = "wt-tree";
-    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench: true });
+    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body });
     return { host, panel };
   }
 
@@ -4502,44 +4494,14 @@ describe("the two-level control's keyboard", () => {
     expect(handled.defaultPrevented).toBe(true);
     expect(passed.defaultPrevented).toBe(false);
   });
-
-  it("[1_2] leaves the shipped flat control's focus behaviour as it was", () => {
-    const host = createHost();
-    const body = document.createElement("div");
-    body.className = "wt-tree";
-    new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench: false });
-    expect(focusOrder(host, ".vault-segmented--flat")).toEqual([0, 0, 0, 0]);
-  });
-});
-
-describe("the label squeeze retires with the control that caused it", () => {
-  function build(workbench: boolean): HTMLElement {
-    const host = createHost();
-    const body = document.createElement("div");
-    body.className = "wt-tree";
-    new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench });
-    return host;
-  }
-
-  it("[1_3] marks the flat control, and only it, as the rule's target", () => {
-    // The container query hides unselected labels below 400px. It is scoped to
-    // this marker so it dies with the flat control instead of surviving to hide
-    // the grouping labels the two-level control always shows.
-    expect(build(false).querySelector(".vault-segmented--flat")).not.toBeNull();
-
-    const on = build(true);
-    expect(on.querySelector(".vault-segmented--flat")).toBeNull();
-    expect(on.querySelector(".vault-groupbar .vault-segmented")).not.toBeNull();
-    expect(on.querySelector(".vault-view-toggle")).not.toBeNull();
-  });
 });
 
 describe("round-1 review fixes", () => {
-  function build(workbench: boolean): { host: HTMLElement; panel: VaultPanel } {
+  function build(): { host: HTMLElement; panel: VaultPanel } {
     const host = createHost();
     const body = document.createElement("div");
     body.className = "wt-tree";
-    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench });
+    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body });
     return { host, panel };
   }
 
@@ -4560,31 +4522,11 @@ describe("round-1 review fixes", () => {
     expect(block(css, ".vault-groupbar"), ".vault-groupbar can shrink").toContain("flex: 0 0 auto");
   });
 
-  it("[2_1] recomposes when the rollout is turned on at runtime", () => {
-    const { host, panel } = build(false);
-    expect(host.querySelectorAll(".vault-toolbar .vault-segmented--flat button")).toHaveLength(4);
-
-    panel.setWorkbench(true);
-    expect(host.querySelector(".vault-segmented--flat")).toBeNull();
-    expect(host.querySelectorAll(".vault-view-toggle button")).toHaveLength(2);
-    expect(host.querySelectorAll(".vault-groupbar button[data-mode]")).toHaveLength(3);
-    expect(host.querySelectorAll(".vault-toolbar button[data-mode]")).toHaveLength(0);
-  });
-
-  it("[2_1] recomposes when the rollout is turned off at runtime", () => {
-    const { host, panel } = build(true);
-    panel.setWorkbench(false);
-    expect(host.querySelector(".vault-view-toggle")).toBeNull();
-    expect(host.querySelector(".vault-groupbar")).toBeNull();
-    expect(host.querySelectorAll(".vault-toolbar .vault-segmented--flat button")).toHaveLength(4);
-  });
-
-  it("[2_1] keeps the body and the grouping the user chose across a flip", () => {
-    const { host, panel } = build(false);
+  it("[2_1] withdraws the grouping strip in the body that has nothing to group", () => {
+    const { host, panel } = build();
     panel.setGroupMode("folder", { persist: false });
     panel.setView("worktree", { persist: false });
 
-    panel.setWorkbench(true);
     expect(panel.getView()).toBe("worktree");
     expect(host.querySelector('.vault-view-toggle button[data-view="worktree"]')?.getAttribute("aria-selected")).toBe(
       "true",
@@ -4596,23 +4538,6 @@ describe("round-1 review fixes", () => {
     expect(host.querySelector('.vault-groupbar button[data-mode="folder"]')?.getAttribute("aria-selected")).toBe(
       "true",
     );
-  });
-
-  it("[2_1] is inert when the rollout resend carries the value it already has", () => {
-    // The host resends the flag after initialization to close a race, so the
-    // common call is a no-op and must not rebuild controls under the user.
-    const { host, panel } = build(true);
-    const before = host.querySelector(".vault-view-toggle");
-    panel.setWorkbench(true);
-    expect(host.querySelector(".vault-view-toggle")).toBe(before);
-  });
-
-  it("[2_1] leaves the keyboard working on controls built by a runtime flip", () => {
-    const { host, panel } = build(false);
-    panel.setWorkbench(true);
-    const toggle = host.querySelector(".vault-view-toggle");
-    toggle?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
-    expect(panel.getView()).toBe("worktree");
   });
 });
 
@@ -4630,7 +4555,6 @@ describe("the rail hands the room back after a selection", () => {
       host,
       postMessage: () => {},
       worktreeBody: body,
-      workbench: true,
       getInitialCollapsed: () => over.collapsed ?? false,
       persistCollapsed: (c) => persisted.push(c),
     });
@@ -4688,7 +4612,6 @@ describe("the rail hands the room back after a selection", () => {
       host,
       postMessage: () => {},
       worktreeBody: body,
-      workbench: true,
       getInitialCollapsed: () => false,
       persistCollapsed: (c) => persisted.push(c),
       animateCollapse: (apply) => {

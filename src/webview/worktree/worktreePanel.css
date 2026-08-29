@@ -15,24 +15,6 @@
  * Emphasis ladder, four steps only: repo → branch → preview → age.
  */
 
-/* The SHIPPED flat control fuses body and grouping into four segments, which no
-   longer fit at sidebar width with icon + label, so its unselected segments keep
-   the icon only. Scoped to `--flat` deliberately: the rule is a symptom of that
-   fusion, so it retires with the control rather than surviving to hide labels on
-   the two-level control, whose values are always named (worktree-panel-ui § 2). */
-.vault-toolbar {
-  container-type: inline-size;
-  container-name: vaultbar;
-}
-.vault-segmented-label {
-  display: inline;
-}
-@container vaultbar (max-width: 400px) {
-  .vault-segmented--flat button[aria-selected="false"] .vault-segmented-label {
-    display: none;
-  }
-}
-
 /* The column holding the tree and the inspector drawer under it.
    It REPEATS `.vault-body`'s flex contract deliberately: `.wt-tree` used to be a
    direct child of that constrained column, and wrapping it makes its own `flex`

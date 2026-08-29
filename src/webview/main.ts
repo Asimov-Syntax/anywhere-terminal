@@ -852,10 +852,6 @@ const routeMessage = createMessageRouter({
     // The seam reaches the panel as well as the coordinator. The bar reads the
     // EFFECTIVE scope, so the flip changes what it draws even though no tab, tree
     // or attribution moved. See: webview/tabBarScopeWiring.ts.
-    // The panel is a participant too: it reads the flag to decide whether the
-    // toolbar carries one fused control or two levels, and without this a flip
-    // left it on whatever it was constructed with (round-1 B2).
-    vaultPanel?.setWorkbench(msg.enabled);
     if (tabBarScope) {
       tabBarScope.setWorkbench(msg.enabled);
       return;
@@ -1167,7 +1163,6 @@ function handleInit(msg: InitMessage): void {
       host: vaultHost,
       actionsAvailable: msg.vaultActionsAvailable,
       worktreeBody: worktreeController.element,
-      workbench: msg.worktreeWorkbench,
       // Supplying this is what CONSTRUCTS the toolbar control: `VaultPanel` builds
       // it only when a create callback exists, and nothing here supplied one, so
       // the primary create affordance had never been rendered.
