@@ -29,6 +29,7 @@ import {
   worktree,
 } from "./worktreeFixtures";
 import type { PresentedActivity } from "./worktreeFormat";
+import { unconfirmedHint } from "./worktreeTreeView";
 import type {
   DelegationRoster,
   WorktreeActionResult,
@@ -438,6 +439,39 @@ describe("tree structure", () => {
         expect(new Set(keys).size, `two states share a ${layer} shape (${where})`).toBe(keys.length);
       }
     }
+  });
+
+  it("stops animating a run that outlived its evidence, and says so as a bound", () => {
+    const { view } = mount();
+    const presence: WorktreePresence = {
+      scannedAt: NOW,
+      degradedSources: [],
+      rowsByWorktreeId: {
+        [PANEL_WT]: [
+          agentRow({
+            rowId: "stale",
+            agent: "claude",
+            activity: "running",
+            activitySource: "output",
+            title: "worker",
+            stateStartedAt: NOW - 9 * 60_000,
+          }),
+        ],
+      },
+    };
+    view.setData({ tree: singleRepoTree(), presence });
+    const glyph = rowFor(view, "feat/worktree-panel")?.querySelector(".wt-glyph .wt-state");
+    expect(glyph?.className).toContain("wt-state--running-unconfirmed");
+    expect(glyph?.getAttribute("aria-label")).toBe("An agent may be running, unconfirmed");
+  });
+
+  it("writes the elapsed gap as a bound, so a hint read an hour later is still true", () => {
+    // The hint is written at render and read at hover. An exact figure would be
+    // false by the time anyone sees it, and the row does not repaint again.
+    expect(unconfirmedHint(9 * 60_000)).toContain("over 9 minutes");
+    expect(unconfirmedHint(3 * 60 * 60_000)).toContain("over 3 hours");
+    expect(unconfirmedHint(9 * 60_000)).toContain("not proof of a turn in progress");
+    expect(unconfirmedHint(undefined)).not.toContain("Unchanged");
   });
 
   it("keeps a failed worktree LISTING out of it — that says nothing about any agent", () => {

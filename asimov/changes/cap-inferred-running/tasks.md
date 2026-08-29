@@ -12,7 +12,7 @@
     3. Thread the new clock argument through every existing caller in the same task — `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeRemoveDialog.ts` — so the wave compiles on its own.
     4. Add the state's rule to `src/webview/worktree/worktreePanel.css` here too: the shape guard is keyed by the presented vocabulary, so a member with no rule does not compile. The rule only has to exist and be distinct; 1_2 owns whether it reads right, and owns the labels and hints.
 
-- [ ] 1_2 Give the unconfirmed claim a static shape and a hint that cannot go stale
+- [x] 1_2 Give the unconfirmed claim a static shape and a hint that cannot go stale — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{strongest-state-wins-and-shape-carries-it, a-claim-that-outlived-its-evidence-says-how-long-and-on-what}
   - **Acceptance**:

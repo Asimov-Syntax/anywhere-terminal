@@ -22,6 +22,7 @@ import {
   isFallbackActivity,
   type PresenceGroup,
   type PresentedActivity,
+  unchangedFor,
   worktreeBadges,
   worktreePills,
   worktreeTooltip,
@@ -69,12 +70,39 @@ function bindActivation(el: HTMLElement, activate: () => void): void {
  * is read as a statement about the evidence rather than about the agent (§ 7.2).
  */
 export function activityLabel(activity: PresentedActivity): string {
-  return activity === "unknown" ? "activity unknown" : activity;
+  if (activity === "unknown") {
+    return "activity unknown";
+  }
+  return activity === "running-unconfirmed" ? "running, unconfirmed" : activity;
 }
 
 /** The same statement made about a worktree row, which speaks for the agents inside it. */
 export function worktreeActivityLabel(activity: PresentedActivity): string {
-  return activity === "unknown" ? "An agent's activity is unknown" : `An agent is ${activity}`;
+  if (activity === "unknown") {
+    return "An agent's activity is unknown";
+  }
+  return activity === "running-unconfirmed" ? "An agent may be running, unconfirmed" : `An agent is ${activity}`;
+}
+
+/**
+ * Why a claim is shown as unconfirmed, in the user's terms.
+ *
+ * A LOWER BOUND, not an exact figure. The hint is written into an attribute when
+ * the row renders and read when the pointer arrives, which can be an hour later:
+ * an exact "5 minutes" would be false by then, and the row does not repaint again
+ * once it has crossed. "over N" is true when written and stays true.
+ */
+export function unconfirmedHint(elapsedMs: number | undefined): string {
+  const base =
+    "Inferred from terminal output, not reported by the agent — the terminal is busy, which is not proof of a turn in progress.";
+  if (elapsedMs === undefined) {
+    return base;
+  }
+  // `compactAge` reads a TIMESTAMP against now; this is a duration, so it is
+  // rendered here rather than by passing an epoch that is really an interval.
+  const minutes = Math.floor(elapsedMs / 60_000);
+  const span = minutes >= 120 ? `${Math.floor(minutes / 60)} hours` : `${minutes} minutes`;
+  return `Unchanged for over ${span}. ${base}`;
 }
 
 /** A leading-slot glyph carrying one of the state shapes (§ 7.2), `unknown` included. */
@@ -390,7 +418,13 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // Keyed off the PRESENTED state: an inference the glyph has already withdrawn
   // must not be re-asserted in present tense beside it. When the state is
   // `unknown` the marker names the failure instead of the inference.
-  if (activity === "unknown") {
+  if (activity === "running-unconfirmed") {
+    const marker = document.createElement("span");
+    marker.className = "wt-confidence";
+    marker.textContent = "~";
+    marker.dataset.tip = unconfirmedHint(unchangedFor(row, opts.now ?? Date.now()));
+    title.append(document.createTextNode(" "), marker);
+  } else if (activity === "unknown") {
     const marker = document.createElement("span");
     marker.className = "wt-confidence";
     marker.textContent = "~";
