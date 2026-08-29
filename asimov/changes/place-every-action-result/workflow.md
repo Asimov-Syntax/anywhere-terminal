@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
@@ -63,3 +63,10 @@ Lane: light — one concern, one owner, no new API/data/security surface; flags:
   falsifiable by the suite; removing BOTH fails all three early-exit tests, which is the
   evidence recorded. The second half is deliberate defence against a silent `after()`
   no-op, kept knowing no reachable state exercises it.
+- Review cycle 1: round 1 BLOCK (2 blockers, both mine — the anchor map reopened the very
+  hole this change closes), round 2 WARN with 0 blockers. Exited at re-verify; all four
+  round-2 warnings taken anyway.
+- Chair corrected my own record: the two halves of the B1 fix are behaviourally
+  equivalent, so neither being individually falsifiable is a property of the code and not
+  a gap in the suite. Both kept — `clear()` stops the map pinning a departed repository's
+  subtree, the guard turns a future regression from a silent drop into an honest append.

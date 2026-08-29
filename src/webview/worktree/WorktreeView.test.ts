@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetTooltipForTests } from "../ui/Tooltip";
 import { ICON_TERMINAL } from "../vault/icons";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
-import { MAX_WORKTREES_PER_REPO, WorktreeView, type WorktreeViewDeps } from "./WorktreeView";
+import { MAX_WORKTREES_PER_REPO, WorktreeView, type WorktreeViewData, type WorktreeViewDeps } from "./WorktreeView";
 import {
   agentRow,
   confirmableBlocker,
@@ -2580,28 +2580,22 @@ describe("every action result is placed", () => {
   // A FIRST render takes the append fallback and never consults an anchor, which is
   // how a stale-anchor defect passed a full suite. Each of these draws a tree first,
   // so the second render meets anchors pointing at nodes it has already detached.
-  it.each([
-    ["gitMissing", { gitAvailable: false, unreadable: { count: 0, reasons: [] }, repos: [] }],
-    ["noRepo", { gitAvailable: true, unreadable: { count: 0, reasons: [] }, repos: [] }],
-  ])("keeps a repo-scoped result through a later %s render", (_name, emptyTree) => {
+  // All FOUR of renderListing's early exits, each after a successful render so the
+  // second one meets anchors pointing at nodes it has already detached.
+  it.each<[string, WorktreeViewData]>([
+    ["gitMissing", { tree: gitMissingTree(), presence: null }],
+    ["noRepo", { tree: noRepoTree(), presence: null }],
+    ["noFolder", { tree: noRepoTree(), presence: null, noFolder: true }],
+    ["loading", { tree: null, presence: null, loading: true }],
+  ])("keeps a repo-scoped result through a later %s render", (_name, empty) => {
     const { view } = mount({ now: () => NOW });
     const results: WorktreeActionResult[] = [
       { action: "prune", repoId: REPO2, outcome: "error", error: "survives-empty-render" },
     ];
     view.setData({ tree: treeOf(repo(REPO2, "repo", ["a"])), presence: null, actionResults: results });
     expect(marks(view, "survives-empty-render")).toBe(1);
-    view.setData({ tree: emptyTree as WorktreeTree, presence: null, actionResults: results });
+    view.setData({ ...empty, actionResults: results });
     expect(marks(view, "survives-empty-render")).toBe(1);
-  });
-
-  it("keeps a repo-scoped result through a later loading render", () => {
-    const { view } = mount({ now: () => NOW });
-    const results: WorktreeActionResult[] = [
-      { action: "prune", repoId: REPO2, outcome: "error", error: "survives-loading" },
-    ];
-    view.setData({ tree: treeOf(repo(REPO2, "repo", ["a"])), presence: null, actionResults: results });
-    view.setData({ tree: null, presence: null, loading: true, actionResults: results });
-    expect(marks(view, "survives-loading")).toBe(1);
   });
 
   it("does not attribute a result to a repository the filter emptied around it", () => {
@@ -2614,6 +2608,7 @@ describe("every action result is placed", () => {
         repo("/r1/.git", "r1", ["alpha-one"]),
         repo("/r2/.git", "r2", ["zulu"]),
         repo("/r3/.git", "r3", ["alpha-three"]),
+        repo("/r4/.git", "r4", ["alpha-four"]),
       ),
       presence: null,
       actionResults: [{ action: "prune", repoId: "/r2/.git", outcome: "error", error: "belongs-to-r2" }],
@@ -2621,13 +2616,15 @@ describe("every action result is placed", () => {
     view.setQuery("alpha");
     const children = Array.from(view.element.children);
     const noticeAt = children.findIndex((el) => el.textContent?.includes("belongs-to-r2"));
-    const r3RowAt = children.findIndex((el) => el.textContent?.includes("alpha-three"));
-    expect(r3RowAt).toBeGreaterThan(-1);
+    // r4 exists so that "appended honestly" and "anchored forward to r3" are not the
+    // same index either — the mirror of the collision the two-repo fixture had.
+    const r4RowAt = children.findIndex((el) => el.textContent?.includes("alpha-four"));
+    expect(r4RowAt).toBeGreaterThan(-1);
     expect(noticeAt).toBeGreaterThan(-1);
     // r2 drew nothing, so it has no section for this to sit in; it must not be
     // filed under r1. A repo-scoped notice carries no name, so nothing on screen
     // would contradict the wrong attribution.
-    expect(noticeAt).toBeGreaterThan(r3RowAt);
+    expect(noticeAt).toBeGreaterThan(r4RowAt);
   });
 
   it("names the worktree a hidden result concerns, not merely a different string", () => {
@@ -2642,6 +2639,9 @@ describe("every action result is placed", () => {
     expect(notice).toContain("named-failure");
     // The positive half: every placement test passed with no name on any notice.
     expect(notice).toContain("zebra");
+    // …and pinned to the BRANCH, not to a substring the worktree id also contains:
+    // `nameFor` returning `info.id` would satisfy the line above on its own.
+    expect(notice).not.toContain(REPO2);
   });
 
   it("renders exactly one notice across a drawn -> undrawn -> drawn pair of pushes", () => {

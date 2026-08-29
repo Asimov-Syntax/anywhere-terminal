@@ -32,3 +32,14 @@
     4. Reuse what the view already has: one DOM scan feeding both placement and the ceiling scheduler, and the existing repository lookup rather than a second one.
     5. Return the focus key rather than parking it on the instance; a synchronous re-entrant render must not read a predecessor's.
     6. Cover what the round-1 tests did not: a repo-scoped result surviving each of the four early-exit renders when a successful render preceded it; a filter that empties one repository while another still holds a result; and the NAME itself asserted present and correct, not only different from its neighbour.
+
+- [x] 1_3 Round-2 test strengthenings — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_2
+  - **Refs**: specs/worktree-panel/spec.md#{every-action-result-is-rendered-whatever-the-tree-chose-to-draw, a-name-in-a-notice-identifies-one-worktree}
+  - **Acceptance**:
+    - Outcome: each placement assertion fails against a mutant that satisfies its old form
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeView.ts`.
+    1. Three assertions read like their requirement without pinning it: a name checked by a substring the worktree id also contains, a positional check whose fixture makes the right and wrong answers the same index, and an exit set that names four cases and covers three.
+    2. Comments are claims too. Two here assert properties the code does not have — one cites synchronous re-entry as handled when only the focus key moved, one calls a guard load-bearing when nothing reaches it. Say what is true, including that the guard is unreachable and kept anyway.

@@ -686,9 +686,15 @@ export class WorktreeView {
 
   /**
    * Draws the tree. Returns the focus key to restore, or `undefined` when there was
-   * no tree to lay out. Returned rather than parked on the instance: `setData` can
-   * re-enter synchronously, and a field would hand a predecessor's key to the render
-   * that outlives it.
+   * no tree to lay out. Returned rather than parked on the instance so the key
+   * belongs to the render that computed it.
+   *
+   * This does NOT make the render re-entrant. `renderWorktree` asks for subagent
+   * rosters from inside the repo loop, and a dep that answered synchronously would
+   * re-enter here, replace the half-built DOM and place every notice twice —
+   * `repoAnchors` and `placeResults` are both unguarded against that. The shipped
+   * host answers over `postMessage`, so nothing reaches it today; a synchronous
+   * answer would need a guard, not just this return value.
    */
   private renderListing(now: number): string | null | undefined {
     // `replaceChildren` detaches the focused row, and focus falls to <body> — a
@@ -898,8 +904,9 @@ export class WorktreeView {
     return new Set(this.renderedWorktreeRows().keys());
   }
 
-  /** The drawn rows by worktree id. ONE scan feeds both the ceiling scheduler and
-   *  result placement — two scans of the same selector drifted twice before. */
+  /** The drawn rows by worktree id. One implementation behind both the ceiling
+   *  scheduler and result placement — two copies of this selector drifted twice
+   *  before. They still scan separately, at the different moments each needs. */
   private renderedWorktreeRows(): Map<string, HTMLElement> {
     const rows = new Map<string, HTMLElement>();
     for (const el of this.element.querySelectorAll<HTMLElement>("[data-worktree-id]")) {
@@ -1097,9 +1104,11 @@ export class WorktreeView {
       // A drawn row already says which worktree this is about, directly above.
       const notice = this.buildActionNotice(result, info, row ? undefined : this.nameFor(result, info));
       const anchor = row ? this.groupEndFor(row) : this.repoAnchorFor(result, info);
-      // `after()` on a detached node is a silent no-op — the notice would be built
-      // and dropped. Never trust an anchor without confirming it is still in the
-      // tree; appending is worse placement but it is placement.
+      // Unreachable as written — the map is cleared with the DOM, so every anchor in
+      // it was recorded after that same `replaceChildren`. Kept because `after()` on
+      // a detached node is a SILENT no-op: this turns a future regression into a
+      // notice in the wrong place rather than no notice at all, which is the one
+      // outcome this pass exists to prevent.
       if (anchor === undefined || !this.element.contains(anchor)) {
         this.element.appendChild(notice);
         continue;
