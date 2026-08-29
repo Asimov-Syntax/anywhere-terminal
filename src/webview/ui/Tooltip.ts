@@ -82,6 +82,23 @@ function hide(): void {
   }
 }
 
+function scheduleShow(target: HTMLElement, resolveText: () => string): void {
+  if (pendingTimer !== null) {
+    clearTimeout(pendingTimer);
+  }
+  currentTarget = target;
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    if (currentTarget !== target) {
+      return;
+    }
+    const live = resolveText();
+    if (live) {
+      show(target, live);
+    }
+  }, SHOW_DELAY_MS);
+}
+
 export interface AttachTooltipOptions {
   /** Overrides `target.title`. When omitted, target's title is used and then stripped. */
   text?: string;
@@ -117,22 +134,7 @@ export function attachTooltip(target: HTMLElement, opts: AttachTooltipOptions = 
   }
   target.setAttribute("aria-describedby", WIDGET_ID);
 
-  const onEnter = (): void => {
-    if (pendingTimer !== null) {
-      clearTimeout(pendingTimer);
-    }
-    currentTarget = target;
-    pendingTimer = setTimeout(() => {
-      pendingTimer = null;
-      if (currentTarget !== target) {
-        return;
-      }
-      const live = resolveText();
-      if (live) {
-        show(target, live);
-      }
-    }, SHOW_DELAY_MS);
-  };
+  const onEnter = (): void => scheduleShow(target, resolveText);
   const onLeave = (): void => {
     if (currentTarget === target) {
       hide();
@@ -171,6 +173,101 @@ export function attachTooltip(target: HTMLElement, opts: AttachTooltipOptions = 
     }
     if (currentTarget === target) {
       hide();
+    }
+  };
+}
+
+/** Attribute a descendant carries to be served by `attachTooltipDelegate`. */
+export const TOOLTIP_ATTR = "data-tip";
+
+/**
+ * Serve hints for a whole subtree from one listener set on `container`.
+ *
+ * For containers that rebuild their children wholesale: a row only has to set
+ * `data-tip`, so nothing needs attaching when it is recreated and nothing needs
+ * disposing when it is thrown away. Per-element `attachTooltip` in such a
+ * container leaks a showing tooltip every time the subtree is replaced under a
+ * stationary cursor, because the removed node never fires `mouseleave`.
+ *
+ * Uses the same widget, delay, and positioning as `attachTooltip`; the two
+ * coexist on one page and share the single active target.
+ */
+export function attachTooltipDelegate(container: HTMLElement): () => void {
+  const doc = container.ownerDocument;
+  if (doc) {
+    ensureWidget(doc);
+  }
+  let described: HTMLElement | null = null;
+
+  const clearDescribed = (): void => {
+    if (described?.getAttribute("aria-describedby") === WIDGET_ID) {
+      described.removeAttribute("aria-describedby");
+    }
+    described = null;
+  };
+  const leave = (): void => {
+    clearDescribed();
+    hide();
+  };
+  const hintFor = (node: EventTarget | null): HTMLElement | null => {
+    if (!(node instanceof Element)) {
+      return null;
+    }
+    const el = node.closest<HTMLElement>(`[${TOOLTIP_ATTR}]`);
+    return el && container.contains(el) ? el : null;
+  };
+  // `mouseover`/`focusin` rather than `mouseenter`/`focus`: only the bubbling
+  // pair reaches a delegate on the container.
+  const onOver = (ev: Event): void => {
+    const target = hintFor(ev.target);
+    if (target === currentTarget) {
+      return;
+    }
+    leave();
+    if (!target) {
+      return;
+    }
+    described = target;
+    target.setAttribute("aria-describedby", WIDGET_ID);
+    scheduleShow(target, () => target.getAttribute(TOOLTIP_ATTR)?.trim() ?? "");
+  };
+  const onOut = (ev: Event): void => {
+    const from = hintFor(ev.target);
+    if (from !== null && from === currentTarget) {
+      leave();
+    }
+  };
+  const onKey = (ev: Event): void => {
+    if ((ev as KeyboardEvent).key === "Escape") {
+      leave();
+    }
+  };
+  // A rebuilt subtree removes the hovered row without a `mouseout`, so the
+  // widget would stay open over a row that no longer exists.
+  const observer = new MutationObserver(() => {
+    if (currentTarget !== null && !currentTarget.isConnected) {
+      leave();
+    }
+  });
+  observer.observe(container, { childList: true, subtree: true });
+
+  container.addEventListener("mouseover", onOver);
+  container.addEventListener("mouseout", onOut);
+  container.addEventListener("focusin", onOver);
+  container.addEventListener("focusout", onOut);
+  container.addEventListener("keydown", onKey);
+
+  return () => {
+    observer.disconnect();
+    container.removeEventListener("mouseover", onOver);
+    container.removeEventListener("mouseout", onOut);
+    container.removeEventListener("focusin", onOver);
+    container.removeEventListener("focusout", onOut);
+    container.removeEventListener("keydown", onKey);
+    if (currentTarget !== null && container.contains(currentTarget)) {
+      leave();
+    } else {
+      clearDescribed();
     }
   };
 }

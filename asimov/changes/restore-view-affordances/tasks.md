@@ -15,7 +15,7 @@
 
 ## 2. Hover hints reach the user
 
-- [ ] 2_1 Add a delegated mode to the shared tooltip widget
+- [x] 2_1 Add a delegated mode to the shared tooltip widget — verified: pnpm exec vitest run 'src/webview/ui/Tooltip.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/vault-panel/spec.md#a-row-s-abbreviated-content-is-reachable-on-hover-and-on-focus
   - **Acceptance**:
