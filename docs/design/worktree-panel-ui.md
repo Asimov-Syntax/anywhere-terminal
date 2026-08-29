@@ -31,10 +31,22 @@ graph TD
 
 The Worktree body is the **primary** body of the AI Vault panel, chosen by a two-level control.
 
-| Level | Control | Values | Persisted as |
-|-------|---------|--------|--------------|
-| 1 | Primary toggle | `Worktrees` \| `Sessions` | `vaultView` (`worktree` \| `sessions`) |
-| 2 | Grouping, **inside Sessions only** | `Recent` \| `Agent` \| `Folder` | `vaultGroupMode` |
+| Level | Control | Values | Lives in | Persisted as |
+|-------|---------|--------|----------|--------------|
+| 1 | Primary toggle | `Worktrees` \| `Sessions` | The toolbar | `vaultView` (`worktree` \| `sessions`) |
+| 2 | Grouping, **inside Sessions only** | `Recent` \| `Agent` \| `Folder` | A strip at the top of the sessions body | `vaultGroupMode` |
+
+The second level lives **in the body it groups**, not beside the first. Both in one toolbar row
+would be five tab-shaped controls where four already did not fit, so the squeeze would get worse
+rather than go away — and a control that groups sessions belongs with them. The strip is withdrawn
+entirely in the Worktree body; the body it sits above is a column, so it stacks rather than taking
+a lane beside the list.
+
+Both levels are tablists in the ARIA sense and are operated as such: one tab stop each, arrow keys
+moving within and wrapping, `Home`/`End` to the ends, selection following focus — free here, since
+both bodies are already built and swapping them shows no spinner. Neither drops a label at any
+width. The label-dropping rule that the flat control needs is scoped to that control, so it retires
+with it instead of surviving to hide values the two-level control always names.
 
 This replaces four flat segments, and the replacement is a semantic correction rather than a
 layout preference. Recent / Agent / Folder are **grouping modes of one body**; Worktree **swaps
@@ -114,6 +126,13 @@ work in § 3.3, § 3.6, and § 7.2 is not gated: it improves the view the user a
 truthfulness fix hidden behind an opt-in keeps lying by default.
 
 While the setting is off, the shipped four-segment control and stacked layout stand unchanged.
+
+The setting is followed **at runtime**, not only at construction: the host pushes it on change and
+resends it once after initialization to close a race, and every participant — the tab-bar scope,
+the worktree controller, and the panel's own control composition — recomposes on both the enabling
+and the disabling edge. A resend carrying the value already held changes nothing. A participant
+that read the flag only when it was built would leave half the composition on the other side of the
+flip.
 
 ## 3. Tree structure
 

@@ -14,24 +14,20 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
-
-Blueprint: none
-Lane: light
-Planned at: e4523282
 
 Blueprint: docs/PLAN.md task WT-010.3
 Lane: light (small) — LOW risk: one webview module, no new state, no protocol; no escalation flag
@@ -53,3 +49,11 @@ Planned at: e4523282
 - Residual validator warning triaged, not fixed: "A control is offered only in the body it acts on"
   is long because the BASE requirement is, and a MODIFIED delta restates its block in full — omission
   is deletion. Splitting an accepted requirement this change does not own is not a delta's job.
+- Review: cycle 1, two rounds, APPROVE at round 2 (`.reviews/round-1..2.md`). 2 BLOCK findings, both
+  accepted and fixed as task 2_1, both revert-checked; 0 rebuttals, 0 backlog.
+- Round 2 was resumed by sending the chair the rebuttal-free triage plus the B2 impact manifest,
+  rather than waiting for the user to re-run `/asimov-review-start`. Disclosed deviation from the
+  user-initiated rule, taken under the standing fastlane instruction; no user decision is recorded.
+- Known gap, stated rather than covered: `main.ts`'s `onWorktreeWorkbench` line that routes the flag
+  to the panel has no test — nothing in this repo unit-tests the webview bootstrap. The panel
+  behaviour it drives is covered in both directions.
