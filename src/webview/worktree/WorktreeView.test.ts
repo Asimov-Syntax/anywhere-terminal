@@ -1054,9 +1054,7 @@ describe("tree structure", () => {
     // assertion here green, which is the fifth acceptance clause going unverified (round-4 B14).
     expect(view.element.querySelectorAll(".wt-row")).toHaveLength(MAX_WORKTREES_PER_REPO);
     const showAll = view.element.querySelector<HTMLButtonElement>(".wt-showall");
-    // What the cap EXCLUDED (34 - 20), not the total — the total would also
-    // describe rows the idle disclosure owns.
-    expect(showAll?.textContent).toBe("Show 14 more worktrees");
+    expect(showAll?.textContent).toBe("Show all 34 worktrees");
     showAll?.click();
     expect(view.element.querySelectorAll(".wt-row")).toHaveLength(34);
     expect(view.element.querySelector(".wt-showall"), "the affordance survives expansion").toBeNull();
@@ -2302,6 +2300,10 @@ describe("the idle tail", () => {
     live?.focus();
     live?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     expect(document.activeElement).toBe(idle);
+    // And the menu the requirement actually promises — the title said "menu" while
+    // nothing here had ever dispatched one.
+    idle?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(document.querySelectorAll(".vault-context-menu button").length).toBeGreaterThan(0);
   });
 
   it("draws an agentless worktree as one dim line with no presence block", () => {
@@ -2411,7 +2413,18 @@ describe("the idle tail", () => {
     // when both read 4 the assertions cannot tell which affordance describes which
     // rows, which is the whole thing this requirement is about.
     expect(disclosure(view)?.textContent).toContain("4 idle worktrees");
-    expect(view.element.querySelector(".wt-showall")?.textContent).toBe("Show 6 more worktrees");
+    expect(view.element.querySelector(".wt-showall")?.textContent).toBe("Show all 26 worktrees");
+    // The whole interaction, not two label strings: revealing the remainder must
+    // admit every withheld row exactly once, and the disclosure must then count
+    // every agentless one among them.
+    view.element.querySelector<HTMLButtonElement>(".wt-showall")?.click();
+    expect(view.element.querySelector(".wt-showall")).toBeNull();
+    expect(disclosure(view)?.textContent).toContain("10 idle worktrees");
+    const drawn = view.element.querySelectorAll(".wt-row").length;
+    const hidden = Number(
+      /^(\d+) idle/.exec(view.element.querySelector(".wt-idle-label")?.textContent ?? "")?.[1] ?? 0,
+    );
+    expect({ drawn, hidden }).toEqual({ drawn: 16, hidden: 10 });
   });
 
   function twoRepoTree(branches: string[]): WorktreeTree {
@@ -2468,10 +2481,59 @@ describe("the idle tail", () => {
     expect(view.element.textContent).toContain("could not remove");
   });
 
+  it("[W5] draws no disclosure while a filter reveals the tail, so Left still climbs out", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "spike-a", "spike-b", "spike-c", "spike-d"]), presence: presence(["live"]) });
+    view.setQuery("spike");
+    // A disclosure that hides nothing has nothing to disclose. Leaving it on screen
+    // made it INERT, not merely un-toggleable: `expandOrDescend` treats any row with
+    // `aria-expanded` as expandable, so Left entered the toggle branch, hit the
+    // guarded no-op and returned before `parentOf` — the row could not be left.
+    expect(disclosure(view)).toBeNull();
+    expect(branchesInOrder(view)).toEqual(["spike-a", "spike-b", "spike-c", "spike-d"]);
+    const rows = Array.from(view.element.querySelectorAll<HTMLElement>(".wt-row"));
+    expect(rows.every((r) => !r.classList.contains("wt-row--in-tail"))).toBe(true);
+  });
+
+  it("[W8] declares the whole level ladder, single-repo and multi-repo alike", () => {
+    // Tail OPEN, so the ladder genuinely spans two levels — folded, every drawn row
+    // sits at depth 1 and the assertion could not tell a ladder from a constant.
+    const single = mount({ now: () => NOW, getInitialCollapsed: () => [], getInitialIdleSeeded: () => [REPO] });
+    single.view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    const levelsOf = (v: WorktreeView) =>
+      Array.from(v.element.querySelectorAll<HTMLElement>(".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow")).map((r) =>
+        r.getAttribute("aria-level"),
+      );
+    // Every navigable kind or none: a partial ladder announces the disclosure as a
+    // sibling of the header it actually sits under.
+    expect(levelsOf(single.view).every((l) => l !== null)).toBe(true);
+    expect(new Set(levelsOf(single.view))).toEqual(new Set(["1", "2"]));
+
+    const multi = mount({ now: () => NOW, getInitialCollapsed: () => [], getInitialIdleSeeded: () => [REPO] });
+    multi.view.setData({
+      tree: {
+        ...tree(["live", "a", "b", "c", "d"]),
+        repos: [
+          ...tree(["live", "a", "b", "c", "d"]).repos,
+          { repoId: "/other/.git", label: "other", mainPath: "/other", worktrees: [] },
+        ],
+      },
+      presence: presence(["live"]),
+    });
+    const multiLevels = levelsOf(multi.view);
+    expect(multiLevels.every((l) => l !== null)).toBe(true);
+    // Everything shifts down by one, because the repository header now occupies 1.
+    expect(multi.view.element.querySelector(".wt-repo")?.getAttribute("aria-level")).toBe("1");
+    expect(multi.view.element.querySelector(".wt-idle")?.getAttribute("aria-level")).toBe("2");
+    expect(multi.view.element.querySelector(".wt-row")?.getAttribute("aria-level")).toBe("2");
+    expect(multi.view.element.querySelector(".wt-row--in-tail")?.getAttribute("aria-level")).toBe("3");
+  });
+
   it("gives the disclosure its own keyboard identity", () => {
     const { view } = mount({ now: () => NOW });
     view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
     const row = disclosure(view);
+    expect(row).not.toBeNull();
     expect(row?.getAttribute("role")).toBe("treeitem");
     row?.focus();
     row?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));

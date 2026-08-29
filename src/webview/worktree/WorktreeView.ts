@@ -799,6 +799,7 @@ export class WorktreeView {
     if (rendered === 0 && this.query) {
       this.element.appendChild(worktreeEmptyState("noMatch"));
     }
+    this.stampLevels(multiRepo);
     return restoreFocusTo;
   }
 
@@ -953,7 +954,12 @@ export class WorktreeView {
 
     const shown = this.shownWorktrees(repo, multiRepo);
     const tail = shown.filter((w) => this.isIdle(w));
-    const folds = tail.length >= IDLE_FOLD_THRESHOLD;
+    // A filter reveals the tail, so there is nothing left for a disclosure to
+    // disclose — and one that hides zero rows is not merely useless, it is a trap:
+    // `expandOrDescend` treats any row carrying `aria-expanded` as expandable, so
+    // Left enters the toggle branch and returns before `parentOf` ever runs. The
+    // row cannot be left. Not rendering it is what keeps the tail climbable.
+    const folds = tail.length >= IDLE_FOLD_THRESHOLD && !this.query;
     const folded = folds && this.idleTailFolded(repo.repoId);
     for (const info of shown) {
       if (folds && this.isIdle(info)) {
@@ -964,6 +970,7 @@ export class WorktreeView {
     if (folds) {
       this.element.appendChild(
         renderIdleDisclosure(repo.repoId, tail.length, folded, () => this.toggleIdleTail(repo.repoId)),
+        // levels are stamped after the whole tree is drawn — see `stampLevels`.
       );
       if (!folded) {
         for (const info of tail) {
@@ -976,7 +983,7 @@ export class WorktreeView {
     }
     if (shown.length < visible.length) {
       this.element.appendChild(
-        renderShowAll(visible.length - shown.length, () => {
+        renderShowAll(visible.length, () => {
           this.uncapped.add(repo.repoId);
           this.repaint();
         }),
@@ -1285,6 +1292,20 @@ export class WorktreeView {
       return idleTailKey(idleKey);
     }
     return row.dataset.worktreeId ?? row.dataset.repoId ?? row.dataset.rowId ?? row.dataset.subKey ?? "";
+  }
+
+  /**
+   * `aria-level` on every navigable row, from the one depth model. A flat
+   * `role="tree"` carries no structure of its own, so a level declared on some
+   * kinds and left implicit on others is worse than none: the disclosure would
+   * announce as a sibling of the header it sits under. `depthOf` is zero-based and
+   * the header only exists multi-repo, hence the offset.
+   */
+  private stampLevels(multiRepo: boolean): void {
+    const offset = multiRepo ? 1 : 0;
+    for (const row of this.navRows()) {
+      row.setAttribute("aria-level", String(this.depthOf(row) + offset));
+    }
   }
 
   /** Depth in the declared tree, from the row's own class. */

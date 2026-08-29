@@ -27,7 +27,7 @@
     2. B2: two key spaces, one namespaced. The navigation key needs the same namespace the collapse key already has, or the repo header keeps winning `keyOf`.
     3. Cover multi-repo. A single-repo fixture is what hid B2 — no header exists there to collide with.
 
-- [ ] 1_3 Round-2 review fixes
+- [x] 1_3 Round-2 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{the-display-cap-is-resolved-before-the-idle-fold, the-idle-disclosure-is-a-first-class-row-of-the-tree, a-search-match-inside-the-tail-opens-it}
   - **Acceptance**:

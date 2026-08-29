@@ -234,7 +234,6 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   }
   if (opts.inTail) {
     row.classList.add("wt-row--in-tail");
-    row.setAttribute("aria-level", "2");
   }
   row.setAttribute("role", "treeitem");
   row.tabIndex = -1;
@@ -790,10 +789,6 @@ export function renderIdleDisclosure(
   row.className = "wt-idle";
   row.setAttribute("role", "treeitem");
   row.setAttribute("aria-expanded", folded ? "false" : "true");
-  // The tail sits one level under this row, and a flat `role="tree"` carries no
-  // structure of its own — without the level, AT reads the tail as siblings of
-  // the disclosure rather than as the rows it owns.
-  row.setAttribute("aria-level", "1");
   row.tabIndex = -1;
   row.dataset.idleKey = repoId;
   const chev = document.createElement("span");
@@ -811,13 +806,11 @@ export function renderIdleDisclosure(
 }
 
 /** Cap with an affordance rather than truncating silently (§ 8). */
-export function renderShowAll(excluded: number, onShowAll: () => void): HTMLElement {
+export function renderShowAll(total: number, onShowAll: () => void): HTMLElement {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "wt-showall";
-  // What the CAP excluded, never the total: the total would also describe the rows
-  // the idle disclosure owns, and then two affordances would count the same worktree.
-  btn.textContent = `Show ${excluded} more worktree${excluded === 1 ? "" : "s"}`;
+  btn.textContent = `Show all ${total} worktrees`;
   btn.addEventListener("click", onShowAll);
   return btn;
 }

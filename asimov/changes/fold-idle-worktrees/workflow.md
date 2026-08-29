@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -65,3 +65,10 @@ Planned at: b9467406
   worktree-panel-ui.md` § 8. Narrowing the delta and reverting the label.
 - Notice reach is NOT planned here: it mints an invariant owner, so it is its own change
   and this one depends on it.
+- Round-2 W6/W7 (notice reach) closed in `place-every-action-result`, archived at
+  260829-0855. Nothing in 1_3 addressed them and nothing here claims to.
+- W5 resolved by NOT rendering a disclosure that hides zero rows, rather than by making
+  one non-interactive: `expandOrDescend` treats any row carrying `aria-expanded` as
+  expandable, so an inert disclosure swallowed ArrowLeft before `parentOf` and could not
+  be left at all.
+- Verify gate: lint check mode, 17 findings, set-identical to the pre-change baseline.
