@@ -1032,12 +1032,13 @@ describe("tree structure", () => {
     expect(rowFor(view, "main")?.querySelector(".wt-glyph .wt-state")?.className).toContain("wt-state--waiting");
   });
 
-  it("wraps an expanded worktree and its agent rows in one card", () => {
+  it("wraps an expanded worktree and its agent rows in one group", () => {
+    // `.wt-group` is the grouping; `.wt-card` is reserved for the selection.
     const { view } = mount();
     view.setData(populated());
-    const card = view.element.querySelector(".wt-card");
-    expect(card?.querySelector(".wt-branch")?.textContent).toBe("main");
-    expect(card?.querySelectorAll(".wt-arow").length).toBe(5);
+    const group = view.element.querySelector(".wt-group");
+    expect(group?.querySelector(".wt-branch")?.textContent).toBe("main");
+    expect(group?.querySelectorAll(".wt-arow").length).toBe(5);
   });
 
   it("caps a large repo with a Show all affordance rather than truncating silently", () => {
@@ -1138,7 +1139,10 @@ describe("presence disclosure", () => {
 
     // Level one: collapse the worktree. The row expansion must survive it.
     rowFor(view, "main")?.click();
-    expect(view.element.querySelector(".wt-card")).toBeNull();
+    // The click also selects, so the group survives as the selection's card —
+    // what has to be gone is the expansion, not the wrapper.
+    expect(rowFor(view, "main")?.getAttribute("aria-expanded")).toBe("false");
+    expect(view.element.querySelector(".wt-arow")).toBeNull();
     expect(persistedCollapsed.at(-1)).toContain(MAIN_PATH);
     expect(persistedRows.at(-1)).toEqual(["main-claude"]);
 
@@ -1154,9 +1158,9 @@ describe("presence disclosure", () => {
       getInitialExpandedRows: () => ["main-claude"],
     });
     view.setData(populated());
-    expect(rowFor(view, "main")?.parentElement?.classList.contains("wt-card")).toBe(false);
+    expect(rowFor(view, "main")?.parentElement?.classList.contains("wt-group")).toBe(false);
     expect(view.element.querySelectorAll(".wt-presence").length).toBe(1);
-    expect(rowFor(view, "feat/worktree-panel")?.parentElement?.classList.contains("wt-card")).toBe(true);
+    expect(rowFor(view, "feat/worktree-panel")?.parentElement?.classList.contains("wt-group")).toBe(true);
   });
 
   it("drops expansion state for a worktree that disappeared", () => {
@@ -1836,14 +1840,14 @@ describe("persisted collapse", () => {
     const branches = Array.from(view.element.querySelectorAll<HTMLElement>(".wt-row")).length;
     expect(branches).toBeGreaterThan(0);
     // Every worktree that HAS agents is expanded, including the non-workspace one.
-    expect(view.element.querySelectorAll(".wt-card")).toHaveLength(2);
+    expect(view.element.querySelectorAll(".wt-group")).toHaveLength(2);
   });
 
   it("seeds defaults when nothing was ever persisted", () => {
     const { view } = mount({ getInitialCollapsed: () => undefined });
     view.setData(populated());
     // Only the workspace worktree opens on a first run.
-    expect(view.element.querySelectorAll(".wt-card")).toHaveLength(1);
+    expect(view.element.querySelectorAll(".wt-group")).toHaveLength(1);
   });
 
   it("ignores a collapsed repo id when no header exists to reopen it", () => {
@@ -2154,7 +2158,7 @@ describe("row activation", () => {
 describe("worktree selection", () => {
   function selectable(over: Partial<WorktreeViewDeps> = {}) {
     const selected: (string | null)[] = [];
-    const { view } = mount({ workbench: () => true, onSelectWorktree: (id) => selected.push(id), ...over });
+    const { view } = mount({ onSelectWorktree: (id) => selected.push(id), ...over });
     return { view, selected };
   }
 
@@ -2169,7 +2173,6 @@ describe("worktree selection", () => {
     // without a throw: at the moment the listener runs, nothing is committed yet.
     let committedWhenTold: string | null | undefined;
     const { view } = mount({
-      workbench: () => true,
       onSelectWorktree: () => {
         committedWhenTold = view.selectedWorktree();
       },
@@ -2185,7 +2188,6 @@ describe("worktree selection", () => {
     // The other direction, and this one can be driven to the throw directly.
     let armed = false;
     const { view } = mount({
-      workbench: () => true,
       onSelectWorktree: () => {
         if (armed) {
           throw new Error("setState failed");
@@ -2290,21 +2292,6 @@ describe("worktree selection", () => {
     view.setData({ ...populated({ tree }) });
     expect(view.element.querySelectorAll(".wt-card")).toHaveLength(0);
     expect(selected).toEqual([null]);
-  });
-
-  it("selects nothing while the workbench is off, and leaves the card on expansion", () => {
-    // Off is inert, not hidden (design.md D6): the panel marks exactly what it
-    // marked before selection existed.
-    const selected: (string | null)[] = [];
-    const { view } = mount({ workbench: () => false, onSelectWorktree: (id) => selected.push(id) });
-    view.setData(populated());
-
-    rowFor(view, "release/0.4.x")?.click();
-    expect(selected).toEqual([]);
-    expect(cardFor(view, "release/0.4.x")).toBeNull();
-    expect(rowFor(view, "release/0.4.x")?.hasAttribute("aria-selected")).toBe(false);
-    // The expanded worktree still carries the card, exactly as it did before.
-    expect(rowFor(view, "main")?.parentElement?.classList.contains("wt-card")).toBe(true);
   });
 });
 
@@ -2894,10 +2881,10 @@ describe("every action result is placed", () => {
 
   it("places a notice after an expanded worktree's group, not inside it", () => {
     // The group, not the card, is what a worktree's rows belong to now: with the
-    // workbench on an expanded-but-unselected worktree carries only `.wt-group`,
+    // an expanded-but-unselected worktree carries only `.wt-group`,
     // and anchoring on the card would drop the notice between the branch row and
     // the agent rows it owns.
-    const { view } = mount({ now: () => NOW, workbench: () => true, getInitialCollapsed: () => [] });
+    const { view } = mount({ now: () => NOW, getInitialCollapsed: () => [] });
     view.setData({ ...populated(), actionResults: [failure(MAIN_PATH, "grouped-failure")] });
 
     const group = rowFor(view, MAIN_PATH)?.closest(".wt-group");

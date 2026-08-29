@@ -28,7 +28,6 @@ function mount(
   over: {
     workspaceRoot?: string | null;
     rowActivation?: WorktreeRowActivation;
-    workbench?: boolean;
     onSelectWorktree?: (worktreeId: string | null) => void;
     onAttribution?: (report: PaneReport) => void;
     showPreview?: (entryId: string) => boolean;
@@ -49,7 +48,6 @@ function mount(
     init: {
       workspaceRoot: over.workspaceRoot === undefined ? "/repo" : over.workspaceRoot,
       rowActivation: over.rowActivation ?? "focus",
-      workbench: over.workbench ?? false,
     },
     onSelectWorktree: over.onSelectWorktree,
     onAttribution: over.onAttribution,
@@ -186,7 +184,7 @@ describe("the worktree the panel has selected", () => {
 
   it("holds nothing until the user selects, then relays what they picked", () => {
     const picked: (string | null)[] = [];
-    const { controller } = mount({ workbench: true, onSelectWorktree: (id) => picked.push(id) });
+    const { controller } = mount({ onSelectWorktree: (id) => picked.push(id) });
     controller.setVisible(true);
     controller.handleTreeResponse(response());
     expect(controller.selectedWorktree()).toBeNull();
@@ -199,7 +197,7 @@ describe("the worktree the panel has selected", () => {
 
   it("relays the drop when the selected worktree leaves the tree", () => {
     const picked: (string | null)[] = [];
-    const { controller } = mount({ workbench: true, onSelectWorktree: (id) => picked.push(id) });
+    const { controller } = mount({ onSelectWorktree: (id) => picked.push(id) });
     controller.setVisible(true);
     controller.handleTreeResponse(response());
     row("main")?.click();
@@ -214,30 +212,6 @@ describe("the worktree the panel has selected", () => {
     controller.handleTreeResponse({ ...response(), tree });
     expect(controller.selectedWorktree()).toBeNull();
     expect(picked).toEqual([null]);
-  });
-
-  it("redraws when the rollout flag flips, since the card changes what it marks", () => {
-    // The flag is not data, so the view's push guard cannot see it move. Turning
-    // it off has to take the card off the selected worktree without a reload.
-    const { controller } = mount({ workbench: true });
-    controller.setVisible(true);
-    controller.handleTreeResponse(response());
-    // `main` opens expanded, so activating it also collapses it: what stays is a
-    // COLLAPSED selected worktree, which carries the card for selection alone.
-    row("main")?.click();
-    expect(row("main")?.getAttribute("aria-expanded")).toBe("false");
-    expect(row("main")?.parentElement?.classList.contains("wt-card")).toBe(true);
-
-    controller.setWorkbench(false);
-    expect(controller.isWorkbenchEnabled()).toBe(false);
-    // Off is what it was before selection existed: the card rides on expansion,
-    // and a collapsed worktree has none.
-    expect(document.querySelectorAll(".wt-card")).toHaveLength(0);
-    expect(row("main")?.hasAttribute("aria-selected")).toBe(false);
-
-    controller.setWorkbench(true);
-    expect(row("main")?.parentElement?.classList.contains("wt-card")).toBe(true);
-    expect(row("main")?.getAttribute("aria-selected")).toBe("true");
   });
 });
 
@@ -389,7 +363,7 @@ describe("which worktree each of this window's panes is in", () => {
     // One place notices appear. A dropped scope is not a failed mutation, so it
     // reads as a statement rather than an error, and it names the worktree the
     // scope had — which by then is no longer in the tree to name itself.
-    const { controller } = mount({ workbench: true });
+    const { controller } = mount();
     controller.setVisible(true);
     controller.handleTreeResponse(response());
 
@@ -482,7 +456,7 @@ describe("persisted disclosure state", () => {
       host: document.body,
       postMessage: (msg) => posts.push(msg),
       store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
-      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: false },
+      init: { workspaceRoot: "/repo", rowActivation: "focus" },
       now: () => 1_000_000,
     });
     document.body.appendChild(controller.element);
@@ -1288,7 +1262,7 @@ describe("the create a toolbar with no repository opens", () => {
       host: document.body,
       postMessage: (msg) => posts.push(msg),
       store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
-      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: false },
+      init: { workspaceRoot: "/repo", rowActivation: "focus" },
       onCreateAvailability: (available) => seen.push(available),
       now: () => 1_000_000,
     });

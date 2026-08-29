@@ -27,7 +27,7 @@ interface Harness {
 }
 
 function mount(
-  over: { workbench?: boolean; overlayOpen?: () => boolean; expandedRows?: string[]; presence?: WorktreePresence } = {},
+  over: { overlayOpen?: () => boolean; expandedRows?: string[]; presence?: WorktreePresence } = {},
 ): Harness {
   const posts: WebViewToExtensionMessage[] = [];
   const selections: (string | null)[] = [];
@@ -36,7 +36,7 @@ function mount(
     host: document.body,
     postMessage: (msg) => posts.push(msg),
     store: { getState: () => state, updateState: (patch) => Object.assign(state, patch) },
-    init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: over.workbench ?? true },
+    init: { workspaceRoot: "/repo", rowActivation: "focus" },
     onSelectWorktree: (worktreeId) => selections.push(worktreeId),
     ...(over.overlayOpen ? { overlayOpen: over.overlayOpen } : {}),
     now: () => NOW,
@@ -124,21 +124,6 @@ describe("opening", () => {
     expect(h.controller.isInspectorOpen()).toBe(true);
     expect(h.selections).toEqual([PANEL]);
   });
-
-  it("opens nothing while the rollout is off", () => {
-    const h = mount({ workbench: false });
-    row(PANEL).click();
-    expect(h.controller.isInspectorOpen()).toBe(false);
-    expect(h.selections).toEqual([]);
-  });
-
-  it("stays mounted and hidden while the rollout is off", () => {
-    // Hidden rather than unmounted, so turning the flag on needs no second
-    // mounting path (design.md D12).
-    mount({ workbench: false });
-    expect(drawer()).not.toBeNull();
-    expect(drawer()?.hidden).toBe(true);
-  });
 });
 
 describe("dismissal", () => {
@@ -223,14 +208,6 @@ describe("what closes it besides the user", () => {
     h.push(treeWithout(PANEL));
     expect(h.controller.isInspectorOpen()).toBe(false);
     expect(h.selections).toEqual([PANEL, null]);
-  });
-
-  it("closes when the rollout is turned off under it", () => {
-    const h = mount();
-    row(PANEL).click();
-    h.controller.setWorkbench(false);
-    expect(h.controller.isInspectorOpen()).toBe(false);
-    expect(drawer()?.hidden).toBe(true);
   });
 });
 

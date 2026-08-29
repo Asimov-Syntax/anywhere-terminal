@@ -463,7 +463,7 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
       getState: () => state as never,
       updateState: (patch) => Object.assign(state, patch),
     },
-    init: { workspaceRoot: REPO, rowActivation: "focus", workbench: false },
+    init: { workspaceRoot: REPO, rowActivation: "focus" },
     now: () => 1_000_000,
   });
   document.body.appendChild(controller.element);

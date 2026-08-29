@@ -848,16 +848,6 @@ const routeMessage = createMessageRouter({
   onWorktreeRowActivation(msg) {
     worktreeController?.setRowActivation(msg.activation);
   },
-  onWorktreeWorkbench(msg) {
-    // The seam reaches the panel as well as the coordinator. The bar reads the
-    // EFFECTIVE scope, so the flip changes what it draws even though no tab, tree
-    // or attribution moved. See: webview/tabBarScopeWiring.ts.
-    if (tabBarScope) {
-      tabBarScope.setWorkbench(msg.enabled);
-      return;
-    }
-    worktreeController?.setWorkbench(msg.enabled);
-  },
   onWorktreeShowPreview(msg) {
     worktreeController?.showPreview(msg.entryId);
   },
@@ -1095,7 +1085,6 @@ function handleInit(msg: InitMessage): void {
     // coordinator has to be holding the persisted scope when that arrives.
     tabBarScope = wireTabBarScope({
       store,
-      workbench: msg.worktreeWorkbench,
       panel: () => worktreeController,
       source: () => store,
       render: () => updateTabBar(),
@@ -1122,7 +1111,6 @@ function handleInit(msg: InitMessage): void {
       init: {
         workspaceRoot: msg.workspaceRoot,
         rowActivation: msg.worktreeRowActivation,
-        workbench: msg.worktreeWorkbench,
       },
       // The overlay and the panes belong to the surfaces that hold them; the
       // controller only forwards, so neither is rebuilt here (D2).

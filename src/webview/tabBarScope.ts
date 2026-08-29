@@ -21,8 +21,6 @@ export interface TabBarScopeStore {
 
 export interface TabBarScopeDeps {
   store: TabBarScopeStore;
-  /** Whether the workbench composition is on at construction. Default `false`. */
-  workbench?: boolean;
   /**
    * The scoped worktree left the tree. `label` is what the panel last knew it as,
    * falling back to its id for a scope restored from persistence that no tree ever
@@ -50,12 +48,6 @@ function labelsOf(tree: WorktreeTree): ReadonlyMap<string, string> {
 
 export class TabBarScopeCoordinator {
   private readonly deps: TabBarScopeDeps;
-  /**
-   * The one gate. Everything that could disagree about whether scoping is on —
-   * the filter, the visibility rule, the chip — reads the effective scope, and
-   * the effective scope is `null` while this is false (design.md D6).
-   */
-  private workbench: boolean;
   private scope: string | null;
   /**
    * What the tree last called the scoped worktree, kept so the drop notice can
@@ -88,7 +80,6 @@ export class TabBarScopeCoordinator {
     // (`WebviewStateStore.getState`), so a non-string here is not a scope — and
     // failing closed would leave a surface filtered by something it could not
     // read (design.md D9).
-    this.workbench = deps.workbench === true;
     const stored = this.readStored();
     this.scope = typeof stored === "string" && stored !== "" ? stored : null;
   }
@@ -102,17 +93,15 @@ export class TabBarScopeCoordinator {
   }
 
   /**
-   * The worktree this surface is filtered to, or `null`. `null` whenever the
-   * workbench is off, whatever is persisted — off is inert, not merely hidden: a
-   * setting that hid the chip but kept the filter would be the invisible filter
-   * with extra steps (design.md D6).
+   * The worktree this surface is filtered to, or `null` — `null` until a tree has
+   * confirmed the persisted id.
    */
   scopedWorktreeId(): string | null {
-    return this.workbench && this.resolved ? this.scope : null;
+    return this.resolved ? this.scope : null;
   }
 
   /**
-   * What to call the scoped worktree, or `null` while unscoped or off. The branch
+   * What to call the scoped worktree, or `null` while unscoped. The branch
    * the tree last showed, never the path — the panel forbids a path on a row and
    * the chip is no different (worktree-panel-ui.md § 3.2). Nothing is scoped until
    * a tree confirms it, so there is no unnamed scope to fall back for.
@@ -137,7 +126,7 @@ export class TabBarScopeCoordinator {
    * surface unsubscribes.
    */
   needsPresence(): boolean {
-    return this.workbench && this.scope !== null;
+    return this.scope !== null;
   }
 
   /** Whether this surface is filtered — the tab bar's second reason to be visible. */
@@ -145,19 +134,10 @@ export class TabBarScopeCoordinator {
     return this.scopedWorktreeId() !== null;
   }
 
-  /** What `buildTabBarData` filters by; `undefined` while unscoped or off. */
+  /** What `buildTabBarData` filters by; `undefined` while unscoped. */
   effectiveScope(): TabBarScope | undefined {
     const worktreeId = this.scopedWorktreeId();
     return worktreeId === null ? undefined : { worktreeId, attribution: this.attribution, waiting: this.waiting };
-  }
-
-  /**
-   * The rollout flag moved. The persisted value is left ALONE while off — turning
-   * the flag back on re-applies it without a reload, which is what makes the flag
-   * a rollout rather than a reset.
-   */
-  setWorkbench(enabled: boolean): void {
-    this.workbench = enabled;
   }
 
   /** The panel selected a worktree, or cleared its selection. */
@@ -222,14 +202,7 @@ export class TabBarScopeCoordinator {
       this.resolved = true;
       return;
     }
-    // No longer confirmed either way, so a flag flip cannot arm a scope this tree
-    // has already lost.
     this.resolved = false;
-    // Nothing further while off, the notice included: a dropped-scope statement
-    // about a feature the user has not turned on is an effect of that feature.
-    if (!this.workbench) {
-      return;
-    }
     const said = this.scopeLabel ?? scoped;
     this.setScope(null);
     this.deps.onScopeDropped?.(scoped, said);

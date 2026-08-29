@@ -17,7 +17,7 @@ function mount(state: WebviewState) {
     host: document.body,
     postMessage: (msg) => posts.push(msg),
     store: { getState: () => state, updateState: (patch) => Object.assign(state, patch) },
-    init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: false },
+    init: { workspaceRoot: "/repo", rowActivation: "focus" },
     now: () => 1_000_000,
   });
   document.body.replaceChildren(controller.element);
@@ -100,7 +100,7 @@ describe("[1_3] a scope keeps the surface subscribed after the rail closes", () 
       host: document.body,
       postMessage: (msg) => posts.push(msg),
       store: { getState: () => state, updateState: (patch) => Object.assign(state, patch) },
-      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: true },
+      init: { workspaceRoot: "/repo", rowActivation: "focus" },
       now: () => 1_000_000,
       presenceNeeded: scoped,
     });
@@ -223,7 +223,7 @@ describe("[1_3] a scope keeps the surface subscribed after the rail closes", () 
       host: document.body,
       postMessage: (msg) => posts.push(msg),
       store: { getState: () => state, updateState: (patch) => Object.assign(state, patch) },
-      init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: false },
+      init: { workspaceRoot: "/repo", rowActivation: "focus" },
       now: () => 1_000_000,
     });
     document.body.replaceChildren(controller.element);

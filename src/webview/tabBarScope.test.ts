@@ -75,13 +75,8 @@ function ask(
   return scope.shouldRender(tabLayouts, buildTabBarData(source, scope.effectiveScope()).hiddenWaiting);
 }
 
-/**
- * A coordinator with the workbench ON. The rollout gate is 1_8's subject and has
- * its own describe block; everywhere else it would only be noise between the
- * behaviour and the assertion.
- */
-function coordinator(deps: Omit<TabBarScopeDeps, "workbench"> & { workbench?: boolean }): TabBarScopeCoordinator {
-  return new TabBarScopeCoordinator({ workbench: true, ...deps });
+function coordinator(deps: TabBarScopeDeps): TabBarScopeCoordinator {
+  return new TabBarScopeCoordinator(deps);
 }
 
 describe("what a reload restores", () => {
@@ -182,14 +177,11 @@ describe("a scope re-resolved against the tree", () => {
     expect(scope.scopedWorktreeId()).toBe(HERE);
   });
 
-  it("stops filtering on a scope a later tree no longer holds, flag off included", () => {
-    // Off, the drop is not announced — but the id is no longer confirmed either,
-    // so turning the flag on cannot arm a scope the tree has already lost.
-    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }), workbench: false });
+  it("stops filtering on a scope a later tree no longer holds", () => {
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
     scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
     scope.applyTree(treeOf(worktree({ id: ELSEWHERE })));
 
-    scope.setWorkbench(true);
     expect(scope.scopedWorktreeId()).toBeNull();
     expect(scope.effectiveScope()).toBeUndefined();
   });
@@ -479,83 +471,6 @@ describe("a push that moved no attribution charges nothing", () => {
   });
 });
 
-describe("every part of this is inert while the setting is off", () => {
-  const off = (state: Record<string, unknown> = { worktreeScope: HERE }) =>
-    coordinator({ store: storeOf(state), workbench: false });
-
-  it("hides no tab and offers no chip, whatever is persisted", () => {
-    // One gate, so the filter, the chip and the visibility rule cannot disagree
-    // about whether scoping is on. `effectiveScope()` is what all three read.
-    const scope = off();
-    expect(scope.scopedWorktreeId()).toBeNull();
-    expect(scope.isScoped()).toBe(false);
-    expect(scope.effectiveScope()).toBeUndefined();
-  });
-
-  it("says nothing when the scoped worktree leaves the tree", () => {
-    // A dropped-scope statement about a feature the user never turned on is an
-    // effect of that feature.
-    const dropped: string[] = [];
-    const scope = coordinator({
-      store: storeOf({ worktreeScope: HERE }),
-      workbench: false,
-      onScopeDropped: (id) => dropped.push(id),
-    });
-    scope.applyTree(treeOf(worktree({ id: ELSEWHERE })));
-    expect(dropped).toEqual([]);
-  });
-
-  it("keeps the persisted scope through being off, and applies it the moment it is on", () => {
-    const store = storeOf({ worktreeScope: HERE });
-    const scope = coordinator({ store, workbench: false });
-
-    // Off: untouched, both in the store and as far as anything drawing is concerned.
-    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
-    expect(store.state.worktreeScope).toBe(HERE);
-    expect(scope.effectiveScope()).toBeUndefined();
-
-    scope.setWorkbench(true);
-    expect(scope.scopedWorktreeId()).toBe(HERE);
-    expect(scope.effectiveScope()).toEqual({ worktreeId: HERE, attribution: new Map(), waiting: new Set() });
-
-    // And back off again, without losing it.
-    scope.setWorkbench(false);
-    expect(scope.isScoped()).toBe(false);
-    expect(store.state.worktreeScope).toBe(HERE);
-  });
-
-  it("redraws the bar on the flip, in both directions", () => {
-    // The scope the signature covers is the EFFECTIVE one, so flipping the flag
-    // changes what the bar would draw even though nothing else moved.
-    const scope = off();
-    const tabs = layouts("tab-1");
-    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
-    scope.setAttribution(report(new Map([["tab-1", ELSEWHERE]])));
-    expect(ask(scope, tabs)).toBe(true);
-    expect(ask(scope, tabs)).toBe(false);
-
-    scope.setWorkbench(true);
-    expect(ask(scope, tabs)).toBe(true);
-    expect(ask(scope, tabs)).toBe(false);
-
-    scope.setWorkbench(false);
-    expect(ask(scope, tabs)).toBe(true);
-  });
-
-  it("leaves the unscoped visibility rule intact while off", () => {
-    // `isScoped` is the bar's SECOND reason to be visible; off, it never supplies
-    // one, so the bar falls back to the tab count exactly as it always did.
-    const scope = off();
-    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
-    expect(scope.isScoped()).toBe(false);
-  });
-
-  it("defaults to off when nothing says otherwise", () => {
-    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
-    expect(scope.isScoped()).toBe(false);
-  });
-});
-
 describe("what the chip is told to call the scope", () => {
   it("names the branch the tree last showed, never the path", () => {
     // The panel forbids a path on a row (worktree-panel-ui.md § 3.2) and the chip
@@ -587,9 +502,8 @@ describe("what the chip is told to call the scope", () => {
     expect(coordinator({ store: storeOf({ worktreeScope: HERE }) }).scopedLabel()).toBeNull();
   });
 
-  it("names nothing while unscoped or while the workbench is off", () => {
+  it("names nothing while unscoped", () => {
     expect(coordinator({ store: storeOf() }).scopedLabel()).toBeNull();
-    expect(coordinator({ store: storeOf({ worktreeScope: HERE }), workbench: false }).scopedLabel()).toBeNull();
   });
 });
 
@@ -657,11 +571,6 @@ describe("[2_1] a persisted scope has to be able to resolve itself", () => {
     scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
 
     expect(scope.needsPresence()).toBe(true);
-  });
-
-  it("needs nothing while the workbench is off, whatever is stored", () => {
-    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }), workbench: false });
-    expect(scope.needsPresence()).toBe(false);
   });
 
   it("needs nothing when no scope was ever stored", () => {

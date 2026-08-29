@@ -46,7 +46,7 @@ export interface WorktreeControllerDeps {
   postMessage(msg: WebViewToExtensionMessage): void;
   store: WorktreeStateStore;
   /** Init fields this controller boots from. */
-  init: { workspaceRoot: string | null; rowActivation: WorktreeRowActivation; workbench: boolean };
+  init: { workspaceRoot: string | null; rowActivation: WorktreeRowActivation };
   /**
    * The user selected a worktree, or `null` when the selected one left the tree.
    * The scope consumer subscribes here; the controller only relays and holds.
@@ -247,11 +247,6 @@ export class WorktreeController {
   private loading: boolean;
   private refreshing = false;
   private rowActivation: WorktreeRowActivation;
-  /**
-   * Whether the worktree workbench composition is on. Nothing reads it yet; the
-   * slices that do arrive behind it, and it is false unless configured.
-   */
-  private workbench: boolean;
   /** The last attribution reported, keyed for comparison. `null` → none yet. */
   private lastAttribution: string | null = null;
   /** The host's resolved create destination, per repo. Only it can know one. */
@@ -352,7 +347,6 @@ export class WorktreeController {
     // the workspace cannot keep.
     this.loading = deps.init.workspaceRoot !== null;
     this.rowActivation = deps.init.rowActivation;
-    this.workbench = deps.init.workbench;
     this.view = new WorktreeView({
       host: deps.host,
       // Both launch items start absent: nothing here can launch until the host
@@ -463,7 +457,6 @@ export class WorktreeController {
       // A getter, not a value: the setting is live, and re-reading it at the
       // click is what lets an update reach a view already painted.
       rowActivation: () => this.rowActivation,
-      workbench: () => this.workbench,
       // Forwarded, not mirrored: the view owns the selection because the view is
       // what marks it, and a second copy here is a second thing to keep right.
       onSelectWorktree: (worktreeId) => {
@@ -1009,28 +1002,6 @@ export class WorktreeController {
   /** The setting moved after `init`. Nothing re-renders — the next click reads it. */
   setRowActivation(activation: WorktreeRowActivation): void {
     this.rowActivation = activation;
-  }
-
-  /** The rollout flag moved after `init`. */
-  setWorkbench(enabled: boolean): void {
-    if (this.workbench === enabled) {
-      return;
-    }
-    this.workbench = enabled;
-    if (!enabled) {
-      // Nothing is selectable with the rollout off, so a drawer describing a
-      // selection that can no longer exist has to go with it.
-      this.inspector.close();
-    }
-    // Unlike `rowActivation`, this one changes what is DRAWN — the card marks
-    // selection only while it is on. Nothing in the data moved, so the push
-    // guard would skip the render that has to happen.
-    this.view.refresh();
-  }
-
-  /** Whether the workbench composition is on for this surface. */
-  isWorkbenchEnabled(): boolean {
-    return this.workbench;
   }
 
   /** The worktree the panel has selected, or `null` for none. */

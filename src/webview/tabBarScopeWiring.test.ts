@@ -91,7 +91,6 @@ interface Surface {
  */
 function surface(
   over: {
-    workbench?: boolean;
     persisted?: string;
     tabIds?: string[];
     layouts?: Map<string, SplitNode>;
@@ -149,7 +148,6 @@ function surface(
       getState: () => state as { worktreeScope?: unknown },
       updateState: (patch) => Object.assign(state, patch),
     },
-    workbench: over.workbench ?? true,
     panel: () => controller,
     source: () => source,
     render: draw,
@@ -184,7 +182,7 @@ function surface(
     host: document.body,
     postMessage: () => {},
     store: { getState: () => state as never, updateState: (patch) => Object.assign(state, patch) },
-    init: { workspaceRoot: "/repo", rowActivation: "focus", workbench: over.workbench ?? true },
+    init: { workspaceRoot: "/repo", rowActivation: "focus" },
     onSelectWorktree: (worktreeId) => seam.onSelectWorktree(worktreeId),
     onAttribution: (map) => seam.onAttribution(map),
     now: () => 1_000_000,
@@ -400,42 +398,6 @@ describe("a scope that arrived from persistence", () => {
   });
 });
 
-describe("the flag the whole thing hangs off", () => {
-  it("draws no chip and hides no tab while it is off, whatever is persisted", () => {
-    const s = surface({ workbench: false, persisted: MAIN });
-    s.push();
-    expect(s.chip()).toBeNull();
-    expect(s.tabs()).toEqual(["pane-main", "pane-panel", "pane-loose"]);
-    expect(s.state.worktreeScope).toBe(MAIN);
-  });
-
-  it("cannot arm a scope the tree lost while it was off", () => {
-    // Through the SEAM, not the controller: the controller's own `setWorkbench`
-    // reaches `view.refresh()` and nothing else, so a test that calls it reads a
-    // tab bar drawn while the coordinator was still off and stays green with the
-    // fix reverted (round-2 V2).
-    const s = surface({ workbench: false, persisted: MAIN });
-    s.push();
-    s.push({ tree: treeWithout(MAIN), rows: {} });
-    s.seam.setWorkbench(true);
-
-    expect(s.chip()).toBeNull();
-    expect(s.tabs()).toEqual(["pane-main", "pane-panel", "pane-loose"]);
-  });
-
-  it("reaches the panel and the bar from one flip", () => {
-    const s = surface({ workbench: false, persisted: MAIN });
-    s.push();
-    expect(s.chip()).toBeNull();
-    expect(s.controller.isWorkbenchEnabled()).toBe(false);
-
-    s.seam.setWorkbench(true);
-    expect(s.controller.isWorkbenchEnabled()).toBe(true);
-    expect(s.chip()?.textContent).toContain("main");
-    expect(s.tabs()).toEqual(["pane-main", "pane-loose"]);
-  });
-});
-
 describe("what a failure inside the push leaves behind", () => {
   it("still drops the scope and still says so when the panel handoff throws", () => {
     // The queue is drained in a `finally`, or a notice queued for a tree that
@@ -500,7 +462,6 @@ describe("a surface with no worktree panel mounted", () => {
         getState: () => state as { worktreeScope?: unknown },
         updateState: (patch) => Object.assign(state, patch),
       },
-      workbench: true,
       panel: () => null,
       source: () => ({
         tabLayouts,
@@ -731,19 +692,6 @@ describe("round-1: the region follows the presented set, not just the selection"
     expect(s.emptyScope).toEqual({ id: MAIN, label: "main" });
   });
 
-  it("takes the region down when the rollout flag goes off", () => {
-    // W1: off is inert. A scope that reads "off" while the container stays hidden
-    // has no selection left that can restore it.
-    const s = surface({ tabIds: ["pane-main"], activePane: "pane-main" });
-    s.push();
-    s.seam.onSelectWorktree(PANEL);
-    expect(s.emptyScope).not.toBeNull();
-
-    s.seam.setWorkbench(false);
-
-    expect(s.emptyScope).toBeNull();
-  });
-
   it("sees the live leaf of a split collapsed onto its non-original pane", () => {
     // W3: `closeSplitPaneById` leaves tabLayouts[A] = leaf{B} with A's instance
     // gone. Reading tab ids reported nothing, and the region claimed a running
@@ -834,24 +782,6 @@ describe("[2_2] the presence need reaches the surface even when nothing repaints
     s.seam.onAttribution({ placement: new Map(), waiting: new Set() });
     return s;
   }
-
-  it("fires when the rollout flip arms a scope no tree has confirmed", () => {
-    // The bar's redraw is gated on a signature built from the CONFIRMED scope,
-    // which is absent both before and after this flip, so nothing repaints.
-    // Routing the subscription through that gate left a restored scope unable to
-    // ever resolve: resolving needs a tree, and the tree needs a subscription
-    // (round-2 B1).
-    const s = primed(surface({ workbench: false, persisted: PANEL }));
-    const rendersBefore = s.renders;
-    const before = s.presenceRevalidations;
-
-    s.seam.setWorkbench(true);
-
-    expect(s.seam.needsPresence(), "the flip did not arm the stored scope").toBe(true);
-    expect(s.seam.effectiveScope(), "the scope was confirmed without a tree").toBeUndefined();
-    expect(s.renders, "the premise failed: this edge did repaint after all").toBe(rendersBefore);
-    expect(s.presenceRevalidations, "the surface was never told its presence need had moved").toBeGreaterThan(before);
-  });
 
   it("fires when a tree drops a stored scope it never confirmed", () => {
     // The falling edge. Unlike the flip above, this one DOES repaint today — the

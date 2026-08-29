@@ -34,3 +34,4 @@ Lane: full (flags: user-visible-ui, re-review)
 Planned at: ee68eafc
 - Oracle round: 5 findings, all accepted. D2's "optional deps let a consumer go first" was wrong — `main.ts` passes direct literals, so excess-property checking makes a partial removal a type error; the four consumer tasks now each remove their own wiring and run in series, with 1_4 before 1_2 because the collapse call reads the getter 1_2 deletes.
 - Oracle also caught an implicit OFF default in `WorktreeView.test.ts`'s `mount` (five unrelated cases assert the OFF arm), `WorktreeView.refresh()` existing only for the deleted setter, the message's union membership, and a fifth spec requirement still carrying the WHERE clause.
+- 1_3 merged into 1_2 at build time: `WorktreeController` implements `TabBarScopePanel`, so deleting the controller's `setWorkbench` breaks the coordinator's contract in the same edit — the two cannot type-check apart, in either order. Six tasks, not seven.

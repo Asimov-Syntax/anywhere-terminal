@@ -27,14 +27,10 @@ export interface TabBarScopePanel {
   stageScopeCleared(worktreeId: string, label: string): void;
   /** Stop marking a row as selected, and say so the way a click would. */
   clearSelection(): void;
-  /** The rollout flag moved. */
-  setWorkbench(enabled: boolean): void;
 }
 
 export interface TabBarScopeWiringDeps {
   store: TabBarScopeStore;
-  /** The rollout flag as `init` carried it. */
-  workbench: boolean;
   /**
    * The panel, once it exists. A getter because the coordinator is constructed
    * FIRST — the panel's first push already carries a tree, and the coordinator has
@@ -77,8 +73,6 @@ export interface TabBarScopeWiring {
    * left to report. The order was a comment in `main.ts`; here it is the code.
    */
   applyTree(tree: WorktreeTree | null, deliver: () => void): void;
-  /** The rollout flag moved. Reaches the panel and the coordinator, in that order. */
-  setWorkbench(enabled: boolean): void;
   /** What `buildTabBarData` filters by, or `undefined`. */
   effectiveScope(): TabBarScope | undefined;
   /** See `TabBarScopeCoordinator.needsPresence`. */
@@ -103,7 +97,6 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
   const dropped: [string, string][] = [];
   const coordinator = new TabBarScopeCoordinator({
     store: deps.store,
-    workbench: deps.workbench,
     onScopeDropped: (worktreeId, label) => dropped.push([worktreeId, label]),
   });
 
@@ -237,19 +230,6 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
         settleScope(false);
         settle();
       }
-    },
-
-    setWorkbench(enabled) {
-      // Through here rather than fanned out at the call site: the flip is the one
-      // join `main.ts` still owned, and the panel and the coordinator disagreeing
-      // about it is exactly what the single gate exists to prevent (round-2 V2).
-      deps.panel()?.setWorkbench(enabled);
-      coordinator.setWorkbench(enabled);
-      // The flag going off makes the scope inert, which takes the region with it —
-      // without this the surface read "scoping off" while staying fully filtered
-      // behind a hidden container, with no selection able to restore it (W1).
-      settleScope(false);
-      settle();
     },
 
     effectiveScope: () => coordinator.effectiveScope(),

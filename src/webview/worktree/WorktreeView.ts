@@ -125,13 +125,6 @@ export interface WorktreeViewDeps {
    */
   rowActivation?: () => WorktreeRowActivation;
   /**
-   * Whether the workbench composition is on. A getter for the same reason
-   * `rowActivation` is one: the setting is live, and re-reading it at the click
-   * is what lets a flip reach a view already painted. Absent → off, and no
-   * worktree is selectable at all.
-   */
-  workbench?: () => boolean;
-  /**
    * The selection moved. `null` when the selected worktree left the tree — the
    * holder outside needs the drop as much as it needs the pick, or it goes on
    * naming a worktree that is gone.
@@ -398,15 +391,6 @@ export class WorktreeView {
   }
 
   /**
-   * The workbench flag moved. The card changes what it marks, and nothing in the
-   * data moved — so `setData`'s signature guard would skip the render that has to
-   * happen.
-   */
-  refresh(): void {
-    this.repaint();
-  }
-
-  /**
    * The window's asked-once roster set, shared with the inspector.
    *
    * Exposed rather than constructed twice: "at most one request per row and
@@ -459,15 +443,11 @@ export class WorktreeView {
   }
 
   /**
-   * Select a worktree, or nothing at all while the workbench is off. Returns
-   * whether the selection moved so the caller can decide who repaints:
-   * activation also toggles disclosure, and two repaints for one click would
-   * rebuild the tree twice and throw focus away in between.
+   * Select a worktree. Returns whether the selection moved so the caller can
+   * decide who repaints: activation also toggles disclosure, and two repaints
+   * for one click would rebuild the tree twice and throw focus away in between.
    */
   private select(worktreeId: string): boolean {
-    if (this.deps.workbench?.() !== true) {
-      return false;
-    }
     if (this.selectedWorktreeId === worktreeId) {
       // Nothing to announce about the scope, but the user asked to read this
       // worktree again — which is the only way a dismissed drawer reopens.
@@ -1231,17 +1211,15 @@ export class WorktreeView {
   private renderWorktree(info: WorktreeInfo, now: number, inTail = false): void {
     const rows = this.rowsFor(info.id);
     const expanded = rows.length > 0 && this.isExpanded(info);
-    const workbench = this.deps.workbench?.() === true;
-    const selected = workbench && this.selectedWorktreeId === info.id;
+    const selected = this.selectedWorktreeId === info.id;
     // Grouping and selection are two jobs that shared one class. `.wt-card` used
     // to mean "expanded", and it is the loudest treatment in the tree — so once
-    // selection exists it reads as a selection nobody made (design.md D5). With
-    // the workbench on the card marks selection alone and `.wt-group` does the
-    // grouping; with it off nothing is selectable and the card stays where it was.
+    // selection exists it reads as a selection nobody made (design.md D5). The
+    // card marks selection alone; `.wt-group` does the grouping.
     const grouped = expanded || selected;
     const container = grouped ? document.createElement("div") : this.element;
     if (grouped) {
-      container.className = !workbench || selected ? "wt-group wt-card" : "wt-group";
+      container.className = selected ? "wt-group wt-card" : "wt-group";
       container.setAttribute("role", "none");
       this.element.appendChild(container);
     }
@@ -1260,10 +1238,7 @@ export class WorktreeView {
           idle: this.isIdle(info),
           inTail,
           expanded,
-          // `undefined` while the workbench is off: a tree that cannot be
-          // selected must not announce a selection state at all, and `false`
-          // everywhere would tell a screen reader there is one to make.
-          selected: workbench ? selected : undefined,
+          selected,
           agentSummary: rows.length > 0 ? agentCountLabel(rows.length) : undefined,
         },
         {
