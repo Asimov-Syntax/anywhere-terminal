@@ -1142,3 +1142,21 @@
   width: 14px;
   height: 14px;
 }
+
+/* The action an empty state carries when it describes something the panel can
+   resolve. Four of the five worktree empty states carry none. */
+.wt-empty-action {
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 2px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.wt-empty-action:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}

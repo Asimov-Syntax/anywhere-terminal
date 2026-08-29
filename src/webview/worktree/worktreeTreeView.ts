@@ -852,10 +852,21 @@ export function renderShowAll(total: number, onShowAll: () => void): HTMLElement
 }
 
 /** The distinct causes of an empty tree. Each gets its own copy — none is an error. */
-export type WorktreeEmptyKind = "noFolder" | "noRepo" | "gitMissing" | "noMatch";
+export type WorktreeEmptyKind = "noFolder" | "noRepo" | "gitMissing" | "noMatch" | "unbranched";
 
-export function worktreeEmptyState(kind: WorktreeEmptyKind): HTMLElement {
+/**
+ * `onCreate` is honoured by the `unbranched` state alone — the only one of the
+ * five describing something a create can act on.
+ */
+export function worktreeEmptyState(kind: WorktreeEmptyKind, onCreate?: () => void): HTMLElement {
   switch (kind) {
+    case "unbranched":
+      return emptyState(
+        ICON_BRANCH,
+        "No other worktrees yet",
+        "A worktree checks out another branch in its own folder, so you can work on it without stashing or switching this one.",
+        onCreate ? { label: "Create worktree", onClick: onCreate } : undefined,
+      );
     case "noFolder":
       return emptyState(ICON_FOLDER, "No folder open", "Open a folder to see its worktrees.");
     case "noRepo":

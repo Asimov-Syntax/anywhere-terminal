@@ -30,7 +30,7 @@
     5. The header exists only in the multi-repo case, and that is the rule the control inherits rather than restates. The control is offered only where the view was given a way to perform it — the same absent-not-inert rule the toolbar gate follows, and the same defect if the controller never supplies the dep.
     6. Cover: activation opening the form on that repository and not another; that one pointer activation and one Enter and one Space each start exactly one create and leave the expansion alone; Tab reaching the control from its own header and not from another; each of the four arrow keys still moving between rows while the control holds focus; nothing header-shaped offering create in a single-repo tree.
 
-- [ ] 1_3 The state that can create, creates
+- [x] 1_3 The state that can create, creates — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{the-unbranched-repository-state-offers-the-create-it-describes, a-state-describing-nothing-to-create-in-offers-no-create, each-cause-of-emptiness-reads-differently}, ../../../specs/worktree-panel/spec.md#{present-the-supplied-worktree-tree}, docs/design/worktree-panel-ui.md#5-states
   - **Acceptance**:

@@ -2959,3 +2959,119 @@ describe("create on the repo group header", () => {
     expect(host.querySelectorAll(".wt-rowaction")).toHaveLength(0);
   });
 });
+
+describe("the unbranched-repository state", () => {
+  const REPO = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+  const MAIN = "/Users/dev/Projects/ai-oss/anywhere-terminal";
+  const cta = (host: HTMLElement) => host.querySelector<HTMLButtonElement>(".vault-empty .wt-empty-action");
+
+  function repoTree(over: Partial<WorktreeRepo> = {}): WorktreeTree {
+    return {
+      gitAvailable: true,
+      unreadable: { count: 0, reasons: [] },
+      repos: [
+        {
+          repoId: REPO,
+          label: "anywhere-terminal",
+          mainPath: MAIN,
+          worktrees: [worktree({ id: MAIN, kind: "main", branch: "main", head: "a".repeat(40) })],
+          ...over,
+        },
+      ],
+    };
+  }
+  function show(tree: WorktreeTree, over: Partial<WorktreeViewDeps> = {}) {
+    const created: string[] = [];
+    const { view, host } = mount({ onCreateForRepo: (repoId: string) => created.push(repoId), ...over });
+    view.setData({ tree, presence: singleRepoPresence(NOW) });
+    return { view, host, created };
+  }
+
+  it("[1_3] says what a worktree buys, and offers the create beside the main row", () => {
+    const { host, created } = show(repoTree());
+    cta(host)?.click();
+
+    expect(host.querySelector(".vault-empty-title")?.textContent).toBeTruthy();
+    expect(created).toEqual([REPO]);
+    // Beside, never instead: every supplied worktree stays reachable exactly
+    // once, and the main row is where "New Worktree…" already lives.
+    expect(host.querySelectorAll(".wt-row")).toHaveLength(1);
+  });
+
+  it("[1_3] a repository with a second worktree is not unbranched", () => {
+    const { host } = show(
+      repoTree({
+        worktrees: [
+          worktree({ id: MAIN, kind: "main", branch: "main", head: "a".repeat(40) }),
+          worktree({ id: `${MAIN}-x`, branch: "feat/x", head: "b".repeat(40) }),
+        ],
+      }),
+    );
+
+    expect(cta(host)).toBeNull();
+  });
+
+  it("[1_3] a repository that could not be listed is not unbranched", () => {
+    // Zero worktrees plus a reason: a listing failure, which is the one shape
+    // that makes "a repository always holds its main checkout" false.
+    const { host } = show(repoTree({ worktrees: [], degraded: "git worktree list: exit 128" }));
+
+    expect(cta(host)).toBeNull();
+  });
+
+  it("[1_3] a degraded repository is not unbranched even when it retained one row", () => {
+    // The stale-listing shape, distinct from the failed-listing one above: the
+    // repository still shows its main row, and the reason beside it says that
+    // row may be all that survived. Not evidence that nothing else exists.
+    const { host } = show(
+      repoTree({
+        worktrees: [worktree({ id: MAIN, kind: "main", branch: "main", head: "a".repeat(40) })],
+        degraded: "git worktree list: exit 128",
+      }),
+    );
+
+    expect(cta(host)).toBeNull();
+  });
+
+  it("[1_3] one worktree that is not the main checkout is not unbranched", () => {
+    const { host } = show(
+      repoTree({ worktrees: [worktree({ id: `${MAIN}-x`, branch: "feat/x", head: "b".repeat(40) })] }),
+    );
+
+    expect(cta(host)).toBeNull();
+  });
+
+  it("[1_3] rows withheld by a filter are not evidence about the repository", () => {
+    const { view, host } = show(
+      repoTree({
+        worktrees: [
+          worktree({ id: MAIN, kind: "main", branch: "main", head: "a".repeat(40) }),
+          worktree({ id: `${MAIN}-x`, branch: "feat/x", head: "b".repeat(40) }),
+        ],
+      }),
+    );
+    view.setQuery("main");
+
+    expect(host.querySelectorAll(".wt-row")).toHaveLength(1);
+    expect(cta(host)).toBeNull();
+  });
+
+  it("[1_3] the states that cannot create offer no control", () => {
+    for (const tree of [noRepoTree(), gitMissingTree()]) {
+      const { host } = show(tree);
+      expect(host.querySelector(".vault-empty")).not.toBeNull();
+      expect(cta(host)).toBeNull();
+    }
+    const { view, host } = show(repoTree());
+    view.setQuery("nothing-matches-this");
+    expect(cta(host)).toBeNull();
+  });
+
+  it("[1_3] offers nothing when the view cannot open a create", () => {
+    const { view, host } = mount();
+    view.setData({ tree: repoTree(), presence: singleRepoPresence(NOW) });
+
+    expect(host.querySelector(".vault-empty-title")?.textContent).toBeTruthy();
+    expect(cta(host)).toBeNull();
+  });
+});

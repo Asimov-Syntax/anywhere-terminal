@@ -81,6 +81,11 @@ const NAV_ROWS = ".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow";
  * own action control joins the tab order only while that row is the stop, so
  * tabbing from a focused row reaches its actions and tabbing again leaves.
  */
+/** A repository that has been cloned but never branched out — one worktree, the main one. */
+function isUnbranched(repo: WorktreeRepo): boolean {
+  return repo.degraded === undefined && repo.worktrees.length === 1 && repo.worktrees[0]?.kind === "main";
+}
+
 function setRowTabStop(row: HTMLElement, isStop: boolean): void {
   row.tabIndex = isStop ? 0 : -1;
   for (const action of row.querySelectorAll<HTMLElement>(".wt-rowaction")) {
@@ -1031,6 +1036,18 @@ export class WorktreeView {
           this.renderWorktree(info, now, true);
         }
       }
+    }
+    // Read off the REPOSITORY, never off what got drawn. A degraded listing
+    // carries zero worktrees, and a filter, the cap, and the fold each reduce the
+    // rows without saying anything about what the repository holds — deciding
+    // from visible rows would call four different things unbranched.
+    if (isUnbranched(repo)) {
+      this.element.appendChild(
+        worktreeEmptyState(
+          "unbranched",
+          this.deps.onCreateForRepo ? () => this.deps.onCreateForRepo?.(repo.repoId) : undefined,
+        ),
+      );
     }
     if (shown.length < visible.length) {
       this.element.appendChild(

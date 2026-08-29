@@ -600,7 +600,17 @@ export function activityStep(step: VaultActivityStep): HTMLElement {
 }
 
 /** Build an empty / no-match panel (icon + title + body), all via textContent. */
-export function emptyState(iconSvg: string, title: string, body: string): HTMLElement {
+export function emptyState(
+  iconSvg: string,
+  title: string,
+  body: string,
+  /**
+   * The action that resolves what the state describes. Optional and absent by
+   * default: most empty states describe something the panel cannot resolve, and
+   * offering an action there would claim otherwise.
+   */
+  action?: { label: string; onClick: () => void },
+): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "vault-empty";
   const icon = document.createElement("span");
@@ -614,5 +624,13 @@ export function emptyState(iconSvg: string, title: string, body: string): HTMLEl
   bodyEl.className = "vault-empty-body";
   bodyEl.textContent = body;
   wrap.append(icon, titleEl, bodyEl);
+  if (action) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wt-empty-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", action.onClick);
+    wrap.appendChild(btn);
+  }
   return wrap;
 }
