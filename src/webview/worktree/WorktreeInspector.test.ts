@@ -201,13 +201,19 @@ describe("the agents it presents", () => {
     expect(m.activated).toEqual([{ rowId: "ext", activation: "preview" }]);
   });
 
-  it("presents rows as list items that a keyboard can reach", () => {
+  it("presents rows as buttons a keyboard can reach and press", () => {
     // `treeitem` outside a tree is invalid, and the drawer has no roving stop.
-    const { inspector } = withAgents(agentRow({ rowId: "a", entryId: "claude:s1" }));
-    const row = inspector.element.querySelector<HTMLElement>(".wt-arow");
-    expect(row?.getAttribute("role")).toBe("listitem");
+    // `button` is what the row actually is — activating it goes to the pane.
+    const m = withAgents(agentRow({ rowId: "a", entryId: "claude:s1", paneId: "p1" }));
+    const row = m.inspector.element.querySelector<HTMLElement>(".wt-arow");
+    expect(row?.getAttribute("role")).toBe("button");
     expect(row?.tabIndex).toBe(0);
     expect(row?.hasAttribute("aria-expanded")).toBe(false);
+
+    // A role of button promises Enter and Space, and the drawer binds no key
+    // handler of its own the way the tree's container does.
+    row?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(m.activated.map((a) => a.rowId)).toEqual(["a"]);
   });
 });
 
@@ -551,20 +557,58 @@ describe("[3_1] a delegation history is a valid part of the list", () => {
     expect(roles.every((r) => r === "listitem")).toBe(true);
   });
 
-  it("claims to be a list only where there is something to list", () => {
-    // Empty, unread and failed sections carry a note, not rows.
-    for (const roster of [
-      undefined,
-      { kind: "ok" as const, rows: [] },
-      { kind: "failed" as const, reason: "EACCES" },
-    ]) {
-      expect(listOf(roster).querySelector(".wt-hist")?.getAttribute("role")).not.toBe("list");
-    }
-    expect(
-      listOf({ kind: "ok", rows: [{ name: "reviewer", status: "completed", live: false }] })
-        .querySelector(".wt-hist")
-        ?.getAttribute("role"),
-    ).toBe("list");
+  it("retries a roster dispatch that threw", () => {
+    // The signature is committed before dispatch, so a throwing send left the
+    // drawer sure it was up to date while nothing had been asked (round-2 W4).
+    let fail = true;
+    const asked: string[] = [];
+    const m = mount({
+      onRequestSubagents: (row) => {
+        asked.push(row.rowId);
+        if (fail) {
+          throw new Error("host gone");
+        }
+      },
+    });
+    const data = (): void =>
+      m.inspector.setData(
+        treeWith(worktree({ id: WT, branch: "feat/x" })),
+        presenceWith({ [WT]: [agentRow({ rowId: "a", entryId: "claude:s1" })] }),
+      );
+    data();
+    expect(() => m.inspector.open(WT)).toThrow("host gone");
+
+    fail = false;
+    data();
+    expect(asked).toEqual(["a", "a"]);
+  });
+
+  it("names the agent each history belongs to", () => {
+    // Round-2 W1: an unlabelled history sitting beside its row cannot be tied
+    // back to the agent it describes.
+    const list = listOf({ kind: "ok", rows: [{ name: "reviewer", status: "completed", live: false }] });
+    const history = list.querySelector(".wt-hist");
+    expect(history?.getAttribute("role")).toBe("group");
+    expect(history?.getAttribute("aria-label")).toContain("Delegations of");
+  });
+
+  it("counts one item per agent, not two", () => {
+    // The first fix bought valid child roles at the price of a second listitem
+    // per agent, which makes the list announce twice the agents there are.
+    const m = mount();
+    m.inspector.setData(
+      treeWith(worktree({ id: WT, branch: "feat/x" })),
+      presenceWith({
+        [WT]: [agentRow({ rowId: "a", entryId: "claude:s1" }), agentRow({ rowId: "b", entryId: "claude:s2" })],
+      }),
+    );
+    m.inspector.open(WT);
+    const list = m.inspector.element.querySelector<HTMLElement>(".wt-iagents");
+    const items = Array.from(list?.children ?? []);
+    expect(items.length).toBe(2);
+    expect(items.every((c) => c.getAttribute("role") === "listitem")).toBe(true);
+    // …and each one owns its own history rather than standing beside it.
+    expect(items.every((c) => c.querySelector(".wt-arow") !== null && c.querySelector(".wt-hist") !== null)).toBe(true);
   });
 });
 

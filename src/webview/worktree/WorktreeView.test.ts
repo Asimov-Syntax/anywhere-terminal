@@ -3428,3 +3428,54 @@ describe("the unbranched-repository state", () => {
     expect(cta(host)).toBeNull();
   });
 });
+
+describe("[3_2] focus never falls out of the tree", () => {
+  // `replaceChildren` detaches whatever holds focus and focus goes to `<body>` —
+  // the top of the whole document, outside the panel entirely. The row lookups
+  // that restore it are no-ops when the render left no row to find, and the
+  // empty-state paths return before restoration runs at all (round-2 B6).
+
+  it("keeps focus inside when a query matches nothing", () => {
+    const { view } = mount();
+    view.setData(populated());
+    const row = view.element.querySelector<HTMLElement>(".wt-row");
+    row?.focus();
+    expect(view.element.contains(document.activeElement)).toBe(true);
+
+    view.setQuery("zzz-matches-nothing");
+    expect(document.activeElement).not.toBe(document.body);
+    expect(view.element.contains(document.activeElement)).toBe(true);
+  });
+
+  it("keeps focus inside when the tree empties out entirely", () => {
+    const { view } = mount();
+    view.setData(populated());
+    view.element.querySelector<HTMLElement>(".wt-row")?.focus();
+
+    view.setData({ tree: noRepoTree(), presence: null });
+    expect(document.activeElement).not.toBe(document.body);
+    expect(view.element.contains(document.activeElement)).toBe(true);
+  });
+
+  it("keeps focus inside when git goes away", () => {
+    const { view } = mount();
+    view.setData(populated());
+    view.element.querySelector<HTMLElement>(".wt-row")?.focus();
+
+    view.setData({ tree: gitMissingTree(), presence: null });
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("takes no focus from outside the tree on any of those renders", () => {
+    // The rescue is for a user who WAS inside. Reaching out for focus otherwise
+    // would drag them out of wherever they actually were.
+    const { view } = mount();
+    view.setData(populated());
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    view.setData({ tree: noRepoTree(), presence: null });
+    expect(document.activeElement).toBe(outside);
+  });
+});

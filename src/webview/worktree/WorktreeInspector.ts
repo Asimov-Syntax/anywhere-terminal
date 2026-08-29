@@ -16,7 +16,7 @@ import type { ContextMenuItem } from "../shared/contextMenuShell";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
 import { worktreeActionItems } from "./worktreeActionItems";
 import { activationFor } from "./worktreeActivation";
-import { branchLabel, presentedActivity } from "./worktreeFormat";
+import { agentRowTitle, branchLabel, presentedActivity } from "./worktreeFormat";
 import { worktreeScopeSignature } from "./worktreeRenderSignature";
 import type { RosterRequests } from "./worktreeRosterRequests";
 import { renderAgentRow, renderSubagentSection } from "./worktreeTreeView";
@@ -237,7 +237,16 @@ export class WorktreeInspector {
     }
     // After the DOM is committed — a dep answering synchronously would otherwise
     // re-enter this and replace the tree it is standing in.
-    this.deps.rosters.flush((row) => this.deps.onRequestSubagents?.(row));
+    try {
+      this.deps.rosters.flush((row) => this.deps.onRequestSubagents?.(row));
+    } catch (err) {
+      // `RosterRequests` re-queues what it could not send, but the signature
+      // above already claims this data is drawn — so an identical push or a
+      // ceiling tick returns early and nothing ever asks again, leaving those
+      // histories on "Reading…" for the session (.reviews/round-2.md W4).
+      this.signature = null;
+      throw err;
+    }
   }
 
   private header(branch: string): HTMLElement {
@@ -333,13 +342,24 @@ export class WorktreeInspector {
     for (const row of rows) {
       // Queued, not sent: `flush` runs once the DOM below is committed.
       this.deps.rosters.want(row);
-      list.appendChild(
+      // One item per agent, holding the row AND the history under it. Two sibling
+      // items — the first shape this took — makes the list announce twice the
+      // agents there are, and leaves each history a peer of the row it describes
+      // rather than part of it (.reviews/round-2.md W1).
+      const item = document.createElement("div");
+      item.setAttribute("role", "listitem");
+      item.className = "wt-iagent";
+      item.appendChild(
         renderAgentRow(
           row,
           {
             activity: presentedActivity(row, degraded, now),
             now,
-            role: "listitem",
+            // A button, because that is what it is: activating it focuses the
+            // pane or opens the preview, and `bindActivation` already answers
+            // Enter and Space. `listitem` belongs to the wrapper above, and
+            // claiming it here is what put two of them in the list.
+            role: "button",
             focusable: true,
             disclosure: false,
             showModel: true,
@@ -351,27 +371,24 @@ export class WorktreeInspector {
           },
         ),
       );
-      // A `list` is not a valid child of a `list`, and a section in any of the
-      // three answerless states lists nothing at all — so the history rides in
-      // its own item, and claims to be a list only when it has rows (round-1 W1).
-      const lists = row.delegations !== undefined && row.delegations.kind === "ok" && row.delegations.rows.length > 0;
-      const item = document.createElement("div");
-      item.setAttribute("role", "listitem");
-      item.appendChild(
-        renderSubagentSection(
-          row.delegations,
-          row,
-          (subagent, parent) => this.deps.onActivateSubagent?.(subagent, parent),
-          now,
-          {
-            ...(lists ? { role: "list", rowRole: "listitem" } : {}),
-            focusable: true,
-            // Nothing will ever be asked for this row, so an unread roster here
-            // is unreadable rather than pending.
-            noSession: row.entryId === undefined,
-          },
-        ),
+      // A labelled group, not a second list: three of the four roster states list
+      // nothing at all, and a `list` that never lists is worse than no list role.
+      // The label is what ties a history to the agent it belongs to.
+      const history = renderSubagentSection(
+        row.delegations,
+        row,
+        (subagent, parent) => this.deps.onActivateSubagent?.(subagent, parent),
+        now,
+        {
+          rowRole: "button",
+          focusable: true,
+          // Nothing will ever be asked for this row, so an unread roster here
+          // is unreadable rather than pending.
+          noSession: row.entryId === undefined,
+        },
       );
+      history.setAttribute("aria-label", `Delegations of ${agentRowTitle(row)}`);
+      item.appendChild(history);
       list.appendChild(item);
     }
     return list;

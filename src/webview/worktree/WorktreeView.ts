@@ -840,7 +840,11 @@ export class WorktreeView {
     // `renderListing` keeps its early exits — a skeleton and an empty state have
     // no tree to lay out — but placement must not sit behind any of them, so it
     // runs here, once, on every path.
-    const restoreFocusTo = this.renderListing(now);
+    // Read once, here, and handed down: every path below has to know whether the
+    // user was inside this tree when it was torn down, including the empty states
+    // that return no key at all (.reviews/round-2.md B6).
+    const focusWasInside = this.element.contains(document.activeElement);
+    const restoreFocusTo = this.renderListing(now, focusWasInside);
     this.placeResults();
     // After the DOM is in place, never from inside the loop that queued them:
     // a dep answering synchronously re-enters `renderListing`, which replaces
@@ -848,6 +852,12 @@ export class WorktreeView {
     // including the early exits below — a queued request is owed either way.
     this.flushRosterRequests();
     if (restoreFocusTo === undefined) {
+      // A skeleton or an empty state. It replaced the children like any other
+      // render, so a user who was inside is now on `<body>` — the top of the
+      // whole document — unless the tree takes them back.
+      if (focusWasInside) {
+        this.element.focus();
+      }
       return;
     }
     this.element.scrollTop = scrollTop;
@@ -855,12 +865,16 @@ export class WorktreeView {
     if (restoreFocusTo !== null) {
       const rows = this.navRows();
       // The row can have left in this very render — a worktree removed, a query
-      // typed — and focus then falls to `<body>`, which is the top of the whole
-      // document. `syncRovingTabindex` above has already moved the tab stop to a
-      // row that exists, so that is where focus belongs.
-      (
-        rows.find((r) => this.keyOf(r) === restoreFocusTo) ?? rows.find((r) => this.keyOf(r) === this.focusedKey)
-      )?.focus();
+      // typed. `syncRovingTabindex` above has already moved the tab stop to a row
+      // that exists, so that is where focus belongs; with no rows at all the tree
+      // itself is the last thing standing between the user and `<body>`.
+      const target =
+        rows.find((r) => this.keyOf(r) === restoreFocusTo) ?? rows.find((r) => this.keyOf(r) === this.focusedKey);
+      if (target === undefined) {
+        this.element.focus();
+        return;
+      }
+      target.focus();
     }
   }
 
@@ -876,11 +890,11 @@ export class WorktreeView {
    * shipped host answers over `postMessage`, so nothing reached it before; the
    * inspector adds a second caller, which is why the ordering became a rule.
    */
-  private renderListing(now: number): string | null | undefined {
+  private renderListing(now: number, focusWasInside: boolean): string | null | undefined {
     // `replaceChildren` detaches the focused row, and focus falls to <body> — a
-    // keyboard user loses their place on every disclosure toggle. Restored below
-    // by key, which is why subagent rows had to gain one.
-    const restoreFocusTo = this.element.contains(document.activeElement) ? this.focusedKey : null;
+    // keyboard user loses their place on every disclosure toggle. Restored by
+    // `render` from this key, which is why subagent rows had to gain one.
+    const restoreFocusTo = focusWasInside ? this.focusedKey : null;
     // Cleared with the DOM it describes, never later: every anchor in it points at
     // a node this call is about to detach, and `placeResults` runs on paths that
     // never reach the repo loop. An anchor map outliving its nodes is a drawing

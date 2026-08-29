@@ -107,3 +107,14 @@
     5. In `src/webview/worktree/worktreeRosterRequests.ts` return unsent rows to `pending` when a send throws (W3).
     6. In `src/webview/worktree/WorktreeController.ts` invalidate the inspector wherever the launch capability moves (B3) and route both roster callbacks through one method (S2).
     7. Cover each fix in `src/webview/worktree/WorktreeInspector.test.ts`, `src/webview/worktree/WorktreeController.inspector.test.ts`, `src/webview/worktree/worktreeRosterRequests.test.ts` and `src/webview/worktree/worktreeRenderSignature.test.ts`: a redraw with an agent row and a subagent row focused, a close under a query that matches nothing, both launch-capability transitions, a sessionless window row's activation on both surfaces, a throwing send that leaves the rows behind it askable, and a degradation no drawn row reads.
+
+- [x] 3_2 Fix the accepted round-2 findings — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: .reviews/round-2.md#{B6, W1, W4} <!-- design.md D2, D7 -->
+  - **Acceptance**:
+    - Outcome: no render and no dismissal leaves focus on the document body, one list item per agent owns its own history, and a failed roster dispatch is retried
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeView.ts` compute "focus was inside" once in `render`, pass it to `renderListing`, and focus the tree's own stop on every path that ends with no row to return to — the four empty-state exits included (B6).
+    2. In `src/webview/worktree/WorktreeInspector.ts` give each agent one `listitem` holding its row and its history, label the history with the agent it belongs to, and make the rows activatable by keyboard now that they are buttons (W1); drop the signature when a roster dispatch throws (W4).
+    3. Cover all three in `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeInspector.test.ts` and `src/webview/worktree/WorktreeController.inspector.test.ts`.
