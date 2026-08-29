@@ -58,3 +58,8 @@ Lane: light — one concern, one owner, no new API/data/security surface; flags:
 - `render` gained a single exit so placement cannot sit behind the listing's four early
   returns. Focus restoration moved to a key captured before `replaceChildren` rather than
   read from a DOM that has already been replaced.
+- Round-1 B1 is closed twice over — the anchor map is cleared with the DOM, AND a
+  detached anchor is refused at use. Each alone closes it, so neither is individually
+  falsifiable by the suite; removing BOTH fails all three early-exit tests, which is the
+  evidence recorded. The second half is deliberate defence against a silent `after()`
+  no-op, kept knowing no reachable state exercises it.

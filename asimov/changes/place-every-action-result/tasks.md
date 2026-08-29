@@ -17,3 +17,18 @@
     7. Reach is about the notice, never about the listing: do not open a fold, lift a cap, widen a filter, or expand a repository to make a row appear.
     8. Preserve the `WorktreeInfo` the tree lookup found when building a notice for an undrawn row, so an offer the result carries — Force remove among them — is not silently dropped for exactly the rows that most need it.
     9. Cover: excluded by cap; hidden by fold; excluded by filter; a collapsed repository's repo-scoped result; absent from the tree entirely; a tree that could not be listed at all. Each proves the row is absent AND that one unique marker occurs exactly once. Then: two undrawn failures sharing a row label, told apart; a drawn row's notice asserted present before asserting it omits the label; and the same result across a drawn → undrawn → drawn pair of pushes, one notice after each render.
+
+- [x] 1_2 Round-1 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_1
+  - **Refs**: specs/worktree-panel/spec.md#{every-action-result-is-rendered-whatever-the-tree-chose-to-draw, a-result-whose-row-is-not-on-screen-says-which-worktree-it-is-about, a-name-in-a-notice-identifies-one-worktree}
+  - **Acceptance**:
+    - Outcome: a result still renders, attributed to the right repository, on a render that drew no tree
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`.
+    1. The anchor map is a DRAWING artifact that placement was allowed to depend on — the same mistake this change was written to remove, one level down. Its lifetime must be tied to the DOM it describes, so it is reset where that DOM is, not where the repo loop happens to start.
+    2. Trusting an anchor is a second decision from recording one. An anchor still in the map but no longer in the tree makes `after()` a silent no-op, which is the one outcome placement must never produce: verify before use and fall back to appending.
+    3. Only record an anchor when the section actually grew. A repository that appended nothing has no last element of its own, and the previous repository's is not a substitute — a repo-scoped notice carries no name, so nothing on screen would contradict the wrong attribution.
+    4. Reuse what the view already has: one DOM scan feeding both placement and the ceiling scheduler, and the existing repository lookup rather than a second one.
+    5. Return the focus key rather than parking it on the instance; a synchronous re-entrant render must not read a predecessor's.
+    6. Cover what the round-1 tests did not: a repo-scoped result surviving each of the four early-exit renders when a successful render preceded it; a filter that empties one repository while another still holds a result; and the NAME itself asserted present and correct, not only different from its neighbour.

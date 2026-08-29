@@ -184,9 +184,6 @@ export class WorktreeView {
   private readonly disposeTooltips: () => void;
   /** Roving tabindex target — the row keyboard navigation last landed on. */
   private focusedKey: string | null = null;
-  /** Set while a render is in flight, so focus restoration survives the listing's
-   *  early exits without being read off a DOM that has already been replaced. */
-  private restoreFocusTo: string | null = null;
   /** repoId → the last node of that repository's section, so a result with no
    *  drawn row still lands with its repository. */
   private readonly repoAnchors = new Map<string, HTMLElement>();
@@ -672,61 +669,61 @@ export class WorktreeView {
     const scrollTop = this.element.scrollTop;
     // `renderListing` keeps its early exits — a skeleton and an empty state have
     // no tree to lay out — but placement must not sit behind any of them, so it
-    // runs here, once, on every path this method can take.
-    const hadListing = this.renderListingAndPlace(now, scrollTop);
-    if (!hadListing) {
-      return;
-    }
-  }
-
-  /** Draws the tree, then places every result. Returns whether a tree was drawn. */
-  private renderListingAndPlace(now: number, scrollTop: number): boolean {
-    const drew = this.renderListing(now);
+    // runs here, once, on every path.
+    const restoreFocusTo = this.renderListing(now);
     this.placeResults();
-    if (!drew) {
-      return false;
+    if (restoreFocusTo === undefined) {
+      return;
     }
     this.element.scrollTop = scrollTop;
     this.syncRovingTabindex();
-    if (this.restoreFocusTo !== null) {
-      const key = this.restoreFocusTo;
-      this.restoreFocusTo = null;
+    if (restoreFocusTo !== null) {
       this.navRows()
-        .find((r) => this.keyOf(r) === key)
+        .find((r) => this.keyOf(r) === restoreFocusTo)
         ?.focus();
     }
-    return true;
   }
 
-  private renderListing(now: number): boolean {
+  /**
+   * Draws the tree. Returns the focus key to restore, or `undefined` when there was
+   * no tree to lay out. Returned rather than parked on the instance: `setData` can
+   * re-enter synchronously, and a field would hand a predecessor's key to the render
+   * that outlives it.
+   */
+  private renderListing(now: number): string | null | undefined {
     // `replaceChildren` detaches the focused row, and focus falls to <body> — a
     // keyboard user loses their place on every disclosure toggle. Restored below
     // by key, which is why subagent rows had to gain one.
-    this.restoreFocusTo = this.element.contains(document.activeElement) ? this.focusedKey : null;
+    const restoreFocusTo = this.element.contains(document.activeElement) ? this.focusedKey : null;
+    // Cleared with the DOM it describes, never later: every anchor in it points at
+    // a node this call is about to detach, and `placeResults` runs on paths that
+    // never reach the repo loop. An anchor map outliving its nodes is a drawing
+    // artifact deciding what gets reported — the exact coupling this change removes.
+    this.repoAnchors.clear();
     this.element.replaceChildren();
     const { tree, presence, loading, refreshing, noFolder } = this.data;
 
     if (loading && !tree) {
       this.element.setAttribute("aria-busy", "true");
       this.element.appendChild(renderSkeleton());
-      return false;
+      return undefined;
     }
     this.element.removeAttribute("aria-busy");
 
     if (noFolder) {
       this.element.appendChild(worktreeEmptyState("noFolder"));
-      return false;
+      return undefined;
     }
     // Only when nothing was retained: an unusable git with a last good listing
     // is a stale tree, not an empty one, and hiding it behind this state was
     // what made the cache's retention invisible.
     if (tree && !tree.gitAvailable && tree.repos.length === 0) {
       this.element.appendChild(worktreeEmptyState("gitMissing"));
-      return false;
+      return undefined;
     }
     if (!tree || tree.repos.length === 0) {
       this.element.appendChild(worktreeEmptyState("noRepo"));
-      return false;
+      return undefined;
     }
 
     // A refresh that already holds a tree keeps it and marks itself quietly (§ 5).
@@ -777,22 +774,26 @@ export class WorktreeView {
     // A group header per repo, but ONLY when the tree holds more than one (§ 3.1).
     const multiRepo = tree.repos.length > 1;
     let rendered = 0;
-    this.repoAnchors.clear();
     for (const repo of tree.repos) {
-      rendered += this.renderRepo(repo, multiRepo, now);
       // Where this repo's section ends, so a repo-scoped result still lands with
-      // its repository. Recorded here rather than inside `renderRepo` because
-      // that method has an early return of its own, and an anchor missing for
-      // exactly the collapsed case is how the collapsed hole opened.
+      // its repository. Recorded here rather than inside `renderRepo` because that
+      // method has an early return of its own, and an anchor missing for exactly
+      // the collapsed case is how the collapsed hole opened.
+      const before = this.element.childElementCount;
+      rendered += this.renderRepo(repo, multiRepo, now);
       const last = this.element.lastElementChild;
-      if (last instanceof HTMLElement) {
+      // ONLY when this repository actually drew something. A filter can empty one
+      // entirely, and then the last element belongs to the repository before it —
+      // a repo-scoped notice carries no name, so nothing on screen would contradict
+      // the wrong attribution.
+      if (this.element.childElementCount > before && last instanceof HTMLElement) {
         this.repoAnchors.set(repo.repoId, last);
       }
     }
     if (rendered === 0 && this.query) {
       this.element.appendChild(worktreeEmptyState("noMatch"));
     }
-    return true;
+    return restoreFocusTo;
   }
 
   /**
@@ -894,14 +895,20 @@ export class WorktreeView {
    * — a row is here because it was drawn, which is the actual question.
    */
   private renderedWorktreeIds(): Set<string> {
-    const ids = new Set<string>();
+    return new Set(this.renderedWorktreeRows().keys());
+  }
+
+  /** The drawn rows by worktree id. ONE scan feeds both the ceiling scheduler and
+   *  result placement — two scans of the same selector drifted twice before. */
+  private renderedWorktreeRows(): Map<string, HTMLElement> {
+    const rows = new Map<string, HTMLElement>();
     for (const el of this.element.querySelectorAll<HTMLElement>("[data-worktree-id]")) {
       const id = el.dataset.worktreeId;
-      if (id !== undefined) {
-        ids.add(id);
+      if (id !== undefined && !rows.has(id)) {
+        rows.set(id, el);
       }
     }
-    return ids;
+    return rows;
   }
 
   /** Returns how many worktree rows this repo contributed (0 → filtered away). */
@@ -1080,13 +1087,7 @@ export class WorktreeView {
     if (results.length === 0) {
       return;
     }
-    const drawn = new Map<string, HTMLElement>();
-    for (const el of this.element.querySelectorAll<HTMLElement>("[data-worktree-id]")) {
-      const id = el.dataset.worktreeId;
-      if (id !== undefined && !drawn.has(id)) {
-        drawn.set(id, el);
-      }
-    }
+    const drawn = this.renderedWorktreeRows();
     // Several results can share one anchor, so each insert walks the cursor
     // forward; appending them all `after` the same node would reverse them.
     const cursors = new Map<HTMLElement, HTMLElement>();
@@ -1094,9 +1095,12 @@ export class WorktreeView {
       const row = result.worktreeId === undefined ? undefined : drawn.get(result.worktreeId);
       const info = result.worktreeId === undefined ? undefined : this.infoFor(result.worktreeId);
       // A drawn row already says which worktree this is about, directly above.
-      const notice = this.buildActionNotice(result, info, row ? undefined : this.nameFor(result));
+      const notice = this.buildActionNotice(result, info, row ? undefined : this.nameFor(result, info));
       const anchor = row ? this.groupEndFor(row) : this.repoAnchorFor(result, info);
-      if (anchor === undefined) {
+      // `after()` on a detached node is a silent no-op — the notice would be built
+      // and dropped. Never trust an anchor without confirming it is still in the
+      // tree; appending is worse placement but it is placement.
+      if (anchor === undefined || !this.element.contains(anchor)) {
         this.element.appendChild(notice);
         continue;
       }
@@ -1119,17 +1123,8 @@ export class WorktreeView {
   /** Where a result with no drawn row goes: with its repository when we can place
    *  it there, else at the end, which is the only honest place left. */
   private repoAnchorFor(result: WorktreeActionResult, info?: WorktreeInfo): HTMLElement | undefined {
-    const repoId = result.repoId ?? (info ? this.repoIdOf(info.id) : undefined);
+    const repoId = result.repoId ?? (info ? this.repoOf(info)?.repoId : undefined);
     return repoId === undefined ? undefined : this.repoAnchors.get(repoId);
-  }
-
-  private repoIdOf(worktreeId: string): string | undefined {
-    for (const repo of this.data.tree?.repos ?? []) {
-      if (repo.worktrees.some((w) => w.id === worktreeId)) {
-        return repo.repoId;
-      }
-    }
-    return undefined;
   }
 
   private infoFor(worktreeId: string): WorktreeInfo | undefined {
@@ -1148,11 +1143,10 @@ export class WorktreeView {
    * across repositories especially — so a label shared with another worktree the
    * panel holds is qualified until it separates them.
    */
-  private nameFor(result: WorktreeActionResult): string | undefined {
+  private nameFor(result: WorktreeActionResult, info?: WorktreeInfo): string | undefined {
     if (result.worktreeId === undefined) {
       return undefined;
     }
-    const info = this.infoFor(result.worktreeId);
     if (!info) {
       // Left the tree: the last thing the panel knew of it, reconstructed by the
       // controller rather than supplied by the host, so it is a fallback and not

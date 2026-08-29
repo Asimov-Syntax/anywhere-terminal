@@ -2577,6 +2577,73 @@ describe("every action result is placed", () => {
     expect(marks(view, "unlisted-tree-failure")).toBe(1);
   });
 
+  // A FIRST render takes the append fallback and never consults an anchor, which is
+  // how a stale-anchor defect passed a full suite. Each of these draws a tree first,
+  // so the second render meets anchors pointing at nodes it has already detached.
+  it.each([
+    ["gitMissing", { gitAvailable: false, unreadable: { count: 0, reasons: [] }, repos: [] }],
+    ["noRepo", { gitAvailable: true, unreadable: { count: 0, reasons: [] }, repos: [] }],
+  ])("keeps a repo-scoped result through a later %s render", (_name, emptyTree) => {
+    const { view } = mount({ now: () => NOW });
+    const results: WorktreeActionResult[] = [
+      { action: "prune", repoId: REPO2, outcome: "error", error: "survives-empty-render" },
+    ];
+    view.setData({ tree: treeOf(repo(REPO2, "repo", ["a"])), presence: null, actionResults: results });
+    expect(marks(view, "survives-empty-render")).toBe(1);
+    view.setData({ tree: emptyTree as WorktreeTree, presence: null, actionResults: results });
+    expect(marks(view, "survives-empty-render")).toBe(1);
+  });
+
+  it("keeps a repo-scoped result through a later loading render", () => {
+    const { view } = mount({ now: () => NOW });
+    const results: WorktreeActionResult[] = [
+      { action: "prune", repoId: REPO2, outcome: "error", error: "survives-loading" },
+    ];
+    view.setData({ tree: treeOf(repo(REPO2, "repo", ["a"])), presence: null, actionResults: results });
+    view.setData({ tree: null, presence: null, loading: true, actionResults: results });
+    expect(marks(view, "survives-loading")).toBe(1);
+  });
+
+  it("does not attribute a result to a repository the filter emptied around it", () => {
+    const { view } = mount({ now: () => NOW });
+    // Three repos, and the middle one is the one the filter empties. That is what
+    // makes the two outcomes distinguishable: inheriting r1's anchor puts the
+    // notice BEFORE r3's section, while having no anchor appends it after.
+    view.setData({
+      tree: treeOf(
+        repo("/r1/.git", "r1", ["alpha-one"]),
+        repo("/r2/.git", "r2", ["zulu"]),
+        repo("/r3/.git", "r3", ["alpha-three"]),
+      ),
+      presence: null,
+      actionResults: [{ action: "prune", repoId: "/r2/.git", outcome: "error", error: "belongs-to-r2" }],
+    });
+    view.setQuery("alpha");
+    const children = Array.from(view.element.children);
+    const noticeAt = children.findIndex((el) => el.textContent?.includes("belongs-to-r2"));
+    const r3RowAt = children.findIndex((el) => el.textContent?.includes("alpha-three"));
+    expect(r3RowAt).toBeGreaterThan(-1);
+    expect(noticeAt).toBeGreaterThan(-1);
+    // r2 drew nothing, so it has no section for this to sit in; it must not be
+    // filed under r1. A repo-scoped notice carries no name, so nothing on screen
+    // would contradict the wrong attribution.
+    expect(noticeAt).toBeGreaterThan(r3RowAt);
+  });
+
+  it("names the worktree a hidden result concerns, not merely a different string", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({
+      tree: treeOf(repo(REPO2, "repo", ["alpha", "zebra"])),
+      presence: null,
+      actionResults: [failure(`${REPO2}:zebra`, "named-failure")],
+    });
+    view.setQuery("alpha");
+    const notice = view.element.querySelector(".wt-notice--error")?.textContent ?? "";
+    expect(notice).toContain("named-failure");
+    // The positive half: every placement test passed with no name on any notice.
+    expect(notice).toContain("zebra");
+  });
+
   it("renders exactly one notice across a drawn -> undrawn -> drawn pair of pushes", () => {
     const { view } = mount({ now: () => NOW });
     const target = `${REPO2}:zebra`;
