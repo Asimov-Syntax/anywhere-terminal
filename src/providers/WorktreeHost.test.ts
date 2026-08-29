@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionToWebViewMessage } from "../types/messages";
-import type { WorktreePresence } from "../worktree/presenceTypes";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
+import type { WorktreePresence } from "../worktree/presenceTypes";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import { createWorktreeHost, type WorktreeSurface } from "./WorktreeHost";

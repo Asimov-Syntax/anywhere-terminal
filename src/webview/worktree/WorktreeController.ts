@@ -13,6 +13,7 @@ import type {
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
   WorktreeMutationResultMessage,
+  WorktreeSubscriptionLevel,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
 import { attributionKey, type PaneReport, waitingKey } from "../paneAttribution";
@@ -55,6 +56,12 @@ export interface WorktreeControllerDeps {
    * push whose attribution moved, and never otherwise.
    */
   onAttribution?: (report: PaneReport) => void;
+  /**
+   * Whether this surface still draws something from presence other than the rail
+   * — a scope's chip, its escape control and its hidden-waiting count all
+   * outlive a collapsed rail. Absent → the rail alone decides.
+   */
+  presenceNeeded?: () => boolean;
   /**
    * Open the session-preview overlay for a host-resolved entry. Returns false
    * when this surface holds no such entry — the host resolved against presence,
@@ -210,7 +217,18 @@ export class WorktreeController {
 
   private readonly deps: WorktreeControllerDeps;
   private readonly view: WorktreeView;
-  private visible = false;
+  /**
+   * The level last posted, or null while unsubscribed. The effective state, not
+   * a request — `applySubscription` derives it.
+   */
+  private subscribed: WorktreeSubscriptionLevel | null = null;
+  /**
+   * What the PANEL asked for: is the rail showing this body? Everything that
+   * acts on the body keys on this falling to false, never on the subscription
+   * ending — a scope can hold the subscription open long after the panel left
+   * (design.md D4).
+   */
+  private bodyShown = false;
   private tree: WorktreeTree | null = null;
   private presence: WorktreePresence | null = null;
   private loading: boolean;
@@ -466,19 +484,55 @@ export class WorktreeController {
    * so this is what starts and stops the flow — nothing polls.
    */
   setVisible(visible: boolean): void {
-    if (visible === this.visible) {
+    if (visible !== this.bodyShown) {
+      this.bodyShown = visible;
+      if (!visible) {
+        // A create resolved after the panel left this body would mount a form
+        // over a body it does not act in (round-1 W6). Keyed on the PANEL's
+        // request, not on the subscription: a scope keeps the subscription open,
+        // and this cleanup has nothing to do with presence. Putting it behind the
+        // effective value is exactly the regression the earlier attempt shipped
+        // (collapse-the-rail-after-a-sidebar-selection/.reviews/round-1.md B2).
+        this.pendingCreate = null;
+      }
+    }
+    this.applySubscription();
+  }
+
+  /**
+   * Recompute the subscription from the panel's request and the current scope.
+   * For the edge the panel cannot see: a scope set or cleared while the rail's
+   * own state has not moved.
+   */
+  revalidateVisibility(): void {
+    this.applySubscription();
+  }
+
+  private applySubscription(): void {
+    // Two questions, two answers. The rail decides whether rows are drawn; a
+    // scope decides whether anything is drawn from presence at all. Its chip,
+    // escape control and hidden-waiting count all survive a collapsed rail
+    // (worktree-panel-ui.md § 7.1), and going quiet under one freezes the
+    // presence half of that count, which `tab-bar-component` § "The count reads
+    // every source that can say a pane is waiting" forbids.
+    const level: WorktreeSubscriptionLevel | null = this.bodyShown
+      ? "rows"
+      : this.deps.presenceNeeded?.() === true
+        ? "presence"
+        : null;
+    if (level === this.subscribed) {
       return;
     }
-    this.visible = visible;
-    if (!visible) {
-      // A create resolved after the panel left this body would mount a form over
-      // a body it does not act in (round-1 W6). Abandoned on the way out rather
-      // than refused on arrival: a surface that never reports visibility at all
-      // must still be able to open one.
-      this.pendingCreate = null;
-    }
-    this.deps.postMessage({ type: "worktreeViewVisibility", visible });
+    const wasSubscribed = this.subscribed !== null;
+    this.subscribed = level;
+    const visible = level !== null;
+    this.deps.postMessage({ type: "worktreeViewVisibility", visible, ...(level ? { level } : {}) });
     if (visible) {
+      // A level change on a standing subscription needs no re-request: the host
+      // is already pushing, and the next projection reads the new level.
+      if (wasSubscribed) {
+        return;
+      }
       this.deps.postMessage({ type: "requestWorktreeTree" });
       // Asked on the way in rather than once at mount: which agents resolve is a
       // property of the machine, and one installed since the last look should
@@ -501,7 +555,9 @@ export class WorktreeController {
 
   /** Toolbar refresh: rebuild the listings rather than re-serve the cache. */
   requestRefresh(): void {
-    if (!this.visible || this.refreshing) {
+    // `bodyShown`, not the subscription: the toolbar this serves is in the body,
+    // so a scope holding presence open is not a reason to accept one (D4).
+    if (!this.bodyShown || this.refreshing) {
       return;
     }
     this.refreshing = true;

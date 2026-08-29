@@ -114,7 +114,9 @@ describe("visibility", () => {
     // Which agents resolve is a property of the machine, so the panel asks on
     // every way in rather than once at mount.
     expect(posts).toEqual([
-      { type: "worktreeViewVisibility", visible: true },
+      // The level says the rail is drawing rows; a scope-only subscriber sends
+      // "presence" instead.
+      { type: "worktreeViewVisibility", visible: true, level: "rows" },
       { type: "requestWorktreeTree" },
       { type: "requestVaultLaunchTargets", capability: "start" },
     ]);

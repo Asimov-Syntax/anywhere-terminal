@@ -24,7 +24,7 @@
     1. In `src/worktree/presenceProjector.ts`, add the enrich option, defaulting true, and skip the title and preview passes when it is false.
     2. In `src/worktree/presenceProjector.test.ts`, cover: with enrichment off no title or preview read is issued; the rows and their waiting states are unchanged; and ranking still updates, since a stale order would reorder every group the moment the rail reopened.
 
-- [ ] 1_3 Post the level from the controller, and keep body work on the panel's own request
+- [x] 1_3 Post the level from the controller, and keep body work on the panel's own request — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.state.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d4-in-the-controller-body-work-keys-on-drawing-subscription-keys-on-either; specs/worktree-panel/spec.md#a-surface-subscribes-to-presence-for-what-it-draws-not-for-the-rail
   - **Acceptance**:
@@ -34,4 +34,5 @@
     1. In `src/webview/worktree/WorktreeController.ts`, keep the panel's request and the scope's need in separate fields and derive the posted level from both, posting only when the level or the subscription itself changes.
     2. In `src/webview/worktree/WorktreeController.ts`, key the pendingCreate cleanup and body-only refresh eligibility on the panel's request falling to false, NOT on the subscription ending — this is the regression the earlier attempt shipped.
     3. In `src/webview/main.ts`, supply the scope-need callback and revalidate on the render route every scope change already reaches.
-    4. In `src/webview/worktree/WorktreeController.state.test.ts`, cover: collapsing under a scope posts the presence level rather than going quiet; clearing the scope then unsubscribes; a scope set while collapsed subscribes; a surface with no scope source behaves as it does today; and — the regression test — collapsing under a scope still cancels an in-flight create.
+    4. In `src/webview/worktree/WorktreeController.test.ts`, update the one test that pins the exact visibility message shape — the level is part of it now.
+    5. In `src/webview/worktree/WorktreeController.state.test.ts`, cover: collapsing under a scope posts the presence level rather than going quiet; clearing the scope then unsubscribes; a scope set while collapsed subscribes; a surface with no scope source behaves as it does today; and — the regression test — collapsing under a scope still cancels an in-flight create.
