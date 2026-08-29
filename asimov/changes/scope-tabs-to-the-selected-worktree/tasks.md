@@ -72,7 +72,7 @@
     5. Reduce `src/webview/main.ts` to wiring: construct the coordinator, feed it the controller's attribution and selection, and call `renderTabBar` only when `shouldRender()` says so.
     6. Cover: reload restoring a present scope; absent, non-string, and unknown-id values all landing unscoped; removal and prune clearing with a stated reason; `missing` keeping it; unrelated state keys preserved across a write; a thrown `setState` propagating rather than being swallowed.
 
-- [ ] 1_6 Charge nothing for a push that moved no attribution
+- [x] 1_6 Charge nothing for a push that moved no attribution — verified: pnpm exec vitest run 'src/webview/tabBarScope.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_5
   - **Refs**: specs/tab-bar-component/spec.md#a-push-that-moves-no-attribution-redraws-no-tab-bar, ../../../specs/worktree-panel/spec.md#a-push-that-changed-nothing-changes-no-pixels, design.md#d8-the-tab-bar-gets-its-own-signature-in-its-own-coordinator
   - **Acceptance**:

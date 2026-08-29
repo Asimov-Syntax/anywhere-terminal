@@ -235,3 +235,93 @@ describe("what counts as a reason to redraw", () => {
     expect(scope.shouldRender(layouts("tab-1"))).toBe(true);
   });
 });
+
+describe("a push that moved no attribution charges nothing", () => {
+  /**
+   * One presence push as the surface actually sees it: the tree is re-resolved,
+   * a fresh attribution map arrives, and the bar is asked whether to redraw.
+   */
+  function push(
+    scope: TabBarScopeCoordinator,
+    entries: [string, string][],
+    tree: WorktreeTree,
+    tabLayouts: Map<string, SplitNode>,
+  ): boolean {
+    scope.applyTree(tree);
+    scope.setAttribution(new Map(entries));
+    return scope.shouldRender(tabLayouts);
+  }
+
+  const tree = () => treeOf(worktree({ id: HERE, branch: "here" }), worktree({ id: ELSEWHERE, branch: "there" }));
+  const placed = (): [string, string][] => [
+    ["pane-1", HERE],
+    ["pane-2", ELSEWHERE],
+  ];
+
+  it("draws once, then not again however many identical pushes arrive", () => {
+    // The envelope carries far more than attribution — a scan timestamp, activity,
+    // titles, delegations — and a new object every time. None of it is in the
+    // signature, so none of it is a reason to re-enter renderTabBar.
+    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const tabs = layouts("tab-1", "tab-2");
+    expect(push(scope, placed(), tree(), tabs)).toBe(true);
+    for (let i = 0; i < 5; i++) {
+      expect(push(scope, placed(), tree(), tabs), `push ${i}`).toBe(false);
+    }
+  });
+
+  it("draws nothing for a tree that moved without moving any attribution", () => {
+    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const tabs = layouts("tab-1");
+    push(scope, placed(), tree(), tabs);
+
+    // A worktree appears, and both the scoped one and another are renamed. No pane
+    // changed hands and the scope still names the same worktree, so per the spec
+    // the bar is left untouched — a tree change that moves no attribution and no
+    // scope is not a redraw. The scoped worktree's own LABEL is therefore not in
+    // the signature, and a chip naming it redraws at the next real reason to.
+    const moved = treeOf(
+      worktree({ id: HERE, branch: "here-renamed" }),
+      worktree({ id: ELSEWHERE, branch: "renamed" }),
+      worktree({ id: "/wt/new", branch: "new" }),
+    );
+    expect(push(scope, placed(), moved, tabs)).toBe(false);
+  });
+
+  it("draws exactly once for each thing that does move it", () => {
+    const scope = new TabBarScopeCoordinator({ store: storeOf({ worktreeScope: HERE }) });
+    const tabs = layouts("tab-1");
+    push(scope, placed(), tree(), tabs);
+
+    // A pane changes hands.
+    const moved: [string, string][] = [
+      ["pane-1", ELSEWHERE],
+      ["pane-2", ELSEWHERE],
+    ];
+    expect(push(scope, moved, tree(), tabs)).toBe(true);
+    expect(push(scope, moved, tree(), tabs)).toBe(false);
+
+    // A pane the evidence stops placing at all.
+    const fewer: [string, string][] = [["pane-2", ELSEWHERE]];
+    expect(push(scope, fewer, tree(), tabs)).toBe(true);
+    expect(push(scope, fewer, tree(), tabs)).toBe(false);
+
+    // The scope itself.
+    scope.select(ELSEWHERE);
+    expect(push(scope, fewer, tree(), tabs)).toBe(true);
+    expect(push(scope, fewer, tree(), tabs)).toBe(false);
+
+    // A split gaining a leaf, then losing it.
+    const split = new Map<string, SplitNode>([
+      ["tab-1", createBranch("horizontal", createLeaf("tab-1"), createLeaf("pane-2"))],
+    ]);
+    expect(push(scope, fewer, tree(), split)).toBe(true);
+    expect(push(scope, fewer, tree(), split)).toBe(false);
+    expect(push(scope, fewer, tree(), tabs)).toBe(true);
+
+    // And the scope being cleared entirely.
+    scope.clear();
+    expect(push(scope, fewer, tree(), tabs)).toBe(true);
+    expect(push(scope, fewer, tree(), tabs)).toBe(false);
+  });
+});
