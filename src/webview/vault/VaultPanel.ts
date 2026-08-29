@@ -180,12 +180,14 @@ export class VaultPanel {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly folderToggleEl: HTMLLabelElement;
   private readonly folderCheckboxEl: HTMLInputElement;
-  private readonly segmentedEl: HTMLElement;
+  /** Rebuilt by `composeControls` on every rollout flip, so none of these is readonly. */
+  private segmentedEl!: HTMLElement;
   /** Level 1 — which body. Null before the workbench rollout. */
-  private readonly viewToggleEl: HTMLElement | null;
+  private viewToggleEl: HTMLElement | null = null;
   /** Level 2's home: a strip inside the sessions body. Null before the rollout. */
-  private readonly groupBarEl: HTMLElement | null;
-  private readonly workbench: boolean;
+  private groupBarEl: HTMLElement | null = null;
+  private workbench: boolean;
+  private readonly toolbarEl: HTMLElement;
   private readonly statusEl: HTMLElement;
   private readonly bodyEl: HTMLElement;
   private readonly listEl: HTMLElement;
@@ -413,89 +415,14 @@ export class VaultPanel {
 
     // Toolbar: the body toggle (or, before the rollout, the flat control that
     // fuses body and grouping) on the left + "This folder only" on the right.
-    const toolbar = document.createElement("div");
-    toolbar.className = "vault-toolbar";
+    // The controls themselves are built by `composeControls`, which is also what
+    // a runtime rollout flip re-runs (round-1 B2).
+    this.toolbarEl = document.createElement("div");
+    this.toolbarEl.className = "vault-toolbar";
+    const toolbar = this.toolbarEl;
     this.workbench = deps.workbench === true;
-    this.segmentedEl = document.createElement("div");
-    this.segmentedEl.className = this.workbench ? "vault-segmented" : "vault-segmented vault-segmented--flat";
-    this.segmentedEl.setAttribute("role", "tablist");
-    this.segmentedEl.setAttribute("aria-label", "Group by");
-    const segment = (
-      into: HTMLElement,
-      label: string,
-      icon: string,
-      hint: string,
-      onClick: () => void,
-    ): HTMLButtonElement => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.title = hint;
-      btn.setAttribute("role", "tab");
-      const iconSpan = document.createElement("span");
-      iconSpan.className = "vault-segmented-icon";
-      iconSpan.innerHTML = icon;
-      iconSpan.setAttribute("aria-hidden", "true");
-      const labelSpan = document.createElement("span");
-      // The flat control's four segments no longer fit at sidebar width, so CSS
-      // drops the label on its unselected ones; the class is what it hooks onto.
-      // Neither of the two-level controls ever drops a label.
-      labelSpan.className = "vault-segmented-label";
-      labelSpan.textContent = label;
-      btn.append(iconSpan, labelSpan);
-      btn.addEventListener("click", onClick);
-      into.appendChild(btn);
-      return btn;
-    };
-    for (const [mode, label, icon, hint] of [
-      ["recent", "Recent", ICON_RECENT, "Group by most recently used"],
-      ["agent", "Agent", ICON_AGENT, "Group by agent (Claude / Codex / OpenCode)"],
-      ["folder", "Folder", ICON_FOLDER, "Group by working folder"],
-    ] as const) {
-      const btn = segment(this.segmentedEl, label, icon, hint, () => this.setGroupMode(mode));
-      btn.dataset.mode = mode;
-    }
     this.worktreeBodyEl = deps.worktreeBody ?? null;
     this.onWorktreeVisibility = deps.onWorktreeVisibility;
-    if (this.workbench) {
-      // Level 1 — which body. Level 2 lives in the body it groups, so the two are
-      // never in one row: five tab-shaped controls where four already did not fit
-      // would make the squeeze worse rather than remove it.
-      this.viewToggleEl = document.createElement("div");
-      // Both classes: `vault-segmented` IS the segment styling, and re-declaring
-      // it under a second selector only adds a descending-specificity rule beside
-      // the one the file already carries. `vault-view-toggle` is the hook that
-      // names this level, and what the tests address it by.
-      this.viewToggleEl.className = "vault-segmented vault-view-toggle";
-      this.viewToggleEl.setAttribute("role", "tablist");
-      this.viewToggleEl.setAttribute("aria-label", "View");
-      for (const [view, label, icon, hint] of [
-        ["worktree", "Worktrees", ICON_BRANCH, "Show the workspace's worktrees"],
-        ["sessions", "Sessions", ICON_RECENT, "Show agent sessions"],
-      ] as const) {
-        const btn = segment(this.viewToggleEl, label, icon, hint, () => this.setView(view));
-        btn.dataset.view = view;
-      }
-      // A toggle whose worktree half leads nowhere would be a control offering a
-      // body that does not exist, so it is built only once one is supplied.
-      if (this.worktreeBodyEl) {
-        toolbar.appendChild(this.viewToggleEl);
-      }
-      this.groupBarEl = document.createElement("div");
-      this.groupBarEl.className = "vault-groupbar";
-      this.groupBarEl.appendChild(this.segmentedEl);
-      // Only the two-level controls get the tabs pattern. The flat control keeps
-      // the focus behaviour it shipped with, and is retired with the rollout.
-      this.wireTablist(this.viewToggleEl);
-      this.wireTablist(this.segmentedEl);
-    } else {
-      this.viewToggleEl = null;
-      this.groupBarEl = null;
-      if (this.worktreeBodyEl) {
-        const btn = segment(this.segmentedEl, "Worktree", ICON_BRANCH, "Worktrees", () => this.setView("worktree"));
-        btn.dataset.view = "worktree";
-      }
-      toolbar.appendChild(this.segmentedEl);
-    }
 
     // Create lives next to the segmented control and only while the Worktree view
     // is up — a "+" in the sessions toolbar would have nothing to create.
@@ -539,9 +466,6 @@ export class VaultPanel {
     // above stay per-element — their targets are never rebuilt and their text is
     // dynamic.
     this.disposers.push(attachTooltipDelegate(this.listEl));
-    if (this.groupBarEl) {
-      this.bodyEl.appendChild(this.groupBarEl);
-    }
     this.bodyEl.appendChild(this.listEl);
     if (this.worktreeBodyEl) {
       this.bodyEl.appendChild(this.worktreeBodyEl);
@@ -557,8 +481,115 @@ export class VaultPanel {
     this.onWorktreeRefresh = deps.onWorktreeRefresh;
     this.persistView = deps.persistView;
     this.view = this.worktreeBodyEl ? (deps.getInitialView?.() ?? "sessions") : "sessions";
+    this.composeControls();
+  }
+
+  /**
+   * (Re)build both control levels for the current `workbench` value and mount
+   * them. Called once from the constructor and again on every rollout flip, so
+   * it must be safe to run over controls that are already there — it removes
+   * them first. `view` and `groupMode` are panel state and survive it; only the
+   * presentation is rebuilt.
+   */
+  private composeControls(): void {
+    for (const el of [this.viewToggleEl, this.groupBarEl, this.segmentedEl]) {
+      el?.remove();
+    }
+    this.segmentedEl = document.createElement("div");
+    this.segmentedEl.className = this.workbench ? "vault-segmented" : "vault-segmented vault-segmented--flat";
+    this.segmentedEl.setAttribute("role", "tablist");
+    this.segmentedEl.setAttribute("aria-label", "Group by");
+    const segment = (
+      into: HTMLElement,
+      label: string,
+      icon: string,
+      hint: string,
+      onClick: () => void,
+    ): HTMLButtonElement => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.title = hint;
+      btn.setAttribute("role", "tab");
+      const iconSpan = document.createElement("span");
+      iconSpan.className = "vault-segmented-icon";
+      iconSpan.innerHTML = icon;
+      iconSpan.setAttribute("aria-hidden", "true");
+      const labelSpan = document.createElement("span");
+      // The flat control's four segments no longer fit at sidebar width, so CSS
+      // drops the label on its unselected ones; the class is what it hooks onto.
+      // Neither of the two-level controls ever drops a label.
+      labelSpan.className = "vault-segmented-label";
+      labelSpan.textContent = label;
+      btn.append(iconSpan, labelSpan);
+      btn.addEventListener("click", onClick);
+      into.appendChild(btn);
+      return btn;
+    };
+    for (const [mode, label, icon, hint] of [
+      ["recent", "Recent", ICON_RECENT, "Group by most recently used"],
+      ["agent", "Agent", ICON_AGENT, "Group by agent (Claude / Codex / OpenCode)"],
+      ["folder", "Folder", ICON_FOLDER, "Group by working folder"],
+    ] as const) {
+      const btn = segment(this.segmentedEl, label, icon, hint, () => this.setGroupMode(mode));
+      btn.dataset.mode = mode;
+    }
+    if (this.workbench) {
+      // Level 1 — which body. Level 2 lives in the body it groups, so the two are
+      // never in one row: five tab-shaped controls where four already did not fit
+      // would make the squeeze worse rather than remove it.
+      this.viewToggleEl = document.createElement("div");
+      // Both classes: `vault-segmented` IS the segment styling, and re-declaring
+      // it under a second selector only adds a descending-specificity rule beside
+      // the one the file already carries. `vault-view-toggle` is the hook that
+      // names this level, and what the tests address it by.
+      this.viewToggleEl.className = "vault-segmented vault-view-toggle";
+      this.viewToggleEl.setAttribute("role", "tablist");
+      this.viewToggleEl.setAttribute("aria-label", "View");
+      for (const [view, label, icon, hint] of [
+        ["worktree", "Worktrees", ICON_BRANCH, "Show the workspace's worktrees"],
+        ["sessions", "Sessions", ICON_RECENT, "Show agent sessions"],
+      ] as const) {
+        const btn = segment(this.viewToggleEl, label, icon, hint, () => this.setView(view));
+        btn.dataset.view = view;
+      }
+      // A toggle whose worktree half leads nowhere would be a control offering a
+      // body that does not exist, so it is built only once one is supplied.
+      if (this.worktreeBodyEl) {
+        this.toolbarEl.insertBefore(this.viewToggleEl, this.toolbarEl.firstChild);
+      }
+      this.groupBarEl = document.createElement("div");
+      this.groupBarEl.className = "vault-groupbar";
+      this.groupBarEl.appendChild(this.segmentedEl);
+      this.bodyEl.insertBefore(this.groupBarEl, this.bodyEl.firstChild);
+      // Only the two-level controls get the tabs pattern. The flat control keeps
+      // the focus behaviour it shipped with, and is retired with the rollout.
+      this.wireTablist(this.viewToggleEl);
+      this.wireTablist(this.segmentedEl);
+    } else {
+      this.viewToggleEl = null;
+      this.groupBarEl = null;
+      if (this.worktreeBodyEl) {
+        const btn = segment(this.segmentedEl, "Worktree", ICON_BRANCH, "Worktrees", () => this.setView("worktree"));
+        btn.dataset.view = "worktree";
+      }
+      this.toolbarEl.insertBefore(this.segmentedEl, this.toolbarEl.firstChild);
+    }
     this.syncView();
     this.syncSegmented();
+  }
+
+  /**
+   * Follow `anywhereTerminal.worktree.workbench` at runtime. The host pushes it
+   * on change AND resends it after initialization to close a race, so the common
+   * call carries the value already held and must not rebuild controls under the
+   * user (round-1 B2).
+   */
+  setWorkbench(enabled: boolean): void {
+    if (this.workbench === enabled) {
+      return;
+    }
+    this.workbench = enabled;
+    this.composeControls();
   }
 
   /** Which body is active. */

@@ -38,3 +38,18 @@
     1. In `src/webview/vault/VaultPanel.ts`, add the class `vault-segmented--flat` to the `.vault-segmented` element only on the `workbench === false` construction path, so the shipped four-segment control is selectable on its own.
     2. In `src/webview/worktree/worktreePanel.css`, narrow the `@container vaultbar (max-width: 400px)` label-hiding rule to `.vault-segmented--flat button[aria-selected="false"] .vault-segmented-label`, and rewrite the comment above it to say the rule exists for the shipped flat control and is retired with it.
     3. In `src/webview/vault/vaultPanel.css`, style `.vault-view-toggle` with the same rules `.vault-segmented` already carries (inline-flex, 2px gap, and its button, hover, selected and focus-visible rules), and style `.vault-groupbar` as a row of the sessions body with the panel's existing horizontal padding above the list.
+
+## 2. Round-1 review fixes
+
+- [x] 2_1 Stack the grouping strip, and follow the rollout at runtime — verified: pnpm exec vitest run 'src/webview/vault/VaultPanel.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_3
+  - **Refs**: specs/worktree-panel/spec.md#{the-control-that-swaps-the-body-is-separate-from-the-one-that-groups-a-body, a-control-is-offered-only-in-the-body-it-acts-on}
+  - **Acceptance**:
+    - Outcome: the grouping strip sits above the list, and a rollout flip recomposes the panel
+    - Verify: unit src/webview/vault/VaultPanel.test.ts
+  - **Plan**:
+    1. In `src/webview/vault/vaultPanel.css`, add `flex-direction: column` to `.vault-body` and `flex: 0 0 auto` to `.vault-groupbar`, so the strip sits above `.vault-list` instead of taking a column beside it (round-1 B1).
+    2. In `src/webview/vault/VaultPanel.test.ts`, assert that rule by reading `vaultPanel.css` the way `src/webview/worktree/WorktreeView.test.ts` reads `worktreePanel.css` — jsdom computes no layout, so the file is the only place the invariant is observable.
+    3. In `src/webview/vault/VaultPanel.ts`, extract the control construction from the constructor into a private `composeControls()` that removes any controls already mounted, rebuilds them for the current `workbench` value, mounts the level-1 control into the toolbar and the level-2 strip as the first child of `this.bodyEl`, then calls `syncView()` and `syncSegmented()`.
+    4. In `src/webview/vault/VaultPanel.ts`, add a public `setWorkbench(enabled: boolean)` that returns early when the value is unchanged and otherwise records it and calls `composeControls()`; `view` and `groupMode` are panel state and are preserved across the recomposition.
+    5. In `src/webview/main.ts`, call `vaultPanel?.setWorkbench(msg.enabled)` from `onWorktreeWorkbench` alongside the existing `tabBarScope` and `worktreeController` routing, on both the enable and the disable path and on the post-initialization resend.

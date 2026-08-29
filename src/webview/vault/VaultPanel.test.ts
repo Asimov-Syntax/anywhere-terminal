@@ -4,6 +4,9 @@
 // header-click toggle, and the session-count badge. The vault is now a
 // collapsible section stacked above the file tree (no panel exclusivity).
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { VaultListResult, VaultSessionEntry } from "../../vault/types";
 import { resetTooltipForTests } from "../ui/Tooltip";
@@ -4528,5 +4531,87 @@ describe("the label squeeze retires with the control that caused it", () => {
     expect(on.querySelector(".vault-segmented--flat")).toBeNull();
     expect(on.querySelector(".vault-groupbar .vault-segmented")).not.toBeNull();
     expect(on.querySelector(".vault-view-toggle")).not.toBeNull();
+  });
+});
+
+describe("round-1 review fixes", () => {
+  function build(workbench: boolean): { host: HTMLElement; panel: VaultPanel } {
+    const host = createHost();
+    const body = document.createElement("div");
+    body.className = "wt-tree";
+    const panel = new VaultPanel({ host, postMessage: () => {}, worktreeBody: body, workbench });
+    return { host, panel };
+  }
+
+  const block = (css: string, selector: string): string =>
+    new RegExp(`(^|\\n)${selector.replace(".", "\\.")} \\{([\\s\\S]*?)\\n\\}`).exec(css)?.[2] ?? "";
+
+  it("[2_1] stacks the grouping strip above the list rather than beside it", () => {
+    // jsdom computes no layout, so the stylesheet is where this is observable —
+    // the same thing WorktreeView.test.ts does for the reduced-motion rules.
+    // `.vault-body` is a flex container, and its default direction put the strip
+    // in a column of its own, squeezing the list it belongs above (round-1 B1).
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, "vaultPanel.css"), "utf8");
+
+    expect(block(css, ".vault-body")).toContain("display: flex");
+    expect(block(css, ".vault-body"), ".vault-body is not a column").toContain("flex-direction: column");
+    // And it keeps its height under pressure instead of being squeezed to nothing.
+    expect(block(css, ".vault-groupbar"), ".vault-groupbar can shrink").toContain("flex: 0 0 auto");
+  });
+
+  it("[2_1] recomposes when the rollout is turned on at runtime", () => {
+    const { host, panel } = build(false);
+    expect(host.querySelectorAll(".vault-toolbar .vault-segmented--flat button")).toHaveLength(4);
+
+    panel.setWorkbench(true);
+    expect(host.querySelector(".vault-segmented--flat")).toBeNull();
+    expect(host.querySelectorAll(".vault-view-toggle button")).toHaveLength(2);
+    expect(host.querySelectorAll(".vault-groupbar button[data-mode]")).toHaveLength(3);
+    expect(host.querySelectorAll(".vault-toolbar button[data-mode]")).toHaveLength(0);
+  });
+
+  it("[2_1] recomposes when the rollout is turned off at runtime", () => {
+    const { host, panel } = build(true);
+    panel.setWorkbench(false);
+    expect(host.querySelector(".vault-view-toggle")).toBeNull();
+    expect(host.querySelector(".vault-groupbar")).toBeNull();
+    expect(host.querySelectorAll(".vault-toolbar .vault-segmented--flat button")).toHaveLength(4);
+  });
+
+  it("[2_1] keeps the body and the grouping the user chose across a flip", () => {
+    const { host, panel } = build(false);
+    panel.setGroupMode("folder", { persist: false });
+    panel.setView("worktree", { persist: false });
+
+    panel.setWorkbench(true);
+    expect(panel.getView()).toBe("worktree");
+    expect(host.querySelector('.vault-view-toggle button[data-view="worktree"]')?.getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    // The strip is withdrawn in the body that has nothing to group, and still
+    // remembers the grouping for when the user goes back.
+    expect(host.querySelector<HTMLElement>(".vault-groupbar")?.hidden).toBe(true);
+    panel.setView("sessions", { persist: false });
+    expect(host.querySelector('.vault-groupbar button[data-mode="folder"]')?.getAttribute("aria-selected")).toBe(
+      "true",
+    );
+  });
+
+  it("[2_1] is inert when the rollout resend carries the value it already has", () => {
+    // The host resends the flag after initialization to close a race, so the
+    // common call is a no-op and must not rebuild controls under the user.
+    const { host, panel } = build(true);
+    const before = host.querySelector(".vault-view-toggle");
+    panel.setWorkbench(true);
+    expect(host.querySelector(".vault-view-toggle")).toBe(before);
+  });
+
+  it("[2_1] leaves the keyboard working on controls built by a runtime flip", () => {
+    const { host, panel } = build(false);
+    panel.setWorkbench(true);
+    const toggle = host.querySelector(".vault-view-toggle");
+    toggle?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+    expect(panel.getView()).toBe("worktree");
   });
 });

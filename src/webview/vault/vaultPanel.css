@@ -223,6 +223,7 @@
    below it and gone entirely in the body that has nothing to group. */
 .vault-groupbar {
   display: flex;
+  flex: 0 0 auto;
   padding: 2px 8px 4px;
 }
 .vault-groupbar[hidden] {
@@ -319,6 +320,10 @@
 /* ── Body: list (+ floating preview overlay) ───────────────────────────── */
 .vault-body {
   display: flex;
+  /* Column, not the default row. The sessions body shows TWO children at once —
+     the grouping strip above its list — and a row direction put the strip in a
+     column beside the list, squeezing it (round-1 B1). */
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
