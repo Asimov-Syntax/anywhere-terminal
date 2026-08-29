@@ -189,19 +189,32 @@ everything else is derived, defaulted, or advanced.
 | Element | Rule |
 |---------|------|
 | Lead input | Branch name, and nothing above it. It is the one thing only the user can supply |
-| Destination | **One derived line under the lead input**, shortened, with the full path in its hint. Not a field in the common case, and never stated twice |
+| Destination | **One derived line under the lead input**, shortened, and not a field in the common case. The exact value is carried by a tooltip and by a visually-hidden span beside the shortened text — the line's implicit role is `generic`, which prohibits naming, so an `aria-label` on it is not exposed to AT. The line is focusable so the exact value is reachable by keyboard, not by pointer alone |
 | Collision | When the computed path exists and a suffix was appended, one line says so and names the result. It replaces a second full path, it does not add one |
-| "After creating" | Four choices, mapping onto all five `WorktreeOpenAfter` wire values: `Nothing` → `none`; `Open a terminal` → `terminal`; `Start an agent` → `agent`; `Open the folder` → `newWindow` or `addToWorkspace`, chosen by a secondary control on that choice and defaulting to `addToWorkspace` in a workspace that already has folders. No wire value is unreachable from the form |
-| Agent block | Agent, permission posture, and first prompt are revealed **only when "After creating" is "Start an agent"**. Always-visible with "Nothing" selected states two contradictory things at once |
-| Advanced | Collapsed by default, holding base ref, branch source (new / existing / detached), and the path override. Opened, it is the third and last place a full path appears in the dialog — as an editable override, which is a different thing from a statement of where the worktree will go |
-| Dangerous posture | Offered, labelled, and never preselected |
-| Submit | Disabled until the branch name validates |
+| "After creating" | Four choices, mapping onto all five `WorktreeOpenAfter` wire values: `Nothing` → `none`; `Open a terminal` → `terminal`; `Start an agent` → `agent`; `Open the folder` → `newWindow` or `addToWorkspace`, chosen by a secondary control on that choice and defaulting to `addToWorkspace` unconditionally. The condition this default once carried — "a workspace that already has folders" — cannot be false where the control exists: the dialog returns early without repos, and a repo implies a folder. Evaluating it would have cost a wire field to answer a question with one answer. No wire value is unreachable from the form |
+| Repo picker | Below the destination line when the workspace has more than one repo. "Nothing above the lead input" is a rule about order; the picker cannot go into Advanced, because the destination is derived from it and burying it would trade one contradiction for another |
+| Agent block | Agent, permission posture, and first prompt are revealed **only when "After creating" is "Start an agent"**. Always-visible with "Nothing" selected states two contradictory things at once. While absent nothing agent-shaped is tabbable and the submitted draft carries no agent details |
+| Advanced | Collapsed by default, holding base ref, branch source (new / existing / detached), and the path override. While collapsed none of them is tabbable. Opened, the override is the only place a full path is *editable* — a different thing from a statement of where the worktree will go. Overriding moves the stated line and withdraws the collision message, which described a derived path the create no longer takes; clearing the field withdraws the override and returns the line to the derivation |
+| Dangerous posture | Offered, labelled, and never preselected. WHERE every posture an agent offers is dangerous, the control holds a non-submittable placeholder rather than falling through to its first option, and submission waits for a choice. Both doors that show the block — create and launch — gate on it; fixing one leaves the other stating the opposite |
+| Submit | Disabled until the value the chosen branch source requires validates — the branch name for new or existing, the **base ref** when detaching, which is the one case the lead input is not what is being validated. Also disabled while a destination request is outstanding, and while a revealed posture list has no choice |
 
 **Path transparency is preserved, not traded away.** The host still states the free path it will
 actually take (§ 3.2), because that is a safety property: the user sees the destination before
 authorizing a filesystem write. What changes is that it is stated **once**, shortened, with the
 exact value one hover away — instead of twice in full in a dialog whose tree view deliberately
 shows no path on any row.
+
+**The dialog submits the offer it was opened against.** The host answers the destination question
+per keystroke and its reply carries the panel's whole live repo record, agent list included.
+Only the *destination* is what was asked for, so only that is taken; the agents an open dialog
+shows and submits stay the ones it was constructed with. Admitting the rest relabels the user's
+posture choice under them as they type, which is the same defect § 3.1's "a launch is submitted as
+the offer it was shown" names for the launch door.
+
+**Whoever owns the caret owns the text.** Nothing writes the derived path into the override field
+while it holds focus. The rule lives at the write, not at its callers: the answer callback arrives
+on the host's schedule and is the one caller that can land mid-edit, so a guard on any single
+caller leaves that one — and every future one — open by construction.
 
 #### 3.2.2 Where create is offered
 

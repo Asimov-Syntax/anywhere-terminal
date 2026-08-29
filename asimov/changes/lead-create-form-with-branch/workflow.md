@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-009.3`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-009.3`)_
 
 ## Archive
 
@@ -44,3 +44,7 @@ Planned at: 874fc77d
 - Gate 2 taken under fastlane: the question was put and went unanswered for 10 minutes. Task 1_3 (the posture defect) is the one item that grew scope; it is last, so it can still be pulled without touching the other two.
 - Verify gate: lint check mode, 17 findings, set-identical to the pre-change baseline (`HEAD~3` in a detached worktree). Two format findings the change introduced were formatted away before the gate; nothing was auto-fixed to clear a lint rule.
 - One full-suite run reported 2 failures and the next three reported none, on the same tree. I did not capture which file, so I cannot name it — recording the observation rather than dropping it. The gate tick rests on the three clean runs and on the targeted suites, all of which were stable.
+- Review cycle 1: round 1 discovery (6 findings), rounds 2 and 3 verification. Ended at round 3 with 0 blockers — WARN only, so no round 4 and no thrash-stop exit applies.
+- Round 2 withdrew its own round-1 W6: my fix for it repealed the unmodified APPLIED base requirement "A launch is submitted as the offer it was shown". Reverted in 1_5; the test that encoded the repealed behaviour was deleted rather than inverted.
+- R2 took two rounds because I guarded the CALLER and the finding was about the WRITE. Round 3 reproduced it through the answer callback with the caret still in the field. Fixed at the write in 1_6, which is why `keepPathInput` exists only between those two commits.
+- Round 3 non-gating and not taken: R4 (unconditional `outstanding = false`), R5 (tooltip singleton — the escalation round 2 predicted did not occur), R6 (`createDefaults()` has no `resolvedPath`), and an audit-backlog item outside this change's cone — `repos.push(next)` can re-point the destination line when `initialRepoId` is absent from `repos`.
