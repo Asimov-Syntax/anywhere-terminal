@@ -32,22 +32,38 @@
         }
       ],
       "firstAt": 1787986069834,
-      "lastAt": 1787988515956,
+      "lastAt": 1787989661058,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "plan",
-          "agent": "asm-review-contracts",
-          "model": "claude-sonnet-5",
-          "messages": 12,
-          "inputTokens": 24,
-          "outputTokens": 4374,
-          "reasoningTokens": 2321,
-          "cacheWriteTokens": 75561,
-          "cacheReadTokens": 1022567,
+          "agent": "asm-review-frontend",
+          "model": "claude-opus-5",
+          "messages": 5,
+          "inputTokens": 10,
+          "outputTokens": 19,
+          "reasoningTokens": null,
+          "cacheWriteTokens": 72937,
+          "cacheReadTokens": 300546,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 75561,
+            "cacheWrite1hTokens": 72937
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-reuse",
+          "model": "gpt-5.6-luna",
+          "messages": 17,
+          "inputTokens": 82960,
+          "outputTokens": 2394,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 660480,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -91,17 +107,71 @@
         {
           "runtime": "claude",
           "phase": "plan",
-          "agent": "main",
+          "agent": "asm-review-master",
           "model": "claude-opus-5",
-          "messages": 35,
-          "inputTokens": 70,
-          "outputTokens": 38672,
-          "reasoningTokens": 9274,
-          "cacheWriteTokens": 66728,
-          "cacheReadTokens": 10505428,
+          "messages": 66,
+          "inputTokens": 132,
+          "outputTokens": 37854,
+          "reasoningTokens": 6874,
+          "cacheWriteTokens": 250292,
+          "cacheReadTokens": 7712492,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 66728,
+            "cacheWrite1hTokens": 250292,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 63,
+          "inputTokens": 126,
+          "outputTokens": 64873,
+          "reasoningTokens": 14196,
+          "cacheWriteTokens": 104073,
+          "cacheReadTokens": 15300241,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 104073,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-performance",
+          "model": "gpt-5.6-luna",
+          "messages": 4,
+          "inputTokens": 56357,
+          "outputTokens": 2740,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 90624,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-logic",
+          "model": "gpt-5.6-terra",
+          "messages": 6,
+          "inputTokens": 101471,
+          "outputTokens": 2698,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 194048,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -143,17 +213,17 @@
         {
           "runtime": "claude",
           "phase": "plan",
-          "agent": "asm-review-master",
-          "model": "claude-opus-5",
-          "messages": 36,
-          "inputTokens": 72,
-          "outputTokens": 19364,
-          "reasoningTokens": 2624,
-          "cacheWriteTokens": 115842,
-          "cacheReadTokens": 4661328,
+          "agent": "asm-review-contracts",
+          "model": "claude-sonnet-5",
+          "messages": 28,
+          "inputTokens": 56,
+          "outputTokens": 10816,
+          "reasoningTokens": 7868,
+          "cacheWriteTokens": 142084,
+          "cacheReadTokens": 2215745,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 115842,
+            "cacheWrite1hTokens": 142084,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -172,42 +242,6 @@
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 96159,
-            "webSearchRequests": 0,
-            "webFetchRequests": 0
-          }
-        },
-        {
-          "runtime": "claude",
-          "phase": "plan",
-          "agent": "asm-review-reuse",
-          "model": "gpt-5.6-luna",
-          "messages": 17,
-          "inputTokens": 82960,
-          "outputTokens": 2394,
-          "reasoningTokens": 0,
-          "cacheWriteTokens": 0,
-          "cacheReadTokens": 660480,
-          "extra": {
-            "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 0,
-            "webSearchRequests": 0,
-            "webFetchRequests": 0
-          }
-        },
-        {
-          "runtime": "claude",
-          "phase": "plan",
-          "agent": "asm-review-performance",
-          "model": "gpt-5.6-luna",
-          "messages": 4,
-          "inputTokens": 56357,
-          "outputTokens": 2740,
-          "reasoningTokens": 0,
-          "cacheWriteTokens": 0,
-          "cacheReadTokens": 90624,
-          "extra": {
-            "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 0,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }

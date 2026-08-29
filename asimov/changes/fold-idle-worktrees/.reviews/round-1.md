@@ -243,3 +243,32 @@ the excluded count. Its pre-existing assertion moves with it — declared, not w
 - `.wt-row--in-tail` shares depth 2 with `.wt-arow`, inert while tail rows hold no agent rows.
 
 Rebutted: none.
+
+## Impact manifest — round-1 fixes
+
+Three fixes touch a shared seam. Enumerated and each verified, since reviewers see
+only the fix hunk.
+
+**`keyOf` — identity source changed.** Six call sites, all in the focus/tab-stop
+machinery: `render()` focus restoration (`WorktreeView.ts:755`), `syncRovingTabindex`
+(:1152, :1155), `focusRow` (:1215), and the two `expandOrDescend` refocus lookups
+(:1272, :1283). Only `.wt-idle` rows change key; every other row kind falls through
+the unchanged chain. `focusedKey` is in-memory per view, never persisted, so no
+stored key predates the namespace. `depthOf` and `parentOf` derive from class, not
+key, so they are untouched.
+
+**`toggleKey` — the collapse set now has one writer.** Callers: repo header (:881),
+idle disclosure (:914), worktree row activation (:986, :1005), agents header (:1011),
+and `expandOrDescend` (:1270, :1276). `toggleCollapsed` delegates unchanged, so every
+pre-existing caller keeps identical behavior; the only new behavior is the query guard
+inside `toggleIdleTail`, which no other caller passes through.
+
+**`renderShowAll` — parameter meaning changed from total to excluded.** Exactly one
+caller (`WorktreeView.ts:936`), guarded by `if (shown.length < visible.length)`, so
+`excluded` is always ≥ 1 and the affordance is absent when nothing is excluded. The
+uncapped path yields `shown.length === visible.length` and renders nothing, unchanged.
+
+**Notice reach.** The folded branch now emits notices for tail rows. `resultsFor` is
+the same accessor the lead path uses, and `rescope` behavior is untouched; the change
+is only whether the loop runs, so a result cannot be rendered twice — the lead loop
+`continue`s on exactly the rows the folded branch covers.
