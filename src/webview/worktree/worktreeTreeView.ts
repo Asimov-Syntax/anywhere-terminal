@@ -19,6 +19,7 @@ import {
   compactAge,
   hasProvenIdentity,
   isFallbackActivity,
+  type PresentedActivity,
   type PresenceGroup,
   worktreeBadges,
   worktreePills,
@@ -63,8 +64,8 @@ function bindActivation(el: HTMLElement, activate: () => void): void {
   });
 }
 
-/** A leading-slot glyph carrying one of the four state shapes (§ 7.2). */
-export function stateShape(activity: WorktreeActivity, label?: string): HTMLElement {
+/** A leading-slot glyph carrying one of the state shapes (§ 7.2), `unknown` included. */
+export function stateShape(activity: PresentedActivity, label?: string): HTMLElement {
   const dot = document.createElement("span");
   dot.className = `wt-state wt-state--${activity}`;
   if (label) {
@@ -118,7 +119,7 @@ export function renderRepoHeader(
 
 export interface WorktreeRowOptions {
   /** The strongest state among this worktree's agents; undefined → the branch glyph. */
-  activity?: WorktreeActivity;
+  activity?: PresentedActivity;
   /** Whether the row owns an expandable agent block. */
   hasAgents?: boolean;
   expanded?: boolean;

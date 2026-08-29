@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "cursors": {
+    "claude:069d5382-fa6a-4334-aecd-ad19660fbb1e": {
+      "main": {
+        "position": "2395483",
+        "fingerprint": "msg_011CeWE8LcRiuN6anWwt7cYN",
+        "lastRecordId": "msg_011CeWLKLUVu7gmyE1NXVH8a"
+      },
+      "subagents/agent-a0492f41dc93f3b68.jsonl": {
+        "position": "429216",
+        "fingerprint": "resp_049d8e047f9df120016a9245a5d50c87d0afcf03d829e0bffb",
+        "lastRecordId": "resp_0a103cc89b2454b4016a9245d1623887d09778902a76fe1bd5"
+      },
+      "subagents/agent-a0bdd53bb9431ffe9.jsonl": {
+        "position": "916126",
+        "fingerprint": "resp_023fca39b8ca52fb016a92458d90ec87d0a1baf0cb0106eda5",
+        "lastRecordId": "resp_09b0c4db0362b305016a92468e08ac87d08d434601ccfed6ca"
+      },
+      "subagents/agent-a3563115a941c252b.jsonl": {
+        "position": "896221",
+        "fingerprint": "resp_09d49d6744e67a9e016a9245a5d73487d0af029aa5f844d284",
+        "lastRecordId": "resp_076e3eb31a1c988d016a9245c5a5fc87d093b558ad37dd30b4"
+      },
+      "subagents/agent-a54c8d33a84310f81.jsonl": {
+        "position": "527323",
+        "fingerprint": "resp_0a8c5d79f1c1b830016a9245cf5adc87d0be7de2c18486ff50",
+        "lastRecordId": "resp_0d0ecbdee9001e8b016a924604d5b887d0b9ca35d3d9685ac3"
+      },
+      "subagents/agent-a5b376e2266ff3fd8.jsonl": {
+        "position": "1187178",
+        "fingerprint": "resp_03b2ffb2dbb35539016a9245ed1fe887d095119f9da596c310",
+        "lastRecordId": "resp_003f713c4dcccc17016a924644cf9487d092f044a5603bbe24"
+      },
+      "subagents/agent-ac5ee26db2a63eec4.jsonl": {
+        "position": "431887",
+        "fingerprint": "resp_07121fbf573a77cd016a9245a91d2c87d09a85bd4e28a23332",
+        "lastRecordId": "resp_07ad7cebf3829bd9016a9245dfe9ac87d0a7c41a224c37c422"
+      }
+    }
+  },
+  "stamps": {
+    "claude:069d5382-fa6a-4334-aecd-ad19660fbb1e": "3d1b4c678d834abc0f54758d6c5e35d6648f6338"
+  }
+}

@@ -1,19 +1,28 @@
-# Implementation Plan — Worktree View & Agent Presence
+# Implementation Plan — Worktree-First Workbench
 
 > **Consumer**: `asimov-plan` — reads one task, reads its linked design doc, scans the codebase, triages a lane, then writes `asimov/changes/<change-id>/`.
 > **Rule**: tasks describe WHAT and WHERE, never HOW. No source-file paths, no function names, no test commands. (Design Ref links to `docs/` are the WHERE, and are required.)
 > **Status lifecycle**: blueprint writes `todo` → asimov-plan sets `in_progress` after Gate 2 → asimov-build sets `done` after implementation approval.
 
-**Scope**: this plan covers the Worktree view added to the AI Vault panel and the agent
-presence it displays. It does not re-baseline the terminal core; `docs/PLAN.v1.md`,
-`docs/PLAN.v2.md`, and `docs/PLAN.v3.md` remain the historical record of that work.
+**Scope**: the remaining Worktree-view work identified by
+`docs/audit/2026-08-29-worktree-ui-vs-orca.md` — the truthfulness ceiling on inferred activity,
+the glanceability findings, and the worktree-first workbench redesign.
+
+`docs/PLAN.v4.md` is the shipped record of WT phases 0–7 (discovery, panel shell, live tree,
+agent presence, actions, hook pipeline, hardening). Its task IDs remain the tracker keys for
+that work; this plan continues the same `WT` epic from Phase 8 and Stage 6.
+
+Closed by the change archived as `restore-view-affordances` and not re-planned here: the
+`[hidden]` CSS reset (audit § A1), the `here` → `open` pill rename (§ E1), routing the Worktree
+view and the vault session list through the delegated tooltip widget (§ E2), and § D1, which was
+the same CSS fix. Audit § B6 (a possibly duplicated agent row) was **dropped by the user** without
+reproduction and is not planned. Audit § C is deferred by design, not debt.
 
 ## Sync contract
 
 Task heading is `### [WT-<NNN>.<M>]` — epic code, three-digit phase number, task number. The ID is
 the tracker sync key: it goes in the issue title and never changes once an issue exists, even when
-the task moves phase. This plan stays two levels; `WT-001.1.1` is reserved for sub-issues split
-downstream, and the sync ignores deeper IDs.
+the task moves phase.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -21,388 +30,261 @@ downstream, and the sync ignores deeper IDs.
 | **Goal** | 1–2 sentences | What this task produces |
 | **Design Ref** | links | The section that specifies it |
 | **Depends On** | ID list | Comma-separated, or `None`. Becomes `blocked-by` |
-| **Stage** | 1–5 | Ship order — what the user can do once it lands. Cuts across phases. Becomes the GitHub milestone |
-| **Size** | XS / S / M / L / XL | Complexity + review load, not duration. XS: one concern, no contract change. S: one concern with its own tests/edge cases. M: feature slice across a few modules, or one new contract. L: cross-boundary, security-sensitive, or a heavy acceptance list. XL: split it unless genuinely irreducible |
+| **Stage** | 6–7 | Ship order — what the user can do once it lands. Cuts across phases. Becomes the GitHub milestone |
+| **Size** | XS / S / M / L / XL | Complexity + review load, not duration. XS: one concern, no contract change. S: one concern with its own tests/edge cases. M: feature slice across a few modules, or one new contract. L: cross-boundary, security-sensitive, or a heavy acceptance list. XL: split it |
 | **Labels** | slug list | `new-api-contract`, `data-migration`, `security-privacy`, `infra`, `new-dependency`, `cross-boundary`, `user-visible-ui`, `re-review`. Or `None` |
 | **Notes** | optional | Risk or reuse signal `asimov-plan` cannot see before reading code. Omit when nothing applies |
 | **Acceptance** | `; `-separated | Observable outcomes only — the mechanism lives in the design doc. Each item becomes one checklist entry on the issue |
 | **Status** | todo / in_progress / done | |
 
 Phase = build order; Stage = ship order; `Depends On` is the only structural relation;
-`Stage(task) ≥ Stage(dep)`. Phase `Est.` is the reviewed range for the phase, not the sum of its
-task sizes — sizes carry no duration at all.
+`Stage(task) ≥ Stage(dep)`.
 
 ## Design References
 
 | Doc | Scope |
 |-----|-------|
-| [DESIGN.md](DESIGN.md) § 13–15 | Subsystem architecture, decisions, consistency registry |
-| [design/worktree-model.md](design/worktree-model.md) | Discovery, identity, path normalization, cache + watch |
-| [design/worktree-agent-presence.md](design/worktree-agent-presence.md) | Evidence model, pane mapping, external rows, subagents |
-| [design/worktree-rpc.md](design/worktree-rpc.md) | Host↔webview messages, validation, action semantics |
-| [design/worktree-panel-ui.md](design/worktree-panel-ui.md) | Fourth segment, tree structure, states, interaction |
-| [design/worktree-actions.md](design/worktree-actions.md) | Create, remove, lock, prune, launch, safety model |
-| [design/agent-hook-server.md](design/agent-hook-server.md) | Generalizing the existing hook runtime: endpoint, install, state machine |
+| [DESIGN.md](DESIGN.md) § 8–10 | Subsystem architecture, decisions, consistency registry |
+| [design/worktree-panel-ui.md](design/worktree-panel-ui.md) | Panel body, two-level toggle, row anatomy, idle tail, inspector, state vocabulary |
+| [design/worktree-scope.md](design/worktree-scope.md) | Scope model, the tab-bar filter, the All chip and its attention badge, layout by location |
+| [design/worktree-activity-ceiling.md](design/worktree-activity-ceiling.md) | The confirmation ceiling on inferred `running` |
+| [design/worktree-actions.md](design/worktree-actions.md) § 3.2.1–3.2.2 | Create form presentation and where create is offered |
+| [design/worktree-agent-presence.md](design/worktree-agent-presence.md) | Evidence model the rows and the scope join both read |
+
+**Reference artifact**: `docs/ui/worktree.html` is the visual reference for Phase 10. It is
+uncommitted at the time of writing and **cannot render** — its entire `wk-*` design language
+lives in a `worktree-workbench.css` that exists nowhere in the repo. Commit it as the reference
+only once it renders standalone; a reference no reviewer can open is not one. Where it and a
+design doc disagree, [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.7 records the
+resolution.
 
 ## Phases Overview
 
 ```mermaid
 flowchart LR
-    P1[P1<br>Worktree foundation] --> P2[P2<br>Panel shell]
-    P1 --> P3[P3<br>Live tree]
-    P1 --> P4[P4<br>Agent presence]
-    P2 --> P3
-    P3 --> P4
-    P4 --> P5[P5<br>Actions]
-    P3 --> P7[P7<br>Hardening]
-    P4 --> P6[P6<br>Hook pipeline]
-    P5 --> P7
-    P6 --> P7
+    P8[P8<br>Truthful activity] --> P9[P9<br>Glanceability]
+    P8 --> P10[P10<br>Worktree-first workbench]
+    P9 --> P10
 ```
-
-Phases are the **build order** — what must exist before the next thing can be built. Stages
-are the **ship order** — what a user can do once it lands. They cut across each other: P4 spans
-Stages 1–3 and P5 spans Stages 1–2. Neither is a parent of the other; the only structural
-relation between tasks is `Depends On`.
 
 | Phase | Est. | Key Deliverable |
 |-------|------|-----------------|
-| P1 — Worktree foundation | ~4-5d | Host can enumerate every worktree of every workspace repo, and knows when that changed |
-| P2 — Panel shell | ~5-7d | Visual language designed and signed off, then rendered from fixtures |
-| P3 — Live tree | ~2d | The shell renders real data without churn, with persisted collapse state |
-| P4 — Agent presence | ~8-11d | Worktree rows show which agents are working inside them, honestly |
-| P5 — Actions | ~8-10d | Navigate, create, remove, lock, prune, and launch agents from the view |
-| P6 — Hook pipeline | ~8-11d | Authoritative turn state and live subagent rosters, on one runtime |
-| P7 — Hardening | ~2d | Cross-cutting invariants pinned as tests; scale verified |
-
-<!-- "What the user gets" becomes the milestone title: "Stage <N> — <text>" -->
+| P8 — Truthful activity | ~2-3d | Every state is legible by shape, and a row stops spinning once nothing has confirmed it |
+| P9 — Glanceability | ~4-6d | The list surfaces the two worktrees that matter, each row says what just happened, and creating one is a worktree question rather than a git one |
+| P10 — Worktree-first workbench | ~9-13d | Selecting a worktree scopes the surface to it, behind a setting until the composition is whole |
 
 | Stage | What the user gets |
 |-------|--------------------|
-| 1 | Which worktrees exist, where the agents are, and how to get there |
-| 2 | Create a worktree with an agent already running in it |
-| 3 | Delegated subagents visible as history |
-| 4 | Real turn state instead of a busy-looking terminal |
-| 5 | Cross-cutting invariants and scale |
+| 6 | A list that can be scanned in one second and rows that stop overstating |
+| 7 | Pick a worktree and the workbench follows it |
 
-> Estimates were revised upward at the 2026-08-25 peer review. P4 carries a webview→host
-> evidence transport that does not exist today; P5 carries a fresh-launch contract the registry
-> does not have; P6 carries a generalization plus the migration of a shipped agent onto it.
-> Per-task invariant tests moved out of P7 and into the tasks that introduce the behaviour,
-> which is why P7 shrinks while the feature phases grow.
+> P10 is detailed here because its design is settled, not because it is next. Per the revision
+> rule, reassess it against what P8 and P9 actually shipped before planning its first task.
 
 ---
 
 ## Phase 0 — Prerequisites
 
-**Empty, deliberately.** This is a VS Code extension with no backend, no accounts, no secrets,
-and an existing release path (`docs/RELEASING.md`) already proven by shipped versions. Every
-external dependency the feature needs — the git executable and the built-in `vscode.git`
-extension — is either already consumed by the codebase or degrades to a documented empty
-state. There is nothing to provision.
+**Empty, deliberately.** This is a re-baseline of a shipped subsystem inside a released
+extension. Every dependency — git, the built-in `vscode.git` extension, the hook runtime, the
+release path — is already in place and already proven by the work in `docs/PLAN.v4.md`. There is
+nothing to provision.
 
 ---
 
-## Phase 1 — Worktree Foundation
+## Phase 8 — Truthful Activity
 
-> **Goal**: the host can answer "what worktrees exist, in which repos" correctly and cheaply, and knows when the answer changed. No UI.
+> **Goal**: the state vocabulary carries meaning by shape, and no row claims work on evidence that has stopped moving.
 
-### [WT-001.1] Worktree Discovery & Identity
+### [WT-008.1] State Legible by Shape
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Resolve the workspace's git repositories and enumerate every worktree of each, producing the tree model with stable ids and normalized paths |
-| **Design Ref** | [worktree-model.md](design/worktree-model.md) § 2, § 3.1–3.4, § 6 |
+| **Goal** | Give every activity state its own shape in the tree, so working, waiting, idle, unknown, and exited are distinguishable at a glance and without colour |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.2, § 3.2, § 3.3 |
 | **Depends On** | None |
-| **Stage** | 1 |
-| **Size** | M |
-| **Labels** | new-dependency |
-| **Notes** | First *structured* git read from this extension (`src/providers/gitIgnoreChecker.ts` already spawns `git check-ignore`); the git extension API was previously consumed for decorations only |
-| **Acceptance** | Every worktree of every workspace repo is enumerated exactly once, with repos deduped by their shared git directory and grouped in workspace-folder order; a worktree's identity survives symlink and drive-letter differences, so one directory named two ways is one worktree; the state git reports — main, bare, detached, locked, prunable, missing — is carried through rather than inferred; ordering is deterministic and independent of filesystem enumeration order; an unusable git, or a listing that fails for one repo, degrades that scope with a reason instead of emptying it or throwing |
-| **Status** | done |
+| **Stage** | 6 |
+| **Size** | S |
+| **Labels** | user-visible-ui |
+| **Notes** | WT-002.1's acceptance already claimed "state is legible by shape alone"; at HEAD that holds for row kind, not for activity, which is the thing users scan for. This settles the glyph shapes § 7.6 leaves to the building task, and WT-008.2 adds one member to the vocabulary it establishes — do not settle five shapes in a way that leaves no room for a sixth |
+| **Acceptance** | Each activity state renders a distinct shape on both the worktree row's leading glyph and the agent row's state glyph, using one vocabulary rather than two; `unknown` is distinguishable from `idle`, because one is an absence of evidence and the other is a positive claim; the shapes stay distinct with colour removed and under reduced motion, and no two states collapse to the same static form; the worktree row still shows the strongest state among its agents, by the documented precedence; the change moves no wire value and adds no field |
+| **Status** | in_progress |
 
-### [WT-001.2] Freshness, Cache & Host Contract
+### [WT-008.2] Confirmation Ceiling on Inferred Activity
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Cache the tree per repo, invalidate it from narrowly scoped filesystem and workspace events, and expose it to the webview over the message protocol |
-| **Design Ref** | [worktree-model.md](design/worktree-model.md) § 3.5, § 3.6, § 5; [worktree-rpc.md](design/worktree-rpc.md) § 2, § 4 |
-| **Depends On** | WT-001.1 |
-| **Stage** | 1 |
+| **Goal** | Stop a row animating `running` once its state has stood unchanged past the ceiling with nothing but terminal output behind it, degrading it to an unconfirmed claim rather than to idle |
+| **Design Ref** | [worktree-activity-ceiling.md](design/worktree-activity-ceiling.md); [worktree-panel-ui.md](design/worktree-panel-ui.md) § 4, § 7.2, § 6.1; [DESIGN.md](DESIGN.md) § 8.4 (the ceiling invariant is added by this task) |
+| **Depends On** | WT-008.1 |
+| **Stage** | 6 |
 | **Size** | M |
-| **Labels** | new-api-contract |
-| **Notes** | Adds a message family to the shared protocol union, and requires the shared watcher pool to gain a typed failure outcome it does not have today |
-| **Acceptance** | The tree is rebuilt only when something structural changed, once per affected repo, and never on a timer; an agent working inside a worktree drives no rebuild; every live surface receives the same tree, and a surface not showing the view is skipped; freshness is owned once per window, so a second surface adds no git or watcher work; a watcher or command that fails leaves the repo degraded with a reason and its last good listing intact, never silently stale |
-| **Status** | done |
+| **Labels** | user-visible-ui, re-review |
+| **Notes** | Risk: this is a truthfulness fix, and the three obvious shortcuts are all wrong. Downgrading the activity to `idle` swaps one false claim for another and moves a value every consumer reads; measuring staleness from the row's last-activity stamp measures the very bytes the ceiling exists to see through. And the clock measures unchanged-activity age, not time since confirmation — the design says so explicitly, because describing it as the latter makes the doc promise a grace period the mechanism does not give. The design also **narrows** WT-004.0 rather than satisfying it whole, and that narrowing is the single most important thing for the review round to agree with |
+| **Acceptance** | A row claiming `running` on output inference alone stops animating once its state has stood unchanged past the ceiling, and says how long and on what evidence; the claim degrades to unconfirmed and never to idle, and the activity value, the evidence tuple, and every message shape are unchanged; a row backed by a fresh agent report, an external registry row, and any state other than `running` are never marked unconfirmed at any age; a report arriving on a degraded row restores it on the same push, and a change of activity restarts the clock, while a change of *source* does not — a run already past the ceiling is unconfirmed the moment its report ages out, with no grace period; a clock that has not run, or that runs backwards, yields a confirmed row rather than manufacturing staleness; the view re-derives confidence on one scheduled deadline rather than an interval, re-arms it on every push and clears it on disposal, and performs no DOM work when the re-derivation moves nothing; the elapsed hint has no clock of its own; the unconfirmed and animated forms stay distinguishable under reduced motion; the ceiling invariant enters the truthfulness table with a test that goes red when it is violated |
+| **Status** | todo |
 
 ---
 
-## Phase 2 — Panel Shell & Visual Language
+## Phase 9 — Glanceability
 
-> **Goal**: the view exists, looks right, and is signed off — before any live data flows into it. This is the design gate.
+> **Goal**: the list answers "where is work happening" in one second, and the create dialog stops reading like git plumbing.
 
-### [WT-002.0] Visual Design Pass
+### [WT-009.1] Fold the Idle Tail
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Produce an approved visual specification for the tree — density, state vocabulary, row anatomy, and empty-state copy — as a throwaway mockup rather than by building the panel |
-| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3, § 7 |
+| **Goal** | Dim agentless worktrees to a single line and collapse them under one disclosure once there are enough of them to bury the worktrees that hold agents |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.6, § 3 ordering, § 8 |
 | **Depends On** | None |
-| **Stage** | 1 |
+| **Stage** | 6 |
 | **Size** | S |
 | **Labels** | user-visible-ui |
-| **Notes** | Iterating a mockup is far cheaper than rebuilding the webview. The mockup is disposable — it produces a spec, not code to reuse. Runs in parallel with Phase 1. Delivered as [docs/ui/worktree.html](ui/worktree.html), a standalone reviewable page authored with Claude Design; WT-002.1 reads it as the visual reference, and [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.7 records where the two disagreed |
-| **Acceptance** | The mockup covers every row kind and every state the design names, at sidebar width; where the mockup and the design doc disagree the disagreement is reported rather than silently resolved, and the resolution is recorded; the values § 7.6 assigns to the shell task are deliberately left open here, not guessed in prose |
-| **Status** | done |
+| **Notes** | This is the part of the reference's "hide sleeping" filter that pays for itself; the filter popover itself stays deferred, so resist growing filter state here. The trap is treating "no agents" and "no evidence" as the same thing — a worktree whose presence source failed is unknown, not idle, and folding it hides exactly what the degradation marker exists to show |
+| **Acceptance** | Worktrees holding agents render in full and sort ahead of agentless ones, with the existing deterministic order inside each part; an agentless worktree renders as one dim line carrying its branch and marks and no presence block; from the documented threshold upward the agentless ones fold under a single disclosure stating an exact count of what it hides, and below it they stay visible; a worktree whose presence is degraded is never folded and never reads as agentless; a search match inside the fold opens it; the fold's state persists with the rest of the tree and survives a push that changed nothing |
+| **Status** | todo |
 
-### [WT-002.1] Fourth Segment & Static Tree Shell
-
-| Field | Value |
-|-------|-------|
-| **Goal** | Add the Worktree segment to the vault's segmented control and render every surface the view owns — repo groups, worktree rows, agent rows, subagent rows, each empty and degraded state, the row context menus, and the create and remove dialogs — from fixture data, with no host protocol behind any of it |
-| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2, § 3, § 5, § 6, § 7; [worktree-actions.md](design/worktree-actions.md) § 3, § 5 |
-| **Depends On** | WT-001.1 |
-| **Stage** | 1 |
-| **Size** | XL |
-| **Labels** | user-visible-ui |
-| **Notes** | Irreducible despite the size: the visual vocabulary has to be settled in one pass, because spacing, emphasis steps, and state shapes are only judgeable against each other. Depends on the tree model's shape, not on its transport — fixtures typed against the real model make WT-003.1 a change of producer rather than a rewrite. This is the design gate; acceptance includes user sign-off on the rendered result. This task settles the spacing, tokens, indicator, and empty-state copy that § 7.6 leaves to it. Every action surface here is inert by construction — a dialog that renders is not an action that runs, and no menu item may reach a host operation |
-| **Acceptance** | The Worktree segment swaps the panel body without disturbing the existing session views or their persisted state; every row kind and state in the approved design renders from fixtures, including each distinct empty state, both dialogs, and the refusal that offers no confirmation at all; the vocabulary holds at sidebar width — state is legible by shape alone, presence collapses to a fixed height regardless of agent count, and no row exposes a filesystem path; keyboard traversal follows the declared tree hierarchy and focus survives every disclosure toggle, with focus visibility and reduced motion working throughout; no control in the view reaches a host operation, and one that cannot yet act is absent rather than present and inert; the rendered shell matches the WT-002.0 spec and is signed off by the user before Phase 3 begins |
-| **Status** | done |
-
----
-
-## Phase 3 — Live Tree
-
-> **Goal**: real worktrees in the shell, refreshing without destroying the user's place in it.
-
-### [WT-003.1] Wire Real Data & Persist View State
+### [WT-009.2] Last-Activity Preview on Agent Rows
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Replace fixtures with the pushed tree, and persist the view choice plus collapse and expansion state across reloads |
-| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.1, § 3, § 8; [worktree-rpc.md](design/worktree-rpc.md) § 2 |
-| **Depends On** | WT-001.2, WT-002.1 |
-| **Stage** | 1 |
+| **Goal** | Give each agent row a second line carrying the last thing that happened in that session, and move the model id off the row |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.3, § 7.1, § 8 |
+| **Depends On** | WT-008.1 |
+| **Stage** | 6 |
 | **Size** | S |
 | **Labels** | user-visible-ui |
-| **Notes** | The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The shell already persists the three keys and prunes ids that vanished; what it deliberately does not do is choose the opening view from repo presence, because it has no repo knowledge — that rule (§ 2.2) lands here |
-| **Acceptance** | The shell renders the live tree, and view, collapse, and expansion state survive a reload; an absent persisted view opens on the worktree body when the workspace has a git repo and on sessions when it has none, while any persisted choice wins over both; state written by an older build stays valid, and a persisted set that is empty means everything is expanded rather than nothing was ever saved; worktrees that disappear drop out of persisted state rather than resurfacing |
-| **Status** | done |
+| **Notes** | The data already exists — the hook pipeline distinguishes turn states and the vault reads transcripts — so this is a rendering task, not a new source. Reuse pressure: the session list already renders a preview line for the same content, and a second formatter is how the two drift. Two things to hold: the preview is decoration-stripped like every other title, and it is a render-signature input, so a preview that changes must repaint while a spinner frame must not |
+| **Acceptance** | An agent row renders two lines — identity, marks and age above, the session's latest message or current tool below — and never a third; the preview truncates before the title and neither wraps; a row with nothing to preview renders no empty second line and no placeholder; a spinner frame is neither displayed in the preview nor able to trigger a re-render; the model id no longer appears on any list row and is absent entirely when unknown; the age column and the leading glyphs never truncate |
+| **Status** | todo |
 
-### [WT-003.2] Re-render Discipline
-
-| Field | Value |
-|-------|-------|
-| **Goal** | Ensure a push that changed nothing meaningful does not rebuild the tree DOM, and that animated titles cannot drive re-renders |
-| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6.1; [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.4 |
-| **Depends On** | WT-003.1 |
-| **Stage** | 1 |
-| **Size** | XS |
-| **Labels** | None |
-| **Notes** | Risk: this is the difference between a usable panel and one that fights the user. A spinner at animation rate repaints the tree many times per second otherwise. The shell already carries a render signature over the fixture shapes; this task's work is proving it covers every input the live data can move, since a field omitted from the key renders stale forever |
-| **Acceptance** | A push that changed nothing meaningful performs no DOM work, so scroll, focus, and expansion survive it; animated titles cannot drive re-renders, and a continuously working agent produces no steady-state render load |
-| **Status** | done |
-
----
-
-## Phase 4 — Agent Presence
-
-> **Goal**: each worktree shows who is working inside it — and never claims more than it can prove.
-
-### [WT-004.0] Host Evidence Transport
+### [WT-009.3] Create Form Reads as a Worktree Form
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Give the extension host a complete, window-wide view of every pane's title and waiting evidence, which today exists only inside individual webviews |
-| **Design Ref** | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.3 "The host evidence seam"; [DESIGN.md](DESIGN.md) § 13.6 |
-| **Depends On** | WT-001.2 |
-| **Stage** | 1 |
-| **Size** | L |
-| **Labels** | new-api-contract, cross-boundary |
-| **Notes** | Adds a webview→host direction that does not exist today. Risk: every later presence task consumes this, so an incomplete seam blocks the whole phase. Build and verify it before any row is projected |
-| **Acceptance** | The host holds a complete, window-wide view of pane title and waiting evidence, updated on change rather than polled; evidence is keyed by pane, so surfaces reporting the same pane agree and a surface closing retracts nothing; unreported evidence is distinguishable from evidence proving absence; the worktree row and the terminal tab derive running from the same rules and cannot disagree |
-| **Status** | done |
-
-### [WT-004.1] Window Panes → Worktree Rows
-
-| Field | Value |
-|-------|-------|
-| **Goal** | Map this window's terminal panes into worktrees and project each into an agent row carrying identity, activity, and the evidence behind both |
-| **Design Ref** | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 2, § 3.1–3.4, § 3.7 |
-| **Depends On** | WT-004.0, WT-003.1 |
-| **Stage** | 1 |
-| **Size** | L |
-| **Labels** | cross-boundary |
-| **Notes** | Risk: the evidence model is the feature's credibility. Reads session state, activity state, and vault resolution together. Four tasks depend directly on this one |
-| **Acceptance** | Each pane attributes to exactly one worktree, correctly for nested and same-prefix siblings; identity is claimed only when proven, by the documented precedence, and never from a spinner or a substring match; identity and activity are qualified independently, so a row can be certain of one and uncertain of the other; a pane's lifecycle is reflected without a closed pane leaving a row behind; a failed source degrades the scope with a reason and never rewrites a live row to idle; presence and tree arrive together, and a rebuild costs one process-table read regardless of pane count |
-| **Status** | done |
-
-### [WT-004.2] External Agent Rows
-
-| Field | Value |
-|-------|-------|
-| **Goal** | Surface agents running in a worktree from outside this window as labelled, non-focusable rows |
-| **Design Ref** | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.5 |
-| **Depends On** | WT-004.1 |
-| **Stage** | 2 |
+| **Goal** | Restructure the create dialog around the branch name, state the destination once, and reveal the agent block only when the user has asked for an agent |
+| **Design Ref** | [worktree-actions.md](design/worktree-actions.md) § 3.2.1, § 3.2 |
+| **Depends On** | None |
+| **Stage** | 6 |
 | **Size** | M |
 | **Labels** | user-visible-ui |
-| **Notes** | Introduces a row class with deliberately reduced affordances. The registry reader must gain a typed outcome: it currently maps an unreadable registry to an empty list, which would silently clear every external row. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The external row's label and its missing focus affordance are already drawn |
-| **Acceptance** | Agents running in a worktree from outside this window appear, labelled, and are never offered focus; a session owned by a window pane is never duplicated as an external row, and headless runs produce none; the scan runs only while the view is visible; an unreadable registry is distinguishable from an empty one and never silently clears the rows |
-| **Status** | done |
+| **Notes** | The path transparency is a safety property, not clutter — the host states the free path it will actually take before a filesystem write is authorized, and that must survive the restructure rather than be traded for tidiness. What changes is that it is stated once instead of twice, in a dialog whose own tree deliberately shows no path on any row. The always-visible agent block currently contradicts an "After creating: Nothing" selection sitting directly above it |
+| **Acceptance** | The branch name is the lead input with nothing above it, and submission stays blocked until it validates; the resolved destination appears exactly once, shortened, with the exact value reachable without leaving the dialog, and a collision states the suffixed result without restating a full path; the agent block is absent unless the user chose to start an agent, and appears when they do, with the dangerous posture labelled and never preselected; base ref, branch source, and the path override live behind a collapsed advanced section; the host still supplies and displays the free path it will take before the action can be authorized; focus order, the focus trap, and dismissal behave as they did |
+| **Status** | todo |
 
-### [WT-004.3] Subagent Rows
+### [WT-009.4] Create Is Offered Where the Intent Arrives
 
 | Field | Value |
 |-------|-------|
-| **Goal** | On expanding an agent row, show the subagents its session delegated, rendered as history rather than as live workers |
-| **Design Ref** | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.6; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.4 |
-| **Depends On** | WT-004.1 |
-| **Stage** | 3 |
+| **Goal** | Add a per-repo create control on group headers and a create action in the body of each empty state, alongside the existing toolbar button and context-menu item |
+| **Design Ref** | [worktree-actions.md](design/worktree-actions.md) § 3.2.2; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.1, § 5 |
+| **Depends On** | WT-009.3 |
+| **Stage** | 6 |
 | **Size** | S |
-| **Labels** | None |
-| **Notes** | Risk: the most tempting place in the feature to overstate what is known. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The historical treatment and its section label exist; the lazy read on expansion does not |
-| **Acceptance** | Subagents are read lazily on expansion, never on a tree push; they render as history, visibly distinct from live agents, exactly one level deep; a subagent has no pane of its own, and its freshness is its parent's; a row with nothing to show, or a read that fails, stays confined to that row |
-| **Status** | done |
+| **Labels** | user-visible-ui |
+| **Notes** | Four entry points, one dialog and one action behind them — a second create path is how the safety model acquires a hole. The header control must be reachable by keyboard, not hover only, or it is invisible to the users most likely to want it. A repo with only its main checkout is a distinct empty state from a workspace with no repo at all, and it is the one that needs the CTA |
+| **Acceptance** | The group header offers create on hover and on keyboard focus, opening the form already scoped to that repo, and appears only where group headers are rendered; the empty states for a repo with one worktree and for a workspace with none carry the create action in the body; the toolbar button and the context-menu item are unchanged; every entry point opens one dialog and runs one action, differing only in the repo it opens on; the toolbar button remains absent from every sessions body |
+| **Status** | todo |
 
 ---
 
-## Phase 5 — Actions
+## Phase 10 — Worktree-First Workbench
 
-> **Goal**: the view becomes a place to act, with a safety model proportional to what each action destroys.
+> **Goal**: selecting a worktree makes the surface about that worktree — its panes in the tab bar, its detail under the tree — behind one setting until the composition is whole.
 
-### [WT-005.1] Navigation & Read-Only Actions
+### [WT-010.1] Scope a Surface's Tab Bar to the Selected Worktree
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Focus a pane, open a session preview, open the worktree folder, reveal it, copy its path, and open a terminal in it |
-| **Design Ref** | [worktree-actions.md](design/worktree-actions.md) § 2; [worktree-rpc.md](design/worktree-rpc.md) § 2.1; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6 |
-| **Depends On** | WT-004.1 |
-| **Stage** | 1 |
+| **Goal** | Make selecting a worktree filter that surface's own tab bar to the panes inside it, named by a chip that can always be escaped |
+| **Design Ref** | [worktree-scope.md](design/worktree-scope.md) § 2, § 3.1, § 3.2, § 3.4, § 6, § 7; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6.1, § 7.3, § 2.3; [DESIGN.md](DESIGN.md) § 8.4 (the hides-only-what-is-proven invariant is added by this task) |
+| **Depends On** | WT-008.1 |
+| **Stage** | 7 |
+| **Size** | L |
+| **Labels** | user-visible-ui |
+| **Notes** | The redesign's thinnest end-to-end slice, so it lands first. It needs no new protocol: the workbench is already one webview document and pane→worktree attribution already reaches the view, so this is a filter over a list the extension owns. The risk is in what the filter hides — a pane whose directory is unknown or outside every worktree produces no presence row at all, and hiding it would make it unreachable from a tab bar the user cannot tell is filtered. Registers the rollout setting, which no manifest declares yet. The attention badge and the behaviour when a scope holds nothing are deliberately WT-010.2's, so a defect in either cannot hold this slice hostage |
+| **Acceptance** | Selecting a worktree filters this surface's tab bar to its panes, and changes no other surface, no process, and nothing the host holds; a pane presence could not attribute stays visible in every scope, while one attributed elsewhere is hidden; a scope that is set is always named on screen, and the control that clears it is reachable whenever it is — including when the panel is collapsed; clearing the scope restores every tab it hid; the card treatment marks the selected worktree and only it, so emphasis no longer reads as selection where the user selected nothing; a removed or pruned scoped worktree drops the scope with a reason, while a `missing` one keeps it; scope persists per surface, absent means all, and an id no longer in the tree resolves to all; two surfaces hold different scopes with neither following the other; a push that changes no attribution performs no tab-bar DOM work; the hides-only-what-is-proven invariant enters the truthfulness table with a test that goes red when it is violated; everything here is inert while the rollout setting is off |
+| **Status** | todo |
+
+### [WT-010.2] Nothing Hidden Goes Unheard
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Count the hidden panes that need a human on the escape control, and settle what a selection does to the active pane and to a scope holding nothing |
+| **Design Ref** | [worktree-scope.md](design/worktree-scope.md) § 3.3, § 4.2, § 4.3; [DESIGN.md](DESIGN.md) § 8.4 (the no-invisible-filter invariant is added by this task) |
+| **Depends On** | WT-010.1 |
+| **Stage** | 7 |
+| **Size** | M |
+| **Labels** | user-visible-ui, re-review |
+| **Notes** | This is the task that makes the filter safe, and it is separated from the filter itself so its correctness is reviewed on its own. Two traps: a badge that is always present is a badge nobody reads, and a count drawn from one evidence source under-reports, because the two sources covering `waiting` do not cover the same panes today. Selection is navigation here — pinning the active pane was considered and rejected in the design, because it creates an attribution outcome the join does not have and makes the empty-scope region unreachable in the common case |
+| **Acceptance** | Hidden panes that are waiting raise a count on the escape control, from either evidence source, and no badge renders when there are none; clearing the scope from the badge yields a tab bar holding every pane the count named; the badge uses the same attention vocabulary a waiting row uses, not an error treatment; selecting a worktree activates its first in-scope pane, leaves an already-in-scope active pane where it is, and shows the empty-scope region when the scope holds none; the previously active pane keeps running across the change and returns when the scope is cleared; the empty-scope region offers the two things worth doing there, carries no error styling, and never clears the scope the user chose; the no-invisible-filter invariant enters the truthfulness table with a test that goes red when it is violated |
+| **Status** | todo |
+
+### [WT-010.3] Two-Level Worktrees / Sessions Toggle
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Replace the four flat segments with a primary Worktrees / Sessions toggle, demoting Recent / Agent / Folder to a grouping control shown only inside Sessions |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2, § 2.1, § 2.2, § 2.3; [DESIGN.md](DESIGN.md) § 9 D28 |
+| **Depends On** | WT-010.1 |
+| **Stage** | 7 |
 | **Size** | M |
 | **Labels** | user-visible-ui |
-| **Notes** | Reuse pressure: reveal, copy-path, and copy-resume-command already have host implementations — these are id-resolving wrappers, not new handlers. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. Both context menus exist with their item sets and omissions; every item currently reaches nothing. Second reuse signal: this view's menu duplicates the vault menu's whole lifecycle — construction, placement, dismissal, focus — and the two have already drifted; extracting the shared shell belongs here rather than growing a third copy |
-| **Acceptance** | Each row's activation does the one thing that row can do, with external rows never offered focus; actions resolve their target host-side from an id, so nothing runs against a path the webview supplied or an id that has gone stale; opening a worktree as a folder leaves the tree with one group, not two; row activation is configurable rather than hard-coded |
-| **Status** | done |
+| **Notes** | No migration exists to write: the two persisted keys are already independent and already carry these exact values, and inventing one would be the bug. The current label-dropping CSS is a symptom of the squeeze this removes, so it goes with it rather than surviving as dead style. Both control levels are tab-like and must keep their roles, labels, and keyboard semantics rather than becoming buttons that happen to look selected |
+| **Acceptance** | One primary control switches the body and always shows both values labelled; the grouping control renders inside the sessions body and nowhere else; state written by an older build keeps its meaning with no migration and no key change; the default-body rule is unchanged — a persisted choice wins, otherwise a workspace with a repo opens on worktrees and one without opens on sessions; both levels expose tab semantics to assistive technology and are fully keyboard operable; the shipped four-segment control remains in place while the rollout setting is off |
+| **Status** | todo |
 
-### [WT-005.2] Mutating Actions & Safety Model
-
-| Field | Value |
-|-------|-------|
-| **Goal** | Create, remove, lock, unlock, and prune worktrees, with blockers evaluated by the host and confirmations that name what is at risk |
-| **Design Ref** | [worktree-actions.md](design/worktree-actions.md) § 3, § 5, § 6, § 7; [worktree-rpc.md](design/worktree-rpc.md) § 3, § 4 |
-| **Depends On** | WT-005.1, WT-004.2 |
-| **Stage** | 2 |
-| **Size** | L |
-| **Labels** | security-privacy |
-| **Notes** | User-supplied refs and paths reach git; destructive operations. Risk: highest in the feature. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. Both dialogs render — the blocker list, the fingerprint the confirmation carries, and the refusal that has no confirm button in it — but every blocker they show is fixture-derived, so nothing here has been evaluated by anything. The safety semantics are reviewed in THIS task, not in the one that drew them. The create form also states a resolved destination only when given one, so the host must supply the free path it will actually take. Reuse signal: the dialog shell duplicates the vault continuation dialog's focus trap and disposal. Registers the two `anywhereTerminal.worktree.*` settings keys, which no manifest declares yet |
-| **Acceptance** | No user-supplied ref or path reaches git as anything but a literal token, and a create path is revalidated immediately before use; the suggested create path follows the repo's own worktree layout when it has one and an explicit setting whenever the user stated one, falling back to the documented default only when neither exists, and a root inside the main worktree leaves the parent's `git status` clean without touching a tracked file; a destructive action names every applicable blocker before running, and a confirmation authorizes exactly the blocker set the user saw and no more; the main worktree, and any worktree holding a working agent, are refused outright with no confirmation path; what removal destroys and what it leaves alone is stated before it runs and true afterwards; every attempt leaves the tree reflecting reality, reporting indeterminate rather than clean failure when git and the filesystem disagree, and nothing partially applied is retried |
-| **Status** | done |
-
-### [WT-005.3] Launch an Agent into a Worktree
+### [WT-010.4] Rail Composition and Layout by Location
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Start an agent — optionally with a seed prompt and a chosen permission posture — in a worktree, resume an existing session there, and offer the same launch as a post-create step in the create form |
-| **Design Ref** | [worktree-actions.md](design/worktree-actions.md) § 3.2, § 4 |
-| **Depends On** | WT-005.1, WT-005.2 |
-| **Stage** | 2 |
+| **Goal** | Give the panel and editor locations a two-column rail beside the terminal, and the sidebar a rail that collapses after a selection |
+| **Design Ref** | [worktree-scope.md](design/worktree-scope.md) § 5; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.3, § 7.1 |
+| **Depends On** | WT-010.1, WT-010.3 |
+| **Stage** | 7 |
 | **Size** | M |
-| **Labels** | new-api-contract |
-| **Notes** | The registry has resume, fork, and continue — all of which start from an existing session — so a fresh-launch contract must be added, not merely reused. `continue` also requires a prompt where this view allows none. The view already renders this from fixtures (WT-002.1); what this task adds is the evidence that makes the claim true, not the pixels. The create form's agent picker, permission postures, and seed-prompt field are drawn, with the dangerous posture offered but never preselected; which agents the list may contain is a host answer this task supplies |
-| **Acceptance** | Starting a fresh session is a declared registry capability, so an agent that cannot start one is simply not offered; a launch runs in the chosen worktree, with a permission posture the user picked and a dangerous one never preselected; a seeded prompt arrives submitted, never left editable and never through a shell string; create-then-launch is the same path as a standalone launch, and a failed launch leaves the created worktree in place |
-| **Status** | done |
+| **Labels** | user-visible-ui |
+| **Notes** | One mechanism, two location-appropriate feels — not two implementations. The surfaces differ today only by a location attribute on the document, and that is the seam to use rather than a second layout path. The auto-collapse is a consequence of an explicit selection, never a timer, and must be reversible by the same control that performed it |
+| **Acceptance** | The panel and editor locations render the rail beside the terminal region with both visible at once; the sidebar keeps the stacked layout and collapses the rail on an explicit selection, reversibly, staying expanded until the next selection once the user reopens it; scope behaves identically in every layout; the escape control survives a collapsed rail; layout animations respect reduced motion; the shipped layout is unchanged while the rollout setting is off |
+| **Status** | todo |
 
----
-
-## Phase 6 — Agent Hook Pipeline
-
-> **Goal**: replace inference with declaration, upgrading presence from "the terminal is busy" to "this agent is waiting on a permission decision, with two subagents working".
->
-> **This phase generalizes the hook stack the extension already ships for one agent.** It does not build a second one. Two runtimes disagreeing about enablement, token authority, or disposal would be worse than either alone, so the migration of the existing agent onto the shared runtime is part of the phase, not a follow-up.
-
-### [WT-006.1] Generalize the Hook Runtime
+### [WT-010.5] Worktree Inspector Drawer
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Widen the existing single-agent loopback hook runtime and its env-contributor seam to serve several agents, and migrate the agent already using it onto the generalized form |
-| **Design Ref** | [agent-hook-server.md](design/agent-hook-server.md) § 2, § 4.1, § 4.2, § 5, § 7 |
-| **Depends On** | WT-004.1 |
-| **Stage** | 4 |
+| **Goal** | Open a capped detail region under the tree on selection, carrying the worktree's path, actions, agents and their models, and its delegation history |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.7, § 3.2, § 6; [worktree-actions.md](design/worktree-actions.md) § 2; [DESIGN.md](DESIGN.md) § 9 D29 |
+| **Depends On** | WT-010.1, WT-009.2 |
+| **Stage** | 7 |
 | **Size** | L |
-| **Labels** | security-privacy, re-review |
-| **Notes** | Changes a shipped security-relevant component rather than adding a new one. Reuse pressure is the point of the task: a new listener beside the existing one is the failure mode |
-| **Acceptance** | One runtime serves every hook-capable agent, with the agent already shipping on it migrated and behaviourally unchanged; a token is bound to its pane and stops working the moment that pane or the feature does; the endpoint is unreachable off-host and cannot be made to change state, error, or stall the agent by any malformed request; coordinates reach a pane only through its own environment, whole or not at all, with nothing written to disk; a runtime that cannot start leaves every pane on inference |
-| **Status** | done |
+| **Labels** | user-visible-ui |
+| **Notes** | Sized L rather than M: it carries an accessible drawer shell and its focus lifecycle *and* the action surface inside it, and the second is where the risk is. A drawer, not a body swap — at sidebar width, replacing the body makes selection destructive and forces a back control. Reuse pressure is high: every action it offers already has a handler and an id-resolving path, and growing a parallel set is the failure mode. It is also one of only two places a path is shown in full, so the no-path-on-a-row rule has to survive it |
+| **Acceptance** | Selecting a worktree opens the drawer and scopes the tab bar from one gesture, and selecting another replaces its contents rather than stacking; the drawer is capped so the tree above stays visible and scannable; it shows the full path, and no list row gains one; every action it offers resolves host-side from an id and runs the same operation as the equivalent menu item, with external agents still never offered focus; the model id appears here and on no row; dismissal is explicit and leaves the scope alone; focus is trapped correctly, returns where it came from, and survives the drawer opening and closing; the drawer is absent while the rollout setting is off |
+| **Status** | todo |
 
-### [WT-006.2] Claude Hook Installation v1
-
-| Field | Value |
-|-------|-------|
-| **Goal** | Give Claude a destination-local, opt-in installer that reconciles the frozen inline command against the current Claude settings file, alongside Cursor's independently reviewed inline hook installer |
-| **Design Ref** | [agent-hook-server.md](design/agent-hook-server.md) § 4.3, § 4.7, § 6, § 7 |
-| **Depends On** | WT-006.1 |
-| **Stage** | 4 |
-| **Size** | L |
-| **Labels** | security-privacy |
-| **Notes** | Superseded the rejected shared ledger/wrapper/probe lifecycle (`install-claude-hooks`, `remove-rejected-hook-installer`, archived) with a dedicated Claude reconciler; the independently reviewed `inline-cursor-hooks` change is merged rather than reimplemented. Delivered and unit-proven; confirmation that installed Claude Code itself invokes the frozen command remains a separate real-agent spike, tracked outside this blueprint entry |
-| **Acceptance** | Installation is opt-in per agent and destination-local: the setting, then `CLAUDE_CONFIG_DIR`, then `~/.claude` resolve one absolute path per operation, with no memory of a prior destination; the user's config survives concurrent editors, interrupted writes, symlinked destinations, and keys we do not recognise; a canonical singleton hook group is the ownership boundary — an ambiguous shape (sibling handlers, extra keys, wrong matcher or event) leaves the document byte-identical and revokes authority rather than guessing; installing repeatedly converges, and uninstall removes exactly the canonical groups at the current destination, with no ledger or historical-destination sweep; the lock never reclaims on age; the registered command is one frozen POSIX literal run through the real shell, and Windows performs zero filesystem access until a real spike lands; a hook with no coordinates, or no runtime to reach, costs the agent nothing and claims nothing |
-| **Status** | done |
-
-### [WT-006.3] Turn State & Presence Upgrade
+### [WT-010.6] Default the Workbench On
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Fold hook events into per-pane turn state and live subagent rosters, and let a fresh status supersede inferred activity |
-| **Design Ref** | [agent-hook-server.md](design/agent-hook-server.md) § 3, § 4.4–4.6; [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.3, § 3.6 |
-| **Depends On** | WT-006.2, WT-004.3 |
-| **Stage** | 4 |
-| **Size** | M |
-| **Labels** | None |
-| **Notes** | Risk: this is where a status pipeline starts lying if the guards are omitted. Delivered except the interrupt clause — the field that would prove an interrupt is not sent on the events this build registers, so an interrupted turn reads as an ordinary finished one; see Deferred and agent-hook-server.md § 4.4 |
-| **Acceptance** | Turn state follows the documented event mapping, with boundaries, interrupts, and completions held open by working children each distinguished from an ordinary finished turn; a fresh status is authoritative over inference and decays to identity-only when stale; process reality — pty exit, a shell reclaiming the pane, a window reload — overrides anything published; nothing the agent reports can create vault state or cause a path to be opened; pane teardown leaves no status, roster, or token behind |
-| **Status** | done |
-
----
-
-## Phase 7 — Hardening
-
-> **Goal**: only what cannot be scoped to a single feature task.
->
-> **Invariant tests belong to the task that introduces the behaviour**, not here. A truthfulness rule verified only at the end lets four phases build on an unverified evidence model; each task's acceptance above therefore carries its own invariant coverage. What remains for this phase is genuinely cross-layer: end-to-end integration and scale.
-
-### [WT-007.1] Cross-Layer Integration & Scale
-
-| Field | Value |
-|-------|-------|
-| **Goal** | Verify the invariants that span layers and that no single task could have proven, and that the view holds up at realistic worktree and pane counts |
-| **Design Ref** | [DESIGN.md](DESIGN.md) § 13.4; [worktree-agent-presence.md](design/worktree-agent-presence.md) § 7; [worktree-model.md](design/worktree-model.md) § 7 |
-| **Depends On** | WT-003.2, WT-005.2, WT-005.3, WT-006.3 |
-| **Stage** | 5 |
-| **Size** | M |
-| **Labels** | re-review |
-| **Notes** | Cross-layer verification cannot live inside any single feature task. Acceptance was narrowed at the 2026-08-28 review handback: the original clause read "covered by a test that fails when violated", which claims a machine proves each tagged assertion necessarily goes red for every violation of its English stimulus. Nothing checks that a test tagged `[I7]` asserts I7 — the stimulus field and the mandatory `re-review` round are the only checks, and the narrowed clause says so instead of implying otherwise. Coverage, traceability, and execution stay machine-enforced; no invariant was dropped |
-| **Acceptance** | Every truthfulness invariant is traceable to the task that owns it and to at least one tagged test that actually ran and passed in the canonical suite, with the registry matching § 8.4 in both directions and nothing left unproven outside the frozen deferred set; every invariant states the stimulus that must make its test go red, and that the tagged assertion answers that stimulus is established by the mandatory review round, not by a machine; an invariant closed by a source-level rule instead of a behavioural test states the scope it enforces and the conditions under which it does not decide, and those conditions are themselves asserted rather than only documented; the documented latency and per-rebuild cost budgets hold at realistic worktree and pane counts; event bursts and sustained streams both collapse to the documented rebuild bounds; a second surface adds no work, and a repo past the render budget caps visibly rather than truncating silently |
-| **Status** | done |
+| **Goal** | Flip the rollout setting's default, retire the gate, and remove the superseded control and layout it was protecting |
+| **Design Ref** | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.3; [DESIGN.md](DESIGN.md) § 10 |
+| **Depends On** | WT-010.1, WT-010.2, WT-010.3, WT-010.4, WT-010.5 |
+| **Stage** | 7 |
+| **Size** | S |
+| **Labels** | user-visible-ui, re-review |
+| **Notes** | The gate's purpose ends when the composition is whole; leaving it registered leaves two supported layouts to test forever. Removing the old control is the point of the task — a flag flipped but never cleaned up is how a codebase acquires a permanent second UI. Verification requirement, not an observable outcome: no dead style, state key, or unreachable branch is left behind for the retired path, which the review round confirms by reading the diff |
+| **Acceptance** | The workbench composition is what a user sees with no setting configured; the superseded four-segment control and the layout branch it guarded are gone rather than merely unreachable; a user who had explicitly set the flag either way lands on the workbench rather than on a path that no longer exists; the registry and the design docs no longer describe the setting as live |
+| **Status** | todo |
 
 ---
 
 ## Deferred
 
-- ~~Dirty / ahead-behind status per worktree row~~ — deferred. The git extension only exposes state for repositories open in the workspace, so unopened worktrees would need their own status invocation per row on every rebuild. Branch and head come free from the listing; dirty state is computed on demand for the removal safety check only.
-- ~~Tree virtualization~~ — deferred per DESIGN.md § 14 D14. Worktree counts are tens; a documented cap beats premature machinery.
-- ~~Group-by / sort-by / visibility filters~~ — deferred. The reference offers a filter popover (hide sleeping, hide default branch, hide automation-created); ordering here is deterministic and the counts are tens, so filters are a response to scale this view does not yet have.
-- ~~Issue-tracker and forge integration in the create form~~ — deferred. The reference creates worktrees from GitHub / Jira / PR references; that is a separate product surface, not a worktree concern.
-- ~~Answering questions and approving permissions from the panel~~ — deferred. Requires the hook pipeline plus paced keystroke delivery and baseline-revalidated answer inference; a separate feature with its own risk surface.
-- ~~Codex and OpenCode hook installers~~ — deferred. The endpoint and state machine accommodate them without a rewrite; Claude alone proves the pipeline.
-- ~~Completion notifications~~ — deferred. Needs quiet windows, burst cooldown, and reconstructable ids to avoid false alarms; out of scope for a navigation view.
-- ~~Process-recognition table for non-Claude running detection~~ — deferred. Until it lands, Codex and OpenCode panes resolve identity by title or not at all, which the UI states rather than hides.
-- ~~Cross-window agent focus~~ — not planned. External rows are labelled and non-focusable by design (DESIGN.md § 14 D6).
-- ~~Filtering the launch environment~~ — deferred to its own change, per DESIGN.md § 14 D24. Agent launches currently inherit the extension host's entire `process.env`, including credentials, because the agent allowlist merges over that clone rather than replacing it. This predates the feature and affects every vault launch; fixing it inside a worktree change would bury a security change in an unrelated diff. Recorded in DESIGN.md § 13.5 so it is not mistaken for a property the feature provides.
-- ~~Pty-write prompt delivery for agents without native seeding~~ — deferred at WT-005.3. Every agent this view offers declares native seeding, so the pty writer and the readiness signal it needs (worktree-actions.md § 4) would ship unused and untestable. An agent that cannot be seeded is offered no prompt field instead. Build it with the first agent that needs it.
-- ~~Distinguishing an interrupted turn from a finished one~~ — deferred at WT-006.3. The design mapped it to `is_interrupt` on `Stop` / `StopFailure`, but that field belongs to `PostToolUseFailure`, which this build does not register, so the flag would never have been set. The reducer reads `interrupted` only where a payload carries it and never synthesizes it. Needs an event Claude does not currently send, or keystroke inference, which is deferred separately.
-- ~~Reading a session's return from compaction as a state change~~ — deferred at WT-006.3. `SessionStart` with `source: "compact"` already lands the pane idle as a boundary, which is the half that matters for truthfulness. `PreCompact` — the half that would show the pane working while it compacts — exists in the payload schema but is not a registered event, and adding one is its own change with its own spec delta.
-- ~~Per-launch `--settings` hook injection~~ — considered and rejected at the 2026-08-25 triage. It would avoid writing to the user's agent config, but it duplicates a registration seam the extension already owns, loses coverage for agents the user starts by hand in an AT terminal, and the reference implementation explicitly tests that it does *not* take this route. Revisit only if config writes prove problematic in practice.
+- ~~Cross-surface scope sync~~ — deferred per DESIGN.md § 9 D25. Technically supported by the existing host-as-hub RPC, but panes belong to one surface, so a rail driving another surface needs a *primary terminal surface* concept and a multi-panel fan-out policy. Revisit as an opt-in setting holding one host-side scope every surface follows, which needs no primary.
+- ~~An editor tab per worktree~~ — deferred per DESIGN.md § 9 D25. Closest to the reference's feel, but it proliferates tabs and the editor surface is second-class today; that debt is paid before any default UX bets on it. Acceptable later as a manual "Open worktree as tab" action, never as the selection default.
+- ~~Sharing activity confidence with the terminal tab~~ — deferred per DESIGN.md § 9 D27. The tab's indicator claims the terminal is producing output, which stays true past the ceiling. Sharing the confidence would mean widening a shipped protocol union and adding an emitter for a surface whose claim is not false. Revisit if that indicator is ever restated as a claim about work.
+- ~~Group-by / sort-by / visibility filter popover~~ — still deferred. WT-009.1 takes the one part of "hide sleeping" that pays for itself with no filter state; the popover itself remains a response to a scale this view does not have.
+- Everything else deferred for the worktree subsystem stays recorded in `docs/PLAN.v4.md` and is not restated here.
 
 ---
 

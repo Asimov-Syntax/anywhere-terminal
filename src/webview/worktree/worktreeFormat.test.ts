@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { agentRow, worktree } from "./worktreeFixtures";
+import type { PresenceDegradation } from "./worktreeViewTypes";
 import {
   agentCountLabel,
   ageTimestamp,
@@ -12,6 +13,7 @@ import {
   groupPresenceByActivity,
   hasProvenIdentity,
   isFallbackActivity,
+  presentedActivity,
   stripDecorations,
   strongestActivity,
   worktreeBadges,
@@ -149,6 +151,69 @@ describe("strongestActivity", () => {
 
   it("is undefined for a worktree with no agents, so the row keeps its branch glyph", () => {
     expect(strongestActivity([])).toBeUndefined();
+  });
+
+  it("ranks unknown above idle — a row nothing could read outranks one settled at rest", () => {
+    const rows = [
+      agentRow({ rowId: "1", activity: "idle", activitySource: "hook" }),
+      agentRow({ rowId: "2", activity: "exited", activitySource: "hook" }),
+    ];
+    expect(strongestActivity(rows, [{ source: "hook", reason: "boom", since: NOW }])).toBe("unknown");
+  });
+
+  it("ranks what is shown, not what was sent — a degraded running row does not read as running", () => {
+    const rows = [agentRow({ rowId: "1", activity: "running", activitySource: "output" })];
+    expect(strongestActivity(rows, [{ source: "panes", reason: "boom", since: NOW }])).toBe("unknown");
+  });
+
+  it("still lets a waiting row from a live source outrank an unknown one", () => {
+    const rows = [
+      agentRow({ rowId: "1", activity: "running", activitySource: "output" }),
+      agentRow({ rowId: "2", activity: "waiting", activitySource: "hook" }),
+    ];
+    expect(strongestActivity(rows, [{ source: "panes", reason: "boom", since: NOW }])).toBe("waiting");
+  });
+
+  it("ignores a repo's own listing failure — that says which worktrees exist, not what agents do", () => {
+    // `degraded` on a repo never reaches here; only presence sources do. Guards the inversion
+    // where one failed git listing turns every row in the repo unknown.
+    const rows = [agentRow({ rowId: "1", activity: "running", activitySource: "output" })];
+    expect(strongestActivity(rows, [])).toBe("running");
+  });
+});
+
+describe("presentedActivity", () => {
+  const degraded = (source: PresenceDegradation["source"]): PresenceDegradation[] => [
+    { source, reason: "boom", since: NOW },
+  ];
+
+  it("reads unknown when no source spoke for the row at all", () => {
+    const row = agentRow({ rowId: "1", activity: "idle", activitySource: "none" });
+    expect(presentedActivity(row, [])).toBe("unknown");
+  });
+
+  it("reads unknown when the source that would have decided the row is degraded", () => {
+    // One mapping per row: hook → hook, output and title → panes, registry → registry.
+    expect(presentedActivity(agentRow({ rowId: "1", activitySource: "hook" }), degraded("hook"))).toBe("unknown");
+    expect(presentedActivity(agentRow({ rowId: "2", activitySource: "output" }), degraded("panes"))).toBe("unknown");
+    expect(presentedActivity(agentRow({ rowId: "3", activitySource: "title" }), degraded("panes"))).toBe("unknown");
+    expect(presentedActivity(agentRow({ rowId: "4", activitySource: "registry" }), degraded("registry"))).toBe(
+      "unknown",
+    );
+  });
+
+  it("keeps the activity when some OTHER source is the degraded one", () => {
+    const row = agentRow({ rowId: "1", activity: "running", activitySource: "hook" });
+    expect(presentedActivity(row, degraded("panes"))).toBe("running");
+    expect(presentedActivity(row, degraded("registry"))).toBe("running");
+    // `vault` decides no row's activity, so it never turns one unknown.
+    expect(presentedActivity(row, degraded("vault"))).toBe("running");
+  });
+
+  it("passes the activity through when nothing is degraded", () => {
+    for (const activity of ["running", "waiting", "idle", "exited"] as const) {
+      expect(presentedActivity(agentRow({ rowId: "1", activity }), [])).toBe(activity);
+    }
   });
 });
 

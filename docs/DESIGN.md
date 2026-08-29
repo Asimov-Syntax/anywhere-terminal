@@ -239,10 +239,11 @@ editor surface but unhandled by its host provider (`../audit/`).
 
 ## 8. Worktree & Agent Presence Subsystem
 
-A fourth view inside the AI Vault panel: the git worktrees of the workspace's repositories,
-with the agents running inside each one. The view answers a question the session list cannot
-— *where is work happening right now, and what is blocked* — and turns each worktree into a
-place to act (open, create, remove, launch an agent).
+The primary body of the AI Vault panel: the git worktrees of the workspace's repositories, with
+the agents running inside each one. It answers a question the session list cannot — *where is
+work happening right now, and what is blocked* — turns each worktree into a place to act (open,
+create, remove, launch an agent), and lets selecting one scope that surface's terminal tab bar
+to the panes inside it.
 
 ### 8.1 Architecture
 
@@ -262,10 +263,11 @@ graph TB
     end
     PUSH -->|postMessage| WV
     subgraph WV["WebView — AI Vault panel"]
-        SEGCTL["Segmented control<br>Recent / Agent / Folder / Worktree"]
-        SEGCTL --> BODY{"Active view"}
-        BODY -->|sessions| LIST["Session list"]
-        BODY -->|worktree| WTREE["Worktree tree"]
+        TOGGLE["Primary toggle<br>Worktrees | Sessions"]
+        TOGGLE --> BODY{"Active body"}
+        BODY -->|sessions| LIST["Session list<br>grouped Recent / Agent / Folder"]
+        BODY -->|worktrees| WTREE["Worktree tree"]
+        WTREE -->|"selection (webview-local)"| SCOPE["Tab-bar scope<br>this surface only"]
     end
     WTREE -->|actions| ACT
 ```
@@ -308,7 +310,9 @@ there.
 | Per-pane title and waiting evidence reaching the host | Each webview surface reports; the host aggregates by pane id | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.3 + § 8.6 below |
 | Pane→worktree mapping, agent identity, activity, external rows, subagents | Extension host, new presence module | [worktree-agent-presence.md](design/worktree-agent-presence.md) |
 | Message contract and validation | `src/types/messages.ts` + the view provider | [worktree-rpc.md](design/worktree-rpc.md) |
-| The fourth segment, tree rendering, states, keyboard | WebView, alongside `VaultPanel` | [worktree-panel-ui.md](design/worktree-panel-ui.md) |
+| The panel body, tree rendering, states, keyboard | WebView, alongside `VaultPanel` | [worktree-panel-ui.md](design/worktree-panel-ui.md) |
+| Selecting a worktree, and the tab bar it scopes | WebView, per surface — no host involvement | [worktree-scope.md](design/worktree-scope.md) |
+| How long an inferred `running` may keep claiming confirmation | WebView, as a projection over a presence row | [worktree-activity-ceiling.md](design/worktree-activity-ceiling.md) |
 | Create / remove / lock / prune / launch | Extension host, extending the vault launcher with a fresh-launch contract | [worktree-actions.md](design/worktree-actions.md) |
 | Authoritative status and live subagent rosters | Extension host, **generalizing the existing Cursor hook runtime** to multiple agents | [agent-hook-server.md](design/agent-hook-server.md) |
 
@@ -357,6 +361,20 @@ specific false claim the view could otherwise make.
 | I15 | A failed or timed-out mutation still forces a rebuild; a state git and the filesystem disagree about is reported as indeterminate, never as a clean failure |
 | I16 | Agent-reported identity is a lookup key only; no reported path is opened on the report's authority |
 
+**An invariant enters this table with the task that proves it, never ahead of it.**
+`src/test/invariants/registry.ts` mirrors every row here and is checked against this section on
+every run; its own gate forbids the statuses `uncovered` and `deferred`, so a row added before its
+covering test exists turns the suite red rather than recording an intention. Three invariants are
+therefore committed but not yet listed — the confirmation ceiling, and the two that keep the
+scoped tab bar honest. Each is stated in its design doc and is added here, with its registry row
+and its covering test, by the task that owns it:
+
+| Planned | Owning task | Stated in |
+|---------|-------------|-----------|
+| The confirmation ceiling degrades an unconfirmed `running` rather than animating it or calling it idle | WT-008.2 | [worktree-activity-ceiling.md](design/worktree-activity-ceiling.md) |
+| A scoped tab bar hides only a pane proven to belong elsewhere | WT-010.1 | [worktree-scope.md](design/worktree-scope.md) § 3.2 |
+| No filter is invisible, and none silences an attention state | WT-010.2 | [worktree-scope.md](design/worktree-scope.md) § 4.2 |
+
 ### 8.5 Security posture
 
 | Surface | Control |
@@ -396,7 +414,7 @@ shared with the tracker; the *instance* is not.
 
 | # | Decision | Alternative rejected | Rationale |
 |---|----------|---------------------|-----------|
-| D1 | Worktree is a fourth **view** that swaps the panel body | A fourth `GroupMode` in `groupEntries()` | Grouping buckets already-loaded sessions, so a worktree with zero agents would vanish. A worktree is a different entity that exists, and is actionable, with no sessions |
+| D1 | Worktree is its own **body**, not a grouping mode | A fourth `GroupMode` in `groupEntries()` | Grouping buckets already-loaded sessions, so a worktree with zero agents would vanish. A worktree is a different entity that exists, and is actionable, with no sessions. (Originally worded "a fourth view" beside three segments; D28 replaced that presentation. The durable decision is the separate body) |
 | D2 | Group by normalized `git-common-dir`, not by repository `rootUri` | Group by workspace folder | A workspace holding both a repo and one of its own linked worktrees would otherwise render two groups for one repo |
 | D3 | `WorktreeInfo.id` is the normalized absolute path | Composite `<repoId>:<path>` | Paths may contain `:`; a path already belongs to exactly one worktree, so a composite id buys nothing and costs an escaping rule |
 | D4 | Realpath both sides of every path comparison | Lexical comparison | macOS reports `/private/var` from the process table and `/var` from git; without realpath every worktree under a symlinked root shows zero agents |
@@ -411,7 +429,7 @@ shared with the tracker; the *instance* is not.
 | D13 | Hook status supersedes inference only while fresh | Hook status always wins | A stale hook row must fall back to identity-only, or a reload resurrects an unanswerable question card |
 | D14 | Virtualization is out of scope; cap with a "show all" affordance | Virtualize the tree | Worktree counts are tens, not thousands. A cap that says so beats a silent truncation and beats premature machinery |
 | D15 | The create form carries an agent picker; creating and launching is one action | Two separate actions the user composes | Creating a worktree in order to put an agent in it is one intent. The launch reuses the standalone launch path, and a failed launch never rolls back a successful create |
-| D16 | No filesystem path on any tree row | Path truncated from the left on the worktree row | At sidebar width a path crowds out the branch name, which is the identity users navigate by. The path stays reachable from the tooltip and the copy action |
+| D16 | No filesystem path on any tree row | Path truncated from the left on the worktree row | At sidebar width a path crowds out the branch name, which is the identity users navigate by. The path stays reachable from the row hint, the copy action, the inspector drawer (D29), and the create form |
 | D17 | The worktree row's leading glyph shows the strongest agent state | A separate status column | One glyph slot keeps rows single-line and aligned; `waiting` outranks `running` because it is the state that needs a human |
 | D18 | Generalize the existing Cursor hook stack into one multi-agent runtime | A second `AgentHookServer` beside it, or per-launch `--settings` injection | `src/cursor/` already ships the loopback runtime, per-session tokens, the env-contributor seam, the locked+atomic config installer, and an event reducer. A second server would duplicate all of it and collide on the singular contributor slot; two controllers could disagree about enablement and disposal. The reference implementation also chose global install over `--settings`, and tests that choice explicitly |
 | D19 | No on-disk endpoint artifact; env at spawn is the only channel | The reference's endpoint file | That file exists to let a *static* config entry find a *moving* server — necessary there because ptys are daemonized and agents can be remote. Here ptys die with the window, so spawn-time env can never go stale, and a window-global file against a window-local runtime would misroute one window's events into another's |
@@ -419,12 +437,19 @@ shared with the tracker; the *instance* is not.
 | D21 | Watch `.git/worktrees` non-recursively plus the two `HEAD` targets, with a 1 s/repo rebuild floor | Recursive `worktrees/**` | That subtree holds `index`, `FETCH_HEAD`, `ORIG_HEAD` and `logs/`, which churn on nearly every git operation. An agent working in a linked worktree would drive a relist plus a broadcast several times a second, indefinitely |
 | D22 | Confirmations are bound to their blocker set by fingerprint | A bare `force: true` re-send | Otherwise confirming "3 untracked files" also authorizes deleting a worktree that acquired a live agent in the meantime — approval for something the user never saw |
 | D23 | Ship in stages: navigation core first, then create+launch, then hooks | All seven phases in sequence | The first four phases answer "which worktrees exist, where are my agents, take me there", which is the daily-use core. Hook work is the largest and least certain piece and should not gate it |
+| D25 | Selecting a worktree scopes **that surface's own tab bar** (scope model 1) | Cross-surface scope sync; an editor tab per worktree | The whole workbench is already one webview document, so scoping is an internal filter over the extension's own tab list — no editor or native-terminal API, no protocol, no new concepts. Sync needs a *primary surface* concept the extension lacks; an editor tab per worktree bets the default UX on the surface with the most unpaid debt |
+| D26 | Scope defaults to `All` and is entered only by an explicit selection | Default the scope to the main worktree | A filter the user never chose must not be on the first time they open the view. This is the mockup's own "a filter can never be invisible" principle applied to first run |
+| D27 | The confirmation ceiling degrades the worktree row's **presentation**; the activity value and the terminal tab are unchanged | Share the confidence with the tab by widening the agent-status protocol; or drop the row to `idle` | The two surfaces make different claims: the tab says the terminal is producing output, which stays true past the ceiling; the row says an agent is working, which does not. Both still derive `running` from the one shared rule, so WT-004.0's clause holds on the value. Sharing the confidence would mean widening a shipped protocol union for a surface whose claim is not false |
+| D28 | Sessions is demoted to the second value of a `Worktrees \| Sessions` toggle; Recent / Agent / Folder becomes a grouping control inside Sessions | Keep four flat segments | Three of the four are grouping modes of one body and the fourth swaps the body. The squeeze that drops labels from unselected segments is the visible symptom of the mismatch. The two persisted keys are already independent, so the correction needs no migration |
+| D29 | Selecting a worktree opens an inspector **drawer** under the tree | Replace the panel body with a detail view | At sidebar width, replacing the body makes selection destructive: the user loses the list they were comparing against and needs a back control to return. The drawer keeps the rail scannable and is where the path lives |
+| D30 | Agentless worktrees dim to one line and fold under a single disclosure from four upward | Ship the reference's filter popover; or leave the tail at full weight | It is the part of "hide sleeping" that pays for itself with no filter state to explain, no popover, and no protocol. The popover stays deferred |
 | D24 | The launch environment gap is recorded, not fixed here | Fold an env-policy fix into this feature | It affects every vault launch, predates this feature, and changing it touches unrelated paths. Fixing it inside a worktree feature would hide a security change in an unrelated diff |
 
 Decisions made on the user's behalf and recorded rather than asked: D3, D4, D5, D8, D11, D14,
-D19–D22. D15–D17 were derived from the reference screenshots reviewed 2026-08-25 and supersede
-earlier placeholders in the UI design. D18, D23, and D24 were chosen by the user at the peer-review
-triage on 2026-08-25.
+D19–D22, D26, D29, D30. D15–D17 were derived from the reference screenshots reviewed 2026-08-25 and
+supersede earlier placeholders in the UI design. D18, D23, and D24 were chosen by the user at the
+peer-review triage on 2026-08-25. D25, D27, and D28 were chosen by the user at the blueprint gate on
+2026-08-29, against the audit in `docs/audit/2026-08-29-worktree-ui-vs-orca.md`.
 
 ---
 
@@ -440,7 +465,7 @@ one definition; every other document references it.
 | `repoId` | Normalized absolute git common dir | [worktree-model.md](design/worktree-model.md) § 3.2 | rpc § 2, ui § 3.1, actions § 3 |
 | `rowId` | `window:<paneId>` or `external:<agent>:<sessionId>` | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 3.5 | rpc § 2, ui § 6 |
 | Vault entry id | `<agent>:<sessionId>` — **pre-existing**, defined in `src/vault/types.ts:53` | Code | presence § 2, rpc § 2, actions § 2 |
-| Activity vocabulary | `running` / `waiting` / `idle` / `exited` — the first three match `TerminalActivityStatus`; `exited` means the pty died with the tab still open | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 2 | ui § 3.3, hook-server § 4.5 |
+| Activity vocabulary | `running` / `waiting` / `idle` / `exited` — the first three match `TerminalActivityStatus`; `exited` means the pty died with the tab still open. The Worktree view **presents** two further states, `running (unconfirmed)` and `unknown`, both derived and neither on the wire | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 2 | ui § 3.3, § 7.2, hook-server § 4.5, ceiling § 2 |
 | Turn-state vocabulary | `working` / `waiting` / `done` — hook-layer only, **deliberately distinct** from the activity vocabulary above. There is no `blocked` | [agent-hook-server.md](design/agent-hook-server.md) § 3 | presence § 3.3 |
 | Evidence tuple | `agentSource`, `activitySource` — confidence is **derived**, never a field | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 2 | ui § 4, hook-server § 4.5 |
 | Degradation record | `PresenceDegradation { source, reason, since }` / `WorktreeRepo.degraded` — a reason, never a bare boolean | [worktree-agent-presence.md](design/worktree-agent-presence.md) § 2 | ui § 3, model § 2 |
@@ -451,15 +476,20 @@ one definition; every other document references it.
 | Hook staleness window | 60 s — a status older than this is identity-only | [agent-hook-server.md](design/agent-hook-server.md) § 4.5 | presence § 3.3 |
 | Minimum supported git | 2.31 — supplies `locked` / `prunable`. Only `-z` (2.36) has a fallback | [worktree-model.md](design/worktree-model.md) § 3.3 | — |
 | Git command timeout | 10 s for read-only listings; mutations get a longer, cancellable budget | [worktree-model.md](design/worktree-model.md) § 5 | rpc § 5, actions § 3.6 |
-| Action outcome | `ok` / `error` / `indeterminate` | [worktree-rpc.md](design/worktree-rpc.md) § 2.2 | actions § 3.6 |
+| Action outcome | `ok` / `error` / `indeterminate` / `unavailable` / `blocked` — `unavailable` is not a failure (nothing was attempted, because what the action would affect could not be read); `blocked` carries the fingerprint the confirmation must echo | [worktree-rpc.md](design/worktree-rpc.md) § 2.2 | actions § 3.6, ui § 5 |
 | Hook env var — **shipped** Claude installer v1 | `ANYWHERE_TERMINAL_CLAUDE_URL = http://127.0.0.1:<port>/<sessionId>/<token>` — base, session id, and token in one value so a partial set cannot be inherited. Sole channel; no on-disk endpoint artifact | `src/agentHooks/install/ClaudeHookInstaller.ts` | [agent-hook-server.md](design/agent-hook-server.md) § 4.2 |
 | Hook env var — **shipped** Cursor agent | `ANYWHERE_TERMINAL_CURSOR_URL = http://127.0.0.1:<port>/<sessionId>/<token>`; the frozen inline command appends `/cursor`. New installs write only exact entries in `~/.cursor/hooks.json`; released wrapper paths are removal-only migration inputs | `src/agentHooks/agents/cursor.ts:14`, minted by `AgentHookRuntime.ts`; entries owned by `CursorHookInstaller.ts` | [agent-cli-integration.md](design/agent-cli-integration.md) |
 | Hook settings keys | `anywhereTerminal.agentHooks.claude.enabled`, `anywhereTerminal.agentHooks.claudeConfigDir`, and the pre-existing `anywhereTerminal.cursorAgent.hooks.enabled` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
 | Hook uninstall command | `anywhereTerminal.agentHooks.uninstall` | [agent-hook-server.md](design/agent-hook-server.md) § 4.7 | — |
-| Persisted view keys | `vaultView`, `vaultGroupMode`, `worktreeCollapsed`, `worktreeExpandedRows` — per **surface**, not per window. An absent collapse array means "never saved" (seed defaults); `[]` means "everything expanded" (seed nothing) | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.1 | — |
+| Persisted view keys | `vaultView`, `vaultGroupMode`, `worktreeCollapsed`, `worktreeExpandedRows`, `worktreeScope` — per **surface**, not per window. An absent collapse array means "never saved" (seed defaults); `[]` means "everything expanded" (seed nothing); an absent `worktreeScope` means All | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.1 | scope § 6 |
+| Panel body values | `vaultView`: `worktree` \| `sessions` — the two-level toggle changes their presentation, never their values, so no migration exists | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2 | — |
+| Worktree scope | `WorktreeInfo.id \| null`; `null` is All and is the default. Webview-local and per surface — never sent to the host, never broadcast | [worktree-scope.md](design/worktree-scope.md) § 2.1 | ui § 6 |
+| Confirmation ceiling | `CONFIRMATION_CEILING_MS = 5 min`, applied only where `activity === "running"` **and** `activitySource === "output"`, measured from `stateStartedAt` — never from `lastActivityAt`, which advances on the very bytes the ceiling exists to see through | [worktree-activity-ceiling.md](design/worktree-activity-ceiling.md) § 2 | ui § 4, § 7.2 |
+| Idle-tail fold threshold | 4 agentless worktrees per repo | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.6 | — |
+| Workbench rollout setting | `anywhereTerminal.worktree.workbench` (boolean, default `false`) — gates the two-level toggle, the rail composition, the scoped tab bar, and the inspector drawer until the composition is whole, then flips and is retired | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 2.3 | — |
 | Worktree settings keys | `anywhereTerminal.worktree.createRoot` (string, default `.claude/worktrees`; relative resolves against the main worktree, absolute used as-is; set explicitly it outranks detection, unset the repo's own layout wins), `anywhereTerminal.worktree.rowActivation` (`focus` \| `preview`, default `focus`) | [worktree-actions.md](design/worktree-actions.md) § 3.2, [worktree-panel-ui.md](design/worktree-panel-ui.md) § 6 | — |
 | `WorktreeOpenAfter` | `none` / `terminal` / `agent` / `newWindow` / `addToWorkspace` | [worktree-rpc.md](design/worktree-rpc.md) § 2.2 | actions § 3.2 |
-| Worktree row state precedence | `waiting` > `running` > `idle` > `exited` | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.2 | ui § 8 |
+| Worktree row state precedence | `waiting` > `running` > `unknown` > `idle` > `exited` — over **presented** states, so it includes the derived `unknown`. `running (unconfirmed)` is a confidence on `running` and carries no rank of its own | [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.2 | ui § 8, ceiling § 2.2 |
 
 **Intentional mapping, not an equality**: the hook layer's turn state and the presence layer's
 activity are different vocabularies on purpose. Turn state describes an agent's conversation;

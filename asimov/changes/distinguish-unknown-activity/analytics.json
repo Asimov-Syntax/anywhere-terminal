@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "distinguish-unknown-activity"
+  },
+  "sessions": [
+    {
+      "sessionId": "069d5382-fa6a-4334-aecd-ad19660fbb1e",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1787971906137,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1787971906137,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1787971906137
+        }
+      ],
+      "firstAt": 1787971906137,
+      "lastAt": 1787974310430,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 19,
+          "inputTokens": 38,
+          "outputTokens": 12792,
+          "reasoningTokens": 3517,
+          "cacheWriteTokens": 29877,
+          "cacheReadTokens": 6218658,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 29877,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

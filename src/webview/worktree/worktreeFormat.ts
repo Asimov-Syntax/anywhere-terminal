@@ -3,7 +3,13 @@
 // how agent rows group by state. No `this`, no side effects — independently
 // unit-testable, mirroring src/webview/vault/format.ts.
 
-import type { WorktreeActivity, WorktreeActivitySource, WorktreeAgentRow, WorktreeInfo } from "./worktreeViewTypes";
+import type {
+  PresenceDegradation,
+  WorktreeActivity,
+  WorktreeActivitySource,
+  WorktreeAgentRow,
+  WorktreeInfo,
+} from "./worktreeViewTypes";
 
 /**
  * Decorative animation frames agents print in front of a pane title. Stripped
@@ -119,17 +125,77 @@ export function worktreeBadges(info: WorktreeInfo): { kind: WorktreeBadgeKind; t
   return badges;
 }
 
+/**
+ * The activity a row is DRAWN with (§ 7.2): the wire vocabulary plus `unknown`.
+ * Presentation only — it is derived on every render, never stored and never sent.
+ */
+export type PresentedActivity = WorktreeActivity | "unknown";
+
+/**
+ * Which presence source would have decided this row's activity, so a failure of
+ * that source can be recognised as the reason the row says nothing (§ 7.2).
+ * `output` and `title` are both read off panes, so both map to `panes`.
+ */
+function decidingSource(source: WorktreeActivitySource): PresenceDegradation["source"] | undefined {
+  switch (source) {
+    case "hook":
+      return "hook";
+    case "output":
+    case "title":
+      return "panes";
+    case "registry":
+      return "registry";
+    case "none":
+      return undefined;
+  }
+}
+
+/**
+ * `unknown` when no source spoke for the row, or when the source that would have
+ * decided it is currently failing. A failed source is labelled, never quietly
+ * drawn as `idle` — `idle` is a positive claim that this agent is at rest.
+ *
+ * Only `WorktreePresence.degradedSources` participates. A repo's own `degraded`
+ * flag says the worktree LISTING failed, which is a claim about which worktrees
+ * exist rather than about what any agent is doing; reading it here would turn
+ * every row in the repo unknown on one failed git listing.
+ */
+export function presentedActivity(
+  row: WorktreeAgentRow,
+  degradedSources: readonly PresenceDegradation[],
+): PresentedActivity {
+  const deciding = decidingSource(row.activitySource);
+  if (deciding === undefined) {
+    return "unknown";
+  }
+  return degradedSources.some((d) => d.source === deciding) ? "unknown" : row.activity;
+}
+
 /** Loudest first: the state that needs a human wins the worktree row's glyph. */
 const ACTIVITY_STRENGTH: readonly WorktreeActivity[] = ["waiting", "running", "idle", "exited"];
+
+/**
+ * Presented order (§ 7.2). `unknown` sits above `idle`: a row nothing could read
+ * is a louder fact than one settled at rest, and below `running`, which is still
+ * an evidenced claim.
+ */
+const PRESENTED_STRENGTH: readonly PresentedActivity[] = ["waiting", "running", "unknown", "idle", "exited"];
 
 /**
  * The strongest state among a worktree's agents (§ 7.2). One waiting agent among
  * four running ones reads as waiting, because that is the one a human must act on.
  * Returns undefined for a worktree with no agents — that row keeps its branch glyph.
+ *
+ * Ranks what is SHOWN, not what was sent: a running row whose source is failing
+ * ranks as `unknown`, the same value its own glyph draws.
  */
-export function strongestActivity(rows: readonly WorktreeAgentRow[]): WorktreeActivity | undefined {
-  for (const activity of ACTIVITY_STRENGTH) {
-    if (rows.some((r) => r.activity === activity)) {
+export function strongestActivity(
+  rows: readonly WorktreeAgentRow[],
+  degradedSources: readonly PresenceDegradation[] = [],
+): PresentedActivity | undefined {
+  const presented = rows.map((r) => presentedActivity(r, degradedSources));
+  for (const activity of PRESENTED_STRENGTH) {
+    if (presented.includes(activity)) {
       return activity;
     }
   }

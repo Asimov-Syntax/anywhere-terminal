@@ -32,10 +32,23 @@ function documentedInvariants(): Map<string, string> {
   return rows;
 }
 
-/** Every task id the blueprint declares, so an `owners` entry cannot point at nothing. */
+/**
+ * Every task id the blueprint declares, so an `owners` entry cannot point at nothing.
+ * The blueprint is more than one file: superseded phases keep their tasks in `PLAN.v<n>.md`,
+ * and an invariant a shipped task proved still names that task as its owner.
+ */
 function blueprintTaskIds(): Set<string> {
-  const plan = fs.readFileSync(path.join(REPO_ROOT, "docs/PLAN.md"), "utf8");
-  return new Set([...plan.matchAll(/^###\s*\[(WT-[\d.]+)\]/gm)].map((m) => m[1]));
+  const docs = path.join(REPO_ROOT, "docs");
+  const plans = fs.readdirSync(docs).filter((name) => /^PLAN(\.v\d+)?\.md$/.test(name));
+  expect(plans, "no blueprint plan found under docs/").not.toEqual([]);
+  const ids = new Set<string>();
+  for (const name of plans) {
+    const plan = fs.readFileSync(path.join(docs, name), "utf8");
+    for (const m of plan.matchAll(/^###\s*\[(WT-[\d.]+)\]/gm)) {
+      ids.add(m[1]);
+    }
+  }
+  return ids;
 }
 
 describe("truthfulness invariants — registry", () => {
