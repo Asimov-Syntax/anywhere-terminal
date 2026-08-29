@@ -36,3 +36,20 @@
     3. In `src/webview/main.ts`, supply the scope-need callback and revalidate on the render route every scope change already reaches.
     4. In `src/webview/worktree/WorktreeController.test.ts`, update the one test that pins the exact visibility message shape — the level is part of it now.
     5. In `src/webview/worktree/WorktreeController.state.test.ts`, cover: collapsing under a scope posts the presence level rather than going quiet; clearing the scope then unsubscribes; a scope set while collapsed subscribes; a surface with no scope source behaves as it does today; and — the regression test — collapsing under a scope still cancels an in-flight create.
+
+## 2. Round-1 review fixes
+
+- [x] 2_1 Let an unresolved scope bootstrap, enrich on promotion, and make the two weak tests discriminate — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.state.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_1, 1_2, 1_3
+  - **Refs**: design.md#d4-in-the-controller-body-work-keys-on-drawing-subscription-keys-on-either; specs/worktree-panel/spec.md#a-surface-subscribes-to-presence-for-what-it-draws-not-for-the-rail
+  - **Acceptance**:
+    - Outcome: a persisted scope resolves itself with the body hidden, and a reopened rail draws enriched rows
+    - Verify: unit src/webview/worktree/WorktreeController.state.test.ts
+  - **Plan**:
+    1. In `src/webview/tabBarScope.ts`, add a predicate for "a scope is persisted, whether or not a tree has confirmed it", true only while the workbench is on (round-1 B1).
+    2. In `src/webview/tabBarScopeWiring.ts`, expose that predicate on the interface main.ts consumes.
+    3. In `src/webview/main.ts`, drive presenceNeeded from the new predicate rather than from effectiveScope, so an unresolved persisted scope subscribes and can be confirmed or dropped.
+    4. In `src/webview/worktree/WorktreeController.ts`, request the tree when a standing subscription is promoted from presence to rows, so a reopened rail does not display the bare envelope until the next poll (round-1 W1). Demotion still requests nothing.
+    5. In `src/providers/WorktreeHost.test.ts`, drive the scan through the injectable clock instead of a direct tree request, asserting that a presence-only subscriber arms it, that it runs with enrichment off, and that the last presence subscription ending cancels it (round-1 W2).
+    6. In `src/worktree/presenceProjector.test.ts`, assert the rank value advances to the newer session under enrichment off, rather than merely remaining defined (round-1 S1).
+    7. In `src/webview/tabBarScope.test.ts` and `src/webview/worktree/WorktreeController.state.test.ts`, cover a valid and a stale persisted scope with the body hidden, and the promotion request.

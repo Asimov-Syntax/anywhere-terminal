@@ -74,6 +74,8 @@ export interface TabBarScopeWiring {
   setWorkbench(enabled: boolean): void;
   /** What `buildTabBarData` filters by, or `undefined`. */
   effectiveScope(): TabBarScope | undefined;
+  /** See `TabBarScopeCoordinator.needsPresence`. */
+  needsPresence(): boolean;
   /**
    * Re-decide whether the region stands, without touching the active pane. Called
    * from the render path, which is the only place that sees every route a pane can
@@ -219,6 +221,7 @@ export function wireTabBarScope(deps: TabBarScopeWiringDeps): TabBarScopeWiring 
     },
 
     effectiveScope: () => coordinator.effectiveScope(),
+    needsPresence: () => coordinator.needsPresence(),
 
     syncEmptyScope: () => settleScope(false),
 

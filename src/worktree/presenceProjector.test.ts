@@ -1943,18 +1943,24 @@ describe("[1_2] enrichment is work only rows consume", () => {
   });
 
   it("keeps ranking current, so reopening the rail does not reorder every group", async () => {
+    // Asserting the VALUE moved, not merely that one is defined: the old rank
+    // stays defined and the revision stays equal when ranking goes stale, so
+    // both of those hold on exactly the behaviour this forbids (round-1 S1).
     const { h } = scoped();
     await h.projector.project([WT], { external: true });
-    const before = h.projector.rankRevision();
+    const before = h.projector.rank(WT);
+    const beforeRevision = h.projector.rankRevision();
 
+    const newer = 1_700_000_000_000;
     h.setRegistry({
       kind: "ok",
-      sessions: [named(), named({ sessionId: "s2" }), named({ sessionId: "s3", startedAt: 1_700_000_000_000 })],
+      sessions: [named(), named({ sessionId: "s3", startedAt: newer })],
     });
     await h.projector.project([WT], { external: true, enrich: false });
 
-    expect(h.projector.rank(WT), "ranking went stale while enrichment was off").toBeDefined();
-    expect(h.projector.rankRevision()).toBeGreaterThanOrEqual(before);
+    expect(h.projector.rank(WT), "ranking went stale while enrichment was off").toBe(newer);
+    expect(h.projector.rank(WT)).not.toBe(before);
+    expect(h.projector.rankRevision()).toBeGreaterThan(beforeRevision);
   });
 
   it("enriches by default, so every existing caller is unchanged", async () => {

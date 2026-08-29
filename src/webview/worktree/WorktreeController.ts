@@ -528,9 +528,16 @@ export class WorktreeController {
     const visible = level !== null;
     this.deps.postMessage({ type: "worktreeViewVisibility", visible, ...(level ? { level } : {}) });
     if (visible) {
-      // A level change on a standing subscription needs no re-request: the host
-      // is already pushing, and the next projection reads the new level.
+      // A level change on a standing subscription re-requests only on the way
+      // UP. The two directions are not symmetric: demoting to "presence" merely
+      // stops future work, while promoting to "rows" has to replace an envelope
+      // that was deliberately built bare, and waiting for the next five-second
+      // scan would show the reopened rail rows with no title and no preview
+      // (round-1 W1).
       if (wasSubscribed) {
+        if (level === "rows") {
+          this.deps.postMessage({ type: "requestWorktreeTree" });
+        }
         return;
       }
       this.deps.postMessage({ type: "requestWorktreeTree" });

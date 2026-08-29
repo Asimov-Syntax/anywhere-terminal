@@ -631,3 +631,41 @@ describe("round-1: the guard moves for every change the badge would draw", () =>
     expect(ask(scope, split, ["gone"])).toBe(true);
   });
 });
+
+describe("[2_1] a persisted scope has to be able to resolve itself", () => {
+  it("needs presence before any tree has confirmed it", () => {
+    // The deadlock this exists to break: confirming needs a tree, the host
+    // pushes trees only to a subscribed surface, and gating the subscription on
+    // the CONFIRMED answer means a restored scope on a collapsed rail can never
+    // resolve (round-1 B1).
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+
+    expect(scope.scopedWorktreeId(), "the scope was confirmed without a tree").toBeNull();
+    expect(scope.needsPresence(), "an unconfirmed scope could not ask for the tree").toBe(true);
+  });
+
+  it("stops needing presence once a tree drops it as stale", () => {
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+    scope.applyTree(treeOf(worktree({ id: ELSEWHERE })));
+
+    expect(scope.scopedWorktreeId()).toBeNull();
+    expect(scope.needsPresence(), "a dropped scope kept the surface subscribed").toBe(false);
+  });
+
+  it("keeps needing presence once a tree confirms it", () => {
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "here" })));
+
+    expect(scope.needsPresence()).toBe(true);
+  });
+
+  it("needs nothing while the workbench is off, whatever is stored", () => {
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }), workbench: false });
+    expect(scope.needsPresence()).toBe(false);
+  });
+
+  it("needs nothing when no scope was ever stored", () => {
+    const scope = coordinator({ store: storeOf({}) });
+    expect(scope.needsPresence()).toBe(false);
+  });
+});

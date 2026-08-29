@@ -3,6 +3,7 @@ import type { ExtensionToWebViewMessage } from "../types/messages";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { WorktreePresence } from "../worktree/presenceTypes";
+import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import { createWorktreeHost, type WorktreeSurface } from "./WorktreeHost";
@@ -659,16 +660,37 @@ describe("WorktreeHost — a re-show whose delivery did not land", () => {
 });
 
 describe("[1_1] a surface can subscribe to presence without drawing rows", () => {
-  /** A host whose projector records the options each projection was given. */
+  /**
+   * A host whose projector records the options each projection was given, and
+   * whose timers the test drives. The scan is the point: a presence-only
+   * subscriber has to keep ARMING it, and a test that drives the projection with
+   * a direct tree request proves the enrich plumbing while staying green if scan
+   * arming stopped for `"presence"` — the freeze this change exists to prevent
+   * (round-1 W2).
+   */
   function scoped() {
     const { runner } = oneRepo(MAIN, FEAT);
     const options: ({ external?: boolean; enrich?: boolean } | undefined)[] = [];
     const presence: WorktreePresence = { rowsByWorktreeId: {}, scannedAt: 1, degradedSources: [] };
+    const timers = new Map<number, () => void>();
+    let nextHandle = 1;
+    const clock: RebuildGateClock = {
+      now: () => 0,
+      setTimeout: (fn) => {
+        const handle = nextHandle++;
+        timers.set(handle, fn);
+        return handle;
+      },
+      clearTimeout: (handle) => {
+        timers.delete(handle as number);
+      },
+    };
     const worktrees = createWorktreeHost({
       deps: deps(runner, ["/repo"]),
       workspaceFolders: () => ["/repo"],
       pool,
       now: () => 1000,
+      clock,
       projector: {
         project: async (_ids, opts) => {
           options.push(opts);
@@ -678,7 +700,20 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
         rankRevision: () => 0,
       },
     });
-    return { worktrees, options };
+    return {
+      worktrees,
+      options,
+      /** How many timers are currently armed. */
+      armed: () => timers.size,
+      /** Fire every armed timer once. */
+      async fire(): Promise<void> {
+        for (const [handle, fn] of [...timers]) {
+          timers.delete(handle);
+          fn();
+        }
+        await settle();
+      },
+    };
   }
 
   it("still serves a presence-only subscriber", async () => {
@@ -695,20 +730,39 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
     expect(s.posts.length, "a presence-only subscriber received nothing").toBeGreaterThan(0);
   });
 
-  it("tells the projection not to enrich when every subscriber is presence-only", async () => {
-    const { worktrees, options } = scoped();
+  it("arms the scan for a presence-only subscriber, and runs it without enriching", async () => {
+    // Both halves matter. Arming is what keeps the hidden-waiting count moving;
+    // not enriching is what makes the collapsed rail cheap.
+    const h = scoped();
     const s = surface();
-    attachShown(worktrees, s);
+    attachShown(h.worktrees, s);
 
-    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
-    worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    h.worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
     await settle();
+    expect(h.armed(), "a presence-only subscriber did not arm the scan").toBeGreaterThan(0);
 
-    expect(options.length, "no projection ran at all").toBeGreaterThan(0);
+    h.options.length = 0;
+    await h.fire();
+
+    expect(h.options.length, "the armed scan ran no projection").toBeGreaterThan(0);
     expect(
-      options.every((o) => o?.enrich === false),
+      h.options.every((o) => o?.enrich === false),
       "per-row work ran for a body drawing no rows",
     ).toBe(true);
+  });
+
+  it("stops arming once the last presence subscription ends", async () => {
+    const h = scoped();
+    const s = surface();
+    attachShown(h.worktrees, s);
+    h.worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+    await settle();
+    expect(h.armed()).toBeGreaterThan(0);
+
+    h.worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: false });
+    await settle();
+
+    expect(h.armed(), "the scan stayed armed after the last subscriber left").toBe(0);
   });
 
   it("enriches for the whole window as soon as one surface draws rows", async () => {

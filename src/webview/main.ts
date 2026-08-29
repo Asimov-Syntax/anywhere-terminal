@@ -1140,7 +1140,7 @@ function handleInit(msg: InitMessage): void {
       // collapsed: its chip, escape control and hidden-waiting count are all
       // drawn from presence. The subscription drops to the presence level, so
       // the window stops per-row work nothing is drawing.
-      presenceNeeded: () => tabBarScope?.effectiveScope() !== undefined,
+      presenceNeeded: () => tabBarScope?.needsPresence() === true,
       onSelectWorktree: (worktreeId) => {
         tabBarScope?.onSelectWorktree(worktreeId);
         // Only an actual selection, only under the rollout, and only where two

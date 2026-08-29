@@ -154,9 +154,8 @@ describe("[1_3] a scope keeps the surface subscribed after the rail closes", () 
     expect(posts.some((m) => m.type === "requestWorktreeTree")).toBe(true);
   });
 
-  it("does not re-request the tree when only the level changed", () => {
-    // The host is already pushing to a standing subscription; the next
-    // projection reads the new level on its own.
+  it("does not re-request the tree when demoted to presence", () => {
+    // Demoting only stops future work; the host is already pushing.
     const scoped = true;
     const { controller, posts } = mountWith(() => scoped);
     controller.setVisible(true);
@@ -164,6 +163,23 @@ describe("[1_3] a scope keeps the surface subscribed after the rail closes", () 
 
     controller.setVisible(false); // rows -> presence, still subscribed
     expect(posts.filter((m) => m.type === "requestWorktreeTree").length).toBe(before);
+  });
+
+  it("re-requests the tree when promoted back to rows", () => {
+    // Not symmetric with demotion: the envelope the surface is holding was
+    // deliberately built bare, so waiting for the next five-second scan would
+    // draw the reopened rail with no titles and no previews (round-1 W1).
+    const scoped = true;
+    const { controller, posts } = mountWith(() => scoped);
+    controller.setVisible(true);
+    controller.setVisible(false); // rows -> presence
+    const before = posts.filter((m) => m.type === "requestWorktreeTree").length;
+
+    controller.setVisible(true); // presence -> rows
+    expect(
+      posts.filter((m) => m.type === "requestWorktreeTree").length,
+      "a reopened rail kept the bare presence-only envelope",
+    ).toBe(before + 1);
   });
 
   it("still cancels an in-flight create when the rail closes under a scope", () => {

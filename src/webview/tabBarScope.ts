@@ -121,6 +121,25 @@ export class TabBarScopeCoordinator {
     return this.scopedWorktreeId() === null ? null : this.scopeLabel;
   }
 
+  /**
+   * Whether a scope is persisted for this surface, WHETHER OR NOT a tree has
+   * confirmed it yet.
+   *
+   * Deliberately not `isScoped()`. Nothing is scoped until a tree confirms it,
+   * but confirming needs a tree, and the host pushes trees only to a surface
+   * that subscribed. Gating the subscription on the confirmed answer is a
+   * deadlock: a restored scope on a surface whose body starts collapsed could
+   * never resolve itself, and its chip, filter and count would stay absent
+   * until the user opened the rail by hand (round-1 B1).
+   *
+   * The stale case needs no branch here: an unconfirmed id resolves to unscoped
+   * and `setScope(null)` clears it, so this goes false on its own and the
+   * surface unsubscribes.
+   */
+  needsPresence(): boolean {
+    return this.workbench && this.scope !== null;
+  }
+
   /** Whether this surface is filtered — the tab bar's second reason to be visible. */
   isScoped(): boolean {
     return this.scopedWorktreeId() !== null;
