@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -60,3 +60,14 @@ Blueprint: docs/PLAN.md task WT-010.2
 - 1_4's Plan gained `emptyScopeRegion.ts` / `.test.ts`: the container hide it owes an assertion for
   was written into `main.ts`, which no test imports, so the putting-up and taking-down moved beside
   the region itself.
+- Review: cycle 1, three rounds. Round 1 BLOCK (2 blocking), round 2 WARN, round 3 BLOCK (1).
+  Every blocker closed; each round's own fix introduced the next round's defect, all inside
+  `emptyScopeRegion`'s mount. Round 3 hit the cycle cap with B3 open, so the thrash stop's three
+  options went to the user, who chose the bounded extension round — one hypothesis, no scope growth.
+  The chair's alternative, extracting the mount as its own change with this one depending on it, is
+  recorded in `.reviews/round-3.md` and is the right move if that component produces another defect.
+- Carried to audit backlog, none gating: a collapsed split's leaf is still absent from the presented
+  bar when its live leaf is in scope (pre-existing `terminals.get(tabId)` gating, carved out of W3 in
+  all three rounds); `main.ts`'s single `syncEmptyScope()` line is unreachable from any test, the D3
+  limit on that file; and the region is never GIVEN focus — its inverse was fixed, the original stands.
+

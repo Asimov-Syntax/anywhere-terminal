@@ -116,6 +116,11 @@ than staying pinned to whatever was active before:
 | The scope holds panes | The first in-scope pane becomes active — unless the already-active pane is itself in scope, in which case nothing moves |
 | The scope holds none | The empty-scope region (§ 4.3) is shown |
 
+**The unit is the pane, not the tab.** A split tab is presented because one of its panes is in
+scope, while the pane active *inside* it may belong elsewhere — bringing that tab forward would
+show the wrong leaf. Selection therefore moves the active **pane**, which sets the owning tab's
+active pane before showing the tab.
+
 **Nothing is stopped, closed, or detached.** The previously active pane keeps running and keeps
 its session; `All` brings its tab straight back and it can be made active again. This is § 7 rule
 4 applied to the active pane: scope changes rendering, never process state.
@@ -160,9 +165,11 @@ when the filter is, and absent when it is not.
 carries a count of hidden panes that need a human — rendered as an attention mark with the
 count, e.g. `All · 2`.
 
-The count is over **this surface's own tabs**, not the window: tabs this scope hides whose
-state is `waiting`. A pane's `waiting` is taken as true when *either* the presence row for it
-or the tab's own tracked status says so. The union is deliberate — the two sources have
+The count is over **this surface's own tabs**, not the window: tabs this scope hides that hold a
+`waiting` pane. The unit is the tab throughout — a hidden split holding two waiting panes is one
+hidden thing and counts once, and a tab is hidden only when *every* one of its panes is attributed
+elsewhere. A pane's `waiting` is taken as true when *either* the presence row for it or the tab's
+own tracked status says so, and an exited pane is never waiting. The union is deliberate — the two sources have
 different coverage today, and a missed `waiting` is precisely the failure this badge exists to
 prevent, while a redundant one costs a glance.
 
@@ -181,6 +188,15 @@ A worktree with no panes is a normal, common selection — it is the state a fre
 worktree is in. The terminal region renders the two things worth doing there (open a terminal,
 launch an agent), states that other worktrees' panes are hidden, and offers `All`. It is not an
 error, carries no error styling, and never auto-clears the scope the user chose.
+
+The launch offer follows the panel's own rule and is **omitted**, never rendered inert, when the
+host reports no agent that can start a session. A region showing one offer is a correct region.
+
+While the region stands, the terminal container is **hidden but left mounted**: unmounting would
+discard the terminal's viewport state and make `All` a rebuild, which is § 7 rule 4 violated one
+layer down. Whether the region stands is re-decided on every redraw, not only on a selection — a
+pane can arrive in the scope by routes no selection passes through, the region's own terminal offer
+among them.
 
 ## 5. Layout by location
 
