@@ -146,11 +146,11 @@ describe("strongestActivity", () => {
       agentRow({ rowId: "4", activity: "running" }),
       agentRow({ rowId: "5", activity: "running" }),
     ];
-    expect(strongestActivity(rows)).toBe("waiting");
+    expect(strongestActivity(rows, [])).toBe("waiting");
   });
 
   it("is undefined for a worktree with no agents, so the row keeps its branch glyph", () => {
-    expect(strongestActivity([])).toBeUndefined();
+    expect(strongestActivity([], [])).toBeUndefined();
   });
 
   it("ranks unknown above idle — a row nothing could read outranks one settled at rest", () => {
@@ -223,7 +223,7 @@ describe("groupPresenceByActivity", () => {
       ...Array.from({ length: 7 }, (_, i) => agentRow({ rowId: `r${i}`, agent: "claude", activity: "running" })),
       agentRow({ rowId: "i1", agent: "cursor", activity: "idle" }),
     ];
-    const groups = groupPresenceByActivity(rows);
+    const groups = groupPresenceByActivity(rows, []);
     expect(groups.map((g) => g.activity)).toEqual(["running", "idle"]);
     expect(groups[0]?.agents).toHaveLength(3);
     expect(groups[0]?.overflow).toBe(4);
@@ -231,10 +231,13 @@ describe("groupPresenceByActivity", () => {
   });
 
   it("counts an unproven row without contributing an icon for it", () => {
-    const groups = groupPresenceByActivity([
-      agentRow({ rowId: "a", agentSource: "none", activity: "idle" }),
-      agentRow({ rowId: "b", agent: "claude", agentSource: "title", activity: "idle" }),
-    ]);
+    const groups = groupPresenceByActivity(
+      [
+        agentRow({ rowId: "a", agentSource: "none", activity: "idle" }),
+        agentRow({ rowId: "b", agent: "claude", agentSource: "title", activity: "idle" }),
+      ],
+      [],
+    );
     expect(groups[0]?.agents).toEqual([]);
     expect(groups[0]?.overflow).toBe(2);
   });

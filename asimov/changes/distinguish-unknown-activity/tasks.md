@@ -28,3 +28,19 @@
   - **Acceptance**:
     - Outcome: the five shapes read apart at sidebar width under both settings
     - Verify: manual open the Worktree view at sidebar width with reduced motion on and a high-contrast or monochrome theme, and confirm waiting, running, unknown, idle and exited are each identifiable without reading colour
+
+## 2. Review round 1
+
+- [x] 2_1 Thread the presented state to every surface that draws it — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_2
+  - **Refs**: specs/worktree-panel/spec.md#{an-activity-no-source-could-determine-is-not-presented-as-idle, strongest-state-wins-and-shape-carries-it}
+  - **Acceptance**:
+    - Outcome: no surface draws a row no source could read as idle
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. Move the `activitySource` → degraded-source table out of `src/providers/WorktreeHost.ts` into `src/worktree/presenceTypes.ts`, keeping its `satisfies Record<…>` exhaustiveness check, and read it from `src/webview/worktree/worktreeFormat.ts` instead of the local switch (W4).
+    2. In `worktreeFormat.ts`, group the collapsed pill on the presented state over the presented precedence, and make `strongestActivity`'s degradation parameter required (B1, S1).
+    3. In `src/webview/worktree/WorktreeView.ts`, pass the degradation list to the pill and into the remove dialog's deps (B1, W1).
+    4. In `src/webview/worktree/WorktreeRemoveDialog.ts`, draw each busy row with its presented state; keep the filter inclusive (W1).
+    5. In `src/webview/worktree/worktreeTreeView.ts`, key the `~` confidence marker off the presented state and give the worktree row's phrasing a named helper (W3, S2).
+    6. In `src/webview/worktree/WorktreeView.test.ts`, normalize the shape rules a second time with `animation` stripped and read the reduced-motion override, so the guard fails on the pre-change ring (W2).

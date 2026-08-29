@@ -14,15 +14,18 @@
 
 import { ICON_TERMINAL } from "../vault/icons";
 import { dialogTitle, openDialogShell, textButton } from "./worktreeDialogShell";
+import { presentedActivity } from "./worktreeFormat";
 import { ICON_LOCK, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
 import { renderAgentRow } from "./worktreeTreeView";
-import type { WorktreeAgentRow, WorktreeInfo, WorktreeRemoveBlocker } from "./worktreeViewTypes";
+import type { PresenceDegradation, WorktreeAgentRow, WorktreeInfo, WorktreeRemoveBlocker } from "./worktreeViewTypes";
 
 export interface WorktreeRemoveDialogDeps {
   info: WorktreeInfo;
   blocker: WorktreeRemoveBlocker;
   /** Rows in this worktree; the refusal names the busy ones. */
   agentRows?: WorktreeAgentRow[];
+  /** Presence sources currently failing, so a listed row is drawn with what is known about it. */
+  degradedSources?: readonly PresenceDegradation[];
   /** Re-sends the remove with `force: true` AND the fingerprint the user was shown. */
   onConfirm: (fingerprint: string) => void;
   /** Reveal the agent that blocks the removal. */
@@ -163,6 +166,10 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   shell.dialog.appendChild(path);
 
   if (refused) {
+    const degraded = deps.degradedSources ?? [];
+    // Named before the copy branches, because the copy asks whether any listed
+    // row is one no live source can vouch for.
+    const busy = (deps.agentRows ?? []).filter((r) => r.activity === "running" || r.activity === "waiting");
     const box = document.createElement("div");
     box.className = "wt-refusebox";
     const lead = document.createElement("b");
@@ -191,7 +198,14 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       }
       box.appendChild(nested);
     } else {
-      lead.textContent = "An agent is mid-turn in this worktree.";
+      // The filter below stays on the WIRE value, so a source going down never
+      // shrinks this refusal — warning about a possibly-working agent is the safe
+      // side of deleting a folder. What the source decides is the CLAIM: with no
+      // live evidence, the dialog says it cannot tell rather than that it knows.
+      const anyUnreadable = busy.some((r) => presentedActivity(r, degraded) === "unknown");
+      lead.textContent = anyUnreadable
+        ? "An agent may be mid-turn in this worktree, and nothing can currently confirm it."
+        : "An agent is mid-turn in this worktree.";
       box.append(
         lead,
         document.createTextNode(
@@ -203,11 +217,10 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
 
     // Name the agent rather than the count: "stop it first" is only actionable if
     // the user can see which one.
-    const busy = (deps.agentRows ?? []).filter((r) => r.activity === "running" || r.activity === "waiting");
     for (const row of busy) {
       const el = renderAgentRow(
         row,
-        { now: deps.now },
+        { activity: presentedActivity(row, degraded), now: deps.now },
         {
           onActivate: () => deps.onShowAgent?.(row),
           onContextMenu: () => {},

@@ -18,6 +18,25 @@ export interface PresenceDegradation {
 }
 
 /**
+ * Which failed source would undermine a row's own activity claim.
+ *
+ * Per-row rather than "is anything degraded": a failed registry scan says nothing
+ * about a pane whose activity came from its hook, and decaying on it would throw
+ * away the one case D11 exists to preserve.
+ *
+ * One table, read by both layers — the host decides delegation decay from it and
+ * the view decides the glyph. Two copies could disagree, and the `satisfies` check
+ * is what turns a new source into a compile error rather than a silent `unknown`.
+ */
+export const ACTIVITY_EVIDENCE = {
+  hook: "hook",
+  output: "panes",
+  title: "panes",
+  registry: "registry",
+  none: undefined,
+} as const satisfies Record<WorktreeAgentRow["activitySource"], PresenceDegradation["source"] | undefined>;
+
+/**
  * Delegated work.
  *
  * `live` separates the two things that produce one of these: `false` means it

@@ -275,29 +275,62 @@ describe("tree structure", () => {
     expect(dots.some((c) => c.includes("wt-state--unknown"))).toBe(true);
   });
 
-  it("gives each of the five states a shape, so none of them is only a colour", () => {
-    // jsdom loads no stylesheet, so the rules are read from source. What this
-    // guards is the reduced-motion case: with the animations off, `running` and
-    // `idle` were two hollow circles separated by a border colour alone.
+  it("gives each of the five states a shape that survives losing colour AND motion", () => {
+    // jsdom loads no stylesheet, so the rules are read from source. Two passes:
+    // colour tokens collapse to one word, then the animations are removed as the
+    // reduced-motion override removes them. The second pass is the one that
+    // matters — before this change `running` and `idle` were two hollow circles
+    // separated by a border colour, and the first pass alone still passed on it.
     const here = path.dirname(fileURLToPath(import.meta.url));
     const css = fs.readFileSync(path.join(here, "worktreePanel.css"), "utf8");
-    const shapeOf = (state: string): string => {
-      const rule = new RegExp(`\\.wt-state--${state}\\s*\\{([^}]*)\\}`).exec(css);
-      expect(rule, `no rule for .wt-state--${state}`).not.toBeNull();
-      return (
-        (rule?.[1] ?? "")
-          .split(";")
-          .map((d) => d.trim())
-          .filter((d) => d.length > 0 && !/color|background|opacity/.test(d.split(":")[0] ?? ""))
-          // Every colour token collapses to one word, so two rules that differ only
-          // in which colour they name compare as the same shape and fail the set.
-          .map((d) => d.replace(/var\(--[^)]*\)|color-mix\([^)]*\)|transparent|#[0-9a-f]{3,8}/g, "C"))
-          .sort()
-          .join(";")
-      );
+    const reduced = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+    expect(reduced, "no reduced-motion block").toContain("animation: none");
+
+    const declsOf = (block: string, state: string): string[] => {
+      const rule = new RegExp(`\\.wt-state--${state}\\s*\\{([^}]*)\\}`).exec(block);
+      return (rule?.[1] ?? "")
+        .split(";")
+        .map((d) => d.trim())
+        .filter((d) => d.length > 0);
     };
-    const shapes = ["running", "waiting", "idle", "unknown", "exited"].map(shapeOf);
-    expect(new Set(shapes).size).toBe(shapes.length);
+    // A hue is a colour; `transparent` is the absence of an edge, which is shape.
+    // Collapsing both to the same token is what let the pre-change tinted ring
+    // pass as distinct from `idle` — it did not have to be, and it was not.
+    const flatten = (value: string): string =>
+      value
+        // Innermost first: a `var()` inside a `color-mix()` has to collapse before
+        // the mix does, or the mix's own closing paren is never reached and a
+        // fragment of it survives as a false distinction.
+        .replace(/var\(--[^)]*\)|#[0-9a-f]{3,8}/g, "C")
+        .replace(/color-mix\([^)]*\)/g, "C")
+        .replace(/\btransparent\b/g, "NONE")
+        .trim();
+    const shapeOf = (state: string, dropMotion: boolean): string => {
+      const base = declsOf(css, state);
+      expect(base, `no rule for .wt-state--${state}`).not.toEqual([]);
+      // The reduced-motion block overrides, so its declarations win where present.
+      const kept = new Map<string, string>();
+      for (const decl of dropMotion ? [...base, ...declsOf(reduced, state)] : base) {
+        const [prop = "", ...rest] = decl.split(":");
+        const value = flatten(rest.join(":"));
+        if (/color|background|opacity/.test(prop) && !value.includes("NONE")) {
+          continue;
+        }
+        if (dropMotion && /animation|transition/.test(prop)) {
+          continue;
+        }
+        kept.set(prop.trim(), value);
+      }
+      return [...kept.entries()]
+        .sort()
+        .map(([k, v]) => `${k}:${v}`)
+        .join(";");
+    };
+
+    for (const dropMotion of [false, true]) {
+      const shapes = ["running", "waiting", "idle", "unknown", "exited"].map((st) => shapeOf(st, dropMotion));
+      expect(new Set(shapes).size, `two states share a shape (motion dropped: ${dropMotion})`).toBe(shapes.length);
+    }
   });
 
   it("keeps a failed worktree LISTING out of it — that says nothing about any agent", () => {
@@ -349,6 +382,25 @@ describe("presence disclosure", () => {
     expect(pill).not.toBeNull();
     expect(pill?.querySelectorAll(".wt-pgroup")).toHaveLength(2);
     expect(pill?.querySelector(".wt-pgroup-more")?.textContent).toBe("+2");
+  });
+
+  it("does not count a row no source could read into the pill's idle group", () => {
+    const rows = [
+      agentRow({ rowId: "a", agent: "claude", activity: "running", activitySource: "output" }),
+      agentRow({ rowId: "b", agent: "claude", activity: "idle", activitySource: "none" }),
+    ];
+    const presence: WorktreePresence = {
+      scannedAt: NOW,
+      degradedSources: [{ source: "panes", reason: "scan failed", since: NOW }],
+      rowsByWorktreeId: { [PANEL_WT]: rows },
+    };
+    const { view } = mount();
+    view.setData({ tree: singleRepoTree(), presence });
+    const dots = Array.from(view.element.querySelectorAll(".wt-presence .wt-pgroup .wt-state")).map((d) => d.className);
+    // Both rows are unreadable — one from a failed source, one from no source at
+    // all — so the pill must show one unknown group and no idle or running dot.
+    expect(dots).toHaveLength(1);
+    expect(dots[0]).toContain("wt-state--unknown");
   });
 
   it("keeps a nine-agent pill the same height as a two-agent one", () => {
@@ -1138,6 +1190,28 @@ describe("dialogs", () => {
     expect(host.querySelector(".wt-refusebox")).not.toBeNull();
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
     expect(host.querySelector(".wt-blockers")).toBeNull();
+  });
+
+  it("still refuses on an unreadable row, but stops claiming to know it is working", () => {
+    const { view, host } = mount();
+    view.setData(populated());
+    const info = singleRepoTree().repos[0]?.worktrees[1];
+    if (!info) {
+      throw new Error("fixture lost the panel worktree");
+    }
+    view.openRemoveDialog({
+      info,
+      blocker: refusedBlocker,
+      agentRows: [
+        agentRow({ rowId: "busy", agent: "claude", activity: "waiting", activitySource: "hook", title: "worker" }),
+      ],
+      degradedSources: [{ source: "hook", reason: "socket closed", since: NOW }],
+    });
+    // The refusal holds — warning about a possibly-working agent is the safe side
+    // of deleting a folder — but the copy and the glyph drop the certainty.
+    expect(host.querySelector(".wt-btn--danger")).toBeNull();
+    expect(host.querySelector(".wt-refusebox b")?.textContent).toContain("nothing can currently confirm it");
+    expect(host.querySelector(".wt-dialog .wt-arow .wt-state")?.className).toContain("wt-state--unknown");
   });
 
   it("reopens the confirmation from a blocked action result", () => {

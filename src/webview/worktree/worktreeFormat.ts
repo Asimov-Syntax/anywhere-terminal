@@ -3,6 +3,7 @@
 // how agent rows group by state. No `this`, no side effects — independently
 // unit-testable, mirroring src/webview/vault/format.ts.
 
+import { ACTIVITY_EVIDENCE } from "../../worktree/presenceTypes";
 import type {
   PresenceDegradation,
   WorktreeActivity,
@@ -132,25 +133,6 @@ export function worktreeBadges(info: WorktreeInfo): { kind: WorktreeBadgeKind; t
 export type PresentedActivity = WorktreeActivity | "unknown";
 
 /**
- * Which presence source would have decided this row's activity, so a failure of
- * that source can be recognised as the reason the row says nothing (§ 7.2).
- * `output` and `title` are both read off panes, so both map to `panes`.
- */
-function decidingSource(source: WorktreeActivitySource): PresenceDegradation["source"] | undefined {
-  switch (source) {
-    case "hook":
-      return "hook";
-    case "output":
-    case "title":
-      return "panes";
-    case "registry":
-      return "registry";
-    case "none":
-      return undefined;
-  }
-}
-
-/**
  * `unknown` when no source spoke for the row, or when the source that would have
  * decided it is currently failing. A failed source is labelled, never quietly
  * drawn as `idle` — `idle` is a positive claim that this agent is at rest.
@@ -164,20 +146,19 @@ export function presentedActivity(
   row: WorktreeAgentRow,
   degradedSources: readonly PresenceDegradation[],
 ): PresentedActivity {
-  const deciding = decidingSource(row.activitySource);
+  // The mapping is `ACTIVITY_EVIDENCE`, shared with the host so the glyph and
+  // delegation decay cannot disagree about which failure undermines which row.
+  const deciding: PresenceDegradation["source"] | undefined = ACTIVITY_EVIDENCE[row.activitySource];
   if (deciding === undefined) {
     return "unknown";
   }
   return degradedSources.some((d) => d.source === deciding) ? "unknown" : row.activity;
 }
 
-/** Loudest first: the state that needs a human wins the worktree row's glyph. */
-const ACTIVITY_STRENGTH: readonly WorktreeActivity[] = ["waiting", "running", "idle", "exited"];
-
 /**
- * Presented order (§ 7.2). `unknown` sits above `idle`: a row nothing could read
- * is a louder fact than one settled at rest, and below `running`, which is still
- * an evidenced claim.
+ * Loudest first: the state that needs a human wins the glyph (§ 7.2). `unknown`
+ * sits above `idle` — a row nothing could read is a louder fact than one settled
+ * at rest — and below `running`, which is still an evidenced claim.
  */
 const PRESENTED_STRENGTH: readonly PresentedActivity[] = ["waiting", "running", "unknown", "idle", "exited"];
 
@@ -191,7 +172,7 @@ const PRESENTED_STRENGTH: readonly PresentedActivity[] = ["waiting", "running", 
  */
 export function strongestActivity(
   rows: readonly WorktreeAgentRow[],
-  degradedSources: readonly PresenceDegradation[] = [],
+  degradedSources: readonly PresenceDegradation[],
 ): PresentedActivity | undefined {
   const presented = rows.map((r) => presentedActivity(r, degradedSources));
   for (const activity of PRESENTED_STRENGTH) {
@@ -206,7 +187,7 @@ export function strongestActivity(
 export const PRESENCE_ICONS_PER_GROUP = 3;
 
 export interface PresenceGroup {
-  activity: WorktreeActivity;
+  activity: PresentedActivity;
   /** Up to PRESENCE_ICONS_PER_GROUP agent ids; a row with unproven identity contributes none. */
   agents: string[];
   /** Rows in this group beyond the ones whose icon is drawn. */
@@ -218,10 +199,16 @@ export interface PresenceGroup {
  * is the question a user scanning the list is asking. Overflow is a count rather
  * than smaller icons, so nine agents occupy the same height as two.
  */
-export function groupPresenceByActivity(rows: readonly WorktreeAgentRow[]): PresenceGroup[] {
+export function groupPresenceByActivity(
+  rows: readonly WorktreeAgentRow[],
+  degradedSources: readonly PresenceDegradation[],
+): PresenceGroup[] {
   const groups: PresenceGroup[] = [];
-  for (const activity of ACTIVITY_STRENGTH) {
-    const inGroup = rows.filter((r) => r.activity === activity);
+  // Grouped on the PRESENTED state: the pill is what a collapsed worktree shows,
+  // so a row no source could read must not be counted into `idle` here either.
+  const presented = rows.map((r) => [r, presentedActivity(r, degradedSources)] as const);
+  for (const activity of PRESENTED_STRENGTH) {
+    const inGroup = presented.filter(([, a]) => a === activity).map(([r]) => r);
     if (inGroup.length === 0) {
       continue;
     }

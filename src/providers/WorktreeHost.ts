@@ -28,6 +28,7 @@ import type {
   WorktreeAgentRow,
   WorktreePresence,
 } from "../worktree/presenceTypes";
+import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
@@ -517,21 +518,6 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   function rosterKey(rowId: string, entryId: string): string {
     return `${rowId}\u0000${entryId}`;
   }
-
-  /**
-   * Which failed source would undermine this row's own activity claim.
-   *
-   * Per-row rather than "is anything degraded": a failed registry scan says
-   * nothing about a pane whose activity came from its hook, and decaying on it
-   * would throw away the one case D11 exists to preserve.
-   */
-  const ACTIVITY_EVIDENCE = {
-    hook: "hook",
-    output: "panes",
-    title: "panes",
-    registry: "registry",
-    none: undefined,
-  } as const satisfies Record<WorktreeAgentRow["activitySource"], PresenceDegradation["source"] | undefined>;
 
   function parentIsLive(row: WorktreeAgentRow, degraded: ReadonlySet<PresenceDegradation["source"]>): boolean {
     if (row.activity !== "running" && row.activity !== "waiting") {

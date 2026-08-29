@@ -71,6 +71,11 @@ export function activityLabel(activity: PresentedActivity): string {
   return activity === "unknown" ? "activity unknown" : activity;
 }
 
+/** The same statement made about a worktree row, which speaks for the agents inside it. */
+export function worktreeActivityLabel(activity: PresentedActivity): string {
+  return activity === "unknown" ? "An agent's activity is unknown" : `An agent is ${activity}`;
+}
+
 /** A leading-slot glyph carrying one of the state shapes (§ 7.2), `unknown` included. */
 export function stateShape(activity: PresentedActivity, label?: string): HTMLElement {
   const dot = document.createElement("span");
@@ -164,11 +169,7 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   glyph.className = "wt-glyph";
   const glyphActivity = opts.activity;
   if (glyphActivity) {
-    glyph.appendChild(
-      glyphActivity === "unknown"
-        ? stateShape(glyphActivity, "An agent's activity is unknown")
-        : stateShape(glyphActivity, `An agent is ${glyphActivity}`),
-    );
+    glyph.appendChild(stateShape(glyphActivity, worktreeActivityLabel(glyphActivity)));
   } else {
     glyph.innerHTML = ICON_BRANCH;
   }
@@ -385,7 +386,19 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   const titleText = agentRowTitle(row);
   title.append(document.createTextNode(titleText));
   title.dataset.tip = titleText;
-  if (isFallbackActivity(row.activitySource)) {
+  // Keyed off the PRESENTED state: an inference the glyph has already withdrawn
+  // must not be re-asserted in present tense beside it. When the state is
+  // `unknown` the marker names the failure instead of the inference.
+  if (activity === "unknown") {
+    const marker = document.createElement("span");
+    marker.className = "wt-confidence";
+    marker.textContent = "~";
+    marker.dataset.tip =
+      row.activitySource === "none"
+        ? "No source reported this row's activity"
+        : `Activity came from ${row.activitySource}, which is not currently reporting`;
+    title.append(document.createTextNode(" "), marker);
+  } else if (isFallbackActivity(row.activitySource)) {
     const marker = document.createElement("span");
     marker.className = "wt-confidence";
     marker.textContent = "~";

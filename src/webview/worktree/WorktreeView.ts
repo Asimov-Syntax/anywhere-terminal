@@ -685,7 +685,9 @@ export class WorktreeView {
       return;
     }
     if (!expanded) {
-      container.appendChild(renderPresencePill(groupPresenceByActivity(rows), () => this.toggleCollapsed(info.id)));
+      container.appendChild(
+        renderPresencePill(groupPresenceByActivity(rows, this.degradedSources()), () => this.toggleCollapsed(info.id)),
+      );
       return;
     }
 
@@ -794,7 +796,13 @@ export class WorktreeView {
       const blocker = result.needsConfirm;
       actions.push({
         label: "Force remove…",
-        onClick: () => this.openRemoveDialog({ info, blocker, agentRows: this.rowsFor(info.id) }),
+        onClick: () =>
+          this.openRemoveDialog({
+            info,
+            blocker,
+            agentRows: this.rowsFor(info.id),
+            degradedSources: this.degradedSources(),
+          }),
       });
     }
     return renderNotice({
