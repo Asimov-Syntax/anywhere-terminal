@@ -35,7 +35,7 @@
     3. Read the clock once per cycle and use that one reading for the signature, the render and the next deadline, so a row cannot be drawn against one moment and scheduled against another.
     4. Cover the no-crossing case as well as the crossing one, since a guard that always repaints passes the first test and defeats the requirement.
 
-- [ ] 1_4 Register the invariant this task owns
+- [x] 1_4 Register the invariant this task owns — verified: pnpm run test:unit && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: specs/worktree-panel/spec.md#an-inferred-running-claim-stops-animating-once-it-outlives-its-evidence
   - **Acceptance**:
@@ -43,5 +43,5 @@
     - Verify: command pnpm run test:unit
   - **Plan**:
     1. Add the invariant to `docs/DESIGN.md` § 8.4 verbatim and remove its row from the planned-invariants table above § 8.5, since it is no longer planned.
-    2. Add the matching row to `src/test/invariants/registry.ts` with this blueprint task as its owner and a covering stimulus, and tag the proving test so the coverage reporter sees it run.
+    2. Add the matching row to `src/test/invariants/registry.ts` with this blueprint task as its owner and a covering stimulus, and tag the proving tests so the coverage reporter sees them run — the derivation half in `src/webview/worktree/worktreeFormat.test.ts` and the still-shape half in `src/webview/worktree/WorktreeView.test.ts`, since the invariant claims both.
     3. Verify with the whole suite, not the registry test alone: `src/test/invariants/coverageReporter.ts` skips its enforcement on a filtered run, so a targeted run cannot prove the tagged test executed.

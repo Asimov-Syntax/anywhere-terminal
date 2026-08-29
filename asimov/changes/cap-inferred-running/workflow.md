@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -44,3 +44,4 @@ Planned at: 21bd8d4a
 - The hint is written to an attribute at render and read at hover, so an exact elapsed figure decays between the two. Resolved by phrasing it as a lower bound rather than by adding a hover-time recompute path — a bound that is true when written stays true however long it sits unread.
 - Out of scope, from oracle finding 5: suspending the deadline timer while the surface is hidden. Visibility lives in `WorktreeController`, not the view, so honouring it needs controller integration; a timer that fires unseen wastes a repaint but tells no lie, which puts it outside a truthfulness change. Recorded for a later one.
 - Rejected, 6 validator warnings of one class: `running (unconfirmed)` is not embedded implementation. It is a user-visible state name, and the accepted requirement it joins already enumerates `waiting` / `running` / `unknown` / `idle` / `exited` the same way.
+- Verify gate: lint's one finding inside this change's files — `noDescendingSpecificity` in `src/webview/worktree/worktreePanel.css` — reproduces at the change's base and only shifted line (514 → 522) as the new state rules pushed it down; the other 19 are pre-existing and outside these files.

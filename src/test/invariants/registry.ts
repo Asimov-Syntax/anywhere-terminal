@@ -153,4 +153,12 @@ export const INVARIANTS: readonly InvariantRow[] = [
     stimulus: "Open or stat a transcriptPath taken from an agent report rather than from the vault store",
     status: "covered",
   },
+  {
+    id: "I17",
+    statement: "The confirmation ceiling degrades an unconfirmed `running` rather than animating it or calling it idle",
+    owners: ["WT-008.2"],
+    stimulus:
+      "Keep animating an output-inferred run past the ceiling, or downgrade it to idle instead of presenting it as unconfirmed",
+    status: "covered",
+  },
 ];

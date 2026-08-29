@@ -277,7 +277,7 @@ describe("tree structure", () => {
     expect(dots.some((c) => c.includes("wt-state--unknown"))).toBe(true);
   });
 
-  it("gives each of the five states a shape that survives losing colour AND motion", () => {
+  it("[I17] gives each presented state a shape that survives losing colour AND motion", () => {
     // jsdom loads no stylesheet, so the rules are read from source. Two passes:
     // colour tokens collapse to one word, then the animations are removed as the
     // reduced-motion override removes them. The second pass is the one that

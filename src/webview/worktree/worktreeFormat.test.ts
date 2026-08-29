@@ -232,7 +232,7 @@ describe("the confirmation ceiling", () => {
       ...over,
     });
 
-  it("stops confirming an output-inferred run once the state has stood unchanged past the ceiling", () => {
+  it("[I17] stops confirming an output-inferred run once the state has stood unchanged past the ceiling", () => {
     expect(presentedActivity(stale(), [], NOW)).toBe("running-unconfirmed");
   });
 
