@@ -23,7 +23,7 @@
     2. In `src/webview/worktree/WorktreeView.ts`, thread the presence degradation list to the row and group builders so the derivation reaches every glyph.
     3. In `src/webview/worktree/worktreePanel.css`, add an `unknown` shape distinct from `idle` at rest, and give `running` a static form that differs from `idle` in outline rather than only in colour, so the reduced-motion rule leaves them distinguishable. Leave room for a sixth member — WT-008.2 adds `running (unconfirmed)` to this vocabulary.
 
-- [ ] 1_3 Review the vocabulary as rendered
+- [x] 1_3 Review the vocabulary as rendered — verified: manual — Rendered the shipped WorktreeView DOM through the shipped worktreePanel.css in headless Chromium at 300px sidebar width, --force-prefers-reduced-motion, filter:grayscale(1), 8x device pixels. Walked all six presented states in one tree: waiting (filled disc + halo), running (open arc), running-unconfirmed (concentric double ring), unknown (dashed broken circle), idle (thin hollow circle), exited (horizontal dash). Each separable by outline alone with every colour channel removed. Not a live VS Code window; no shape derives its geometry from a theme token.
   - **Deps**: 1_2
   - **Acceptance**:
     - Outcome: the five shapes read apart at sidebar width under both settings

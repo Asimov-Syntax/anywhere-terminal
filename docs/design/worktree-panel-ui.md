@@ -406,14 +406,14 @@ The vocabulary is the **activity** vocabulary registered in DESIGN.md § 10 — 
 `waiting`, `idle`, `exited` — plus two states this view *derives* and does not receive. The
 hook layer's `working` / `done` words are deliberately not used here.
 
-| Presented state | Derived from | Treatment |
-|-----------------|--------------|-----------|
-| `running` | the activity value | An animated working indicator |
-| `running (unconfirmed)` | **derived** — [worktree-activity-ceiling.md](worktree-activity-ceiling.md) | A **static**, visibly different shape: the same claim with its animation withdrawn. Its hint names the gap |
-| `waiting` | the activity value | A distinct attention treatment, visually louder than `running` — the only state that needs a human, and the only strong animation |
-| `idle` | the activity value | The at-rest glyph: branch on a worktree row, a settled mark on an agent row |
-| `unknown` | **derived** — see below | A recessive shape meaning no source could say. Distinct from `idle`, which is a positive claim |
-| `exited` | the activity value | Recessive and visibly terminal; the row is history that has not been cleaned up yet |
+| Presented state | Derived from | Treatment | Shape, colour removed |
+|-----------------|--------------|-----------|-----------------------|
+| `running` | the activity value | An animated working indicator | An **open arc** — a ring whose left and bottom sides are transparent, so it stays an incomplete outline once the spin stops. The only unclosed curve |
+| `running (unconfirmed)` | **derived** — [worktree-activity-ceiling.md](worktree-activity-ceiling.md) | A **static**, visibly different shape: the same claim with its animation withdrawn. Its hint names the gap | A **concentric double ring**, closed and hollow between the rings. It must read as running-with-a-doubt, so it stays a ring rather than becoming a fifth unrelated shape — and it must not converge on the arc when reduced motion stops the spin |
+| `waiting` | the activity value | A distinct attention treatment, visually louder than `running` — the only state that needs a human, and the only strong animation | A **filled disc inside a halo ring** — the only solid-filled glyph in the vocabulary, which is what makes the one state needing a human the one the eye lands on first |
+| `idle` | the activity value | The at-rest glyph: branch on a worktree row, a settled mark on an agent row | A **thin hollow circle**, whole and unbroken: rest is a positive claim, and a whole outline is what says so |
+| `unknown` | **derived** — see below | A recessive shape meaning no source could say. Distinct from `idle`, which is a positive claim | A **dashed, broken circle** at reduced opacity. The break is the point — an incomplete answer, recessive because missing evidence does not ask for attention |
+| `exited` | the activity value | Recessive and visibly terminal; the row is history that has not been cleaned up yet | A **horizontal dash** — no enclosed area at all, the only glyph that is not a circle |
 
 **Both derived states are presentation only.** Neither is an activity value, neither appears in
 any message, and neither adds a field — confidence is derived, never stored (D20). Both are
@@ -442,6 +442,14 @@ this order.
 
 Every glyph must be legible as a static shape. Under reduced motion the animations stop and no
 two states become identical.
+
+Separation is by **outline**, not weight or tint, so it survives a monochrome theme rather than
+merely surviving a colour-blind one: filled vs hollow, closed vs open, whole vs dashed, curve vs
+line. Two pairs are the ones a change here is most likely to collapse — `idle` against
+`running (unconfirmed)`, which differ only by the inner ring, and `waiting` against
+`running (unconfirmed)`, which differ only by the fill. Both were confirmed apart at sidebar
+width by rendering the shipped DOM through the shipped stylesheet with reduced motion forced and
+every colour channel removed.
 
 ### 7.3 Selection, scope, and grouping
 
