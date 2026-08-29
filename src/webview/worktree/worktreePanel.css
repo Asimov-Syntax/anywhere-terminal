@@ -1143,20 +1143,16 @@
   height: 14px;
 }
 
-/* The action an empty state carries when it describes something the panel can
-   resolve. Four of the five worktree empty states carry none. */
-.wt-empty-action {
-  margin-top: 8px;
-  padding: 4px 12px;
-  border: none;
-  border-radius: 2px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: inherit;
+/* An empty state that sits inside the tree rather than instead of it. A
+   multi-repo workspace can hold several at once, so it carries a row's rhythm
+   and not a panel's. */
+.wt-empty-inline {
+  padding: 8px 12px 12px;
+  align-items: flex-start;
+  text-align: left;
+  gap: 4px;
 }
 
-.wt-empty-action:hover {
-  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+.wt-empty-inline .vault-empty-icon {
+  display: none;
 }

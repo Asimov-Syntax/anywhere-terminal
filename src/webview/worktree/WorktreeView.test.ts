@@ -2925,6 +2925,54 @@ describe("create on the repo group header", () => {
     expect(actionIn(second)?.tabIndex).toBe(0);
   });
 
+  it("[W3] a header names itself, rather than reading out its control's label", () => {
+    // `role="treeitem"` with no name takes one from its contents, so every header
+    // announced "…Create worktree in …" once the control moved inside it.
+    const { host } = twoRepos();
+    const first = headers(host)[0];
+
+    expect(first?.getAttribute("aria-label")).toBe("anywhere-terminal, 2 worktrees");
+  });
+
+  it("[W4] one arrow keypress writes the tab stops once, not twice", () => {
+    // `focusRow` writes them and then focuses, which fires the delegate that
+    // wrote them again — two full-tree passes per keypress.
+    const { view, host } = twoRepos();
+    const first = headers(host)[0];
+    if (!first) {
+      throw new Error("expected a group header");
+    }
+    first.focus();
+    let passes = 0;
+    const real = view.element.querySelectorAll.bind(view.element);
+    view.element.querySelectorAll = ((sel: string) => {
+      if (sel.includes(".wt-repo")) {
+        passes += 1;
+      }
+      return real(sel);
+    }) as typeof view.element.querySelectorAll;
+    view.element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    view.element.querySelectorAll = real;
+
+    // One to read the rows for the keypress, one to write the stops. The pass the
+    // delegate used to add on top of those is what this pins.
+    expect(passes).toBe(2);
+  });
+
+  it("[W7] the control is revealed by focus, not by hover alone", () => {
+    // jsdom applies no stylesheet, so the rule that makes this keyboard-reachable
+    // is unobservable from the DOM — and `visibility: hidden` makes the button
+    // unfocusable however its tabIndex reads. Read the rule from source, the way
+    // the reduced-motion contract above is read.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, "worktreePanel.css"), "utf8");
+    const reveal = css.match(/([^}]*)\{\s*visibility: visible;\s*\}/);
+    const selectors = reveal?.[1] ?? "";
+
+    expect(selectors).toMatch(/:focus-within \.wt-rowaction/);
+    expect(selectors).toMatch(/:hover \.wt-rowaction/);
+  });
+
   it("[1_2] arrows still move between rows while the control holds focus", () => {
     // `onKeyDown` indexes `document.activeElement` into the row list, so focus on
     // a non-row yields -1 and every arrow lands on the top of the tree.
@@ -2935,6 +2983,9 @@ describe("create on the repo group header", () => {
       throw new Error("expected a header create control");
     }
     const after = rowsIn(host)[1];
+    // The header takes focus FIRST — that is what reveals the control and makes
+    // it focusable at all; focusing it out of nowhere is a no-op in a browser.
+    first.focus();
     action.focus();
     view.element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
 
@@ -2963,7 +3014,7 @@ describe("create on the repo group header", () => {
 describe("the unbranched-repository state", () => {
   const REPO = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
   const MAIN = "/Users/dev/Projects/ai-oss/anywhere-terminal";
-  const cta = (host: HTMLElement) => host.querySelector<HTMLButtonElement>(".vault-empty .wt-empty-action");
+  const cta = (host: HTMLElement) => host.querySelector<HTMLButtonElement>(".vault-empty .vault-empty-action");
 
   function repoTree(over: Partial<WorktreeRepo> = {}): WorktreeTree {
     return {
@@ -2996,6 +3047,37 @@ describe("the unbranched-repository state", () => {
     // Beside, never instead: every supplied worktree stays reachable exactly
     // once, and the main row is where "New Worktree…" already lives.
     expect(host.querySelectorAll(".wt-row")).toHaveLength(1);
+  });
+
+  it("[1_3] each unbranched repository in a multi-repo tree states itself once", () => {
+    // The shape the header door actually lives in, and the one no test rendered:
+    // several repositories, more than one of them freshly cloned.
+    const tree = repoTree();
+    const only = tree.repos[0];
+    if (!only) {
+      throw new Error("fixture lost its repo");
+    }
+    tree.repos = [
+      only,
+      { ...only, repoId: "/b/.git", label: "b", mainPath: "/b", worktrees: [worktree({ id: "/b", kind: "main" })] },
+      {
+        ...only,
+        repoId: "/c/.git",
+        label: "c",
+        mainPath: "/c",
+        worktrees: [
+          worktree({ id: "/c", kind: "main" }),
+          worktree({ id: "/c-x", branch: "feat/x", head: "b".repeat(40) }),
+        ],
+      },
+    ];
+    const { host } = show(tree);
+
+    expect(host.querySelectorAll(".vault-empty")).toHaveLength(2);
+    expect(host.querySelectorAll(".vault-empty-action")).toHaveLength(2);
+    // Compact where it sits between repositories: the panel-scale block is for a
+    // panel with nothing in it, not for a paragraph under every third header.
+    expect([...host.querySelectorAll(".vault-empty")].every((e) => e.classList.contains("wt-empty-inline"))).toBe(true);
   });
 
   it("[1_3] a repository with a second worktree is not unbranched", () => {

@@ -44,3 +44,20 @@
     4. `emptyState` takes an icon, a title, and a body and has no slot for an action. Four of the five states must not carry one, so the slot is optional and its absence is the default: extend that atom, leave every existing caller rendering what it renders now.
     5. The no-match state keeps winning. A query that matches nothing already has its own state and its own copy, and the two must not both describe the same screen.
     6. Cover: the state rendering for a repository holding only its main checkout, with its control opening the form on that repository and the main row still present with its menu; a repository with a second worktree not rendering it; a degraded repository with no rows not rendering it; a repository showing only main because of the filter, the cap, or the fold not rendering it; the four states that cannot create offering no control.
+
+- [x] 1_4 Round-1 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_3
+  - **Refs**: specs/worktree-panel/spec.md#{every-create-entry-point-opens-the-same-offer, a-control-is-offered-only-in-the-body-it-acts-on, a-repo-group-header-offers-create-for-its-own-repository}, ../../../specs/worktree-panel/spec.md#{a-row-is-never-offered-an-action-it-cannot-perform}
+  - **Acceptance**:
+    - Outcome: every door offers the same repositories, and no answer reaches a form that did not ask for it
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/worktreePanel.css`, `src/webview/vault/renderAtoms.ts`, `src/webview/vault/vaultPanel.css`, `src/webview/main.ts`.
+    1. B1: a superseded ask's answers still reach the open form, where a branch-less one clears `outstanding` and rewrites the derived destination. Separate the two conversations by what they carry: the form always asks WITH a branch and an opening ask never does, so only a branch-bearing answer may reach a form. That is a property of the wire, not a heuristic — the host echoes the branch it was given and omits it when it was given none.
+    2. B2: availability is seeded from a field that is deliberately looser than git's own answer, and the same field opens the Worktree body — so the button is visible while no tree exists and the door it opens computes no targets. Let the tree be the only thing that reports availability, and accept one frame of absence rather than a frame of inertness.
+    3. W1: the outstanding set is captured at ask time and never reconciled, so one repository leaving mid-flight jams the create for all of them with no notice and no error reply to wait for. Reconcile it where the other create state is reconciled, and open if that empties it.
+    4. W2: the accepted requirement says the doors differ only in which repository the form opens on, and they do not — a scoped door on a cold panel offers only the repository it asked about. Every door asks every repository; scoped ones differ by which is preselected.
+    5. W3: a `treeitem` names itself from its contents, so every header absorbed the control's label. Name the header itself.
+    6. W4: `focusRow` writes the stops and then focuses, which fires the delegate that writes them again. One pass per focus change.
+    7. Test strength (W5, W7): the multi-repo shape is the only one the header door exists in and no test renders the new state there; and the keyboard-reach rule lives in a stylesheet jsdom does not apply, asserted by a test that stages focus a browser would not grant. Assert both where they actually live.
+    8. Loose ends (W6, S2, S3): a create resolved after the panel left the body it acts in; a frozen offer consumed by a form that did not open; a shared atom hard-coding a worktree-prefixed class.

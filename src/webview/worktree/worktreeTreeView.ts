@@ -234,6 +234,9 @@ export function renderRepoHeader(
     header.appendChild(rowAction(ICON_PLUS, `Create worktree in ${repo.label}`, onCreate));
   }
   header.appendChild(chev);
+  // A `treeitem` with no name takes one from its contents, so the create
+  // control's label was read out as part of every header (round-1 W3).
+  header.setAttribute("aria-label", `${repo.label}, ${count} worktrees`);
   header.dataset.tip = collapsed ? `Expand ${repo.label}` : `Collapse ${repo.label}`;
   bindActivation(header, onToggle);
   return header;
@@ -860,13 +863,19 @@ export type WorktreeEmptyKind = "noFolder" | "noRepo" | "gitMissing" | "noMatch"
  */
 export function worktreeEmptyState(kind: WorktreeEmptyKind, onCreate?: () => void): HTMLElement {
   switch (kind) {
-    case "unbranched":
-      return emptyState(
+    case "unbranched": {
+      // This one sits INSIDE a tree, under the repository it describes, and a
+      // multi-repo workspace can hold several at once. The panel-scale block is
+      // for a panel with nothing in it (round-1 W5).
+      const state = emptyState(
         ICON_BRANCH,
         "No other worktrees yet",
         "A worktree checks out another branch in its own folder, so you can work on it without stashing or switching this one.",
         onCreate ? { label: "Create worktree", onClick: onCreate } : undefined,
       );
+      state.classList.add("wt-empty-inline");
+      return state;
+    }
     case "noFolder":
       return emptyState(ICON_FOLDER, "No folder open", "Open a folder to see its worktrees.");
     case "noRepo":

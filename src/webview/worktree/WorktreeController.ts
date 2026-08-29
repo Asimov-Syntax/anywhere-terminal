@@ -447,6 +447,13 @@ export class WorktreeController {
       return;
     }
     this.visible = visible;
+    if (!visible) {
+      // A create resolved after the panel left this body would mount a form over
+      // a body it does not act in (round-1 W6). Abandoned on the way out rather
+      // than refused on arrival: a surface that never reports visibility at all
+      // must still be able to open one.
+      this.pendingCreate = null;
+    }
     this.deps.postMessage({ type: "worktreeViewVisibility", visible });
     if (visible) {
       this.deps.postMessage({ type: "requestWorktreeTree" });
@@ -503,8 +510,11 @@ export class WorktreeController {
    * names none must offer them all rather than pick one for the user.
    */
   openCreateForRepo(repoId?: string): void {
-    const targets = repoId === undefined ? (this.tree?.repos ?? []).map((r) => r.repoId) : [repoId];
-    if (targets.length === 0) {
+    // EVERY door asks every repository. The picker is built from the answers the
+    // seed holds, so a door that asked about one would offer one — and the doors
+    // are required to differ only in which repository the form opens ON.
+    const targets = (this.tree?.repos ?? []).map((r) => r.repoId);
+    if (targets.length === 0 || (repoId !== undefined && !targets.includes(repoId))) {
       return;
     }
     this.pendingCreate = {
@@ -681,11 +691,17 @@ export class WorktreeController {
     this.createDefaults.set(msg.repoId, msg);
     const pending = this.pendingCreate;
     if (pending === null || !pending.outstanding.has(msg.repoId)) {
-      // Not the answer that opens a form — it answers a branch the OPEN form
-      // asked about, so it goes straight into that form.
-      const seed = this.createRepos().find((r) => r.repoId === msg.repoId);
-      if (seed !== undefined) {
-        this.applyCreateDefaults?.(seed);
+      // The two conversations are told apart by what they carry, not by what is
+      // outstanding: an OPEN form always asks with a branch and an opening ask
+      // never does, and the host echoes the branch it was given. A superseded
+      // ask's leftovers are therefore branch-less, and the form's own staleness
+      // guard compares branches — so it could not have caught them, and one
+      // cleared the wait for a branch the user had already typed (round-1 B1).
+      if (msg.branch !== undefined) {
+        const seed = this.createRepos().find((r) => r.repoId === msg.repoId);
+        if (seed !== undefined) {
+          this.applyCreateDefaults?.(seed);
+        }
       }
       return;
     }
@@ -693,7 +709,22 @@ export class WorktreeController {
     if (pending.outstanding.size > 0) {
       return;
     }
+    this.openPendingCreate(pending);
+  }
+
+  /**
+   * Open the form the completed ask was for. Both completion paths end here —
+   * the last answer, and a reconcile that dropped the last repository still
+   * outstanding.
+   */
+  private openPendingCreate(pending: { outstanding: Set<string>; initialRepoId?: string }): void {
     this.pendingCreate = null;
+    // Frozen only for a form that actually opens: `openCreateDialog` returns on
+    // an empty seed, and a standing offer for a form that never opened is a
+    // claim about a dialog that is not there (round-1 S2).
+    if (this.createRepos().length === 0) {
+      return;
+    }
     this.frozenCreateOffer = { ...(this.launchOfferId === undefined ? {} : { offerId: this.launchOfferId }) };
     this.view.openCreateDialog(pending.initialRepoId);
   }
@@ -769,6 +800,25 @@ export class WorktreeController {
     for (const repoId of this.createDefaults.keys()) {
       if (!repos.has(repoId)) {
         this.createDefaults.delete(repoId);
+      }
+    }
+
+    // A create waiting on a repository that has left is waiting for a message
+    // the host has no way to send: it answers only while the repo is in its
+    // cache, and there is no error reply. Unreconciled, one departure jams the
+    // create for every repository it asked (round-1 W1).
+    const pending = this.pendingCreate;
+    if (pending !== null) {
+      for (const repoId of pending.outstanding) {
+        if (!repos.has(repoId)) {
+          pending.outstanding.delete(repoId);
+        }
+      }
+      if (pending.initialRepoId !== undefined && !repos.has(pending.initialRepoId)) {
+        delete pending.initialRepoId;
+      }
+      if (pending.outstanding.size === 0) {
+        this.openPendingCreate(pending);
       }
     }
 

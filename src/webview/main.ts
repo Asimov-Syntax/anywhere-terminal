@@ -1092,10 +1092,6 @@ function handleInit(msg: InitMessage): void {
       // the vault doesn't bounce the file tree (the grow-sibling).
       animateCollapse: (apply) => runAuxCollapseAnimation(apply),
     });
-    // The controller reports availability on every tree, but it is mounted first:
-    // seed from the same init field the initial view resolves against, so a tree
-    // that landed before this panel existed does not leave the control hidden.
-    vaultPanel.setCreateWorktreeAvailable(msg.worktreeHasRepo === true);
     // Seed the folder-filter context to the current active pane (optimistic), then
     // ask the host for its authoritative cwd; it updates on every pane select /
     // tab switch / `cd`. A vault that restored expanded refreshes itself via the

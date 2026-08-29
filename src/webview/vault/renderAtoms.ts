@@ -627,7 +627,7 @@ export function emptyState(
   if (action) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "wt-empty-action";
+    btn.className = "vault-empty-action";
     btn.textContent = action.label;
     btn.addEventListener("click", action.onClick);
     wrap.appendChild(btn);

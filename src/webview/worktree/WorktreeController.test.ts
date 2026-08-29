@@ -839,8 +839,12 @@ describe("the create a toolbar with no repository opens", () => {
   function twoRepoResponse(): WorktreeTreeResponseMessage {
     return { type: "worktreeTreeResponse", tree: twoRepoTree(), presence: singleRepoPresence(1_000_000) };
   }
+  /** The asks a DOOR made. The open form asks for its own branch; those carry one. */
   const asks = (h: Harness) =>
-    h.posts.filter((m) => m.type === "requestWorktreeCreateDefaults").map((m) => m.repoId);
+    h.posts
+      .filter((m) => m.type === "requestWorktreeCreateDefaults")
+      .filter((m) => m.branch === undefined)
+      .map((m) => m.repoId);
   const open = () => document.querySelector("#wt-branch") !== null;
   const offered = () =>
     [...(document.querySelectorAll<HTMLOptionElement>("#wt-repo-select option") ?? [])].map((o) => o.value);
@@ -892,6 +896,79 @@ describe("the create a toolbar with no repository opens", () => {
     expect(open()).toBe(false);
   });
 
+  it("[B1] a branch-less answer does not unblock a form waiting on a branch", () => {
+    // An opening ask carries no branch, so the form's staleness guard — which
+    // compares the branch an answer is FOR — cannot catch its leftovers. One
+    // arriving late cleared the wait and rewrote the derived destination for a
+    // branch the user had already typed. Reachable while `pendingCreate` is
+    // null: a repository answering twice, or a reconcile that opened the form
+    // by dropping the repository still outstanding.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("expected the form to be open");
+    }
+    branch.value = "feat/x";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    const create = () => document.querySelector<HTMLButtonElement>(".wt-btn--primary");
+    expect(create()?.disabled).toBe(true);
+
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+
+    // Still waiting on the destination for "feat/x" — nothing has answered it.
+    expect(create()?.disabled).toBe(true);
+  });
+
+  it("[B1] an answer that names the branch it is for still reaches the open form", () => {
+    const h = ready(twoRepoResponse());
+    const applied: unknown[] = [];
+    (h.controller as unknown as { applyCreateDefaults?: (s: unknown) => void }).applyCreateDefaults = (seed) =>
+      applied.push(seed);
+    h.controller.handleCreateDefaults({ ...answer(REPO_A, "/trees/a"), branch: "feat/x" });
+
+    expect(applied).toHaveLength(1);
+  });
+
+  it("[W1] a repository that leaves mid-flight does not jam the create for the rest", () => {
+    // The host answers only while the repo is in its cache and has no error
+    // reply, so an unreconciled outstanding set waits forever with no notice.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: singleRepoTree(),
+      presence: singleRepoPresence(1_000_000),
+    });
+
+    expect(document.querySelector("#wt-branch")).not.toBeNull();
+  });
+
+  it("[W2] a scoped door offers every repository, and differs only in which is selected", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreateForRepo(REPO_B);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+
+    expect(asks(h)).toEqual([REPO_A, REPO_B]);
+    expect(offered()).toEqual([REPO_A, REPO_B]);
+    expect(document.querySelector<HTMLSelectElement>("#wt-repo-select")?.value).toBe(REPO_B);
+  });
+
+  it("[W6] a create resolved after the panel left the worktree body opens nothing", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.setVisible(false);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+
+    expect(document.querySelector("#wt-branch")).toBeNull();
+  });
+
   it("[1_2] the view is given a way to open a create for one repository", () => {
     // The header control is built only where this dep exists, so an unsupplied
     // one is the same silent absence the toolbar had.
@@ -899,14 +976,17 @@ describe("the create a toolbar with no repository opens", () => {
     const deps = (h.controller as unknown as { view: { deps: { onCreateForRepo?: (r: string) => void } } }).view.deps;
     deps.onCreateForRepo?.(REPO_B);
 
-    expect(asks(h)).toEqual([REPO_B]);
+    expect(asks(h)).toEqual([REPO_A, REPO_B]);
   });
 
-  it("[1_1] a repo-scoped create still asks only its own repository", () => {
+  it("[1_1] a repo-scoped create asks every repository too, and selects its own", () => {
+    // Round-1 W2: asking only its own left a cold scoped door offering ONE
+    // repository where the toolbar offered three, and the doors are required to
+    // differ only in which repository the form opens on.
     const h = ready(twoRepoResponse());
     h.controller.openCreateForRepo(REPO_B);
 
-    expect(asks(h)).toEqual([REPO_B]);
+    expect(asks(h)).toEqual([REPO_A, REPO_B]);
   });
 
   it("[1_1] reports whether there is any repository to create in", () => {
@@ -1380,6 +1460,10 @@ describe("the destination follows the branch the user typed", () => {
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal-feat-login",
+      // The branch this answer is FOR. An open form always asks with one, so an
+      // answer without one belongs to an OPENING ask and must not reach it
+      // (round-1 B1).
+      branch: "feat/login",
     });
 
     expect(applied.map((d) => d.resolvedPath)).toEqual(["/trees/anywhere-terminal-feat-login"]);

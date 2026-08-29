@@ -2389,3 +2389,21 @@ body:has(#tab-bar.visible) .vault-preview--max {
   opacity: 0.5;
   cursor: default;
 }
+
+/* The action an empty state carries when it describes something the panel can
+   resolve. Most empty states describe something it cannot, and carry none. */
+.vault-empty-action {
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 2px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.vault-empty-action:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}

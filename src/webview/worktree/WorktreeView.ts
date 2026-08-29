@@ -242,15 +242,22 @@ export class WorktreeView {
     // covered at once rather than each toggle path remembering to update the key.
     this.element.addEventListener("focusin", (ev) => {
       const row = (ev.target as HTMLElement | null)?.closest<HTMLElement>(NAV_ROWS);
-      if (row) {
-        this.focusedKey = this.keyOf(row);
-        // The stop moves with the focus, whatever brought it here. A row's action
-        // control is only tabbable while its row holds the stop, so a pointer press
-        // that skipped `focusRow` would otherwise leave the action unreachable by
-        // the Tab that follows it.
-        for (const other of this.navRows()) {
-          setRowTabStop(other, other === row);
-        }
+      if (row === undefined || row === null) {
+        return;
+      }
+      const key = this.keyOf(row);
+      if (key === this.focusedKey) {
+        // Already the stop — `focusRow` writes them before it focuses, so this
+        // is that focus arriving. Repeating the pass here doubled the DOM work
+        // of every arrow keypress (round-1 W4).
+        return;
+      }
+      this.focusedKey = key;
+      // Focus that did NOT come through `focusRow` — a pointer press. The stop
+      // moves with it, or the action on the pressed row is unreachable by the
+      // Tab that follows.
+      for (const other of this.navRows()) {
+        setRowTabStop(other, other === row);
       }
     });
     // Delegated, because render() replaces every row: rows carry `data-tip` and
@@ -1413,6 +1420,9 @@ export class WorktreeView {
     if (!row) {
       return;
     }
+    // The stops are written here and NOT again by the delegate `focus()` fires:
+    // `focusedKey` already names this row, and the delegate returns early on
+    // that. Two full-tree passes per arrow keypress was the cost otherwise.
     for (const other of this.navRows()) {
       setRowTabStop(other, other === row);
     }
