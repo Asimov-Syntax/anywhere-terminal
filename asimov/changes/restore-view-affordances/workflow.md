@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -38,3 +38,5 @@ Planned at: 1f3abc7d
 - Reuse: the tooltip widget already exists (`src/webview/ui/Tooltip.ts` + `ui/tooltip.css`, used by file-tree, vault header, preview header). This change adds one delegated export to it; a second tooltip system is the failure mode to avoid. Event delegation via `closest()` is already an idiom here (`main.ts`, `FloatingWindow.ts`, `HoverPreviewPopup.ts`).
 - jsdom cannot prove § A1: it reports `display: none` for a `hidden` element whether or not the `[hidden]` reset exists, so no computed-style assertion can go red. The tripwire is a source-level assertion over the generated HTML, matching the project's existing `gate:fs-deletion` shape.
 - Out of scope: the spinner ceiling (audit § E3), the worktree-first redesign (§ F), and the duplicate-session-row question (§ B6 — dropped by the user).
+- Verify gate: lint's remaining 3 errors + 14 warnings are pre-existing and sit in files this change does not touch. The one exception, `src/webview/worktree/worktreePanel.css`, is touched — but its single warning (`noDescendingSpecificity` at `.wt-hist-label`) is byte-identical at the base commit under the same biome 2.5.10, and unrelated to the `.wt-pill--open` rename. Comparing lint counts across worktrees is meaningless here: the base checkout resolved biome 2.3.14.
+- Follow-up, not done: `src/webview/vault/renderAtoms.ts` still sets native `title` at six sites (session-preview timeline). Same defect class as E2, different surface, outside this change's leases.

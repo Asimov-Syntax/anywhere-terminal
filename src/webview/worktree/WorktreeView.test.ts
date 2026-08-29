@@ -6,8 +6,8 @@
 // no live dot on history, no focus offered on an external row.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ICON_TERMINAL } from "../vault/icons";
 import { resetTooltipForTests } from "../ui/Tooltip";
+import { ICON_TERMINAL } from "../vault/icons";
 import type { WorktreeMenuActions } from "./WorktreeContextMenu";
 import { MAX_WORKTREES_PER_REPO, WorktreeView, type WorktreeViewDeps } from "./WorktreeView";
 import {

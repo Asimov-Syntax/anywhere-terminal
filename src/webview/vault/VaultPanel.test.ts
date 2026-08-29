@@ -278,9 +278,7 @@ describe("VaultPanel row rendering (redesign 4_1)", () => {
     // carry a native `title`, which VS Code webviews never render.
     vi.useFakeTimers();
     try {
-      host
-        .querySelector(".vault-row-title")
-        ?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      host.querySelector(".vault-row-title")?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
       vi.advanceTimersByTime(300);
       const tip = document.body.querySelector<HTMLElement>(".webview-tooltip");
       expect(tip?.style.display).toBe("block");
