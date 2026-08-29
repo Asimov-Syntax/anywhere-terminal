@@ -913,6 +913,19 @@
   color: var(--vscode-editorWarning-foreground);
   background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 16%, transparent);
 }
+/* Present to assistive tech, absent from the layout. The destination line reads
+   shortened and announces exact, and the two cannot be the same node. */
+.wt-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 /* The destination: one derived line under the lead input, shortened. The exact
    value rides on `aria-label` and the tooltip, so shortening costs no truth. */
 .wt-dest-wrap {

@@ -29,13 +29,22 @@ import type {
  * enough to tell `…/anywhere-terminal-feat-x` in one root from the same name in
  * another, and the exact value is a focus or a hover away regardless.
  */
+function segments(path: string): string[] {
+  // Both separators. The host builds these with `node:path`, which produces `\\`
+  // on Windows — splitting on `/` alone leaves such a path whole, so the line
+  // renders unshortened and the collision note restates it in full: the two
+  // things this form exists to stop doing. Same idiom the file-tree panel and
+  // its data source already use, both module-private to their own files.
+  return path.split(/[/\\]/).filter(Boolean);
+}
+
 function shortPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
+  const parts = segments(path);
   return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
 }
 
 function lastSegment(path: string): string {
-  return path.split("/").filter(Boolean).at(-1) ?? path;
+  return segments(path).at(-1) ?? path;
 }
 
 const BRANCH_MODES: readonly { id: WorktreeBranchMode; label: string }[] = [
@@ -137,7 +146,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // Escape and the scrim dispose the shell from inside it, so the tooltip has
     // to be released here too — `disposeAll` is not on that path.
     onDismiss: () => {
-      disposeDestTip();
+      releaseDestTip();
       deps.onCancel?.();
     },
   });
@@ -147,7 +156,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   };
   /** Every exit goes through here — the tooltip outlives `shell.dispose` alone. */
   const disposeAll = (restoreFocus = true): void => {
-    disposeDestTip();
+    releaseDestTip();
     shell.dispose(restoreFocus);
   };
 
@@ -179,6 +188,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // `attachTooltip` exposes its target on focus, but does not make it focusable.
   // Without this the exact value is a mouse-only affordance.
   dest.tabIndex = 0;
+  /** The shortened text, which is for reading and not for announcing. */
+  const destShort = document.createElement("span");
+  destShort.setAttribute("aria-hidden", "true");
+  /**
+   * The exact value, for assistive tech only. NOT `aria-label` on `dest`: its
+   * implicit role is `generic`, which prohibits naming, so the attribute is
+   * simply not exposed — the attribute stays for tests and for anything reading
+   * the DOM, but this element is what actually announces the path.
+   */
+  const destExactText = document.createElement("span");
+  destExactText.className = "wt-visually-hidden";
+  dest.append(destShort, destExactText);
   const destNote = document.createElement("div");
   destNote.className = "wt-dest-note";
   destNote.hidden = true;
@@ -186,7 +207,22 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   shell.dialog.appendChild(destWrap);
   /** The exact path the line is currently shortening; read on every show. */
   let destExact = "";
-  const disposeDestTip = attachTooltip(dest, { getText: () => destExact });
+  /**
+   * Attached the first time there IS a destination, not at construction.
+   * `attachTooltip` resolves its text once at attach and returns a no-op when it
+   * is empty — and at construction `destExact` is "", so attaching here bound
+   * nothing at all and every release path below released nothing.
+   */
+  let disposeDestTip: (() => void) | null = null;
+  const ensureDestTip = (): void => {
+    if (disposeDestTip === null && destExact !== "") {
+      disposeDestTip = attachTooltip(dest, { getText: () => destExact });
+    }
+  };
+  const releaseDestTip = (): void => {
+    disposeDestTip?.();
+    disposeDestTip = null;
+  };
 
   // ── Repository (only with more than one) ────────────────────────────────
   // Below the destination it derives, never above the lead input.
@@ -363,8 +399,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     syncOpenAfter();
   }
 
-  /** The branch the last host request was made for, so edits do not re-ask. */
+  /** The repo AND branch the last host request was made for, so edits do not
+   *  re-ask — and so a repo switch is not mistaken for the same question. The
+   *  request is repo-scoped; a key that is not reuses one repo's answer for
+   *  another, and the destination line is what states that answer. */
   let askedFor: string | null = null;
+  const askKey = (branch: string): string => `${draft.repoId}\u0000${branch}`;
   /** True while a destination request has no answer yet. Submit waits for it. */
   let outstanding = false;
 
@@ -372,10 +412,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   function askForDestination(): void {
     const detached = draft.branchMode === "detached";
     const branch = detached ? draft.baseRef : draft.branchName;
-    if (branch === askedFor) {
+    if (askKey(branch) === askedFor) {
       return;
     }
-    askedFor = branch;
+    askedFor = askKey(branch);
     if (deps.onBranchChange !== undefined) {
       outstanding = true;
       deps.onBranchChange(draft.repoId, branch);
@@ -418,18 +458,20 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // the host default over a submitted override is the worse of the two lies.
     const overridden = !pathIsDerived;
     const stated = overridden ? draft.path : repo.resolvedPath;
-    dest.replaceChildren();
     if (stated) {
       destExact = stated;
       dest.setAttribute("aria-label", stated);
-      dest.textContent = shortPath(stated);
+      destShort.textContent = shortPath(stated);
+      destExactText.textContent = stated;
       dest.classList.remove("wt-dest--pending");
+      ensureDestTip();
     } else {
       // Nothing is resolved yet, so nothing is claimed. The default SHAPE is not
       // a destination and is not shortened as though it were one.
       destExact = "";
       dest.removeAttribute("aria-label");
-      dest.textContent = `Defaults to …/${repo.pathPrefix}-<branch>`;
+      destShort.textContent = `Defaults to …/${repo.pathPrefix}-<branch>`;
+      destExactText.textContent = "";
       dest.classList.add("wt-dest--pending");
     }
 
@@ -493,7 +535,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   baseInput.addEventListener("input", syncDerived);
   baseInput.addEventListener("change", edited);
   pathInput.addEventListener("input", () => {
-    pathIsDerived = false;
+    // Clearing the field is not an override of "nowhere" — it is withdrawing the
+    // override. One-way, the face showed a derivation that had been switched off
+    // and Create was disabled with the explaining control behind the disclosure.
+    pathIsDerived = pathInput.value.trim() === "";
     draft.path = pathInput.value;
     syncDerived();
   });
@@ -510,7 +555,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // Replies race the typing that produced them. An answer for a branch the
     // form has already moved past would put a destination on screen that no
     // longer matches the name beside it (round-4 B12).
-    if (next.answersBranch !== undefined && next.answersBranch !== askedFor) {
+    // Compared against the key the question was asked under, so an answer for the
+    // right branch but the wrong repository is discarded like any other stale one.
+    if (next.answersBranch !== undefined && `${next.repoId}\u0000${next.answersBranch}` !== askedFor) {
       return;
     }
     const at = repos.findIndex((r) => r.repoId === next.repoId);
@@ -520,6 +567,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       repos.push(next);
     }
     outstanding = false;
+    // The answer replaces the repo record wholesale, agents included, and the
+    // posture gate reads that list — an offer refreshed into an all-dangerous one
+    // would otherwise leave Create enabled on a posture nobody chose.
+    if (next.repoId === draft.repoId) {
+      agentBox.setAgents(currentRepo().agents);
+      rebuildAfterOptions();
+    }
     syncDerived();
   });
 

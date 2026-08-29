@@ -12,6 +12,14 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+/**
+ * The form BEFORE any host answer — no `onBranchChange`, no `bindDefaults`, so
+ * the destination is the local guess and `outstanding` never arms. Production
+ * always supplies both (`WorktreeController.createDialogDeps`), so anything
+ * asserting what a create SUBMITS wants the wired shape instead: `resolved()`
+ * and `twoRepos()` below. Round-1 W4 — this file had seven tests submitting
+ * through a branch production never reaches.
+ */
 function open(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -388,7 +396,7 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     expect(host.querySelectorAll(".wt-dest")).toHaveLength(1);
     // Shortened for reading; the exact value is what the element announces and
     // what its tooltip carries, so it never leaves the dialog to be checked.
-    expect(dest.textContent).toBe("…/ai-oss/anywhere-terminal-feat-x");
+    expect(dest.querySelector("[aria-hidden]")?.textContent).toBe("…/ai-oss/anywhere-terminal-feat-x");
     expect(dest.getAttribute("aria-label")).toBe(FULL);
     // `attachTooltip` listens for focus but does not make its target focusable —
     // without this the exact value is reachable by mouse only.
@@ -398,10 +406,16 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
   it("does not state a full path outside the advanced override", () => {
     const { host } = resolved();
     const advanced = host.querySelector(".wt-advanced-body");
-    const statesFull = [...host.querySelectorAll<HTMLElement>(".wt-dialog *")].filter(
+    const carries = [...host.querySelectorAll<HTMLElement>(".wt-dialog *")].filter(
       (el) => el.children.length === 0 && (el.textContent ?? "").includes(FULL) && !advanced?.contains(el),
     );
-    expect(statesFull).toHaveLength(0);
+    // Nothing SIGHTED states it in full — the line is shortened and the override
+    // is behind the disclosure.
+    expect(carries.filter((el) => !el.classList.contains("wt-visually-hidden"))).toHaveLength(0);
+    // And the exact value is carried exactly once, by the element that exists to
+    // announce it. "Stated once" is a claim about the statement, not a ban on the
+    // accessible name of that same statement.
+    expect(carries).toHaveLength(1);
   });
 
   it("follows the override, and withdraws the collision note with it", () => {
@@ -415,7 +429,7 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     expect(q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/custom/place");
     expect(q<HTMLElement>(".wt-dest-note").hidden).toBe(true);
     expect(q<HTMLElement>(".wt-dest-note").textContent).toBe("");
-    expect(host).toBeDefined();
+    expect(host.textContent ?? "").not.toContain("already exists");
     q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(submitted[0]?.path).toBe("/custom/place");
   });
@@ -441,7 +455,7 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     const opener = document.createElement("button");
     document.body.appendChild(opener);
     opener.focus();
-    const { host, q } = open();
+    const { host } = open();
     const trapped = (): HTMLElement[] =>
       [
         ...host.querySelectorAll<HTMLElement>(
@@ -462,7 +476,7 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     // And dismissal still returns focus to whatever opened the dialog.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(document.activeElement).toBe(opener);
-    expect(q === undefined).toBe(false);
+    expect(host.querySelector(".wt-dialog")).toBeNull();
   });
 
   it("dismisses from the title control as well as from Cancel", () => {
@@ -531,14 +545,26 @@ describe("After creating offers four choices (§ 3.2.1)", () => {
       ["folder", "newWindow"],
     ] as const) {
       document.body.replaceChildren();
-      const { q, submitted } = open();
+      // Wired, because this asserts what production SUBMITS — the bare shape
+      // reaches submit down a path the panel never takes.
+      let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+      const { q, submitted } = open({
+        onBranchChange: () => {},
+        bindDefaults: (fn) => {
+          apply = fn;
+        },
+      });
       choose(q, choice);
       if (mode !== undefined) {
         const sel = q<HTMLSelectElement>("#wt-folder-mode");
         sel.value = mode;
         sel.dispatchEvent(new Event("change"));
       }
-      type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+      const branch = q<HTMLInputElement>("#wt-branch");
+      branch.value = "feat/x";
+      branch.dispatchEvent(new Event("input", { bubbles: true }));
+      branch.dispatchEvent(new Event("change", { bubbles: true }));
+      apply?.(createDefaults({ resolvedPath: "/trees/repo-feat-x", answersBranch: "feat/x" }));
       q<HTMLButtonElement>(".wt-btn--primary").click();
       const openAfter = submitted[0]?.openAfter;
       if (openAfter !== undefined) {
@@ -612,5 +638,119 @@ describe("a create that cannot name a posture cannot be submitted", () => {
     const { q } = open({ repos: [createDefaults({ agents: [RECKLESS] })] });
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+});
+
+describe("round-1 review fixes", () => {
+  const FULL_A = "/trees/repo-a-feat-x";
+  const FULL_B = "/trees/repo-b-feat-x";
+
+  /** Two repos and the host wiring the panel really supplies. */
+  function twoRepos() {
+    const asked: { repoId: string; branch: string }[] = [];
+    let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+    const h = open({
+      repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
+      onBranchChange: (repoId, branch) => asked.push({ repoId, branch }),
+      bindDefaults: (fn) => {
+        apply = fn;
+      },
+    });
+    return { ...h, asked, answer: (next: ReturnType<typeof createDefaults>) => apply?.(next) };
+  }
+
+  function commit(input: HTMLInputElement, value: string): void {
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  it("[B1] re-asks the host when the repository changes under a named branch", () => {
+    const h = twoRepos();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: FULL_A, answersBranch: "feat/x" }));
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(FULL_A);
+
+    const repo = h.q<HTMLSelectElement>("#wt-repo-select");
+    repo.value = "/other/.git";
+    repo.dispatchEvent(new Event("change"));
+    // The request is repo-scoped; deduping it on the branch alone reuses repo A's
+    // answer for repo B, and the line the form now leans on says so.
+    expect(h.asked.at(-1)).toEqual({ repoId: "/other/.git", branch: "feat/x" });
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
+
+    h.answer(createDefaults({ repoId: "/other/.git", resolvedPath: FULL_B, answersBranch: "feat/x" }));
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(FULL_B);
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+
+  it("[W1] exposes the exact destination to assistive tech and to a hover", () => {
+    const h = twoRepos();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: FULL_A, answersBranch: "feat/x" }));
+    const dest = h.q<HTMLElement>(".wt-dest");
+    // `aria-label` on a bare div is not exposed — role `generic` prohibits naming —
+    // so the exact value needs an element AT will actually read.
+    expect(dest.querySelector(".wt-visually-hidden")?.textContent).toBe(FULL_A);
+    // And the tooltip: `attachTooltip` returns a no-op when its text is empty at
+    // attach time, so attaching before any destination existed attached nothing.
+    expect(dest.getAttribute("aria-describedby")).toBe("webview-tooltip-widget");
+  });
+
+  it("[W2] shortens a Windows path too", () => {
+    const h = twoRepos();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(
+      createDefaults({
+        resolvedPath: "C:\\Users\\dev\\trees\\repo-feat-x",
+        collidedWith: "-feat-x",
+        answersBranch: "feat/x",
+      }),
+    );
+    // Splitting on "/" alone leaves a Windows path whole, so both the line and
+    // the collision note render a full path — the two things this change removed.
+    expect(h.q<HTMLElement>(".wt-dest").querySelector("[aria-hidden]")?.textContent).toBe("…/trees/repo-feat-x");
+    expect(h.q<HTMLElement>(".wt-dest-note").textContent).toContain("repo-feat-x");
+    expect(h.q<HTMLElement>(".wt-dest-note").textContent).not.toContain("C:\\Users");
+  });
+
+  it("[W3] returns to the derivation when the override is cleared", () => {
+    const h = twoRepos();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: FULL_A, answersBranch: "feat/x" }));
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    const path = h.q<HTMLInputElement>("#wt-path");
+    type(path, "/custom/place");
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/custom/place");
+    // Emptying it was a one-way door: the face showed a derivation that had been
+    // switched off, Create was disabled, and the control that explained it had
+    // gone behind the disclosure.
+    type(path, "   ");
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(FULL_A);
+    expect(path.value).toBe(FULL_A);
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+
+  it("[W6] refreshes the agent block when an answer carries a different agent list", () => {
+    const RECKLESS = {
+      id: "reckless",
+      label: "Reckless",
+      canSeedPrompt: true,
+      permissionChoices: [{ id: "yolo", label: "Skip every prompt", dangerous: true }],
+    };
+    const h = twoRepos();
+    const after = h.q<HTMLSelectElement>("#wt-after");
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: FULL_A, answersBranch: "feat/x" }));
+    // Enabled on the offer that HAS a safe posture, so the disable below is the
+    // refreshed list and not the destination the form was still waiting for.
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+    // The answer replaces the repo record wholesale, agents included. The posture
+    // gate reads that list, so an offer that became all-dangerous must re-gate.
+    h.answer(createDefaults({ resolvedPath: FULL_A, answersBranch: "feat/x", agents: [RECKLESS] }));
+    expect([...h.q<HTMLSelectElement>("#wt-agent").options].map((o) => o.value)).toEqual(["reckless"]);
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
   });
 });

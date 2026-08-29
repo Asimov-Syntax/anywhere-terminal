@@ -178,6 +178,9 @@ describe("an agent whose every posture is dangerous", () => {
     expect(perm?.value).toBe("");
     expect(box.read().permissionChoiceId).toBeUndefined();
     expect(box.needsPosture()).toBe(true);
+    // Choosable, it is a posture the user can land on by arrowing past it —
+    // which is the preselection this exists to prevent, one keystroke later.
+    expect(perm?.options[0]?.disabled).toBe(true);
   });
 
   it("still offers them, each labelled as what it is", () => {

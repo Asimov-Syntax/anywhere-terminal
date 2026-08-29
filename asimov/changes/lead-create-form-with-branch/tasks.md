@@ -42,3 +42,18 @@
     2. Not selected is a state the control has to be able to hold, so it needs something to sit on that is not a posture. Whatever carries it must not be submittable as one, and `read()` must return no `permissionChoiceId` while it is showing.
     3. The block is shared with the launch dialog, so both doors get this. Both submit paths gate on it — the base requirement names both, and fixing one leaves the other stating the opposite.
     4. Cover: the all-dangerous agent, which no fixture exercises today; that a mixed list still opens on its first safe choice; that switching from a mixed agent to an all-dangerous one drops the carried selection rather than keeping a posture the new agent does not offer.
+
+- [x] 1_4 Round-1 review fixes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_3
+  - **Refs**: specs/worktree-panel/spec.md#{the-destination-is-stated-once-and-its-exact-value-stays-reachable, a-destination-is-named-only-once-it-is-known}, ../../../specs/worktree-panel/spec.md#{a-created-worktree-names-the-destination-it-will-actually-use}
+  - **Acceptance**:
+    - Outcome: the stated destination belongs to the repo and branch on screen, and its exact value is genuinely reachable
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeCreateDialog.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/worktreeAgentBox.test.ts`, `src/webview/worktree/worktreeFixtures.ts`, `src/webview/worktree/worktreePanel.css`.
+    1. B1: the request is repo-scoped and its dedup key is not. Key on both, so no caller that changes the repo — this handler or a later one — can reuse an answer computed for a different one.
+    2. W1: `attachTooltip` resolves its text at attach and hands back a no-op when it is empty, so attaching before the first destination exists attached nothing. Attach when there is something to say, once, and keep the disposer. The second carrier failed for its own reason: `aria-label` on a bare `div` is not exposed, so the exact value needs an element whose name AT will read rather than an attribute on one it will not.
+    3. W2: two separators, not one. The repo carries this idiom twice already; take the idiom rather than export a file-tree helper into this dialog.
+    4. W3: the override is one-way and should not be. Clearing it returns the line to the derivation, because a face showing a derivation that is switched off is worse than no override at all.
+    5. W6: the apply callback replaces the repo record wholesale, agents included, and refreshes only the destination. The posture gate now reads that list, so it has to be refreshed with it.
+    6. Fixtures and assertions (W4, W5): the default fixture must be able to stand in for production, which always supplies both callbacks and a resolved path — seven tests currently submit through a branch production never reaches. Delete the two assertions that cannot fail, and assert the tooltip that W1 says nothing asserts: deleting the attach must turn the suite red.
