@@ -273,6 +273,12 @@ export class WorktreeView {
    * drawn is what can cross.
    */
   private repaint(): void {
+    // `dispose()` tears down the tooltip delegates, so a rebuild after it produces
+    // a tree whose hints are permanently dead — a half-live view is worse than a
+    // stale one. Guarding only the arming left the DOM work happening anyway.
+    if (this.disposed) {
+      return;
+    }
     const now = this.now();
     this.render(now);
     this.armCeiling(now);
@@ -704,10 +710,8 @@ export class WorktreeView {
   }
 
   /**
-   * The worktrees this repo actually DRAWS: none when it is collapsed, otherwise
-   * the matching ones up to the display cap. Sole owner of the collapse-and-cap
-   * rule, so the ceiling scheduler and the render cannot come to different
-   * conclusions about what is on screen.
+   * The worktrees this repo draws: none when it is collapsed, otherwise the
+   * matching ones up to the display cap.
    */
   private shownWorktrees(repo: WorktreeRepo, multiRepo: boolean): WorktreeInfo[] {
     if (multiRepo && this.collapsed.has(repo.repoId)) {
@@ -728,27 +732,41 @@ export class WorktreeView {
     if (strongest !== "running-unconfirmed" && strongest !== "unknown") {
       return undefined;
     }
-    const source = rows.find((r) => presentedActivity(r, degraded, now) === strongest);
+    // The LONGEST-standing match, not the first: `rowsByWorktreeId` order is not a
+    // contract, and taking whichever came first made the collapsed worktree's
+    // elapsed figure depend on it. The oldest claim is also the truthful bound —
+    // it is the one that has stood unchanged the longest.
+    let source: WorktreeAgentRow | undefined;
+    for (const row of rows) {
+      if (presentedActivity(row, degraded, now) !== strongest) {
+        continue;
+      }
+      if (
+        source === undefined ||
+        (row.stateStartedAt ?? Number.POSITIVE_INFINITY) < (source.stateStartedAt ?? Number.POSITIVE_INFINITY)
+      ) {
+        source = row;
+      }
+    }
     return source ? confidenceHint(source, strongest, now) : undefined;
   }
 
-  /** Every worktree id currently on screen — the only rows a crossing can repaint. */
+  /**
+   * Every worktree id currently on screen, read back OUT OF THE DOM rather than
+   * re-derived. `armCeiling` always runs after `render`, so the rows are already
+   * there to be counted.
+   *
+   * The previous version restated the render's own predicate, and the restatement
+   * drifted twice: once on `gitAvailable`, which drew a retained listing no
+   * crossing could repaint, and once on `noFolder`. There is no third term to miss
+   * — a row is here because it was drawn, which is the actual question.
+   */
   private renderedWorktreeIds(): Set<string> {
-    const tree = this.data.tree;
     const ids = new Set<string>();
-    // Exactly `render`'s own fall-through, and no more. `gitAvailable: false` with
-    // repos RETAINED is a stale tree, not an empty one — the cache keeps the last
-    // good listing and the view draws it under a notice. Excluding it here armed no
-    // crossing while git was down, so a visible row animated a withdrawn claim for
-    // as long as the outage lasted: the very failure this change exists to end,
-    // reintroduced by the fix that scoped the walk.
-    if (!tree || tree.repos.length === 0) {
-      return ids;
-    }
-    const multiRepo = tree.repos.length > 1;
-    for (const repo of tree.repos) {
-      for (const info of this.shownWorktrees(repo, multiRepo)) {
-        ids.add(info.id);
+    for (const el of this.element.querySelectorAll<HTMLElement>("[data-worktree-id]")) {
+      const id = el.dataset.worktreeId;
+      if (id !== undefined) {
+        ids.add(id);
       }
     }
     return ids;

@@ -235,6 +235,32 @@ describe("remove worktree — refused (§ 12)", () => {
     expect(copy).toContain("cannot be read at all");
   });
 
+  it("names the unconfirmed part of a list it can otherwise vouch for", () => {
+    const NOW = 1_700_000_000_000;
+    const live = agentRow({
+      rowId: "live",
+      agent: "claude",
+      activity: "running",
+      activitySource: "hook",
+      title: "reported",
+    });
+    const stale = agentRow({
+      rowId: "stale",
+      agent: "codex",
+      activity: "running",
+      activitySource: "output",
+      title: "worker",
+      stateStartedAt: NOW - CONFIRMATION_CEILING_MS,
+    });
+    const { host } = open(refusedBlocker, { agentRows: [live, stale], now: NOW });
+    const copy = host.querySelector(".wt-refusebox")?.textContent ?? "";
+    // The vouched-for row earns the flat claim, and the stale one still has to be
+    // accounted for: a sentence that mentions only the strongest evidence drops
+    // the row whose glyph is drawn qualified two lines below it.
+    expect(copy).toContain("An agent is mid-turn in this worktree");
+    expect(copy).toContain("outlived what can confirm it");
+  });
+
   it("shows only the rows that are actually mid-turn", () => {
     const idle = agentRow({ rowId: "idle", agent: "codex", activity: "idle", title: "zsh" });
     const { host } = open(refusedBlocker, { agentRows: [busy, idle] });

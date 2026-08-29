@@ -222,32 +222,39 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       // a row the user can act on, and the empty branch has just said there is none.
       const stopIt = " Stop it first — there is no confirmation that removes a folder out from under a working agent.";
       const unread = presented.length - confirmed;
+      const unconfirmed = confirmed - vouched;
       if (presented.length === 0) {
         lead.textContent = "An agent was mid-turn in this worktree, and no row can be shown for it now.";
         box.append(lead, document.createTextNode(" It is no longer listed here — retry the removal."));
       } else {
-        if (confirmed === 0) {
-          lead.textContent = "An agent may be mid-turn in this worktree, and nothing can currently confirm it.";
-        } else if (vouched === 0) {
-          // Readable, but every readable one has outlived its evidence. Saying "is
-          // mid-turn" here would contradict the `~` hint on the very row below,
-          // which says a busy terminal is not proof of a turn in progress. The
-          // unreadable rows keep their clause: dropping them to soften the certainty
-          // would trade one omission for another.
-          lead.textContent =
-            unread === 0
-              ? "An agent may be mid-turn in this worktree, and the activity here has outlived what can confirm it."
-              : unread === 1
-                ? "An agent may be mid-turn in this worktree, the activity here has outlived what can confirm it, and another row cannot be read at all."
-                : "An agent may be mid-turn in this worktree, the activity here has outlived what can confirm it, and others here cannot be read at all.";
-        } else if (unread === 0) {
-          lead.textContent = "An agent is mid-turn in this worktree.";
+        // COMPOSED, not a branch per combination. A list can hold vouched-for rows,
+        // rows past the ceiling, and rows no source can read, in any mixture; the
+        // earlier chain picked one sentence and silently dropped whichever parts it
+        // was not about. Each clause is added only when its own count is non-zero,
+        // so the sentence says everything true of this list and nothing else.
+        const clauses: string[] = [];
+        if (vouched > 0) {
+          clauses.push("An agent is mid-turn in this worktree");
+          if (unconfirmed > 0) {
+            clauses.push(
+              unconfirmed === 1
+                ? "another claim here has outlived what can confirm it"
+                : "other claims here have outlived what can confirm them",
+            );
+          }
+        } else if (confirmed > 0) {
+          clauses.push(
+            "An agent may be mid-turn in this worktree",
+            "the activity here has outlived what can confirm it",
+          );
         } else {
-          lead.textContent =
-            unread === 1
-              ? "An agent is mid-turn in this worktree, and another here cannot be read at all."
-              : "An agent is mid-turn in this worktree, and others here cannot be read at all.";
+          clauses.push("An agent may be mid-turn in this worktree", "nothing can currently confirm it");
         }
+        if (unread > 0) {
+          clauses.push(unread === 1 ? "another here cannot be read at all" : "others here cannot be read at all");
+        }
+        const [first, ...rest] = clauses;
+        lead.textContent = rest.length === 0 ? `${first}.` : `${first}, and ${rest.join(", and ")}.`;
         box.append(lead, document.createTextNode(stopIt));
       }
     }

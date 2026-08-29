@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
@@ -48,3 +48,6 @@ Planned at: 21bd8d4a
 - Round 2, B3: the W2 fix reintroduced the change's own failure. `renderedWorktreeIds` mirrored a `gitAvailable` early return that `render` does not have, so a retained listing during a git outage drew rows no crossing could ever repaint. Any helper claiming to mirror what the render draws needs a test that pins the two together, not a reading of both.
 - Round 2, deferred: S6 (`border: double` renders as solid below 3px). Accepted as a real hole in the shape guard, not gating, and not taken in task 2_2 — a targeted threshold assertion, not a wider shape key, is the fix.
 - Round 2, review integrity: the chair reported findings attributed to logic and frontend specialists it could not substantiate, and retracted them. Only the contracts lens delivered. All four findings were re-verified against source here before being accepted; none was taken on the chair's word. The two undelivered lenses are outstanding for round 3.
+- Round 3: WARN, 0 gating blockers — cycle closed at the cap. Every non-gating finding was taken rather than deferred, including S6's follow-up territory, so nothing carries forward.
+- Round 3, W9: the `[I17]` guard was REBUILT, not patched a seventh time. Its defect was one assumption — `.exec` returns the first match — not six missing cases: it read one rule per state and one reduced-motion block while the file holds two of the latter and already uses contextual selectors on this element. Anchoring the class name also exposed a latent merge: `running` is a prefix of `running-unconfirmed`, so those two states had been compared as a single shape the whole time.
+- Round 3, S11: the scheduler now reads drawn worktree ids out of the DOM instead of restating the render's predicate. That predicate had drifted twice (`gitAvailable`, then `noFolder`); there is now none to drift.

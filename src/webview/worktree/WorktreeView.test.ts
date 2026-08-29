@@ -286,15 +286,55 @@ describe("tree structure", () => {
     // separated by a border colour, and the first pass alone still passed on it.
     const here = path.dirname(fileURLToPath(import.meta.url));
     const css = fs.readFileSync(path.join(here, "worktreePanel.css"), "utf8");
-    const reduced = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
-    expect(reduced, "no reduced-motion block").toContain("animation: none");
+    // EVERY reduced-motion block, not the first. The file already holds two, and
+    // reading only one is the ASSUMPTION — not a missing special case — behind
+    // several of the escapes found across three review rounds.
+    const reducedBlocks = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/g)].map(
+      (m) => m[1] ?? "",
+    );
+    expect(reducedBlocks.length, "no reduced-motion block").toBeGreaterThan(0);
+    const reduced = reducedBlocks.join("\n");
+    expect(reduced, "no reduced-motion rule").toContain("animation: none");
 
-    const declsOf = (block: string, state: string): string[] => {
-      const rule = new RegExp(`\\.wt-state--${state}\\s*\\{([^}]*)\\}`).exec(block);
-      return (rule?.[1] ?? "")
-        .split(";")
-        .map((d) => d.trim())
-        .filter((d) => d.length > 0);
+    /**
+     * Every rule targeting this state, in source order — the bare selector, a
+     * contextual one like `.wt-glyph .wt-state--x`, a group, all of it. `.exec`
+     * returned only the FIRST, so an override written in the pattern this very file
+     * already uses for `.wt-glyph .wt-state` applied in the browser and was never
+     * read here. `pseudo` keeps the layers apart.
+     */
+    const declsOf = (block: string, state: string, pseudo = ""): string[] => {
+      // Anchored at the END of the class name: `running` is a PREFIX of
+      // `running-unconfirmed`, so a substring test silently merged the two states
+      // into one shape and collapsed the very distinction under test.
+      const targets = new RegExp(`\\.wt-state--${state}(?![\\w-])`);
+      const out: string[] = [];
+      for (const m of block.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const selector = (m[1] ?? "").trim();
+        if (!targets.test(selector)) {
+          continue;
+        }
+        // A group can name the state twice at different layers; only the parts at
+        // THIS layer contribute.
+        const layerOf = (x: string): string => {
+          const hit = /::?(after|before)\b/.exec(x);
+          return hit ? `::${hit[1]}` : "";
+        };
+        const parts = selector
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x) => targets.test(x));
+        if (!parts.some((x) => layerOf(x) === pseudo)) {
+          continue;
+        }
+        out.push(
+          ...(m[2] ?? "")
+            .split(";")
+            .map((d) => d.trim())
+            .filter((d) => d.length > 0),
+        );
+      }
+      return out;
     };
     // A hue is a colour; `transparent` is the absence of an edge, which is shape.
     // Collapsing both to one token is what let the pre-change tinted ring pass as
@@ -363,16 +403,18 @@ describe("tree structure", () => {
       state: string,
       dropMotion: boolean,
     ): { key: string; base: string; baseInked: boolean; motion: string[] } => {
-      const baseDecls = declsOf(css, state);
+      const baseDecls = declsOf(css, state, "");
       expect(baseDecls, `no rule for .wt-state--${state}`).not.toEqual([]);
+      // `::before` as well: an animated pseudo-element is an animated glyph
+      // whichever side generates it, and only `::after` was ever looked at.
       const layers: [string, string[]][] = [
         ["", dropMotion ? [...baseDecls, ...declsOf(reduced, state)] : baseDecls],
-        [
-          "after",
+        ...(["::after", "::before"] as const).map((pseudo): [string, string[]] => [
+          pseudo,
           dropMotion
-            ? [...declsOf(css, `${state}::after`), ...declsOf(reduced, `${state}::after`)]
-            : declsOf(css, `${state}::after`),
-        ],
+            ? [...declsOf(css, state, pseudo), ...declsOf(reduced, state, pseudo)]
+            : declsOf(css, state, pseudo),
+        ]),
       ];
       const keys = new Map<string, Map<string, string>>();
       let baseInked = false;
@@ -429,7 +471,12 @@ describe("tree structure", () => {
           .map(([k, v]) => `${k}:${v}`)
           .join(";");
       const stillMoving = [...motion.entries()].filter(([, v]) => v !== "none").map(([l, v]) => `${l || "base"}:${v}`);
-      return { key: `${render("")}|${render("after")}`, base: render(""), baseInked, motion: stillMoving };
+      return {
+        key: `${render("")}|${render("::after")}|${render("::before")}`,
+        base: render(""),
+        baseInked,
+        motion: stillMoving,
+      };
     };
 
     // Keyed by the presented vocabulary itself, so § 7.2's reserved sixth member
@@ -825,6 +872,51 @@ describe("tree structure", () => {
     expect(wt?.querySelector(".wt-state")?.className).toContain("running-unconfirmed");
     expect(wt?.dataset.tip ?? "").toContain("Unchanged for at least");
     expect(wt?.dataset.tip ?? "").toContain("not proof of a turn in progress");
+  });
+
+  it("arms nothing for a worktree the view never drew, whatever the reason", () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = mount({ now: () => NOW });
+      const presence: WorktreePresence = {
+        scannedAt: NOW,
+        degradedSources: [],
+        rowsByWorktreeId: {
+          [PANEL_WT]: [
+            agentRow({
+              rowId: "r",
+              agent: "claude",
+              activity: "running",
+              activitySource: "output",
+              title: "worker",
+              stateStartedAt: NOW - 4 * 60_000,
+            }),
+          ],
+        },
+      };
+      // `noFolder` returns from `render` before the tree is touched. The scheduler
+      // used to restate the render's predicate and had drifted on this term as well
+      // as on `gitAvailable`; reading the drawn rows back out of the DOM means there
+      // is no predicate left to drift.
+      view.setData({ tree: singleRepoTree(), presence, noFolder: true });
+      expect(view.element.querySelectorAll("[data-worktree-id]")).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+      view.setData({ tree: singleRepoTree(), presence });
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not rebuild a disposed view's DOM, whose hints are already dead", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData(populated());
+    const before = view.element.querySelector(".wt-row");
+    view.dispose();
+    // `dispose()` tore down the tooltip delegates. A rebuild after it yields rows
+    // whose hints can never resolve — worse than leaving the stale ones alone.
+    view.setQuery("main");
+    expect(view.element.querySelector(".wt-row")).toBe(before);
   });
 
   it("performs no DOM work when a re-derivation moves nothing", () => {

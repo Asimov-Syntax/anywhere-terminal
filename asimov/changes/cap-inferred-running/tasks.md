@@ -65,7 +65,7 @@
     7. W3 + S3 — one confidence-marker builder, and its hint reachable by keyboard, not only by pointer.
     8. S4 + S5 — assert the two presented orders hold the same membership; stop saying "over N minutes" at exactly N.
 
-- [ ] 2_2 Close the round-2 escapes, including the one the W2 fix opened
+- [x] 2_2 Close the round-2 escapes, including the one the W2 fix opened — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#{a-claim-that-outlives-its-evidence-stops-animating-without-being-told, an-inferred-running-claim-stops-animating-once-it-outlives-its-evidence, a-claim-that-outlived-its-evidence-says-how-long-and-on-what, one-reading-of-the-clock-serves-the-whole-cycle}
   - **Acceptance**:
@@ -79,3 +79,17 @@
     4. W7 — the new `vouched === 0` branch drops the unreadable rows the previous chain named.
     5. W8 — a collapsed worktree draws a pill that is `aria-hidden` and unfocusable, so the required statement is unreachable; carry it on the worktree row's own tip.
     6. S8 + S9 — pin both presented orders against the `PresentedActivity` union rather than each other; make `confidenceHint`'s clock required.
+
+- [x] 2_3 Stop mirroring the cascade, and stop mirroring the render — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_2
+  - **Refs**: specs/worktree-panel/spec.md#{an-inferred-running-claim-stops-animating-once-it-outlives-its-evidence, a-claim-that-outlives-its-evidence-stops-animating-without-being-told, one-reading-of-the-clock-serves-the-whole-cycle, a-claim-that-outlived-its-evidence-says-how-long-and-on-what}
+  - **Acceptance**:
+    - Outcome: the guard reads every rule that targets a state, and the scheduler reads what was drawn instead of re-deriving it
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/WorktreeRemoveDialog.ts`, `src/webview/worktree/WorktreeRemoveDialog.test.ts`.
+    1. W9 — the guard's defect is an assumption, not a missing case: `.exec` reads the FIRST rule for a state and the FIRST reduced-motion block, while the file already holds two of the latter and already uses contextual selectors on this element. Read every rule whose selector targets the state, across every block, in source order. Not a seventh special case.
+    2. S11 + W10 — `armCeiling` always runs after `render`, so read the drawn worktree ids back out of the DOM instead of re-deriving them. Deletes the mirrored predicate, and with it the `noFolder` term it was missing and the whole drift class B3 came from.
+    3. S9 residual — the crack moved one frame up: make the agent row's own clock required so the type enforces what the comment claims.
+    4. `repaint()` after disposal still rebuilds DOM whose tooltips `dispose()` already tore down. Guard the render, not only the arming.
+    5. S14 + S15 — compose the refusal sentence from its parts so a mixed vouched-and-unconfirmed list states both, rather than adding a fourth branch; make the collapsed worktree's hint independent of row order.

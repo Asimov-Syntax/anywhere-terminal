@@ -390,7 +390,13 @@ export interface AgentRowOptions {
   /** Subagent disclosure state — independent of the worktree's own collapse (§ 3.5). */
   expanded?: boolean;
   selected?: boolean;
-  now?: number;
+  /**
+   * Required, for the same reason as `activity` above: an optional clock that
+   * falls back to `Date.now()` lets this row's elapsed figure describe a different
+   * moment than the state drawn beside it. Making `confidenceHint`'s clock
+   * required only moved that crack one frame up into here.
+   */
+  now: number;
 }
 
 /**
@@ -469,7 +475,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // Keyed off the PRESENTED state: an inference the glyph has already withdrawn
   // must not be re-asserted in present tense beside it. When the state is
   // `unknown` the marker names the failure instead of the inference.
-  const confidenceTip = confidenceHint(row, activity, opts.now ?? Date.now());
+  const confidenceTip = confidenceHint(row, activity, opts.now);
   if (confidenceTip !== undefined) {
     title.append(document.createTextNode(" "), confidenceMarker(confidenceTip));
   }
