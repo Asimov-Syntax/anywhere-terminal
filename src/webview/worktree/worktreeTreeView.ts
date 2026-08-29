@@ -402,6 +402,10 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
     sixth.dataset.tip = row.model;
   }
   el.appendChild(sixth);
+  // Same reason as the worktree row above: `el` is what the roving tabindex
+  // focuses, and its title / preview live on descendants closest() cannot reach
+  // from here.
+  el.dataset.tip = row.preview ? `${titleText}\n${row.preview}` : titleText;
 
   // 7 — collapsed child count. Disappears when expanded; the children show instead.
   const count = document.createElement("span");

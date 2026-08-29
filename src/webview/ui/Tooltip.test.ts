@@ -245,6 +245,36 @@ describe("attachTooltipDelegate", () => {
     expect(widget()?.style.display).toBe("none");
   });
 
+  it("keeps the tooltip up when the pointer moves within one hint owner", () => {
+    const host = container();
+    attachTooltipDelegate(host);
+    const r = row(host, "alpha");
+    const child = document.createElement("span");
+    r.appendChild(child);
+    hover(r);
+    vi.advanceTimersByTime(300);
+    expect(widget()?.style.display).toBe("block");
+    // Moving onto a child of the SAME hinted row is not leaving it. Hiding here
+    // and re-scheduling made an already-visible hint flicker and pay the delay
+    // again on every composed row.
+    r.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: child }));
+    expect(widget()?.style.display).toBe("block");
+    hover(child);
+    expect(widget()?.style.display).toBe("block");
+  });
+
+  it("hides on press, as the per-element path does", () => {
+    const host = container();
+    attachTooltipDelegate(host);
+    const r = row(host, "alpha");
+    hover(r);
+    vi.advanceTimersByTime(300);
+    expect(widget()?.style.display).toBe("block");
+    // Activation opens a preview or a context menu; the hint must not sit over it.
+    r.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(widget()?.style.display).toBe("none");
+  });
+
   it("stops serving hints once disposed", () => {
     const host = container();
     const dispose = attachTooltipDelegate(host);

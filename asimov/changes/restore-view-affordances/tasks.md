@@ -58,3 +58,16 @@
     1. Rename the pill's text and kind in `src/webview/worktree/worktreeFormat.ts`, and its hint to state the worktree is open as a workspace folder.
     2. Follow the kind through the class name in `src/webview/worktree/worktreeTreeView.ts` and the selector in `src/webview/worktree/worktreePanel.css`.
     3. Update `worktreeFormat.test.ts` and add a case proving two worktrees open at once both carry the mark.
+
+## 4. Review round 1 fixes
+
+- [x] 4_1 Present hints to keyboard focus, and stop delegated tooltips flickering across a row — verified: pnpm exec vitest run 'src/webview/ui/Tooltip.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/vault-panel/spec.md#a-row-s-abbreviated-content-is-reachable-on-hover-and-on-focus
+  - **Acceptance**:
+    - Outcome: a focused row presents its full content
+    - Verify: unit src/webview/ui/Tooltip.test.ts
+  - **Plan**:
+    1. Give each focus owner its own hint: the vault session row in `src/webview/vault/vaultListView.ts` and the worktree agent row in `src/webview/worktree/worktreeTreeView.ts`. `closest()` keeps a nearer descendant hint winning on hover (B1).
+    2. In `src/webview/ui/Tooltip.ts`, compare `relatedTarget` in the out handler so moving within one hint owner neither hides the tooltip nor restarts its delay (W1), and hide on `mousedown` as the per-element path does (S1).
+    3. Cover in `src/webview/ui/Tooltip.test.ts`, `src/webview/vault/VaultPanel.test.ts`, and `src/webview/worktree/WorktreeView.test.ts`: focus on the real rows presents the content; a parent-to-child move keeps the tooltip up; a press hides it.

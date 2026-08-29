@@ -347,6 +347,29 @@ describe("agent rows", () => {
     return Array.from(view.element.querySelectorAll<HTMLElement>(".wt-arow"));
   }
 
+  it("presents the agent's own content when keyboard focus lands on the row", () => {
+    const { view } = mount();
+    view.setData(populated());
+    const first = agentRows(view)[0];
+    if (!first) {
+      throw new Error("fixture lost its first agent row");
+    }
+    // The roving tabindex focuses `.wt-arow` itself; its title and preview live
+    // on non-focusable descendants, which closest() cannot reach from the row.
+    vi.useFakeTimers();
+    try {
+      first.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      vi.advanceTimersByTime(300);
+      const tip = document.body.querySelector<HTMLElement>(".webview-tooltip");
+      expect(tip?.style.display).toBe("block");
+      const shown = first.querySelector(".wt-atitle")?.textContent ?? "";
+      expect(shown).not.toBe("");
+      expect(tip?.textContent).toContain(shown);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reserves the disclosure gutter even with no children, so dots stay aligned", () => {
     const { view } = mount();
     view.setData(populated());

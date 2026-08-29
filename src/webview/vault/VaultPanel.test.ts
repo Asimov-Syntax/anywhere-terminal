@@ -288,6 +288,26 @@ describe("VaultPanel row rendering (redesign 4_1)", () => {
     }
   });
 
+  it("presents the full title when keyboard focus lands on the row", () => {
+    const host = createHost();
+    const panel = new VaultPanel({ host, postMessage: () => {}, getInitialCollapsed: () => false });
+    const long = "a session title far too long to fit inside a sidebar row at any width";
+    panel.render(result([entry({ id: "claude:a", title: long })]));
+    // The focus owner is `.vault-row`, not the title span the pointer lands on.
+    // A hint on a non-focusable descendant is unreachable by keyboard, because
+    // the delegate resolves upwards with closest().
+    vi.useFakeTimers();
+    try {
+      host.querySelector(".vault-row")?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      vi.advanceTimersByTime(300);
+      const tip = document.body.querySelector<HTMLElement>(".webview-tooltip");
+      expect(tip?.style.display).toBe("block");
+      expect(tip?.textContent).toContain(long);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("posts vaultResume with the entry id when the icon-only Resume is clicked", () => {
     const host = createHost();
     const posted: { type: string; entryId?: string | null }[] = [];

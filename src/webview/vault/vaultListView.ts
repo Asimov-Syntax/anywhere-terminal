@@ -109,6 +109,11 @@ export function renderRow(
     titleEl.appendChild(sourceBadge);
   }
   row.appendChild(titleEl);
+  // The row is the focus owner, so it carries the hint too: `closest()` only
+  // looks upwards, and a keyboard user never lands on the title span. A nearer
+  // descendant hint still wins under the pointer.
+  const rowTip = shownTitle || "(untitled session)";
+  row.dataset.tip = entry.cwd ? `${rowTip}\n${entry.cwd}` : rowTip;
 
   if (!opts.hideCwd) {
     const cwdEl = document.createElement("span");

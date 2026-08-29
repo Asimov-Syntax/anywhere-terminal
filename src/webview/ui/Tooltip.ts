@@ -233,7 +233,19 @@ export function attachTooltipDelegate(container: HTMLElement): () => void {
   };
   const onOut = (ev: Event): void => {
     const from = hintFor(ev.target);
-    if (from !== null && from === currentTarget) {
+    if (from === null || from !== currentTarget) {
+      return;
+    }
+    // Moving onto a child of the same hinted element is not leaving it. Without
+    // this the tooltip hides and the re-entry pays the delay again, so an
+    // already-visible hint flickers across every composed row.
+    if (hintFor((ev as MouseEvent | FocusEvent).relatedTarget) === from) {
+      return;
+    }
+    leave();
+  };
+  const onDown = (ev: Event): void => {
+    if (hintFor(ev.target) !== null) {
       leave();
     }
   };
@@ -253,6 +265,7 @@ export function attachTooltipDelegate(container: HTMLElement): () => void {
 
   container.addEventListener("mouseover", onOver);
   container.addEventListener("mouseout", onOut);
+  container.addEventListener("mousedown", onDown);
   container.addEventListener("focusin", onOver);
   container.addEventListener("focusout", onOut);
   container.addEventListener("keydown", onKey);
@@ -261,6 +274,7 @@ export function attachTooltipDelegate(container: HTMLElement): () => void {
     observer.disconnect();
     container.removeEventListener("mouseover", onOver);
     container.removeEventListener("mouseout", onOut);
+    container.removeEventListener("mousedown", onDown);
     container.removeEventListener("focusin", onOver);
     container.removeEventListener("focusout", onOut);
     container.removeEventListener("keydown", onKey);
