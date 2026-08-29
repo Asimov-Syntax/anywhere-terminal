@@ -136,6 +136,19 @@ export interface WorktreeViewDeps {
    * naming a worktree that is gone.
    */
   onSelectWorktree?: (worktreeId: string | null) => void;
+  /**
+   * A worktree row was activated. Raised on EVERY activation under the rollout,
+   * where `onSelectWorktree` fires only on a move: what is scoped and what is
+   * being read are two questions, and re-activating the selected row is how a
+   * dismissed inspector is reopened (design.md D3).
+   */
+  onInspect?: (worktreeId: string) => void;
+  /**
+   * A confidence re-derivation just happened, driven by the ceiling deadline
+   * rather than by a push. Raised so a second surface reading the same rows
+   * cannot disagree with the tree about a row's state (design.md D7).
+   */
+  onCeilingTick?: () => void;
   /** Activating an agent row — focus its pane, or open its preview (§ 6). */
   onActivateAgent?: (row: WorktreeAgentRow, activation: WorktreeRowActivation) => void;
   /** Activating a subagent row targets the PARENT's pane; it has none of its own. */
@@ -377,6 +390,34 @@ export class WorktreeView {
     this.repaint();
   }
 
+  /**
+   * The window's asked-once roster set, shared with the inspector.
+   *
+   * Exposed rather than constructed twice: "at most one request per row and
+   * session" is a claim about the window, and two sets would each ask once for
+   * the same key (design.md D6).
+   */
+  rosterRequests(): RosterRequests {
+    return this.rosters;
+  }
+
+  /**
+   * Put focus on a worktree's row, or on the tree itself when that row is not
+   * drawn — the inspector's close returns focus here, and a filtered-out row
+   * must not leave focus on `<body>`.
+   */
+  focusWorktree(worktreeId: string): void {
+    const rows = this.navRows();
+    // The tree's own tab stop is the fallback, not the container: the container
+    // is not focusable, so focusing it would leave focus on `<body>` and the
+    // keyboard user back at the top of the document.
+    const target =
+      rows.find((r) => r.dataset.worktreeId === worktreeId) ??
+      rows.find((r) => this.keyOf(r) === this.focusedKey) ??
+      rows[0];
+    this.focusRow(target);
+  }
+
   /** The worktree this panel marks as selected, or `null`. The only copy there is. */
   selectedWorktree(): string | null {
     return this.selectedWorktreeId;
@@ -404,7 +445,13 @@ export class WorktreeView {
    * rebuild the tree twice and throw focus away in between.
    */
   private select(worktreeId: string): boolean {
-    if (this.deps.workbench?.() !== true || this.selectedWorktreeId === worktreeId) {
+    if (this.deps.workbench?.() !== true) {
+      return false;
+    }
+    if (this.selectedWorktreeId === worktreeId) {
+      // Nothing to announce about the scope, but the user asked to read this
+      // worktree again — which is the only way a dismissed drawer reopens.
+      this.deps.onInspect?.(worktreeId);
       return false;
     }
     // Announced BEFORE the field moves, and the throw is not caught. The listener
@@ -414,6 +461,9 @@ export class WorktreeView {
     // the chip cleared it (round-2 V1).
     this.deps.onSelectWorktree?.(worktreeId);
     this.selectedWorktreeId = worktreeId;
+    // Last, for the same reason: inspecting first would leave the drawer
+    // describing a worktree the selection never reached.
+    this.deps.onInspect?.(worktreeId);
     return true;
   }
 
@@ -441,6 +491,7 @@ export class WorktreeView {
       () => {
         this.ceilingTimer = undefined;
         this.applyAt(this.now());
+        this.deps.onCeilingTick?.();
       },
       // Clamped, because a `stateStartedAt` in the future is CONFIRMED — an
       // impossible clock must not manufacture staleness — which is exactly what
@@ -804,9 +855,14 @@ export class WorktreeView {
     this.element.scrollTop = scrollTop;
     this.syncRovingTabindex();
     if (restoreFocusTo !== null) {
-      this.navRows()
-        .find((r) => this.keyOf(r) === restoreFocusTo)
-        ?.focus();
+      const rows = this.navRows();
+      // The row can have left in this very render — a worktree removed, a query
+      // typed — and focus then falls to `<body>`, which is the top of the whole
+      // document. `syncRovingTabindex` above has already moved the tab stop to a
+      // row that exists, so that is where focus belongs.
+      (
+        rows.find((r) => this.keyOf(r) === restoreFocusTo) ?? rows.find((r) => this.keyOf(r) === this.focusedKey)
+      )?.focus();
     }
   }
 
