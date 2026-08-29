@@ -145,12 +145,14 @@ export interface RenderTabBarDeps {
    */
   onAfterRender?: () => void;
   /**
-   * Whether this surface is scoped. A SECOND, independent reason to be visible —
-   * not a reinterpretation of the tab count. The chip is the only thing on screen
-   * saying the list is a subset, so a scope filtering down to one tab would
-   * otherwise hide its own escape hatch (design.md D3).
+   * Present exactly while this surface is scoped, which is why it is ONE field
+   * rather than a boolean beside a label: the chip is the only thing on screen
+   * saying the list is a subset, and a filter without it is the invisible filter
+   * the whole change exists to avoid. It is also the SECOND, independent reason
+   * for the bar to be visible — not a reinterpretation of the tab count — so a
+   * scope filtering down to one tab cannot hide its own escape hatch (D3, D4).
    */
-  isScoped?: boolean;
+  scope?: { label: string; onClear: () => void };
 }
 
 /**
@@ -163,7 +165,7 @@ export interface RenderTabBarDeps {
  * - Shows tab bar when 2+ tabs, or whatever the count while the surface is scoped
  */
 export function renderTabBar(deps: RenderTabBarDeps): void {
-  const { tabBarEl, terminals, activeTabId, onTabClick, onTabClose, onAddClick, onTabRename, onAfterRender, isScoped } =
+  const { tabBarEl, terminals, activeTabId, onTabClick, onTabClose, onAddClick, onTabRename, onAfterRender, scope } =
     deps;
 
   const existingTabs = new Map<string, HTMLDivElement>();
@@ -171,6 +173,42 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
     if (child instanceof HTMLDivElement && child.classList.contains("tab-item") && child.dataset.tabId) {
       existingTabs.set(child.dataset.tabId, child);
     }
+  }
+
+  // The chip is the head of the same reconciled child list the tabs and the "+"
+  // live in, so it survives a re-render the way they do and needs no second render
+  // path (design.md D4).
+  let chip = tabBarEl.querySelector<HTMLDivElement>(":scope > .tab-scope") ?? undefined;
+  if (scope) {
+    if (!chip) {
+      chip = document.createElement("div");
+      chip.className = "tab-scope";
+      const name = document.createElement("span");
+      name.className = "tab-scope-name";
+      chip.appendChild(name);
+      const clear = document.createElement("button");
+      clear.className = "tab-scope-clear";
+      clear.type = "button";
+      clear.textContent = "\u00d7";
+      chip.appendChild(clear);
+    }
+    const name = chip.querySelector<HTMLElement>(".tab-scope-name");
+    if (name && name.textContent !== scope.label) {
+      name.textContent = scope.label;
+    }
+    // Said, not implied by a visual mark: the bar looks complete either way, so
+    // the only thing distinguishing a subset from the whole list is this sentence.
+    chip.title = `Showing only tabs in ${scope.label}`;
+    chip.setAttribute("aria-label", `Showing only tabs in ${scope.label}`);
+    const clear = chip.querySelector<HTMLButtonElement>(".tab-scope-clear");
+    if (clear) {
+      clear.setAttribute("aria-label", `Clear the ${scope.label} scope`);
+      // Rebound on every render, so a stale closure never outlives the scope it named.
+      clear.onclick = () => scope.onClear();
+    }
+  } else if (chip) {
+    chip.remove();
+    chip = undefined;
   }
 
   const orderedTabs: HTMLDivElement[] = [];
@@ -273,6 +311,12 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
   // Preserve nodes that are already in the right position. Avoiding even a
   // same-parent remove/reinsert is what keeps pointerdown/up targeting stable.
   let cursor = tabBarEl.firstElementChild;
+  if (chip) {
+    if (chip !== cursor) {
+      tabBarEl.insertBefore(chip, cursor);
+    }
+    cursor = chip.nextElementSibling;
+  }
   for (const tab of orderedTabs) {
     if (tab !== cursor) {
       tabBarEl.insertBefore(tab, cursor);
@@ -290,7 +334,7 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
   }
 
   // Toggle visibility: hide when <= 1 tab and unscoped, show when 2+ OR scoped.
-  if (terminals.size >= 2 || isScoped === true) {
+  if (terminals.size >= 2 || scope !== undefined) {
     tabBarEl.classList.add("visible");
   } else {
     tabBarEl.classList.remove("visible");

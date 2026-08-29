@@ -357,6 +357,25 @@ let tabBarScope: TabBarScopeCoordinator | null = null;
 
 // ─── Orchestration ──────────────────────────────────────────────────
 
+/**
+ * The chip the tab bar carries while this surface is filtered, or `undefined`. One
+ * value for both the chip and the bar's second reason to be visible, so a filter
+ * without its own escape hatch is not expressible.
+ */
+function scopeChip(): { label: string; onClear: () => void } | undefined {
+  const label = tabBarScope?.scopedLabel();
+  if (label === undefined || label === null) {
+    return undefined;
+  }
+  return {
+    label,
+    onClear: () => {
+      tabBarScope?.clear();
+      updateTabBar();
+    },
+  };
+}
+
 function updateTabBar(): void {
   const tabBarEl = document.getElementById("tab-bar");
   if (!tabBarEl) {
@@ -365,7 +384,7 @@ function updateTabBar(): void {
   renderTabBar({
     tabBarEl,
     terminals: buildTabBarData(store, tabBarScope?.effectiveScope()),
-    isScoped: tabBarScope?.isScoped() === true,
+    scope: scopeChip(),
     activeTabId: store.activeTabId,
     onTabClick: (tabId) => switchTab(tabId),
     onTabClose: (tabId) => vscode.postMessage({ type: "closeTab", tabId }),

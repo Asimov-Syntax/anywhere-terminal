@@ -216,6 +216,44 @@ export function getTerminalHtml(
       opacity: 1 !important;
       background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
     }
+    /* The scope chip: the only thing on the bar saying the list is a subset, so it
+       reads as a statement rather than as another tab (design.md D4). */
+    .tab-scope {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      height: 100%;
+      padding: 0 4px 0 8px;
+      flex-shrink: 0;
+      white-space: nowrap;
+      color: var(--vscode-badge-foreground, #fff);
+      background: var(--vscode-badge-background, rgba(255,255,255,0.12));
+      border-right: 1px solid var(--vscode-tab-border, transparent);
+    }
+    .tab-scope-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 14ch;
+    }
+    .tab-scope-clear {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      color: inherit;
+      background: transparent;
+      border: none;
+      border-radius: 3px;
+      font-size: 13px;
+      line-height: 1;
+      padding: 0;
+      flex-shrink: 0;
+    }
+    .tab-scope-clear:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+    }
     .tab-add {
       display: flex;
       align-items: center;

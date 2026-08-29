@@ -108,14 +108,14 @@
     2. Keep the persisted value untouched while off: turning the flag on re-applies it without a reload.
     3. Cover with the flag off: a persisted scope hiding no tab and rendering no chip; the unscoped visibility rule intact. Then the live flip in both directions, asserting the persisted scope survives being off and takes effect on.
 
-- [ ] 1_9 Name the scope on the bar and give it an escape
+- [x] 1_9 Name the scope on the bar and give it an escape — verified: pnpm exec vitest run 'src/webview/TabBar.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_8
   - **Refs**: specs/tab-bar-component/spec.md#a-scope-is-named-wherever-it-is-in-force, design.md#d4-the-chip-is-a-child-of-tab-bar-rendered-by-rendertabbar
   - **Acceptance**:
     - Outcome: a scoped bar names its worktree and offers a control that clears it
     - Verify: unit src/webview/TabBar.test.ts
   - **Plan**:
-    0. Files: `src/webview/TabBarUtils.ts`, `src/webview/TabBar.test.ts`, `src/providers/webviewHtml.ts`, `src/webview/main.ts`.
+    0. Files: `src/webview/TabBarUtils.ts`, `src/webview/TabBar.test.ts`, `src/providers/webviewHtml.ts`, `src/webview/main.ts`, `src/webview/tabBarScope.ts`, `src/webview/tabBarScope.test.ts`. The last two supply the chip's LABEL: the panel forbids a path on a row (worktree-panel-ui.md § 3.2), the coordinator already remembers what the tree last called the scoped worktree, and `main.ts` holds no tree of its own to ask.
     1. In `TabBarUtils.ts`, render the chip as the first child of `tabBarEl`, reconciled in place like the tabs are, carrying the scoped worktree's label and a clearing control with an accessible name.
     2. Extend the tail-trimming loop after the "+" button so it does not delete the chip, and remove the chip when no scope is set.
     3. Style the chip in `src/providers/webviewHtml.ts` beside the existing `#tab-bar` rules, using VS Code CSS variables only.

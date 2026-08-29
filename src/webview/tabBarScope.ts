@@ -80,6 +80,17 @@ export class TabBarScopeCoordinator {
     return this.workbench ? this.scope : null;
   }
 
+  /**
+   * What to call the scoped worktree, or `null` while unscoped or off. The branch
+   * the tree last showed, never the path — the panel forbids a path on a row and
+   * the chip is no different (worktree-panel-ui.md § 3.2). Falls back to the id
+   * only for a scope restored from persistence that no tree has confirmed yet.
+   */
+  scopedLabel(): string | null {
+    const worktreeId = this.scopedWorktreeId();
+    return worktreeId === null ? null : (this.scopeLabel ?? worktreeId);
+  }
+
   /** Whether this surface is filtered — the tab bar's second reason to be visible. */
   isScoped(): boolean {
     return this.scopedWorktreeId() !== null;

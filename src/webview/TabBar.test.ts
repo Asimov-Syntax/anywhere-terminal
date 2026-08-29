@@ -738,7 +738,7 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     // The chip is the only thing saying the list is a subset, so a scope filtering
     // down to one tab must not hide its own escape hatch (design.md D3).
     const one = new Map([["a", { name: "a" }]]);
-    for (const [size, isScoped, visible] of [
+    for (const [size, scoped, visible] of [
       [0, true, true],
       [1, true, true],
       [0, false, false],
@@ -746,10 +746,10 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     ] as const) {
       const deps = createMockDeps({
         terminals: size === 0 ? new Map() : one,
-        ...(isScoped ? { isScoped: true } : {}),
+        ...(scoped ? { scope: { label: "here", onClear: vi.fn() } } : {}),
       });
       renderTabBar(deps);
-      expect(deps.tabBarEl.classList.contains("visible"), `size ${size}, scoped ${isScoped}`).toBe(visible);
+      expect(deps.tabBarEl.classList.contains("visible"), `size ${size}, scoped ${scoped}`).toBe(visible);
     }
   });
 
@@ -762,5 +762,127 @@ describe("a scoped tab bar hides only what it can prove belongs elsewhere", () =
     });
     renderTabBar(deps);
     expect(deps.tabBarEl.classList.contains("visible")).toBe(true);
+  });
+});
+
+// ─── The chip that names the scope, and the escape it offers ─────────
+
+describe("a scope is named wherever it is in force", () => {
+  const chip = (el: HTMLElement) => el.querySelector<HTMLElement>(".tab-scope");
+  const clearBtn = (el: HTMLElement) => el.querySelector<HTMLButtonElement>(".tab-scope-clear");
+  const two = () =>
+    new Map([
+      ["a", { name: "a" }],
+      ["b", { name: "b" }],
+    ]);
+
+  it("carries a chip naming the worktree exactly while scoped, and none when not", () => {
+    const deps = createMockDeps({ terminals: two(), scope: { label: "feat/here", onClear: vi.fn() } });
+    renderTabBar(deps);
+    expect(chip(deps.tabBarEl)?.textContent).toContain("feat/here");
+    expect(chip(deps.tabBarEl)?.getAttribute("aria-label")).toBe("Showing only tabs in feat/here");
+
+    renderTabBar({ ...deps, scope: undefined });
+    expect(chip(deps.tabBarEl)).toBeNull();
+  });
+
+  it("gives the clearing control its own accessible name, and calls back exactly once", () => {
+    const onClear = vi.fn();
+    const deps = createMockDeps({ terminals: two(), scope: { label: "feat/here", onClear } });
+    renderTabBar(deps);
+
+    const clear = clearBtn(deps.tabBarEl);
+    expect(clear?.getAttribute("aria-label")).toBe("Clear the feat/here scope");
+    clear?.click();
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebinds the control on every render, so a stale scope is never the one cleared", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const deps = createMockDeps({ terminals: two(), scope: { label: "one", onClear: first } });
+    renderTabBar(deps);
+    renderTabBar({ ...deps, scope: { label: "two", onClear: second } });
+
+    clearBtn(deps.tabBarEl)?.click();
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the chip as the head of the bar, ahead of every tab and the + button", () => {
+    const deps = createMockDeps({ terminals: two(), scope: { label: "feat/here", onClear: vi.fn() } });
+    renderTabBar(deps);
+    expect([...deps.tabBarEl.children].map((c) => c.className.split(" ")[0])).toEqual([
+      "tab-scope",
+      "tab-item",
+      "tab-item",
+      "tab-add",
+    ]);
+  });
+
+  it("survives a re-render that changes no tab, node and all", () => {
+    // The tail-trimming loop after the "+" is what would otherwise delete it, and a
+    // rebuilt node would drop an in-flight pointer press the way a rebuilt tab does.
+    const deps = createMockDeps({ terminals: two(), scope: { label: "feat/here", onClear: vi.fn() } });
+    renderTabBar(deps);
+    const before = chip(deps.tabBarEl);
+    renderTabBar(deps);
+    expect(chip(deps.tabBarEl)).toBe(before);
+    expect(deps.tabBarEl.querySelectorAll(".tab-scope")).toHaveLength(1);
+  });
+
+  it("renames in place rather than rebuilding when the scope's label moves", () => {
+    const deps = createMockDeps({ terminals: two(), scope: { label: "one", onClear: vi.fn() } });
+    renderTabBar(deps);
+    const before = chip(deps.tabBarEl);
+    renderTabBar({ ...deps, scope: { label: "two", onClear: vi.fn() } });
+    expect(chip(deps.tabBarEl)).toBe(before);
+    expect(chip(deps.tabBarEl)?.textContent).toContain("two");
+  });
+
+  it("lives on the tab bar, not in the panel that set the scope", () => {
+    // Which is what keeps it reachable when the worktree panel is collapsed or
+    // hidden: the escape is not inside the thing that can be put away.
+    const panel = document.createElement("div");
+    panel.className = "vault-panel";
+    panel.hidden = true;
+    document.body.appendChild(panel);
+
+    const deps = createMockDeps({ terminals: two(), scope: { label: "feat/here", onClear: vi.fn() } });
+    renderTabBar(deps);
+    expect(chip(deps.tabBarEl)?.closest(".vault-panel")).toBeNull();
+    expect(deps.tabBarEl.contains(chip(deps.tabBarEl))).toBe(true);
+  });
+
+  it("presents every tab the scope was hiding once it is cleared", () => {
+    const store: TabBarDataSource = {
+      tabLayouts: new Map([
+        ["here", createLeaf("here")],
+        ["elsewhere", createLeaf("elsewhere")],
+      ]),
+      tabActivePaneIds: new Map(),
+      terminals: new Map([
+        ["here", { name: "here", exited: false, activityStatus: "idle" }],
+        ["elsewhere", { name: "elsewhere", exited: false, activityStatus: "idle" }],
+      ]) as never,
+    };
+    const scope: TabBarScope = {
+      worktreeId: "/wt/here",
+      attribution: new Map([
+        ["here", "/wt/here"],
+        ["elsewhere", "/wt/elsewhere"],
+      ]),
+    };
+
+    const deps = createMockDeps({
+      terminals: buildTabBarData(store, scope),
+      scope: { label: "here", onClear: vi.fn() },
+    });
+    renderTabBar(deps);
+    expect(deps.tabBarEl.querySelectorAll(".tab-item")).toHaveLength(1);
+
+    renderTabBar({ ...deps, terminals: buildTabBarData(store), scope: undefined });
+    expect(deps.tabBarEl.querySelectorAll(".tab-item")).toHaveLength(2);
+    expect(chip(deps.tabBarEl)).toBeNull();
   });
 });

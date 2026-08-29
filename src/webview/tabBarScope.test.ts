@@ -410,3 +410,22 @@ describe("every part of this is inert while the setting is off", () => {
     expect(scope.isScoped()).toBe(false);
   });
 });
+
+describe("what the chip is told to call the scope", () => {
+  it("names the branch the tree last showed, never the path", () => {
+    // The panel forbids a path on a row (worktree-panel-ui.md § 3.2) and the chip
+    // is no different — it is on screen for exactly the same reason.
+    const scope = coordinator({ store: storeOf({ worktreeScope: HERE }) });
+    scope.applyTree(treeOf(worktree({ id: HERE, branch: "feat/here" })));
+    expect(scope.scopedLabel()).toBe("feat/here");
+  });
+
+  it("falls back to the id for a persisted scope no tree has confirmed yet", () => {
+    expect(coordinator({ store: storeOf({ worktreeScope: HERE }) }).scopedLabel()).toBe(HERE);
+  });
+
+  it("names nothing while unscoped or while the workbench is off", () => {
+    expect(coordinator({ store: storeOf() }).scopedLabel()).toBeNull();
+    expect(coordinator({ store: storeOf({ worktreeScope: HERE }), workbench: false }).scopedLabel()).toBeNull();
+  });
+});
