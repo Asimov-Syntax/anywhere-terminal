@@ -61,7 +61,7 @@
     5. Delete the OFF fixture value from `src/webview/messaging/MessageRouter.test.ts`, which fills the required init field until step 4 removes it.
     6. Delete the rollout cases in `src/providers/TerminalViewProvider.worktree.test.ts` and `src/providers/TerminalEditorProvider.test.ts`, including the non-boolean coverage of the retired reader (design.md D6), and add one case per provider proving a configuration that still holds the key changes nothing.
 
-- [ ] 2_3 Stop describing a setting nothing reads
+- [x] 2_3 Stop describing a setting nothing reads — verified: bash -c '! grep -rq "anywhereTerminal.worktree.workbench" docs/' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#{a-setting-the-panel-no-longer-reads-decides-nothing} <!-- design.md D1 -->
   - **Acceptance**:

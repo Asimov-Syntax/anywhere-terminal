@@ -120,25 +120,14 @@ reads as a broken panel rather than a default.
 ### 2.3 Rollout
 
 The structural changes — the two-level toggle, the rail composition, the scoped tab bar, and the
-inspector drawer — ship behind `anywhereTerminal.worktree.workbench` (boolean, default `false`)
-until the composition is whole, then the default flips and the setting is retired. The row-level
-work in § 3.3, § 3.6, and § 7.2 is not gated: it improves the view the user already chose, and a
-truthfulness fix hidden behind an opt-in keeps lying by default.
+inspector drawer — shipped behind a boolean setting that defaulted off, until the composition was
+whole. It is: WT-010.1 through WT-010.5 are built and reviewed, and WT-010.6 retired the setting
+rather than defaulting it on, because a key that still declared a way back would have kept every
+OFF arm alive. There is no supported way to ask for the pre-workbench layout, and nothing reads a
+value a user's settings may still hold.
 
-While the setting is off, the shipped four-segment control and stacked layout stand unchanged.
-
-The setting is followed **at runtime**, not only at construction: the host pushes it on change and
-resends it once after initialization to close a race, and every participant — the tab-bar scope,
-the worktree controller, and the panel's own control composition — recomposes on both the enabling
-and the disabling edge. A resend carrying the value already held changes nothing. A participant
-that read the flag only when it was built would leave half the composition on the other side of the
-flip.
-
-The flip has to reach the **gate on every behaviour it owns**, not just the composition. The
-after-selection collapse below reads it live at selection time rather than from the value the
-webview was built with: a captured copy cannot see the change, so enabling it would never start
-collapsing and — the half that matters — disabling it would keep collapsing after the user turned
-it off, which is the one thing "the shipped layout stands unchanged while off" forbids.
+The row-level work in § 3.3, § 3.6, and § 7.2 was never gated: it improves the view the user
+already chose, and a truthfulness fix hidden behind an opt-in keeps lying by default.
 
 ### 2.4 Handing the room back after a selection
 
@@ -605,7 +594,6 @@ is four (§ 3.6).
 - [ ] The primary toggle switches the body; the grouping control renders only inside Sessions
 - [ ] `vaultView` and `vaultGroupMode` written by an older build keep their meaning with no migration
 - [ ] Persisted `vaultView` wins over the default rule; no persisted view + a repo → Worktrees; no repo → Sessions
-- [ ] With the workbench setting off, the shipped four-segment control and stacked layout are unchanged
 - [ ] One repo → no group header; two repos → two headers, workspace-folder order
 - [ ] Worktrees with agents sort ahead of agentless ones
 - [ ] Four agentless worktrees fold under one `N idle worktrees` row with an exact count; three do not fold
