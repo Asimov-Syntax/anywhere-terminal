@@ -7,10 +7,11 @@ import type {
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
-import { noRepoTree, singleRepoPresence, singleRepoTree, twoRepoTree, worktree } from "./worktreeFixtures";
+import { agentRow, noRepoTree, singleRepoPresence, singleRepoTree, twoRepoTree, worktree } from "./worktreeFixtures";
 import type {
   WorktreeActionResult,
   WorktreeAgentRow,
+  WorktreePresence,
   WorktreeCreateDefaults,
   WorktreeInfo,
   WorktreeRowActivation,
@@ -28,6 +29,7 @@ function mount(
     rowActivation?: WorktreeRowActivation;
     workbench?: boolean;
     onSelectWorktree?: (worktreeId: string | null) => void;
+    onAttribution?: (paneToWorktree: ReadonlyMap<string, string>) => void;
     showPreview?: (entryId: string) => boolean;
     activatePane?: (paneId: string) => boolean;
     /** Persisted before mount — the view reads it once, at construction. */
@@ -49,6 +51,7 @@ function mount(
       workbench: over.workbench ?? false,
     },
     onSelectWorktree: over.onSelectWorktree,
+    onAttribution: over.onAttribution,
     showPreview: over.showPreview,
     activatePane: over.activatePane,
     now: () => 1_000_000,
@@ -232,6 +235,94 @@ describe("the worktree the panel has selected", () => {
     controller.setWorkbench(true);
     expect(row("main")?.parentElement?.classList.contains("wt-card")).toBe(true);
     expect(row("main")?.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("which worktree each of this window's panes is in", () => {
+  const MAIN = "/Users/dev/Projects/ai-oss/anywhere-terminal";
+  const PANEL = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel";
+
+  /** A presence envelope built from `worktreeId → rows` alone. */
+  function presenceOf(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>, degraded = false): WorktreePresence {
+    return {
+      scannedAt: 1_000_000,
+      degradedSources: degraded ? [{ source: "registry", reason: "unreadable", since: 999_000 }] : [],
+      rowsByWorktreeId,
+    };
+  }
+
+  function pane(rowId: string, paneId: string | undefined, scope: "window" | "external" = "window"): WorktreeAgentRow {
+    const row = agentRow({ rowId, agent: "claude", activity: "running", title: rowId });
+    return { ...row, scope, ...(paneId === undefined ? {} : { paneId }) };
+  }
+
+  function capture(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>, degraded = false) {
+    const maps: ReadonlyMap<string, string>[] = [];
+    const { controller } = mount({ onAttribution: (m) => maps.push(m) });
+    controller.setVisible(true);
+    controller.handleTreeResponse({ ...response(), presence: presenceOf(rowsByWorktreeId, degraded) });
+    return { controller, maps };
+  }
+
+  it("places every window pane under the worktree that published it", () => {
+    const { maps } = capture({
+      [MAIN]: [pane("a", "pane-1"), pane("b", "pane-2")],
+      [PANEL]: [pane("c", "pane-3")],
+    });
+    expect([...(maps.at(-1) ?? [])]).toEqual([
+      ["pane-1", MAIN],
+      ["pane-2", MAIN],
+      ["pane-3", PANEL],
+    ]);
+  });
+
+  it("places nothing for a row this window does not host, or one with no pane", () => {
+    // An external row names an agent in another window and a row with no paneId
+    // names no tab at all — neither says where any of THIS surface's tabs belongs.
+    const { maps } = capture({
+      [MAIN]: [pane("ext", "pane-9", "external"), pane("nopane", undefined), pane("ok", "pane-1")],
+    });
+    expect([...(maps.at(-1) ?? [])]).toEqual([["pane-1", MAIN]]);
+  });
+
+  it("omits a pane two worktrees both claim", () => {
+    // Two answers to a question the evidence did not settle is not proof, so the
+    // pane is left unplaced rather than resolved by whichever row came last.
+    const { maps } = capture({
+      [MAIN]: [pane("a", "pane-1"), pane("b", "pane-2")],
+      [PANEL]: [pane("c", "pane-1")],
+    });
+    expect([...(maps.at(-1) ?? [])]).toEqual([["pane-2", MAIN]]);
+  });
+
+  it("keeps a pane two rows in the SAME worktree both name", () => {
+    const { maps } = capture({ [MAIN]: [pane("a", "pane-1"), pane("b", "pane-1")] });
+    expect([...(maps.at(-1) ?? [])]).toEqual([["pane-1", MAIN]]);
+  });
+
+  it("says nothing a second time when the attribution did not move", () => {
+    const rows = { [MAIN]: [pane("a", "pane-1")] };
+    const { controller, maps } = capture(rows);
+    expect(maps).toHaveLength(1);
+
+    // A fresh envelope, a later scan, the same placement: a presence push must not
+    // be a reason to redraw the tab bar on its own.
+    controller.handleTreeResponse({
+      ...response(),
+      presence: { ...presenceOf(rows), scannedAt: 2_000_000 },
+    });
+    expect(maps).toHaveLength(1);
+
+    controller.handleTreeResponse({ ...response(), presence: presenceOf({ [PANEL]: [pane("a", "pane-1")] }) });
+    expect(maps).toHaveLength(2);
+    expect([...(maps.at(-1) ?? [])]).toEqual([["pane-1", PANEL]]);
+  });
+
+  it("reports what a degraded envelope still carries", () => {
+    // A failed source weakens what a row says about its AGENT; it does not remove
+    // the row or move it between worktrees, so attribution stands (design.md D7).
+    const { maps } = capture({ [MAIN]: [pane("a", "pane-1")] }, true);
+    expect([...(maps.at(-1) ?? [])]).toEqual([["pane-1", MAIN]]);
   });
 });
 

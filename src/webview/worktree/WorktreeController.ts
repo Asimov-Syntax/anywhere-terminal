@@ -50,6 +50,11 @@ export interface WorktreeControllerDeps {
    */
   onSelectWorktree?: (worktreeId: string | null) => void;
   /**
+   * Which worktree each of this window's panes is running in. Emitted on every
+   * push whose attribution moved, and never otherwise.
+   */
+  onAttribution?: (paneToWorktree: ReadonlyMap<string, string>) => void;
+  /**
    * Open the session-preview overlay for a host-resolved entry. Returns false
    * when this surface holds no such entry — the host resolved against presence,
    * which can name a session this webview's own list does not have.
@@ -217,6 +222,8 @@ export class WorktreeController {
   private workbench: boolean;
   /** The worktree the panel has selected, or `null`. Never seeded. */
   private selectedWorktreeId: string | null = null;
+  /** The last attribution reported, keyed for comparison. `null` → none yet. */
+  private attributionKey: string | null = null;
   /** The host's resolved create destination, per repo. Only it can know one. */
   private readonly createDefaults = new Map<string, WorktreeCreateDefaultsMessage>();
   /** The repo a create was invoked for, waiting on its defaults. */
@@ -633,6 +640,57 @@ export class WorktreeController {
     this.frozenMenuTarget = null;
   }
 
+  /**
+   * Which worktree each of this window's panes is running in, read off the
+   * envelope that already carries presence — the only attribution path there is
+   * (design.md D2). An absent key means "not placed", which is why no sentinel
+   * value exists for it: a third value would invite a fourth outcome.
+   *
+   * A pane published under more than one worktree is OMITTED, not resolved by
+   * last-write-wins. Two answers to a question the evidence did not settle is not
+   * proof, and the consumer hides only what it can prove belongs elsewhere.
+   */
+  private buildAttribution(): Map<string, string> {
+    const map = new Map<string, string>();
+    const contested = new Set<string>();
+    for (const [worktreeId, rows] of Object.entries(this.presence?.rowsByWorktreeId ?? {})) {
+      for (const row of rows) {
+        // External rows name agents this window does not host — they carry no
+        // pane of ours and so say nothing about where any of our tabs belongs.
+        if (row.scope !== "window" || row.paneId === undefined) {
+          continue;
+        }
+        const held = map.get(row.paneId);
+        if (held !== undefined && held !== worktreeId) {
+          contested.add(row.paneId);
+        }
+        map.set(row.paneId, worktreeId);
+      }
+    }
+    for (const paneId of contested) {
+      map.delete(paneId);
+    }
+    return map;
+  }
+
+  /**
+   * Report attribution, but only where it moved. A presence scan lands on its own
+   * cadence and most of them carry the same placement — reporting each one would
+   * make every scan a reason to redraw the tab bar.
+   */
+  private emitAttribution(): void {
+    const next = this.buildAttribution();
+    const key = [...next]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([paneId, worktreeId]) => `${paneId}\u0000${worktreeId}`)
+      .join("\u0001");
+    if (key === this.attributionKey) {
+      return;
+    }
+    this.attributionKey = key;
+    this.deps.onAttribution?.(next);
+  }
+
   /** Which worktree the presence envelope published this row under. */
   private worktreeIdOf(row: WorktreeAgentRow): string | undefined {
     for (const [worktreeId, rows] of Object.entries(this.presence?.rowsByWorktreeId ?? {})) {
@@ -789,6 +847,7 @@ export class WorktreeController {
     this.reconcile(msg.tree);
     this.tree = msg.tree;
     this.presence = msg.presence;
+    this.emitAttribution();
     this.loading = false;
     this.refreshing = false;
     this.deps.onCreateAvailability?.(msg.tree.repos.length > 0);

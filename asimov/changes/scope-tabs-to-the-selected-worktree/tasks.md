@@ -31,7 +31,7 @@
     6. In `WorktreeController.ts` supply `onSelectWorktree` and hold the selected id.
     7. Cover: nothing selected on first render or after a push; selecting one then another leaving only the second; an expanded-but-unselected worktree carrying no selection treatment; the open-folder mark still on the worktrees that earn it; selection by each activation key; with the flag off, activation selecting nothing and the card unchanged.
 
-- [ ] 1_3 Publish pane attribution from the controller
+- [x] 1_3 Publish pane attribution from the controller — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/tab-bar-component/spec.md#a-scoped-tab-bar-hides-only-what-it-can-prove-belongs-elsewhere, design.md#d2-the-controller-publishes-attribution-the-tab-bar-consumes-it
   - **Acceptance**:
