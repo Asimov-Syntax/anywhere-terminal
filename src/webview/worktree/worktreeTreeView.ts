@@ -122,9 +122,16 @@ function confidenceMarker(tip: string): HTMLElement {
  * the PRESENTED state: an inference the glyph has already withdrawn must not be
  * re-asserted in present tense beside it.
  */
-export function confidenceHint(row: WorktreeAgentRow, activity: PresentedActivity, now?: number): string | undefined {
+export function confidenceHint(
+  row: WorktreeAgentRow,
+  activity: PresentedActivity,
+  // Required. An optional clock defaulting to `Date.now()` is the same crack S2
+  // closed in the dialog: the caller reads one moment, this reads another, and the
+  // elapsed figure stops describing the glyph beside it.
+  now: number,
+): string | undefined {
   if (activity === "running-unconfirmed") {
-    return unconfirmedHint(unchangedFor(row, now ?? Date.now()));
+    return unconfirmedHint(unchangedFor(row, now));
   }
   if (activity === "unknown") {
     // Names the FAILING source, the same word the stale affordance uses, rather
@@ -204,6 +211,8 @@ export interface WorktreeRowOptions {
   expanded?: boolean;
   /** "3 agents" — announced on the row, since the pill and header are not. */
   agentSummary?: string;
+  /** Why this row's glyph is qualified, when it is. */
+  confidenceTip?: string;
 }
 
 /**
@@ -219,7 +228,11 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   row.setAttribute("role", "treeitem");
   row.tabIndex = -1;
   row.dataset.worktreeId = info.id;
-  row.dataset.tip = worktreeTooltip(info);
+  // The qualification travels WITH the glyph. A collapsed worktree shows a state
+  // shape and a pill that assistive tech and the arrow keys both skip, so this row
+  // is the only thing a keyboard user reaches — and a `~`-worthy glyph here with no
+  // way to read why is the overstatement the ceiling exists to retract.
+  row.dataset.tip = opts.confidenceTip ? `${worktreeTooltip(info)}\n${opts.confidenceTip}` : worktreeTooltip(info);
   if (opts.hasAgents) {
     row.setAttribute("aria-expanded", opts.expanded ? "true" : "false");
     // The presence pill and the "N agents" header are hidden from assistive tech
@@ -456,7 +469,7 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // Keyed off the PRESENTED state: an inference the glyph has already withdrawn
   // must not be re-asserted in present tense beside it. When the state is
   // `unknown` the marker names the failure instead of the inference.
-  const confidenceTip = confidenceHint(row, activity, opts.now);
+  const confidenceTip = confidenceHint(row, activity, opts.now ?? Date.now());
   if (confidenceTip !== undefined) {
     title.append(document.createTextNode(" "), confidenceMarker(confidenceTip));
   }

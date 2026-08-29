@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { agentRow, worktree } from "./worktreeFixtures";
+import type { PresentedActivity } from "./worktreeFormat";
 import {
   agentCountLabel,
   ageTimestamp,
@@ -230,8 +231,24 @@ describe("the two presented orders", () => {
   // diverge in is MEMBERSHIP: a state missing from the vocabulary is dropped from
   // the collapsed pill, and one missing from the rank cannot win a worktree row.
   // Byte-identical today is exactly what makes that easy to miss.
-  it("hold the same members, whatever order each puts them in", () => {
-    expect([...PRESENTED_ORDER].sort()).toEqual([...PRESENTED_STRENGTH].sort());
+  // Against the UNION, not against each other: two arrays that agree can still
+  // both be missing the same member, and a state absent from the vocabulary is
+  // dropped from the collapsed pill while one absent from the rank can never win
+  // a worktree row. The Record makes adding a member to `PresentedActivity`
+  // fail to compile here until it is listed.
+  const ALL: Record<PresentedActivity, true> = {
+    waiting: true,
+    running: true,
+    "running-unconfirmed": true,
+    unknown: true,
+    idle: true,
+    exited: true,
+  };
+  const EVERY = Object.keys(ALL).sort();
+
+  it("each carry every presented state the type allows", () => {
+    expect([...PRESENTED_ORDER].sort()).toEqual(EVERY);
+    expect([...PRESENTED_STRENGTH].sort()).toEqual(EVERY);
   });
 });
 

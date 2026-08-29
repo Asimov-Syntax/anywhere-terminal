@@ -28,6 +28,7 @@ import {
 } from "./worktreeFormat";
 import { worktreeSignature } from "./worktreeRenderSignature";
 import {
+  confidenceHint,
   type NoticeSpec,
   renderAgentRow,
   renderAgentsHeader,
@@ -286,6 +287,12 @@ export class WorktreeView {
     if (this.ceilingTimer !== undefined) {
       clearTimeout(this.ceilingTimer);
       this.ceilingTimer = undefined;
+    }
+    // Guarding `setData` alone left `repaint()` — every interaction handler still
+    // bound to live DOM — free to plant one after disposal. This is the single
+    // place a timer is created, so it is the only place the check holds.
+    if (this.disposed) {
+      return;
     }
     const at = this.nextCeilingCrossing(now);
     if (at === undefined) {
@@ -710,11 +717,32 @@ export class WorktreeView {
     return this.uncapped.has(repo.repoId) ? visible : visible.slice(0, MAX_WORKTREES_PER_REPO);
   }
 
+  /**
+   * What the worktree row's own glyph is qualified BY: the hint belonging to the
+   * first agent row presented as the state the worktree is showing. Undefined when
+   * that state needs no qualification.
+   */
+  private strongestConfidenceTip(rows: readonly WorktreeAgentRow[], now: number): string | undefined {
+    const degraded = this.degradedSources();
+    const strongest = strongestActivity(rows, degraded, now);
+    if (strongest !== "running-unconfirmed" && strongest !== "unknown") {
+      return undefined;
+    }
+    const source = rows.find((r) => presentedActivity(r, degraded, now) === strongest);
+    return source ? confidenceHint(source, strongest, now) : undefined;
+  }
+
   /** Every worktree id currently on screen — the only rows a crossing can repaint. */
   private renderedWorktreeIds(): Set<string> {
     const tree = this.data.tree;
     const ids = new Set<string>();
-    if (!tree || !tree.gitAvailable || tree.repos.length === 0) {
+    // Exactly `render`'s own fall-through, and no more. `gitAvailable: false` with
+    // repos RETAINED is a stale tree, not an empty one — the cache keeps the last
+    // good listing and the view draws it under a notice. Excluding it here armed no
+    // crossing while git was down, so a visible row animated a withdrawn claim for
+    // as long as the outage lasted: the very failure this change exists to end,
+    // reintroduced by the fix that scoped the walk.
+    if (!tree || tree.repos.length === 0) {
       return ids;
     }
     const multiRepo = tree.repos.length > 1;
@@ -797,6 +825,11 @@ export class WorktreeView {
         info,
         {
           activity: strongestActivity(rows, this.degradedSources(), now),
+          // While collapsed this row IS the row: the pill below it is `aria-hidden`
+          // with `tabIndex = -1` and is not in the arrow-key set, so a keyboard
+          // user meets only this. A qualified glyph here without its qualification
+          // is the claim without the caveat.
+          confidenceTip: this.strongestConfidenceTip(rows, now),
           hasAgents: rows.length > 0,
           expanded,
           agentSummary: rows.length > 0 ? agentCountLabel(rows.length) : undefined,

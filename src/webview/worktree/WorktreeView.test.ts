@@ -362,7 +362,7 @@ describe("tree structure", () => {
     const shapeOf = (
       state: string,
       dropMotion: boolean,
-    ): { key: string; base: string; baseInked: boolean; motion: string } => {
+    ): { key: string; base: string; baseInked: boolean; motion: string[] } => {
       const baseDecls = declsOf(css, state);
       expect(baseDecls, `no rule for .wt-state--${state}`).not.toEqual([]);
       const layers: [string, string[]][] = [
@@ -377,8 +377,10 @@ describe("tree structure", () => {
       const keys = new Map<string, Map<string, string>>();
       let baseInked = false;
       // What the cascade ACTUALLY leaves running, as opposed to what the shape key
-      // deliberately ignores. Last write wins, exactly as the media query does.
-      let motion = "none";
+      // deliberately ignores. PER LAYER: one shared value let an `::after` the media
+      // query names cancel a base animation it never touched, which is a different
+      // element still moving.
+      const motion = new Map<string, string>();
       for (const [layer, decls] of layers) {
         const kept = new Map<string, string>();
         const edges = new Map<string, Edge>();
@@ -393,7 +395,9 @@ describe("tree structure", () => {
             // the assertion below is the only thing that can see it. Deleting this
             // outright, as this guard used to, made that assertion unaskable: an
             // animated `running-unconfirmed` stayed green through every pass.
-            motion = prop === "animation-name" || prop === "animation" ? value : motion;
+            if (prop === "animation-name" || prop === "animation") {
+              motion.set(layer, value);
+            }
             continue;
           }
           if (/^transition/.test(prop)) {
@@ -424,7 +428,8 @@ describe("tree structure", () => {
           .sort()
           .map(([k, v]) => `${k}:${v}`)
           .join(";");
-      return { key: `${render("")}|${render("after")}`, base: render(""), baseInked, motion };
+      const stillMoving = [...motion.entries()].filter(([, v]) => v !== "none").map(([l, v]) => `${l || "base"}:${v}`);
+      return { key: `${render("")}|${render("after")}`, base: render(""), baseInked, motion: stillMoving };
     };
 
     // Keyed by the presented vocabulary itself, so § 7.2's reserved sixth member
@@ -454,6 +459,18 @@ describe("tree structure", () => {
         const keys = shapes.map((sh) => (layer === "base" ? sh.base : sh.key));
         expect(new Set(keys).size, `two states share a ${layer} shape (${where})`).toBe(keys.length);
       }
+      if (!dropMotion) {
+        // Unconditional, because the invariant is: the state exists to be the one
+        // that does NOT move. Naming it in the reduced-motion block would satisfy
+        // the pass below while it still span for every viewer who never asked for
+        // reduced motion — the majority — so the claim has to hold before the media
+        // query is consulted at all.
+        const still = shapes[STATES.indexOf("running-unconfirmed")];
+        expect(
+          still?.motion ?? [],
+          "running-unconfirmed animates — it is the state whose whole purpose is to stand still",
+        ).toEqual([]);
+      }
       if (dropMotion) {
         // The distinctness passes above cannot ask this: they strip motion from the
         // key on purpose, so a state that animates and one that does not compare
@@ -466,7 +483,7 @@ describe("tree structure", () => {
           expect(
             shape.motion,
             `.wt-state--${STATES[i]} still animates under prefers-reduced-motion — the media query does not name it`,
-          ).toBe("none");
+          ).toEqual([]);
         }
       }
     }
@@ -726,6 +743,88 @@ describe("tree structure", () => {
     // keyboard user has to be able to get them.
     expect(row?.dataset.tip ?? "").toContain("Unchanged for at least");
     expect(row?.dataset.tip ?? "").toContain("not proof of a turn in progress");
+  });
+
+  it("still arms a crossing when git is unavailable but the listing was retained", () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = mount({ now: () => NOW });
+      const tree = singleRepoTree();
+      // The cache keeps the last good listing and lowers the flag; the view draws
+      // those repos under a "Git is unavailable" notice. A scheduler that treats
+      // this as an empty tree arms nothing, so every drawn row keeps animating a
+      // withdrawn claim for as long as the outage lasts.
+      const stale: WorktreeTree = { ...tree, gitAvailable: false };
+      view.setData({
+        tree: stale,
+        presence: {
+          scannedAt: NOW,
+          degradedSources: [],
+          rowsByWorktreeId: {
+            [PANEL_WT]: [
+              agentRow({
+                rowId: "outage",
+                agent: "claude",
+                activity: "running",
+                activitySource: "output",
+                title: "worker",
+                stateStartedAt: NOW - 4 * 60_000,
+              }),
+            ],
+          },
+        },
+      });
+      expect(rowFor(view, "feat/worktree-panel"), "the retained listing is drawn").toBeDefined();
+      expect(vi.getTimerCount(), "a drawn row must be able to cross").toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("plants no timer when an interaction fires after disposal", () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = mount({ now: () => NOW });
+      view.setData(populated());
+      view.dispose();
+      // Interaction handlers are still bound to DOM the view no longer owns.
+      // Guarding `setData` alone left this path free to arm one.
+      view.setQuery("main");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("qualifies the worktree row itself, the only row a collapsed worktree offers", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({
+      tree: singleRepoTree(),
+      presence: {
+        scannedAt: NOW,
+        degradedSources: [],
+        rowsByWorktreeId: {
+          // PANEL_WT is not in the workspace, so it is first seen COLLAPSED: its
+          // agent rows are never drawn and its pill is aria-hidden, tabIndex -1,
+          // and outside the arrow-key set. This row is all a keyboard user gets.
+          [PANEL_WT]: [
+            agentRow({
+              rowId: "stale",
+              agent: "claude",
+              activity: "running",
+              activitySource: "output",
+              title: "worker",
+              stateStartedAt: NOW - CONFIRMATION_CEILING_MS,
+            }),
+          ],
+        },
+      },
+    });
+    const wt = rowFor(view, "feat/worktree-panel");
+    expect(view.element.querySelectorAll(".wt-arow"), "fixture must be collapsed").toHaveLength(0);
+    expect(wt?.querySelector(".wt-state")?.className).toContain("running-unconfirmed");
+    expect(wt?.dataset.tip ?? "").toContain("Unchanged for at least");
+    expect(wt?.dataset.tip ?? "").toContain("not proof of a turn in progress");
   });
 
   it("performs no DOM work when a re-derivation moves nothing", () => {

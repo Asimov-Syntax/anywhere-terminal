@@ -64,3 +64,18 @@
     6. W1 — the refusal keeps refusing, but stops asserting a turn is in progress when every readable row is unconfirmed.
     7. W3 + S3 — one confidence-marker builder, and its hint reachable by keyboard, not only by pointer.
     8. S4 + S5 — assert the two presented orders hold the same membership; stop saying "over N minutes" at exactly N.
+
+- [ ] 2_2 Close the round-2 escapes, including the one the W2 fix opened
+  - **Deps**: 2_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-claim-that-outlives-its-evidence-stops-animating-without-being-told, an-inferred-running-claim-stops-animating-once-it-outlives-its-evidence, a-claim-that-outlived-its-evidence-says-how-long-and-on-what, one-reading-of-the-clock-serves-the-whole-cycle}
+  - **Acceptance**:
+    - Outcome: a drawn row arms a crossing whatever the tree's state, and the static shape is static unconditionally
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    0. Files: `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/worktreeTreeView.ts`, `src/webview/worktree/worktreeFormat.test.ts`, `src/webview/worktree/WorktreeRemoveDialog.ts`, `src/webview/worktree/WorktreeRemoveDialog.test.ts`.
+    1. B3 — `renderedWorktreeIds` mirrors an early-return `render` does not have: an unusable git with a retained listing still DRAWS its repos. Match the real fall-through, and pin it so the two cannot drift again.
+    2. B1 — the guard tracks motion across both layers and only under the reduced pass, so an `::after` the media query names cancels a base animation, and naming the state exempts it entirely. Track motion per layer and assert the static state is static in the unreduced pass too, since the registry statement is unconditional.
+    3. W6 — `repaint()` plants a timer after `dispose()`; the terminal flag has to sit where the timer is armed, not only at `setData`.
+    4. W7 — the new `vouched === 0` branch drops the unreadable rows the previous chain named.
+    5. W8 — a collapsed worktree draws a pill that is `aria-hidden` and unfocusable, so the required statement is unreachable; carry it on the worktree row's own tip.
+    6. S8 + S9 — pin both presented orders against the `PresentedActivity` union rather than each other; make `confidenceHint`'s clock required.

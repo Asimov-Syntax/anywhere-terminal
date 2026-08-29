@@ -231,9 +231,15 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
         } else if (vouched === 0) {
           // Readable, but every readable one has outlived its evidence. Saying "is
           // mid-turn" here would contradict the `~` hint on the very row below,
-          // which says a busy terminal is not proof of a turn in progress.
+          // which says a busy terminal is not proof of a turn in progress. The
+          // unreadable rows keep their clause: dropping them to soften the certainty
+          // would trade one omission for another.
           lead.textContent =
-            "An agent may be mid-turn in this worktree, and the activity here has outlived what can confirm it.";
+            unread === 0
+              ? "An agent may be mid-turn in this worktree, and the activity here has outlived what can confirm it."
+              : unread === 1
+                ? "An agent may be mid-turn in this worktree, the activity here has outlived what can confirm it, and another row cannot be read at all."
+                : "An agent may be mid-turn in this worktree, the activity here has outlived what can confirm it, and others here cannot be read at all.";
         } else if (unread === 0) {
           lead.textContent = "An agent is mid-turn in this worktree.";
         } else {

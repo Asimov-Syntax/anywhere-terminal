@@ -212,6 +212,29 @@ describe("remove worktree — refused (§ 12)", () => {
     expect(copy).not.toContain("An agent is mid-turn");
   });
 
+  it("keeps naming the unreadable rows while softening the certainty", () => {
+    const NOW = 1_700_000_000_000;
+    const stale = agentRow({
+      rowId: "stale",
+      agent: "claude",
+      activity: "running",
+      activitySource: "output",
+      title: "worker",
+      stateStartedAt: NOW - CONFIRMATION_CEILING_MS,
+    });
+    const dark = agentRow({ rowId: "dark", agent: "codex", activity: "running", activitySource: "hook" });
+    const { host } = open(refusedBlocker, {
+      agentRows: [stale, dark],
+      degradedSources: [{ source: "hook", reason: "endpoint down", since: NOW }],
+      now: NOW,
+    });
+    const copy = host.querySelector(".wt-refusebox")?.textContent ?? "";
+    // Softening the claim must not silently drop what the previous chain said.
+    expect(copy).toContain("may be mid-turn");
+    expect(copy).toContain("outlived what can confirm it");
+    expect(copy).toContain("cannot be read at all");
+  });
+
   it("shows only the rows that are actually mid-turn", () => {
     const idle = agentRow({ rowId: "idle", agent: "codex", activity: "idle", title: "zsh" });
     const { host } = open(refusedBlocker, { agentRows: [busy, idle] });

@@ -1,0 +1,257 @@
+/* worktree-workbench.css — proposed replacement for src/webview/worktree/worktreePanel.css.
+ *
+ * The Worktree view stops being a fourth vault segment and becomes the panel's
+ * primary rail: `Worktrees | Sessions` is the top-level toggle, and the terminal
+ * region is scoped by whichever worktree is selected. Only var(--vscode-*) tokens,
+ * so light and dark both work; every animation is off under reduced-motion.
+ *
+ * Density: worktree rows are one line, agent rows are two (identity + preview).
+ * Indentation steps 16px: repo 8 → worktree 8 → agent 24 → subagent 40.
+ */
+
+/* ── Fake VS Code window (mockup only — the shell already exists) ─────────── */
+.wk-window{display:flex;min-height:0;flex:1 1 auto;background:var(--vscode-editor-background);color:var(--vscode-foreground);font-size:13px}
+.wk-side{width:300px;flex:0 0 300px;min-width:0;display:flex;flex-direction:column;background:var(--vscode-sideBar-background);border-right:1px solid var(--vscode-panel-border)}
+.wk-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;background:var(--vscode-editor-background)}
+
+/* ── Panel head + primary toggle ─────────────────────────────────────────── */
+.wk-phead{display:flex;align-items:center;gap:6px;padding:7px 8px 6px 10px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--vscode-descriptionForeground)}
+.wk-phead-sp{flex:1 1 auto}
+.wk-iconbtn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:4px;background:none;color:var(--vscode-icon-foreground);cursor:pointer}
+.wk-iconbtn:hover{background:var(--vscode-toolbar-hoverBackground)}
+.wk-iconbtn:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-iconbtn.is-primary{color:var(--vscode-textLink-foreground)}
+/* Two views, not four segments: Sessions keeps its own Recent/Agent/Folder
+   grouping one level down, where it belongs. */
+.wk-toggle{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin:0 8px 6px;padding:2px;border-radius:5px;background:color-mix(in srgb,var(--vscode-foreground) 8%,transparent)}
+.wk-toggle button{display:flex;align-items:center;justify-content:center;gap:5px;padding:4px 6px;border:0;border-radius:4px;background:none;font:inherit;font-size:12px;color:var(--vscode-descriptionForeground);cursor:pointer}
+.wk-toggle button[aria-selected="true"]{background:var(--vscode-editorWidget-background);color:var(--vscode-foreground);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.wk-toggle button:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-subtabs{display:flex;gap:4px;padding:0 10px 6px}
+.wk-subtab{padding:2px 8px;border:0;border-radius:999px;background:none;font:inherit;font-size:11px;color:var(--vscode-descriptionForeground);cursor:pointer}
+.wk-subtab[aria-selected="true"]{background:color-mix(in srgb,var(--vscode-foreground) 12%,transparent);color:var(--vscode-foreground)}
+.wk-tree{flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;padding:1px 0 8px}
+
+/* ── State vocabulary: one table for worktree rows and agent rows ─────────
+   Shape carries the state; colour only reinforces it. */
+.wk-g{width:10px;height:10px;flex:0 0 auto;box-sizing:border-box;position:relative;justify-self:center}
+.wk-g--working{border-radius:50%;border:1.5px solid color-mix(in srgb,var(--vscode-charts-blue) 26%,transparent);border-top-color:var(--vscode-charts-blue);animation:wk-spin .9s linear infinite}
+/* Activity only INFERRED, and not confirmed for a while: the same ring, standing
+   still and broken, so it cannot be read as a live turn. */
+.wk-g--unconfirmed{border-radius:50%;border:1.5px solid color-mix(in srgb,var(--vscode-charts-blue) 40%,transparent);border-right-color:transparent;border-bottom-color:transparent;opacity:.75;cursor:help}
+.wk-g--waiting{border-radius:50%;background:var(--vscode-charts-yellow)}
+.wk-g--waiting::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:1px solid var(--vscode-charts-yellow);opacity:.55;animation:wk-pulse 1.6s ease-out infinite}
+.wk-g--done{width:9px;height:9px;border:0}
+.wk-g--done::after{content:"";position:absolute;left:0;top:0;width:8px;height:4px;border-left:1.5px solid var(--vscode-charts-green);border-bottom:1.5px solid var(--vscode-charts-green);transform:rotate(-45deg) translate(0,1px)}
+.wk-g--unknown{border-radius:50%;border:1.5px solid var(--vscode-descriptionForeground);opacity:.4}
+.wk-g--exited{border-radius:50%;border:1.5px solid var(--vscode-disabledForeground);opacity:.8}
+.wk-g--exited::after{content:"";position:absolute;left:-1px;right:-1px;top:50%;height:0;border-top:1.5px solid var(--vscode-disabledForeground)}
+@keyframes wk-spin{to{transform:rotate(360deg)}}
+@keyframes wk-pulse{0%{transform:scale(.7);opacity:.6}70%{transform:scale(1.25);opacity:0}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.wk-g--working{animation:none;border-right-color:transparent;border-bottom-color:transparent}.wk-g--waiting::after{animation:none;opacity:.35}.wk-skel span{animation:none}}
+.wk-legend{display:grid;grid-template-columns:14px minmax(0,1fr);gap:6px 8px;align-items:center;padding:6px 10px;font-size:11px;color:var(--vscode-descriptionForeground)}
+.wk-legend b{color:var(--vscode-foreground);font-weight:600}
+
+/* ── Repo group header ───────────────────────────────────────────────────── */
+.wk-repo{display:grid;grid-template-columns:auto minmax(0,auto) auto 1fr auto;gap:6px;align-items:center;padding:7px 8px 4px 10px;font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--vscode-foreground);cursor:pointer;user-select:none}
+.wk-repo:hover{background:var(--vscode-list-hoverBackground)}
+.wk-repo:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-repo-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wk-repo-count{font-weight:400;color:var(--vscode-descriptionForeground);opacity:.8}
+.wk-chev{display:inline-flex;color:var(--vscode-descriptionForeground);transition:transform 120ms ease-out}
+.is-collapsed>.wk-chev{transform:rotate(-90deg)}
+/* Create lives where the repo is named too — hover-revealed, keyboard-reachable. */
+.wk-repo .wk-iconbtn{width:18px;height:18px;opacity:0}
+.wk-repo:hover .wk-iconbtn,.wk-repo .wk-iconbtn:focus-visible{opacity:1}
+
+/* ── Worktree row ────────────────────────────────────────────────────────── */
+.wk-wt{margin:2px 6px;border-radius:5px}
+.wk-wt.is-selected{background:color-mix(in srgb,var(--vscode-charts-blue) 13%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--vscode-charts-blue) 42%,transparent)}
+.wk-row{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:7px;align-items:center;padding:4px 8px;border-radius:5px;cursor:pointer}
+.wk-row:hover{background:var(--vscode-list-hoverBackground)}
+.wk-row:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-glyph{width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;color:var(--vscode-descriptionForeground);flex:0 0 auto}
+.wk-branch{min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-foreground)}
+.wk-branch--sha{font-family:var(--vscode-editor-font-family,monospace);font-size:12px;color:var(--vscode-descriptionForeground)}
+.wk-row.is-missing .wk-branch{color:var(--vscode-descriptionForeground);text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--vscode-foreground) 35%,transparent)}
+.wk-marks{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+/* `open` is the only word left: it says this worktree is a workspace folder, and
+   several rows can carry it at once. Everything else is an icon + tooltip. */
+.wk-pill{padding:0 5px;border-radius:3px;font-size:10px;line-height:15px;white-space:nowrap;color:var(--vscode-charts-blue);background:color-mix(in srgb,var(--vscode-charts-blue) 15%,transparent)}
+.wk-ib{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:3px;color:var(--vscode-descriptionForeground);background:color-mix(in srgb,var(--vscode-foreground) 10%,transparent);cursor:help}
+.wk-ib svg{width:10px;height:10px}
+.wk-ib--warn{color:var(--vscode-editorWarning-foreground);background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 15%,transparent)}
+.wk-ib--error{color:var(--vscode-editorError-foreground);background:color-mix(in srgb,var(--vscode-editorError-foreground) 15%,transparent)}
+
+/* ── Agent rows: two lines, identity then preview ─────────────────────────── */
+.wk-arow{display:grid;grid-template-columns:12px 14px minmax(0,1fr) auto;grid-template-rows:auto auto;gap:1px 6px;align-items:center;padding:3px 8px 4px 24px;border-radius:4px;cursor:pointer}
+.wk-arow:hover{background:var(--vscode-list-hoverBackground)}
+.wk-arow:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-aicon{width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;color:var(--vscode-descriptionForeground)}
+.wk-aicon svg{width:12px;height:12px}
+.wk-aname{min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-foreground)}
+.wk-age{font-size:10px;color:var(--vscode-descriptionForeground);opacity:.75;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wk-aprev{grid-column:3/5;min-width:0;font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-descriptionForeground)}
+.wk-count{font-size:10px;color:var(--vscode-descriptionForeground);font-variant-numeric:tabular-nums}
+.wk-scope-tag{display:inline-flex;align-items:center;gap:3px;padding:0 4px;border-radius:3px;font-size:9px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;line-height:14px;white-space:nowrap;color:var(--vscode-descriptionForeground);background:color-mix(in srgb,var(--vscode-foreground) 10%,transparent)}
+.wk-scope-tag svg{width:9px;height:9px}
+
+/* Collapsed presence: grouped by state, fixed height whatever the agent count. */
+.wk-presence{display:inline-flex;align-items:center;gap:9px;margin:0 6px 4px 30px;padding:1px 7px;border:0;border-radius:999px;background:color-mix(in srgb,var(--vscode-foreground) 8%,transparent);cursor:pointer}
+.wk-presence:hover{background:color-mix(in srgb,var(--vscode-foreground) 13%,transparent)}
+.wk-presence:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.wk-pgroup{display:flex;align-items:center;gap:3px}
+.wk-pgroup-icons{display:flex;align-items:center;gap:2px}
+.wk-pgroup-icons span{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:3px;background:color-mix(in srgb,var(--vscode-foreground) 12%,transparent)}
+.wk-pgroup-icons svg{width:9px;height:9px}
+.wk-more{font-size:10px;color:var(--vscode-descriptionForeground);font-variant-numeric:tabular-nums}
+
+/* ── Idle tail: low-density rows, and a disclosure once there are four ────── */
+.wk-idle{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:7px;align-items:center;margin:0 6px;padding:2px 8px;border-radius:4px;font-size:12px;color:var(--vscode-descriptionForeground);opacity:.72;cursor:pointer}
+.wk-idle:hover{background:var(--vscode-list-hoverBackground);opacity:1}
+.wk-idle:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-idle .wk-branch{font-size:12px;color:inherit}
+.wk-disc{display:flex;align-items:center;gap:6px;width:calc(100% - 12px);margin:2px 6px;padding:3px 8px;border:0;border-radius:4px;background:none;font:inherit;font-size:11px;color:var(--vscode-descriptionForeground);cursor:pointer;text-align:left}
+.wk-disc:hover{background:var(--vscode-list-hoverBackground);color:var(--vscode-foreground)}
+.wk-disc:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-disc .wk-chev{transform:rotate(-90deg)}
+.wk-disc.is-open .wk-chev{transform:none}
+
+/* ── Subagent history — unchanged vocabulary, resynced to the new glyphs ──── */
+.wk-hist{margin:0 6px 3px 40px;padding-left:8px;border-left:1px solid color-mix(in srgb,var(--vscode-foreground) 14%,transparent)}
+.wk-hist-label{padding:2px 0 1px;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--vscode-descriptionForeground);opacity:.7}
+.wk-hist-note{padding:2px 0 3px;font-size:11px;font-style:italic;color:var(--vscode-descriptionForeground);opacity:.85}
+.wk-srow{display:grid;grid-template-columns:11px minmax(0,1fr) 30px;gap:6px;align-items:center;padding:1px 4px 1px 0;border-radius:3px;font-size:12px;color:var(--vscode-descriptionForeground);cursor:pointer}
+.wk-srow:hover{background:var(--vscode-list-hoverBackground)}
+.wk-srow:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-stext{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wk-out{display:inline-flex;align-items:center;justify-content:center;width:11px;font-size:9px;opacity:.85}
+.wk-out--failed{color:color-mix(in srgb,var(--vscode-editorError-foreground) 80%,var(--vscode-descriptionForeground))}
+
+/* ── Notices ─────────────────────────────────────────────────────────────── */
+.wk-notice{display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:6px;align-items:start;margin:3px 6px;padding:5px 7px;border-radius:4px;font-size:11px;line-height:1.45;color:var(--vscode-descriptionForeground);background:color-mix(in srgb,var(--vscode-foreground) 7%,transparent);border-left:2px solid color-mix(in srgb,var(--vscode-foreground) 30%,transparent)}
+.wk-notice svg{width:12px;height:12px;margin-top:2px}
+.wk-notice b{color:var(--vscode-foreground);font-weight:600}
+.wk-notice--warn{border-left-color:var(--vscode-editorWarning-foreground);background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 10%,transparent)}
+.wk-notice--warn svg{color:var(--vscode-editorWarning-foreground)}
+.wk-notice--error{border-left-color:var(--vscode-editorError-foreground);background:color-mix(in srgb,var(--vscode-editorError-foreground) 10%,transparent)}
+.wk-notice--error svg{color:var(--vscode-editorError-foreground)}
+.wk-reason{display:block;margin-top:2px;font-family:var(--vscode-editor-font-family,monospace);font-size:10px;white-space:pre-wrap;overflow-wrap:anywhere;opacity:.9}
+.wk-link{background:none;border:0;padding:0;font:inherit;color:var(--vscode-textLink-foreground);cursor:pointer}
+.wk-link:hover{text-decoration:underline}
+.wk-dismiss{background:none;border:0;padding:0 2px;color:var(--vscode-descriptionForeground);cursor:pointer;line-height:1}
+.wk-dismiss:hover{color:var(--vscode-foreground)}
+
+/* ── Empty states ────────────────────────────────────────────────────────── */
+.wk-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:26px 18px;text-align:center}
+.wk-empty-icon{color:var(--vscode-descriptionForeground);opacity:.6}
+.wk-empty-title{font-size:12px;font-weight:600;color:var(--vscode-foreground)}
+.wk-empty-body{font-size:11px;line-height:1.5;color:var(--vscode-descriptionForeground);text-wrap:pretty}
+
+/* ── Inspector: a drawer under the tree, not a replacement for it ─────────── */
+.wk-insp{flex:0 0 auto;max-height:52%;overflow-y:auto;border-top:1px solid var(--vscode-panel-border);background:color-mix(in srgb,var(--vscode-foreground) 4%,transparent)}
+.wk-insp-head{display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:7px;align-items:center;padding:8px 8px 2px 10px}
+.wk-insp-branch{min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--vscode-foreground)}
+.wk-insp-path{padding:0 10px 7px 29px;font-family:var(--vscode-editor-font-family,monospace);font-size:10px;line-height:1.4;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere;cursor:help}
+.wk-acts{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 8px}
+.wk-act{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid color-mix(in srgb,var(--vscode-foreground) 16%,transparent);border-radius:4px;background:none;font:inherit;font-size:11px;color:var(--vscode-foreground);cursor:pointer}
+.wk-act:hover{background:var(--vscode-list-hoverBackground)}
+.wk-act:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.wk-act svg{width:11px;height:11px;color:var(--vscode-descriptionForeground)}
+.wk-act--danger{color:var(--vscode-editorError-foreground);border-color:color-mix(in srgb,var(--vscode-editorError-foreground) 40%,transparent)}
+.wk-act--danger svg{color:inherit}
+.wk-sec{padding:5px 10px 2px;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--vscode-descriptionForeground);opacity:.7}
+.wk-insp .wk-arow{padding-left:10px;grid-template-columns:12px 14px minmax(0,1fr) auto}
+.wk-insp .wk-hist{margin-left:26px}
+
+/* ── Terminal region: tab bar carries the scope ──────────────────────────── */
+.wk-tabbar{display:flex;align-items:center;gap:4px;min-height:35px;padding:0 6px;background:var(--vscode-editorWidget-background);border-bottom:1px solid var(--vscode-panel-border)}
+.wk-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 4px 2px 7px;border-radius:999px;font-size:11px;color:var(--vscode-charts-blue);background:color-mix(in srgb,var(--vscode-charts-blue) 15%,transparent);white-space:nowrap}
+.wk-chip svg{width:11px;height:11px}
+.wk-chip-all{padding:1px 7px;border:0;border-radius:999px;background:color-mix(in srgb,var(--vscode-charts-blue) 22%,transparent);font:inherit;font-size:10px;color:inherit;cursor:pointer}
+.wk-chip-all:hover{background:color-mix(in srgb,var(--vscode-charts-blue) 34%,transparent)}
+.wk-chip-all:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.wk-tabs{display:flex;align-items:stretch;gap:1px;min-width:0;overflow:hidden}
+.wk-tab{display:flex;align-items:center;gap:6px;max-width:210px;padding:0 10px;border:0;border-bottom:1px solid transparent;background:none;font:inherit;font-size:12px;color:var(--vscode-descriptionForeground);cursor:pointer;white-space:nowrap}
+.wk-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.wk-tab:hover{background:var(--vscode-list-hoverBackground)}
+.wk-tab[aria-selected="true"]{background:var(--vscode-editor-background);color:var(--vscode-foreground);border-bottom-color:var(--vscode-charts-blue)}
+.wk-tab:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-termbody{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:10px 14px;font-family:var(--vscode-editor-font-family,monospace);font-size:12px;line-height:1.6;color:var(--vscode-descriptionForeground)}
+.wk-termbody .dim{opacity:.55}
+.wk-cursor{display:inline-block;width:7px;height:14px;vertical-align:-3px;background:var(--vscode-charts-blue);opacity:.8}
+/* A selected worktree with no panes: the two things worth doing, offered large. */
+.wk-termempty{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.wk-termempty-title{font-size:14px;color:var(--vscode-foreground)}
+.wk-termempty-body{max-width:420px;font-size:12px;line-height:1.55;text-align:center;text-wrap:pretty}
+.wk-ctas{display:flex;gap:10px}
+.wk-cta{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border:1px solid var(--vscode-widget-border);border-radius:6px;background:var(--vscode-editorWidget-background);font:inherit;font-size:12px;color:var(--vscode-foreground);cursor:pointer}
+.wk-cta:hover{background:var(--vscode-list-hoverBackground)}
+.wk-cta:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}
+.wk-cta--primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-color:transparent}
+.wk-cta--primary:hover{background:var(--vscode-button-hoverBackground)}
+.wk-cta svg{width:14px;height:14px}
+
+/* ── Dialogs ─────────────────────────────────────────────────────────────── */
+.wk-scrim{position:absolute;inset:0;z-index:900;background:rgba(0,0,0,.5)}
+.wk-dialog{position:absolute;z-index:1000;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(460px,calc(100% - 24px));max-height:calc(100% - 24px);overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:14px;font-size:12px;background:var(--vscode-editorWidget-background);color:var(--vscode-foreground);border:1px solid var(--vscode-widget-border);border-radius:6px;box-shadow:0 16px 40px rgba(0,0,0,.55)}
+.wk-dtitle{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;font-weight:600}
+.wk-dsubject{font-weight:400;color:var(--vscode-descriptionForeground)}
+.wk-dtitle .wk-dismiss{margin-left:auto}
+.wk-dpath{margin:0;font-family:var(--vscode-editor-font-family,monospace);font-size:11px;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere}
+.wk-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wk-flabel{font-size:11px;color:var(--vscode-descriptionForeground)}
+.wk-flabel-opt{opacity:.7}
+.wk-input,.wk-select{box-sizing:border-box;width:100%;height:28px;padding:3px 8px;border:1px solid var(--vscode-input-border,transparent);border-radius:4px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font:inherit;font-size:12px;outline:none}
+.wk-input--lead{height:34px;font-size:14px}
+.wk-input--mono{font-family:var(--vscode-editor-font-family,monospace);font-size:11px}
+.wk-input:focus,.wk-select:focus{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-input.is-invalid{border-color:var(--vscode-inputValidation-errorBorder)}
+.wk-textarea{box-sizing:border-box;width:100%;min-height:46px;resize:vertical;padding:5px 8px;border:1px solid var(--vscode-input-border,transparent);border-radius:4px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font:inherit;font-size:12px;outline:none}
+/* The destination is one shortened line; the full path is the tooltip. */
+.wk-dest{display:flex;align-items:center;gap:6px;font-family:var(--vscode-editor-font-family,monospace);font-size:11px;color:var(--vscode-descriptionForeground);cursor:help}
+.wk-dest b{color:var(--vscode-foreground);font-weight:600}
+.wk-collide{font-size:10px;color:var(--vscode-editorWarning-foreground)}
+.wk-ferror{font-size:10px;line-height:1.4;color:var(--vscode-editorError-foreground)}
+.wk-fhint{font-size:10px;line-height:1.4;color:var(--vscode-descriptionForeground)}
+.wk-seg{display:flex;gap:2px;padding:2px;border-radius:5px;background:color-mix(in srgb,var(--vscode-foreground) 8%,transparent)}
+.wk-seg button{flex:1 1 auto;padding:4px 8px;border:0;border-radius:4px;background:none;font:inherit;font-size:11px;color:var(--vscode-descriptionForeground);cursor:pointer}
+.wk-seg button[aria-selected="true"]{background:var(--vscode-editorWidget-background);color:var(--vscode-foreground);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.wk-seg button:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.wk-cols{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.wk-agentbox{display:flex;flex-direction:column;gap:8px;padding:9px;border-radius:5px;border:1px solid color-mix(in srgb,var(--vscode-foreground) 12%,transparent);background:color-mix(in srgb,var(--vscode-foreground) 4%,transparent)}
+.wk-danger-tag{margin:0 4px;padding:0 4px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--vscode-editorWarning-foreground);background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 16%,transparent)}
+.wk-opt-danger{color:var(--vscode-editorWarning-foreground)}
+/* Advanced holds what most creates never touch: base ref, existing branch, detached. */
+.wk-adv{border-top:1px solid color-mix(in srgb,var(--vscode-foreground) 12%,transparent);padding-top:8px}
+.wk-adv-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:2px 0;border:0;background:none;font:inherit;font-size:11px;color:var(--vscode-descriptionForeground);cursor:pointer;text-align:left}
+.wk-adv-toggle:hover{color:var(--vscode-foreground)}
+.wk-adv-toggle:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.wk-adv-toggle .wk-chev{transform:rotate(-90deg)}
+.wk-adv.is-open .wk-adv-toggle .wk-chev{transform:none}
+.wk-adv-body{display:flex;flex-direction:column;gap:8px;padding-top:8px}
+.wk-blockers{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.wk-blockers li{display:grid;grid-template-columns:12px minmax(0,1fr);gap:7px;align-items:start;font-size:11px;line-height:1.45}
+.wk-blockers svg{width:11px;height:11px;margin-top:2px;color:var(--vscode-descriptionForeground)}
+.wk-blockers b{color:var(--vscode-foreground);font-weight:600}
+.wk-warnbox,.wk-refusebox{padding:7px 9px;border-radius:4px;font-size:11px;line-height:1.5}
+.wk-warnbox{border-left:2px solid var(--vscode-editorWarning-foreground);background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 10%,transparent)}
+.wk-refusebox{border-left:2px solid var(--vscode-editorError-foreground);background:color-mix(in srgb,var(--vscode-editorError-foreground) 10%,transparent)}
+.wk-warnbox b,.wk-refusebox b{color:var(--vscode-foreground);font-weight:600}
+.wk-dacts{display:flex;align-items:center;gap:8px;margin-top:2px}
+.wk-btn{padding:5px 12px;border:1px solid transparent;border-radius:4px;font:inherit;font-size:12px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+.wk-btn:hover{background:var(--vscode-button-secondaryHoverBackground)}
+.wk-btn:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.wk-btn:disabled{opacity:.5;cursor:default}
+.wk-btn--primary{margin-left:auto;background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
+.wk-btn--primary:hover{background:var(--vscode-button-hoverBackground)}
+.wk-btn--danger{margin-left:auto;background:color-mix(in srgb,var(--vscode-editorError-foreground) 78%,#000);color:#fff}
+.wk-btn--danger:hover{background:var(--vscode-editorError-foreground)}
+.wk-kbd{margin-left:6px;font-family:var(--vscode-editor-font-family,monospace);font-size:10px;opacity:.65}
+
+/* ── Skeleton ────────────────────────────────────────────────────────────── */
+.wk-skel{display:grid;grid-template-columns:14px minmax(0,1fr);gap:7px;align-items:center;margin:0 6px;padding:4px 8px}
+.wk-skel span{height:9px;border-radius:3px;background:color-mix(in srgb,var(--vscode-foreground) 12%,transparent);animation:wk-shim 1.5s ease-in-out infinite}
+.wk-skel span:first-child{width:10px;height:10px;border-radius:3px;justify-self:center}
+.wk-skel--agent{padding-left:24px;grid-template-columns:10px minmax(0,1fr)}
+@keyframes wk-shim{0%,100%{opacity:.5}50%{opacity:.95}}

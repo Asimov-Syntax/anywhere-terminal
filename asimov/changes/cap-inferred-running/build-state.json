@@ -1,6 +1,21 @@
 {
   "change": "cap-inferred-running",
-  "leases": [],
+  "leases": [
+    {
+      "task": "2_2",
+      "id": "ec762c32-5b6a-477a-a857-33ad6f06850e",
+      "paths": [
+        "src/webview/worktree/WorktreeView.ts",
+        "src/webview/worktree/WorktreeView.test.ts",
+        "src/webview/worktree/worktreeTreeView.ts",
+        "src/webview/worktree/worktreeFormat.test.ts",
+        "src/webview/worktree/WorktreeRemoveDialog.ts",
+        "src/webview/worktree/WorktreeRemoveDialog.test.ts"
+      ],
+      "at": 1787984680470,
+      "stamp": "856f7e6147a61236bc76e3600f11bed48e6f7e4a"
+    }
+  ],
   "attempts": {},
   "locked": [],
   "reads": 0
