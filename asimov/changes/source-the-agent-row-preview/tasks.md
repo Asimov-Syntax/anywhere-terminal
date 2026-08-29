@@ -15,7 +15,7 @@
     5. An unopenable or malformed file is `null`, never a throw — the caller's whole failure story is the absence of a preview.
     6. Cover: the last message returned from a file whose head would answer differently; a file larger than one read window answered without reading its head; each format's own usable-record rule, including a record the OTHER format would have accepted; a record spanning a window boundary still found after growth; a record past the cap answered `null` rather than read on; a multi-line and over-long message bounded before it is returned; a marker-only line surviving as itself; a corrupt tail line skipped rather than fatal; an absent file answered `null`.
 
-- [ ] 1_2 Serve previews from one owner that knows when not to look
+- [x] 1_2 Serve previews from one owner that knows when not to look — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-agent-presence/spec.md#a-scan-that-finds-no-new-activity-reads-no-transcript · design.md#{d1a-coverage-is-file-backed-transcripts-only-and-that-is-a-stated-limit, d2-the-preview-service-owns-the-stamp-the-cache-and-the-rate}
   - **Acceptance**:
