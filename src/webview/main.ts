@@ -43,6 +43,7 @@ import { SplitTreeRenderer } from "./split/SplitTreeRenderer";
 import { resolveTabDisplayPane } from "./split/tabDisplay";
 import { WebviewStateStore } from "./state/WebviewStateStore";
 import { buildTabBarData, handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
+import { TabBarScopeCoordinator } from "./tabBarScope";
 import { hideRenameOverlay, repositionRenameOverlay, showRenameOverlay } from "./tabRenameOverlay";
 import { hasCurrentCursorApproval, hasStrictCursorTitle } from "./terminal/CursorApprovalDetector";
 import { createPaneEvidenceReporter } from "./terminal/paneEvidenceReporter";
@@ -349,6 +350,10 @@ let fileTreeController: FileTreeController | null = null;
 // `vaultSessionsResponse`. See: webview/vault/VaultPanel.ts.
 let vaultPanel: VaultPanel | null = null;
 let worktreeController: WorktreeController | null = null;
+// This surface's tab-bar scope — which worktree it is filtered to, and whether a
+// push moved anything the bar draws. Constructed on init beside the controller
+// that feeds it. See: webview/tabBarScope.ts and design.md D8.
+let tabBarScope: TabBarScopeCoordinator | null = null;
 
 // ─── Orchestration ──────────────────────────────────────────────────
 
@@ -359,7 +364,8 @@ function updateTabBar(): void {
   }
   renderTabBar({
     tabBarEl,
-    terminals: buildTabBarData(store),
+    terminals: buildTabBarData(store, tabBarScope?.effectiveScope()),
+    isScoped: tabBarScope?.isScoped() === true,
     activeTabId: store.activeTabId,
     onTabClick: (tabId) => switchTab(tabId),
     onTabClose: (tabId) => vscode.postMessage({ type: "closeTab", tabId }),
@@ -797,7 +803,14 @@ const routeMessage = createMessageRouter({
     // (it stays on the native paste path); nothing to restore.
   },
   onWorktreeTreeResponse(msg) {
+    // The coordinator sees the tree FIRST. The panel's own pruning clears the
+    // selection when a worktree leaves, which reaches the coordinator as a plain
+    // clear — and a scope already cleared has nothing left to report.
+    tabBarScope?.applyTree(msg.tree);
     worktreeController?.handleTreeResponse(msg);
+    if (tabBarScope?.shouldRender(store.tabLayouts) === true) {
+      updateTabBar();
+    }
   },
   onWorktreeRowActivation(msg) {
     worktreeController?.setRowActivation(msg.activation);
@@ -1038,6 +1051,12 @@ function handleInit(msg: InitMessage): void {
   if (vaultHost) {
     // Worktree segment — the window's own tree, pushed by the host and gated on
     // this surface declaring the view visible. See: worktree/WorktreeController.ts.
+    // Before the controller: its first push already carries a tree, and the
+    // coordinator has to be holding the persisted scope when that arrives.
+    tabBarScope = new TabBarScopeCoordinator({
+      store,
+      onScopeDropped: (worktreeId, label) => worktreeController?.reportScopeCleared(worktreeId, label),
+    });
     worktreeController = WorktreeController.mount({
       host: vaultHost,
       postMessage: (m) => vscode.postMessage(m),
@@ -1054,6 +1073,11 @@ function handleInit(msg: InitMessage): void {
       // The toolbar create is absent, not inert, when there is nothing to create
       // in — and only the tree knows that.
       onCreateAvailability: (available) => vaultPanel?.setCreateWorktreeAvailable(available),
+      onSelectWorktree: (worktreeId) => {
+        tabBarScope?.select(worktreeId);
+        updateTabBar();
+      },
+      onAttribution: (map) => tabBarScope?.setAttribution(map),
     });
     vaultPanel = new VaultPanel({
       host: vaultHost,

@@ -11,9 +11,9 @@ import { agentRow, noRepoTree, singleRepoPresence, singleRepoTree, twoRepoTree, 
 import type {
   WorktreeActionResult,
   WorktreeAgentRow,
-  WorktreePresence,
   WorktreeCreateDefaults,
   WorktreeInfo,
+  WorktreePresence,
   WorktreeRowActivation,
 } from "./worktreeViewTypes";
 
@@ -323,6 +323,27 @@ describe("which worktree each of this window's panes is in", () => {
     // the row or move it between worktrees, so attribution stands (design.md D7).
     const { maps } = capture({ [MAIN]: [pane("a", "pane-1")] }, true);
     expect([...(maps.at(-1) ?? [])]).toEqual([["pane-1", MAIN]]);
+  });
+
+  it("says the scope was cleared, through the panel's own notice list", () => {
+    // One place notices appear. A dropped scope is not a failed mutation, so it
+    // reads as a statement rather than an error, and it names the worktree the
+    // scope had — which by then is no longer in the tree to name itself.
+    const { controller } = mount({ workbench: true });
+    controller.setVisible(true);
+    controller.handleTreeResponse(response());
+
+    controller.reportScopeCleared("/wt/gone", "feat/gone");
+    const notice = [...document.querySelectorAll(".wt-notice")].find((n) => n.textContent?.includes("Scope cleared"));
+    expect(notice).toBeDefined();
+    expect(notice?.textContent).toContain("feat/gone");
+    expect(notice?.classList.contains("wt-notice--error")).toBe(false);
+
+    // A second drop of the same worktree replaces the first rather than stacking.
+    controller.reportScopeCleared("/wt/gone", "feat/gone");
+    expect(
+      [...document.querySelectorAll(".wt-notice")].filter((n) => n.textContent?.includes("Scope cleared")),
+    ).toHaveLength(1);
   });
 });
 

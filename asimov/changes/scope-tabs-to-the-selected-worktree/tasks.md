@@ -57,18 +57,18 @@
     3. Add an `isScoped` input to `RenderTabBarDeps` and make visibility `terminals.size >= 2 || isScoped` — a second independent predicate, not a reinterpretation of the count.
     4. Cover: the three attribution outcomes; a split with one in-scope leaf and one elsewhere; a split with one unplaced leaf and the rest elsewhere; a split with every leaf elsewhere; an empty map hiding nothing; unscoped visibility unchanged at zero, one and two tabs; a scoped one-tab bar still presented.
 
-- [ ] 1_5 Own the scope in a coordinator, and persist it
+- [x] 1_5 Own the scope in a coordinator, and persist it — verified: pnpm exec vitest run 'src/webview/tabBarScope.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_4
   - **Refs**: specs/tab-bar-component/spec.md#{a-surface-s-scope-survives-a-reload-and-never-outlives-its-worktree, a-scope-that-loses-its-worktree-is-dropped-and-said}, design.md#{d1-scope-is-webview-local-state-on-the-surface-persisted-through-the-existing-store, d7-scope-is-re-resolved-on-every-tree-push-from-the-tree-alone, d8-the-tab-bar-gets-its-own-signature-in-its-own-coordinator, d9-failure-surface-the-persisted-surface-state}
   - **Acceptance**:
     - Outcome: scope survives a reload and never names a worktree the tree has lost
     - Verify: unit src/webview/tabBarScope.test.ts
   - **Plan**:
-    0. Files: `src/webview/tabBarScope.ts`, `src/webview/tabBarScope.test.ts`, `src/webview/state/WebviewState.ts`, `src/webview/main.ts`.
+    0. Files: `src/webview/tabBarScope.ts`, `src/webview/tabBarScope.test.ts`, `src/webview/state/WebviewState.ts`, `src/webview/main.ts`, `src/webview/worktree/worktreeViewTypes.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`. The last five are step 4's "said": D7 sends it through the panel's existing action-result surface, which is a `WorktreeActionResult` — so the kind, its notice copy, and the controller entry point the coordinator's callback reaches all have to exist.
     1. Add `worktreeScope?: string` to `WebviewState` in `src/webview/state/WebviewState.ts`, documented as absent-means-unscoped, beside `worktreeCollapsed`.
     2. Create `src/webview/tabBarScope.ts` holding the effective scope, the attribution map, and a signature over exactly the scope, the map entries sorted by pane id, and tab-layout membership. Expose `shouldRender()` comparing that signature, and a `seed`/`set`/`clear` surface taking injected persistence so nothing imports `main.ts`.
     3. Seed the scope from the store on construction, rejecting a value that is not a string; write every change back with `store.updateState`, preserving unrelated keys.
-    4. Re-resolve on each tree push: a scoped id absent from the tree clears it, a `missing` one keeps it. Report a clear through the panel's existing action-result surface, naming the worktree the scope had.
+    4. Re-resolve on each tree push: a scoped id absent from the tree clears it, a `missing` one keeps it. Report a clear through the panel's existing action-result surface, naming the worktree the scope had — a `scope` action kind with its own notice branch, since a dropped scope did nothing TO a worktree and must not read as a failed mutation. The coordinator must see the tree BEFORE the controller does: the panel's own pruning clears the selection when a worktree leaves, and a scope already cleared has nothing left to say.
     5. Reduce `src/webview/main.ts` to wiring: construct the coordinator, feed it the controller's attribution and selection, and call `renderTabBar` only when `shouldRender()` says so.
     6. Cover: reload restoring a present scope; absent, non-string, and unknown-id values all landing unscoped; removal and prune clearing with a stated reason; `missing` keeping it; unrelated state keys preserved across a write; a thrown `setState` propagating rather than being swallowed.
 

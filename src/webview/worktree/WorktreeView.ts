@@ -1327,6 +1327,18 @@ export class WorktreeView {
     const about = name ?? result.orphanedLabel;
     const withAbout = (body?: string): string | undefined =>
       about === undefined ? body : body === undefined ? about : `${about} — ${body}`;
+    if (result.action === "scope") {
+      // Not a mutation: nothing failed and nothing was done to the worktree. It
+      // left the tree, and the surface that was filtered by it says so rather
+      // than quietly showing every tab again.
+      return renderNotice({
+        tone: "neutral",
+        live: "status",
+        title: "Scope cleared.",
+        body: `${about ?? "The scoped worktree"} is no longer in this tree, so every tab is shown again.`,
+        onDismiss: dismiss,
+      });
+    }
     if (result.outcome === "ok") {
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
@@ -1592,6 +1604,8 @@ function titleForAction(action: WorktreeActionResult["action"]): string {
       return "Unlock";
     case "prune":
       return "Prune";
+    case "scope":
+      return "Scope";
     default:
       return "Launch";
   }

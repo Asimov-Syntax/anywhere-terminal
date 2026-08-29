@@ -113,6 +113,15 @@ export interface WebviewState {
   /** Expanded agent rowIds (second disclosure level) — persisted independently. */
   worktreeExpandedRows?: string[];
   /**
+   * The worktree this surface's tab bar is scoped to. ABSENT means unscoped, which
+   * is both the first-run state and what anything written by a build that recorded
+   * no scope reads as: "no scope" and "never had one" call for the same behaviour,
+   * so there is no second signal. Per surface by construction — each webview holds
+   * its own state object, and two surfaces holding different scopes is the feature
+   * (docs/design/worktree-scope.md § 2.2).
+   */
+  worktreeScope?: string;
+  /**
    * repoIds whose idle tail has already been presented once. A SECOND signal is
    * needed because `worktreeCollapsed` reads every absent key as expanded, so the
    * fold key alone cannot distinguish a tail this build has never shown from one

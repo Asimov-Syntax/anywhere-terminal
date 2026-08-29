@@ -58,7 +58,12 @@ export interface WorktreeRemoveBlocker {
   containsWorktrees: readonly { worktreeId: string; displayPath: string }[];
 }
 
-export type WorktreeActionKind = "create" | "remove" | "lock" | "unlock" | "prune" | "launch";
+/**
+ * `scope` is the odd one out and stays here anyway: it did nothing TO a worktree,
+ * but the panel has exactly one place notices appear and a second channel would be
+ * a second place to look (design.md D7).
+ */
+export type WorktreeActionKind = "create" | "remove" | "lock" | "unlock" | "prune" | "launch" | "scope";
 
 export interface WorktreeActionResult {
   action: WorktreeActionKind;
