@@ -38,10 +38,17 @@ export const MAX_WINDOW_BYTES = 1024 * 1024;
  * which provider the entry came from, and guessing would let one format's records
  * answer for the other.
  */
-export async function readLastActivityLine(transcriptPath: string, format: LastActivityFormat): Promise<string | null> {
+export async function readLastActivityLine(
+  transcriptPath: string,
+  format: LastActivityFormat,
+  /** Test seam only — nothing in production passes it. A short read happens
+   *  between this handle's own `stat` and `read`, so that is the only place a
+   *  test can stand to reproduce one (round-2 S2-R2). */
+  open: (p: string) => Promise<fs.FileHandle> = (p) => fs.open(p, "r"),
+): Promise<string | null> {
   let handle: fs.FileHandle | undefined;
   try {
-    handle = await fs.open(transcriptPath, "r");
+    handle = await open(transcriptPath);
     const { size } = await handle.stat();
     if (size <= 0) {
       return null;

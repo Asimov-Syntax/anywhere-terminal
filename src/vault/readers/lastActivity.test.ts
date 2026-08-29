@@ -147,6 +147,34 @@ describe("readLastActivityLine", () => {
     expect(await readLastActivityLine(file, "claude")).toBe("the complete record");
   });
 
+  it("does not lose the newest record to a file that shrank mid-read", async () => {
+    // The window is sized from `stat`. If the file shrinks before the read, the
+    // read comes back short and the rest of the zero-filled buffer is NUL
+    // padding — which, decoded, glues onto the newest record and makes it
+    // unparseable, silently answering with an older one instead (W4).
+    const file = path.join(dir, "shrinking.jsonl");
+    await fs.writeFile(file, `${claudeAssistant("the older record")}\n${claudeAssistant("the newest record")}`);
+
+    const overstatingStat = async (p: string): Promise<fs.FileHandle> => {
+      const handle = await fs.open(p, "r");
+      return new Proxy(handle, {
+        get(target, key, receiver) {
+          if (key !== "stat") {
+            return Reflect.get(target, key, receiver);
+          }
+          return async () => {
+            const stats = await target.stat();
+            return new Proxy(stats, {
+              get: (t, k) => (k === "size" ? t.size + 500 : Reflect.get(t, k)),
+            });
+          };
+        },
+      });
+    };
+
+    expect(await readLastActivityLine(file, "claude", overstatingStat)).toBe("the newest record");
+  });
+
   it("answers null for a missing or empty file", async () => {
     expect(await readLastActivityLine(path.join(dir, "nope.jsonl"), "claude")).toBeNull();
     const empty = path.join(dir, "empty.jsonl");

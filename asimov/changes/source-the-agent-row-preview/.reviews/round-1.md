@@ -258,7 +258,7 @@ so the reachable states are enumerated here rather than left to the fix hunk):
 | covered, path outside the store root | never opened, stays unresolved | `never opens a codex rollout outside the sessions dir`, `never opens a claude transcript outside the projects dir` |
 | resolved, stamp unmoved | one `stat`, no open | `stats but does not open a transcript whose stamp has not moved` |
 | resolved, stamp moved | exactly one read | `reads exactly once when the stamp has moved` + the two stamp-component tests |
-| resolved, file moved | re-resolves and reads the new path in one ask | `re-resolves a transcript that moved instead of pinning the old path` |
+| resolved, file moved | Codex: re-resolves and reads the new path in one ask. Claude: the no-hint path is inert there, so it recovers on the SECOND ask, when `deps.entry()` re-derives the path by id — corrected in round 2 (S1-R2); the row above overstated it | `re-resolves a transcript that moved instead of pinning the old path` (Codex) |
 | resolved, file deleted | preview dropped, back to unresolved | `drops the preview when the transcript is gone` |
 | `entry()` throws | no line, cadence not advanced, next ask retries | `retries on the next ask rather than waiting out an interval it never used` |
 | concurrent asks | one read shared | `shares one read between concurrent asks for the same session` |

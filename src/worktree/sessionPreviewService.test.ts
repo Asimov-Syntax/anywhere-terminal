@@ -232,6 +232,52 @@ describe("createSessionPreviewService", () => {
       expect(reads).toEqual([rollout, moved]);
     });
 
+    it("backs an unresolvable row off instead of scanning every interval", async () => {
+      // Resolving a Codex session with no rollout walks the whole sessions tree.
+      // On the freshness cadence that recurs at 0.5 Hz forever for one row
+      // (round-2 B1-R2), so consecutive failures have to decay.
+      let resolutions = 0;
+      const svc = createSessionPreviewService({
+        entry: async () => {
+          resolutions += 1;
+          return { agent: "codex", sessionId: "never", sessionPath: undefined };
+        },
+        roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+        now: () => clock,
+        recheckMs: 2000,
+      });
+
+      // Ten intervals of a row that never resolves.
+      for (let i = 0; i < 10; i++) {
+        expect(await svc.preview("codex:never")).toBeUndefined();
+        clock += 2000;
+      }
+
+      // Ungated this is one scan per interval; backed off it is a handful.
+      expect(resolutions).toBeLessThan(5);
+    });
+
+    it("puts an entry back on the freshness cadence once it resolves", async () => {
+      const svc = service({ "codex:late": { agent: "codex", sessionId: "late" } });
+      for (let i = 0; i < 3; i++) {
+        await svc.preview("codex:late");
+        clock += 60_000; // past any backoff, so the next look really runs
+      }
+
+      const later = path.join(sessionsDir, "rollout-late.jsonl");
+      await fs.writeFile(later, `${codexEvent("it finally spoke")}\n`);
+      expect(await svc.preview("codex:late")).toBe("it finally spoke");
+
+      // Back on the ordinary interval: still gated at 1999 ms, looking at 2001.
+      stats = [];
+      clock += 1999;
+      await svc.preview("codex:late");
+      expect(stats).toEqual([]);
+      clock += 2;
+      await svc.preview("codex:late");
+      expect(stats).toEqual([later]);
+    });
+
     it("keeps costing nothing for an uncovered source however often it is asked", async () => {
       const svc = service({ "opencode:s1": { agent: "opencode", sessionId: "s1", sessionPath: rollout } });
       for (let i = 0; i < 3; i++) {
@@ -253,10 +299,12 @@ describe("createSessionPreviewService", () => {
     expect(await svc.preview("codex:s1")).toBeUndefined();
   });
 
-  it("retries on the next ask rather than waiting out an interval it never used", async () => {
+  it("retries a rejected lookup sooner than the cadence, but still rate-limits it", async () => {
     let fail = true;
+    let lookups = 0;
     const svc = createSessionPreviewService({
       entry: async () => {
+        lookups += 1;
         if (fail) {
           throw new Error("vault unavailable");
         }
@@ -266,8 +314,52 @@ describe("createSessionPreviewService", () => {
       now: () => clock,
       recheckMs: 2000,
     });
+
     expect(await svc.preview("codex:s1")).toBeUndefined();
+    // A rejection must leave a gate behind — without one the entry has no rate
+    // limit at all and every rebuild retries it (round-2 W1-R2).
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+    expect(lookups).toBe(1);
+
     fail = false;
+    clock += 250;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    // Sooner than the 2 s cadence, which is what S5 asked for.
+    expect(lookups).toBe(2);
+  });
+
+  it("lets a newer entry win when eviction races an in-flight read", async () => {
+    // The re-seat exists so eviction mid-read does not strand the result, but it
+    // must not put the stale instance back over a newer one (round-2 W2-R2).
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let firstRead = true;
+    const svc = createSessionPreviewService({
+      entry: async () => ({ agent: "codex", sessionId: "s1", sessionPath: rollout }),
+      read: async (file, format) => {
+        if (firstRead) {
+          firstRead = false;
+          await gate;
+        }
+        reads.push(file);
+        return readLastActivityLine(file, format);
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+      cap: 1,
+    });
+
+    const slow = svc.preview("codex:s1");
+    await svc.preview("codex:other"); // evicts the in-flight entry at cap 1
+    release?.();
+    expect(await slow).toBe("the first answer");
+
+    // Whatever is mapped now, the next ask must reach a live entry rather than a
+    // stale one holding someone else's state.
+    clock += 5000;
     expect(await svc.preview("codex:s1")).toBe("the first answer");
   });
 

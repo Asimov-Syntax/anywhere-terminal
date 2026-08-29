@@ -74,3 +74,19 @@
     5. W4, S1 and S2 — the reader's three bound defects: decode only the bytes actually read, do not discard a record the window boundary happened to align with, and never read past the cap.
     6. S3, S5 and S6 — the agent field takes the vault's own union, a swallowed lookup stops advancing the cadence as if it had answered, and eviction stops stranding a read still in flight.
     7. Cover: a session unresolvable on the first ask and resolvable on the next; an uncovered source still costing nothing however often it is asked; a resolved path that disappears re-resolving rather than freezing; a deleted transcript ending with no preview; a Codex rollout found by the repo's fallback when the index path is stale; a short read not eating the newest record; a record ending exactly on a window boundary still found; each format's usable-record rule unchanged.
+
+- [x] 2_2 Stop an unresolvable row paying for a tree walk on the freshness cadence — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-2.md#b1-r2-the-two-fixes-together-walk-the-entire-codex-sessions-tree-every-2-s-forever · design.md#d2-the-preview-service-owns-the-stamp-the-cache-and-the-rate
+  - **Acceptance**:
+    - Outcome: a row whose transcript never resolves stops costing a scan per interval
+    - Verify: unit src/worktree/sessionPreviewService.test.ts
+  - **Plan**:
+    0. Files: `src/worktree/sessionPreviewService.ts`, `src/worktree/sessionPreviewService.test.ts`, `src/vault/readers/lastActivity.ts`, `src/vault/readers/lastActivity.test.ts`, `asimov/changes/source-the-agent-row-preview/design.md`.
+    1. B1-R2 — retrying a resolution and re-checking a known file are two different questions and stop sharing one interval. Consecutive failures decay their own retry; a success puts the entry back on the freshness cadence.
+    2. W1-R2 — the gate becomes an explicit next-attempt time that BOTH outcomes set, so a rejected look can no longer leave the entry with no rate limit at all.
+    3. W2-R2 — the re-seat tests absence, not inequality: a newer entry for the same id wins and the stale one is dropped.
+    4. S1-R2 — the no-hint recovery is Codex-only in fact, so it says so; the Ref's own note on how a Claude row recovers instead goes with it, and the round-1 manifest row is corrected.
+    5. S2-R2 — the short read is testable after all, by the Ref's method. The reader takes one optional seam for opening, used by nothing in production.
+    6. W3-R2 — D1a is amended to describe the resolution that ships, including what the fallback costs. The coverage decision itself does not move.
+    7. Cover: an unresolvable row's scans falling off rather than recurring per interval; a resolution that succeeds putting the entry back on the freshness cadence; a rejected lookup still rate-limited; a stale entry not displacing a newer one; a file truncated between the reader's own stat and read not losing its newest record.

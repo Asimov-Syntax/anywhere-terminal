@@ -58,6 +58,23 @@ export const DEFAULT_RECHECK_MS = 2000;
 
 export const DEFAULT_PREVIEW_CACHE_CAP = 256;
 
+/**
+ * Resolving and re-checking are different questions and must not share one
+ * interval. Re-checking a known file is a `stat`; resolving a Codex session that
+ * has no rollout yet is a walk of `~/.codex/sessions/**`, a tree that grows with
+ * history and is never pruned. On the freshness cadence that walk would recur at
+ * 0.5 Hz forever for a single unresolvable row (round-2 B1-R2), so consecutive
+ * failures decay their own retry and a success puts the entry back on the cadence.
+ */
+const MAX_BACKOFF_SHIFT = 8;
+
+/**
+ * Floor under a look that REJECTED. A thrown lookup must still leave a rate
+ * limit behind — without one the entry has no gate at all and every rebuild
+ * retries it (round-2 W1-R2).
+ */
+const REJECT_RETRY_MS = 250;
+
 type Target =
   /** This source keeps no transcript at all — never worth another syscall. */
   | { kind: "uncovered" }
@@ -72,7 +89,10 @@ interface Held {
   target: Target;
   stamp?: FileStamp;
   line?: string;
-  checkedAt: number;
+  /** Earliest time another look may run. Every outcome sets it, so no path is ungated. */
+  nextAt: number;
+  /** Consecutive resolution failures, for the backoff above. */
+  misses: number;
   inflight?: Promise<string | undefined>;
 }
 
@@ -158,7 +178,11 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       // hint keeps pointing at the dead path and resolving from it again would
       // loop — ask the store WITHOUT the hint, which is what runs the filename
       // fallback and finds where the transcript moved to (round-1 B2/W2).
-      const again = await resolve(entry, false);
+      // Codex only, and deliberately: `resolve(entry, false)` drops the hint, and
+      // the hint is ALL the Claude branch has, so there it would always answer
+      // `unresolved`. A Claude row recovers a moved transcript on the next ask
+      // instead — `deps.entry()` re-derives its path by id every look (S1-R2).
+      const again = entry.agent === "codex" ? await resolve(entry, false) : { kind: "unresolved" as const };
       stamp = again.kind === "resolved" && again.path !== target.path ? await stat(again.path) : null;
       if (!stamp) {
         // Nothing readable now. Unresolved rather than uncovered, so a transcript
@@ -196,36 +220,41 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
     async preview(entryId: string): Promise<string | undefined> {
       const current = held.get(entryId) ?? {
         target: { kind: "unresolved" as const },
-        checkedAt: Number.NEGATIVE_INFINITY,
+        nextAt: Number.NEGATIVE_INFINITY,
+        misses: 0,
       };
       touch(entryId, current);
       if (current.inflight) {
         return current.inflight; // one read per session, however many rows ask
       }
-      if (now() - current.checkedAt < recheckMs) {
+      if (now() < current.nextAt) {
         return current.line;
       }
-      // A thrown lookup is a failed look, not a completed one: it forgets the
-      // line for the same reason a failed `stat` does, and leaves `checkedAt`
-      // where it was so the next ask retries instead of waiting out an interval
-      // it never used (S5).
       const inflight = look(entryId, current).then(
         (line) => {
-          current.checkedAt = now();
+          // A look that ends without a resolved target has just paid whatever
+          // resolution costs and found nothing; the next one waits longer.
+          current.misses = current.target.kind === "resolved" ? 0 : current.misses + 1;
+          current.nextAt = now() + recheckMs * 2 ** Math.min(current.misses, MAX_BACKOFF_SHIFT);
           return line;
         },
-        () => forget(current),
+        () => {
+          // A rejected look is not a completed one — it retries sooner than the
+          // cadence, but it still leaves a gate behind (W1-R2).
+          current.nextAt = now() + REJECT_RETRY_MS;
+          return forget(current);
+        },
       );
       current.inflight = inflight;
       try {
         return await inflight;
       } finally {
-        // Re-seat the entry: eviction during a long read would otherwise strand
-        // this result where the next ask cannot see it (S6).
-        if (held.get(entryId) === current) {
-          current.inflight = undefined;
-        } else {
-          current.inflight = undefined;
+        current.inflight = undefined;
+        // Re-seat only when the id is genuinely unmapped: eviction mid-read would
+        // otherwise strand this result, but a NEWER entry for the same id must
+        // win rather than be overwritten by this stale one (S6, corrected by
+        // round-2 W2-R2).
+        if (!held.has(entryId)) {
           touch(entryId, current);
         }
       }

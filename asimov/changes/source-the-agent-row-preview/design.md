@@ -24,8 +24,12 @@ message stays one line.
 **Covered: Claude JSONL, and Codex when its rollout file exists.** Not OpenCode, not Cursor.
 
 This is a property of what the providers expose, not a shortcut. A Codex entry carries
-`sessionPath` from `rollout_path` and is file-backed only when that resolves
-(`codexReader.ts:141-165`); an OpenCode entry exposes no transcript path at all — its content is
+`sessionPath` from `rollout_path`, and locating its rollout is `pickRolloutPath`'s existing
+decision — the index's path when it is contained, **else a scan by uuid** over
+`~/.codex/sessions/**` (`codexReader.ts:1071-1094`). The scan is the expensive half: that tree
+grows with history and is never pruned, so a session it cannot resolve must not be retried on the
+freshness cadence. Resolution failures therefore carry their own decaying retry, separate from the
+`(mtimeMs, size)` gate below (round-2 B1-R2). An OpenCode entry exposes no transcript path at all — its content is
 SQLite `message`/`part` rows (`opencodeReader.ts:157-177`) — and Cursor deliberately exposes none,
 because its own accepted requirements forbid a listing from opening `store.db`
 (`agent-session-index` § "Cursor indexing is metadata-only").
@@ -139,6 +143,7 @@ this change does not own, to fix a problem that only exists because the wrong st
 | Preview read | Whole-file read per row per scan | D1 reads the tail only; cost is flat in transcript size |
 | Preview read | An oversized single record defeats the bound | D1b caps window growth and gives up as `null` rather than reading unboundedly |
 | Preview read | Re-reads a transcript nothing wrote to | D2 gates on `(mtimeMs, size)`; a quiet scan opens nothing |
+| Preview read | An unresolvable Codex row re-walks the sessions tree every interval | Consecutive resolution failures decay their own retry; resolving restores the freshness cadence (D1a) |
 | Preview read | Growth axis is rows × scans; a 150 ms full projection would make that rows × ~6.7 `stat`/s | D2's per-entry re-check interval bounds syscalls independently of scan rate |
 | Preview text | Unbounded text crosses IPC and enters the render signature | D1b bounds with the existing `boundedPreview` before the row is built |
 | Preview text | A bulleted line loses its marker, or renders as nothing | D4 removes the title stripper from the preview path entirely |
