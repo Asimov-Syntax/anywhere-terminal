@@ -3,8 +3,7 @@
 //
 // The gate lives here rather than inline in the bootstrap because `main.ts`
 // exports nothing and runs the whole webview on import, so an invariant written
-// there cannot be tested at all. Three conditions have to hold at once, and one
-// of them is a rollout flag that moves at runtime.
+// there cannot be tested at all.
 
 /**
  * Whether the aux region is stacked above/below the terminal rather than docked
@@ -19,20 +18,13 @@ export function isStackedLayout(layout: HTMLElement): boolean {
 /**
  * Whether this selection should collapse the rail.
  *
- * `workbench` MUST be read live at selection time. The init-time snapshot cannot
- * see `onWorktreeWorkbench`, so an off→on flip would never start collapsing and,
- * worse, an on→off flip would keep collapsing after the rollout was switched
- * off — breaking the requirement that shipped behaviour is unchanged while the
- * flag is off.
- *
  * `worktreeId` of `null` is a scope being CLEARED, not a selection: escaping a
  * scope must not collapse the thing you escaped to.
  */
 export function shouldCollapseAfterSelection(args: {
-  workbench: boolean;
   worktreeId: string | null;
   layout: HTMLElement | null;
 }): boolean {
-  const { workbench, worktreeId, layout } = args;
-  return workbench && worktreeId !== null && layout !== null && isStackedLayout(layout);
+  const { worktreeId, layout } = args;
+  return worktreeId !== null && layout !== null && isStackedLayout(layout);
 }

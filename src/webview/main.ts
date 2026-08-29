@@ -1141,19 +1141,11 @@ function handleInit(msg: InitMessage): void {
       overlayOpen: () => vaultPanel?.isPreviewOpen() === true,
       onSelectWorktree: (worktreeId) => {
         tabBarScope?.onSelectWorktree(worktreeId);
-        // Only an actual selection, only under the rollout, and only where two
-        // columns do not fit. Clearing a scope (`null`) is not a selection, and
-        // a docked rail is not taking the terminal's room.
+        // Only an actual selection, and only where two columns do not fit.
+        // Clearing a scope (`null`) is not a selection, and a docked rail is not
+        // taking the terminal's room.
         const layout = document.getElementById("webview-layout");
-        if (
-          shouldCollapseAfterSelection({
-            // Live, not `msg.worktreeWorkbench` — that snapshot cannot see
-            // `onWorktreeWorkbench` (round-1 B3).
-            workbench: worktreeController?.isWorkbenchEnabled() === true,
-            worktreeId,
-            layout,
-          })
-        ) {
+        if (shouldCollapseAfterSelection({ worktreeId, layout })) {
           vaultPanel?.collapseAfterSelection();
         }
       },

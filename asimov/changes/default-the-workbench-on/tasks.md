@@ -11,7 +11,7 @@
     3. In `src/webview/worktree/worktreePanel.css` delete the `vault-segmented--flat` hook and the unselected-label rule that only applies under it; leave the shared grouping and card rules alone.
     4. In `src/webview/vault/VaultPanel.test.ts` delete the cases whose subject is the flat control or a rollout transition, and drop the obsolete field from any remaining fixture.
 
-- [ ] 1_4 A selection hands the room back on its own terms
+- [x] 1_4 A selection hands the room back on its own terms — verified: pnpm exec vitest run 'src/webview/vault/collapseAfterSelection.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-selection-in-the-narrow-layout-hands-the-room-back} <!-- design.md D2, D3 -->
   - **Acceptance**:
