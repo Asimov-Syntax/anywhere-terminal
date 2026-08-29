@@ -59,7 +59,11 @@ describe("what a reload restores", () => {
     const rows = Array.from(document.querySelectorAll<HTMLElement>(".wt-row[aria-expanded]"));
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.getAttribute("aria-expanded") === "true")).toBe(true);
-    expect(state.worktreeCollapsed).toEqual([]);
+    // Narrowed to worktree keys, which is what the claim above is about. The
+    // idle-tail fold also lives in this array under a namespaced key, and IS
+    // seeded on first presentation — that is the point of the namespace.
+    expect(state.worktreeCollapsed?.filter((k) => !k.startsWith("\u0000"))).toEqual([]);
+    expect(state.worktreeCollapsed?.some((k) => k.startsWith("\u0000idle-tail:"))).toBe(true);
   });
 
   it("seeds its own defaults when nothing was ever saved", () => {

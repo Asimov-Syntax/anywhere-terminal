@@ -134,8 +134,11 @@ describe("the tree", () => {
     const { controller } = mount();
     controller.setVisible(true);
     controller.handleTreeResponse(response());
-    const branches = Array.from(document.querySelectorAll(".wt-row")).map((r) => r.textContent);
-    expect(branches.length).toBe(singleRepoTree().repos[0]?.worktrees.length);
+    // Every pushed worktree is accounted for — drawn, or counted by the idle
+    // disclosure that hides it. Four of this fixture's six hold no agents.
+    const drawn = document.querySelectorAll(".wt-row").length;
+    const hidden = Number(/^(\d+) idle/.exec(document.querySelector(".wt-idle-label")?.textContent ?? "")?.[1] ?? 0);
+    expect(drawn + hidden).toBe(singleRepoTree().repos[0]?.worktrees.length);
   });
 
   it("renders placeholder rows until the first push arrives", () => {

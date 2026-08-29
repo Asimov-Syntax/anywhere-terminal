@@ -33,6 +33,7 @@ import { CONFIRMATION_CEILING_MS } from "./worktreeFormat";
 import { unconfirmedHint } from "./worktreeTreeView";
 import type {
   DelegationRoster,
+  PresenceDegradation,
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeInfo,
@@ -42,6 +43,7 @@ import type {
 } from "./worktreeViewTypes";
 
 const NOW = 1_700_000_000_000;
+const REPO_ID = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
 const MAIN_PATH = "/Users/dev/Projects/ai-oss/anywhere-terminal";
 const PANEL_WT = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel";
 
@@ -80,6 +82,11 @@ function mount(over: Partial<WorktreeViewDeps> = {}): { view: WorktreeView; host
     actions: noopActions(),
     onActivateAgent: () => {},
     now: () => NOW,
+    // The shared fixture holds exactly four agentless worktrees, so it grows an
+    // idle tail (§ 3.6). Tests about OTHER contracts get it already presented and
+    // therefore open, which is the picture they were written against; the idle
+    // tail's own tests mount with their own state.
+    getInitialIdleSeeded: () => [REPO_ID],
     ...over,
   });
   host.appendChild(view.element);
@@ -2227,5 +2234,180 @@ describe("an outcome that could not be checked, and one that simply worked", () 
     const labels = [...view.element.querySelectorAll("button")].map((b) => b.textContent ?? "");
 
     expect(labels.some((l) => /retry|try again/i.test(l))).toBe(false);
+  });
+});
+
+// ── § 3.6: the idle tail ──────────────────────────────────────────────────
+
+describe("the idle tail", () => {
+  const REPO = "/repo/.git";
+
+  function tree(branches: string[]): WorktreeTree {
+    return {
+      gitAvailable: true,
+      unreadable: { count: 0, reasons: [] },
+      repos: [
+        {
+          repoId: REPO,
+          label: "repo",
+          mainPath: "/repo",
+          worktrees: branches.map((b) => worktree({ id: `/wt/${b}`, branch: b, head: "a".repeat(40) })),
+        },
+      ],
+    };
+  }
+
+  function presence(withAgents: string[], degraded: PresenceDegradation[] = []): WorktreePresence {
+    const rowsByWorktreeId: Record<string, WorktreeAgentRow[]> = {};
+    for (const b of withAgents) {
+      rowsByWorktreeId[`/wt/${b}`] = [agentRow({ rowId: `r-${b}`, agent: "claude", title: b })];
+    }
+    return { scannedAt: NOW, degradedSources: degraded, rowsByWorktreeId };
+  }
+
+  const branchesInOrder = (view: WorktreeView): string[] =>
+    Array.from(view.element.querySelectorAll(".wt-row .wt-branch")).map((e) => e.textContent ?? "");
+
+  const disclosure = (view: WorktreeView): HTMLElement | null => view.element.querySelector<HTMLElement>(".wt-idle");
+
+  it("orders agent-holding worktrees first, keeping supplied order inside each part", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["a", "b", "c", "d"]), presence: presence(["b", "d"]) });
+    expect(branchesInOrder(view)).toEqual(["b", "d", "a", "c"]);
+  });
+
+  it("leaves a worktree of unknown presence in the leading part", () => {
+    const { view } = mount({ now: () => NOW });
+    // `a` has no rows, but a degraded source means the view cannot attribute that
+    // absence to there being no agents — unknown is not agentless.
+    // Four rowless worktrees — enough to fold, were the absence attributable.
+    view.setData({
+      tree: tree(["a", "b", "c", "d", "e"]),
+      presence: presence(["b"], [{ source: "panes", reason: "scan failed", since: NOW }]),
+    });
+    expect(branchesInOrder(view)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(disclosure(view)).toBeNull();
+  });
+
+  it("keeps an agentless worktree's row duties — menu and keyboard reach", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["a", "b"]), presence: presence(["a"]) });
+    const live = view.element.querySelector<HTMLElement>('[data-worktree-id="/wt/a"]');
+    const idle = view.element.querySelector<HTMLElement>('[data-worktree-id="/wt/b"]');
+    expect(idle?.getAttribute("role")).toBe("treeitem");
+    // Dim is a treatment, not a demotion: arrowing still reaches it.
+    live?.focus();
+    live?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(document.activeElement).toBe(idle);
+  });
+
+  it("draws an agentless worktree as one dim line with no presence block", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["a", "b"]), presence: presence(["a"]) });
+    const idle = Array.from(view.element.querySelectorAll<HTMLElement>(".wt-row")).find(
+      (r) => r.querySelector(".wt-branch")?.textContent === "b",
+    );
+    expect(idle?.className).toContain("wt-row--idle");
+    expect(idle?.querySelector(".wt-glyph .wt-state")).toBeNull();
+    expect(idle?.dataset.worktreeId).toBe("/wt/b");
+  });
+
+  it("folds from four agentless worktrees, stating an exact hidden count", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    expect(disclosure(view)?.textContent).toContain("4");
+    expect(branchesInOrder(view)).toEqual(["live"]);
+  });
+
+  it("leaves three visible, since a disclosure hiding two costs more than it saves", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a", "b", "c"]), presence: presence(["live"]) });
+    expect(disclosure(view)).toBeNull();
+    expect(branchesInOrder(view)).toEqual(["live", "a", "b", "c"]);
+  });
+
+  it("never folds when presence has not arrived", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["a", "b", "c", "d", "e"]), presence: null });
+    expect(disclosure(view)).toBeNull();
+    expect(branchesInOrder(view)).toHaveLength(5);
+  });
+
+  it("opens the tail for a filter match without spending the user's own choice", () => {
+    const { view } = mount({ now: () => NOW });
+    // Every idle branch matches, so the surviving tail is still long enough to
+    // fold — the query cannot reveal these by shrinking them below the threshold,
+    // only by the view declining to fold while a filter is up.
+    view.setData({ tree: tree(["live", "spike-a", "spike-b", "spike-c", "spike-d"]), presence: presence(["live"]) });
+    expect(branchesInOrder(view)).toEqual(["live"]);
+    view.setQuery("spike");
+    expect(branchesInOrder(view)).toEqual(["spike-a", "spike-b", "spike-c", "spike-d"]);
+    view.setQuery("");
+    // Back to folded: the query revealed the tail, it did not re-decide it.
+    expect(branchesInOrder(view)).toEqual(["live"]);
+  });
+
+  it("keeps a folded tail folded across a push", () => {
+    // The fold key is not a live repo or worktree id, so a rebuild that only
+    // recognises those would silently unfold the tail on every push.
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    expect(branchesInOrder(view)).toEqual(["live"]);
+    // A push that MOVED something, so the view actually repaints against the
+    // rebuilt state. An identical push is cheaper but proves less: it is dropped
+    // at the render signature, so it could not observe the fold being lost.
+    view.setData({ tree: tree(["live2", "a", "b", "c", "d"]), presence: presence(["live2"]) });
+    expect(branchesInOrder(view)).toEqual(["live2"]);
+  });
+
+  it("keeps an opened tail open across a push", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    view.element.querySelector<HTMLElement>(".wt-idle")?.click();
+    expect(branchesInOrder(view)).toHaveLength(5);
+    view.setData({ tree: tree(["live2", "a", "b", "c", "d"]), presence: presence(["live2"]) });
+    expect(branchesInOrder(view)).toHaveLength(5);
+  });
+
+  it("defaults a first-seen tail folded even on persisted state that predates it", () => {
+    // The trap: a restored collapse array treats every absent key as EXPANDED, so
+    // the fold key alone would read as "the user opened it" for every existing
+    // user — the feature would arrive unfolded for exactly the people it is for.
+    const { view } = mount({ now: () => NOW, getInitialCollapsed: () => [], getInitialIdleSeeded: () => [] });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    expect(disclosure(view)?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("restores a tail the user opened, rather than re-folding it", () => {
+    const { view } = mount({
+      now: () => NOW,
+      getInitialCollapsed: () => [],
+      getInitialIdleSeeded: () => [REPO],
+    });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    expect(disclosure(view)?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("counts only what the cap admitted, leaving the excluded to the cap's own affordance", () => {
+    const agentHolders = Array.from({ length: MAX_WORKTREES_PER_REPO - 4 }, (_, i) => `live-${i}`);
+    const idle = Array.from({ length: 8 }, (_, i) => `idle-${i}`);
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree([...agentHolders, ...idle]), presence: presence(agentHolders) });
+    // The cap admits four of the eight agentless worktrees, so the disclosure
+    // hides four — not eight — and the four the cap excluded are the cap's to
+    // report. Neither affordance describes the other's rows.
+    expect(disclosure(view)?.textContent).toContain("4 idle worktrees");
+    expect(view.element.querySelector(".wt-showall")?.textContent).toContain(String(agentHolders.length + idle.length));
+  });
+
+  it("gives the disclosure its own keyboard identity", () => {
+    const { view } = mount({ now: () => NOW });
+    view.setData({ tree: tree(["live", "a", "b", "c", "d"]), presence: presence(["live"]) });
+    const row = disclosure(view);
+    expect(row?.getAttribute("role")).toBe("treeitem");
+    row?.focus();
+    row?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(branchesInOrder(view)).toHaveLength(5);
+    expect(document.activeElement?.className).toContain("wt-idle");
   });
 });

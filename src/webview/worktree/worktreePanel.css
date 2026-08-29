@@ -698,6 +698,41 @@
   color: var(--vscode-descriptionForeground);
 }
 
+/* ── The idle tail (§ 3.6) ─────────────────────────────────────────────── */
+/* A worktree positively known to hold no agents is still a row — same hit area,
+   same menu, same keyboard reach — drawn quieter so the working ones read first.
+   Opacity, not a dimmer colour: it must survive a high-contrast theme, where the
+   forced palette would flatten a hand-picked grey back into the foreground. */
+.wt-row--idle {
+  opacity: 0.72;
+}
+.wt-row--idle:hover,
+.wt-row--idle:focus-visible {
+  opacity: 1;
+}
+/* Under the disclosure, so it is indented to the depth the keyboard model
+   already gives it. */
+.wt-row--in-tail {
+  padding-left: 22px;
+}
+
+.wt-idle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  user-select: none;
+}
+.wt-idle:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.wt-idle[aria-expanded="false"] .wt-chev {
+  transform: rotate(-90deg);
+}
+
 /* "Show all" cap rather than silent truncation. */
 .wt-showall {
   display: block;

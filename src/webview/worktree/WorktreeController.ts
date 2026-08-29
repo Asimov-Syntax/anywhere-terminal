@@ -383,6 +383,8 @@ export class WorktreeController {
       persistCollapsed: (ids) => deps.store.updateState({ worktreeCollapsed: ids }),
       getInitialExpandedRows: () => deps.store.getState().worktreeExpandedRows ?? [],
       persistExpandedRows: (ids) => deps.store.updateState({ worktreeExpandedRows: ids }),
+      getInitialIdleSeeded: () => deps.store.getState().worktreeIdleTailSeeded ?? [],
+      persistIdleSeeded: (ids) => deps.store.updateState({ worktreeIdleTailSeeded: ids }),
       // The reply is the next tree+presence envelope, carrying the roster on the
       // row itself — there is no response message to correlate here.
       onRequestSubagents: (row) => {

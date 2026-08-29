@@ -32,6 +32,7 @@ import {
   type NoticeSpec,
   renderAgentRow,
   renderAgentsHeader,
+  renderIdleDisclosure,
   renderNotice,
   renderPresencePill,
   renderRefreshingMarker,
@@ -59,6 +60,17 @@ import type {
  *  exists so a repo with hundreds of worktrees does not stall the render; it is a
  *  visible affordance, never a silent truncation. */
 export const MAX_WORKTREES_PER_REPO = 20;
+
+/** Below this many agentless worktrees, a disclosure hides less than it costs (§ 3.6). */
+export const IDLE_FOLD_THRESHOLD = 4;
+
+/**
+ * Namespaced so it can never collide with a repoId or a worktree id, both of which
+ * share the same collapse set and are matched against the live tree.
+ */
+function idleTailKey(repoId: string): string {
+  return `\u0000idle-tail:${repoId}`;
+}
 
 /** setTimeout's delay is a signed 32-bit int; anything larger wraps and fires now. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -128,6 +140,8 @@ export interface WorktreeViewDeps {
   /** Expanded agent rowIds — the SECOND disclosure level, persisted separately. */
   getInitialExpandedRows?: () => string[];
   persistExpandedRows?: (ids: string[]) => void;
+  getInitialIdleSeeded?: () => string[];
+  persistIdleSeeded?: (ids: string[]) => void;
   /** Injected in tests so ages are deterministic. */
   now?: () => number;
 }
@@ -153,6 +167,7 @@ export class WorktreeView {
   /** Armed only while some row can still cross the ceiling; cleared on disposal. */
   private ceilingTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
+  private idleSeeded: Set<string>;
   private query = "";
   private signature: string | null = null;
   /** Repo/worktree ids whose children are hidden. */
@@ -185,6 +200,7 @@ export class WorktreeView {
     this.restored = persisted !== undefined;
     this.seeded = new Set(this.collapsed);
     this.expandedRows = new Set(deps.getInitialExpandedRows?.() ?? []);
+    this.idleSeeded = new Set(deps.getInitialIdleSeeded?.() ?? []);
     this.element = document.createElement("div");
     this.element.className = "wt-tree";
     this.element.setAttribute("role", "tree");
@@ -542,10 +558,28 @@ export class WorktreeView {
     const sessionRowIds = new Set<string>();
     const collapsed = new Set<string>();
     const before = [...this.collapsed].join("\0");
+    const seededBefore = [...this.idleSeeded].join("\0");
     for (const repo of data.tree.repos) {
       liveIds.add(repo.repoId);
       if (this.collapsed.has(repo.repoId)) {
         collapsed.add(repo.repoId);
+      }
+      // The fold key is namespaced, so it survives a rebuild that only recognises
+      // live repo and worktree ids — without this the tail would silently unfold
+      // on every push.
+      const tailKey = idleTailKey(repo.repoId);
+      const idleCount = repo.worktrees.filter((w) => this.isIdleIn(data, w)).length;
+      if (this.idleSeeded.has(repo.repoId)) {
+        if (this.collapsed.has(tailKey)) {
+          collapsed.add(tailKey);
+        }
+      } else if (idleCount >= IDLE_FOLD_THRESHOLD) {
+        // First time this repo has had a tail to present: default it folded, and
+        // record that it HAS been presented. Seeding on the repo rather than on
+        // the first push matters — a repo that gains its fourth idle worktree
+        // later must still meet the tail folded.
+        this.idleSeeded.add(repo.repoId);
+        collapsed.add(tailKey);
       }
       for (const wt of repo.worktrees) {
         liveIds.add(wt.id);
@@ -573,6 +607,14 @@ export class WorktreeView {
     this.collapsed = collapsed;
     if ([...collapsed].join("\0") !== before) {
       this.deps.persistCollapsed?.([...collapsed]);
+    }
+    for (const id of this.idleSeeded) {
+      if (!liveIds.has(id)) {
+        this.idleSeeded.delete(id);
+      }
+    }
+    if ([...this.idleSeeded].join("\0") !== seededBefore) {
+      this.deps.persistIdleSeeded?.([...this.idleSeeded]);
     }
     // Reconciled against the identities presence actually carries, never
     // accumulated — the same rule the host applies at the other end (D3, D14).
@@ -717,8 +759,54 @@ export class WorktreeView {
     if (multiRepo && this.collapsed.has(repo.repoId)) {
       return [];
     }
+    // Filter, then partition, then cap — in that order, so the cap's affordance
+    // keeps reporting only what the CAP excluded and the fold only ever counts
+    // rows the cap admitted. Neither ends up describing the other's rows.
     const visible = repo.worktrees.filter((w) => this.matches(w));
-    return this.uncapped.has(repo.repoId) ? visible : visible.slice(0, MAX_WORKTREES_PER_REPO);
+    const ordered = [...visible.filter((w) => !this.isIdle(w)), ...visible.filter((w) => this.isIdle(w))];
+    return this.uncapped.has(repo.repoId) ? ordered : ordered.slice(0, MAX_WORKTREES_PER_REPO);
+  }
+
+  /**
+   * A POSITIVE determination that a worktree holds no agents — never a bare
+   * `rows.length === 0`. There are three states, not two: has agents, has none,
+   * and cannot be read. Collapsing the third into the second folds away exactly
+   * the worktrees the degradation marker exists to surface.
+   *
+   * `PresenceDegradation` carries no repository or worktree attribution, so one
+   * failed source suppresses folding everywhere. That is the honest reading of
+   * the data rather than a shortcut.
+   */
+  private isIdle(info: WorktreeInfo): boolean {
+    return this.isIdleIn(this.data, info);
+  }
+
+  /** Against a supplied envelope, because `pruneStaleState` runs on the incoming one. */
+  private isIdleIn(data: WorktreeViewData, info: WorktreeInfo): boolean {
+    const presence = data.presence;
+    if (!presence || presence.degradedSources.length > 0) {
+      return false;
+    }
+    return (presence.rowsByWorktreeId[info.id] ?? []).length === 0;
+  }
+
+  private toggleIdleTail(repoId: string): void {
+    const key = idleTailKey(repoId);
+    if (this.collapsed.has(key)) {
+      this.collapsed.delete(key);
+    } else {
+      this.collapsed.add(key);
+    }
+    this.deps.persistCollapsed?.([...this.collapsed]);
+    this.repaint();
+  }
+
+  /** Whether this repo's tail is folded right now — a live filter reveals it. */
+  private idleTailFolded(repoId: string): boolean {
+    if (this.query) {
+      return false;
+    }
+    return this.collapsed.has(idleTailKey(repoId));
   }
 
   /**
@@ -806,10 +894,26 @@ export class WorktreeView {
     }
 
     const shown = this.shownWorktrees(repo, multiRepo);
+    const tail = shown.filter((w) => this.isIdle(w));
+    const folds = tail.length >= IDLE_FOLD_THRESHOLD;
+    const folded = folds && this.idleTailFolded(repo.repoId);
     for (const info of shown) {
-      this.renderWorktree(info, now);
-      for (const result of this.resultsFor(info.id)) {
-        this.element.appendChild(this.buildActionNotice(result, info));
+      if (folds && this.isIdle(info)) {
+        continue;
+      }
+      this.renderWorktreeWithNotices(info, now, false);
+    }
+    if (folds) {
+      this.element.appendChild(
+        renderIdleDisclosure(repo.repoId, tail.length, folded, () => this.toggleIdleTail(repo.repoId)),
+      );
+      if (!folded) {
+        for (const info of tail) {
+          // Notices travel with the row they concern wherever it is drawn: a
+          // worktree does not stop reporting what an action did to it because
+          // it happens to be quiet enough to sit under the disclosure.
+          this.renderWorktreeWithNotices(info, now, true);
+        }
       }
     }
     if (shown.length < visible.length) {
@@ -826,7 +930,14 @@ export class WorktreeView {
     return visible.length;
   }
 
-  private renderWorktree(info: WorktreeInfo, now: number): void {
+  private renderWorktreeWithNotices(info: WorktreeInfo, now: number, inTail: boolean): void {
+    this.renderWorktree(info, now, inTail);
+    for (const result of this.resultsFor(info.id)) {
+      this.element.appendChild(this.buildActionNotice(result, info));
+    }
+  }
+
+  private renderWorktree(info: WorktreeInfo, now: number, inTail = false): void {
     const rows = this.rowsFor(info.id);
     const expanded = rows.length > 0 && this.isExpanded(info);
     // The card wraps the branch row together with its agent rows, so ownership
@@ -849,6 +960,8 @@ export class WorktreeView {
           // is the claim without the caveat.
           confidenceTip: this.strongestConfidenceTip(rows, now),
           hasAgents: rows.length > 0,
+          idle: this.isIdle(info),
+          inTail,
           expanded,
           agentSummary: rows.length > 0 ? agentCountLabel(rows.length) : undefined,
         },
@@ -1015,7 +1128,7 @@ export class WorktreeView {
    *  are excluded: both duplicate the worktree row's own toggle, and both are hidden
    *  from assistive tech because neither is a valid child of `role="tree"`. */
   private navRows(): HTMLElement[] {
-    return Array.from(this.element.querySelectorAll<HTMLElement>(".wt-repo, .wt-row, .wt-arow, .wt-srow"));
+    return Array.from(this.element.querySelectorAll<HTMLElement>(".wt-repo, .wt-idle, .wt-row, .wt-arow, .wt-srow"));
   }
 
   /** One tab stop for the whole tree; arrows move within it. */
@@ -1032,7 +1145,14 @@ export class WorktreeView {
   }
 
   private keyOf(row: HTMLElement): string {
-    return row.dataset.worktreeId ?? row.dataset.repoId ?? row.dataset.rowId ?? row.dataset.subKey ?? "";
+    return (
+      row.dataset.worktreeId ??
+      row.dataset.repoId ??
+      row.dataset.idleKey ??
+      row.dataset.rowId ??
+      row.dataset.subKey ??
+      ""
+    );
   }
 
   /** Depth in the declared tree, from the row's own class. */
@@ -1040,8 +1160,13 @@ export class WorktreeView {
     if (row.classList.contains("wt-repo")) {
       return 0;
     }
-    if (row.classList.contains("wt-row")) {
+    if (row.classList.contains("wt-idle")) {
       return 1;
+    }
+    if (row.classList.contains("wt-row")) {
+      // A row inside the tail sits UNDER the disclosure, so Right can descend into
+      // it and Left can climb back out.
+      return row.classList.contains("wt-row--in-tail") ? 2 : 1;
     }
     return row.classList.contains("wt-arow") ? 2 : 3;
   }
@@ -1122,7 +1247,13 @@ export class WorktreeView {
 
     if (expandable && forward !== isOpen) {
       const treeId = active.dataset.worktreeId ?? active.dataset.repoId;
+      const idleKey = active.dataset.idleKey;
       const rowId = active.dataset.rowId;
+      if (idleKey) {
+        this.toggleIdleTail(idleKey);
+        this.focusRow(this.navRows().find((r) => this.keyOf(r) === idleKey));
+        return;
+      }
       if (treeId) {
         this.toggleCollapsed(treeId);
       } else if (rowId) {

@@ -112,6 +112,14 @@ export interface WebviewState {
   worktreeCollapsed?: string[];
   /** Expanded agent rowIds (second disclosure level) — persisted independently. */
   worktreeExpandedRows?: string[];
+  /**
+   * repoIds whose idle tail has already been presented once. A SECOND signal is
+   * needed because `worktreeCollapsed` reads every absent key as expanded, so the
+   * fold key alone cannot distinguish a tail this build has never shown from one
+   * the user deliberately opened — and an existing user would meet the feature
+   * already unfolded. See docs/design/worktree-panel-ui.md § 3.6.
+   */
+  worktreeIdleTailSeeded?: string[];
 }
 
 /**

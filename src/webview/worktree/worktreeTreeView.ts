@@ -213,6 +213,10 @@ export interface WorktreeRowOptions {
   agentSummary?: string;
   /** Why this row's glyph is qualified, when it is. */
   confidenceTip?: string;
+  /** Positively determined to hold no agents — draws as one dim line. */
+  idle?: boolean;
+  /** Sits under the idle disclosure, which owns its depth and its reveal. */
+  inTail?: boolean;
 }
 
 /**
@@ -224,6 +228,12 @@ export function renderWorktreeRow(info: WorktreeInfo, opts: WorktreeRowOptions, 
   row.className = "wt-row";
   if (info.missing) {
     row.classList.add("is-missing");
+  }
+  if (opts.idle) {
+    row.classList.add("wt-row--idle");
+  }
+  if (opts.inTail) {
+    row.classList.add("wt-row--in-tail");
   }
   row.setAttribute("role", "treeitem");
   row.tabIndex = -1;
@@ -765,6 +775,37 @@ export function renderRefreshingMarker(): HTMLElement {
 }
 
 /** Cap with an affordance rather than truncating silently (§ 8). */
+/**
+ * The idle tail's disclosure. Its own row kind, not a restyled repo header:
+ * `navRows` matches on class and derives depth from it, so borrowing `.wt-repo`
+ * would give it depth 0 and route its toggle through a repoId it does not carry.
+ */
+export function renderIdleDisclosure(
+  repoId: string,
+  hidden: number,
+  folded: boolean,
+  onToggle: () => void,
+): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "wt-idle";
+  row.setAttribute("role", "treeitem");
+  row.setAttribute("aria-expanded", folded ? "false" : "true");
+  row.tabIndex = -1;
+  row.dataset.idleKey = repoId;
+  const chev = document.createElement("span");
+  chev.className = "wt-chev";
+  chev.innerHTML = ICON_CHEVRON_DOWN;
+  chev.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.className = "wt-idle-label";
+  // The count is of the rows the fold actually hides, so it stays exact when a
+  // cap has already removed some of them.
+  label.textContent = `${hidden} idle worktree${hidden === 1 ? "" : "s"}`;
+  row.append(chev, label);
+  bindActivation(row, onToggle);
+  return row;
+}
+
 export function renderShowAll(total: number, onShowAll: () => void): HTMLElement {
   const btn = document.createElement("button");
   btn.type = "button";
