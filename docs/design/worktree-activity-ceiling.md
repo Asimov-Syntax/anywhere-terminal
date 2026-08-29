@@ -84,11 +84,29 @@ activity value stays `running`, and nothing on the wire changes.
   is legible without colour and survives reduced motion.
 - A hint naming the gap in the user's terms — how long the state has stood unchanged, and that
   it was inferred from terminal output rather than reported. Delivered through the delegated
-  tooltip widget, like every other hint in this view.
+  tooltip widget, like every other hint in this view. Phrased as a **lower bound** ("at least
+  N"), because the attribute is written at render and read at hover, which may be an hour later
+  and after no repaint: an exact figure would be false by the time anyone saw it. The bound also
+  has to be true at the instant it is written, which is why it is "at least" and not "over" —
+  the deadline fires *at* the ceiling, so the first hint a crossing writes carries the exact
+  figure.
+- The hint reaches the **row**, not only the marker. The tooltip widget resolves
+  `closest('[data-tip]')` and keyboard focus lands on the row, which walks upward and can never
+  reach a descendant span; and while a worktree is collapsed the pill is `aria-hidden`,
+  unfocusable and outside the arrow-key set, so the worktree row carries the qualification
+  belonging to the longest-standing agent row that produced its glyph.
 - The worktree row's leading glyph shows the strongest state among its agents
   (§ 7.2 precedence). `unconfirmed` is a **confidence on `running`, not a rank of its own**: a
   worktree whose only `running` agent is unconfirmed reads as unconfirmed-running, and one
   waiting agent still outranks it.
+- **`unknown` outranks it.** A source the presence data reports as failed cannot support a claim
+  of running *at all*, so there is nothing left to qualify as merely unconfirmed: the degraded
+  check runs before the ceiling and yields `unknown`. The clock never pauses while it does — when
+  the failure clears, the row lands on `running (unconfirmed)` on that same update.
+- The **collapsed presence pill groups by exact presented state**, so an unconfirmed row is
+  counted under its own state. Grouping by the wire value instead would have dropped those rows
+  from the pill entirely. This is why the presented vocabulary and the aggregate rank are two
+  separate orders: the pill needs every member, the worktree glyph needs a precedence.
 
 ## 3. What the ceiling does not change
 
