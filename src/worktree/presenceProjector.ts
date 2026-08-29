@@ -194,6 +194,17 @@ export interface ProjectOptions {
    * would shell out to `ps` every five seconds for the life of the window (D6).
    */
   external?: boolean;
+  /**
+   * Run per-row title and preview enrichment. Defaults to true.
+   *
+   * False when no attached surface is drawing agent rows. The presence a scope's
+   * count is built from comes from the registry pass and `externalRows`; titles
+   * and previews are drawn on rows or not at all, so a window whose only
+   * subscribers are presence-only skips roughly one preview lookup and stat per
+   * live external session per poll
+   * (separate-presence-subscription-from-view-visibility/design.md D3).
+   */
+  enrich?: boolean;
 }
 
 export interface PresenceProjector {
@@ -989,8 +1000,13 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         }
       }
 
-      await titleFromVault(rowsByWorktreeId, now);
-      await previewFromVault(rowsByWorktreeId);
+      // Ranking is computed from `lastActivityAt` on the rows themselves, above,
+      // and so is unaffected — deliberately: a ranking left stale while nobody
+      // drew rows would reorder every group the moment the rail reopened.
+      if (options?.enrich !== false) {
+        await titleFromVault(rowsByWorktreeId, now);
+        await previewFromVault(rowsByWorktreeId);
+      }
 
       // A source that answered this rebuild clears its entry; one still failing
       // keeps the epoch of the FIRST failure in the run, so the affordance can

@@ -1892,3 +1892,74 @@ describe("a reported turn decides activity", () => {
     expect(row).toMatchObject({ activity: "running", activitySource: "output" });
   });
 });
+
+describe("[1_2] enrichment is work only rows consume", () => {
+  const named = (over: Partial<RunningClaudeSession> = {}): RunningClaudeSession => ({
+    sessionId: "s1",
+    cwd: WT,
+    pid: 4242,
+    startedAt: 1_600_000_000_000,
+    name: "hadern-analysis-a7",
+    ...over,
+  });
+
+  function scoped() {
+    const h = makeProjector();
+    const titled: string[] = [];
+    const previewed: string[] = [];
+    h.setRegistry({ kind: "ok", sessions: [named(), named({ sessionId: "s2" })] });
+    h.setVaultTitle(async (entryId) => {
+      titled.push(entryId);
+      return "a title";
+    });
+    h.setVaultPreview(async (entryId) => {
+      previewed.push(entryId);
+      return "a line of transcript";
+    });
+    return { h, titled, previewed };
+  }
+
+  it("reads no title and no preview when nobody is drawing rows", async () => {
+    // The cost this option exists to remove: roughly one lookup and stat per
+    // live external session per poll, for a body drawing no rows at all.
+    const { h, titled, previewed } = scoped();
+
+    await h.projector.project([WT], { external: true, enrich: false });
+
+    expect(titled, "titles were read for rows nobody draws").toEqual([]);
+    expect(previewed, "previews were read for rows nobody draws").toEqual([]);
+  });
+
+  it("still reports the rows and their waiting states", async () => {
+    // Presence is exactly what a presence-only subscriber is there for: the
+    // count on a scope's escape control is built from these rows.
+    const { h } = scoped();
+
+    const enriched = (await h.projector.project([WT], { external: true })).rowsByWorktreeId[WT];
+    const bare = (await h.projector.project([WT], { external: true, enrich: false })).rowsByWorktreeId[WT];
+
+    expect(bare.length).toBe(enriched.length);
+    expect(bare.map((r) => r.activity)).toEqual(enriched.map((r) => r.activity));
+  });
+
+  it("keeps ranking current, so reopening the rail does not reorder every group", async () => {
+    const { h } = scoped();
+    await h.projector.project([WT], { external: true });
+    const before = h.projector.rankRevision();
+
+    h.setRegistry({
+      kind: "ok",
+      sessions: [named(), named({ sessionId: "s2" }), named({ sessionId: "s3", startedAt: 1_700_000_000_000 })],
+    });
+    await h.projector.project([WT], { external: true, enrich: false });
+
+    expect(h.projector.rank(WT), "ranking went stale while enrichment was off").toBeDefined();
+    expect(h.projector.rankRevision()).toBeGreaterThanOrEqual(before);
+  });
+
+  it("enriches by default, so every existing caller is unchanged", async () => {
+    const { h, previewed } = scoped();
+    await h.projector.project([WT], { external: true });
+    expect(previewed.length).toBeGreaterThan(0);
+  });
+});
