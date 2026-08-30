@@ -186,7 +186,7 @@ something the title did not, and a heuristic that hides it would be a second, wo
 a redundancy. Owned by [worktree-panel-ui.md](worktree-panel-ui.md) § 3.3, which specifies the row's
 preview line; this doc records only that the suppression rule exists and where it lives.
 
-### 2.5 A preview outlives the entry it described
+### 2.5 A preview outlives the entry it described — SHIPPED (WT-011.5)
 
 When a vault entry disappears, the preview service clears the cached line but keeps the entry's
 resolved target. A row can therefore keep presenting a line sourced from a transcript whose vault
@@ -211,13 +211,28 @@ preview line says what its session last did" requires exactly that. This debt ad
 either side of that pair — the entry itself is gone — and retires the line permanently rather than
 on the retry ladder.
 
-**What planning found, and what it costs**: the service cannot ask that question yet. `getEntry`
-returns `null` for a deleted entry *and* for a reader that failed — `codexReader.ts` says so in its
+**What planning found, and what it cost**: the service could not ask that question at all. `getEntry`
+returned `null` for a deleted entry *and* for a reader that failed — `codexReader.ts` said so in its
 own comment, `// query-error → unresolved (caller treats null as unknown-entry)` — so a mechanism
-built on `null` would retire a live session's line on a transient SQLite error, which is the exact
-confusion this debt exists to end. A conclusive `found | absent | unknown` answer is a change to the
-vault readers' contract and a separate invariant owner, so it was split out as WT-011.8; WT-011.5
-depends on it and settles nothing until it lands.
+built on `null` would have retired a live session's line on a transient SQLite error, which is the
+exact confusion this debt exists to end. A conclusive `found | absent | unknown` answer was a change
+to the vault readers' contract and a separate invariant owner, so it shipped first as WT-011.8.
+
+**What shipped.** The service consumes `VaultEntryLookup` directly: `absent` — reachable only from an
+enumeration that completed without the session — retires the line into a third `gone` target that
+makes no syscall of any kind, and every inconclusive answer is `unknown`. `gone` is not final:
+the store is re-consulted on its own interval, an order of magnitude slower than the freshness check
+beside it, so a session that comes back previews again. That interval is the gap between two
+lookups and not a wall-clock bound on the stale line — the service is pull-based, and a row nothing
+asks about is a row nothing re-confirms.
+
+The half that took a review round is the one that looks like a detail: an `unknown` must change
+**nothing**. Blanking the line on an inconclusive answer is the same thing the user sees as retiring
+it, and letting the look carry on into its ordinary freshness work is worse than it appears —
+an inconclusive answer deliberately does not stamp the confirmation time, so the row stays
+permanently due, and one unchanged `stat` there resets the retry ladder and puts the next store
+lookup back on the freshness cadence. The bound is only a bound while the inconclusive path stays
+inert.
 
 ## 3. Deferred again, with reasons
 

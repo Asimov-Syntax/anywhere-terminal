@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.5`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.5`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -38,3 +38,5 @@ Scope call (fastlane), UPHELD on verification: the blueprint acceptance's "a row
 Build notes:
 - Mutation testing: 6 mutations across the routing and the interval. M1 (an `unknown` falling through to the `found` branch) survived the first pass — the line was kept anyway by the `entry === undefined` guard below it, so only the wrongly-stamped `confirmedAt` distinguished the mutant. `does not let an inconclusive answer stand as a fresh confirmation` is that test; all 6 now die.
 - The suite's `deps.entry` stubs were rewrapped mechanically for the widened seam (`--test-change` records it). One new test asserted the wrong wait — a resolved-then-unknown row is gated by the retry ladder's 2 × recheckMs, not by the interval — and was corrected to assert the ladder rather than relaxed.
+- Review: cycle 1 closed at round 2, APPROVE, 0 gating blockers. Round 1's single BLOCK was a conformance gap against this change's own D4 — no `D#` moved and no owner was minted, so it was remediated in task 2_1 rather than handed back.
+- Blueprint sync: § 2.5 records what shipped and why the inert `unknown` path is the bound rather than a detail; DESIGN.md § 12's failed-look row gains the re-confirmation and the inconclusive-answer rule. No new `D#` — D35 and D36 already own these decisions and this change implements them.
