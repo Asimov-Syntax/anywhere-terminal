@@ -610,7 +610,11 @@ function branchOf(mode: WorktreeCreateMode): string | undefined {
 function sourceOf(mode: WorktreeCreateMode): CreateSource {
   switch (mode.kind) {
     case "fresh":
-      return { kind: "newBranch", branch: mode.branch, ...(mode.baseRef === undefined ? {} : { baseRef: mode.baseRef }) };
+      return {
+        kind: "newBranch",
+        branch: mode.branch,
+        ...(mode.baseRef === undefined ? {} : { baseRef: mode.baseRef }),
+      };
     case "fresh-detached":
       return { kind: "detached", ref: mode.baseRef };
     case "reuse":

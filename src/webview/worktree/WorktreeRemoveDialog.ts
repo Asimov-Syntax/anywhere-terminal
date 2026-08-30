@@ -12,12 +12,12 @@
 //    dialog names the agent instead and offers to show it. A disabled confirm would
 //    imply some other input could enable it.
 
+import { countOf, failed, isRefusedByChecks } from "../../worktree/removalChecks";
 import { ICON_TERMINAL } from "../vault/icons";
 import { dialogTitle, openDialogShell, textButton } from "./worktreeDialogShell";
 import { presentedActivity } from "./worktreeFormat";
 import { ICON_LOCK, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
 import { renderAgentRow } from "./worktreeTreeView";
-import { countOf, failed, isRefusedByChecks } from "../../worktree/removalChecks";
 import type {
   PresenceDegradation,
   RemovalCheck,

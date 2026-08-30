@@ -227,7 +227,13 @@ describe("a mutation reaches git through the coordinator", () => {
         normalize: async (raw) => raw,
       },
     });
-    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", afterCreate: { kind: "none" }, mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo/wt/new",
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
+    });
 
     // At least one filesystem observation before the first rebuild, and more
     // after it.
@@ -247,7 +253,13 @@ describe("a mutation reaches git through the coordinator", () => {
         normalize: async (raw) => raw,
       },
     });
-    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", afterCreate: { kind: "none" }, mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo/wt/new",
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
+    });
 
     expect(h.runner.run).not.toHaveBeenCalled();
     expect(h.outcomes[0]).toMatchObject({
@@ -272,7 +284,13 @@ describe("a mutation reaches git through the coordinator", () => {
         normalize: async (raw) => raw,
       },
     });
-    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", afterCreate: { kind: "none" }, mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo/wt/new",
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
+    });
 
     expect(h.runner.run).not.toHaveBeenCalled();
     expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("no longer empty") });
@@ -288,7 +306,13 @@ describe("a mutation reaches git through the coordinator", () => {
         normalize: async (raw) => raw,
       },
     });
-    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", afterCreate: { kind: "none" }, mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo/wt/new",
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
+    });
 
     // Found rather than indexed: a `fresh` mode is name-checked first (W9), so
     // the create is not the first git call and asserting on position would tie
@@ -310,7 +334,13 @@ describe("a mutation reaches git through the coordinator", () => {
         normalize: async (raw) => raw,
       },
     });
-    await h.service.createWorktree({ repoId: REPO, path: "/repo/wt/new", afterCreate: { kind: "none" }, mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo/wt/new",
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
+    });
 
     expect(h.argv.find((a) => a[0] === "worktree" && a[1] === "add")).toContain("-b");
   });
@@ -611,7 +641,8 @@ describe("what the create writes into info/exclude", () => {
     await h.service.createWorktree({
       repoId: REPO,
       path: "/repo/wt/feat",
-      mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
       afterCreate: { kind: "none" },
     });
 
@@ -639,7 +670,13 @@ describe("what the create writes into info/exclude", () => {
     });
 
     for (const branch of ["feat", "fix"]) {
-      await h.service.createWorktree({ repoId: REPO, path: `/repo/wt/${branch}`, mode: { kind: "fresh", branch }, disposition: { kind: "free" }, afterCreate: { kind: "none" } });
+      await h.service.createWorktree({
+        repoId: REPO,
+        path: `/repo/wt/${branch}`,
+        mode: { kind: "fresh", branch },
+        disposition: { kind: "free" },
+        afterCreate: { kind: "none" },
+      });
     }
     expect(written).toEqual([
       ["/repo/.git", "/wt/"],
@@ -715,7 +752,13 @@ describe("evidence that could not be read is not evidence of safety", () => {
         throw new Error("no window available");
       },
     });
-    await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" }, afterCreate: { kind: "newWindow" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "newWindow" },
+    });
     // ONE outcome, and it is the success: a second notice sharing this scope
     // would replace the very result it annotates (round-4 W7).
     expect(h.outcomes).toEqual([
@@ -734,7 +777,8 @@ describe("evidence that could not be read is not evidence of safety", () => {
     await h.service.createWorktree({
       repoId: REPO,
       path: "/repo-wt/new",
-      mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
       afterCreate: { kind: "agent", waitForSetup: false, agent: "claude" },
     });
     expect(h.outcomes).toEqual([
@@ -757,7 +801,8 @@ describe("evidence that could not be read is not evidence of safety", () => {
     await h.service.createWorktree({
       repoId: REPO,
       path: "/repo-wt/new",
-      mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
       afterCreate: {
         kind: "agent",
         waitForSetup: false,
@@ -790,7 +835,13 @@ describe("evidence that could not be read is not evidence of safety", () => {
 
   it("says nothing extra when the open-after succeeds", async () => {
     const h = harness();
-    await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", mode: { kind: "fresh", branch: "feat" }, disposition: { kind: "free" }, afterCreate: { kind: "newWindow" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "newWindow" },
+    });
     expect(h.outcomes).toEqual([expect.objectContaining({ kind: "ok", verb: "create" })]);
     expect(h.outcomes[0]).not.toHaveProperty("openFailed");
   });
@@ -816,8 +867,9 @@ describe("an invalid branch name creates nothing (round-4 W9)", () => {
     await h.service.createWorktree({
       repoId: REPO,
       path: "/repo-wt/new",
-      mode: { kind: "fresh", branch: "feat..bad", baseRef: "main" }, disposition: { kind: "free" },
-            afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat..bad", baseRef: "main" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
     });
     expect(h.outcomes).toEqual([
       expect.objectContaining({ kind: "error", verb: "create", message: expect.stringContaining("feat..bad") }),
@@ -830,8 +882,9 @@ describe("an invalid branch name creates nothing (round-4 W9)", () => {
     await h.service.createWorktree({
       repoId: REPO,
       path: "/repo-wt/new",
-      mode: { kind: "fresh", branch: "feat/ok", baseRef: "main" }, disposition: { kind: "free" },
-            afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat/ok", baseRef: "main" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
     });
     expect(h.outcomes).toEqual([expect.objectContaining({ kind: "ok", verb: "create" })]);
     expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(true);
@@ -852,8 +905,9 @@ describe("an invalid branch name creates nothing (round-4 W9)", () => {
     await h.service.createWorktree({
       repoId: REPO,
       path: "/repo-wt/new",
-      mode: { kind: "fresh", branch: "feat/ok", baseRef: "main" }, disposition: { kind: "free" },
-            afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat/ok", baseRef: "main" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
     });
     expect(h.outcomes).toEqual([expect.objectContaining({ kind: "ok", verb: "create" })]);
     expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(true);
@@ -861,7 +915,13 @@ describe("an invalid branch name creates nothing (round-4 W9)", () => {
 
   it("does not check a branch it is not creating", async () => {
     const { h, argv } = withRefFormat(true);
-    await h.service.createWorktree({ repoId: REPO, path: "/repo-wt/new", mode: { kind: "fresh-detached", baseRef: "HEAD" }, disposition: { kind: "free" }, afterCreate: { kind: "none" } });
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: "/repo-wt/new",
+      mode: { kind: "fresh-detached", baseRef: "HEAD" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
+    });
     expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(true);
     expect(argv.some((a) => a[0] === "check-ref-format")).toBe(false);
   });

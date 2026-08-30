@@ -30,7 +30,9 @@ function withChecks(
     contained,
     checks: base.checks.map((c) => {
       const patch = over[c.id];
-      return patch === undefined ? c : { ...c, outcome: patch.outcome, ...(patch.count === undefined ? {} : { count: patch.count }) };
+      return patch === undefined
+        ? c
+        : { ...c, outcome: patch.outcome, ...(patch.count === undefined ? {} : { count: patch.count }) };
     }),
   };
 }
@@ -84,14 +86,20 @@ describe("isRemoveRefused", () => {
     // D4: git's `remove --force` would delete the child's files and leave a
     // prunable child record behind, and no confirmation about THIS worktree can
     // honestly describe losing that one.
-    expect(isRemoveRefused(withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: failedWith(NESTED.length) }, NESTED).checks)).toBe(true);
+    expect(
+      isRemoveRefused(
+        withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: failedWith(NESTED.length) }, NESTED).checks,
+      ),
+    ).toBe(true);
     expect(isRemoveRefused(confirmableBlocker.checks)).toBe(false);
   });
 });
 
 describe("remove worktree — refused for containment (design.md D4)", () => {
   function openNested(children = NESTED) {
-    return open(withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: failedWith(children.length) }, children));
+    return open(
+      withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: failedWith(children.length) }, children),
+    );
   }
 
   it("offers no confirm button", () => {
@@ -125,7 +133,13 @@ describe("remove worktree — refused for containment (design.md D4)", () => {
 
   it("still explains the main worktree as the main worktree when both apply", () => {
     // isMain is the more fundamental refusal and stays the headline.
-    const { host } = open(withChecks(refusedBlocker, { busyAgents: passed, isMain: failedWith(), containsWorktrees: failedWith(NESTED.length) }, NESTED));
+    const { host } = open(
+      withChecks(
+        refusedBlocker,
+        { busyAgents: passed, isMain: failedWith(), containsWorktrees: failedWith(NESTED.length) },
+        NESTED,
+      ),
+    );
     expect(host.querySelector(".wt-refusebox")?.textContent).toContain("main worktree");
   });
 });

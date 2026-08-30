@@ -867,7 +867,11 @@ describe("create validates the shape before it delegates", () => {
     // The form does not offer it; this is the defence behind that, so a hand-sent
     // message cannot reach a launch that does not exist.
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, afterCreate: { kind: "agent" } as never });
+    host.handleMessage(view, {
+      ...REQ,
+      mode: { kind: "fresh", branch: "feat" },
+      afterCreate: { kind: "agent" } as never,
+    });
     await settle();
 
     expect(calls).toEqual([]);
@@ -876,7 +880,11 @@ describe("create validates the shape before it delegates", () => {
 
   it("rejects a mode that is not one of the documented ones", async () => {
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, afterCreate: { kind: "somethingElse" } as never });
+    host.handleMessage(view, {
+      ...REQ,
+      mode: { kind: "fresh", branch: "feat" },
+      afterCreate: { kind: "somethingElse" } as never,
+    });
     await settle();
 
     expect(calls).toEqual([]);
