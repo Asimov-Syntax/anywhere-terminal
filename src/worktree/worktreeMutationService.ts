@@ -10,7 +10,7 @@
 // module is that assembly, and the one place the ordering rules live.
 
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
-import type { WorktreeAgentLaunchFields, WorktreeOpenAfterMode } from "../types/messages";
+import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
 import { type CreatePathContext, type CreatePathDeps, identityOf, validateCreatePath } from "./createPath";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
@@ -149,16 +149,14 @@ export interface MutationServiceDeps {
   /**
    * Everything this action should do once git has succeeded.
    *
-   * `launch` accompanies the `agent` mode and no other, and `origin` is the
-   * surface that asked — only a surface can hold the session a launch creates.
-   * A rejection here is the create's `openFailed`, never the create's failure.
+   * Takes the whole `WorktreeAfterCreate` rather than a mode plus an optional
+   * payload: the launch details live on the `agent` variant, and splitting them
+   * apart here would recreate the "does this pairing make sense" question the
+   * union exists to answer. `origin` is the surface that asked — only a surface
+   * can hold the session a launch creates. A rejection here is the create's
+   * `openFailed`, never the create's failure.
    */
-  afterCreate(
-    path: string,
-    openAfter: WorktreeOpenAfterMode,
-    launch?: WorktreeAgentLaunchFields,
-    origin?: WorktreeSurface,
-  ): Promise<void>;
+  afterCreate(path: string, after: WorktreeAfterCreate, origin?: WorktreeSurface): Promise<void>;
   /** The `.git` dir whose `info/exclude` needs the entry, or null (D8). */
   /**
    * The `.git` directory whose `info/exclude` should hide `createdPath`, plus
@@ -464,14 +462,6 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // worktree exists whether or not a window opened (round-3 W7).
       let openFailure: string | null = null;
 
-      // The launch details and the mode that names them are one thing: the mode
-      // without them describes no launch, and them without the mode is a caller
-      // that meant something else. Neither is repairable here.
-      if ((request.openAfter === "agent") !== (request.launch !== undefined)) {
-        deps.report(fail("That launch does not match the mode it was asked for."), request.origin);
-        return;
-      }
-
       const before = deps.createContext(request.repoId);
       if (before === null) {
         deps.report(fail("That repository is gone."), request.origin);
@@ -521,14 +511,14 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             }
             // Before anything is created: git's own answer, so an invalid name
             // fails as a name rather than as a half-finished worktree (W9).
-            const named = branchOf(request);
+            const named = branchOf(request.mode);
             if (named !== undefined && (await branchNameIsValid(deps.runner, repoPath, named)) === false) {
               return fail(`Git will not accept "${named}" as a branch name.`);
             }
             const result = await createWorktree(deps.runner, {
               repoPath,
               worktreePath: check.path,
-              source: sourceOf(request),
+              source: sourceOf(request.mode),
             });
             if (!result.ok) {
               return settled("create", request.repoId, result);
@@ -541,12 +531,10 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             }
             // The worktree is already made. Whatever this rejects with, it
             // reports as a launch that did not happen — it never unmakes it.
-            await deps
-              .afterCreate(check.path, request.openAfter, request.launch, request.origin)
-              .catch((error: unknown) => {
-                const reason = messageOf(error);
-                openFailure = request.openAfter === "agent" ? `Agent did not start: ${reason}` : reason;
-              });
+            await deps.afterCreate(check.path, request.afterCreate, request.origin).catch((error: unknown) => {
+              const reason = messageOf(error);
+              openFailure = request.afterCreate.kind === "agent" ? `Agent did not start: ${reason}` : reason;
+            });
             return {
               kind: "ok",
               verb: "create",
@@ -554,7 +542,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               ...(openFailure === null ? {} : { openFailed: openFailure }),
               // Only a SURFACE can open a terminal — it needs a view id and a
               // webview (D2). The host performs it on the origin.
-              ...(request.openAfter === "terminal" ? { openTerminalAt: check.path } : {}),
+              ...(request.afterCreate.kind === "terminal" ? { openTerminalAt: check.path } : {}),
             };
           },
         })
@@ -597,19 +585,35 @@ function asOutcome(verb: MutationVerb, repoId: string, outcome: RemovalOutcome):
  * Only a new branch is checked: an existing branch was already accepted by git
  * when it was made, and a detached create names a revision, not a branch.
  */
-function branchOf(request: { branch?: string; baseRef?: string; detach?: boolean }): string | undefined {
-  const source = sourceOf(request);
-  return source.kind === "newBranch" ? source.branch : undefined;
+function branchOf(mode: WorktreeCreateMode): string | undefined {
+  return mode.kind === "fresh" ? mode.branch : undefined;
 }
 
-function sourceOf(request: { branch?: string; baseRef?: string; detach?: boolean }): CreateSource {
-  if (request.detach === true) {
-    return { kind: "detached", ref: request.baseRef ?? "HEAD" };
+/**
+ * The wire mode, in git's own vocabulary. A TOTAL map, with no inference.
+ *
+ * This used to read the request's optional fields and guess: `newBranch` only
+ * when `baseRef` happened to be present, `existingBranch` otherwise. The
+ * new-branch and existing-branch modes were indistinguishable on the wire, so
+ * the ordinary create — a new branch, no base ref — became
+ * `git worktree add <path> <branch>` against a branch nobody had made, and git
+ * answered `fatal: invalid reference`. There is nothing left here to guess with.
+ *
+ * `reattach` and `adopt` are not `git worktree add` at all; they throw rather
+ * than resolve, and WT-012.15 is where they get their own commands.
+ */
+function sourceOf(mode: WorktreeCreateMode): CreateSource {
+  switch (mode.kind) {
+    case "fresh":
+      return { kind: "newBranch", branch: mode.branch, ...(mode.baseRef === undefined ? {} : { baseRef: mode.baseRef }) };
+    case "fresh-detached":
+      return { kind: "detached", ref: mode.baseRef };
+    case "reuse":
+      return { kind: "existingBranch", branch: mode.branch };
+    case "reattach":
+    case "adopt":
+      throw new Error(`"${mode.kind}" is not a git worktree add; it has no CreateSource.`);
   }
-  if (request.branch !== undefined && request.baseRef !== undefined) {
-    return { kind: "newBranch", branch: request.branch, baseRef: request.baseRef };
-  }
-  return { kind: "existingBranch", branch: request.branch ?? "HEAD" };
 }
 
 function messageOf(error: unknown): string {

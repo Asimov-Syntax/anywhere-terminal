@@ -688,9 +688,9 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
         type: "worktreeCreate",
         repoId: "/repo/.git",
         path: "/repo/.claude/worktrees/feat",
-        openAfter: "none",
-        branch: "feat",
-        baseRef: "main",
+        mode: { kind: "fresh", branch: "feat", baseRef: "main" },
+        disposition: { kind: "free" },
+        afterCreate: { kind: "none" },
       },
     ]);
   });
@@ -711,7 +711,16 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     });
 
     expect(h.posts).toEqual([
-      { type: "worktreeCreate", repoId: "/repo/.git", path: "/wt", openAfter: "none", branch: "feat" },
+      {
+        type: "worktreeCreate",
+        repoId: "/repo/.git",
+        path: "/wt",
+        // No `baseRef` key at all, and `fresh` rather than `reuse` — the two
+        // halves of the defect this pair of properties exists to stop.
+        mode: { kind: "fresh", branch: "feat" },
+        disposition: { kind: "free" },
+        afterCreate: { kind: "none" },
+      },
     ]);
   });
 
@@ -728,7 +737,16 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     });
 
     expect(h.posts).toEqual([
-      { type: "worktreeCreate", repoId: "/repo/.git", path: "/wt", openAfter: "none", detach: true },
+      {
+        type: "worktreeCreate",
+        repoId: "/repo/.git",
+        path: "/wt",
+        // Whitespace is not a ref, so the mode's required field takes the
+        // default the host used to substitute.
+        mode: { kind: "fresh-detached", baseRef: "HEAD" },
+        disposition: { kind: "free" },
+        afterCreate: { kind: "none" },
+      },
     ]);
   });
 
@@ -745,7 +763,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       openAfter: "none",
     });
 
-    expect(h.posts[0]).toMatchObject({ baseRef: "origin/main" });
+    expect(h.posts[0]).toMatchObject({ mode: { kind: "fresh", baseRef: "origin/main" } });
   });
 
   it("posts no create for a branch name that is blank", () => {
@@ -810,9 +828,17 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
         type: "worktreeCreate",
         repoId: "/repo/.git",
         path: "/wt",
-        branch: "feat",
-        openAfter: "agent",
-        launch: { agent: "claude", permissionChoiceId: "plan", prompt: "read the failing test" },
+        // `existing` is `reuse`, not `fresh` — the distinction the wire could
+        // not carry before.
+        mode: { kind: "reuse", branch: "feat" },
+        disposition: { kind: "free" },
+        afterCreate: {
+          kind: "agent",
+          waitForSetup: false,
+          agent: "claude",
+          permissionChoiceId: "plan",
+          prompt: "read the failing test",
+        },
       },
     ]);
   });
@@ -1002,9 +1028,9 @@ describe("the launch entry paths WT-005.3 supplies", () => {
       agentId: "claude",
     });
     const created = h.posts.filter((m) => m.type === "worktreeCreate")[0] as
-      | { launch?: { offerId?: string } }
+      | { afterCreate?: { offerId?: string } }
       | undefined;
-    expect(created?.launch?.offerId).toBe("offer-1");
+    expect(created?.afterCreate?.offerId).toBe("offer-1");
   });
 
   it("resumes a row's session in the worktree that row is published under", () => {

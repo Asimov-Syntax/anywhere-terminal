@@ -639,25 +639,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               : {}),
           });
         },
-        afterCreate: async (createdPath, openAfter, launch, origin) => {
-          if (openAfter === "newWindow" || openAfter === "addToWorkspace") {
-            await worktreeActions.openFolder(createdPath, openAfter);
+        afterCreate: async (createdPath, after, origin) => {
+          if (after.kind === "newWindow" || after.kind === "addToWorkspace") {
+            await worktreeActions.openFolder(createdPath, after.kind);
             return;
           }
           // The same two halves the menu's launch uses — resolve the argv here,
           // open the pane on the surface that asked. Throwing is the contract:
           // the service reports it as an agent that did not start, and the
           // worktree it was created in stays.
-          if (openAfter === "agent" && launch !== undefined) {
+          //
+          // No "and the launch details are present" clause: they are fields of
+          // this variant, so narrowing the kind is what produces them.
+          if (after.kind === "agent") {
             const open = origin?.launchAgent;
             if (!open) {
               throw new Error("This view cannot start an agent.");
             }
             await open.call(
               origin,
-              await vaultLauncher.startAgent(launch.agent, createdPath, {
-                ...(launch.permissionChoiceId === undefined ? {} : { permissionChoiceId: launch.permissionChoiceId }),
-                ...(launch.prompt === undefined ? {} : { prompt: launch.prompt }),
+              await vaultLauncher.startAgent(after.agent, createdPath, {
+                ...(after.permissionChoiceId === undefined ? {} : { permissionChoiceId: after.permissionChoiceId }),
+                ...(after.prompt === undefined ? {} : { prompt: after.prompt }),
               }),
             );
           }

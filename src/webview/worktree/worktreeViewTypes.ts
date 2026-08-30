@@ -15,6 +15,13 @@
 //     → docs/design/worktree-actions.md § 3.2
 
 export type { WorktreeRowActivation } from "../../settings/SettingsReader";
+// The create request's own shapes. The dialog builds them and the host consumes
+// them unflattened, so both sides read one declaration.
+export type {
+  DestinationDisposition,
+  WorktreeAfterCreate,
+  WorktreeCreateMode,
+} from "../../types/messages";
 export type {
   DelegationRoster,
   PresenceDegradation,

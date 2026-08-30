@@ -14,8 +14,14 @@ of the message.
 
 A boundary that accepts `{ kind: "reuse", branch }` and hands on `{ branch, baseRef: undefined }`
 has deleted the property the union exists for, at the one place nobody looks. The type is the
-enforcement — a validator that re-checks "reuse must not carry a base ref" three layers down is
-exactly the forgettable check rpc § 2.3 replaces.
+enforcement *within our own code* — a validator that re-checks "reuse must not carry a base ref"
+three layers down is exactly the forgettable check rpc § 2.3 replaces.
+
+**It is not a substitute for validating the inbound message.** The type erases where the webview's
+message crosses into the host, so `WorktreeHost` keeps a runtime check that the discriminant is one
+of the five and that the variant carries the fields it declares — rpc § 4 asks for exactly that, on
+every inbound message. What the union removes is the *inference* (`sourceOf` guessing a mode from
+which optional fields are set), not the boundary check.
 
 Consequence: three signatures change together in one task, and the flat `branch?` / `baseRef?` /
 `detach?` / `openAfter` / `launch?` fields disappear rather than being kept as an overload.

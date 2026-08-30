@@ -852,20 +852,22 @@ export interface BranchDeleteRequest {
  * caller bug, not a field to ignore (worktree-rpc.md § 2.2). The union makes
  * that unrepresentable rather than validated.
  */
-export type WorktreeCreateRequestMessage = WorktreeCreateRequestBase &
-  (
-    | { openAfter: "agent"; launch: WorktreeAgentLaunchFields }
-    | { openAfter: Exclude<WorktreeOpenAfterMode, "agent">; launch?: never }
-  );
-
-interface WorktreeCreateRequestBase {
+export interface WorktreeCreateRequestMessage {
   type: "worktreeCreate";
   repoId: string;
   /** Untrusted: the one action with no host-issued id to re-resolve from. */
   path: string;
-  branch?: string;
-  baseRef?: string;
-  detach?: boolean;
+  /**
+   * WHICH branch mode the user chose, said outright.
+   *
+   * It used to be inferred from which of `branch` / `baseRef` / `detach`
+   * happened to be present, and the new-branch and existing-branch modes were
+   * indistinguishable that way — so the host guessed, and guessed wrong for a
+   * new branch with no base ref.
+   */
+  mode: WorktreeCreateMode;
+  disposition: DestinationDisposition;
+  afterCreate: WorktreeAfterCreate;
 }
 
 /** WebView → Extension: start a fresh agent session in a worktree. */

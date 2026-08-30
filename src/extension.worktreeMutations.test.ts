@@ -221,7 +221,14 @@ describe("an outcome comes back to the surface that started it (design.md D17)",
         await a.lockWorktree?.({ repoId: REPO, worktreeId: WT, origin }, undefined);
         await a.unlockWorktree?.({ repoId: REPO, worktreeId: WT, origin });
         await a.pruneRepo?.(REPO, 0, origin);
-        await a.createWorktree?.({ repoId: REPO, path: "/repo-wt/new", branch: "feat", openAfter: "none", origin });
+        await a.createWorktree?.({
+          repoId: REPO,
+          path: "/repo-wt/new",
+          mode: { kind: "fresh", branch: "feat" },
+          disposition: { kind: "free" },
+          afterCreate: { kind: "none" },
+          origin,
+        });
       });
       // Every verb reported, and every report carried the surface it came from.
       expect(received.reports.map((r) => r.outcome.verb).sort()).toEqual([

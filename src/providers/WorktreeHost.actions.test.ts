@@ -834,11 +834,17 @@ describe("removal resolves its target and refuses an unauthorized force", () => 
 });
 
 describe("create validates the shape before it delegates", () => {
-  const REQ = { type: "worktreeCreate", repoId: "/repo", path: "/trees/feat", openAfter: "none" } as const;
+  const REQ = {
+    type: "worktreeCreate",
+    repoId: "/repo",
+    path: "/trees/feat",
+    disposition: { kind: "free" },
+    afterCreate: { kind: "none" },
+  } as const;
 
   it("hands the request to the capability", async () => {
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, branch: "feat", baseRef: "origin/main" });
+    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat", baseRef: "origin/main" } });
     await settle();
 
     expect(calls).toEqual([
@@ -847,10 +853,9 @@ describe("create validates the shape before it delegates", () => {
         {
           repoId: "/repo",
           path: "/trees/feat",
-          branch: "feat",
-          baseRef: "origin/main",
-          detach: undefined,
-          openAfter: "none",
+          mode: { kind: "fresh", branch: "feat", baseRef: "origin/main" },
+          disposition: { kind: "free" },
+          afterCreate: { kind: "none" },
           origin: view,
         },
       ],
@@ -862,7 +867,7 @@ describe("create validates the shape before it delegates", () => {
     // The form does not offer it; this is the defence behind that, so a hand-sent
     // message cannot reach a launch that does not exist.
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, openAfter: "agent" as never });
+    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, afterCreate: { kind: "agent" } as never });
     await settle();
 
     expect(calls).toEqual([]);
@@ -871,7 +876,7 @@ describe("create validates the shape before it delegates", () => {
 
   it("rejects a mode that is not one of the documented ones", async () => {
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, openAfter: "somethingElse" as never });
+    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, afterCreate: { kind: "somethingElse" } as never });
     await settle();
 
     expect(calls).toEqual([]);
@@ -880,7 +885,7 @@ describe("create validates the shape before it delegates", () => {
 
   it("acts on nothing when the path is empty", async () => {
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, path: "" });
+    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, path: "" });
     await settle();
 
     expect(calls).toEqual([]);
@@ -1768,15 +1773,26 @@ describe("resuming a session into a worktree", () => {
 });
 
 describe("create with a launch", () => {
-  const REQ = { type: "worktreeCreate", repoId: REPO, path: "/trees/feat" } as const;
+  const REQ = {
+    type: "worktreeCreate",
+    repoId: REPO,
+    path: "/trees/feat",
+    mode: { kind: "fresh", branch: "feat" },
+    disposition: { kind: "free" },
+  } as const;
   const creates = (calls: Array<[string, ...unknown[]]>) => calls.filter(([name]) => name === "createWorktree");
 
   it("accepts the agent mode now that a launch exists behind it", async () => {
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, openAfter: "agent", launch: { offerId: offer(), agent: "claude" } });
+    host.handleMessage(view, {
+      ...REQ,
+      afterCreate: { kind: "agent", waitForSetup: false, offerId: offer(), agent: "claude" },
+    });
     await settle();
     expect(creates(calls)).toHaveLength(1);
-    expect(creates(calls)[0]?.[1]).toMatchObject({ openAfter: "agent", launch: { offerId: offer(), agent: "claude" } });
+    expect(creates(calls)[0]?.[1]).toMatchObject({
+      afterCreate: { kind: "agent", offerId: offer(), agent: "claude" },
+    });
     dispose();
   });
 
@@ -1789,7 +1805,7 @@ describe("create with a launch", () => {
       { offerId: offer(), agent: "claude", permissionChoiceId: "bypassPermissions" },
       { offerId: offer(), agent: "opencode", prompt: "read the spec" },
     ]) {
-      host.handleMessage(view, { ...REQ, openAfter: "agent", launch } as never);
+      host.handleMessage(view, { ...REQ, afterCreate: { kind: "agent", waitForSetup: false, ...launch } } as never);
     }
     await settle();
     expect(creates(calls)).toHaveLength(0);
@@ -1797,16 +1813,11 @@ describe("create with a launch", () => {
   });
 
   it("refuses an agent mode that describes no launch", async () => {
+    // Unrepresentable in our own code now — the agent fields are members of the
+    // variant — but the message crosses a boundary where the type is erased, so
+    // the host still has to answer for one that arrives anyway.
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, openAfter: "agent" } as never);
-    await settle();
-    expect(creates(calls)).toHaveLength(0);
-    dispose();
-  });
-
-  it("refuses launch details riding a mode that is not launching", async () => {
-    const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { ...REQ, openAfter: "none", launch: { offerId: offer(), agent: "claude" } } as never);
+    host.handleMessage(view, { ...REQ, afterCreate: { kind: "agent", waitForSetup: false } } as never);
     await settle();
     expect(creates(calls)).toHaveLength(0);
     dispose();
@@ -1816,8 +1827,13 @@ describe("create with a launch", () => {
     const { host, view, calls, dispose } = await builtHost();
     host.handleMessage(view, {
       ...REQ,
-      openAfter: "agent",
-      launch: { offerId: offer(), agent: "claude", prompt: "x".repeat(MAX_CONTINUATION_INSTRUCTION + 1) },
+      afterCreate: {
+        kind: "agent",
+        waitForSetup: false,
+        offerId: offer(),
+        agent: "claude",
+        prompt: "x".repeat(MAX_CONTINUATION_INSTRUCTION + 1),
+      },
     });
     await settle();
     expect(creates(calls)).toHaveLength(0);

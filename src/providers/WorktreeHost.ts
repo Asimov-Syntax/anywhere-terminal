@@ -8,12 +8,14 @@
 
 import type * as vscode from "vscode";
 import type {
+  DestinationDisposition,
   ExtensionToWebViewMessage,
   WebViewToExtensionMessage,
   WorktreeActionMessage,
+  WorktreeAfterCreate,
   WorktreeAgentLaunchFields,
+  WorktreeCreateMode,
   WorktreeMutationResultMessage,
-  WorktreeOpenAfterMode,
   WorktreeSubscriptionLevel,
 } from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
@@ -214,12 +216,11 @@ export interface WorktreeActions {
   createWorktree?(request: {
     repoId: string;
     path: string;
-    branch?: string;
-    baseRef?: string;
-    detach?: boolean;
-    openAfter: WorktreeOpenAfterMode;
-    /** Present exactly when `openAfter` is `"agent"` — the host refuses any other pairing. */
-    launch?: WorktreeAgentLaunchFields;
+    /** Unflattened all the way down: the capability reads the mode, never a field-presence guess. */
+    mode: WorktreeCreateMode;
+    disposition: DestinationDisposition;
+    /** The launch details live on the `agent` variant; no other variant can carry them. */
+    afterCreate: WorktreeAfterCreate;
     origin?: WorktreeSurface;
   }): Promise<void>;
   removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
@@ -820,6 +821,58 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   /** The launcher's option bag, with absent fields absent rather than undefined. */
+  /**
+   * Does this inbound value name one of the five branch modes, with the fields
+   * that mode requires?
+   *
+   * A discriminant the webview invented would otherwise reach `sourceOf`, whose
+   * `switch` is total over the five and therefore has no arm to catch it.
+   */
+  function isKnownCreateMode(mode: unknown): mode is WorktreeCreateMode {
+    if (typeof mode !== "object" || mode === null) {
+      return false;
+    }
+    const m = mode as { kind?: unknown; branch?: unknown; baseRef?: unknown; repairPath?: unknown };
+    const named = (v: unknown): boolean => typeof v === "string" && v.length > 0;
+    switch (m.kind) {
+      case "fresh":
+        return named(m.branch) && (m.baseRef === undefined || named(m.baseRef));
+      case "fresh-detached":
+        return named(m.baseRef);
+      case "reuse":
+        return named(m.branch);
+      case "reattach":
+        return named(m.branch) && named(m.repairPath) && named((mode as { expectedOid?: unknown }).expectedOid);
+      case "adopt":
+        return (
+          named(m.branch) &&
+          named((mode as { adoptPath?: unknown }).adoptPath) &&
+          named((mode as { expectedBranchOid?: unknown }).expectedBranchOid)
+        );
+      default:
+        return false;
+    }
+  }
+
+  /** The same check for what happens afterwards; the agent variant must name an agent. */
+  function isKnownAfterCreate(after: unknown): after is WorktreeAfterCreate {
+    if (typeof after !== "object" || after === null) {
+      return false;
+    }
+    const a = after as { kind?: unknown; agent?: unknown };
+    switch (a.kind) {
+      case "none":
+      case "terminal":
+      case "newWindow":
+      case "addToWorkspace":
+        return true;
+      case "agent":
+        return typeof a.agent === "string" && a.agent.length > 0;
+      default:
+        return false;
+    }
+  }
+
   function launchOpts(fields: WorktreeAgentLaunchFields): { permissionChoiceId?: string; prompt?: string } {
     return {
       ...(fields.permissionChoiceId === undefined ? {} : { permissionChoiceId: fields.permissionChoiceId }),
@@ -864,38 +917,34 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
       case "worktreeCreate": {
         const create = actions.createWorktree;
-        // Validated, not trusted: an unknown mode must fail closed rather than
-        // fall through to whatever the capability defaults to.
-        const modes: readonly WorktreeOpenAfterMode[] = ["none", "terminal", "agent", "newWindow", "addToWorkspace"];
-        if (!modes.includes(msg.openAfter)) {
-          return;
-        }
-        // Launch details belong to the agent mode alone. Riding another mode
-        // they are a caller bug, not a field to ignore — and an agent mode
-        // without them names a launch nobody described (worktree-rpc.md § 2.2).
-        if ((msg.openAfter === "agent") !== (msg.launch !== undefined)) {
+        // Validated at RUNTIME, not merely typed. The unions make a bad request
+        // unrepresentable in our own code, which is what stops us writing one —
+        // but this message arrives from the webview, and a type erases at the
+        // boundary. worktree-rpc.md § 4 asks for the check on every inbound
+        // message, so an unknown discriminant fails closed here rather than
+        // reaching a `switch` that has no arm for it.
+        if (!isKnownCreateMode(msg.mode) || !isKnownAfterCreate(msg.afterCreate)) {
           return;
         }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
           const request = {
             repoId: msg.repoId,
             path: msg.path,
-            branch: msg.branch,
-            baseRef: msg.baseRef,
-            detach: msg.detach,
-            openAfter: msg.openAfter,
+            mode: msg.mode,
+            disposition: msg.disposition,
+            afterCreate: msg.afterCreate,
             origin: surface,
           };
-          if (msg.launch === undefined) {
+          if (msg.afterCreate.kind !== "agent") {
             perform(() => create(request));
             return;
           }
-          const asked = msg.launch;
+          const asked = msg.afterCreate;
           // Admitted BEFORE git runs: a create that made a worktree and then
           // refused its launch would leave the user a directory they did not
           // ask for on its own.
           if (admissibleLaunch(surface, asked)) {
-            perform(() => create({ ...request, launch: asked }));
+            perform(() => create(request));
           }
         }
         return;

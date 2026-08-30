@@ -28,6 +28,7 @@ import type {
   WorktreeCreateDefaults,
   WorktreeInfo,
   WorktreeLaunchAgent,
+  WorktreeCreateMode,
   WorktreeOpenAfter,
   WorktreePresence,
   WorktreeRowActivation,
@@ -415,28 +416,38 @@ export class WorktreeController {
         if (draft.branchMode !== "detached" && branch.length === 0) {
           return;
         }
+        // The form has always known which of its three branch modes the user
+        // picked; until the mode union it had nowhere on the wire to say so,
+        // and the host inferred it from which optional fields were filled in.
+        const mode: WorktreeCreateMode =
+          draft.branchMode === "detached"
+            ? // `fresh-detached` requires the ref, so the default lands here
+              // rather than in the host — the type is what insists on it.
+              { kind: "fresh-detached", baseRef: baseRef.length > 0 ? baseRef : "HEAD" }
+            : draft.branchMode === "new"
+              ? { kind: "fresh", branch, ...(baseRef.length > 0 ? { baseRef } : {}) }
+              : { kind: "reuse", branch };
         deps.postMessage({
           type: "worktreeCreate",
           repoId: draft.repoId,
           path: draft.path,
-          // The launch details travel with the agent mode and with no other —
-          // the host rejects any other pairing rather than ignoring them.
-          ...(draft.openAfter === "agent" && draft.agentId !== undefined
-            ? {
-                openAfter: "agent" as const,
-                launch: {
+          mode,
+          // Nothing in this form offers a debris destination yet; WT-012.12
+          // adds the authorization that makes the other member reachable.
+          disposition: { kind: "free" },
+          // The launch details travel with the agent variant and with no other —
+          // the union is what makes any other pairing unrepresentable.
+          afterCreate:
+            draft.openAfter === "agent" && draft.agentId !== undefined
+              ? {
+                  kind: "agent",
+                  waitForSetup: false,
                   agent: draft.agentId,
                   ...(draft.permissionChoiceId === undefined ? {} : { permissionChoiceId: draft.permissionChoiceId }),
                   ...(draft.prompt === undefined ? {} : { prompt: draft.prompt }),
                   ...(this.frozenCreateOffer?.offerId === undefined ? {} : { offerId: this.frozenCreateOffer.offerId }),
-                },
-              }
-            : { openAfter: draft.openAfter as Exclude<WorktreeOpenAfter, "agent"> }),
-          ...(draft.branchMode === "detached"
-            ? { detach: true, ...(baseRef.length > 0 ? { baseRef } : {}) }
-            : draft.branchMode === "new"
-              ? { branch, ...(baseRef.length > 0 ? { baseRef } : {}) }
-              : { branch }),
+                }
+              : { kind: draft.openAfter as Exclude<WorktreeOpenAfter, "agent"> },
         });
       },
       getInitialCollapsed: () => deps.store.getState().worktreeCollapsed,

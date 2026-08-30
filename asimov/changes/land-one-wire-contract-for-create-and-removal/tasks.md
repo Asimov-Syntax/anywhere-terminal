@@ -14,7 +14,7 @@
     3. Add no entry to `WORKTREE_MESSAGE_TYPES`: no new message type exists, only new shapes on existing ones.
   - **Boundary**: no change to any existing exported type in this task
 
-- [ ] 1_2 Carry the branch mode the user picked all the way to git
+- [x] 1_2 Carry the branch mode the user picked all the way to git — verified: bun test 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-create-says-which-kind-of-branch-it-wants; design.md D1, design.md D2
   - **Acceptance**:
@@ -24,10 +24,12 @@
     1. In `src/types/messages.ts`, replace `WorktreeCreateRequestBase`'s `branch?` / `baseRef?` / `detach?` with `mode: WorktreeCreateMode` and `disposition: DestinationDisposition`, and replace the `openAfter`/`launch` intersection with `afterCreate: WorktreeAfterCreate`.
     2. In `src/webview/worktree/WorktreeController.ts`, build the mode from `draft.branchMode` per design.md D2's table, substituting `"HEAD"` for a blank base ref in the `fresh-detached` case; the guard that drops an agent mode with no agent id becomes the guard that cannot build the `agent` variant.
     3. In `src/webview/worktree/WorktreeCreateDialog.ts`, derive the path slug from the mode rather than from `detached ? draft.baseRef : draft.branchName`.
-    4. In `src/providers/WorktreeHost.ts`, change `createWorktree`'s request type to carry `mode`, `disposition` and `afterCreate`, and delete the hand-written `modes.includes(...)` and `(openAfter === "agent") !== (launch !== undefined)` checks — the union is what refuses those now.
+    4. In `src/providers/WorktreeHost.ts`, change `createWorktree`'s request type to carry `mode`, `disposition` and `afterCreate`, and rewrite the inbound guards against the union — the `modes.includes(...)` allow-list and the launch-pairing check become `isKnownCreateMode` and `isKnownAfterCreate`, which reject an unknown discriminant and a variant missing a field its shape requires. They are not deleted: the message crosses a boundary where the type is erased, and rpc § 4 asks for the check on every inbound message.
     5. In `src/worktree/worktreeMutationService.ts`, rewrite `sourceOf` and `branchOf` as total maps from `WorktreeCreateMode` to `CreateSource` — `fresh` → `newBranch`, `reuse` → `existingBranch`, `fresh-detached` → `detached` — with no inference from which optional fields are present, and no `default` arm that could absorb a mode added later.
     6. In `src/worktree/worktreeMutations.ts`, leave `CreateSource` and the argv assembly as they are; they are git's vocabulary and already correct.
-    7. Update `src/webview/worktree/worktreeFixtures.ts` and the suites named in Plan paths to the new shape, changing inputs only and never an assertion about behaviour — except in `src/worktree/worktreeMutationService.test.ts`, which gains the case design.md D2 names: a `fresh` mode with no `baseRef` reaches git as `newBranch`, not `existingBranch`.
+    6b. Change the service's `afterCreate` dependency to take one `WorktreeAfterCreate` instead of `(openAfter, launch?)`, and follow it into its implementation in `src/extension.ts` — splitting the union back into a mode and an optional payload at that call is the flattening the proposal forbids.
+    7. In `src/webview/worktree/worktreeViewTypes.ts`, re-export `WorktreeCreateMode`, `DestinationDisposition` and `WorktreeAfterCreate` beside the other message types the webview reads.
+    8. Update `src/webview/worktree/worktreeFixtures.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeController.test.ts` and the suites named in Plan paths to the new shape, changing inputs only and never an assertion about behaviour — except in `src/worktree/worktreeMutationService.test.ts`, which gains the case design.md D2 names: a `fresh` mode with no `baseRef` reaches git as `newBranch`, not `existingBranch`.
 
 - [ ] 1_3 Make the destination rule depend on what the mode needs
   - **Deps**: 1_2
