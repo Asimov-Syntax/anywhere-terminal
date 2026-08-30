@@ -59,7 +59,7 @@
     5. In `src/webview/worktree/worktreeViewTypes.ts` and `src/webview/worktree/worktreeFixtures.ts`, follow the type through; leave `src/worktree/worktreeBlockers.ts` and `src/worktree/worktreeFingerprint.ts` unchanged.
   - **Boundary**: no new check id beyond design.md D4's table
 
-- [ ] 1_5 Prove the shapes that must not compile do not compile
+- [x] 1_5 Prove the shapes that must not compile do not compile — verified: pnpm run check-types && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_4
   - **Refs**: design.md D6
   - **Acceptance**:
