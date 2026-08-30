@@ -1,17 +1,6 @@
 {
   "hooks": {
-    "SubagentStart": [
-      {
-        "matcher": "asm-knowledge-extract",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/skills/asimov/claude/hooks/knowledge-extract-session.sh\"",
-            "timeout": 60
-          }
-        ]
-      }
-    ],
+    "SubagentStart": [],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",

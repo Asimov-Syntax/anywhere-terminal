@@ -48,6 +48,27 @@ asimov/memory.db*
 .code-review-graph/
 asimov/worktrees/
 .env.worktree
+asimov/changes/**/.analytics-cursor.json
+asimov/changes/**/.analytics.json.*.tmp
+asimov/changes/**/..analytics-cursor.json.*.tmp
+asimov/changes/**/analytics.json.lock/
+asimov/debug/**/.analytics-cursor.json
+asimov/debug/**/.analytics.json.*.tmp
+asimov/debug/**/..analytics-cursor.json.*.tmp
+asimov/debug/**/analytics.json.lock/
+asimov/changes/**/build-state.json
+asimov/changes/*/.build/
+asimov/changes/**/.build/test-baseline.json
+asimov/changes/**/.build-state.json.*.tmp
+asimov/changes/**/build-state.json.lock/
+asimov/changes/**/build-task.lock/
+asimov/changes/**/.tasks.md.*.tmp
+!asimov/changes/active/
+asimov/changes/active.lock/
+asimov/changes/.active*.tmp
+asimov/debug/*/lease.json
+asimov/debug/*/lease.json.*.tmp
+asimov/debug/*/lease.lock/
 
 # asimov
 .opencode/plugins/asimov.ts
