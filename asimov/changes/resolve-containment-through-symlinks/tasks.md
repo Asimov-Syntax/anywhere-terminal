@@ -32,7 +32,7 @@
     2. In `src/vault/readers/codexReader.test.ts` cover a stored `rolloutPath` that escapes through a link, asserting the reader falls back to the filename scan rather than reading it, and one that is contained under a symlinked sessions root and is used.
     3. Keep the regression `isUnder` guarded: a `rolloutPath` equal to the sessions directory must still be rejected so the filename scan runs (design.md D5).
 
-- [ ] 1_4 The preview service asks the shared question
+- [x] 1_4 The preview service asks the shared question — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D2, D6 -->
   - **Acceptance**:

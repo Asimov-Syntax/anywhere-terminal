@@ -8,7 +8,7 @@
 // could answer "should this file be opened right now" on its own.
 
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
+import { isResolvedPathInside } from "../utils/pathBoundary";
 import { claudeRoots } from "../vault/readers/claudePaths";
 import { codexStoreDirs, pickRolloutPath } from "../vault/readers/codexReader";
 import { type LastActivityFormat, readLastActivityLine } from "../vault/readers/lastActivity";
@@ -150,12 +150,14 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
    */
   async function resolve(entry: PreviewEntry, useHint: boolean): Promise<Target> {
     if (entry.agent === "claude") {
-      // The path the entry already carries, containment-checked — which is also
-      // what makes the spec's "a transcript it can locate" true of this branch
-      // rather than of a projects-wide scan (W6).
+      // The path the entry already carries, containment-checked on RESOLVED
+      // paths — which is also what makes the spec's "a transcript it can locate"
+      // true of this branch rather than of a projects-wide scan (W6). A hint
+      // that resolves out of the store leaves the row unresolved, so the
+      // ordinary cadence retries it rather than recording it as uncovered.
       const file = useHint ? entry.sessionPath : undefined;
       const projectsDir = deps.roots?.claudeProjectsDir ?? claudeRoots({}).projectsDir;
-      return file && isInside(file, projectsDir)
+      return file && (await isResolvedPathInside(file, projectsDir))
         ? { kind: "resolved", path: file, format: "claude" }
         : { kind: "unresolved" };
     }
@@ -316,9 +318,4 @@ async function defaultStat(transcriptPath: string): Promise<FileStamp | null> {
   } catch {
     return null;
   }
-}
-
-function isInside(candidate: string, root: string): boolean {
-  const rel = path.relative(root, candidate);
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }

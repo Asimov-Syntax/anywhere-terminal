@@ -200,6 +200,48 @@ describe("createSessionPreviewService", () => {
     });
   });
 
+  describe("a hint is judged where it resolves", () => {
+    it("leaves the row unresolved when the hint escapes the projects root through a link", async () => {
+      // Lexically inside; resolves out. The row must stay retryable rather than
+      // being recorded as uncovered — the store may be repaired underneath it.
+      const outside = path.join(dir, "stolen.jsonl");
+      await fs.writeFile(outside, `${claudeAssistant("not yours")}\n`);
+      const hint = path.join(projectsDir, "-repo", "escape.jsonl");
+      await fs.mkdir(path.join(projectsDir, "-repo"), { recursive: true });
+      await fs.symlink(outside, hint);
+
+      const svc = service({ "claude:c1": { agent: "claude", sessionId: "c1", sessionPath: hint } });
+      expect(await svc.preview("claude:c1")).toBeUndefined();
+      expect(reads).toEqual([]);
+    });
+
+    it("still previews a hint under a projects root that is itself a link", async () => {
+      const realProjects = path.join(dir, "volume-projects", "-repo");
+      await fs.mkdir(realProjects, { recursive: true });
+      const transcript = path.join(realProjects, "c2.jsonl");
+      await fs.writeFile(transcript, `${claudeAssistant("across the volume")}\n`);
+      const linkedProjects = path.join(dir, "linked-projects");
+      await fs.symlink(path.join(dir, "volume-projects"), linkedProjects);
+
+      const svc = createSessionPreviewService({
+        entry: async () => ({
+          agent: "claude",
+          sessionId: "c2",
+          sessionPath: path.join(linkedProjects, "-repo", "c2.jsonl"),
+        }),
+        read: async (file, format) => readLastActivityLine(file, format),
+        stat: async (file) => {
+          const s = await fs.stat(file);
+          return { mtimeMs: s.mtimeMs, size: s.size };
+        },
+        roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: linkedProjects },
+        now: () => clock,
+        recheckMs: 2000,
+      });
+      expect(await svc.preview("claude:c2")).toBe("across the volume");
+    });
+  });
+
   describe("resolution is a moment, not a verdict", () => {
     it("finds a codex rollout the index did not name, by the repo's own fallback", async () => {
       // `rollout_path` is unreliable — `pickRolloutPath` scans by filename when the
