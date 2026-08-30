@@ -10,6 +10,7 @@ import { TURN_FRESHNESS_MS } from "../session/PaneEvidenceStore";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import type { VaultAgentId } from "../vault/types";
+import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import type { SessionLookup } from "./agentIdentity";
 import {
   createPresenceProjector,
@@ -1967,5 +1968,147 @@ describe("[1_2] enrichment is work only rows consume", () => {
     const { h, previewed } = scoped();
     await h.projector.project([WT], { external: true });
     expect(previewed.length).toBeGreaterThan(0);
+  });
+});
+
+describe("attribution through a symlink", () => {
+  // These build the projector over a REAL `ResolvedPathMemo` with a fake
+  // `realpath`, not over a stub `normalize`. The bug this change fixes lived in
+  // the seam — the memo, `prepareCwds` and `normalize` agreeing about which
+  // side of the comparison is resolved — so a test that stubs `normalize`
+  // proves nothing about it.
+  const PHYSICAL = "/private/repo/feature";
+  const SPELLED = "/link/feature";
+
+  function symlinked(links: Record<string, string>, initial: Pane[]) {
+    const memo = new ResolvedPathMemo({
+      realpath: async (p) => {
+        realpaths.push(p);
+        const hit = links[p];
+        if (hit === undefined) {
+          const error: NodeJS.ErrnoException = new Error(`ENOENT: ${p}`);
+          error.code = "ENOENT";
+          throw error;
+        }
+        return hit;
+      },
+    });
+    const realpaths: string[] = [];
+    const panes = [...initial];
+    const deps: PresenceProjectorDeps = {
+      panes: () => panes,
+      activityFor: () => ({ activity: "idle", rule: "quiet" }),
+      openSnapshot: async () => ({
+        resolve: async () => ({ kind: "absent" }) as SessionLookup,
+        sessions: async () => ({ kind: "ok", sessions: [] }),
+      }),
+      prepareCwds: (paths) => memo.prepare(paths),
+      normalize: (p) => memo.resolvedOr(p),
+      forgetCwd: (p) => memo.invalidate(p),
+      now: () => clock,
+    };
+    return { projector: createPresenceProjector(deps), panes, realpaths, memo };
+  }
+
+  it("puts a pane under the worktree its cwd resolves into, however it is spelled", async () => {
+    // Spec: "A pane whose shell reports a symlinked spelling of its worktree".
+    // The worktree id arrives already realpathed by `normalizeWorktreePath`;
+    // only the pane side was ever unresolved, which is why the row vanished.
+    const h = symlinked({ [SPELLED]: PHYSICAL }, [pane({ paneId: "p1", cwd: SPELLED })]);
+
+    const projection = await h.projector.project([PHYSICAL]);
+
+    expect(projection.rowsByWorktreeId[PHYSICAL]?.map((r) => r.paneId)).toEqual(["p1"]);
+  });
+
+  it("keeps a pane out of a worktree it is merely spelled beneath", async () => {
+    // Spec: "A pane spelled beneath a worktree that resolves elsewhere". The
+    // lexical comparison alone says yes here, so this is the half that a
+    // `path.resolve` fix would still get wrong.
+    const h = symlinked({ "/repo/escape": "/elsewhere/real" }, [pane({ paneId: "p1", cwd: "/repo/escape" })]);
+
+    const projection = await h.projector.project(["/repo"]);
+
+    expect(projection.rowsByWorktreeId["/repo"]).toBeUndefined();
+  });
+
+  it("keeps the row it has today when the cwd cannot be resolved", async () => {
+    // A worktree mid-creation fails `realpath`. Dropping the row would make
+    // this fix a regression on the ordinary case to serve the exotic one.
+    const h = symlinked({}, [pane({ paneId: "p1", cwd: "/repo/pending" })]);
+
+    const projection = await h.projector.project(["/repo"]);
+
+    expect(projection.rowsByWorktreeId["/repo"]?.map((r) => r.paneId)).toEqual(["p1"]);
+  });
+
+  it("costs one realpath per directory, not one per projection", async () => {
+    // The acceptance's cost half: "the per-push paths do not gain an unbounded
+    // syscall per comparison". Asserted as a count, because a type-check cannot
+    // see it and a passing attribution test would hold either way.
+    const h = symlinked({ [SPELLED]: PHYSICAL }, [
+      pane({ paneId: "p1", cwd: SPELLED }),
+      pane({ paneId: "p2", cwd: SPELLED }),
+    ]);
+
+    await h.projector.project([PHYSICAL]);
+    await h.projector.project([PHYSICAL]);
+    await h.projector.project([PHYSICAL]);
+
+    expect(h.realpaths).toEqual([SPELLED]);
+  });
+
+  it("re-resolves a directory a pane has left, and only then", async () => {
+    // A pane moving is the one signal that the directory it named may itself
+    // have moved. Nothing else in the window observes that, and re-resolving
+    // on every pass instead would be the unbounded syscall D1 forbids.
+    const links: Record<string, string> = { [SPELLED]: PHYSICAL, "/link/other": "/private/repo/other" };
+    const h = symlinked(links, [pane({ paneId: "p1", cwd: SPELLED })]);
+
+    await h.projector.project([PHYSICAL]);
+    await h.projector.project([PHYSICAL]);
+    expect(h.realpaths).toEqual([SPELLED]);
+
+    h.panes[0] = pane({ paneId: "p1", cwd: "/link/other" });
+    await h.projector.project([PHYSICAL]);
+    links[SPELLED] = "/private/repo/moved";
+    h.panes[0] = pane({ paneId: "p1", cwd: SPELLED });
+    await h.projector.project(["/private/repo/moved"]);
+
+    expect(h.realpaths).toEqual([SPELLED, "/link/other", SPELLED]);
+  });
+
+  it("attributes a registry session by where its cwd resolves too", async () => {
+    // External rows compare the same way, from a set the pane loop never
+    // prepared — so they need their own bounded pass, not the pane one.
+    const memo = new ResolvedPathMemo({
+      realpath: async (p) => (p === SPELLED ? PHYSICAL : Promise.reject(new Error("ENOENT"))),
+    });
+    const projector = createPresenceProjector({
+      panes: () => [],
+      activityFor: () => ({ activity: "idle", rule: "quiet" }),
+      openSnapshot: async () => ({
+        resolve: async () => ({ kind: "absent" }) as SessionLookup,
+        sessions: async () => ({
+          kind: "ok",
+          sessions: [
+            {
+              sessionId: "s1",
+              cwd: SPELLED,
+              startedAt: clock,
+              pid: 1,
+              name: "other window",
+            } as unknown as RunningClaudeSession,
+          ],
+        }),
+      }),
+      prepareCwds: (paths) => memo.prepare(paths),
+      normalize: (p) => memo.resolvedOr(p),
+      now: () => clock,
+    });
+
+    const projection = await projector.project([PHYSICAL], { external: true });
+
+    expect(projection.rowsByWorktreeId[PHYSICAL]?.map((r) => r.scope)).toEqual(["external"]);
   });
 });

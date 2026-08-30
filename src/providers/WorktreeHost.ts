@@ -127,7 +127,8 @@ export interface WorktreeHostOptions {
    * blockers a confirmation is bound to come from one set of facts.
    */
   removalFacts?: {
-    panes(): readonly PaneFact[];
+    /** Async because the cwds carry the resolution `PaneFact.cwd` promises. */
+    panes(): Promise<readonly PaneFact[]>;
     externalSessions(): Promise<SourceRead<readonly ExternalSessionFact[]>>;
   };
   /**
@@ -1821,6 +1822,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           ? null
           : await options.deps.runner.run(["status", "--porcelain"], found.wt.displayPath);
         const sessions = await facts.externalSessions();
+        // Taken with the other reads, ahead of `stillObserved`, so the whole
+        // assessment is checked against ONE observation. Awaiting it below
+        // would put a suspension point after that check (round-9 B8).
+        const panes = await facts.panes();
         // Round-9 B8: those two reads take real time, and a rebuild landing in
         // between replaces the listing everything below is derived from — the
         // siblings, and the target itself. An assessment spanning two
@@ -1830,7 +1835,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         return evaluateRemoval({
           target: found.wt,
           siblings: found.repo.worktrees,
-          panes: facts.panes(),
+          panes,
           rows: presence().rowsByWorktreeId[target.worktreeId] ?? [],
           // Every read that can fail is carried as a read, not as its benign
           // fallback. A failed status is not a clean worktree (round-2 B6).

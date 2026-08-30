@@ -49,6 +49,7 @@ import type {
   WorktreeRemoveBlockerPayload,
 } from "./types/messages";
 import { isPathInside } from "./utils/pathBoundary";
+import { ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
@@ -687,28 +688,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   });
 
+  // One window, one set of resolutions. Both consumers below compare a cwd
+  // against a worktree id that `normalizeWorktreePath` already realpathed, so
+  // both need the candidate side resolved — and they must not disagree about
+  // where the same directory is (design.md D1, D5).
+  const cwdMemo = new ResolvedPathMemo();
+
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
     // The two evidence sources a removal blocker set needs and the tree does
     // not carry, from the same store and registry the projector reads.
     removalFacts: {
-      panes: () =>
-        paneEvidence.panes().map((pane) => ({
+      // Resolved through the SAME memo the projection uses, so the panes a
+      // removal warns about and the rows the tree shows under that worktree
+      // are attributed by one set of facts. `prepare` first because this path
+      // can run before the first projection has resolved anything.
+      panes: async () => {
+        const panes = paneEvidence.panes();
+        await cwdMemo.prepare(panes.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
+        return panes.map((pane) => ({
           paneId: pane.paneId,
-          cwd: pane.cwd === undefined ? undefined : path.resolve(pane.cwd),
+          cwd: pane.cwd === undefined ? undefined : cwdMemo.resolvedOr(pane.cwd),
           activity: paneEvidence.activityFor(pane.paneId),
-        })),
+        }));
+      },
       externalSessions: async () => {
         const outcome = await listRunningClaudeSessions();
         // The FAILURE is carried, not flattened to an empty list. An unreadable
         // registry is not "no external sessions", and on a forced removal that
         // difference is a session nobody was warned about (round-2 B6).
-        return outcome.kind === "ok"
-          ? {
-              ok: true,
-              value: outcome.sessions.map((s) => ({ sessionId: s.sessionId, cwd: path.resolve(s.cwd) })),
-            }
-          : { ok: false };
+        if (outcome.kind !== "ok") {
+          return { ok: false };
+        }
+        await cwdMemo.prepare(outcome.sessions.map((s) => s.cwd));
+        return {
+          ok: true,
+          value: outcome.sessions.map((s) => ({ sessionId: s.sessionId, cwd: cwdMemo.resolvedOr(s.cwd) })),
+        };
       },
     },
     workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
@@ -727,6 +743,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     projector: createPresenceProjector(
       createPresenceProjectorDeps({
         store: paneEvidence,
+        cwdMemo,
         // Fallback only — the projector asks about a session the registry left
         // unnamed. A user rename outranks the derived title here for the same
         // reason it does in the vault list (enhance-vault-sessions D1).

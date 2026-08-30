@@ -136,6 +136,23 @@ export interface PresenceProjectorDeps {
   /** Fold a pane cwd into the same form `WorktreeInfo.id` is in. */
   normalize(p: string): string;
   /**
+   * Resolve the cwds this pass will attribute, once, before it compares any of
+   * them. `normalize` stays synchronous because of this call: attribution runs
+   * per presence push, so resolving inside the comparison would put a syscall on
+   * every row of every push (D1). Optional — a projector under test needs no
+   * filesystem, and without it `normalize` answers exactly as it did before.
+   */
+  prepareCwds?(paths: readonly string[]): Promise<void>;
+  /**
+   * Forget where one path resolved, because the pane that named it has moved.
+   *
+   * A pane changing directory is the window's one cheap signal that the
+   * directory it left may itself have moved — a worktree removed and recreated
+   * under the same spelling resolves somewhere new. Nothing else observes that,
+   * and a timer would answer it no better (D4).
+   */
+  forgetCwd?(path: string): void;
+  /**
    * The vault's name for a resolved session — the FALLBACK title, consulted only
    * for a row the registry did not name.
    *
@@ -254,6 +271,9 @@ interface PaneState {
   /** The pane facts `proven` was read at. A move here forces a re-read. */
   provenPtyPid?: number;
   provenCwd?: string;
+  /** The cwd this pane last reported, so the next pass can see it move. Held
+   *  separately from `provenCwd`, which only tracks panes that resolved. */
+  seenCwd?: string;
   proven?: ProvenIdentity;
   /** Identity this row's timestamps describe; a change starts a new epoch (D11). */
   identity?: ProvenIdentity;
@@ -938,6 +958,33 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       const now = clock();
       const snapshot = await deps.openSnapshot();
 
+      // Before anything is attributed: the cwds this pass will compare, resolved
+      // in one bounded pass. The set is the panes the window holds, so the cost
+      // is distinct directories rather than rows.
+      if (deps.prepareCwds) {
+        const cwds = new Set<string>();
+        for (const pane of deps.panes()) {
+          if (pane.cwd !== undefined) {
+            cwds.add(pane.cwd);
+          }
+          let state = states.get(pane.paneId);
+          if (state === undefined) {
+            state = {};
+            states.set(pane.paneId, state);
+          }
+          // Dropped when the pane moves, never when it merely reports again:
+          // the entry is a fact about a directory, and re-resolving one the
+          // window is still sitting in would put the syscall back on the push.
+          if (state.seenCwd !== pane.cwd) {
+            if (state.seenCwd !== undefined) {
+              deps.forgetCwd?.(state.seenCwd);
+            }
+            state.seenCwd = pane.cwd;
+          }
+        }
+        await deps.prepareCwds([...cwds]);
+      }
+
       const failures = new Map<PresenceDegradation["source"], string>();
       const rowsByWorktreeId: Record<string, WorktreeAgentRow[]> = {};
       const nextRanks = new Map<string, number>();
@@ -981,6 +1028,11 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         }
       }
       const sessions = read.kind === "ok" ? read.sessions : lastSessions;
+      // Registry sessions are attributed by cwd too, and their set is not the
+      // pane set, so they get the same one bounded pass.
+      if (deps.prepareCwds) {
+        await deps.prepareCwds([...new Set(sessions.map((session) => session.cwd))]);
+      }
       if (read.kind === "ok") {
         lastSessions = read.sessions;
         // Eviction rides a successful read, and only a successful read: it is

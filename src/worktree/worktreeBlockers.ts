@@ -94,16 +94,27 @@ export interface AttributedRow {
   activity: string;
 }
 
+/**
+ * A cwd this assessment compares against `WorktreeInfo.id`.
+ *
+ * RESOLVED, not merely absolute. `normalizeWorktreePath` realpaths every
+ * worktree id, so a shell reporting a symlinked spelling of the same directory
+ * is inside no worktree by this comparison — and on this path that reads as a
+ * pane that will not be destroyed rather than a pane nobody warned about. The
+ * producer resolves, because only the producer's set is bounded: `evaluateRemoval`
+ * is synchronous and pure, and resolving here would be a syscall per pane per
+ * assessment (design.md D1).
+ */
 export interface PaneFact {
   paneId: string;
-  /** Normalized. Absent when the pane has not reported one. */
+  /** Resolved. Absent when the pane has not reported one. */
   cwd: string | undefined;
   activity: PaneActivity | undefined;
 }
 
 export interface ExternalSessionFact {
   sessionId: string;
-  /** Normalized. */
+  /** Resolved, on the same contract as `PaneFact.cwd`. */
   cwd: string;
 }
 

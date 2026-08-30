@@ -13,7 +13,7 @@
     3. Give it an explicit `invalidate()` for the structural events of 1_2 and 1_3, and no timer.
     4. Cover: one syscall for repeated spellings, concurrent callers joining, the failure fallback, and that invalidation forces a re-resolve.
 
-- [ ] 1_2 Attribute a pane by where its cwd resolves
+- [x] 1_2 Attribute a pane by where its cwd resolves — verified: pnpm exec vitest run 'src/worktree/presenceProjector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-agent-presence/spec.md#attribute-a-pane-to-exactly-one-worktree; design.md#d5-presencedepsnormalize-becomes-the-seam-it-already-documents
   - **Acceptance**:
@@ -23,7 +23,7 @@
     1. In `src/utils/resolvedPathMemo.ts` (+ `src/utils/resolvedPathMemo.test.ts`), add the batch/peek pair the sync comparison sites need: resolve many paths at the boundary, then read a settled value synchronously, falling back to the lexical form exactly as today.
     2. In `src/worktree/presenceDeps.ts`, resolve the pane and session cwds through the memo before the projection compares them, and replace the `normalize: (p) => path.resolve(p)` comment that documents this exact miss.
     3. In `src/worktree/presenceProjector.ts`, leave the comparison on `isPathInside` — both sides arrive resolved.
-    4. In `src/worktree/worktreeBlockers.ts`, take the same resolved cwd for the pane and session filters.
+    4. In `src/worktree/worktreeBlockers.ts`, state the resolution contract its `isPathInside` filters depend on, and supply it from the producers of those facts — `src/extension.ts`'s `removalFacts` sharing one memo with the projector, and `src/providers/WorktreeHost.ts` awaiting the now-async pane read (with `src/providers/WorktreeHost.actions.test.ts` and `src/worktree/worktreeBlockers.test.ts` following).
     5. Invalidate the memo entry for a pane whose reported cwd changes.
     6. Cover both spec scenarios, plus a pane whose cwd fails to resolve keeping the row it has today.
 

@@ -142,4 +142,43 @@ describe("ResolvedPathMemo", () => {
     memo.invalidateAll();
     expect(memo.size).toBe(0);
   });
+
+  it("reads a prepared path synchronously", async () => {
+    const fs = counting({ "/link/wt": "/private/real/wt" });
+    const memo = new ResolvedPathMemo(fs);
+
+    await memo.prepare(["/link/wt"]);
+
+    expect(memo.resolvedOr("/link/wt")).toBe("/private/real/wt");
+  });
+
+  it("answers lexically for a path nobody prepared, rather than losing the answer", async () => {
+    // A site that never prepared must behave exactly as it did before this memo
+    // existed. Returning undefined here would drop rows instead of misfiling one.
+    const fs = counting({ "/link/wt": "/private/real/wt" });
+    const memo = new ResolvedPathMemo(fs);
+
+    expect(memo.resolvedOr("/link/wt")).toBe(path.resolve("/link/wt"));
+    expect(fs.calls).toEqual([]);
+  });
+
+  it("prepares a batch with one syscall per distinct path", async () => {
+    const fs = counting({ "/a": "/real/a", "/b": "/real/b" });
+    const memo = new ResolvedPathMemo(fs);
+
+    await memo.prepare(["/a", "/b", "/a", "/a/../a"]);
+
+    expect(fs.calls.sort()).toEqual(["/a", "/b"]);
+    expect(memo.resolvedOr("/b")).toBe("/real/b");
+  });
+
+  it("stops answering synchronously for a path that was invalidated", async () => {
+    const fs = counting({ "/link/wt": "/private/real/wt" });
+    const memo = new ResolvedPathMemo(fs);
+
+    await memo.prepare(["/link/wt"]);
+    memo.invalidate("/link/wt");
+
+    expect(memo.resolvedOr("/link/wt")).toBe(path.resolve("/link/wt"));
+  });
 });

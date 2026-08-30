@@ -17,6 +17,7 @@ import {
 } from "../pty/processTableSnapshot";
 import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { resolveClaudeSession } from "../session/resolveClaudeSession";
+import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { claudeSessionMtime, resolveClaudeSessionPath } from "../vault/readers/claudePaths";
 import {
   indexRunningSessionsOrEmpty,
@@ -44,6 +45,13 @@ export interface PresenceDepsOptions {
   listSessions?(): Promise<readonly VaultSessionEntry[]>;
   /** A standing terminal-bound report, such as OpenCode's session id. */
   reportedSession?(paneId: string): { agent: VaultAgentId; entryId: string } | undefined;
+  /**
+   * Where the window's cwds resolve. Supplied so the removal-blocker filters —
+   * which compare the SAME pane cwds against the same worktree ids — share one
+   * set of resolutions with the projection, rather than keeping a second memo
+   * that could answer differently for the same path.
+   */
+  cwdMemo?: ResolvedPathMemo;
   now?(): number;
 }
 
@@ -65,16 +73,22 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
    * forever (.reviews/round-1.md B6).
    */
   const reportedSessions = new Map<string, Promise<string | null>>();
+  /** Where each cwd this window has attributed really is. Keyed by path, so the
+   *  bound is directories the window has seen, not pushes it has served. */
+  const cwdMemo = options.cwdMemo ?? new ResolvedPathMemo();
 
   return {
     panes: () => store.panes(),
     activityFor: (paneId, now) => store.explainActivityFor(paneId, now),
 
-    // `path.resolve` only: `isPathInside` owns separator drift and drive-letter
-    // casing, and a realpath here would have to be async. A pane whose shell
-    // reports a symlinked cwd where git reported the physical path is the one
-    // case this misses.
-    normalize: (p) => path.resolve(p),
+    // Resolved, not merely `path.resolve`d: the worktree ids this is compared
+    // against are already realpathed by `normalizeWorktreePath`, so a pane whose
+    // shell reports a symlinked cwd where git reported the physical path used to
+    // be attributed to no worktree at all. `prepareCwds` does the resolving in
+    // one bounded pass per projection, which is what lets this stay synchronous.
+    prepareCwds: (paths) => cwdMemo.prepare(paths),
+    normalize: (p) => cwdMemo.resolvedOr(p),
+    forgetCwd: (p) => cwdMemo.invalidate(p),
 
     ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),
     ...(options.sessionPreview ? { sessionPreview: options.sessionPreview } : {}),
