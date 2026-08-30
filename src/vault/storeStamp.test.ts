@@ -92,6 +92,63 @@ describe("readStoreGeneration: a generation is proven, not sampled", () => {
     expect(storeFilePaths("/x/store.db")).toEqual(["/x/store.db", "/x/store.db-wal"]);
   });
 
+  it("refuses a generation whose wal alone cannot be read", async () => {
+    // The exact shape the round-1 probe used: the database stays readable, the
+    // sidecar does not. `fs.stat` needs SEARCH permission on the directory, not
+    // read permission on the file, so a stat-only generation stayed usable and the
+    // pool went on reusing a retained snapshot while a cold read failed.
+    await fsp.writeFile(`${dbPath}-wal`, "wal");
+    const denied = `${dbPath}-wal`;
+
+    const generation = await readStoreGeneration(dbPath, undefined, async (p) => {
+      if (p === denied) {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      }
+      return { close: async () => {} };
+    });
+
+    expect(generation.usable).toBe(false);
+  });
+
+  it("still stamps a store it can read", async () => {
+    await fsp.writeFile(`${dbPath}-wal`, "wal");
+    const generation = await readStoreGeneration(dbPath);
+    expect(generation.usable).toBe(true);
+    expect(Object.keys(generation.stamps).sort()).toEqual([dbPath, `${dbPath}-wal`].sort());
+  });
+
+  it("releases every handle it opens, including on refusal", async () => {
+    await fsp.writeFile(`${dbPath}-wal`, "wal");
+    let open = 0;
+    const counting = async (p: string) => {
+      if (p === `${dbPath}-wal`) {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      }
+      open += 1;
+      return {
+        close: async () => {
+          open -= 1;
+        },
+      };
+    };
+
+    for (let i = 0; i < 5; i++) {
+      await readStoreGeneration(dbPath, undefined, counting);
+    }
+
+    // A leak here would hold a descriptor against a file a running agent is writing.
+    expect(open).toBe(0);
+  });
+
+  it("leaves the stamp helper's answer for an unreadable path alone", async () => {
+    // `stampStoreFiles` shares the same loop and has always OMITTED a path it could
+    // not read rather than refusing the set. Tightening that is a cache-invalidation
+    // change this task deliberately does not make (design.md D4).
+    await fsp.writeFile(`${dbPath}-wal`, "wal");
+    const stamps = await stampStoreFiles(storeFilePaths(dbPath));
+    expect(Object.keys(stamps).sort()).toEqual([dbPath, `${dbPath}-wal`].sort());
+  });
+
   it("reads a quiet WAL-free store as usable", async () => {
     const gen = await readStoreGeneration(dbPath);
     expect(gen.usable).toBe(true);

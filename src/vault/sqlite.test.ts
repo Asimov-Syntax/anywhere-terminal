@@ -886,6 +886,53 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });
+
+  async function walStorePair() {
+    return { a: await walStore(), b: await walStore() };
+  }
+
+  it("agrees between a reused snapshot and a genuinely fresh store", async (ctx) => {
+    // Two DISTINCT stores. Round-1 W2: re-reading the same path after warming the
+    // pool is not a cold read — `snapshotPool` reuses a matching retained entry
+    // whether or not this borrower asked to retain, so the variable named `cold`
+    // was served from the very cache under test.
+    const { a, b } = await walStorePair();
+    try {
+      const warm = await withPrimarySqliteSnapshot(a.dbFile, async (s) => s.query("SELECT id FROM t"));
+      expect(warm.status).toBe("ok");
+
+      // The sidecar alone — the database itself stays readable, which is what makes
+      // a stat-based or base-file-only proof pass while SQLite cannot open the store.
+      await fsp.chmod(`${a.dbFile}-wal`, 0o000);
+      await fsp.chmod(`${b.dbFile}-wal`, 0o000);
+      let denied = true;
+      try {
+        const probe = await fsp.open(`${a.dbFile}-wal`, "r");
+        await probe.close();
+        denied = false;
+      } catch {
+        denied = true;
+      }
+      if (!denied) {
+        // Root, or a filesystem that ignores mode bits. A warning plus an early
+        // return would be recorded as a PASS, which is the vacuous green this case
+        // exists to avoid (round-1 W2).
+        ctx.skip();
+      }
+
+      const reused = await withPrimarySqliteSnapshot(a.dbFile, async (s) => s.query("SELECT id FROM t"));
+      const fresh = await withPrimarySqliteSnapshot(b.dbFile, async (s) => s.query("SELECT id FROM t"));
+
+      expect(reused.status).toBe(fresh.status);
+      expect(reused.status).not.toBe("ok");
+    } finally {
+      for (const store of [a, b]) {
+        await fsp.chmod(`${store.dbFile}-wal`, 0o600).catch(() => {});
+        store.live.close();
+        await fsp.rm(store.dir, { recursive: true, force: true });
+      }
+    }
+  });
 });
 
 describe("both entry points map a snapshot failure the same way", () => {

@@ -37,10 +37,16 @@ S (≤1d)
 
 ### Must not
 
-- Add a syscall per pool hit
-- Let an unreadable store report `no-db` — absence and unreachability are different answers, and
-  `fsPresence` already owns which failures prove which
+- Let an unreadable store report `no-db` on ANY path, read or write — absence and unreachability are
+  different answers, and `fsPresence` already owns which failures prove which
 - Split the proof across two owners, so that one entry point proves readability and the other does not
+
+### Cost accepted
+
+The first attempt assumed the proof was free. It is not: proving a file can be read means attempting
+to read it, so the reuse path gains work per hit — one `stat` becomes an `open` + `fstat` + `close`,
+per path per pass. The PLAN row permits this "unless that is the decision recorded"; design.md D3
+records it.
 
 ## Risk Level
 

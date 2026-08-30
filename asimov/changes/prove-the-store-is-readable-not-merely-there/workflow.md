@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.9`)_
@@ -73,3 +73,12 @@ Build notes:
   readability means attempting the read, so the reuse path gains work per hit. The PLAN row permits
   it "unless that is the decision recorded", so the proposal's Must-not needs amending as part of the
   replan rather than the design quietly violating it.
+- Rebuild after the round-1 handback. 2 mutations, both killed: the readability gate removed from
+  `usable`, and the handle not released.
+- The cost turned out to be latency, not just syscalls, and a test caught it. Proving readability
+  INSIDE both coherence passes made `readGeneration` slow enough that a second borrower missed the
+  in-flight join window and produced a redundant snapshot — `snapshotPool.test.ts` "keeps a shared
+  unretained snapshot alive until its last reader is done" failed. Readability is a gate rather than
+  part of the coherence claim, so it is one pass beside the two rather than inside them. D1 records it.
+- Merged `worktree-test-suite-cost-control` before finishing this: it makes the dispose-barrier case
+  deterministic by injecting `readGeneration`, and that case was one of the two my probe perturbed.

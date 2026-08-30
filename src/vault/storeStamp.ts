@@ -57,6 +57,46 @@ export interface StoreGeneration {
  *  survive, rather than arguing that it does. */
 export type StatFn = (p: string) => Promise<{ mtimeMs: number; size: number }>;
 
+/** Just enough of `fs.open` to prove a read. Injectable for the same reason `StatFn`
+ *  is: a test has to be able to deny a single path. */
+export type OpenFn = (p: string) => Promise<{ close(): Promise<void> }>;
+
+/**
+ * Can this process actually READ every path the generation stamped?
+ *
+ * `fs.stat` needs search permission on the directory, not read permission on the
+ * file, so it answers happily for a store the process cannot open — which is how a
+ * retained snapshot went on being reused, and served as `ok`, while a cold read of
+ * the same store failed (round-1 B1). Nothing weaker settles it: `fs.access(R_OK)`
+ * covers one file at one instant and does not consult Windows ACLs, and both halves
+ * matter because a WAL-mode store is a SET of files on a platform this project
+ * supports. An open is what an ACL is checked against.
+ *
+ * Deliberately ONE pass, beside the two the stamps need rather than inside them.
+ * Readability is a gate, not part of the coherence claim, so it does not need the
+ * ordered repetition — and the cost is latency, not just syscalls: proving it inside
+ * both passes made `readGeneration` slow enough that a second borrower missed the
+ * in-flight join window and produced a redundant snapshot.
+ *
+ * The handle is released on every exit — a leak would hold a descriptor against a
+ * file a running agent is writing.
+ */
+async function allReadable(paths: string[], open: OpenFn): Promise<boolean> {
+  for (const p of paths) {
+    let handle: Awaited<ReturnType<OpenFn>> | undefined;
+    try {
+      handle = await open(p);
+    } catch {
+      // Includes ENOENT: the path was stamped a moment ago, so its disappearing
+      // means this generation already describes a store that no longer exists.
+      return false;
+    } finally {
+      await handle?.close();
+    }
+  }
+  return true;
+}
+
 /** One pass: stat each path in order, and refuse to call the result usable when a
  *  path's state could not be determined. Only ENOENT/ENOTDIR read as "not there" —
  *  an EACCES on the `-wal` must never read as a WAL-free store. */
@@ -86,12 +126,17 @@ async function readOnce(paths: string[], stat: StatFn): Promise<StoreGeneration>
  * `.db` reads before the checkpoint and both `-wal` reads after it, but the second
  * `.db` read comes after the first `-wal` read and would observe the checkpoint.
  */
-export async function readStoreGeneration(dbPath: string, stat: StatFn = (p) => fs.stat(p)): Promise<StoreGeneration> {
+export async function readStoreGeneration(
+  dbPath: string,
+  stat: StatFn = (p) => fs.stat(p),
+  open: OpenFn = (p) => fs.open(p, "r"),
+): Promise<StoreGeneration> {
   const paths = storeFilePaths(dbPath);
   const first = await readOnce(paths, stat);
   const second = await readOnce(paths, stat);
   const agreed = first.usable && second.usable && sameStamps(first.stamps, second.stamps);
   // A generation that does not cover the database file proves nothing about it.
-  const usable = agreed && second.stamps[dbPath] !== undefined;
+  const stamped = agreed && second.stamps[dbPath] !== undefined;
+  const usable = stamped && (await allReadable(Object.keys(second.stamps), open));
   return { stamps: second.stamps, usable };
 }
