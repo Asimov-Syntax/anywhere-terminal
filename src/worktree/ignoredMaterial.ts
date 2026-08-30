@@ -11,6 +11,7 @@
 // The reads are injected, so the suite needs no disk.
 
 import { afterDelay } from "./deadline";
+import { readWorktreeGitDir } from "./worktreeGitDir";
 
 /** Entries scanned before the walk gives up. */
 export const MAX_IGNORED_ENTRIES = 5000;
@@ -261,11 +262,7 @@ export function diskIgnoredDeps(options: DiskIgnoredOptions): IgnoredMaterialDep
       // The worktree's OWN git dir — `.git/worktrees/<name>` — which is where
       // the apply path writes the manifest and which git deletes along with the
       // worktree (worktree-apply.md § 2.6).
-      const dir = await run(["rev-parse", "--absolute-git-dir"], worktreePath);
-      if (dir.code !== 0 || dir.timedOut) {
-        throw new Error(`git rev-parse --absolute-git-dir exited ${dir.code}`);
-      }
-      return await readFile(join(dir.stdout.toString("utf8").trim(), "anywhere-terminal-provision.json"));
+      return await readFile(join(await readWorktreeGitDir(worktreePath, run), "anywhere-terminal-provision.json"));
     },
     now: options.now ?? Date.now,
   };
