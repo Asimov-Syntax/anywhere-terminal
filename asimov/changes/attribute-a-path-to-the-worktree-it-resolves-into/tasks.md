@@ -2,7 +2,7 @@
 
 ## 1. One memo, then the sites that use it
 
-- [ ] 1_1 Resolve a path once per spelling, and only when asked
+- [x] 1_1 Resolve a path once per spelling, and only when asked — verified: pnpm exec vitest run 'src/utils/resolvedPathMemo.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: design.md#d1-the-bounded-side-of-each-comparison-resolves-the-unbounded-side-does-not; design.md#d3-a-resolved-value-may-be-cached-here-because-the-answer-authorizes-nothing; design.md#d4-resolution-is-lazy-and-per-distinct-path-never-an-eager-sweep
   - **Acceptance**:
     - Outcome: repeated spellings of one path cost a single `realpath`
