@@ -41,7 +41,7 @@
     5. The inbound half is only half the wire: `src/webview/messaging/MessageRouter.ts` and `src/webview/main.ts` route the ANSWER, and `src/webview/messaging/MessageRouter.test.ts` covers it. Declared-posted-handled but unrouted is how `requestWorktreeSubagents` shipped inert with every unit test green.
   - **Boundary**: `worktreeCreateDefaults` and the provisioning offer gain nothing — their lifecycle is a separate question (proposal § Non-goals)
 
-- [ ] 2_2 The form states the mode and refuses the base ref that cannot apply
+- [x] 2_2 The form states the mode and refuses the base ref that cannot apply — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: design.md D5; specs/worktree-panel/spec.md#the-base-ref-is-refused-where-the-mode-cannot-apply-it
   - **Acceptance**:
@@ -49,7 +49,7 @@
     - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
   - **Plan**:
     1. `src/webview/worktree/WorktreeCreateDialog.ts` derives the base control's enabled state from `draft.branchMode` alone — the same single-source rule the combobox already applies to new-versus-existing (D5). Disabled, not hidden.
-    2. The resolution's mode feeds `draft.branchMode`, and the form states what the create will do. A stale answer — `query` no longer matching what is typed — is ignored, which is what `query` echoes for.
+    2. The resolution's mode feeds `draft.branchMode`, and the form states what the create will do. A stale answer — `query` no longer matching what is typed — is ignored, which is what `query` echoes for. `WorktreeBranchMode` in `src/webview/worktree/worktreeViewTypes.ts` gains `reattach`, and `src/webview/worktree/WorktreeController.ts` builds the wire `reattach` mode from the resolution it already holds — 3_1 executes a repair and 2_1 offers one, and without this seam nothing in the form could ever reach either. Covered in `src/webview/worktree/WorktreeController.test.ts`.
     3. A `debris` disposition does NOT disable the base: clearing the ground does not change where a new branch starts (§ 2.1).
     4. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts`: base disabled with a reason for reuse and for reattach; enabled for fresh; enabled for fresh WITH an occupied destination; a resolution for a query the user has typed past changes nothing.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited

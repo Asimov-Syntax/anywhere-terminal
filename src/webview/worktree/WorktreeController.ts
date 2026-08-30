@@ -313,6 +313,7 @@ export class WorktreeController {
    * open — which is what drops an answer that outlived its dialog.
    */
   private applyRefs: ((repoId: string, refs: WorktreeRefOffer) => void) | null = null;
+  private applyResolution: ((resolution: WorktreeCreateResolutionMessage) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
   private actionResults: WorktreeActionResult[] = [];
   /**
@@ -433,6 +434,9 @@ export class WorktreeController {
         bindRefs: (apply) => {
           this.applyRefs = apply;
         },
+        bindResolution: (apply) => {
+          this.applyResolution = apply;
+        },
       }),
       onLaunchSubmit: (request) => {
         const frozen = this.frozenLaunch;
@@ -490,7 +494,7 @@ export class WorktreeController {
               { kind: "fresh-detached", baseRef: baseRef.length > 0 ? baseRef : "HEAD" }
             : draft.branchMode === "new"
               ? { kind: "fresh", branch, ...(baseRef.length > 0 ? { baseRef } : {}) }
-              : { kind: "reuse", branch };
+              : (this.repairFor(draft.repoId, branch) ?? { kind: "reuse", branch });
         deps.postMessage({
           type: "worktreeCreate",
           repoId: draft.repoId,
@@ -1043,6 +1047,29 @@ export class WorktreeController {
       return;
     }
     this.createResolutions.set(msg.repoId, msg);
+    this.applyResolution?.(msg);
+  }
+
+  /**
+   * The repair the held resolution authorizes for this branch, or nothing.
+   *
+   * `reuse` is the fallback rather than a refusal: a form that says `reattach`
+   * while the resolution behind it has gone stale — a different query, or an
+   * answer that never landed — is describing a repair nobody corroborated, and
+   * `git worktree add` against a branch that exists is the honest thing to ask
+   * for. The mutation re-checks the OID either way (design.md D3).
+   */
+  private repairFor(repoId: string, branch: string): WorktreeCreateMode | undefined {
+    const held = this.createResolutions.get(repoId);
+    if (held === undefined || held.query.trim() !== branch || held.mode.kind !== "reattach") {
+      return undefined;
+    }
+    return {
+      kind: "reattach",
+      branch,
+      repairPath: held.mode.repairPath,
+      expectedOid: held.mode.expectedOid,
+    };
   }
 
   /** The resolution currently held for a repository, if one has landed. */

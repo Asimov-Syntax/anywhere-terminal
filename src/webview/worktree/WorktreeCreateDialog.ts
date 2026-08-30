@@ -13,6 +13,7 @@
 //  - A dangerous permission posture is labelled and never preselected.
 //  - The repo picker appears only once the workspace holds more than one repo.
 
+import type { WorktreeCreateResolutionMessage } from "../../types/messages";
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
 import { attachTooltip } from "../ui/Tooltip";
 import { createWorktreeAgentBox } from "./worktreeAgentBox";
@@ -156,6 +157,14 @@ export interface WorktreeCreateDialogDeps {
    * callback is what B4 was.
    */
   bindRefs?: (apply: (repoId: string, refs: WorktreeRefOffer) => void) => void;
+  /**
+   * What a create against the settled selection would actually do.
+   *
+   * The form applies an answer only while `query` still matches what is typed:
+   * a resolution the user has typed past describes a selection that is gone,
+   * and applying it would state a mode nobody chose (design.md D1).
+   */
+  bindResolution?: (apply: (resolution: WorktreeCreateResolutionMessage) => void) => void;
   onSubmit: (draft: WorktreeCreateDraft) => void;
   onCancel?: () => void;
 }
@@ -575,6 +584,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   baseInput.type = "text";
   baseInput.placeholder = "HEAD";
   baseField.appendChild(baseInput);
+  // Disabled, never hidden (D5): a field that vanishes when the mode changes
+  // reads as a bug, and a base ref silently ignored is what § 2.1 forbids.
+  const baseNote = document.createElement("p");
+  baseNote.className = "wt-fhint";
+  baseNote.id = "wt-base-note";
+  baseNote.hidden = true;
+  baseInput.setAttribute("aria-describedby", "wt-base-note");
+  baseField.appendChild(baseNote);
 
   // The override, which is a different thing from a statement of where the
   // worktree will go — hence its home here rather than on the form's face.
@@ -828,6 +845,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (draft.branchMode === "detached") {
       return undefined;
     }
+    // A repair is not blocked by the registration it repairs. `heldBy` comes
+    // from the listing, which reports a prunable holder exactly like a live
+    // one; the resolution is what told these apart, and it says `blockedBy`
+    // when a LIVE worktree holds the branch and `reattach` when the holder is
+    // the stale registration this create would fix (design.md D3).
+    if (draft.branchMode === "reattach") {
+      return undefined;
+    }
     // Derived from the typed NAME against the current repository's list, not
     // from `choice`. Committing the create-new row deliberately sets `choice`
     // to `new` while leaving the typed text alone, so a guard reading `choice`
@@ -858,6 +883,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       draft.branchMode = choiceMode(choice);
     }
   }
+
+  /**
+   * Why the base ref is unavailable, per mode. Absent means it applies.
+   *
+   * A total map rather than a condition, so a mode added later has to answer
+   * the question rather than inherit an answer nobody wrote for it.
+   */
+  const BASE_REFUSED_BY: Record<WorktreeBranchMode, string | undefined> = {
+    new: undefined,
+    detached: undefined,
+    existing: "This branch already exists, so it starts where it already is.",
+    reattach: "This repairs a checkout that is already on disk, so it keeps the commit it is on.",
+  };
 
   /** The wire mode a choice means. `detached` is the toggle's and never a row's. */
   function choiceMode(c: BranchChoice): WorktreeBranchMode {
@@ -1006,6 +1044,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     nameInput.disabled = detached;
     nameInput.placeholder = draft.branchMode === "existing" ? "existing-branch" : "feat/…";
     baseInput.placeholder = detached ? "a ref to detach at" : "HEAD";
+    // From `draft.branchMode` ALONE (D5), the same single-source rule the name
+    // field already applies. The destination's disposition deliberately does
+    // not enter into it: clearing the ground does not change where a new
+    // branch starts (§ 2.1).
+    const baseRefused = BASE_REFUSED_BY[draft.branchMode];
+    baseInput.disabled = baseRefused !== undefined;
+    baseNote.hidden = baseRefused === undefined;
+    baseNote.textContent = baseRefused ?? "";
     // Said, rather than left to look complete: a capped list presented as the
     // repository's whole set is the one claim this control must not make.
     const truncated = repo.refs?.truncated === true;
@@ -1246,6 +1292,32 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (listOpen) {
       renderList();
     }
+    syncDerived();
+  });
+
+  // What the create would DO, on its own channel. It never touches
+  // `outstanding` — the destination is the gate, and a form held shut waiting
+  // on a classification would be a second gate nobody asked for.
+  deps.bindResolution?.((resolution) => {
+    if (closed || resolution.repoId !== draft.repoId) {
+      return;
+    }
+    // An answer the user has typed past describes a selection that is gone.
+    // This is what `query` echoes for — the token separates two OPENINGS, and
+    // only this separates two edits within one (design.md D1).
+    if (resolution.query.trim() !== nameInput.value.trim()) {
+      return;
+    }
+    // Detached is the user's own toggle and outranks a classification of the
+    // typed text: the resolution answers "what is this branch name", and under
+    // detached the field is not a branch name at all.
+    if (draft.branchMode === "detached") {
+      return;
+    }
+    // `adopt` is reported so the resolver can name the state it found; the form
+    // does not offer it, and WT-012.15 is where it becomes an action. Until
+    // then it behaves as the fresh it falls back to.
+    draft.branchMode = resolution.mode.kind === "reattach" ? "reattach" : draft.branchMode;
     syncDerived();
   });
 

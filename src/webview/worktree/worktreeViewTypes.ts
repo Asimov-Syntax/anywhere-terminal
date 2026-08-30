@@ -191,7 +191,14 @@ export interface WorktreeLaunchAgent {
   canSeedPrompt: boolean;
 }
 
-export type WorktreeBranchMode = "new" | "existing" | "detached";
+/**
+ * `reattach` is a fourth MODE, not a flavour of `existing`.
+ *
+ * It takes its starting point from a checkout that is already on disk, so the
+ * base ref cannot apply to it — and the create it submits is a repair rather
+ * than a `git worktree add`, which is a different thing to say on the wire.
+ */
+export type WorktreeBranchMode = "new" | "existing" | "detached" | "reattach";
 
 export type WorktreeOpenAfter = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspace";
 

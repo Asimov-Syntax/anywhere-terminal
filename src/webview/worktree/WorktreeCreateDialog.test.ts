@@ -4,6 +4,7 @@
 // branch, collided path, agent picker expanded).
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorktreeCreateResolutionMessage } from "../../types/messages";
 import { openWorktreeCreateDialog, sanitizeBranchForPath } from "./WorktreeCreateDialog";
 import {
   createDefaults,
@@ -1857,5 +1858,135 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
     const { q } = open({ repos: [createDefaults({ refs: { list: [], truncated: true } })] });
 
     expect(q<HTMLInputElement>("#wt-branch").getAttribute("aria-describedby")).toBe("wt-branch-partial");
+  });
+});
+
+// ── The base ref is refused where the mode cannot apply it (§ 2.1, D5) ────
+
+describe("the base ref states when it cannot apply", () => {
+  const RESOLVED_REFS = [{ name: "main" }, { name: "feat/search" }, { name: "fix/lock", heldBy: "lock-spike" }];
+
+  function withResolution(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
+    let apply: ((resolution: WorktreeCreateResolutionMessage) => void) | undefined;
+    const h = open({
+      repos: [createDefaults({ refs: { list: RESOLVED_REFS, truncated: false } })],
+      bindResolution: (fn) => {
+        apply = fn;
+      },
+      ...over,
+    });
+    return {
+      ...h,
+      base: () => h.q<HTMLInputElement>("#wt-base"),
+      note: () => h.q<HTMLElement>("#wt-base-note"),
+      resolve: (msg: Partial<WorktreeCreateResolutionMessage> & { mode: WorktreeCreateResolutionMessage["mode"] }) =>
+        apply?.({
+          type: "worktreeCreateResolution",
+          repoId: REPO_ID,
+          token: 1,
+          query: "feat/search",
+          freePath: "/trees/repo-feat-search",
+          ...msg,
+        }),
+    };
+  }
+
+  it("offers the base ref for a branch nothing has heard of", () => {
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "brand-new");
+
+    expect(h.base().disabled).toBe(false);
+    expect(h.note().hidden).toBe(true);
+  });
+
+  it("refuses the base ref for an existing branch, and says why", () => {
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feat/search");
+
+    expect(h.base().disabled).toBe(true);
+    expect(h.note().hidden).toBe(false);
+    expect(h.note().textContent).toContain("already exists");
+  });
+
+  it("refuses the base ref for a repair, with its own reason", () => {
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feat/search");
+    h.resolve({ mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" } });
+
+    expect(h.base().disabled).toBe(true);
+    expect(h.note().textContent).toContain("already on disk");
+  });
+
+  it("keeps the base ref for a detached create, which is the one that needs it", () => {
+    const h = withResolution();
+    h.q<HTMLButtonElement>("#wt-detached").click();
+
+    expect(h.base().disabled).toBe(false);
+    expect(h.note().hidden).toBe(true);
+  });
+
+  it("does not hide the control it disables", () => {
+    // A field that vanishes when the mode changes reads as a bug rather than
+    // as a rule (D5).
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feat/search");
+
+    expect(h.base().hidden).toBe(false);
+    expect(h.base().isConnected).toBe(true);
+  });
+
+  it("ignores a resolution for a query the user has typed past", () => {
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "brand-new");
+    h.resolve({ query: "feat/search", mode: { kind: "reattach", repairPath: "/x", expectedOid: "abc" } });
+
+    expect(h.base().disabled, "a stale answer disabled the base ref").toBe(false);
+  });
+
+  it("lets the user's own detached toggle outrank a classification of the text", () => {
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feat/search");
+    h.q<HTMLButtonElement>("#wt-detached").click();
+    h.resolve({ query: "feat/search", mode: { kind: "reattach", repairPath: "/x", expectedOid: "abc" } });
+
+    expect(h.base().disabled).toBe(false);
+  });
+
+  it("lets a corroborated repair submit the branch its own stale registration holds", () => {
+    // `heldBy` comes from the listing, which reports a prunable holder exactly
+    // like a live one. Without the repair exception the guard that stops a
+    // branch being checked out twice also stops the one action that fixes the
+    // registration, and reattach could never be reached at all.
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled, "the setup never armed the held-branch guard").toBe(
+      true,
+    );
+
+    h.resolve({ query: "fix/lock", mode: { kind: "reattach", repairPath: "/trees/lock-spike", expectedOid: "abc" } });
+
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+
+  it("still refuses a branch a LIVE worktree holds", () => {
+    // The exception above is for the repair and nothing else: a resolution
+    // that did not say `reattach` leaves the guard exactly where it was.
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    h.resolve({ query: "fix/lock", mode: { kind: "reuse" }, blockedBy: { ownerPath: "/trees/lock-spike" } });
+
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
+  });
+
+  it("ignores a resolution for another repository", () => {
+    const h = withResolution();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feat/search");
+    h.resolve({
+      repoId: "/other/.git",
+      mode: { kind: "reattach", repairPath: "/x", expectedOid: "abc" },
+    });
+
+    // Still `existing` — the repair reason would have replaced this one.
+    expect(h.note().textContent).toContain("already exists");
   });
 });

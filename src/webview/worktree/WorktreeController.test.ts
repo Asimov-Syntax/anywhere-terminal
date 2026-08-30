@@ -791,6 +791,62 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     expect(h.posts).toEqual([]);
   });
 
+  it("[2_2] submits a repair the resolution corroborated, not a second worktree", () => {
+    // 3_1 executes a repair and 2_1 offers one. Without this seam the form
+    // could never reach either, and a stale registration would be answered by
+    // a near-duplicate beside the checkout that is already there.
+    const h = mount();
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: "/repo/.git",
+      token: 0,
+      query: "feat",
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
+      freePath: "/trees/repo-feat",
+    });
+    expect(h.controller.resolutionFor("/repo/.git"), "the setup stored no resolution to submit from").toBeDefined();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "reattach",
+      branchName: "feat",
+      baseRef: "",
+      path: "/trees/stale",
+      openAfter: "none",
+    });
+
+    expect(h.posts.find((m) => m.type === "worktreeCreate")).toMatchObject({
+      mode: { kind: "reattach", branch: "feat", repairPath: "/trees/stale", expectedOid: "abc123" },
+    });
+  });
+
+  it("[2_2] falls back to reuse when the resolution behind the repair has gone stale", () => {
+    // A form saying `reattach` while its resolution answers a different query
+    // is describing a repair nobody corroborated. `git worktree add` against a
+    // branch that exists is the honest thing to ask for instead.
+    const h = mount();
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: "/repo/.git",
+      token: 0,
+      query: "something-else",
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
+      freePath: "/trees/repo",
+    });
+    expect(h.controller.resolutionFor("/repo/.git"), "the setup stored no resolution at all").toBeDefined();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "reattach",
+      branchName: "feat",
+      baseRef: "",
+      path: "/trees/stale",
+      openAfter: "none",
+    });
+
+    expect(h.posts.find((m) => m.type === "worktreeCreate")).toMatchObject({ mode: { kind: "reuse", branch: "feat" } });
+  });
+
   it("posts no create for an agent mode naming no agent", () => {
     // The mode and its launch details are one thing on the wire; a mode with no
     // agent would ask the host for a launch it must refuse.
