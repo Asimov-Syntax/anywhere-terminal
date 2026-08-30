@@ -468,6 +468,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * unreachable — which is the same answer as an expired id.
    */
   const offers = createProvisionOfferStore();
+  /**
+   * Provider reads in flight, marked BEFORE the await.
+   *
+   * `offers.current()` stays empty until a read RESOLVES, so guarding on it let
+   * every keystroke's defaults request start another read and issue another
+   * offer — each superseding the last (.reviews/round-1.md B5). The unit that
+   * closes the guard has to be the pass in flight, not the pass that finished.
+   */
+  const provisionReading = new Set<string>();
   const surfaceKeys = new WeakMap<WorktreeSurface, string>();
   let surfaceSeq = 0;
   const surfaceKey = (s: WorktreeSurface): string => {
@@ -1124,11 +1133,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // ids under a dialog the user has not stopped looking at — and
         // superseding evicts, so a submission mid-type would name nothing.
         // § 4.0's rule is that the host keeps the model it displayed.
-        const offerKey = `${surfaceKey(surface)}:${msg.repoId}`;
-        if (options.readProvisioning && offers.current(offerKey) === undefined) {
+        //
+        // A branch-less ask is a form OPENING; an ask carrying one is the user
+        // typing in a form already open. That distinction already exists on this
+        // path — the webview relies on it to tell a superseded ask's leftovers
+        // from a current answer — so it is what decides when to resolve a fresh
+        // model, and no new message is needed to learn that a form closed.
+        const opening = msg.branch === undefined;
+        const offerKey = { surface: surfaceKey(surface), repoId: msg.repoId };
+        const reading = `${offerKey.surface} ${msg.repoId}`;
+        if (options.readProvisioning && opening && !provisionReading.has(reading)) {
+          provisionReading.add(reading);
           void options
             .readProvisioning(repo.mainPath)
             .then((model) => {
+              // The surface may have detached while the file was being read. A
+              // post to a dead surface is at best wasted and at worst revives an
+              // offer the detach was supposed to forget (B6).
+              if (disposed || !surfaces.has(surface)) {
+                return;
+              }
               const offer = offers.issue(offerKey, model);
               surface.post({
                 type: "worktreeProvisionOffer",
@@ -1139,7 +1163,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             })
             // The section is not the create. A provider layer that cannot
             // answer must not delay or refuse the destination the form needs.
-            .catch(() => {});
+            .catch(() => {})
+            .finally(() => {
+              provisionReading.delete(reading);
+            });
         }
         surface.post({
           type: "worktreeCreateDefaults",
@@ -1830,6 +1857,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return {
       dispose: () => {
         surfaces.delete(surface);
+        // The models this surface was shown go with it. Nothing else evicts
+        // them, so without this the store grows with every window ever opened
+        // and a stale id stays resolvable (.reviews/round-1.md B6).
+        offers.forgetSurface(surfaceKey(surface));
         // Detaching is a falling edge too: the last showing surface going away
         // this way would otherwise leave the scan armed for the window's life.
         reconcileScan();

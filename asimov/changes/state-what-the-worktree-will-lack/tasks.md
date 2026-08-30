@@ -85,15 +85,15 @@
     5. Bound the read itself, not a prior `stat` — an oversized provider file becomes an `unreadable` problem and never reaches `parse` (W1).
   - **Boundary**: no containment implementation of its own — `src/utils/resolvedPathBoundary.ts` stays the only one; and no write of any kind to disk
 
-- [ ] 2_2 Make the offer belong to one form, and connect it in production
+- [x] 2_2 Make the offer belong to one form, and connect it in production — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: .reviews/round-1.md B1, B3, B5, B6; docs/design/worktree-provisioning.md#40-the-model-the-user-saw-is-the-model-that-runs; design.md D5
   - **Acceptance**:
     - Outcome: The shipped extension offers provisioning, one read per form, and a closed form's offer resolves to nothing
     - Verify: unit src/providers/WorktreeHost.actions.test.ts
   - **Plan**:
-    1. Add `src/worktree/provisioning/provisioningDeps.ts` building the adapter's filesystem dependencies over `node:fs/promises`, including the bounded read 2_1 defines, and wire `readAsimovProvisioning` into `createWorktreeHost` in `src/extension.ts` so the shipped dialog actually receives an offer (B1).
-    2. Scope `lookup` in `src/worktree/provisioning/offerStore.ts` to the surface key that issued the offer, admitting only that key's current id — the signature is what a redeemer inherits (B3).
+    1. Add `src/worktree/provisioning/provisioningDeps.ts` building the adapter's filesystem dependencies over `node:fs/promises`, including the bounded read 2_1 defines, and wire `readAsimovProvisioning` into `createWorktreeHost` in `src/extension.ts` so the shipped dialog actually receives an offer (B1). Prove that seam against a real checkout in `src/worktree/provisioning/provisioningDeps.test.ts` — every other suite injects fakes, which is what let it ship unwired.
+    2. Scope `lookup` in `src/worktree/provisioning/offerStore.ts` to the surface key that issued the offer, admitting only that key's current id — the signature is what a redeemer inherits (B3). Cover it in `src/worktree/provisioning/offerStore.test.ts`.
     3. Track the read in flight per form in `src/providers/WorktreeHost.ts`, marked BEFORE the await, and drop completions from a superseded generation (B5).
     4. Clear a surface's offers when its form closes and when the surface detaches, and refuse a post to a disposed surface (B6).
     5. Repair the 1_3 test whose fake resolves synchronously: hold one resolution open and drive a second defaults request into that window, or the assertion cannot observe the property it names.

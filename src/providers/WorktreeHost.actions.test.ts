@@ -2036,7 +2036,8 @@ describe("the provisioning offer the create form is given", () => {
     // The defaults request is re-sent on every keystroke. A fresh offer each
     // time would churn ids under a dialog nobody has stopped looking at, and
     // issuing evicts the previous one — so a submission mid-type would name
-    // nothing.
+    // nothing. A branch-less ask is the form OPENING; one carrying a branch is
+    // typing in a form already open.
     let reads = 0;
     const { host, view, dispose } = await builtHost(undefined, false, {
       readProvisioning: async () => {
@@ -2044,6 +2045,8 @@ describe("the provisioning offer the create form is given", () => {
         return model(".env");
       },
     });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
     for (const branch of ["f", "fe", "fea", "feat"]) {
       host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, branch });
       await settle();
@@ -2052,6 +2055,63 @@ describe("the provisioning offer the create form is given", () => {
     expect(reads).toBe(1);
     expect(offersIn(view)).toHaveLength(1);
     dispose();
+  });
+
+  it("[B5] does not start a second read while the first is still in flight", async () => {
+    // The repaired version of the test above. Its fake resolved synchronously,
+    // so there was no suspension for a second caller to arrive in and it could
+    // not observe the property it named: the guard read `offers.current()`,
+    // which stays empty until a read RESOLVES. Holding one read open is what
+    // makes the assertion mean anything.
+    let reads = 0;
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => {
+        reads += 1;
+        await held;
+        return model(".env");
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+    // A second form-open ask arrives while the first read has not answered.
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+    expect(reads).toBe(1);
+
+    release?.();
+    await settle();
+
+    expect(reads).toBe(1);
+    expect(offersIn(view)).toHaveLength(1);
+    dispose();
+  });
+
+  it("[B6] publishes nothing when the surface detaches mid-read", async () => {
+    // The read outlives the window. A post to a detached surface is at best
+    // wasted, and at worst revives an offer the detach was meant to forget.
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => {
+        await held;
+        return model(".env");
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+    dispose();
+    release?.();
+    await settle();
+
+    expect(offersIn(view)).toEqual([]);
   });
 
   it("still answers the destination when provisioning cannot be read", async () => {

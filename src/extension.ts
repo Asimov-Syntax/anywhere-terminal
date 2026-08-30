@@ -66,6 +66,8 @@ import { normalizeWorktreePath } from "./worktree/normalizePath";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
+import { readAsimovProvisioning } from "./worktree/provisioning/asimovProvider";
+import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { checksFor } from "./worktree/removalChecks";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
@@ -681,6 +683,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
+    // Without this the create form never receives an offer and the whole
+    // provisioning section is dark in the shipped extension — every test passed
+    // because they all supplied their own (.reviews/round-1.md B1).
+    readProvisioning: (mainWorktree) => readAsimovProvisioning(createProvisioningDeps(), mainWorktree),
     // The two evidence sources a removal blocker set needs and the tree does
     // not carry, from the same store and registry the projector reads.
     removalFacts: {

@@ -17,6 +17,23 @@ export interface ProvisionOffer {
   readonly model: ProvisionModel;
 }
 
+/**
+ * Which form an offer belongs to.
+ *
+ * A surface and a repository, never a bare string: the surface is the window
+ * that was shown the model, and admission has to be able to ask "was THIS
+ * surface shown THIS offer" rather than "does this id exist somewhere"
+ * (.reviews/round-1.md B3).
+ *
+ * Kept as a pair and held in nested maps rather than joined into one string.
+ * `repoId` is a filesystem path, so any separator chosen for a flat key is a
+ * character some repository is entitled to contain.
+ */
+export interface ProvisionOfferKey {
+  readonly surface: string;
+  readonly repoId: string;
+}
+
 export interface ProvisionOfferStore {
   /**
    * Record a model and mint the id that names it, superseding whatever this key
@@ -26,53 +43,73 @@ export interface ProvisionOfferStore {
    * means a submission can name the older, and the older is by definition the
    * model the user is no longer looking at.
    */
-  issue(key: string, model: ProvisionModel): ProvisionOffer;
+  issue(key: ProvisionOfferKey, model: ProvisionModel): ProvisionOffer;
   /** The offer this key currently holds, or `undefined` before one is issued. */
-  current(key: string): ProvisionOffer | undefined;
+  current(key: ProvisionOfferKey): ProvisionOffer | undefined;
   /**
-   * The model an id names, or `undefined`.
+   * The model an id names, **for the form that was shown it**, or `undefined`.
    *
-   * Undefined rather than a throw: an unknown or expired id is an ordinary
-   * outcome with a defined answer — no create and no provisioning, resolve a
-   * fresh model, present it, wait for a second submission (rpc § 2.4). A throw
-   * would make the caller decide that, and there is only one right answer.
+   * Scoped rather than global. Ids are a monotonic counter, so a global lookup
+   * would let one window resolve another window's model by guessing a small
+   * integer — and a redeemer written against an unscoped signature cannot add
+   * the scope back, because by then the store no longer knows it (round-1 B3).
+   *
+   * Undefined rather than a throw: an unknown, expired or foreign id is an
+   * ordinary outcome with a defined answer — no create and no provisioning,
+   * resolve a fresh model, present it, wait for a second submission (rpc § 2.4).
+   * A throw would make the caller decide that, and there is only one right
+   * answer.
    */
-  lookup(offerId: string): ProvisionModel | undefined;
-  /** Drop everything a surface holds. Its offers can never be submitted again. */
-  forget(key: string): void;
+  lookup(key: ProvisionOfferKey, offerId: string): ProvisionModel | undefined;
+  /** Drop what one form holds. Its offers can never be submitted again. */
+  forget(key: ProvisionOfferKey): void;
+  /**
+   * Drop everything a surface holds, across every repository.
+   *
+   * A detached surface takes its offers with it. Without this the store grows
+   * with every window that has ever been open, and a read completing after a
+   * detach could still publish into it (round-1 B6).
+   */
+  forgetSurface(surface: string): void;
 }
 
 export function createProvisionOfferStore(): ProvisionOfferStore {
-  const currentByKey = new Map<string, ProvisionOffer>();
-  const modelById = new Map<string, ProvisionModel>();
+  const bySurface = new Map<string, Map<string, ProvisionOffer>>();
   let sequence = 0;
 
   return {
     issue(key, model) {
-      const previous = currentByKey.get(key);
-      if (previous !== undefined) {
-        modelById.delete(previous.offerId);
+      let repos = bySurface.get(key.surface);
+      if (repos === undefined) {
+        repos = new Map();
+        bySurface.set(key.surface, repos);
       }
       sequence += 1;
       // Monotonic and never reused, so a resubmission of a superseded id cannot
-      // land on a later offer that happens to occupy the same slot.
+      // land on a later offer that happens to occupy the same slot. The `set`
+      // below evicts the previous offer for this form by construction.
       const offer: ProvisionOffer = { offerId: `provision-${sequence}`, model };
-      currentByKey.set(key, offer);
-      modelById.set(offer.offerId, model);
+      repos.set(key.repoId, offer);
       return offer;
     },
     current(key) {
-      return currentByKey.get(key);
+      return bySurface.get(key.surface)?.get(key.repoId);
     },
-    lookup(offerId) {
-      return modelById.get(offerId);
+    lookup(key, offerId) {
+      const held = bySurface.get(key.surface)?.get(key.repoId);
+      // The id must be the one THIS form currently holds. An id that is merely
+      // live somewhere resolves to nothing here, which is the safe answer.
+      return held?.offerId === offerId ? held.model : undefined;
     },
     forget(key) {
-      const held = currentByKey.get(key);
-      if (held !== undefined) {
-        modelById.delete(held.offerId);
-        currentByKey.delete(key);
+      const repos = bySurface.get(key.surface);
+      repos?.delete(key.repoId);
+      if (repos?.size === 0) {
+        bySurface.delete(key.surface);
       }
+    },
+    forgetSurface(surface) {
+      bySurface.delete(surface);
     },
   };
 }
