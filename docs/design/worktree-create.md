@@ -273,7 +273,7 @@ everything else is derived, defaulted, or advanced.
 | "After creating" | Segmented radios mapping onto all five `WorktreeOpenAfter` wire values: `Nothing` → `none`; `Open a terminal` → `terminal`; `Start an agent` → `agent`; `Open the folder` → `newWindow` or `addToWorkspace`, chosen by a secondary control and defaulting to `addToWorkspace`. No wire value is unreachable from the form |
 | Repo picker | Below the destination line when the workspace has more than one repo. "Nothing above the lead input" is a rule about order; the picker cannot go into Advanced, because the destination is derived from it |
 | Agent block | Agent, permission posture, and first prompt are revealed **only when "After creating" is "Start an agent"**. While absent nothing agent-shaped is tabbable and the submitted draft carries no agent details |
-| Advanced | Collapsed by default, holding base ref, branch source, and the path override. While collapsed none of them is tabbable. Opened, the override is the only place a full path is *editable* — a different thing from a statement of where the worktree will go |
+| Advanced | Collapsed by default, holding base ref, the **detached toggle**, and the path override. Branch source is NOT here: once the combobox owns new-versus-existing, an Advanced control writing the same field would be a second source for one wire value (§ 4.1). Detached is what the combobox cannot express, so it is what stays. While collapsed none of them is tabbable. Opened, the override is the only place a full path is *editable* — a different thing from a statement of where the worktree will go |
 | Dangerous posture | Offered, labelled, and never preselected. WHERE every posture an agent offers is dangerous, the control holds a non-submittable placeholder rather than falling through to its first option |
 | Submit | Disabled until the value the chosen mode requires validates, while a destination request is outstanding, and while a revealed posture list has no choice |
 
@@ -288,6 +288,30 @@ The list is ordered by what the typed text most likely means — an exact ref ma
 prefix matches, then PRs, then the always-available "create new branch" row. Local refs resolve
 immediately; PRs are a network call and carry their own async state, so a slow or unauthenticated
 forge never blocks branch search underneath it.
+
+**The combobox is the only source of new-versus-existing.** Picking a ref means `existing`; picking
+the create-new row means `new`. `draft.branchMode`'s third value, `detached`, is the one the
+combobox cannot express, so the Advanced section keeps that and nothing else — one wire value, never
+two sources for it.
+
+**A branch another worktree holds is offered, not hidden.** It renders `aria-disabled` with the name
+of the directory holding it, stays keyboard-reachable and announced, and cannot be submitted.
+Removing the row would return the branch to looking free, which is the failure this exists to
+delete. The refusal reads the typed NAME against the current repository's list rather than the
+standing selection: the create-new row is always present, so it is always reachable after a held
+name has been typed, and committing it sets the mode to `new` while leaving that name in the input.
+
+**The enumeration is bounded and says when it was cut.** Local branches are read through one
+`git for-each-ref --count`, asked one over the cap so a full page is distinguishable from a
+repository that has exactly that many. A truncated list states that it is partial; a list that could
+not be read at all is stated as unavailable rather than rendered as a repository with no branches.
+The create-new row is not gated on any of it, so a failed or partial enumeration costs discovery and
+never the ability to create.
+
+**Escape belongs to the list while the list is open.** The first Escape closes the list and leaves
+the dialog standing; the second dismisses the dialog. The shell binds Escape on `document` in the
+capture phase before the form exists, so the form cannot register a handler that runs first — it
+answers a "was this handled?" hook instead, keeping one owner rather than two racing ones.
 
 ### 4.2 Collision states a segment, never a path
 

@@ -186,6 +186,33 @@ An earlier draft invented "the PID recorded for the worktree" with no writer and
 is replaced above by the registry the subsystem already maintains; if that registry is unavailable,
 the proof is unproven, not assumed.
 
+**One scan yields two views, and they are not interchangeable.** The registry is read once and the
+producer derives both from that read:
+
+- the **undeduped live records** answer the ownership proof, because a duplicate that loses the
+  registry's canonical selection is still a live pid rooted in that directory;
+- the **canonical live list** answers the refusal, one record per session id, chosen by the
+  registry's own rule — interactive over headless, then newest `startedAt`, then highest pid.
+
+The ORDER is the contract, not just the rule. The winner is chosen over every live record
+**user-wide, before anything asks which directory a session is rooted in**. Testing containment
+first and keeping whatever survives selects a different record, and a session whose canonical record
+is rooted elsewhere then refuses a removal it did not refuse before. The selection therefore keeps
+one implementation and one home — the live reader exports it as a pure derivation over records
+already in hand, rather than the removal path re-deriving it from metadata copied onto a second
+type.
+
+Dead records are carried as evidence and never resolved to real paths: they cannot make the
+ownership proof fail, so realpathing user-wide stale session history was unbounded work for an
+answer nobody reads.
+
+**An incomplete scan is not evidence of absence.** A candidate registry file that could not be READ
+marks the scan partial, and the ownership proof then answers `unproven` rather than `passed` — one
+EACCES on a live owner's own record must not read as "nobody is here" about the one action that
+cannot be undone. A partial scan that DID find a live owner still answers `failed`: a live owner
+found is a fact an incomplete scan cannot weaken. A malformed payload is not partial — that file was
+read and is simply not a record.
+
 **Nothing is reaped automatically.** The proofs inform the report; the user still presses the
 button. An automatic delete path justified by three heuristics is a new way to lose work, and the
 three proofs exist to make a human decision better-informed, not to replace it.

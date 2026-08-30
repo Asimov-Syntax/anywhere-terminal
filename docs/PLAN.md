@@ -578,7 +578,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | Independent of the provisioning tasks and can run beside them. The rejected alternative is on the record: source tabs cost height in a narrow modal, split keyboard search across datasets, and force a mode choice before the user has typed. A branch checked out elsewhere is offered disabled because git permits one worktree per branch and failing at submit is the behaviour being removed |
 | **Acceptance** | Refs and a create-new row appear in one list with no tab bar; ordering puts an exact match first, then prefixes, then create-new; a branch already checked out in another worktree is offered disabled and badged with the directory that owns it, and cannot be submitted; the branch name remains the lead input with nothing above it and submission stays blocked until it validates; keyboard traversal covers the whole list |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.8] A Branch That Already Exists Is Reused, Not Duplicated
 
@@ -727,7 +727,7 @@ refused outright.
 | **Labels** | None |
 | **Notes** | Display only, deliberately. An automatic delete path justified by three heuristics is a new way to lose work in the one area of this extension where mistakes are unrecoverable. Each proof needed a named source before it was implementable: the lock's age comes from the lock file git itself writes, the owning process from the **existing** Claude PID registry rather than an invented ownership file, and the merge from a local-ref ancestry test that never issues a fetch to answer a question the user did not ask |
 | **Acceptance** | Each proof appears on the assessment with its own class and outcome and reads its value from the named source rather than a new one; a proof that cannot be evaluated withholds only the action it gates and never prevents removal; a worktree that is not locked reports the lock proof as `notApplicable`; a worktree the registry never covered reports the ownership proof as `notApplicable`; the merge proof distinguishes not-merged from could-not-determine and never issues a fetch; the three holding together never causes a removal without an explicit press; rendering is WT-013.4's and this task adds no UI |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-013.3] A Branch Goes Only Under a Guard
 

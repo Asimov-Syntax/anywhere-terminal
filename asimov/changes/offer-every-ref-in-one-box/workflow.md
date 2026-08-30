@@ -15,8 +15,8 @@
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [x] Review done — cycle 1, rounds 1-3; round 3 returned WARN with 0 gating blockers
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Gate: implementation approved (fastlane)
+- [x] Blueprint sync complete
 
 ## Archive
 
