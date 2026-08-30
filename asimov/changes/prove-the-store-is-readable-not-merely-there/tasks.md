@@ -1,6 +1,6 @@
 ## 1. One predicate, proving what its callers assume
 
-- [ ] 1_1 Prove the store is readable, not merely there — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0 — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+- [x] 1_1 Prove the store is readable, not merely there — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0 — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0 — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/vault-store-status/spec.md#a-store-that-cannot-be-read-reports-the-same-status-on-every-path <!-- design.md D1, D2 -->
   - **Acceptance**:

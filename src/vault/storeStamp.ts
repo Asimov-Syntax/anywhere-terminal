@@ -83,15 +83,24 @@ export type OpenFn = (p: string) => Promise<{ close(): Promise<void> }>;
  */
 async function allReadable(paths: string[], open: OpenFn): Promise<boolean> {
   for (const p of paths) {
-    let handle: Awaited<ReturnType<OpenFn>> | undefined;
+    let handle: Awaited<ReturnType<OpenFn>>;
     try {
       handle = await open(p);
     } catch {
       // Includes ENOENT: the path was stamped a moment ago, so its disappearing
       // means this generation already describes a store that no longer exists.
       return false;
-    } finally {
-      await handle?.close();
+    }
+    try {
+      await handle.close();
+    } catch {
+      // A close that rejects leaves the descriptor's fate unknown, and letting it
+      // escape would be worse than the leak: `readStoreGeneration` would reject,
+      // the pool would never reach fresh production, and the caller would see the
+      // cleanup failure misclassified as a query error (round-2 W1). Refusing the
+      // generation is the conservative answer — the caller re-asks, and a fresh
+      // snapshot decides on its own evidence.
+      return false;
     }
   }
   return true;

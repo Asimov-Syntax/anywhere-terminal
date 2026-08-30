@@ -140,6 +140,22 @@ describe("readStoreGeneration: a generation is proven, not sampled", () => {
     expect(open).toBe(0);
   });
 
+  it("refuses a generation whose handle could not be closed", async () => {
+    // A close that rejects leaves the descriptor's fate unknown. Letting it escape
+    // is worse than the leak: the generation read rejects, the pool never reaches
+    // fresh production, and the cleanup failure surfaces as a query error
+    // (round-2 W1).
+    await fsp.writeFile(`${dbPath}-wal`, "wal");
+
+    const generation = await readStoreGeneration(dbPath, undefined, async () => ({
+      close: async () => {
+        throw Object.assign(new Error("EIO"), { code: "EIO" });
+      },
+    }));
+
+    expect(generation.usable).toBe(false);
+  });
+
   it("leaves the stamp helper's answer for an unreadable path alone", async () => {
     // `stampStoreFiles` shares the same loop and has always OMITTED a path it could
     // not read rather than refusing the set. Tightening that is a cache-invalidation

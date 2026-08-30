@@ -57,8 +57,8 @@ This is cycle 2 discovery, not verification of cycle 1. The reviewed implementat
 - **Evidence**: Approved D1 says readability replaces the path stat with `open("r")` plus stat-through-the-handle, so each stamp describes the file actually opened. Approved D3 consequently records two ordered passes as four opens, four fstats, and four closes. The reviewed implementation leaves both `readOnce` passes on path-based `fs.stat`, then performs a separate third pass with one open/close per stamped path; `OpenFn` cannot fstat at all. The changed workflow note says this separate pass is deliberate and that “D1 records it,” but D1/D3 still record the superseded mechanism and cost.
 - **Impact**: The code may embody a reasonable post-test tradeoff, but it is not the design approved at Gate 2. The authoritative mechanism, coherence claim, and hot-path cost are contradictory; a later builder or verifier following D1/D3 would reintroduce the two-pass open design that already broke in-flight deduplication. Under the workflow's intent-reconstruction gate, this material design delta cannot be approved as an implementation detail.
 - **SuggestedFix**: Hand the change back to planning: update D1/D3 and the failure-surface inventory to explicitly own the one readability pass beside two stat passes, record the remaining check/use boundary and corrected cost, then renew Gate 2. Alternatively, implement the currently approved stat-through-handle design if its latency problem is resolved.
-- **Status**: open
-- **Triage**: pending
+- **Status**: accepted
+- **Triage**: Accepted, and not remediation. The one-readability-pass-beside-two-stat-passes shape is what shipped and what the latency evidence supports; the defect was that D1/D3 still described the superseded stat-through-handle design. Parked the lease, handed back to planning, rewrote D1/D3 and the failure-surface inventory to own the check/use boundary and the corrected cost (`46d0ca2f`), untick-ed Gate 2 and task 1_1, and re-earned Gate 2. Not implementing the approved-but-superseded design: the reviewer's own round-1 evidence is that stat-through-handle adds enough latency to the pooled path that a second borrower misses the in-flight join window.
 
 ### W1
 
@@ -73,8 +73,8 @@ This is cycle 2 discovery, not verification of cycle 1. The reviewed implementat
 - **Evidence**: `allReadable` converts every `open()` rejection into `false`, but `await handle?.close()` runs in `finally` without handling rejection. `OpenFn` explicitly allows a rejecting `Promise<void>`, so this deterministically rejects `readStoreGeneration` instead of returning an unusable generation. `SnapshotPool.borrow` then aborts before the fresh snapshot path, and `withPooledSnapshot` maps the untagged cleanup error to `query-error`. The current handle-count test covers successful closes and an open refusal, not a rejecting close.
 - **Impact**: Cleanup failure takes a different control path from the declared readability gate, and the descriptor's release is not established despite task 1_1's every-exit ownership requirement. Repeated failures could leave resource ownership uncertain and surface an internal `query-error` rather than a deliberate generation verdict.
 - **SuggestedFix**: Define and test an explicit close-failure policy. Ensure reuse remains disabled, do not let an untagged cleanup rejection masquerade as an ordinary query failure, and only retry `close()` if the supported Node/runtime contract makes that safe; add an injected rejecting-close case.
-- **Status**: open
-- **Triage**: pending
+- **Status**: accepted
+- **Triage**: Accepted. `handle.close()` rejecting escaped the readability verdict and surfaced as `query-error` through `withPooledSnapshot`. Split `allReadable` so open and close are each caught and each return `false` — a descriptor whose release could not be confirmed is not a store we will claim is readable, and reuse stays disabled. No retry: the Node contract does not make a second `close()` on a rejected handle safe. Test added: `"refuses a generation whose handle could not be closed"`; mutation removing the close guard fails exactly that test.
 
 ### W2
 
@@ -89,8 +89,8 @@ This is cycle 2 discovery, not verification of cycle 1. The reviewed implementat
 - **Evidence**: The test correctly separates retained store `a` from fresh store `b`, but asserts only `reused.status === fresh.status` and `reused.status !== "ok"`. It would remain green if both paths regressed to `query-error`, even though task 1_1 and the spec require `db-unreachable` and explicitly distinguish it from other failures.
 - **Impact**: The central discriminated-status obligation can regress while the new end-to-end test still passes; the test proves convergence, not the promised answer.
 - **SuggestedFix**: Assert `db-unreachable` for both the reused and fresh results, retaining the distinct-store and dynamic-skip setup.
-- **Status**: open
-- **Triage**: pending
+- **Status**: accepted
+- **Triage**: Accepted. Convergence is a weaker claim than the promised one. Both assertions now name the discriminated status directly (`expect(reused.status).toBe("db-unreachable")` and the same for `fresh`), with a comment recording why equality alone was insufficient. The distinct-store and dynamic-skip setup is unchanged.
 
 ### W3
 
@@ -105,8 +105,8 @@ This is cycle 2 discovery, not verification of cycle 1. The reviewed implementat
 - **Evidence**: Task 1_1 is checked complete and its Plan step 4 requires an assertion that writing an existing unreadable store returns `write-error`, not `no-db`. Commit `0ed037f0` changes no write-path test; `src/vault/sqlite.write.test.ts` contains only generic injected status mapping and readable real-engine cases. The new `src/vault/sqlite.test.ts` case exercises read snapshots only.
 - **Impact**: The exact cycle-1 W1 regression remains unpinned at its write boundary, so a future strengthening of the shared existence predicate could again misreport an existing store as absent without failing this task's verification suite.
 - **SuggestedFix**: Add the required existing-but-unreadable write case against the production dependency behavior, with an honest runtime skip where permission revocation cannot be enforced, and assert `write-error` rather than `no-db`.
-- **Status**: open
-- **Triage**: pending
+- **Status**: accepted
+- **Triage**: Accepted — task 1_1's Plan step 4 promised this case and commit `0ed037f0` did not carry it. Added `describe("the write path tells absence from unreadability")` in `src/vault/sqlite.test.ts`, driving `writeSqlite` against the default deps over a real chmod-0o000 store, asserting `write-error` and explicitly `not.toBe("no-db")`, with `ctx.skip()` when the mode does not bite (root, or a filesystem that ignores it). Mutation restoring `R_OK` to the shared existence predicate fails exactly this case.
 
 ## Invariant inventory
 

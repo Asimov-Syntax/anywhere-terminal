@@ -13,6 +13,7 @@ import {
   type SqliteDeps,
   withPrimarySqliteSnapshot,
   withSqliteSnapshot,
+  writeSqlite,
 } from "./sqlite";
 
 function makeDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
@@ -923,14 +924,55 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
       const reused = await withPrimarySqliteSnapshot(a.dbFile, async (s) => s.query("SELECT id FROM t"));
       const fresh = await withPrimarySqliteSnapshot(b.dbFile, async (s) => s.query("SELECT id FROM t"));
 
-      expect(reused.status).toBe(fresh.status);
-      expect(reused.status).not.toBe("ok");
+      // The discriminated status itself, not merely "not ok": both could regress
+      // to `query-error` together and stay equal (round-2 W2).
+      expect(reused.status).toBe("db-unreachable");
+      expect(fresh.status).toBe("db-unreachable");
     } finally {
       for (const store of [a, b]) {
         await fsp.chmod(`${store.dbFile}-wal`, 0o600).catch(() => {});
         store.live.close();
         await fsp.rm(store.dir, { recursive: true, force: true });
       }
+    }
+  });
+});
+
+describe("the write path tells absence from unreadability", () => {
+  it("reports a write failure, not absence, for an existing unreadable store", async (ctx) => {
+    // `defaultWriteDeps` is `{ exists: defaultDeps.exists }`, so it aliases the
+    // read side's presence predicate. Strengthening that predicate to prove
+    // readability made an existing but unreadable store answer `no-db` —
+    // documented as ABSENT — instead of reaching SQLite (cycle-1 W1). The proof
+    // moved to the generation read precisely so this stays true.
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-write-perm-"));
+    const dbFile = path.join(dir, "store.db");
+    try {
+      const live = new DatabaseSync(dbFile);
+      live.exec("CREATE TABLE t (id TEXT)");
+      live.exec("INSERT INTO t (id) VALUES ('base-row')");
+      live.close();
+
+      await fsp.chmod(dbFile, 0o000);
+      let denied = true;
+      try {
+        const probe = await fsp.open(dbFile, "r");
+        await probe.close();
+        denied = false;
+      } catch {
+        denied = true;
+      }
+      if (!denied) {
+        ctx.skip();
+      }
+
+      const result = await writeSqlite(dbFile, "UPDATE t SET id = ? WHERE id = ?", ["next", "base-row"]);
+
+      expect(result.status).not.toBe("no-db");
+      expect(result.status).toBe("write-error");
+    } finally {
+      await fsp.chmod(dbFile, 0o600).catch(() => {});
+      await fsp.rm(dir, { recursive: true, force: true });
     }
   });
 });
