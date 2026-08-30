@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -48,4 +48,5 @@ Pending triage (cycle 2, out-of-band from the reuse specialist, verified before 
 Cycle-2 note (out-of-band, performance specialist could not reach the chair): it raised then WITHDREW a BLOCK on the pool bounds, on the ground that no caller fans out concurrent cross-store snapshots — the candidate walk in `cursorReader.ts:407` is sequential. The withdrawal is correct on concurrency and does NOT weaken D3's capacity bound, which never rested on concurrency: a sequential walk retains one snapshot per store it visits, so N stores accumulate inside one idle window just the same. Round-1 B2's wording ("a list walks every candidate") is the accumulation argument, not a fan-out argument. Recorded because a withdrawal that reaches only me could otherwise leave a stale BLOCK in the chair's report, or be mistaken for grounds to drop the capacity bound.
 Pending triage (cycle 2, BLOCK from the data-security specialist, arrived out of band AND as its final report; verified before recording): `stampStoreFiles` (`storeStamp.ts:15-25`) stats `.db` then `-wal` sequentially, so a stamp is not a coherent read of the store. A retained `{db:S0}` with no WAL can be matched by a later read that observes `.db` before a checkpoint and `-wal` after its deletion — equal stamps across a completed write, i.e. a false `absent`. This invalidates D1's PROOF, not just its implementation: "equal stamp means no write landed" holds only if both files are observed at one instant. Accepted. Fix is a coherent double stamp (two full stamps in fixed order, reuse only when equal, else produce without retaining); with `db,wal,db,wal` ordering the bad interleaving is self-contradictory, because the second `.db` read necessarily falls after the first `-wal` read and would observe the checkpoint. Requires a changed D1 → handback, not a fix commit. Note the shipped list cache shares the mechanism but not the consequence (stale list, not a deletion), and the `storeFilePaths` consolidation above would let one coherent-stamp helper serve all three sites.
 Handback (cycle 2 round 2, superseded): thrash stop on both triggers — B3 is the same lifecycle invariant failing a second time, and B5 (specialist BLOCK the chair's report dropped) invalidates D1's proof rather than its code. D1 and D3a rewritten; three of the six triaged findings were carried in from specialists that reached me directly but not the report.
+Cycle-3 fixes: check-types clean, 5438 unit tests, I10 ok, `biome check src` at 4/14/3. Each rule mutation-checked; two mutations reproduce the reported bugs exactly — a single-pass generation read (round-2 B5) and a flight-map-only disposal drain (round-2 B3) — and each fails only its own test.
 
