@@ -27,7 +27,7 @@
     5. Invalidate the memo entry for a pane whose reported cwd changes.
     6. Cover both spec scenarios, plus a pane whose cwd fails to resolve keeping the row it has today.
 
-- [ ] 1_3 Discover the repository a folder resolves into
+- [x] 1_3 Discover the repository a folder resolves into — verified: pnpm exec vitest run 'src/worktree/repoRoots.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d1-the-bounded-side-of-each-comparison-resolves-the-unbounded-side-does-not
   - **Acceptance**:
@@ -37,6 +37,7 @@
     1. In `src/worktree/repoRoots.ts`, resolve the workspace folder and each Git API `rootUri.fsPath` through the memo before the longest-prefix match.
     2. Invalidate on the Git API's repository set changing, so a repo opened later is not matched against a stale resolution.
     3. Cover a folder and a repo root spelled differently but resolving together, and a folder spelled under a repo it resolves outside of.
+    4. Supply the resolver in production from `src/worktree/worktreeDeps.ts`, over the memo `src/extension.ts` already shares with the projection.
 
 - [ ] 1_4 Scope decorations by a resolved root
   - **Deps**: 1_1

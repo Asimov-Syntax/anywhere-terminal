@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { createGitCapabilities } from "./gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
-import { type GitApiAccessor, resolveRepoOutcomes, resolveRepoRoots } from "./repoRoots";
+import { createRepoPathResolver, type GitApiAccessor, resolveRepoOutcomes, resolveRepoRoots } from "./repoRoots";
 
 type Reply = { code?: number; stdout?: string; stderr?: string; timedOut?: boolean; failedToSpawn?: boolean };
 
@@ -277,5 +278,128 @@ describe("resolveRepoOutcomes — a nonzero toplevel that is not an absence", ()
     });
 
     expect((await resolveRepoOutcomes(["/plain"], deps(runner)))[0].outcome).toEqual({ kind: "absent" });
+  });
+});
+
+describe("matching a repository through a symlink", () => {
+  // Built over a real `ResolvedPathMemo` with a fake `realpath`, so the seam —
+  // prepare, then a synchronous match — is what these exercise, not a stub
+  // that already returns the answer.
+  function symlinked(links: Record<string, string>) {
+    const realpaths: string[] = [];
+    const memo = new ResolvedPathMemo({
+      realpath: async (p) => {
+        realpaths.push(p);
+        const hit = links[p];
+        if (hit === undefined) {
+          const error: NodeJS.ErrnoException = new Error(`ENOENT: ${p}`);
+          error.code = "ENOENT";
+          throw error;
+        }
+        return hit;
+      },
+    });
+    return { paths: createRepoPathResolver(memo), realpaths, memo };
+  }
+
+  it("matches the repository a folder resolves INTO, not the one it is spelled under", async () => {
+    const { runner, run } = makeRunner({ [`/repo|${PATH_FORMAT}`]: { stdout: "/repo/.git\n" } });
+    const { paths } = symlinked({ "/link/api": "/repo/packages/api" });
+
+    const repos = await resolveRepoRoots(["/link/api"], { ...deps(runner, api("initialized", ["/repo"])), paths });
+
+    expect(repos).toEqual([{ repoId: "/repo/.git", rootPath: "/repo" }]);
+    // The open repository is proof enough — no `--show-toplevel` probe.
+    expect(run.mock.calls.some(([args]) => args.join(" ") === TOPLEVEL)).toBe(false);
+  });
+
+  it("does not match a repository a folder is merely spelled beneath", async () => {
+    // The lexical comparison says yes here, so this is the half a `path.resolve`
+    // fix would still get wrong: the folder escapes the repo through a link.
+    const { runner, run } = makeRunner({
+      [`/repo/escape|${TOPLEVEL}`]: { code: 128, stderr: "fatal: not a git repository" },
+    });
+    const { paths } = symlinked({ "/repo/escape": "/elsewhere/real", "/repo": "/repo" });
+
+    const outcomes = await resolveRepoOutcomes(["/repo/escape"], {
+      ...deps(runner, api("initialized", ["/repo"])),
+      paths,
+    });
+
+    expect(outcomes[0]?.outcome).toEqual({ kind: "absent" });
+    // It fell through to the probe rather than claiming the open repository.
+    expect(run.mock.calls.some(([args]) => args.join(" ") === TOPLEVEL)).toBe(true);
+  });
+
+  it("picks the longest RESOLVED root, not the longest spelling", async () => {
+    // Both roots genuinely contain the folder, so only the tie-break is under
+    // test — and the spellings are ordered AGAINST the answer: `/x` is 2
+    // characters and resolves deepest, `/a-very-long-symlink-name` is 25 and
+    // resolves shallowest. Ranking on the spelling picks the wrong one.
+    const { runner } = makeRunner({ [`/x|${PATH_FORMAT}`]: { stdout: "/repo/inner/.git\n" } });
+    const { paths } = symlinked({
+      "/repo/inner/pkg": "/repo/inner/pkg",
+      "/a-very-long-symlink-name": "/repo",
+      "/x": "/repo/inner",
+    });
+
+    const repos = await resolveRepoRoots(["/repo/inner/pkg"], {
+      ...deps(runner, api("initialized", ["/a-very-long-symlink-name", "/x"])),
+      paths,
+    });
+
+    // The API's OWN spelling comes back, because it is handed to git as a cwd.
+    expect(repos).toEqual([{ repoId: "/repo/inner/.git", rootPath: "/x" }]);
+  });
+
+  it("keeps today's answer when a folder cannot be resolved", async () => {
+    const { runner } = makeRunner({ [`/repo|${PATH_FORMAT}`]: { stdout: "/repo/.git\n" } });
+    const { paths } = symlinked({});
+
+    const repos = await resolveRepoRoots(["/repo/packages/api"], {
+      ...deps(runner, api("initialized", ["/repo"])),
+      paths,
+    });
+
+    expect(repos).toEqual([{ repoId: "/repo/.git", rootPath: "/repo" }]);
+  });
+
+  it("resolves each path once across rebuilds, not once per pass", async () => {
+    const { runner } = makeRunner({ [`/repo|${PATH_FORMAT}`]: { stdout: "/repo/.git\n" } });
+    const { paths, realpaths } = symlinked({ "/link/api": "/repo/packages/api", "/repo": "/repo" });
+    const built = { ...deps(runner, api("initialized", ["/repo"])), paths };
+
+    await resolveRepoRoots(["/link/api"], built);
+    await resolveRepoRoots(["/link/api"], built);
+    await resolveRepoRoots(["/link/api"], built);
+
+    expect(realpaths.sort()).toEqual(["/link/api", "/repo"]);
+  });
+
+  it("forgets a root that VS Code closed, so a repo recreated there resolves again", async () => {
+    // The structural event D4 names. Nothing else in this module observes it,
+    // and re-resolving every pass instead would be the syscall D1 forbids.
+    const links: Record<string, string> = { "/link/repo": "/physical/one" };
+    const { paths, realpaths } = symlinked(links);
+
+    await paths.prepare([], ["/link/repo"]);
+    expect(paths.resolvedOr("/link/repo")).toBe("/physical/one");
+
+    await paths.prepare([], []);
+    links["/link/repo"] = "/physical/two";
+    await paths.prepare([], ["/link/repo"]);
+
+    expect(paths.resolvedOr("/link/repo")).toBe("/physical/two");
+    expect(realpaths).toEqual(["/link/repo", "/link/repo"]);
+  });
+
+  it("keeps a root that stayed open, so a steady workspace costs nothing", async () => {
+    const { paths, realpaths } = symlinked({ "/link/repo": "/physical/one" });
+
+    await paths.prepare([], ["/link/repo"]);
+    await paths.prepare([], ["/link/repo"]);
+    await paths.prepare([], ["/link/repo"]);
+
+    expect(realpaths).toEqual(["/link/repo"]);
   });
 });

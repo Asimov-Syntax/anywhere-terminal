@@ -7,14 +7,23 @@
 // host takes assembled deps and tests drive it with fakes.
 
 import * as fs from "node:fs/promises";
+import type { ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { createGitCapabilities } from "./gitCapabilities";
 import { createGitCommandRunner, type GitCommandRunnerOptions } from "./gitCommandRunner";
 import { normalizeWorktreePath } from "./normalizePath";
+import { createRepoPathResolver } from "./repoRoots";
 import type { WorktreeTreeDeps } from "./WorktreeDiscovery";
 
 export interface CreateWorktreeTreeDepsOptions {
   /** Forwarded to the git runner — mainly to shorten the timeout in tests. */
   git?: GitCommandRunnerOptions;
+  /**
+   * Where the window's paths resolve. Absent — discovery matches repositories
+   * lexically, exactly as before. Supplied in production from the window's one
+   * memo, so a workspace folder reached through a symlink matches the
+   * repository it resolves into.
+   */
+  pathMemo?: ResolvedPathMemo;
 }
 
 /**
@@ -29,5 +38,6 @@ export function createWorktreeTreeDeps(options: CreateWorktreeTreeDepsOptions = 
     capabilities: createGitCapabilities(runner),
     normalize: (p) => normalizeWorktreePath(p),
     stat: (p) => fs.stat(p),
+    ...(options.pathMemo ? { paths: createRepoPathResolver(options.pathMemo) } : {}),
   };
 }

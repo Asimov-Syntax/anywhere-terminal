@@ -667,7 +667,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Held rather than inlined: the mutation service runs git through the SAME
   // runner discovery uses, so a capability probe or a timeout setting cannot
   // differ between reading the tree and changing it.
-  const worktreeTreeDeps = createWorktreeTreeDeps();
+  // One window, one set of resolutions. Both consumers below compare a cwd
+  // against a worktree id that `normalizeWorktreePath` already realpathed, so
+  // both need the candidate side resolved — and they must not disagree about
+  // where the same directory is (design.md D1, D5).
+  const cwdMemo = new ResolvedPathMemo();
+
+  const worktreeTreeDeps = createWorktreeTreeDeps({ pathMemo: cwdMemo });
 
   // One owner of every preview the agent rows show — the stamp, the re-check
   // interval, the in-flight de-duplication and the bound all live behind it.
@@ -687,12 +693,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           };
     },
   });
-
-  // One window, one set of resolutions. Both consumers below compare a cwd
-  // against a worktree id that `normalizeWorktreePath` already realpathed, so
-  // both need the candidate side resolved — and they must not disagree about
-  // where the same directory is (design.md D1, D5).
-  const cwdMemo = new ResolvedPathMemo();
 
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,

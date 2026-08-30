@@ -8,9 +8,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentTurnReport } from "../agentHooks/AgentHookRuntime";
 import { TURN_FRESHNESS_MS } from "../session/PaneEvidenceStore";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
+import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import type { VaultAgentId } from "../vault/types";
-import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import type { SessionLookup } from "./agentIdentity";
 import {
   createPresenceProjector,
