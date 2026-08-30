@@ -132,7 +132,7 @@
     1. In `src/vault/snapshotPool.ts`, size the snapshot before the accounting and delete evicted victims after it, so the block that checks the budget, evicts and inserts contains no await.
     2. Cover concurrent admissions of distinct stores against a one-entry and a byte budget, asserting the pool never exceeds either.
 
-- [ ] 4_2 Budget and retry the disk a failed deletion left behind
+- [x] 4_2 Budget and retry the disk a failed deletion left behind — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 4_1
   - **Refs**: .reviews/round-3.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
   - **Acceptance**:

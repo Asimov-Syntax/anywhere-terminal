@@ -550,6 +550,80 @@ describe("SnapshotPool capacity", () => {
     expect(pool.retainedCount).toBeLessThanOrEqual(2);
     await pool.dispose();
   });
+
+  it("counts a snapshot it could not delete against the budget", async () => {
+    let clock = 0;
+    let failDeletes = false;
+    const pool = new SnapshotPool({
+      ...deps,
+      maxEntries: 8,
+      maxBytes: 250,
+      now: () => (clock += 10),
+      rmrf: async (dir) => {
+        if (failDeletes) {
+          throw new Error("EBUSY");
+        }
+        await fs.rm(dir, { recursive: true, force: true });
+      },
+    });
+    const a = await store("a");
+    const b = await store("b");
+
+    const first = await pool.borrow(a, produce);
+    await first.release();
+
+    // `a` is superseded and its deletion fails, so its 100 bytes are still on disk.
+    failDeletes = true;
+    await fs.writeFile(a, "base-a-changed");
+    const refreshed = await pool.borrow(a, produce);
+    await refreshed.release();
+    await expect(fs.access(first.file)).resolves.toBeUndefined();
+
+    // 100 retained + 100 undeleted + 100 incoming exceeds 250, so `b` is not simply
+    // added on top as though the failed deletion had freed its space.
+    const other = await pool.borrow(b, produce);
+    await other.release();
+    // Exactly one: admitting `b` had to evict `a`, because the undeleted 100 bytes
+    // still count. Ignoring them would leave room to hold both.
+    expect(pool.retainedCount).toBe(1);
+
+    failDeletes = false;
+    await pool.dispose();
+  });
+
+  it("releases the budget once a retry finally deletes it", async () => {
+    let clock = 0;
+    let failDeletes = true;
+    const pool = new SnapshotPool({
+      ...deps,
+      maxEntries: 8,
+      maxBytes: 250,
+      now: () => (clock += 10),
+      rmrf: async (dir) => {
+        if (failDeletes) {
+          throw new Error("EBUSY");
+        }
+        await fs.rm(dir, { recursive: true, force: true });
+      },
+    });
+    const a = await store("a");
+
+    const first = await pool.borrow(a, produce);
+    await first.release();
+    await fs.writeFile(a, "base-a-changed");
+    const refreshed = await pool.borrow(a, produce);
+    await refreshed.release();
+    await expect(fs.access(first.file)).resolves.toBeUndefined();
+
+    // The next admission retries the stuck deletion, which now succeeds.
+    failDeletes = false;
+    await fs.writeFile(a, "base-a-changed-again");
+    const third = await pool.borrow(a, produce);
+    await third.release();
+
+    await expect(fs.access(first.file)).rejects.toThrow();
+    await pool.dispose();
+  });
 });
 
 describe("SnapshotPool disposal", () => {

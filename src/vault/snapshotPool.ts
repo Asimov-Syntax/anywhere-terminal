@@ -54,6 +54,7 @@ interface Entry {
   retained: boolean;
   lastUsed: number;
   bytes: number;
+  deleteAttempts: number;
 }
 
 const SNAPSHOT_FILE = "db.sqlite";
@@ -66,6 +67,9 @@ const MAX_JOIN_WAITS = 2;
  *  stores a window actually reads without letting a burst own the temp volume. */
 const DEFAULT_MAX_ENTRIES = 8;
 const DEFAULT_MAX_BYTES = 1_073_741_824; // 1 GiB of retained snapshots
+/** How many times a stubborn directory is retried before the pool stops trying on
+ *  every admission. It stays owned and stays counted either way. */
+const MAX_DELETE_ATTEMPTS = 5;
 
 export class SnapshotPool {
   private readonly retained = new Map<string, Entry>();
@@ -81,6 +85,10 @@ export class SnapshotPool {
   /** Bytes held by RETAINED snapshots. A snapshot still on loan after eviction is
    *  bounded by the number of concurrent readers, not by this budget. */
   private retainedBytes = 0;
+  /** Snapshots whose deletion failed: still owned, still on disk, and still counted —
+   *  otherwise repeated failures accumulate gigabytes the budget cannot see (W6). */
+  private readonly undeleted = new Set<Entry>();
+  private undeletedBytes = 0;
   private sweeper: ReturnType<typeof setInterval> | undefined;
   private disposed = false;
   /** Every entry whose directory still exists, retained or merely on loan. Disposal
@@ -179,6 +187,7 @@ export class SnapshotPool {
       retained: false,
       lastUsed: this.now(),
       bytes: 0,
+      deleteAttempts: 0,
     };
     this.liveEntries.add(entry);
     try {
@@ -198,15 +207,18 @@ export class SnapshotPool {
     const stable = !this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
 
     // Sized BEFORE the accounting, so the accounting itself can be synchronous.
-    let bytes: number | undefined;
-    if (stable) {
-      bytes = await this.sizeOf(entry.file).catch(() => undefined);
-    }
+    // Sized whether or not it will be retained: an unretained snapshot still occupies
+    // disk, and must be budgetable if its deletion later fails.
+    const bytes = await this.sizeOf(entry.file).catch(() => undefined);
+    entry.bytes = bytes ?? 0;
+
+    // Retried here rather than on a timer: an admission is exactly when the space
+    // matters, and it is outside the accounting block, which must stay synchronous.
+    await this.retryUndeleted();
 
     const evicted: Entry[] = [];
     if (stable && bytes !== undefined) {
       entry.stamp = after.stamps;
-      entry.bytes = bytes;
       entry.lastUsed = this.now();
       this.admitWithinOneTurn(dbPath, entry, evicted);
     }
@@ -258,7 +270,7 @@ export class SnapshotPool {
     if (entry.bytes > this.maxBytes) {
       return; // Can never fit, so it never costs another snapshot its place.
     }
-    while (this.retained.size + 1 > this.maxEntries || this.retainedBytes + entry.bytes > this.maxBytes) {
+    while (this.retained.size + 1 > this.maxEntries || this.liveBytes() + entry.bytes > this.maxBytes) {
       const victim = this.leastRecentlyUsed();
       if (!victim) {
         return;
@@ -290,6 +302,7 @@ export class SnapshotPool {
 
   /** Release the disk of every retained snapshot no reader has touched for `idleMs`. */
   async evictIdle(): Promise<void> {
+    await this.retryUndeleted();
     const cutoff = this.now() - this.idleMs;
     for (const [dbPath, entry] of [...this.retained]) {
       // Identity-checked: a binding replaced while an earlier deletion awaited must
@@ -356,10 +369,31 @@ export class SnapshotPool {
     try {
       await this.deps.rmrf(entry.dir);
     } catch {
+      entry.deleteAttempts += 1;
+      if (!this.undeleted.has(entry)) {
+        this.undeleted.add(entry);
+        this.undeletedBytes += entry.bytes;
+      }
       return false;
+    }
+    if (this.undeleted.delete(entry)) {
+      this.undeletedBytes -= entry.bytes;
     }
     this.liveEntries.delete(entry);
     return true;
+  }
+
+  /** Disk the pool still owns: what it is reusing, plus what it failed to delete. */
+  private liveBytes(): number {
+    return this.retainedBytes + this.undeletedBytes;
+  }
+
+  private async retryUndeleted(): Promise<void> {
+    for (const entry of [...this.undeleted]) {
+      if (entry.deleteAttempts < MAX_DELETE_ATTEMPTS) {
+        await this.destroy(entry);
+      }
+    }
   }
 
   /** Give up ownership of an entry's disk — now if nobody holds it, otherwise at its
