@@ -17,7 +17,7 @@ import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
-import { sameStamps, stampStoreFiles } from "../storeStamp";
+import { sameStamps, stampStoreFiles, storeFilePaths } from "../storeStamp";
 import {
   formatEntryId,
   type VaultActivityStep,
@@ -510,7 +510,7 @@ export async function readCodexSessions(
   // the cache was written, reuse the cached entries and skip the snapshot clone +
   // query entirely (cache-vault-load D3). Guarded on a non-empty stamp set so an
   // absent DB falls through to the query → fallback path rather than "reusing" {}.
-  const sources = await stampStoreFiles([dbPath, `${dbPath}-wal`]);
+  const sources = await stampStoreFiles(storeFilePaths(dbPath));
   const prevHasSqliteParentageMarker = prev?.kind === "store" && SQLITE_PARENTAGE_CACHE_KEY in prev.sources;
   const reusableSources = prevHasSqliteParentageMarker ? withSqliteParentageCacheMarker(sources) : sources;
   if (

@@ -11,7 +11,7 @@ import * as path from "node:path";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { readSqlite, withSqliteSnapshot, writeSqlite } from "../sqlite";
-import { sameStamps, stampStoreFiles } from "../storeStamp";
+import { sameStamps, stampStoreFiles, storeFilePaths } from "../storeStamp";
 import {
   formatEntryId,
   type VaultActivityStep,
@@ -238,7 +238,7 @@ export async function readOpenCodeSessions(
   // Skip the snapshot clone + query when the DB (+ -wal) is unchanged since the
   // cache was written (cache-vault-load D3). Guarded on a non-empty stamp set so
   // an absent DB falls through to the query (→ zero entries) rather than reusing {}.
-  const sources = await stampStoreFiles([dbPath, `${dbPath}-wal`]);
+  const sources = await stampStoreFiles(storeFilePaths(dbPath));
   if (prev?.kind === "store" && Object.keys(sources).length > 0 && sameStamps(prev.sources, sources)) {
     const u = prev.unreadable ?? 0;
     return {

@@ -79,12 +79,13 @@
 
 ## 3. Round-2 review fixes
 
-- [ ] 3_1 Prove the generation coherently, or refuse to reuse
+- [x] 3_1 Prove the generation coherently, or refuse to reuse — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: .reviews/round-2.md; design.md#d1-reuse-is-gated-on-proven-sameness-never-on-elapsed-time
   - **Acceptance**:
     - Outcome: a write that completes between the two halves of a generation read never reads as unchanged
     - Verify: unit src/vault/snapshotPool.test.ts
   - **Plan**:
+    0. Cover the generation read itself in `src/vault/storeStamp.test.ts`.
     1. In `src/vault/storeStamp.ts`, export the store's file set once and add a generation read that stats in a fixed order, distinguishes proven absence from any other stat failure via `provesAbsence`, and reports a generation as unusable when a path could not be determined.
     2. Read the generation twice in that fixed order and treat it as usable only when both readings agree, so a write spanning the read cannot present as unchanged.
     3. In `src/vault/snapshotPool.ts`, gate reuse, joining and retention on a usable generation; an unusable one produces a fresh snapshot and retains nothing.

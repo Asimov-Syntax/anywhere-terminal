@@ -10,7 +10,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { FileStamp } from "./cacheTypes";
-import { sameStamps, stampStoreFiles } from "./storeStamp";
+import { readStoreGeneration, type StoreGeneration, sameStamps } from "./storeStamp";
 
 type Stamp = Record<string, FileStamp>;
 
@@ -23,8 +23,8 @@ export interface SnapshotLease {
 export interface SnapshotPoolDeps {
   mkdtemp(): Promise<string>;
   rmrf(dir: string): Promise<void>;
-  /** Freshness stamp for the store's files. Defaults to the shipped `stampStoreFiles`. */
-  stamp?(paths: string[]): Promise<Stamp>;
+  /** Coherent generation read for a store. Defaults to `readStoreGeneration`. */
+  readGeneration?(dbPath: string): Promise<StoreGeneration>;
   /** How long a retained snapshot may go unused before its disk is released.
    *  Correctness never depends on this — reuse is gated on the stamp (D1); this
    *  only stops an idle window holding a gigabyte of temp files (D3). */
@@ -67,23 +67,12 @@ const MAX_JOIN_WAITS = 2;
 const DEFAULT_MAX_ENTRIES = 8;
 const DEFAULT_MAX_BYTES = 1_073_741_824; // 1 GiB of retained snapshots
 
-/** `-shm` is deliberately absent: volatile wal-index state, see `storeStamp.ts`. */
-function storePaths(dbPath: string): string[] {
-  return [dbPath, `${dbPath}-wal`];
-}
-
-/** A stamp that does not cover the database file itself proves nothing — the `stat`
- *  failed, or the store is gone — so it can neither justify reuse nor be retained. */
-function stampable(stamp: Stamp, dbPath: string): boolean {
-  return stamp[dbPath] !== undefined;
-}
-
 export class SnapshotPool {
   private readonly retained = new Map<string, Entry>();
   /** One production per store. Concurrent readers join it rather than each running
    *  their own backup — vault list, detail and lookup routinely fire together. */
   private readonly inFlight = new Map<string, Flight>();
-  private readonly stamp: (paths: string[]) => Promise<Stamp>;
+  private readonly readGeneration: (dbPath: string) => Promise<StoreGeneration>;
   private readonly idleMs: number;
   private readonly now: () => number;
   private readonly maxEntries: number;
@@ -102,7 +91,7 @@ export class SnapshotPool {
   private readonly quiesced: Array<() => void> = [];
 
   constructor(private readonly deps: SnapshotPoolDeps) {
-    this.stamp = deps.stamp ?? stampStoreFiles;
+    this.readGeneration = deps.readGeneration ?? readStoreGeneration;
     this.idleMs = deps.idleMs ?? DEFAULT_IDLE_MS;
     this.now = deps.now ?? Date.now;
     this.maxEntries = deps.maxEntries ?? DEFAULT_MAX_ENTRIES;
@@ -121,9 +110,9 @@ export class SnapshotPool {
       throw new Error("snapshot pool is disposed");
     }
     for (let waits = 0; ; waits++) {
-      const before = await this.stamp(storePaths(dbPath));
+      const before = await this.readGeneration(dbPath);
       const hit = this.retained.get(dbPath);
-      if (hit && stampable(before, dbPath) && sameStamps(before, hit.stamp)) {
+      if (hit && before.usable && sameStamps(before.stamps, hit.stamp)) {
         return this.lease(hit);
       }
 
@@ -132,7 +121,7 @@ export class SnapshotPool {
         // Joining is gated on the same stamp that gates reuse: a caller that has
         // already observed a newer store must not be handed a snapshot taken before
         // that write, which would be a false `absent` by a different door (D4).
-        if (stampable(before, dbPath) && sameStamps(before, joined.stamp)) {
+        if (before.usable && sameStamps(before.stamps, joined.stamp)) {
           return this.lease(await joined.promise);
         }
         if (waits < MAX_JOIN_WAITS) {
@@ -147,7 +136,7 @@ export class SnapshotPool {
         }
       }
 
-      const flight: Flight = { stamp: before, promise: this.produce(dbPath, before, produce) };
+      const flight: Flight = { stamp: before.stamps, promise: this.produce(dbPath, before, produce) };
       this.inFlight.set(dbPath, flight);
       // Cleared when it settles either way: a failed snapshot must not linger as a
       // promise later readers await forever.
@@ -162,12 +151,16 @@ export class SnapshotPool {
     }
   }
 
-  private async produce(dbPath: string, before: Stamp, take: (dest: string) => Promise<void>): Promise<Entry> {
+  private async produce(
+    dbPath: string,
+    before: StoreGeneration,
+    take: (dest: string) => Promise<void>,
+  ): Promise<Entry> {
     const dir = await this.deps.mkdtemp();
     const entry: Entry = {
       dir,
       file: path.join(dir, SNAPSHOT_FILE),
-      stamp: before,
+      stamp: before.stamps,
       leases: 0,
       retained: false,
       lastUsed: this.now(),
@@ -185,16 +178,16 @@ export class SnapshotPool {
     // across a write is still atomic and still correct for THIS caller, but it belongs
     // to neither stamp — retaining it under the earlier one would be a lie the next
     // reader believes.
-    const after = await this.stamp(storePaths(dbPath));
+    const after = await this.readGeneration(dbPath);
     // Nothing is retained once the pool is closed: this snapshot is handed to its
     // caller and deleted at its last release, never left for a sweeper that is gone.
-    if (!this.disposed && stampable(before, dbPath) && sameStamps(before, after)) {
+    if (!this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps)) {
       const superseded = this.retained.get(dbPath);
       if (superseded) {
         this.retained.delete(dbPath);
         this.retainedBytes -= superseded.bytes;
       }
-      entry.stamp = after;
+      entry.stamp = after.stamps;
       entry.lastUsed = this.now();
       if (await this.admit(entry)) {
         entry.retained = true;

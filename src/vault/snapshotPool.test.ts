@@ -119,10 +119,10 @@ describe("SnapshotPool", () => {
     await expect(fs.access(file)).rejects.toThrow();
   });
 
-  it("never reuses when the store's stamp cannot be read", async () => {
+  it("never reuses when the store's generation could not be established", async () => {
     const pool = new SnapshotPool({
       ...deps,
-      stamp: async () => ({}),
+      readGeneration: async () => ({ stamps: {}, usable: false }),
     });
 
     const first = await pool.borrow(dbPath, produce);

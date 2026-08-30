@@ -3,8 +3,8 @@
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { sameStamps, stampStoreFiles } from "./storeStamp";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readStoreGeneration, sameStamps, stampStoreFiles, storeFilePaths } from "./storeStamp";
 
 describe("sameStamps", () => {
   it("is true for identical stamp sets", () => {
@@ -48,5 +48,79 @@ describe("stampStoreFiles", () => {
     expect(Object.keys(stamps)).toEqual([db]);
     expect(stamps[db].size).toBe(5);
     expect(stamps[db].mtimeMs).toBeGreaterThan(0);
+  });
+});
+
+describe("readStoreGeneration: a generation is proven, not sampled", () => {
+  let dir: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-gen-"));
+    dbPath = path.join(dir, "store.db");
+    await fsp.writeFile(dbPath, "base");
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it("covers the database and its wal, and nothing else", () => {
+    expect(storeFilePaths("/x/store.db")).toEqual(["/x/store.db", "/x/store.db-wal"]);
+  });
+
+  it("reads a quiet WAL-free store as usable", async () => {
+    const gen = await readStoreGeneration(dbPath);
+    expect(gen.usable).toBe(true);
+    expect(Object.keys(gen.stamps)).toEqual([dbPath]);
+  });
+
+  it("refuses a generation when a write completes between the two halves of the read", async () => {
+    // The store starts WAL-free, exactly the shape whose stamp is `{db}` alone.
+    let stats = 0;
+    const stat = async (target: string) => {
+      stats += 1;
+      // After the FIRST `.db` stat, a writer commits, checkpoints and closes: the
+      // database advances and the `-wal` is gone before we get to stat it. A single
+      // pass would come back `{db:S0}` and match the pre-write generation.
+      if (stats === 1) {
+        const result = await fsp.stat(target);
+        await fsp.writeFile(`${dbPath}-wal`, "committed");
+        await fsp.writeFile(dbPath, "base-checkpointed-and-larger");
+        await fsp.rm(`${dbPath}-wal`, { force: true });
+        return result;
+      }
+      return fsp.stat(target);
+    };
+
+    const gen = await readStoreGeneration(dbPath, stat);
+
+    // Either it is refused, or it describes the post-write store — never the stale one.
+    if (gen.usable) {
+      expect(gen.stamps[dbPath]?.size).toBe("base-checkpointed-and-larger".length);
+    } else {
+      expect(gen.usable).toBe(false);
+    }
+    expect(stats).toBeGreaterThanOrEqual(4);
+  });
+
+  it("never reads an unreadable wal as a wal-free store", async () => {
+    await fsp.writeFile(`${dbPath}-wal`, "committed");
+    const stat = async (target: string) => {
+      if (target.endsWith("-wal")) {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      }
+      return fsp.stat(target);
+    };
+
+    const gen = await readStoreGeneration(dbPath, stat);
+    expect(gen.usable).toBe(false);
+  });
+
+  it("refuses a generation that does not cover the database itself", async () => {
+    await fsp.rm(dbPath);
+    const gen = await readStoreGeneration(dbPath);
+    expect(gen.usable).toBe(false);
   });
 });
