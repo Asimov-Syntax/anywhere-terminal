@@ -4,8 +4,14 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { listClaudeWorkflowStubs, readClaudeDetail, readClaudeEntry, readClaudeSessions } from "./claudeReader";
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  listClaudeWorkflowStubs,
+  lookupClaudeEntry,
+  readClaudeDetail,
+  readClaudeEntry,
+  readClaudeSessions,
+} from "./claudeReader";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.join(here, "..", "__fixtures__", "claude");
@@ -594,5 +600,73 @@ describe("readClaudeSessions: a listed file is still checked for containment", (
     } finally {
       await fsp.rm(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe("lookupClaudeEntry: absent is proven, everything else is unknown", () => {
+  // chmod is meaningless as root, so the two permission cases opt out there.
+  const asRoot = process.getuid?.() === 0;
+  const tmpRoots: string[] = [];
+
+  const makeStore = async (): Promise<string> => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "at-claude-lookup-"));
+    tmpRoots.push(root);
+    await fsp.mkdir(path.join(root, "projects", "proj-a"), { recursive: true });
+    return root;
+  };
+
+  afterAll(async () => {
+    for (const root of tmpRoots) {
+      await fsp.chmod(path.join(root, "projects"), 0o755).catch(() => {});
+      await fsp.chmod(path.join(root, "projects", "proj-a"), 0o755).catch(() => {});
+      await fsp.rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("finds a session the store holds", async () => {
+    const found = await lookupClaudeEntry("sess-changed", { configDir: PERMISSION_MODE_FIXTURE_ROOT });
+    expect(found.status).toBe("found");
+  });
+
+  it("says absent after an exhaustive scan that did not find the file", async () => {
+    const found = await lookupClaudeEntry("no-such-session", { configDir: PERMISSION_MODE_FIXTURE_ROOT });
+    expect(found).toEqual({ status: "absent" });
+  });
+
+  it("says absent for an id no store could carry", async () => {
+    expect(await lookupClaudeEntry("../escape", { configDir: PERMISSION_MODE_FIXTURE_ROOT })).toEqual({
+      status: "absent",
+    });
+  });
+
+  it("says absent when the projects dir itself is not there", async () => {
+    const root = await makeStore();
+    await fsp.rm(path.join(root, "projects"), { recursive: true });
+    expect(await lookupClaudeEntry("anything", { configDir: root })).toEqual({ status: "absent" });
+  });
+
+  it.skipIf(asRoot)("says unknown when the projects dir cannot be listed", async () => {
+    const root = await makeStore();
+    await fsp.chmod(path.join(root, "projects"), 0o000);
+    expect(await lookupClaudeEntry("anything", { configDir: root })).toEqual({ status: "unknown" });
+  });
+
+  it.skipIf(asRoot)("says unknown when one project dir could not be searched", async () => {
+    // The scan lists the parent fine and is refused inside — the case that used
+    // to look identical to an exhaustive miss.
+    const root = await makeStore();
+    await fsp.mkdir(path.join(root, "projects", "proj-b"));
+    await fsp.chmod(path.join(root, "projects", "proj-a"), 0o000);
+    expect(await lookupClaudeEntry("anything", { configDir: root })).toEqual({ status: "unknown" });
+  });
+
+  it("says unknown when the file is there and cannot be turned into an entry", async () => {
+    const root = await makeStore();
+    await fsp.writeFile(path.join(root, "projects", "proj-a", "broken.jsonl"), "not json at all\n");
+    expect(await lookupClaudeEntry("broken", { configDir: root })).toEqual({ status: "unknown" });
+  });
+
+  it("keeps readClaudeEntry nullable for the callers that cannot act on the difference", async () => {
+    expect(await readClaudeEntry("no-such-session", { configDir: PERMISSION_MODE_FIXTURE_ROOT })).toBeNull();
   });
 });

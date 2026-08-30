@@ -29,6 +29,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import { type FsPresence, presenceFromAccessError } from "../utils/fsPresence";
 
 const execFileAsync = promisify(execFile);
 
@@ -48,8 +49,10 @@ const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
  *  (tell-an-absent-session-from-an-unknown-one D6). */
 export type SqliteStatus = "ok" | "no-db" | "db-unreachable" | "no-sqlite3" | "query-error";
 
-/** What a presence check could establish about the database file. */
-export type SqlitePresence = "present" | "absent" | "unreachable";
+/** What a presence check could establish about the database file. The scanners in
+ *  the readers ask the same question, so the answer has one owner. */
+export type SqlitePresence = FsPresence;
+export { presenceFromAccessError };
 
 export interface SqliteResult {
   rows: Record<string, unknown>[];
@@ -114,17 +117,6 @@ async function cloneOrCopy(src: string, dest: string): Promise<void> {
     // clone tool missing / clone unsupported (e.g. cross-volume) — byte-copy below.
   }
   await fs.copyFile(src, dest);
-}
-
-/**
- * Which `fs.access` rejections prove the file is not there. ENOENT and ENOTDIR do
- * — a missing entry, and a path whose parent is not a directory. Everything else
- * (EACCES, EPERM, EIO, ELOOP, a dead mount) says only that this process could not
- * find out, and MUST NOT be reported as absence (D6).
- */
-export function presenceFromAccessError(err: unknown): SqlitePresence {
-  const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  return code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unreachable";
 }
 
 async function defaultAccess(p: string): Promise<SqlitePresence> {

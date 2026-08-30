@@ -8,6 +8,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { provesAbsence } from "../../utils/fsPresence";
 import { isResolvedPathInsideRoot, type PreparedRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
 
 /** Separates a parent session id from a subagent file stem in an entry id:
@@ -59,41 +60,79 @@ export function isSafeSessionId(id: string): boolean {
  * The candidate is containment-checked under the projects dir on RESOLVED paths
  * before being returned, and the host never trusts a webview-supplied path (D3).
  */
-export async function resolveClaudeSessionPath(
+/**
+ * What a by-id path scan established. `exhaustive` is the only thing that lets a
+ * caller say the session is not there: a scan that could not list a project
+ * directory, or could not establish the store root, searched less than it looks
+ * (tell-an-absent-session-from-an-unknown-one D4).
+ */
+export interface ClaudeSessionPathScan {
+  path: string | null;
+  exhaustive: boolean;
+}
+
+export async function scanClaudeSessionPath(
   sessionId: string,
   options: ClaudeReaderOptions = {},
-): Promise<string | null> {
+): Promise<ClaudeSessionPathScan> {
   if (!isSafeSessionId(sessionId)) {
-    return null;
+    // No store can carry this id, which is a conclusive answer, not a failed look.
+    return { path: null, exhaustive: true };
   }
   const { projectsDir } = claudeRoots(options);
   let projectDirs: string[];
   try {
     const entries = await fs.readdir(projectsDir, { withFileTypes: true });
     projectDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch {
-    return null;
+  } catch (err) {
+    // A projects dir that is not there means no session is either; any other
+    // failure means this process could not look.
+    return { path: null, exhaustive: provesAbsence(err) };
   }
   // Once for the scan, not once per project directory (D8).
   const root = await prepareResolvedRoot(projectsDir);
   if (root === null) {
-    return null;
+    // Containment could not be established, so nothing was searched at all.
+    return { path: null, exhaustive: false };
   }
+  let exhaustive = true;
   for (const dir of projectDirs) {
     const candidate = path.join(projectsDir, dir, `${sessionId}.jsonl`);
     if (!(await isResolvedPathInsideRoot(candidate, root))) {
-      continue; // resolves outside the store root — never read it
+      // Never read it. But a false here has two causes the predicate does not
+      // separate: the path resolves outside the store root, or the filesystem
+      // declined to answer (EACCES/ELOOP — pathBoundary.ts). Only the first
+      // proves the candidate is not a legitimate session file, so a scan that
+      // saw either can no longer call itself exhaustive. Conservative on
+      // purpose: it costs an unproven absence, never a false one (D2).
+      exhaustive = false;
+      continue;
     }
     try {
       const stat = await fs.stat(candidate);
       if (stat.isFile()) {
-        return candidate;
+        return { path: candidate, exhaustive: true };
       }
-    } catch {
-      // not in this project dir — keep scanning
+    } catch (err) {
+      // Not in this project dir — but only when the error says so. The permission
+      // case never arrives here: without execute on the directory, `realpath`
+      // fails inside the containment check above and the candidate is skipped
+      // there. This covers a transient failure (EIO, ENOMEM) on a path that
+      // resolved fine, which no test can provoke through chmod.
+      if (!provesAbsence(err)) {
+        exhaustive = false;
+      }
     }
   }
-  return null;
+  return { path: null, exhaustive };
+}
+
+/** The path-or-nothing view, for the callers that cannot act on the difference. */
+export async function resolveClaudeSessionPath(
+  sessionId: string,
+  options: ClaudeReaderOptions = {},
+): Promise<string | null> {
+  return (await scanClaudeSessionPath(sessionId, options)).path;
 }
 
 /**

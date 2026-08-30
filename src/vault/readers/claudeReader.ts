@@ -38,6 +38,7 @@ import {
   isSafeSessionId,
   listJsonlFiles,
   resolveClaudeSessionPath,
+  scanClaudeSessionPath,
   resolveClaudeSubagentPath,
   resolveClaudeWorkflowAgentPath,
 } from "./claudePaths";
@@ -457,42 +458,39 @@ export async function readClaudeSessions(
   return { entries, unreadable, cache: { kind: "files", files } };
 }
 
-/**
- * Resolve ONE Claude session to its launch entry by id — the single-entry
- * counterpart to readClaudeSessions, used by VaultService.getEntry for fast
- * resume/fork (no full-store scan; D3). Locates the file via the same
- * containment-checked, metadata-only path resolver. Returns null for an unsafe
- * id or an unlocatable/unparseable session.
- */
+/** The entry-or-nothing view, for callers that cannot act on the difference. */
 export async function readClaudeEntry(
   sessionId: string,
   options: ClaudeReaderOptions = {},
 ): Promise<VaultSessionEntry | null> {
-  const { configDir } = claudeRoots(options);
-  const filePath = await resolveClaudeSessionPath(sessionId, options);
-  if (!filePath) {
-    return null;
-  }
-  try {
-    // Resolve-by-id returns the entry even for a team member (it's a real,
-    // launchable session) — only the list path hides members (D5).
-    const built = await buildClaudeEntry(filePath, sessionId, configDir);
-    return built ? built.entry : null;
-  } catch {
-    return null;
-  }
+  const found = await lookupClaudeEntry(sessionId, options);
+  return found.status === "found" ? found.entry : null;
 }
 
 /**
- * Claude by-id lookup, as the conclusive answer the adapter contract asks for.
- * Task 1_1 wraps the existing reader without classifying: a non-null read is
- * `found`, everything else is `unknown`, which is what the caller already assumed.
- * Task 1_3 replaces this body with the real classification.
+ * Resolve ONE Claude session by id — the single-entry counterpart to
+ * readClaudeSessions, used by VaultService for fast resume/fork (no full-store
+ * scan; D3). Answers conclusively: `absent` only from an exhaustive scan that did
+ * not find the file, `unknown` from any scan or build that failed.
  */
 export async function lookupClaudeEntry(
   sessionId: string,
   options: ClaudeReaderOptions = {},
 ): Promise<VaultEntryLookup> {
-  const entry = await readClaudeEntry(sessionId, options);
-  return entry ? { status: "found", entry } : { status: "unknown" };
+  const { configDir } = claudeRoots(options);
+  const scan = await scanClaudeSessionPath(sessionId, options);
+  if (!scan.path) {
+    // Only a scan that searched everywhere may call the session absent.
+    return scan.exhaustive ? { status: "absent" } : { status: "unknown" };
+  }
+  try {
+    // Resolve-by-id returns the entry even for a team member (it's a real,
+    // launchable session) — only the list path hides members (D5).
+    const built = await buildClaudeEntry(scan.path, sessionId, configDir);
+    // The file is there and we could not turn it into an entry: the session
+    // exists, so this is never absence.
+    return built ? { status: "found", entry: built.entry } : { status: "unknown" };
+  } catch {
+    return { status: "unknown" };
+  }
 }

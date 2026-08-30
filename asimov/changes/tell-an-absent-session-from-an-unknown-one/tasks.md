@@ -29,7 +29,7 @@
     3. In `src/vault/readers/codexReader.ts`, have its local status alias reference `SqliteStatus` rather than re-listing its members, so the new status cannot be missed there.
     4. Re-pin the existing `no-db` list expectation in `src/vault/readers/opencodeReader.test.ts` and add the access-failure case beside it.
 
-- [ ] 1_3 Let the Claude reader say which of the three it means
+- [x] 1_3 Let the Claude reader say which of the three it means — verified: pnpm exec vitest run 'src/vault/readers/claudeReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: <!-- design.md D2, D4, D5 (Claude) -->
   - **Boundary**: `resolveClaudeSessionPath` keeps its current signature and its three other callers are not touched
@@ -37,10 +37,11 @@
     - Outcome: a Claude session never stored reports absent; every path that failed to look reports unknown
     - Verify: unit src/vault/readers/claudeReader.test.ts
   - **Plan**:
-    1. In `src/vault/readers/claudePaths.ts`, add a sibling of `resolveClaudeSessionPath` reporting the path plus whether the scan was exhaustive, separating an ENOENT projects dir from any other `readdir` failure and from a `prepareResolvedRoot` miss; keep the existing function as its wrapper.
-    2. In the same file, make the per-candidate `stat` catch inspect the error it already has: an absence-class error is a miss, anything else makes the scan non-exhaustive.
-    3. In `src/vault/readers/claudeReader.ts`, give `lookupClaudeEntry` the real classification from the D5 Claude table, reporting unknown when the entry build returns nothing or raises.
-    4. Test each row of the table, asserting unknown specifically on the failure paths rather than "not found".
+    1. Move the errno-to-presence decision task 1_2 put in `src/vault/sqlite.ts` into `src/utils/fsPresence.ts` and re-export it there, so the by-id scanners share the one definition of which failures prove absence rather than restating it.
+    2. In `src/vault/readers/claudePaths.ts`, add a sibling of `resolveClaudeSessionPath` reporting the path plus whether the scan was exhaustive, separating an ENOENT projects dir from any other `readdir` failure and from a `prepareResolvedRoot` miss; keep the existing function as its wrapper.
+    3. In the same file, make the per-candidate `stat` catch inspect the error it already has: an absence-class error is a miss, anything else makes the scan non-exhaustive.
+    4. In `src/vault/readers/claudeReader.ts`, give `lookupClaudeEntry` the real classification from the D5 Claude table, reporting unknown when the entry build returns nothing or raises.
+    5. Test each row of the table, asserting unknown specifically on the failure paths rather than "not found".
 
 - [ ] 1_4 Let the Codex reader say which of the three it means
   - **Deps**: 1_2
