@@ -584,30 +584,48 @@ describe("the SHIPPED snapshot, exercised as shipped (round-2 B1/W3)", () => {
     return { dbFile, dir, live };
   }
 
-  /** Race a checkpoint + VACUUM against an in-flight snapshot, and report whether
-   *  they actually completed while it was running. */
-  async function raceAgainst<T>(
-    live: InstanceType<typeof DatabaseSync>,
-    start: () => Promise<T>,
-  ): Promise<{ result: T; raced: boolean }> {
-    let raced = false;
-    const running = start();
-    const churn = (async () => {
-      await new Promise((r) => setImmediate(r));
-      live.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      live.exec("VACUUM");
-      raced = true; // only once both have COMPLETED
-    })();
-    const [result] = await Promise.all([running, churn]);
-    return { result, raced };
+  /** Timestamps proving the churn happened WHILE a snapshot was in flight, which
+   *  is the claim — a witness that only proves the churn finished would also be
+   *  satisfied by a serialized implementation that never overlapped at all. */
+  interface Overlap {
+    started?: number;
+    churned?: number;
+    settled?: number;
+  }
+
+  function expectOverlap(o: Overlap): void {
+    expect(o.started).toBeDefined();
+    expect(o.churned).toBeDefined();
+    expect(o.settled).toBeDefined();
+    expect(o.started as number).toBeLessThanOrEqual(o.churned as number);
+    expect(o.churned as number).toBeLessThanOrEqual(o.settled as number);
+  }
+
+  /** Churn fired from INSIDE a real backup step: the snapshot has provably begun
+   *  and provably not settled. DatabaseSync is synchronous, so this completes
+   *  before the backup takes its next step. */
+  function churningAt(live: InstanceType<typeof DatabaseSync>, step: number, o: Overlap) {
+    return (n: number) => {
+      o.started ??= Date.now();
+      if (n === step && o.churned === undefined) {
+        live.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        live.exec("VACUUM");
+        o.churned = Date.now();
+      }
+    };
   }
 
   it("keeps every row when a checkpoint and vacuum race the in-process snapshot", async () => {
     const { dbFile, dir, live } = await bigLiveStore(20000);
-    const deps = shippedDeps({ hasNodeSqlite: async () => true });
+    const overlap: Overlap = {};
+    const deps = shippedDeps({
+      hasNodeSqlite: async () => true,
+      onSnapshotProgress: churningAt(live, 3, overlap),
+    });
     try {
-      const { result, raced } = await raceAgainst(live, () => readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps));
-      expect(raced).toBe(true);
+      const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
+      overlap.settled = Date.now();
+      expectOverlap(overlap);
       if (result.status === "ok") {
         expect(result.rows).toEqual([{ c: 20001 }]);
       } else {
@@ -621,12 +639,15 @@ describe("the SHIPPED snapshot, exercised as shipped (round-2 B1/W3)", () => {
 
   it("does the same through withSqliteSnapshot", async () => {
     const { dbFile, dir, live } = await bigLiveStore(20000);
-    const deps = shippedDeps({ hasNodeSqlite: async () => true });
+    const overlap: Overlap = {};
+    const deps = shippedDeps({
+      hasNodeSqlite: async () => true,
+      onSnapshotProgress: churningAt(live, 3, overlap),
+    });
     try {
-      const { result, raced } = await raceAgainst(live, () =>
-        withSqliteSnapshot(dbFile, (s) => s.query("SELECT count(*) AS c FROM t"), deps),
-      );
-      expect(raced).toBe(true);
+      const result = await withSqliteSnapshot(dbFile, (s) => s.query("SELECT count(*) AS c FROM t"), deps);
+      overlap.settled = Date.now();
+      expectOverlap(overlap);
       if (result.status === "ok") {
         expect(result.value.rows).toEqual([{ c: 20001 }]);
       } else {
@@ -640,10 +661,29 @@ describe("the SHIPPED snapshot, exercised as shipped (round-2 B1/W3)", () => {
 
   it("does the same through the real sqlite3 CLI", async () => {
     const { dbFile, dir, live } = await bigLiveStore(20000);
-    const deps = shippedDeps({ hasNodeSqlite: async () => false });
+    const overlap: Overlap = {};
+    // The CLI cannot be stepped, so the barrier is the process lifetime: churn
+    // after VACUUM INTO has been spawned and before its promise settles.
+    const deps = shippedDeps({
+      hasNodeSqlite: async () => false,
+      exec: async (file, args, options) => {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const running = promisify(execFile)(file, args, { timeout: options.timeout });
+        if (String(args[2] ?? "").startsWith("VACUUM INTO")) {
+          overlap.started = Date.now();
+          live.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+          live.exec("VACUUM");
+          overlap.churned = Date.now();
+        }
+        const { stdout, stderr } = await running;
+        return { stdout: String(stdout), stderr: String(stderr) };
+      },
+    });
     try {
-      const { result, raced } = await raceAgainst(live, () => readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps));
-      expect(raced).toBe(true);
+      const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
+      overlap.settled = Date.now();
+      expectOverlap(overlap);
       if (result.status === "ok") {
         expect(result.rows).toEqual([{ c: 20001 }]);
       } else {
@@ -659,11 +699,11 @@ describe("the SHIPPED snapshot, exercised as shipped (round-2 B1/W3)", () => {
     // Enough pages that the backup takes more than one step, and a budget already
     // spent — so the deadline must be checked by the shipped callback, not by us.
     const { dbFile, dir, live } = await bigLiveStore(20000);
-    const deps = shippedDeps({ hasNodeSqlite: async () => true, snapshotTimeoutMs: 0 });
+    const deps = shippedDeps({ hasNodeSqlite: async () => true, snapshotTimeoutMs: -1 });
     try {
       const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
       expect(result.status).toBe("query-error");
-      expect(result.error).toMatch(/exceeded 0ms/);
+      expect(result.error).toMatch(/exceeded -1ms/);
       expect(result.rows).toEqual([]);
     } finally {
       live.close();

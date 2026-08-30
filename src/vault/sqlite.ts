@@ -108,6 +108,10 @@ export interface SqliteDeps {
   /** Wall clock for the snapshot, in ms. Defaults to `SNAPSHOT_TIMEOUT_MS`; tests
    *  lower it to drive the real deadline through the real progress callback. */
   snapshotTimeoutMs?: number;
+  /** Called between real backup steps, with the step number. Production omits it;
+   *  it exists so a test can act while a snapshot is genuinely in flight, which
+   *  is the only way to prove the atomicity claim rather than assume it. */
+  onSnapshotProgress?(step: number): void;
 }
 
 async function defaultAccess(p: string): Promise<SqlitePresence> {
@@ -290,7 +294,7 @@ async function takeSnapshot(deps: SqliteDeps, dbPath: string, dest: string, useC
     return;
   }
   const budget = deps.snapshotTimeoutMs ?? SNAPSHOT_TIMEOUT_MS;
-  await (useCli ? cliSnapshot(deps, budget) : defaultSnapshot)(dbPath, dest, budget);
+  await (useCli ? cliSnapshot(deps, budget) : defaultSnapshot)(dbPath, dest, budget, deps.onSnapshotProgress);
 }
 
 /** The CLI engine's snapshot: `VACUUM INTO` under `-readonly`. VACUUM INTO runs
@@ -328,7 +332,12 @@ async function cliSourceReads(deps: SqliteDeps, dbPath: string, budget: number):
   }
 }
 
-async function defaultSnapshot(dbPath: string, dest: string, budget: number): Promise<void> {
+async function defaultSnapshot(
+  dbPath: string,
+  dest: string,
+  budget: number,
+  onStep?: (step: number) => void,
+): Promise<void> {
   const { DatabaseSync, backup } = await import("node:sqlite");
   // node:sqlite opens lazily, so a refusal can surface at the constructor OR at
   // the backup. Classify by the error, not by where it was thrown — and only
@@ -337,6 +346,7 @@ async function defaultSnapshot(dbPath: string, dest: string, budget: number): Pr
   // directory is the misattribution D2 exists to prevent.
   let source: InstanceType<typeof DatabaseSync> | undefined;
   const deadline = Date.now() + budget;
+  let steps = 0;
   try {
     source = new DatabaseSync(dbPath, { readOnly: true });
     // SQLite RESTARTS an incremental backup whenever the source is written, so a
@@ -346,6 +356,7 @@ async function defaultSnapshot(dbPath: string, dest: string, budget: number): Pr
     await backup(source, dest, {
       rate: SNAPSHOT_PAGES_PER_STEP,
       progress: () => {
+        onStep?.(++steps);
         if (Date.now() > deadline) {
           throw new Error(`snapshot exceeded ${budget}ms`);
         }

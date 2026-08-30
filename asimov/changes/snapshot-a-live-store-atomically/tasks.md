@@ -65,3 +65,13 @@
   - **Plan**:
     1. In `src/vault/sqlite.ts`, let the snapshot budget be injected so the real deadline runs in tests, and give the CLI branch the same source-readability proof the in-process branch has.
     2. In `src/vault/sqlite.test.ts`, replace the tests that substituted their own snapshot with ones that exercise the shipped implementation across both engines and both entry points, and set the race witness only once the checkpoint and vacuum have completed.
+
+- [x] 2_3 Prove the churn overlapped an in-flight snapshot — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_2
+  - **Refs**: .reviews/round-3.md
+  - **Acceptance**:
+    - Outcome: the race tests observe snapshot start, then churn completion, then snapshot settlement, in that order
+    - Verify: unit src/vault/sqlite.test.ts
+  - **Plan**:
+    1. In `src/vault/sqlite.ts`, expose a narrow optional progress observer on the injectable dep surface so a test can act between real backup steps.
+    2. In `src/vault/sqlite.test.ts`, drive the checkpoint and vacuum from inside that observer for the in-process engines, and between process spawn and settlement for the CLI, asserting the three lifecycle timestamps are ordered; give the deadline test a budget that cannot pass within one millisecond.
