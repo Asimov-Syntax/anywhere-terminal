@@ -1,0 +1,1 @@
+{"task":"1_1","cmd":"pnpm run check-types && pnpm run test:unit","exit":0,"tree":"a7c660f14f6cd8e2828163fbc6294127cd39d2fa","at":1788073794742,"claimToken":"67e3ddf0-2ce5-4629-8e3d-f5123ba0be34","scope":["src/vault/snapshotPool.ts","src/vault/snapshotPool.test.ts"],"testCmd":"pnpm exec vitest run 'src/vault/snapshotPool.test.ts'"}

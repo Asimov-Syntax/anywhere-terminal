@@ -2,7 +2,7 @@
 
 ## 1. A pool that reuses only what it can prove is current
 
-- [ ] 1_1 Reuse a snapshot while the store's stamp is unchanged
+- [x] 1_1 Reuse a snapshot while the store's stamp is unchanged — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: specs/agent-session-index/spec.md#wal-safe-read-only-sqlite-access; design.md#d1-reuse-is-gated-on-proven-sameness-never-on-elapsed-time; design.md#d2-the-stamp-is-taken-twice-and-only-a-stable-snapshot-is-retained
   - **Acceptance**:
     - Outcome: a second read of an unchanged store takes no new snapshot; a write between reads forces one

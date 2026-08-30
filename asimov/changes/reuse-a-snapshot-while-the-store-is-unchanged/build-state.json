@@ -1,0 +1,7 @@
+{
+  "change": "reuse-a-snapshot-while-the-store-is-unchanged",
+  "leases": [],
+  "attempts": {},
+  "locked": [],
+  "reads": 1
+}
