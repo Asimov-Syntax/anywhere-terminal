@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-013.2`)_
@@ -26,6 +26,8 @@
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
+
+- Verify Gate lint: `pnpm exec biome check src` exits 1 on 3 pre-existing format errors in `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts` and `src/cursor/CursorHookInstaller.test.ts` — the recorded baseline for this branch, none of them touched by this change. 14 warnings, also the baseline.
 
 - 3_2: D1 says the proofs are reported from the `confirmable` branch only. They ARE absent from `refused`, which is what D1's reason argues for. They are NOT filtered out of `unavailable`: that branch reports the whole catalogue unproven, an unproven proof claims nothing, and filtering would make the check list differ by outcome — the failure D1's one-row-per-id table exists to prevent.
 - 3_2: `src/webview/worktree/WorktreeRemoveDialog.ts` added to the Plan paths. WT-013.1's guard withholds Force whenever ANY check is unproven, and three routinely-unproven proofs in every confirmable report silently withheld it from every removal — caught by the assembly test, not by removalChecks. Scoped to non-proof checks: the guard is about a risk the dialog could not describe, and withholding force over a proof IS a proof refusing a removal (§ 2.2, D2, and the proposal's Must-not). Remediation inside the accepted contract, not a new decision.
