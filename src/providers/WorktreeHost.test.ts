@@ -672,6 +672,7 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
     const { runner } = oneRepo(MAIN, FEAT);
     const options: ({ external?: boolean; enrich?: boolean } | undefined)[] = [];
     let forgotten = 0;
+    let hold: Promise<void> | undefined;
     const presence: WorktreePresence = { rowsByWorktreeId: {}, scannedAt: 1, degradedSources: [] };
     const timers = new Map<number, () => void>();
     let nextHandle = 1;
@@ -695,6 +696,9 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
       projector: {
         project: async (_ids, opts) => {
           options.push(opts);
+          if (hold) {
+            await hold;
+          }
           return presence;
         },
         rank: () => undefined,
@@ -709,6 +713,17 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
       options,
       /** How many times the projector was told its rows are no longer drawn. */
       forgotten: () => forgotten,
+      /** Park every projection until the returned function is called. */
+      holdProjections(): () => void {
+        let release = () => {};
+        hold = new Promise<void>((r) => {
+          release = r;
+        });
+        return () => {
+          hold = undefined;
+          release();
+        };
+      },
       /** How many timers are currently armed. */
       armed: () => timers.size,
       /** Fire every armed timer once. */
@@ -739,6 +754,49 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
     // stops arriving once nothing draws rows. Each edge below left the order
     // standing, so a reopened window granted by pre-hide position rather than
     // taking every returned identity as an arrival (round-4 B1, design.md D10).
+
+    it("owes an enriched pass when the edge lands mid-projection", async () => {
+      // `projectedEnriched` records what was REQUESTED. The projector's fence
+      // skips the preview half of a projection that loses its last drawing
+      // surface, and the envelope was still marked enriched — so the reopening
+      // surface was told nothing was owed (round-6 W1).
+      const h = await drawingRows();
+      const release = h.holdProjections();
+      h.worktrees.handleMessage(h.s, { type: "requestWorktreeTree" });
+      await settle();
+
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+      release();
+      await settle();
+      h.options.length = 0;
+
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+      await settle();
+
+      expect(h.options.some((o) => o?.enrich === true)).toBe(true);
+    });
+
+    it("owes nothing after a falling edge with no projection running", async () => {
+      // The reconcile is a state settle, not an edge check, so it runs on every
+      // mutation while nothing draws. Recording an obligation there is what moved
+      // 19 cases; gating on a projection in flight is what keeps this quiet (D2).
+      const h = await drawingRows();
+      h.worktrees.handleMessage(h.s, { type: "requestWorktreeTree" });
+      await settle();
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+      await settle();
+      for (let i = 0; i < 3; i++) {
+        h.attachment.setDisplayed(false);
+        h.attachment.setDisplayed(true);
+        await settle();
+      }
+      h.options.length = 0;
+
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+      await settle();
+
+      expect(h.options.some((o) => o?.enrich === true)).toBe(false);
+    });
 
     it("forgets the order when the last drawing surface collapses to presence-only", async () => {
       const h = await drawingRows();

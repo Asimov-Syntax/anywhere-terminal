@@ -492,6 +492,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * rows with no title and no preview until the next scan (round-2 W1).
    */
   let projectedEnriched = true;
+  /** Enrichment a projection was asked for but did not deliver.
+   *
+   *  `projectedEnriched` records what was REQUESTED. A projection that loses the
+   *  last row-drawing surface before it reaches preview enrichment skips that half
+   *  (the projector's fence, WT-011.7 D10), and the envelope was still marked
+   *  enriched — so `enrichmentOwed()` told the reopening surface nothing was owed
+   *  and it drew stale second lines until the next external scan (round-6 W1). */
+  let enrichmentPending = false;
   /**
    * Rosters read, and the reads still in flight, both under `(rowId, entryId)`.
    *
@@ -1336,6 +1344,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         void requestProjection();
       }
     })();
+    // Cleared where a run STARTS, not where it publishes: the projection this
+    // flag exists for is cut short mid-flight, so clearing at publish would let
+    // that very projection wipe the obligation the edge had just recorded. A run
+    // that begins after the edge is the one entitled to clear it. No await
+    // separates this from the run's own synchronous prefix, so no edge can land
+    // in between.
+    enrichmentPending = false;
     projectionRun = run;
     return run;
   }
@@ -1424,7 +1439,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * be checked at one boundary and missed at two (design.md D1).
    */
   function enrichmentOwed(): boolean {
-    return anyDrawingRows() && !projectedEnriched;
+    return anyDrawingRows() && (!projectedEnriched || enrichmentPending);
   }
 
   /**
@@ -1451,6 +1466,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // by pre-hide position (round-4 B1, design.md D10).
     if (!anyDrawingRows()) {
       projector?.forgetDrawOrder();
+      // Only while a projection is in flight: that is the pass whose preview half
+      // the projector's fence skips. A falling edge with none running skips
+      // nothing, and recording here unconditionally is what moved 19 cases — this
+      // reconcile is deliberately a state settle, so it runs on EVERY mutation
+      // while nothing draws (D2). The edge records; the rise spends it.
+      if (projectionRun !== undefined) {
+        enrichmentPending = true;
+      }
       return;
     }
     if (enrichmentOwed()) {
