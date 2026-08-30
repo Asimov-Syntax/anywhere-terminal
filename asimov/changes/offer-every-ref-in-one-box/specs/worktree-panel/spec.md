@@ -53,15 +53,6 @@ WHERE the offered branches are limited because the repository holds more than th
 enumerates, the create dialog SHALL state that the list is partial rather than presenting it as the
 repository's complete set.
 
-## MODIFIED Requirements
-
-### Requirement: Create dialog keyboard and dismissal behaviour
-
-The create dialog SHALL keep the branch entry as its lead input with no control above it, SHALL
-block submission until the value the chosen mode requires validates, and SHALL retain its existing
-focus order, focus trap, and dismissal behaviour. Keyboard traversal SHALL reach every entry in the
-branch list, including entries that cannot be selected.
-
 ### Requirement: Escape closes the branch list before it dismisses the dialog
 
 WHILE the branch list is open, the Escape key SHALL close the list and SHALL NOT dismiss the
@@ -73,3 +64,25 @@ dialog. WHILE the branch list is closed, the Escape key SHALL dismiss the dialog
 - **THEN** the list closes and the dialog remains open
 - **WHEN** the user presses Escape again
 - **THEN** the dialog is dismissed
+
+## MODIFIED Requirements
+
+### Requirement: The create form leads with the branch name
+
+The branch name SHALL be the form's first input, with no other control above it, and it SHALL hold initial focus. That input SHALL be a combobox over the repository's branches and an always-available create-new entry, and the choice between a new and an existing branch SHALL be made there and nowhere else — no separate branch-source control SHALL offer it. Submission SHALL stay unavailable until the value the chosen branch source requires is supplied and valid — the branch name for a new or existing branch, the base ref when detaching, which is the one case the lead input is not the value being validated. Keyboard traversal SHALL reach every entry in the branch list, including entries that cannot be selected, and the form SHALL retain its existing focus order, focus trap, and dismissal behaviour.
+
+#### Scenario: The branch field is what the form opens on
+
+- **WHEN** the create form opens
+- **THEN** the branch name input is the first control in the form and holds focus
+
+#### Scenario: An invalid branch name is not submittable
+
+- **WHEN** the branch name fails validation
+- **THEN** submission is unavailable
+
+#### Scenario: Detaching validates the ref it detaches at
+
+- **WHEN** the branch source is detached and no base ref is supplied
+- **THEN** submission is unavailable, and the empty branch name does not make it available
+

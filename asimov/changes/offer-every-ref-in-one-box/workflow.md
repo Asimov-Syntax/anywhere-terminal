@@ -20,7 +20,7 @@
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
+- [x] Apply deltas: `bun run asm change apply`
 - [ ] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
@@ -45,3 +45,5 @@ Task 2_3 added mid-build: 1_2 named `WorktreeHost` as the answerer and nothing n
 - W2's `closed`-on-dismissal half stays declared-defensive and has no test: after Escape the form's DOM is gone, so a write into it is unobservable — the exact reason round 2 was right that my previous test passed for the wrong reason. What IS observable is supersession, and the token guard is covered and mutation-proven. Writing another test around `closed` would repeat the mistake rather than fix it.
 
 - Round 3 closed the cycle at its cap with 0 blockers. Both WARNs accepted and fixed in 4_2 rather than carried: W4 (two cleanup regressions made vacuous by the token gate) and S3 (a CSS `calc` that read as a measurement without being one). Neither was rebutted, so no further re-review round is owed — the cycle ends at Re-Verify.
+
+- The spec delta's two MODIFIED requirements did not exist in the target spec and `apply` refused them. "Escape closes the branch list before it dismisses the dialog" is new behaviour and is now ADDED; the keyboard/dismissal constraints belong to the shipped requirement actually named "The create form leads with the branch name", which is what the MODIFIED block now replaces — carrying its three existing scenarios through unchanged.

@@ -625,7 +625,7 @@ A tail the view has not previously presented for a repository SHALL default to f
 
 ### Requirement: The create form leads with the branch name
 
-The branch name SHALL be the form's first input, with no other control above it, and it SHALL hold initial focus. Submission SHALL stay unavailable until the value the chosen branch source requires is supplied and valid — the branch name for a new or existing branch, the base ref when detaching, which is the one case the lead input is not the value being validated.
+The branch name SHALL be the form's first input, with no other control above it, and it SHALL hold initial focus. That input SHALL be a combobox over the repository's branches and an always-available create-new entry, and the choice between a new and an existing branch SHALL be made there and nowhere else — no separate branch-source control SHALL offer it. Submission SHALL stay unavailable until the value the chosen branch source requires is supplied and valid — the branch name for a new or existing branch, the base ref when detaching, which is the one case the lead input is not the value being validated. Keyboard traversal SHALL reach every entry in the branch list, including entries that cannot be selected, and the form SHALL retain its existing focus order, focus trap, and dismissal behaviour.
 
 #### Scenario: The branch field is what the form opens on
 
@@ -1230,4 +1230,113 @@ Before performing a removal the system SHALL re-evaluate the checks. WHEN a chec
 
 - **WHEN** the user confirms a removal reporting uncommitted changes, and an agent session becomes active before the removal runs
 - **THEN** the removal does not proceed and is refused
+
+### Requirement: The removal assessment reports whether the worktree looks abandoned
+
+The removal assessment SHALL report three orphan proofs — that the worktree's lock is older than a recorded threshold, that no process is recorded as owning it, and that its branch is merged — each carrying its own outcome from the same four-outcome vocabulary as every other check. Each proof SHALL be answered from a named existing source and SHALL NOT be inferred from any other proof's answer.
+
+#### Scenario: A worktree that is not locked
+
+- **WHEN** the assessment runs against a worktree git does not report as locked
+- **THEN** the lock-age proof is reported as not applicable rather than as passed or failed
+
+### Requirement: A proof never blocks the removal it accompanies
+
+A proof SHALL NOT refuse a removal, SHALL NOT cause a typed confirmation to be required, and SHALL NOT cause a previously granted confirmation to be re-requested. WHEN a proof cannot be evaluated it SHALL be reported as unproven, and the removal SHALL remain exactly as available as it was without the proof.
+
+#### Scenario: Every proof is unproven
+
+- **WHEN** none of the three proofs can be evaluated and no confirmable risk is present
+- **THEN** the removal is still offered without a typed confirmation
+
+#### Scenario: A proof degrades between confirmation and execution
+
+- **WHEN** the user confirms a removal and a proof that was passing is unproven at execution time
+- **THEN** the removal proceeds on the confirmation already given, and only the option that proof gated is withdrawn
+
+### Requirement: The merge proof reads local refs and never fetches
+
+The merge proof SHALL be answered by comparing the worktree's branch against a default branch resolved from local references only. The system SHALL NOT contact a remote to answer it. WHEN the default branch cannot be resolved, or the comparison cannot be made, the proof SHALL be reported as unproven rather than as not merged. WHEN the worktree has no branch, the proof SHALL be reported as not applicable.
+
+#### Scenario: A branch that is not an ancestor of the default branch
+
+- **WHEN** the worktree's branch contains commits the resolved default branch does not
+- **THEN** the merge proof is reported as failed rather than unproven
+
+#### Scenario: The repository has no resolvable default branch
+
+- **WHEN** no local reference identifies a default branch
+- **THEN** the merge proof is reported as unproven and no removal behavior changes
+
+### Requirement: The ownership proof distinguishes no record from a dead record
+
+The ownership proof SHALL be answered from the session registry read in a way that preserves records whose process is gone. A registry that names no record for the worktree SHALL be reported as the proof passing; a registry that names a record whose process is gone SHALL also be reported as passing; a registry that names a record whose process is alive SHALL be reported as failing; and a registry that cannot be read SHALL be reported as unproven rather than as either.
+
+#### Scenario: A crashed session left a record behind
+
+- **WHEN** the registry holds a record rooted in the worktree whose process no longer exists
+- **THEN** the ownership proof passes, and the record is not reported as a live agent
+
+### Requirement: The create dialog offers branches and a create-new entry in one list
+
+The create dialog SHALL present the repository's existing local branches and an always-available
+"create new branch" entry in a single list attached to the lead input, with no tab bar and no
+separate control for choosing between an existing branch and a new one.
+
+### Requirement: The branch list is ordered by what the typed text most likely means
+
+The list SHALL place a branch whose name exactly equals the typed text first, then branches whose
+names begin with that text, then the create-new entry. With no text typed, every offered branch
+SHALL be listed and the create-new entry SHALL remain present.
+
+### Requirement: A branch can be created when the list is unavailable or incomplete
+
+The create-new entry SHALL remain selectable when the branch list is unavailable, empty, or
+incomplete, so a repository whose branches could not be enumerated can still be used to create a
+worktree.
+
+#### Scenario: A name that is not in the list is still creatable
+
+- **WHEN** the user types a branch name that matches no offered branch
+- **THEN** the create-new entry is the selectable result, and submission is permitted once the name
+  validates
+
+### Requirement: A branch another worktree holds is offered but not selectable
+
+WHERE a local branch is checked out in another worktree of the same repository, the create dialog
+SHALL offer that branch as a visible, non-selectable entry, and SHALL refuse to submit a create
+naming that branch.
+
+#### Scenario: The held branch cannot be submitted by any route
+
+- **WHEN** a create is submitted naming a branch that another worktree holds
+- **THEN** no worktree-create request is issued
+
+### Requirement: A held branch names the directory holding it
+
+A non-selectable branch entry SHALL be annotated with the name of the directory that holds it, and
+that annotation SHALL name the directory only, never a full filesystem path.
+
+### Requirement: An entry that cannot be selected stays reachable
+
+An entry that cannot be selected SHALL remain reachable by keyboard and announced by assistive
+technology rather than hidden, so the reason the branch is unavailable is available to the user.
+
+### Requirement: An incomplete branch list is stated as incomplete
+
+WHERE the offered branches are limited because the repository holds more than the dialog
+enumerates, the create dialog SHALL state that the list is partial rather than presenting it as the
+repository's complete set.
+
+### Requirement: Escape closes the branch list before it dismisses the dialog
+
+WHILE the branch list is open, the Escape key SHALL close the list and SHALL NOT dismiss the
+dialog. WHILE the branch list is closed, the Escape key SHALL dismiss the dialog.
+
+#### Scenario: Escape closes the list before it closes the dialog
+
+- **WHEN** the branch list is open and the user presses Escape
+- **THEN** the list closes and the dialog remains open
+- **WHEN** the user presses Escape again
+- **THEN** the dialog is dismissed
 
