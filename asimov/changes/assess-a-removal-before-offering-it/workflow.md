@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
@@ -82,3 +82,11 @@ W2 and W4 fixed in 6_1. W2's second half is the one that mattered: an enumeratio
 W3 accepted and NOT fixed, for the user. A stalled filesystem leaves one abandoned `lstat` per assessment and nothing dedupes them across assessments; the fix it asks for is a bounded shared in-flight read registry, which is a new invariant owner and therefore not something to land inside a fix loop. Bounding context, not a rebuttal: an assessment issues at most `MAX_IGNORED_ENTRIES` stats and runs on a user action, so the accumulation needs a stalled mount plus repeated removal dialogs.
 
 Verify Gate re-run after task 6_1: type check clean, 259 files / 5720 unit tests passing, `gate:fs-deletion` ok, `verify-status` exit 0. Biome unchanged at the same 3 errors in untouched files and the 14-warning baseline.
+
+Review cycle 2, round 5 (verification): WARN — 0 blocking. B5, W2 and W4 all confirmed fixed and B4 holds, so every BLOCK this change ever raised is closed. The chair confirmed the D6 edit reads as remediation rather than a changed decision, which is the judgment I asked it to check rather than assume.
+
+W3 is the one item left open, and it is NOT risk-accepted — nobody has granted that. `afterDelay` cancels its timer and not the `lstat` underneath it, and nothing dedupes abandoned reads across assessments, so a stalled FUSE or network mount plus repeated removal dialogs could reach the extension host's shared libuv filesystem pool. What bounds it: the walk awaits its stats serially, so one assessment abandons at most one read, and assessments run on a user action rather than a timer. What it needs is a bounded shared read owner — one outstanding stat per path plus a global cap — which is a new invariant owner and therefore planning's, not a fix loop's.
+
+Recorded disagreement, unresolved on purpose: round 5's own verdict counts 0 blocking findings and `asimov-build` defines WARN as non-blocking unless explicitly accepted as must-fix, so by those severity semantics the fix loop has exited. The chair holds that only user-granted risk acceptance can close W3, and that cycle 2's three-round cap forbids a round 6. Both readings are in the round file; the user picks.
+
+Knowledge candidate: a review chair can return a verdict whose own counts contradict its gating language (`Blocking: 0` beside "only user-granted risk acceptance can make this non-gating") | Surprise: I expected the verdict line and the finding disposition to be one claim, and treated the stricter prose as authoritative before noticing the count disagreed with it | Evidence: .reviews/round-5.md verdict block vs its W3 Triage | Consumer: build | Action: when a report's counts and its prose disagree, put BOTH readings to the user rather than silently adopting either — adopting the strict one stops work the user asked for, adopting the loose one launders a waiver nobody gave
