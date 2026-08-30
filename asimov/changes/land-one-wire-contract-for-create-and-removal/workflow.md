@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
@@ -43,4 +43,6 @@ Deviation (1_2): Plan step 3 — "derive the path slug from the mode" — was wr
 Deviation (1_4): the task's `unit` Verify runs under `--runner 'pnpm exec vitest run'`. `WorktreeRemoveDialog.test.ts` needs the jsdom environment `bun test` does not provide, and the Acceptance is unchanged.
 Verify gate: biome reports 3 format errors — `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts`, `src/cursor/CursorHookInstaller.test.ts`. Reproduced on a detached clean worktree at this change's parent; all three were last written by `1567f2d1`, from another change merged from main today. Warnings are at the recorded baseline of 14.
 Deviation (verify gate): the formatter reflows this change's own widened call sites were applied with `biome format --write` scoped to two named files after the import-order fixes were hand-applied — formatter only, never `check --write --unsafe`, and the resulting diff moves no assertion, string, or control flow.
+Review: cycle 1, 2 rounds. Round 1 BLOCK (B1 forged debris disposition crossing the host boundary, B2 unvalidated `waitForSetup`), round 2 WARN with 0 blockers. All six findings accepted, none rebutted, none risk-accepted.
+Carried to WT-013.4 (round-2 A1 + W2's deferred half): an `unproven` report withholds the force button but `buildForceWarning` still names force, and an unproven check renders no line at all. Both need the unreadable-report copy WT-013.4 owns; inventing it inside a contract task is what the proposal's Must not forbids. Unreachable today — `checksFor` emits `unproven` only for an `unavailable` assessment, which the service answers elsewhere — and WT-013.1 is what first routes one here.
 
