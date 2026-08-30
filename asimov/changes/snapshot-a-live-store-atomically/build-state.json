@@ -1,7 +1,20 @@
 {
   "change": "snapshot-a-live-store-atomically",
-  "leases": [],
-  "attempts": {},
+  "leases": [
+    {
+      "task": "1_3",
+      "id": "45124e4c-0580-4043-a39c-e9ef162c49ef",
+      "paths": [
+        "src/vault/sqlite.ts",
+        "src/vault/sqlite.test.ts"
+      ],
+      "at": 1788070423378,
+      "stamp": "fb105b2fe7b53b9aca47f5aecc26cab3d464ad5a"
+    }
+  ],
+  "attempts": {
+    "1_3": 1
+  },
   "locked": [],
   "reads": 3
 }

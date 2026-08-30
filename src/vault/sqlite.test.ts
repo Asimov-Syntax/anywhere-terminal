@@ -491,3 +491,63 @@ describe("withSqliteSnapshot: the other entry point snapshots the same way", () 
     expect(result.status).toBe("query-error");
   });
 });
+
+describe("readSqlite: a store that cannot be opened is not an empty store", () => {
+  it("reports db-unreachable when a WAL store's directory denies the open", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-ro-"));
+    const dir = path.join(root, "store");
+    await fsp.mkdir(dir);
+    const dbFile = path.join(dir, "live.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("PRAGMA journal_mode=WAL");
+    seed.exec("CREATE TABLE t(id TEXT)");
+    seed.exec("INSERT INTO t VALUES ('still-here')");
+    const second = new DatabaseSync(dbFile);
+    second.exec("INSERT INTO t VALUES ('wal-row')");
+    seed.close();
+    second.close();
+    // A WAL sidecar with no -shm: opening it needs to create the index, which a
+    // read-only directory refuses. The file is readable, so this is emphatically
+    // not "the store is missing".
+    await fsp.rm(`${dbFile}-shm`, { force: true });
+    await fsp.chmod(dir, 0o555);
+
+    const deps: SqliteDeps = {
+      exec: vi.fn(async () => {
+        throw new Error("command not found: sqlite3");
+      }),
+      exists: async (p) => {
+        try {
+          await fsp.access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      copy: (src, dest) => fsp.copyFile(src, dest),
+      mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
+      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
+      hasNodeSqlite: async () => true,
+    };
+    try {
+      const result = await readSqlite(dbFile, "SELECT id FROM t", deps);
+      expect(result.status).toBe("db-unreachable");
+      expect(result.rows).toEqual([]);
+    } finally {
+      await fsp.chmod(dir, 0o755);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports query-error when the snapshot fails for any other reason", async () => {
+    const deps = makeDeps({
+      hasNodeSqlite: vi.fn(async () => true),
+      snapshot: vi.fn(async () => {
+        throw new Error("no space left on device");
+      }),
+    });
+    const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
+    expect(result.status).toBe("query-error");
+    expect(result.rows).toEqual([]);
+  });
+});

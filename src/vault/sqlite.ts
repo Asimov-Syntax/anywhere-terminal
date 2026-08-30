@@ -311,20 +311,59 @@ async function takeSnapshot(deps: SqliteDeps, dbPath: string, dest: string, useC
  *  under `mkdtemp`, never caller input. */
 function cliSnapshot(deps: SqliteDeps): (dbPath: string, dest: string) => Promise<void> {
   return async (dbPath, dest) => {
-    await deps.exec("sqlite3", ["-readonly", dbPath, `VACUUM INTO '${dest.replaceAll("'", "''")}'`], {
-      timeout: COPY_TIMEOUT_MS,
-    });
+    try {
+      await deps.exec("sqlite3", ["-readonly", dbPath, `VACUUM INTO '${dest.replaceAll("'", "''")}'`], {
+        timeout: COPY_TIMEOUT_MS,
+      });
+    } catch (err) {
+      throw isCannotOpen(err) ? new SnapshotOpenError(errorMessage(err)) : err;
+    }
   };
 }
 
 async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
   const { DatabaseSync, backup } = await import("node:sqlite");
-  const source = new DatabaseSync(dbPath, { readOnly: true });
+  // node:sqlite opens lazily, so the refusal can surface at the constructor OR at
+  // the backup. Classify by the error, not by where it was thrown: the file is
+  // there — `presence` already said so — so a refusal to open it means "I could
+  // not look", which is never "it is not there" (D2). A WAL store whose `-shm`
+  // index must be created in a directory that denies it lands here.
+  let source: InstanceType<typeof DatabaseSync> | undefined;
   try {
+    source = new DatabaseSync(dbPath, { readOnly: true });
     await backup(source, dest);
+  } catch (err) {
+    throw isCannotOpen(err) ? new SnapshotOpenError(errorMessage(err)) : err;
   } finally {
-    source.close();
+    source?.close();
   }
+}
+
+/** Whether SQLite refused to OPEN the store rather than failing to read it.
+ *  Classified by primary result code where the engine gives one — the extended
+ *  code's low byte — because the message varies by sub-case: a missing `-shm`
+ *  that cannot be created reports SQLITE_READONLY ("attempt to write a readonly
+ *  database", errcode 1544 = SQLITE_READONLY_DIRECTORY) while a sidecar in an
+ *  unreadable directory reports SQLITE_CANTOPEN. The CLI gives no code, so its
+ *  message is matched instead. */
+const OPEN_REFUSAL_CODES = new Set([3, 8, 14, 23]); // PERM, READONLY, CANTOPEN, AUTH
+function isCannotOpen(err: unknown): boolean {
+  const errcode = (err as { errcode?: unknown } | undefined)?.errcode;
+  if (typeof errcode === "number") {
+    return OPEN_REFUSAL_CODES.has(errcode & 0xff);
+  }
+  return /unable to open|readonly database|SQLITE_CANTOPEN|SQLITE_READONLY|SQLITE_PERM/i.test(errorMessage(err));
+}
+
+/** A snapshot that failed at the OPEN, which the entry points report as
+ *  `db-unreachable` rather than `query-error`. Marked by a field rather than by
+ *  `instanceof` so it survives bundling. */
+class SnapshotOpenError extends Error {
+  readonly snapshotOpenFailure = true;
+}
+
+function isOpenFailure(err: unknown): boolean {
+  return (err as SnapshotOpenError | undefined)?.snapshotOpenFailure === true;
 }
 
 export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps = defaultDeps): Promise<SqliteResult> {
@@ -379,6 +418,9 @@ export async function withSqliteSnapshot<T>(
     };
     return { status: "ok", value: await callback(snapshot) };
   } catch (err) {
+    if (isOpenFailure(err)) {
+      return { status: "db-unreachable", error: errorMessage(err) };
+    }
     return { status: "query-error", error: errorMessage(err) };
   } finally {
     if (tempDir) {
@@ -407,6 +449,9 @@ async function readSqliteViaCopy(
     await takeSnapshot(deps, dbPath, dbCopy, useCli);
     return useCli ? await runQuery(deps, dbCopy, sql) : await (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql);
   } catch (err) {
+    if (isOpenFailure(err)) {
+      return { rows: [], status: "db-unreachable", error: errorMessage(err) };
+    }
     return { rows: [], status: "query-error", error: errorMessage(err) };
   } finally {
     if (tempDir) {
