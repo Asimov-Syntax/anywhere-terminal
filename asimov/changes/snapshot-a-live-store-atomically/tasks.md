@@ -2,7 +2,7 @@
 
 ## 1. One atomic snapshot, both engines
 
-- [ ] 1_1 Take the snapshot with the engine instead of the filesystem
+- [x] 1_1 Take the snapshot with the engine instead of the filesystem — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: specs/agent-session-index/spec.md#wal-safe-read-only-sqlite-access; design.md#d1-the-engine-takes-the-snapshot-not-the-filesystem; design.md#d3-the-snapshot-never-opens-the-live-store-read-write; design.md#d4-the-temp-directory-lifecycle-and-the-callback-contract-are-unchanged
   - **Acceptance**:
     - Outcome: a WAL-resident row is in the snapshot even when the store checkpoints during it

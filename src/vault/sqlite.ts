@@ -94,6 +94,12 @@ export interface SqliteDeps {
    * real engine. Tests stub it to avoid touching a real sqlite file.
    */
   runNodeQuery?(dbCopy: string, sql: string): Promise<SqliteResult>;
+  /**
+   * Produce a point-in-time snapshot of the live store at `dest`. Defaults to the
+   * real engine. Throws on any failure — a snapshot that could not be taken must
+   * never be mistaken for a store that is empty (D2).
+   */
+  snapshot?(dbPath: string, dest: string): Promise<void>;
 }
 
 /**
@@ -282,6 +288,36 @@ async function presence(deps: SqliteDeps, dbPath: string): Promise<SqlitePresenc
   }
 }
 
+/**
+ * Snapshot a live store using SQLite's Online Backup API, opening the source
+ * READ-ONLY (D3 — the store belongs to a running agent; a read must never take a
+ * write lock on it). The backup runs inside a read transaction, so writers,
+ * checkpoints and vacuums during it are included or excluded as a unit. That
+ * atomicity is the point: assembling a snapshot from separately-timed copies of
+ * the base file and its sidecars cannot be made correct by ordering them, because
+ * the store can checkpoint and vacuum between any two of those copies.
+ */
+/** One snapshot, whichever engine is in play. The CLI branch still assembles one
+ *  from file copies; task 1_2 replaces it with a read-only `VACUUM INTO`. */
+async function takeSnapshot(deps: SqliteDeps, dbPath: string, dest: string, useCli: boolean): Promise<void> {
+  if (!useCli) {
+    await (deps.snapshot ?? defaultSnapshot)(dbPath, dest);
+    return;
+  }
+  await copySidecars(deps, dbPath, dest);
+  await deps.copy(dbPath, dest);
+}
+
+async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
+  const { DatabaseSync, backup } = await import("node:sqlite");
+  const source = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    await backup(source, dest);
+  } finally {
+    source.close();
+  }
+}
+
 /** Copy the `-wal`/`-shm` sidecars beside a snapshot, PRESERVING the reason a
  *  sidecar could not be read. A WAL holds committed rows the base file does not,
  *  so querying a base-only copy after a failed sidecar read returns a smaller
@@ -350,15 +386,7 @@ export async function withSqliteSnapshot<T>(
   try {
     tempDir = await deps.mkdtemp();
     const dbCopy = path.join(tempDir, "db.sqlite");
-    // ORDER MATTERS: sidecars first, base LAST. A checkpoint can land between the
-    // two copies, and only this order survives it — whatever the checkpoint moved
-    // out of the WAL is already in the base file by the time we copy it, and a
-    // now-stale WAL copy is salt-mismatched, so SQLite ignores it in favour of
-    // that newer base. Copying the base first loses those rows twice over: absent
-    // from the older base, and absent from a WAL that is legitimately gone
-    // (round-4 B1-R3).
-    await copySidecars(deps, dbPath, dbCopy);
-    await deps.copy(dbPath, dbCopy);
+    await takeSnapshot(deps, dbPath, dbCopy, useCli);
     const snapshot: SqliteSnapshot = {
       query: (sql) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
     };
@@ -389,15 +417,7 @@ async function readSqliteViaCopy(
   try {
     tempDir = await deps.mkdtemp();
     const dbCopy = path.join(tempDir, "db.sqlite");
-    // ORDER MATTERS: sidecars first, base LAST. A checkpoint can land between the
-    // two copies, and only this order survives it — whatever the checkpoint moved
-    // out of the WAL is already in the base file by the time we copy it, and a
-    // now-stale WAL copy is salt-mismatched, so SQLite ignores it in favour of
-    // that newer base. Copying the base first loses those rows twice over: absent
-    // from the older base, and absent from a WAL that is legitimately gone
-    // (round-4 B1-R3).
-    await copySidecars(deps, dbPath, dbCopy);
-    await deps.copy(dbPath, dbCopy);
+    await takeSnapshot(deps, dbPath, dbCopy, useCli);
     return useCli ? await runQuery(deps, dbCopy, sql) : await (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql);
   } catch (err) {
     return { rows: [], status: "query-error", error: errorMessage(err) };

@@ -1,0 +1,7 @@
+{
+  "change": "snapshot-a-live-store-atomically",
+  "leases": [],
+  "attempts": {},
+  "locked": [],
+  "reads": 0
+}

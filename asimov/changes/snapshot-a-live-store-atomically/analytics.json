@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "snapshot-a-live-store-atomically"
+  },
+  "sessions": [
+    {
+      "sessionId": "069d5382-fa6a-4334-aecd-ad19660fbb1e",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788069821848,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788069821848,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788069821848
+        }
+      ],
+      "firstAt": 1788069821848,
+      "lastAt": 1788069821848,
+      "buckets": []
+    }
+  ]
+}

@@ -18,6 +18,9 @@ function makeDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
     exec: vi.fn(async () => ({ stdout: "[]", stderr: "" })),
     exists: vi.fn(async () => true),
     copy: vi.fn(async () => {}),
+    // The in-process engine snapshots rather than copies; stub deps that never
+    // touch a real file need it stubbed too.
+    snapshot: vi.fn(async () => {}),
     mkdtemp: vi.fn(async () => "/tmp/at-vault-xyz"),
     rmrf: vi.fn(async () => {}),
     // Default the harness to CLI-only so the existing tests exercise the CLI
@@ -236,7 +239,9 @@ describe("readSqlite: engine selection (node:sqlite preferred)", () => {
     expect(result.rows).toEqual([{ id: "n1" }]);
     // node reads the temp snapshot, not the live db.
     expect(runNodeQuery).toHaveBeenCalledWith("/tmp/at-vault-xyz/db.sqlite", "SELECT id FROM t");
-    expect(deps.copy).toHaveBeenCalledWith("/x/state.sqlite", "/tmp/at-vault-xyz/db.sqlite");
+    // The snapshot is taken by the engine as one operation, not assembled from copies.
+    expect(deps.snapshot).toHaveBeenCalledWith("/x/state.sqlite", "/tmp/at-vault-xyz/db.sqlite");
+    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("returns no-sqlite3 when BOTH the CLI and node:sqlite are absent", async () => {
@@ -456,6 +461,101 @@ describe("readSqlite: a checkpoint mid-snapshot cannot empty the result (round-4
       expect(result.status).toBe("ok");
       expect(result.status === "ok" ? result.value.rows : undefined).toEqual([{ id: "live-session" }]);
     } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readSqlite: the snapshot is taken by the engine, atomically", () => {
+  /** A real WAL-mode store with a SECOND connection left open holding a committed
+   *  row in the WAL — what a running agent's database actually looks like. */
+  async function liveWalStore(): Promise<{ dbFile: string; dir: string; live: InstanceType<typeof DatabaseSync> }> {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-live-"));
+    const dbFile = path.join(dir, "live.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("PRAGMA journal_mode=WAL");
+    seed.exec("CREATE TABLE t(id TEXT)");
+    seed.exec("INSERT INTO t VALUES ('base-row')");
+    seed.close();
+    const live = new DatabaseSync(dbFile);
+    live.exec("PRAGMA journal_mode=WAL");
+    live.exec("INSERT INTO t VALUES ('wal-row')"); // committed, WAL-resident
+    return { dbFile, dir, live };
+  }
+
+  function realDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
+    return {
+      exec: vi.fn(async () => {
+        throw new Error("command not found: sqlite3"); // force the in-process engine
+      }),
+      exists: async (p) => {
+        try {
+          await fsp.access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      copy: (src, dest) => fsp.copyFile(src, dest),
+      mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
+      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
+      hasNodeSqlite: async () => true,
+      ...overrides,
+    };
+  }
+
+  it("includes a row that lives only in the WAL of a store held open by another process", async () => {
+    const { dbFile, dir, live } = await liveWalStore();
+    try {
+      const result = await readSqlite(dbFile, "SELECT id FROM t ORDER BY id", realDeps());
+      expect(result.status).toBe("ok");
+      expect(result.rows).toEqual([{ id: "base-row" }, { id: "wal-row" }]);
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("survives the checkpoint-and-vacuum interleaving that defeated both copy orders", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-live-"));
+    const dbFile = path.join(dir, "live.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("PRAGMA journal_mode=WAL");
+    seed.exec("CREATE TABLE t(id INTEGER)");
+    for (let i = 0; i < 1000; i++) {
+      seed.prepare("INSERT INTO t VALUES (?)").run(i);
+    }
+    seed.close();
+    const live = new DatabaseSync(dbFile);
+    live.exec("PRAGMA journal_mode=WAL");
+    live.prepare("INSERT INTO t VALUES (?)").run(9999); // WAL-resident
+
+    // The exact window review reproduced: the sidecar has been captured, and the
+    // store then checkpoints AND vacuums — rewriting its pages — before the base
+    // is captured. No ordering of independent file copies survives this; only a
+    // snapshot the engine takes as one operation does.
+    let moved = false;
+    const deps = realDeps({
+      copy: async (src, dest) => {
+        await fsp.copyFile(src, dest);
+        if (!moved && src.endsWith("-wal")) {
+          moved = true;
+          live.exec("PRAGMA wal_checkpoint(PASSIVE)");
+          live.exec("VACUUM");
+        }
+      },
+    });
+    try {
+      const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
+      // Either the snapshot is whole, or it failed loudly. What it must never be
+      // is a successful read that silently lost a pre-existing row.
+      if (result.status === "ok") {
+        expect(result.rows).toEqual([{ c: 1001 }]);
+      } else {
+        expect(["query-error", "db-unreachable"]).toContain(result.status);
+      }
+    } finally {
+      live.close();
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });
