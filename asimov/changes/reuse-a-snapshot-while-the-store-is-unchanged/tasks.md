@@ -112,7 +112,7 @@
     1. In `src/vault/snapshotPool.ts`, untrack an entry only after its directory is deleted, keep failures for retry, and have `dispose` surface what it could not remove rather than resolving over it.
     2. Cover a failing deletion at release and at disposal.
 
-- [ ] 3_4 Write the borrow-and-release lifecycle once
+- [x] 3_4 Write the borrow-and-release lifecycle once — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: .reviews/round-2.md; design.md#d5-the-pool-sits-behind-the-existing-entry-points-not-beside-them
   - **Acceptance**:
     - Outcome: both entry points share one lease lifecycle and keep their own result and status mapping

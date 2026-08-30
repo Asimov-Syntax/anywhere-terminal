@@ -464,6 +464,30 @@ export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps =
 }
 
 /**
+ * Borrow one pooled snapshot, use it, and release it — the lifecycle both entry
+ * points share. Each caller keeps its own result shape and status mapping; only the
+ * borrow/release discipline is written once, so a future change to it cannot land on
+ * one entry point and miss the other.
+ */
+async function withPooledSnapshot<T>(
+  deps: SqliteDeps,
+  dbPath: string,
+  useCli: boolean,
+  use: (dbCopy: string) => Promise<T>,
+  fail: (status: "db-unreachable" | "query-error", error: string) => T,
+): Promise<T> {
+  let lease: SnapshotLease | undefined;
+  try {
+    lease = await poolFor(deps).borrow(dbPath, (dest) => takeSnapshot(deps, dbPath, dest, useCli));
+    return await use(lease.file);
+  } catch (err) {
+    return fail(isOpenFailure(err) ? "db-unreachable" : "query-error", errorMessage(err));
+  } finally {
+    await lease?.release();
+  }
+}
+
+/**
  * Borrow one engine-taken snapshot of a live database, then run bounded static
  * queries against it. The callback cannot access the live path, and the lease ends
  * before this function returns.
@@ -488,22 +512,19 @@ export async function withSqliteSnapshot<T>(
     return { status: found === "absent" ? "no-db" : "db-unreachable" };
   }
 
-  let lease: SnapshotLease | undefined;
-  try {
-    lease = await poolFor(deps).borrow(dbPath, (dest) => takeSnapshot(deps, dbPath, dest, useCli));
-    const dbCopy = lease.file;
-    const snapshot: SqliteSnapshot = {
-      query: (sql) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
-    };
-    return { status: "ok", value: await callback(snapshot) };
-  } catch (err) {
-    if (isOpenFailure(err)) {
-      return { status: "db-unreachable", error: errorMessage(err) };
-    }
-    return { status: "query-error", error: errorMessage(err) };
-  } finally {
-    await lease?.release();
-  }
+  return withPooledSnapshot<SqliteSnapshotResult<T>>(
+    deps,
+    dbPath,
+    useCli,
+    async (dbCopy) => {
+      const snapshot: SqliteSnapshot = {
+        query: (sql) =>
+          useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql),
+      };
+      return { status: "ok", value: await callback(snapshot) };
+    },
+    (status, error) => ({ status, error }),
+  );
 }
 
 /**
@@ -518,19 +539,13 @@ async function readSqliteViaSnapshot(
   sql: string,
   useCli: boolean,
 ): Promise<SqliteResult> {
-  let lease: SnapshotLease | undefined;
-  try {
-    lease = await poolFor(deps).borrow(dbPath, (dest) => takeSnapshot(deps, dbPath, dest, useCli));
-    const dbCopy = lease.file;
-    return useCli ? await runQuery(deps, dbCopy, sql) : await (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql);
-  } catch (err) {
-    if (isOpenFailure(err)) {
-      return { rows: [], status: "db-unreachable", error: errorMessage(err) };
-    }
-    return { rows: [], status: "query-error", error: errorMessage(err) };
-  } finally {
-    await lease?.release();
-  }
+  return withPooledSnapshot<SqliteResult>(
+    deps,
+    dbPath,
+    useCli,
+    (dbCopy) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
+    (status, error) => ({ rows: [], status, error }),
+  );
 }
 
 // ── WRITE PATH (write-vault-rename-to-store D2) ──────────────────────────────

@@ -865,3 +865,45 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
     }
   });
 });
+
+describe("both entry points map a snapshot failure the same way", () => {
+  class OpenRefusal extends Error {
+    readonly snapshotOpenFailure = true;
+  }
+
+  function failingDeps(err: Error): SqliteDeps {
+    return makeDeps({
+      hasNodeSqlite: vi.fn(async () => true),
+      runNodeQuery: vi.fn(async () => ({ rows: [], status: "ok" as const })),
+      snapshot: vi.fn(async () => {
+        throw err;
+      }),
+    });
+  }
+
+  it("reports an open refusal as db-unreachable at both entry points", async () => {
+    const read = await readSqlite("/x/store.db", "SELECT 1", failingDeps(new OpenRefusal("denied")));
+    const scoped = await withSqliteSnapshot(
+      "/x/store.db",
+      async (s) => s.query("SELECT 1"),
+      failingDeps(new OpenRefusal("denied")),
+    );
+
+    expect(read.status).toBe("db-unreachable");
+    expect(read.rows).toEqual([]);
+    expect(scoped.status).toBe("db-unreachable");
+  });
+
+  it("reports any other snapshot failure as query-error at both entry points", async () => {
+    const read = await readSqlite("/x/store.db", "SELECT 1", failingDeps(new Error("disk full")));
+    const scoped = await withSqliteSnapshot(
+      "/x/store.db",
+      async (s) => s.query("SELECT 1"),
+      failingDeps(new Error("disk full")),
+    );
+
+    expect(read.status).toBe("query-error");
+    expect(read.rows).toEqual([]);
+    expect(scoped.status).toBe("query-error");
+  });
+});
