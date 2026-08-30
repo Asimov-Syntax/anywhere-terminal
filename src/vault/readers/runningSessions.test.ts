@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   indexRunningSessions,
   isHeadlessSession,
+  listClaudeSessionRecords,
   listRunningClaudeSessions,
   MAX_SESSION_NAME_CHARS,
   type RunningClaudeSession,
@@ -405,5 +406,76 @@ describe("what a registry record has to prove about its own fields", () => {
     const sessions = await liveSessions(opts(), aliveDeps([1, 2, 3]));
     expect(sessions).toHaveLength(3);
     expect(sessions.every((one) => one.startedAt === undefined)).toBe(true);
+  });
+});
+
+// The removal path asks a different question of the same directory: not "who is
+// running" but "is anything recorded here at all". `listRunningClaudeSessions`
+// drops a record the moment its pid is gone, so its empty result cannot tell
+// "no record" from "a dead record was filtered out" — and that distinction IS
+// the ownership proof (worktree-removal.md § 4.1).
+describe("listClaudeSessionRecords — what the registry says, including what has died", () => {
+  it("returns a record whose process is gone, marked dead", async () => {
+    await writePidFile(4001, { pid: 4001, sessionId: "s-dead", cwd: "/repo/wt-a" });
+
+    const outcome = await listClaudeSessionRecords(opts(), aliveDeps([]));
+
+    expect(outcome.kind).toBe("ok");
+    if (outcome.kind !== "ok") {
+      return;
+    }
+    expect(outcome.records).toEqual([
+      expect.objectContaining({ sessionId: "s-dead", cwd: "/repo/wt-a", pid: 4001, alive: false }),
+    ]);
+  });
+
+  it("still hides that record from the live reader", async () => {
+    // The negative that gives the case above its meaning: this is one parse
+    // answering two questions, not a change to what the live reader reports.
+    await writePidFile(4001, { pid: 4001, sessionId: "s-dead", cwd: "/repo/wt-a" });
+
+    expect(await liveSessions(opts(), aliveDeps([]))).toEqual([]);
+  });
+
+  it("marks a live record alive", async () => {
+    await writePidFile(4002, { pid: 4002, sessionId: "s-live", cwd: "/repo/wt-a" });
+
+    const outcome = await listClaudeSessionRecords(opts(), aliveDeps([4002]));
+
+    expect(outcome.kind === "ok" && outcome.records[0]?.alive).toBe(true);
+  });
+
+  it("keeps both records when two processes claim one session id", async () => {
+    // Dedupe is the LIVE reader's rule, and it exists to pick the row a pane
+    // should show. This question is whether ANY live process holds the
+    // worktree, so collapsing two records to one could hide the live one.
+    await writePidFile(4003, { pid: 4003, sessionId: "s-same", cwd: "/repo/wt-a" });
+    await writePidFile(4004, { pid: 4004, sessionId: "s-same", cwd: "/repo/wt-a" });
+
+    const outcome = await listClaudeSessionRecords(opts(), aliveDeps([4004]));
+
+    expect(outcome.kind === "ok" && outcome.records.map((r) => r.pid).sort()).toEqual([4003, 4004]);
+  });
+
+  it("fails the same way the live reader does when the directory cannot be read", async () => {
+    await fs.rm(sessionsDir, { recursive: true, force: true });
+    await fs.writeFile(sessionsDir, "not a directory", "utf8");
+
+    const outcome = await listClaudeSessionRecords(opts(), aliveDeps([]));
+
+    expect(outcome.kind).toBe("failed");
+  });
+
+  it("skips a malformed record exactly as the live reader does", async () => {
+    // One parser, so a guard cannot be enforced on one question and not the
+    // other: a file whose stem disagrees with its payload is malformed by
+    // construction and must not reach either caller.
+    await writePidFile(4005, { pid: 9999, sessionId: "s-liar", cwd: "/repo/wt-a" });
+    await fs.writeFile(path.join(sessionsDir, "4006.json"), "{not json", "utf8");
+    await writePidFile(4007, { pid: 4007, sessionId: "s-ok", cwd: "/repo/wt-a" });
+
+    const outcome = await listClaudeSessionRecords(opts(), aliveDeps([4007]));
+
+    expect(outcome.kind === "ok" && outcome.records.map((r) => r.sessionId)).toEqual(["s-ok"]);
   });
 });

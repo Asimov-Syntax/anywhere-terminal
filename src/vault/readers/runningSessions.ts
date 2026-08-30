@@ -87,6 +87,22 @@ export type RunningSessionsOutcome =
   | { kind: "ok"; sessions: RunningClaudeSession[] }
   | { kind: "failed"; reason: string };
 
+/**
+ * A registry record as read, whether or not its process still exists.
+ *
+ * The removal assessment asks a different question of this directory than the
+ * presence panel does: not "who is running" but "is anything recorded here at
+ * all". `listRunningClaudeSessions` drops a dead record, so its empty result
+ * cannot tell "no record" from "a dead record was filtered out" — and that
+ * distinction is the ownership proof (worktree-removal.md § 4.1).
+ */
+export interface ClaudeSessionRecord extends RunningClaudeSession {
+  /** `process.kill(pid, 0)` semantics at the moment of the read. */
+  alive: boolean;
+}
+
+export type SessionRecordsOutcome = { kind: "ok"; records: ClaudeSessionRecord[] } | { kind: "failed"; reason: string };
+
 /** Injectable liveness probe — kept separate from fs so tests stay process-free. */
 export interface RunningSessionsDeps {
   /** `process.kill(pid, 0)` semantics: true when the process exists. */
@@ -151,87 +167,134 @@ function sessionsDir(options: ClaudeReaderOptions): string {
  * failure reports `failed`, which is the case the caller must not confuse with
  * an empty machine.
  */
-export async function listRunningClaudeSessions(
+/**
+ * One registry file, validated — or `undefined` when it is not a record.
+ *
+ * Every guard lives here rather than in a caller, because two callers now ask
+ * different questions of the same directory and a guard enforced on only one of
+ * them is a guard that does not exist.
+ */
+function parseRecord(fileName: string, text: string): RunningClaudeSession | undefined {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return undefined; // unreadable / malformed → skip, don't fail the scan
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return undefined;
+  }
+  const pid = typeof parsed.pid === "number" ? parsed.pid : Number(parsed.pid);
+  // The filename is not decoration: Claude writes `${process.pid}.json`
+  // carrying `pid: process.pid`, so a stem that disagrees with its payload is
+  // malformed by construction — and trusting the payload would let such a file
+  // impersonate whatever live process it names (.reviews/round-2.md B2).
+  // `indexRunningSessions` keeps `byPid` list-valued regardless, as defence in
+  // depth for records this guard never sees.
+  if (pid !== Number(fileName.slice(0, -".json".length))) {
+    return undefined;
+  }
+  const { sessionId, cwd } = parsed;
+  if (!Number.isInteger(pid) || pid <= 0 || typeof sessionId !== "string" || typeof cwd !== "string") {
+    return undefined;
+  }
+  // A record that cannot name a session, or name where it is running, is not
+  // one. This id is published as a vault entry id and as an `external:` row
+  // identity, and every downstream Claude reader resolves a transcript by it,
+  // so it faces the same canonical guard those readers use rather than a
+  // non-empty check that admits separators and traversal
+  // (.reviews/round-1.md W1, .reviews/round-4.md W4). A relative cwd would be
+  // resolved against THIS process's directory before being containment-tested
+  // against a worktree.
+  if (!isSafeSessionId(sessionId) || !path.isAbsolute(cwd)) {
+    return undefined;
+  }
+  // Finite and non-negative, not merely `typeof "number"`: `1e999` parses as
+  // Infinity and would pin its worktree above every real activity, and this
+  // value is published as a time as well as ordered on. A rejected one falls
+  // back to first-seen, exactly as a record carrying no launch time does
+  // (.reviews/round-4.md W5).
+  const startedAt =
+    typeof parsed.startedAt === "number" && Number.isFinite(parsed.startedAt) && parsed.startedAt >= 0
+      ? parsed.startedAt
+      : undefined;
+  const entrypoint = typeof parsed.entrypoint === "string" ? parsed.entrypoint : undefined;
+  // Trimmed before the emptiness test, so a name of nothing but whitespace is
+  // absent rather than a title that renders as a blank row.
+  const trimmedName = typeof parsed.name === "string" ? parsed.name.trim() : "";
+  const sessionName = trimmedName === "" ? undefined : trimmedName.slice(0, MAX_SESSION_NAME_CHARS);
+  return {
+    sessionId,
+    cwd,
+    pid,
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(entrypoint !== undefined ? { entrypoint } : {}),
+    ...(sessionName !== undefined ? { name: sessionName } : {}),
+  };
+}
+
+/**
+ * Every well-formed record in the registry, each carrying whether its process
+ * still exists. NOT deduped: dedupe is the live reader's rule, and it exists to
+ * pick the row a pane should show. The question here is whether ANY live
+ * process holds a directory, so collapsing two records could hide the live one.
+ */
+export async function listClaudeSessionRecords(
   options: ClaudeReaderOptions = {},
   deps: RunningSessionsDeps = defaultDeps,
-): Promise<RunningSessionsOutcome> {
+): Promise<SessionRecordsOutcome> {
   const dir = sessionsDir(options);
   let names: string[];
   try {
     names = await fs.readdir(dir);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { kind: "ok", sessions: [] }; // never run here → genuinely none
+      return { kind: "ok", records: [] }; // never run here → genuinely none
     }
     return { kind: "failed", reason: describeReadFailure(err) };
   }
-  const bySession = new Map<string, RunningClaudeSession>();
+  const records: ClaudeSessionRecord[] = [];
   for (const name of names) {
     if (!/^\d+\.json$/.test(name)) {
       continue; // strict guard (claude-code concurrentSessions.ts, #34210)
     }
-    let parsed: Record<string, unknown>;
+    let text: string;
     try {
-      parsed = JSON.parse(await fs.readFile(path.join(dir, name), "utf8")) as Record<string, unknown>;
+      text = await fs.readFile(path.join(dir, name), "utf8");
     } catch {
-      continue; // unreadable / malformed → skip, don't fail the scan
-    }
-    if (!parsed || typeof parsed !== "object") {
       continue;
     }
-    const pid = typeof parsed.pid === "number" ? parsed.pid : Number(parsed.pid);
-    // The filename is not decoration: Claude writes `${process.pid}.json`
-    // carrying `pid: process.pid`, so a stem that disagrees with its payload is
-    // malformed by construction — and trusting the payload would let such a file
-    // impersonate whatever live process it names (.reviews/round-2.md B2).
-    // `indexRunningSessions` keeps `byPid` list-valued regardless, as defence in
-    // depth for records this guard never sees.
-    if (pid !== Number(name.slice(0, -".json".length))) {
-      continue;
+    const record = parseRecord(name, text);
+    if (record !== undefined) {
+      records.push({ ...record, alive: deps.isAlive(record.pid) });
     }
-    const { sessionId, cwd } = parsed;
-    if (!Number.isInteger(pid) || pid <= 0 || typeof sessionId !== "string" || typeof cwd !== "string") {
-      continue;
-    }
-    // A record that cannot name a session, or name where it is running, is not
-    // one. This id is published as a vault entry id and as an `external:` row
-    // identity, and every downstream Claude reader resolves a transcript by it,
-    // so it faces the same canonical guard those readers use rather than a
-    // non-empty check that admits separators and traversal
-    // (.reviews/round-1.md W1, .reviews/round-4.md W4). A relative cwd would be
-    // resolved against THIS process's directory before being containment-tested
-    // against a worktree.
-    if (!isSafeSessionId(sessionId) || !path.isAbsolute(cwd)) {
-      continue;
-    }
-    if (!deps.isAlive(pid)) {
+  }
+  return { kind: "ok", records };
+}
+
+/**
+ * The LIVE sessions, deduped — unchanged in what it reports.
+ *
+ * Built on the same scan the record reader uses, so a guard can never be
+ * enforced on one question and not the other.
+ */
+export async function listRunningClaudeSessions(
+  options: ClaudeReaderOptions = {},
+  deps: RunningSessionsDeps = defaultDeps,
+): Promise<RunningSessionsOutcome> {
+  const outcome = await listClaudeSessionRecords(options, deps);
+  if (outcome.kind !== "ok") {
+    return outcome;
+  }
+  const bySession = new Map<string, RunningClaudeSession>();
+  for (const record of outcome.records) {
+    if (!record.alive) {
       continue; // stale (crashed/exited, ESRCH) → ignore
     }
-    // Finite and non-negative, not merely `typeof "number"`: `1e999` parses as
-    // Infinity and would pin its worktree above every real activity, and this
-    // value is published as a time as well as ordered on. A rejected one falls
-    // back to first-seen, exactly as a record carrying no launch time does
-    // (.reviews/round-4.md W5).
-    const startedAt =
-      typeof parsed.startedAt === "number" && Number.isFinite(parsed.startedAt) && parsed.startedAt >= 0
-        ? parsed.startedAt
-        : undefined;
-    const entrypoint = typeof parsed.entrypoint === "string" ? parsed.entrypoint : undefined;
-    // Trimmed before the emptiness test, so a name of nothing but whitespace is
-    // absent rather than a title that renders as a blank row.
-    const trimmedName = typeof parsed.name === "string" ? parsed.name.trim() : "";
-    const sessionName = trimmedName === "" ? undefined : trimmedName.slice(0, MAX_SESSION_NAME_CHARS);
-    const entry: RunningClaudeSession = {
-      sessionId,
-      cwd,
-      pid,
-      ...(startedAt !== undefined ? { startedAt } : {}),
-      ...(entrypoint !== undefined ? { entrypoint } : {}),
-      ...(sessionName !== undefined ? { name: sessionName } : {}),
-    };
-    const existing = bySession.get(sessionId);
+    const { alive: _alive, ...entry } = record;
+    const existing = bySession.get(entry.sessionId);
     if (!existing || winsDedupe(entry, existing)) {
-      bySession.set(sessionId, entry);
+      bySession.set(entry.sessionId, entry);
     }
   }
   return { kind: "ok", sessions: [...bySession.values()] };
