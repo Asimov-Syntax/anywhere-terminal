@@ -2,7 +2,7 @@
 
 ## 1. The provider layer
 
-- [ ] 1_1 Declare the normalized model and the offer on the wire
+- [x] 1_1 Declare the normalized model and the offer on the wire — verified: pnpm run check-types && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: docs/design/worktree-provisioning.md#2-the-normalized-model; docs/design/worktree-rpc.md#24-the-provisioning-offer; design.md D7
   - **Acceptance**:

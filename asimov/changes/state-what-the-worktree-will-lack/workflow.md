@@ -41,4 +41,5 @@ Dependency: `yaml` (eemeli/yaml 2.9.0) enters `dependencies` as its second entry
 Blueprint edit pending approval: design.md D7 makes `ProvisionPort.port` optional, which contradicts `worktree-provisioning.md` § 2's required `number`. Port allocation is WT-012.6, two tasks downstream, so the field cannot be filled here. Syncs back to § 2 on approval.
 Scope note: this repository's own `asimov/worktree.yaml` declares no `ports:`, so the port row is exercised by a fixture rather than by the real file.
 Constraint carried into 1_4: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are read-only for this change. A design pass owns them, and `main` carries an unmerged second pass (48fe43ce) conflicting with this branch's (a42de0a0).
+Deviation (1_1): the Plan said `ProvisionItemId` was already landed by WT-012.0. Only `ProvisionSelection` was — WT-012.0's own Plan named the id type but its task declared the selection alone. Added here with the rest of the model. `worktreeProvisionOffer` is NOT added to `WORKTREE_MESSAGE_TYPES`: that list enumerates what the webview sends, and this travels the other way.
 

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "state-what-the-worktree-will-lack"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788108745843,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788108745843,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788108745843
+        }
+      ],
+      "firstAt": 1788108745843,
+      "lastAt": 1788108745843,
+      "buckets": []
+    }
+  ]
+}

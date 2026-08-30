@@ -776,6 +776,90 @@ export type WorktreeAfterCreate =
     } & WorktreeAgentLaunchFields);
 
 /**
+ * Every selectable item carries an opaque host-issued id, unique within one
+ * offer. The webview submits ids; it never submits paths or command text
+ * (worktree-provisioning.md § 4.0). Ids are not stable across offers.
+ */
+export interface ProvisionItemId {
+  readonly id: string;
+}
+
+/** One thing to materialize into a new worktree. */
+export interface ProvisionEntry extends ProvisionItemId {
+  /** Repo-relative POSIX path. Globs are expanded at read time, never stored. */
+  readonly path: string;
+  readonly mode: "copy" | "link";
+  /** Provider file this entry came from, repo-relative. Never absent. */
+  readonly source: string;
+}
+
+/**
+ * One step to run in the new worktree after materialization.
+ *
+ * There is exactly one variant. A second, carrying a resolved VS Code task so
+ * the task system could run it with its identity intact, was designed and then
+ * removed: a task cannot be run for a directory that is not a workspace folder,
+ * and it does not refuse — it runs in the window's open folder instead
+ * (worktree-provisioning.md § 3.3).
+ *
+ * `kind` survives the collapse to a single member so a later variant can be
+ * added without reshaping every stored step.
+ */
+export type ProvisionSetupStep = ProvisionItemId & {
+  readonly kind: "shell";
+  /** Exact script text, passed as the shell's single script argument. Never concatenated. */
+  readonly script: string;
+  readonly source: string;
+};
+
+/** A named port the repo wants allocated per worktree. Selectable, like every other row. */
+export interface ProvisionPort extends ProvisionItemId {
+  readonly name: string;
+  readonly source: string;
+  /**
+   * The free port this create will take.
+   *
+   * Absent until something allocates one. Reading a provider file cannot: it
+   * learns the NAME the repo wants, and probing for a free port is WT-012.6,
+   * which lands after the task that materializes files. So a row can be offered
+   * — named, attributed, selectable — before any number exists for it, and the
+   * dialog renders the name alone rather than a placeholder that reads as an
+   * allocation nobody made.
+   *
+   * Once set it is still a preview: it is re-resolved immediately before it is
+   * written (worktree-provisioning.md § 5.3), and the second resolution binds.
+   */
+  readonly port?: number;
+}
+
+export interface ProvisionProvider {
+  readonly id: "asimov" | "orca" | "vscodeTasks" | "native";
+  /** Repo-relative file that produced it. */
+  readonly file: string;
+  /** True for the provider whose model the native file extended or detection chose. */
+  readonly active: boolean;
+}
+
+export interface ProvisionProblem {
+  readonly file: string;
+  readonly reason: "unreadable" | "malformed" | "unknownKey" | "missingExtends" | "unsubstituted";
+  /** Bounded, already safe to render. Parser text is quoted, never interpreted. */
+  readonly detail: string;
+}
+
+export interface ProvisionModel {
+  readonly entries: readonly ProvisionEntry[];
+  readonly setup: readonly ProvisionSetupStep[];
+  readonly ports: readonly ProvisionPort[];
+  /** Providers detected, in detection order. The first is the one that supplied the base. */
+  readonly providers: readonly ProvisionProvider[];
+  /** Entries an `exclude` rule removed, kept so the UI can show them as deliberate. */
+  readonly excluded: readonly ProvisionEntry[];
+  /** Populated when a provider file was found but could not be read. */
+  readonly problems: readonly ProvisionProblem[];
+}
+
+/**
  * WebView → Extension: which of the host's own offered provisioning items the
  * user left checked.
  *
@@ -1999,9 +2083,31 @@ export interface WorktreeCreateDefaultsMessage {
   collidedWith?: string;
 }
 
+/**
+ * Extension → WebView: the provisioning model this create would apply, under the
+ * id the selection quotes back.
+ *
+ * The model travels as DISPLAY material — paths, names, script text to show —
+ * and the webview answers with `ProvisionSelection`, which carries ids only. The
+ * host keeps the model this id names and executes from that, never from a
+ * re-read of the provider files: re-reading after the user pressed Create is
+ * exactly the window an untrusted checked-in file needs
+ * (worktree-provisioning.md § 4.0).
+ *
+ * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
+ */
+export interface WorktreeProvisionOfferMessage {
+  type: "worktreeProvisionOffer";
+  repoId: string;
+  /** Opaque and per-offer. Not a path, and not stable across offers. */
+  offerId: string;
+  model: ProvisionModel;
+}
+
 export type ExtensionToWebViewMessage =
   | WorktreeMutationResultMessage
   | WorktreeCreateDefaultsMessage
+  | WorktreeProvisionOfferMessage
   | InitMessage
   | OutputMessage
   | ExitMessage
