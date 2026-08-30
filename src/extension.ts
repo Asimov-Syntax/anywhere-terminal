@@ -488,6 +488,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // own tracker, because what counts as "this set changed" differs per site —
   // but they must never disagree about where a directory is (design.md D1, D5).
   const pathMemo = new ResolvedPathMemo();
+  // A removal assessment is a consumer like any other: it claims the set it is
+  // about to compare and releases the previous one, so its paths are neither
+  // stranded in the memo nor deleted out from under a standing consumer (D6).
+  const removalPanePaths = createTrackedPathResolver(pathMemo);
+  const removalSessionPaths = createTrackedPathResolver(pathMemo);
 
   const gitDecorationProvider = createGitDecorationProvider({ paths: createTrackedPathResolver(pathMemo) });
   context.subscriptions.push(gitDecorationProvider);
@@ -714,10 +719,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           cwd: pane.cwd,
           activity: paneEvidence.activityFor(pane.paneId),
         }));
-        await pathMemo.prepare(observed.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
+        await removalPanePaths.prepare(
+          [],
+          observed.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])),
+        );
         return observed.map((pane) => ({
           ...pane,
-          cwd: pane.cwd === undefined ? undefined : pathMemo.resolvedOr(pane.cwd),
+          cwd: pane.cwd === undefined ? undefined : removalPanePaths.resolvedOr(pane.cwd),
         }));
       },
       externalSessions: async () => {
@@ -728,10 +736,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (outcome.kind !== "ok") {
           return { ok: false };
         }
-        await pathMemo.prepare(outcome.sessions.map((s) => s.cwd));
+        await removalSessionPaths.prepare(
+          [],
+          outcome.sessions.map((s) => s.cwd),
+        );
         return {
           ok: true,
-          value: outcome.sessions.map((s) => ({ sessionId: s.sessionId, cwd: pathMemo.resolvedOr(s.cwd) })),
+          value: outcome.sessions.map((s) => ({
+            sessionId: s.sessionId,
+            cwd: removalSessionPaths.resolvedOr(s.cwd),
+          })),
         };
       },
     },

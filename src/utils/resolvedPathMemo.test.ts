@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ResolvedPathMemo } from "./resolvedPathMemo";
+import { createTrackedPathResolver, ResolvedPathMemo } from "./resolvedPathMemo";
 
 function counting(map: Record<string, string> = {}): {
   realpath: (p: string) => Promise<string>;
@@ -213,7 +213,7 @@ describe("ResolvedPathMemo", () => {
     const fs = counting({ "/link/wt": "/private/real/wt" });
     const memo = new ResolvedPathMemo(fs);
 
-    await memo.prepare(["/link/wt"]);
+    await createTrackedPathResolver(memo).prepare([], ["/link/wt"]);
 
     expect(memo.resolvedOr("/link/wt")).toBe("/private/real/wt");
   });
@@ -228,11 +228,11 @@ describe("ResolvedPathMemo", () => {
     expect(fs.calls).toEqual([]);
   });
 
-  it("prepares a batch with one syscall per distinct path", async () => {
+  it("claims a batch with one syscall per distinct path", async () => {
     const fs = counting({ "/a": "/real/a", "/b": "/real/b" });
     const memo = new ResolvedPathMemo(fs);
 
-    await memo.prepare(["/a", "/b", "/a", "/a/../a"]);
+    await createTrackedPathResolver(memo).prepare([], ["/a", "/b", "/a", "/a/../a"]);
 
     expect(fs.calls.sort()).toEqual(["/a", "/b"]);
     expect(memo.resolvedOr("/b")).toBe("/real/b");
@@ -242,9 +242,85 @@ describe("ResolvedPathMemo", () => {
     const fs = counting({ "/link/wt": "/private/real/wt" });
     const memo = new ResolvedPathMemo(fs);
 
-    await memo.prepare(["/link/wt"]);
+    await createTrackedPathResolver(memo).prepare([], ["/link/wt"]);
     memo.invalidate("/link/wt");
 
     expect(memo.resolvedOr("/link/wt")).toBe(path.resolve("/link/wt"));
+  });
+});
+
+describe("createTrackedPathResolver claims", () => {
+  it("keeps a path resolved for the claimants that still hold it", async () => {
+    // Round-2 B4. The memo is shared, so one consumer's bookkeeping must not
+    // delete a fact another consumer is standing on. Decorations prepare only
+    // on a workspace-folder change, so an entry they lose is lost for the
+    // window's life — the very fallback this change exists to remove.
+    const fs = counting({ "/link/root": "/private/root" });
+    const memo = new ResolvedPathMemo(fs);
+    const decorations = createTrackedPathResolver(memo);
+    const panes = createTrackedPathResolver(memo);
+
+    await decorations.prepare([], ["/link/root"]);
+    await panes.prepare([], ["/link/root"]);
+    await panes.prepare([], []);
+
+    expect(decorations.resolvedOr("/link/root")).toBe("/private/root");
+    expect(memo.size).toBe(1);
+  });
+
+  it("drops the entry once the last claimant lets go", async () => {
+    const fs = counting({ "/link/root": "/private/root" });
+    const memo = new ResolvedPathMemo(fs);
+    const decorations = createTrackedPathResolver(memo);
+    const panes = createTrackedPathResolver(memo);
+
+    await decorations.prepare([], ["/link/root"]);
+    await panes.prepare([], ["/link/root"]);
+    await panes.prepare([], []);
+    await decorations.prepare([], []);
+
+    expect(memo.size).toBe(0);
+    expect(memo.resolvedOr("/link/root")).toBe("/link/root");
+  });
+
+  it("never releases a pinned path, however the tracked set moves", async () => {
+    const fs = counting({ "/link/root": "/private/root", "/link/wt": "/private/wt" });
+    const memo = new ResolvedPathMemo(fs);
+    const repos = createTrackedPathResolver(memo);
+
+    await repos.prepare(["/link/root"], ["/link/wt"]);
+    await repos.prepare(["/link/root"], []);
+
+    expect(repos.resolvedOr("/link/root")).toBe("/private/root");
+    expect(repos.resolvedOr("/link/wt")).toBe("/link/wt");
+  });
+
+  it("clears claimed entries too when a structural event invalidates everything", async () => {
+    // D4 governs freshness: an event that moves the filesystem makes the answer
+    // wrong for every claimant, so claims do not hold it back.
+    const fs = counting({ "/link/root": "/private/root" });
+    const memo = new ResolvedPathMemo(fs);
+    const decorations = createTrackedPathResolver(memo);
+
+    await decorations.prepare([], ["/link/root"]);
+    memo.invalidateAll();
+
+    expect(memo.size).toBe(0);
+    expect(decorations.resolvedOr("/link/root")).toBe("/link/root");
+  });
+
+  it("re-resolves after every claimant has let go", async () => {
+    // The claim set must not leave a tombstone: a path claimed again after a
+    // full release is a fresh question, not a cached refusal.
+    const fs = counting({ "/link/root": "/private/root" });
+    const memo = new ResolvedPathMemo(fs);
+    const panes = createTrackedPathResolver(memo);
+
+    await panes.prepare([], ["/link/root"]);
+    await panes.prepare([], []);
+    await panes.prepare([], ["/link/root"]);
+
+    expect(panes.resolvedOr("/link/root")).toBe("/private/root");
+    expect(fs.calls).toEqual(["/link/root", "/link/root"]);
   });
 });

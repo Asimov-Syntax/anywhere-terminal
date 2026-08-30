@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentTurnReport } from "../agentHooks/AgentHookRuntime";
 import { TURN_FRESHNESS_MS } from "../session/PaneEvidenceStore";
 import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
-import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
+import { createTrackedPathResolver, ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import type { VaultAgentId } from "../vault/types";
 import type { SessionLookup } from "./agentIdentity";
@@ -1994,6 +1994,8 @@ describe("attribution through a symlink", () => {
       },
     });
     const realpaths: string[] = [];
+    const paneCwds = createTrackedPathResolver(memo);
+    const sessionCwds = createTrackedPathResolver(memo);
     const panes = [...initial];
     const deps: PresenceProjectorDeps = {
       panes: () => panes,
@@ -2002,9 +2004,9 @@ describe("attribution through a symlink", () => {
         resolve: async () => ({ kind: "absent" }) as SessionLookup,
         sessions: async () => ({ kind: "ok", sessions: [] }),
       }),
-      prepareCwds: (paths) => memo.prepare(paths),
+      holdPaneCwds: (paths) => paneCwds.prepare([], paths),
+      holdSessionCwds: (paths) => sessionCwds.prepare([], paths),
       normalize: (p) => memo.resolvedOr(p),
-      forgetCwd: (p) => memo.invalidate(p),
       now: () => clock,
     };
     return { projector: createPresenceProjector(deps), panes, realpaths, memo };
@@ -2079,7 +2081,7 @@ describe("attribution through a symlink", () => {
   });
 
   it("releases a cwd when its pane closes, so the memo tracks what the window holds", async () => {
-    // Round-1 B4. `forgetCwd` fired only on a pane that MOVED, so every pane the
+    // Round-1 B4. The release fired only on a pane that MOVED, so every pane the
     // window ever closed left its last directory resolved for the host's life.
     const h = symlinked({ [SPELLED]: PHYSICAL }, [pane({ paneId: "p1", cwd: SPELLED })]);
 
@@ -2110,6 +2112,63 @@ describe("attribution through a symlink", () => {
     expect(h.realpaths).toEqual([SPELLED]);
   });
 
+  it("leaves a directory another consumer claims resolved when its last pane goes", async () => {
+    // Round-2 B4. The memo is shared, and the decoration provider re-prepares
+    // only on a workspace-folder change — so a path presence deleted on a pane
+    // close would stay lexical there for the window's life. A workspace folder
+    // with a terminal open in it is the ordinary case, not an exotic one.
+    const h = symlinked({ [SPELLED]: PHYSICAL }, [pane({ paneId: "p1", cwd: SPELLED })]);
+    const decorations = createTrackedPathResolver(h.memo);
+    await decorations.prepare([], [SPELLED]);
+
+    await h.projector.project([PHYSICAL]);
+    h.panes.length = 0;
+    await h.projector.project([PHYSICAL]);
+
+    expect(decorations.resolvedOr(SPELLED)).toBe(PHYSICAL);
+    expect(h.memo.size).toBe(1);
+  });
+
+  it("keeps a session cwd resolved through a registry read that failed", async () => {
+    // Round-1 B4's other half, and the one a claim must not lose: an unreadable
+    // registry is not "every session is gone". Releasing on it would leave the
+    // next pass comparing a lexical spelling for a session that never left.
+    const memo = new ResolvedPathMemo({
+      realpath: async (p) => (p === SPELLED ? PHYSICAL : Promise.reject(new Error("ENOENT"))),
+    });
+    const sessionCwds = createTrackedPathResolver(memo);
+    let registry: RunningSessionsOutcome = {
+      kind: "ok",
+      sessions: [
+        {
+          sessionId: "s1",
+          cwd: SPELLED,
+          startedAt: clock,
+          pid: 1,
+          name: "other window",
+        } as unknown as RunningClaudeSession,
+      ],
+    };
+    const projector = createPresenceProjector({
+      panes: () => [],
+      activityFor: () => ({ activity: "idle", rule: "quiet" }),
+      openSnapshot: async () => ({
+        resolve: async () => ({ kind: "absent" }) as SessionLookup,
+        sessions: async () => registry,
+      }),
+      holdSessionCwds: (paths) => sessionCwds.prepare([], paths),
+      normalize: (p) => memo.resolvedOr(p),
+      now: () => clock,
+    });
+
+    await projector.project([PHYSICAL], { external: true });
+    registry = { kind: "failed", reason: "registry unreadable" };
+    const projection = await projector.project([PHYSICAL], { external: true });
+
+    expect(memo.resolvedOr(SPELLED)).toBe(PHYSICAL);
+    expect(projection.rowsByWorktreeId[PHYSICAL]?.map((r) => r.scope)).toEqual(["external"]);
+  });
+
   it("attributes a registry session by where its cwd resolves too", async () => {
     // External rows compare the same way, from a set the pane loop never
     // prepared — so they need their own bounded pass, not the pane one.
@@ -2134,7 +2193,7 @@ describe("attribution through a symlink", () => {
           ],
         }),
       }),
-      prepareCwds: (paths) => memo.prepare(paths),
+      holdSessionCwds: (paths) => createTrackedPathResolver(memo).prepare([], paths),
       normalize: (p) => memo.resolvedOr(p),
       now: () => clock,
     });

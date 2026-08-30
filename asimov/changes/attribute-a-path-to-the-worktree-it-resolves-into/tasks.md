@@ -78,7 +78,7 @@
 
 ## 3. Round-2 review fixes
 
-- [ ] 3_1 Hold a resolved path by its claimants, and give presence the resolver everyone else uses
+- [x] 3_1 Hold a resolved path by its claimants, and give presence the resolver everyone else uses — verified: pnpm exec vitest run 'src/utils/resolvedPathMemo.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: .reviews/round-2.md; design.md#d6-a-resolved-path-is-held-by-its-claimants-and-released-when-the-last-one-lets-go; design.md#d4-resolution-is-lazy-and-per-distinct-path-never-an-eager-sweep
   - **Acceptance**:

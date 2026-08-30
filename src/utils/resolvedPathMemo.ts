@@ -21,6 +21,10 @@ export class ResolvedPathMemo {
   private readonly memo = new Map<string, Promise<string>>();
   /** The settled half, for `resolvedOr`'s synchronous read. */
   private readonly settled = new Map<string, string>();
+  /** Who still needs each path. The memo is shared, so no single consumer knows
+   *  whether an answer is still wanted, and one consumer's bookkeeping deleting
+   *  another's fact is round-2 B4 (D6). */
+  private readonly holders = new Map<string, Set<symbol>>();
   private readonly realpath: (p: string) => Promise<string>;
 
   constructor(deps: ResolvedPathMemoDeps = {}) {
@@ -70,15 +74,6 @@ export class ResolvedPathMemo {
   }
 
   /**
-   * Resolve many paths at the boundary that produced them, so the comparison
-   * sites that follow can be synchronous. Bounded by the caller's set — the panes
-   * a window holds, the folders it has open — never by comparisons.
-   */
-  async prepare(candidates: Iterable<string>): Promise<void> {
-    await Promise.all([...candidates].map((candidate) => this.resolve(candidate)));
-  }
-
-  /**
    * Where `candidate` resolved, if that is already known, else its lexical form.
    *
    * The fallback is the same one `resolve` gives a path that will not resolve, so
@@ -91,7 +86,43 @@ export class ResolvedPathMemo {
     return this.settled.get(key) ?? key;
   }
 
-  /** Forget one path, because the thing that produced it changed. */
+  /**
+   * Resolve `candidate` and record that `owner` needs it.
+   *
+   * A claim is not a second cache: it decides only WHEN an entry may go, which
+   * D6 separates from D4's question of when an answer is wrong.
+   */
+  claim(owner: symbol, candidate: string): Promise<string> {
+    const key = path.resolve(candidate);
+    const held = this.holders.get(key);
+    if (held) {
+      held.add(owner);
+    } else {
+      this.holders.set(key, new Set([owner]));
+    }
+    return this.resolve(candidate);
+  }
+
+  /**
+   * `owner` no longer needs `candidate`. The entry goes only when the last
+   * claimant lets go — a pane closing says one consumer stopped asking, never
+   * that the directory moved.
+   */
+  release(owner: symbol, candidate: string): void {
+    const key = path.resolve(candidate);
+    const held = this.holders.get(key);
+    if (held === undefined) {
+      return;
+    }
+    held.delete(owner);
+    if (held.size === 0) {
+      this.holders.delete(key);
+      this.invalidate(candidate);
+    }
+  }
+
+  /** Forget one path, because the thing that produced it changed. Claims are
+   *  untouched: a stale answer is still an answer someone wants. */
   invalidate(candidate: string): void {
     const key = path.resolve(candidate);
     this.memo.delete(key);
@@ -124,7 +155,7 @@ export class ResolvedPathMemo {
 export interface TrackedPathResolver {
   /**
    * Resolve `pinned` and `tracked`, forgetting every tracked path that was in
-   * the previous call and is not in this one. `pinned` is never forgotten: it
+   * the previous call and is not in this one. `pinned` is never released: it
    * is the caller's own standing set, and pruning it would re-resolve on every
    * pass — the syscall-per-comparison D1 forbids.
    */
@@ -134,20 +165,26 @@ export interface TrackedPathResolver {
 }
 
 /** The parts of {@link ResolvedPathMemo} a {@link TrackedPathResolver} needs. */
-export type TrackablePathMemo = Pick<ResolvedPathMemo, "prepare" | "resolvedOr" | "invalidate">;
+export type TrackablePathMemo = Pick<ResolvedPathMemo, "claim" | "release" | "resolvedOr">;
 
+/**
+ * Each resolver is a claimant. The identity is what lets a shared memo tell
+ * "this consumer stopped needing the path" from "the path is stale" — the
+ * distinction round-2 B4 turned on (D6).
+ */
 export function createTrackedPathResolver(memo: TrackablePathMemo): TrackedPathResolver {
+  const owner = Symbol("tracked-paths");
   let last: readonly string[] = [];
   return {
     async prepare(pinned, tracked) {
       const held = new Set(tracked);
       for (const gone of last) {
         if (!held.has(gone)) {
-          memo.invalidate(gone);
+          memo.release(owner, gone);
         }
       }
       last = [...tracked];
-      await memo.prepare([...pinned, ...tracked]);
+      await Promise.all([...pinned, ...tracked].map((p) => memo.claim(owner, p)));
     },
     resolvedOr: (p) => memo.resolvedOr(p),
   };

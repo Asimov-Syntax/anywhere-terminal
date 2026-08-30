@@ -8,7 +8,7 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-011.6
 Lane: full — cross-boundary; five attribution sites across four files, several on per-push paths
-Planned at: e87eb449
+Planned at: ae9e44ce
 
 Stage-2 facts established against current code, not inherited from the archived change:
 - The five sites WT-011.1 D2 listed still carry the lexical compare, at `src/worktree/repoRoots.ts:91`, `src/worktree/worktreeBlockers.ts:163,167`, `src/worktree/presenceProjector.ts:366`, `src/providers/gitDecorationProvider.ts:148`, `src/webview/fileTree/FileTreePanel.ts:309,334` — the last against a file-local copy of the predicate at `FileTreePanel.ts:1715`, which is the "no site keeps a private copy" clause of the acceptance.

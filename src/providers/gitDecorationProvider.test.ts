@@ -866,7 +866,7 @@ describe("createGitDecorationProvider — a workspace folder reached through a s
       realpath: async (p) => (p === "/link/repo" ? "/private/work/repo" : "/somewhere/else"),
     });
     // Prepare the decorated file's own spelling, as another producer would.
-    await memo.prepare(["/private/work/repo/a.ts"]);
+    await createTrackedPathResolver(memo).prepare([], ["/private/work/repo/a.ts"]);
 
     const inside = "/private/work/repo/a.ts";
     const r = makeRepo("/private/work/repo", [{ path: inside, status: Status.MODIFIED }]);

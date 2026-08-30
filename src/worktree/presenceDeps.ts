@@ -17,7 +17,7 @@ import {
 } from "../pty/processTableSnapshot";
 import type { PaneEvidenceStore } from "../session/PaneEvidenceStore";
 import { resolveClaudeSession } from "../session/resolveClaudeSession";
-import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
+import { createTrackedPathResolver, ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { claudeSessionMtime, resolveClaudeSessionPath } from "../vault/readers/claudePaths";
 import {
   indexRunningSessionsOrEmpty,
@@ -76,6 +76,10 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
   /** Where each cwd this window has attributed really is. Keyed by path, so the
    *  bound is directories the window has seen, not pushes it has served. */
   const cwdMemo = options.cwdMemo ?? new ResolvedPathMemo();
+  /** Two claims over the one memo, because panes and sessions are two bounded
+   *  sets retiring on two triggers. Each releases only its own (D6). */
+  const paneCwds = createTrackedPathResolver(cwdMemo);
+  const sessionCwds = createTrackedPathResolver(cwdMemo);
 
   return {
     panes: () => store.panes(),
@@ -84,11 +88,11 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
     // Resolved, not merely `path.resolve`d: the worktree ids this is compared
     // against are already realpathed by `normalizeWorktreePath`, so a pane whose
     // shell reports a symlinked cwd where git reported the physical path used to
-    // be attributed to no worktree at all. `prepareCwds` does the resolving in
+    // be attributed to no worktree at all. The claims below do the resolving in
     // one bounded pass per projection, which is what lets this stay synchronous.
-    prepareCwds: (paths) => cwdMemo.prepare(paths),
+    holdPaneCwds: (paths) => paneCwds.prepare([], paths),
+    holdSessionCwds: (paths) => sessionCwds.prepare([], paths),
     normalize: (p) => cwdMemo.resolvedOr(p),
-    forgetCwd: (p) => cwdMemo.invalidate(p),
 
     ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),
     ...(options.sessionPreview ? { sessionPreview: options.sessionPreview } : {}),

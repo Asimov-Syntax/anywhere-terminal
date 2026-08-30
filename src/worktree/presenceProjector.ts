@@ -141,20 +141,19 @@ export interface PresenceProjectorDeps {
    * per presence push, so resolving inside the comparison would put a syscall on
    * every row of every push (D1). Optional — a projector under test needs no
    * filesystem, and without it `normalize` answers exactly as it did before.
-   */
-  prepareCwds?(paths: readonly string[]): Promise<void>;
-  /**
-   * Forget where one path resolved, because nothing in this window is there any
-   * more — the last pane in it moved or closed, or the last session under it
-   * left the registry.
    *
-   * That retirement is the window's one cheap signal that the directory itself
-   * may have moved: a worktree removed and recreated under the same spelling
-   * resolves somewhere new. Nothing else observes it, and a timer would answer
-   * it no better (D4). It also bounds the memo by what the window currently
-   * holds rather than everything it has ever seen (round-1 B4).
+   * A CLAIM, not a bare resolve: the memo is shared, and holding this pass's set
+   * is what stops one consumer's retirement from deleting a path another is
+   * standing on. Releasing what left the set is the claim's own job, so the
+   * projector keeps no cwd history of its own (D6).
    */
-  forgetCwd?(path: string): void;
+  holdPaneCwds?(paths: readonly string[]): Promise<void>;
+  /**
+   * The same, for the registry sessions this pass will attribute. A separate
+   * claim because it is a separate bounded set retiring on a separate trigger:
+   * panes come and go with the window's terminals, sessions with the registry.
+   */
+  holdSessionCwds?(paths: readonly string[]): Promise<void>;
   /**
    * The vault's name for a resolved session — the FALLBACK title, consulted only
    * for a row the registry did not name.
@@ -444,9 +443,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   let lastSessions: readonly RunningClaudeSession[] = [];
   /** The cwds the last successful registry read prepared, so the ones that
    *  leave can be released rather than held for the window's life. */
-  let lastSessionCwds: ReadonlySet<string> = new Set();
   /** The same, for the pane set — released when the last pane there is gone. */
-  let lastPaneCwds: ReadonlySet<string> = new Set();
   /**
    * What the last full pass concluded about this window's own panes, kept so an
    * external-only pass can publish a whole envelope without re-running it.
@@ -966,27 +963,18 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // Before anything is attributed: the cwds this pass will compare, resolved
       // in one bounded pass. The set is the panes the window holds, so the cost
       // is distinct directories rather than rows.
-      if (deps.prepareCwds) {
+      if (deps.holdPaneCwds) {
         const cwds = new Set<string>();
         for (const pane of deps.panes()) {
           if (pane.cwd !== undefined) {
             cwds.add(pane.cwd);
           }
         }
-        // Released by DIRECTORY, not by pane. A memo entry is a fact about a
-        // path, so it belongs to every pane sitting there: forgetting it when
-        // one pane moves or closes would drop a resolution its siblings still
-        // compare against on the very next push. What leaves the set is what a
-        // pane's move or close actually retired (round-1 B4).
-        if (deps.forgetCwd) {
-          for (const gone of lastPaneCwds) {
-            if (!cwds.has(gone)) {
-              deps.forgetCwd(gone);
-            }
-          }
-          lastPaneCwds = cwds;
-        }
-        await deps.prepareCwds([...cwds]);
+        // Claimed by DIRECTORY, not by pane. A memo entry is a fact about a
+        // path, so it belongs to every pane sitting there: retiring it when one
+        // pane moves or closes would drop a resolution its siblings still
+        // compare against on the very next push (round-1 B4).
+        await deps.holdPaneCwds([...cwds]);
       }
 
       const failures = new Map<PresenceDegradation["source"], string>();
@@ -1034,21 +1022,12 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       const sessions = read.kind === "ok" ? read.sessions : lastSessions;
       // Registry sessions are attributed by cwd too, and their set is not the
       // pane set, so they get the same one bounded pass.
-      if (deps.prepareCwds) {
-        const sessionCwds = new Set(sessions.map((session) => session.cwd));
-        // Released on the same evidence the rows are: a SUCCESSFUL read is the
-        // only answer that proves a session is gone rather than unreadable, so
-        // a failed read must not drop resolutions the next pass still needs
-        // (round-1 B4).
-        if (read.kind === "ok" && deps.forgetCwd) {
-          for (const gone of lastSessionCwds) {
-            if (!sessionCwds.has(gone)) {
-              deps.forgetCwd(gone);
-            }
-          }
-          lastSessionCwds = sessionCwds;
-        }
-        await deps.prepareCwds([...sessionCwds]);
+      if (deps.holdSessionCwds) {
+        // `sessions` is the last SUCCESSFUL read when this one failed, so the
+        // claimed set is unchanged and nothing is released — a failed read must
+        // not drop resolutions the next pass still needs (round-1 B4). The claim
+        // gets that from the set it is handed, with no read-kind test of its own.
+        await deps.holdSessionCwds([...new Set(sessions.map((session) => session.cwd))]);
       }
       if (read.kind === "ok") {
         lastSessions = read.sessions;
