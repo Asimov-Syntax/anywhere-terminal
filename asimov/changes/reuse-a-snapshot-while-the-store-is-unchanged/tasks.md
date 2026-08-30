@@ -77,3 +77,46 @@
     2. In `src/vault/sqlite.ts`, correct `withSqliteSnapshot`'s doc comment, which still promises a sidecar copy and deletion before return (W2).
     3. Cover a production in flight across a dispose, a lease outstanding across a dispose, and a borrow attempted after dispose.
 
+## 3. Round-2 review fixes
+
+- [ ] 3_1 Prove the generation coherently, or refuse to reuse
+  - **Refs**: .reviews/round-2.md; design.md#d1-reuse-is-gated-on-proven-sameness-never-on-elapsed-time
+  - **Acceptance**:
+    - Outcome: a write that completes between the two halves of a generation read never reads as unchanged
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/storeStamp.ts`, export the store's file set once and add a generation read that stats in a fixed order, distinguishes proven absence from any other stat failure via `provesAbsence`, and reports a generation as unusable when a path could not be determined.
+    2. Read the generation twice in that fixed order and treat it as usable only when both readings agree, so a write spanning the read cannot present as unchanged.
+    3. In `src/vault/snapshotPool.ts`, gate reuse, joining and retention on a usable generation; an unusable one produces a fresh snapshot and retains nothing.
+    4. Adopt the exported file set in `src/vault/readers/codexReader.ts` and `src/vault/readers/opencodeReader.ts` so the reuse gate and the persisted list cache cannot disagree about which files define freshness.
+    5. Cover: a checkpoint-and-delete landing between the two halves of the read, an unreadable `-wal` never reading as a WAL-free store, and a genuinely WAL-free store still reusing.
+
+- [ ] 3_2 Drain admitted work at shutdown, not the states it can see
+  - **Deps**: 3_1
+  - **Refs**: .reviews/round-2.md; design.md#d3a-dispose-is-a-barrier-not-a-sweep
+  - **Acceptance**:
+    - Outcome: dispose outlives every outstanding borrow and production
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, admit every borrow to a registry before its first await and remove it when it settles; drain that registry to quiescence in `dispose` instead of the joinable-flight map.
+    2. Cover a borrow parked on its first stamp across a dispose, and a producer displaced from the per-store binding by a waiting caller.
+
+- [ ] 3_3 Give up a snapshot's ownership only once its disk is gone
+  - **Deps**: 3_2
+  - **Refs**: .reviews/round-2.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
+  - **Acceptance**:
+    - Outcome: a deletion that fails leaves the snapshot owned and reported, never silently abandoned
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, untrack an entry only after its directory is deleted, keep failures for retry, and have `dispose` surface what it could not remove rather than resolving over it.
+    2. Cover a failing deletion at release and at disposal.
+
+- [ ] 3_4 Write the borrow-and-release lifecycle once
+  - **Refs**: .reviews/round-2.md; design.md#d5-the-pool-sits-behind-the-existing-entry-points-not-beside-them
+  - **Acceptance**:
+    - Outcome: both entry points share one lease lifecycle and keep their own result and status mapping
+    - Verify: unit src/vault/sqlite.test.ts
+  - **Plan**:
+    1. In `src/vault/sqlite.ts`, factor the borrow / use / release-in-finally lifecycle into one internal helper both entry points call, leaving each wrapper's distinct result shape and status mapping where they are.
+    2. Cover that both entry points still map an open failure to `db-unreachable` and any other snapshot failure to `query-error`.
+

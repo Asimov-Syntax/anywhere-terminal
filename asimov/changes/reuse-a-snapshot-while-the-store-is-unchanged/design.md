@@ -4,23 +4,46 @@
 
 ### D1: Reuse is gated on proven sameness, never on elapsed time
 
-A retained snapshot is reused only when `sameStamps(stampStoreFiles([db, db+"-wal"]), retained.stamp)`
-holds. `storeStamp.ts` is the shipped stamp the list cache already trusts, and its comment records why
-`-shm` is excluded (volatile wal-index state; stamping it causes false invalidations).
+A retained snapshot is reused only when the store's GENERATION is provably equal to the one the
+snapshot was taken under. A generation is the `(mtimeMs, size)` of the `.db` and its `-wal` — `-shm`
+excluded, per `storeStamp.ts`, as volatile wal-index state that causes false invalidations.
 
-This is what makes reuse safe for `absent`. Any commit rewrites the `-wal` mtime and any checkpoint
-rewrites the `.db`, so an equal stamp means no write landed — and a snapshot taken under that stamp
-answers what a fresh one would, including about a session's absence. A TTL alone could not say that.
+Any commit rewrites the `-wal` mtime and any checkpoint rewrites the `.db`, so an equal generation
+means no write landed, and a snapshot taken under it answers what a fresh one would — including about
+absence, which a TTL could never establish. There is no time-based expiry for correctness; the idle
+timer exists only to release disk (D3).
 
-There is no time-based expiry for correctness. An idle timer exists only to release disk (D3).
+**A generation must be read coherently, or it proves nothing (round-2 B5).** The first draft of this
+decision called two sequential `stat` calls a proof. They are not: `.db` observed at one instant and
+`-wal` at another is a mixed-time reading, and a retained `{db:S0}` with no WAL can be matched by a
+read that sees `.db` before a checkpoint and `-wal` after that checkpoint's close removed it — equal
+values spanning a completed write, which is a false `absent`. So a generation is read TWICE in a fixed
+`db, wal, db, wal` order and is usable only when both readings agree. That is sufficient rather than
+merely safer: the bad interleaving needs both `.db` reads before the checkpoint and both `-wal` reads
+after the deletion, yet the second `.db` read falls after the first `-wal` read and would observe the
+checkpointed file. The interleaving contradicts itself.
 
-**Rejected**: a short TTL (1–2 s) instead of a stamp. It would answer `absent` for a session written
+**Only proven absence may be read as "no WAL" (round-2 B4).** A `stat` that fails for any reason other
+than ENOENT/ENOTDIR says the process could not find out, and must make the generation unusable rather
+than silently reading as a WAL-free store. This is the repository's existing rule, not a new one:
+`provesAbsence` in `src/utils/fsPresence.ts` already owns it for exactly this reason.
+
+An unusable generation is never a reason to serve a stale answer: the read produces a fresh snapshot
+and retains nothing.
+
+**Rejected**: a short TTL (1–2 s) instead of a generation. It would answer `absent` for a session written
 during the window, which is the precise failure the whole parent chain exists to remove, and it would
 buy nothing a stamp does not — the stamp is two `stat` calls.
 
 **Inherited risk, stated**: two writes inside one mtime tick at an identical size are invisible to the
-stamp. This is the shipped list-cache exposure (`vault-list-cache` § *Incremental refresh of changed
-sources only*), not a new one, and it is not widened here.
+generation. This is the shipped list-cache exposure (`vault-list-cache` § *Incremental refresh of
+changed sources only*), not a new one, and it is not widened here. Note the distinction from B5: that
+risk is about the RESOLUTION of the values, this decision is about reading them COHERENTLY, and only
+the second was a defect in the argument.
+
+**One owner for the store's file set.** The `.db`-plus-`-wal` path set is built in the pool and in both
+persisted-cache readers. It becomes one exported helper, so the reuse gate and the list cache cannot
+answer the same freshness question from separately-authored path sets (round-2 W4).
 
 ### D2: The stamp is taken twice, and only a stable snapshot is retained
 
@@ -56,6 +79,11 @@ A snapshot a caller is currently reading is never deleted underneath them, which
 entries are borrowed and released by refcount, and an entry removed from the pool for any reason is
 deleted at its last release.
 
+**Ownership ends when the disk does, not when the bookkeeping does (round-2 W3).** An entry is dropped
+from the pool's live registry only after its directory is actually gone. A deletion that fails keeps
+its entry, so it still has an owner and can be retried, and disposal reports what it could not remove
+instead of reporting success over a file that is still there.
+
 ### D3a: Dispose is a barrier, not a sweep
 
 Shutdown must leave nothing behind, so `dispose` is a closed state rather than a single pass over the
@@ -63,6 +91,13 @@ retained map. It rejects new borrows, awaits every in-flight production so a sna
 created after the sweep that was supposed to remove it, refuses to retain anything once closed, and
 awaits outstanding leases before deleting what they hold. A pass that only drains the map (round-1 B3)
 leaves exactly the file the shutdown scenario is about: one whose production settled after disposal.
+
+**The barrier drains a registry of admitted work, not the states it can see (round-2 B3).** Draining
+the joinable-flight map misses two real cases: a borrow that passed its disposal check and is parked on
+its first stamp, and a producer displaced from the per-store binding when a waiting caller replaced it.
+Both are live work invisible to that map. So every borrow is admitted to a registry before its first
+await and leaves it when it settles, and disposal drains THAT to quiescence — a disposal that resolves
+while any admitted operation is outstanding is the bug, whatever map the operation is or is not in.
 
 ### D4: One in-flight snapshot per store, joined only on a matching generation
 
@@ -110,3 +145,6 @@ process-wide instance.
 | A snapshot outlives a clean shutdown | D3a makes dispose a barrier over in-flight productions and outstanding leases, not a single sweep |
 | A snapshot is deleted while a reader is mid-query | Borrow/release refcounting, with the superseded entry deleted only after its last release |
 | The win is assumed rather than measured | Acceptance includes a measured comparison: a second read of an unchanged large store must not repeat the snapshot cost |
+| A generation is read across a write and looks unchanged | D1's coherent double read in fixed order, whose failing interleaving is self-contradictory; acceptance drives the interleaving rather than arguing it |
+| A stat failure is read as "no WAL" | D1 defers to `provesAbsence`: only ENOENT/ENOTDIR reads as absence, everything else makes the generation unusable |
+| Shutdown races work the barrier cannot see | D3a's admitted-work registry, entered before the first await |
