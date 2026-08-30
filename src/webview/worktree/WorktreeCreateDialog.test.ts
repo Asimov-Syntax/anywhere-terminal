@@ -1177,6 +1177,46 @@ describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () =
     expect(host.querySelectorAll(".wt-brow")).toHaveLength(3);
   });
 
+  it("[W2] follows the repository picker, and keeps each repo's ticks", () => {
+    // A repo switch redraws from a different offer, so the checked ids cannot
+    // live in the DOM. Reachable from the manifest: two repositories, one with
+    // an offer and one without.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let applyOffer: ((repoId: string, offer: ReturnType<typeof provisionOffer>) => void) | undefined;
+    const other = createDefaults({ repoId: "/other/.git", repoLabel: "other", mainPath: "/other" });
+    openWorktreeCreateDialog(host, {
+      repos: [createDefaults(), other],
+      onSubmit: () => {},
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    applyOffer?.(REPO_ID, provisionOffer());
+    const setup = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).at(-1);
+    if (!setup) {
+      throw new Error("expected rows");
+    }
+    setup.checked = true;
+    setup.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const picker = host.querySelector<HTMLSelectElement>("#wt-repo-select");
+    if (!picker) {
+      throw new Error("expected a repo picker");
+    }
+    picker.value = "/other/.git";
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    // The other repository has no offer, which is "not told yet" — not an empty
+    // section claiming it needs nothing.
+    expect(host.querySelector<HTMLElement>(".wt-bring")?.hidden).toBe(true);
+
+    picker.value = REPO_ID;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const back = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).map((cb) => cb.checked);
+    expect(back).toEqual([true, true, true, true, true]);
+  });
+
   it("[W3] names each checkbox by its subject, not only by its verb", () => {
     // Five rows from one provider otherwise announce as five identical
     // "Copy asimov/worktree.yaml".
