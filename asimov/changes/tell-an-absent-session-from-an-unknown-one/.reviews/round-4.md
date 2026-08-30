@@ -81,3 +81,8 @@ None.
 ## Audit backlog
 
 None.
+
+## Author triage
+
+- Status: accepted
+- Triage: Accepted in full; the probe is right and the round-3 fix was incomplete. I had the sidecar copy AFTER the base copy, which leaves exactly the window described: the base is taken, a checkpoint then moves WAL rows into the live store and removes the WAL, and the later presence check correctly sees a proven absence and skips it — so a base copied before those rows landed is queried as conclusive. Fixed by inverting the order rather than by adding a stability protocol: sidecars first, base last. Whatever a checkpoint moves out of the WAL is in the base by the time the base is copied, and a now-stale WAL copy is salt-mismatched so SQLite ignores it in favour of that newer base; both interleavings leave the row present, and no retry, extra syscall, or new decision is needed. Regression added for both entry points and mutation-checked — reverting to base-first fails exactly those two tests. Recorded honestly: my first two attempts at that regression passed under BOTH orderings (the checkpoint fired before the base copy, and the seeded row was already in the base file), so they proved nothing; the committed version was rebuilt until it discriminated.
