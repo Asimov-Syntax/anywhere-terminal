@@ -24,23 +24,41 @@ import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
  * and not another is how a UI ends up rendering a shorter list for a worse
  * outcome.
  */
-const CATALOGUE: readonly { id: string; cls: RemovalCheckClass; source: UnreadableSource }[] = [
+/**
+ * What a check's failure costs.
+ *
+ * Constant for every check but one. `externalAgents` refuses when the session is
+ * running, waiting, or undeterminable and is confirmable only when it is provably
+ * idle (worktree-removal.md § 2.2), so its class is a property of the EVIDENCE
+ * rather than of the id — and `cls` is what decides whether a typed confirmation
+ * can authorize the removal, which is why § 2.5 puts it on the wire instead of
+ * letting the webview re-derive it.
+ *
+ * A function, not a second check id: two ids would make the check list differ by
+ * outcome, which is the failure this one-row-per-id table exists to prevent.
+ */
+type ClassOf = RemovalCheckClass | ((assessment: RemovalAssessment) => RemovalCheckClass);
+
+const CATALOGUE: readonly { id: string; cls: ClassOf; source: UnreadableSource }[] = [
   { id: "isMain", cls: "refusal", source: "listing" },
   { id: "busyAgents", cls: "refusal", source: "sessions" },
   { id: "containsWorktrees", cls: "refusal", source: "listing" },
   { id: "dirty", cls: "confirmable", source: "status" },
   { id: "untracked", cls: "confirmable", source: "status" },
   { id: "idlePanes", cls: "confirmable", source: "sessions" },
-  { id: "externalAgents", cls: "confirmable", source: "sessions" },
+  // Refusal-class throughout a refused assessment: `cls` answers "could a
+  // confirmation authorize this", and in a refusal nothing can be authorized at
+  // all — which is why every check in that branch carries the refusal class.
+  { id: "externalAgents", cls: (a) => (a.kind === "refused" ? "refusal" : "confirmable"), source: "sessions" },
   { id: "locked", cls: "confirmable", source: "status" },
 ];
 
 /** The whole catalogue, every check unproven. */
-function allUnproven(unreadable: readonly UnreadableSource[]): readonly RemovalCheck[] {
+function allUnproven(unreadable: readonly UnreadableSource[], assessment: RemovalAssessment): readonly RemovalCheck[] {
   const named = new Set(unreadable);
   return CATALOGUE.map((entry) => ({
     id: entry.id,
-    cls: entry.cls,
+    cls: classOf(entry.cls, assessment),
     outcome: "unproven" as const,
     // An `unavailable` assessment carries no evidence at all, so no check can be
     // reported as passed — not only the ones whose own source failed. Naming the
@@ -50,14 +68,18 @@ function allUnproven(unreadable: readonly UnreadableSource[]): readonly RemovalC
   }));
 }
 
-function check(id: string, failed: boolean, count?: number): RemovalCheck {
+function classOf(cls: ClassOf, assessment: RemovalAssessment): RemovalCheckClass {
+  return typeof cls === "function" ? cls(assessment) : cls;
+}
+
+function check(id: string, assessment: RemovalAssessment, failed: boolean, count?: number): RemovalCheck {
   const entry = CATALOGUE.find((e) => e.id === id);
   if (entry === undefined) {
     throw new Error(`"${id}" is not a removal check.`);
   }
   return {
     id,
-    cls: entry.cls,
+    cls: classOf(entry.cls, assessment),
     outcome: failed ? "failed" : "passed",
     ...(count === undefined ? {} : { count }),
   };
@@ -75,24 +97,36 @@ function check(id: string, failed: boolean, count?: number): RemovalCheck {
 export function checksFor(assessment: RemovalAssessment): readonly RemovalCheck[] {
   switch (assessment.kind) {
     case "unavailable":
-      return allUnproven(assessment.unreadable);
-    case "refused":
+      return allUnproven(assessment.unreadable, assessment);
+    case "refused": {
+      const live = assessment.liveExternalSessionIds.length;
       return [
-        check("isMain", assessment.isMain),
-        check("busyAgents", assessment.busyAgents > 0, assessment.busyAgents),
-        check("containsWorktrees", assessment.containsWorktrees.length > 0, assessment.containsWorktrees.length),
+        check("isMain", assessment, assessment.isMain),
+        check("busyAgents", assessment, assessment.busyAgents > 0, assessment.busyAgents),
+        check(
+          "containsWorktrees",
+          assessment,
+          assessment.containsWorktrees.length > 0,
+          assessment.containsWorktrees.length,
+        ),
+        // Reported even when the refusal came from elsewhere: the sessions WERE
+        // read, and a check that ran and found nothing is a different report
+        // from one omitted. It is refusal-class here only when it is the check
+        // doing the refusing.
+        check("externalAgents", assessment, live > 0, live),
       ];
+    }
     case "confirmable": {
       const e = assessment.evidence;
       return [
-        check("isMain", false),
-        check("busyAgents", false, 0),
-        check("containsWorktrees", false, 0),
-        check("dirty", e.dirtyPaths.length > 0, e.dirtyPaths.length),
-        check("untracked", e.untrackedPaths.length > 0, e.untrackedPaths.length),
-        check("idlePanes", e.paneIds.length > 0, e.paneIds.length),
-        check("externalAgents", e.externalSessionIds.length > 0, e.externalSessionIds.length),
-        check("locked", e.locked),
+        check("isMain", assessment, false),
+        check("busyAgents", assessment, false, 0),
+        check("containsWorktrees", assessment, false, 0),
+        check("dirty", assessment, e.dirtyPaths.length > 0, e.dirtyPaths.length),
+        check("untracked", assessment, e.untrackedPaths.length > 0, e.untrackedPaths.length),
+        check("idlePanes", assessment, e.paneIds.length > 0, e.paneIds.length),
+        check("externalAgents", assessment, e.externalSessionIds.length > 0, e.externalSessionIds.length),
+        check("locked", assessment, e.locked),
       ];
     }
   }

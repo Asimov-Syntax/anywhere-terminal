@@ -17,8 +17,16 @@ the session's activity is `running`, `waiting`, or undeterminable, and in the co
 when it is provably idle — so its class depends on what was read, not on its id.
 
 **Chosen:** the catalogue keeps one row per id and that row's `cls` becomes either a constant or a
-function of the evidence. `externalAgents` is the only function today. The catalogue therefore still
-answers "which checks exist" with one list, and `checksFor` still emits every id in every branch.
+function of the assessment. `externalAgents` is the only function today, and the catalogue still
+answers "which checks exist" with one list.
+
+Refined while building 1_2: the function reads the assessment KIND, not the session count. `cls`
+answers "could a confirmation authorize this check", and a refused assessment authorizes nothing —
+so every check in that branch is refusal-class, including this one, and the pre-existing invariant
+that a refusal reports only refusal-class checks survives untouched. `externalAgents` is reported
+in the refused branch because the sessions were genuinely read: an unreadable registry returns
+`unavailable` before any refusal is reached, so this is not the "claiming a read that never
+happened" case the branch guards against.
 
 Rejected — two ids (`externalAgentsBusy` / `externalAgentsIdle`): it makes the check list differ by
 outcome, which is the exact failure the existing comment guards against, and the UI would have to

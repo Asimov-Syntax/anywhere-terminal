@@ -14,7 +14,7 @@
     5. Add `src/extension.ts` to the edited paths for step 3.
   - **Boundary**: no change to the presence projection's own filter — this reads the registry for a second question, it does not repurpose the first
 
-- [ ] 1_2 Let one check's class follow its evidence
+- [x] 1_2 Let one check's class follow its evidence — verified: pnpm exec vitest run 'src/worktree/removalChecks.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-removal-refuses-when-it-cannot-establish-that-nothing-is-using-the-worktree}; docs/design/worktree-rpc.md#25-removal-assessment-and-branch-deletion; design.md D1
   - **Acceptance**:
@@ -22,8 +22,8 @@
     - Verify: unit src/worktree/removalChecks.test.ts
   - **Plan**:
     1. In `src/worktree/removalChecks.ts`, let a `CATALOGUE` row's `cls` be either a constant or a function of the assessment. `externalAgents` becomes the only function; every other row keeps its constant.
-    2. Keep `checksFor` emitting every catalogue id in every branch. The one-row-per-id table is what stops a UI rendering a shorter list for a worse outcome, and that property is not what this task changes.
-    3. Cover in `src/worktree/removalChecks.test.ts` that `isRefusedByChecks` returns true for a not-provably-idle external session and false for an idle one, and that the emitted id list is identical across all three assessment kinds.
+    2. Emit `externalAgents` in the `refused` branch too, since it is now a refusal-class check there. That branch deliberately reports ONLY the refusal-class checks — it gathered no confirmable evidence, so reporting those as passed would claim a read that never happened — and this check joins that list rather than breaking the rule.
+    3. Cover in `src/worktree/removalChecks.test.ts` that `isRefusedByChecks` returns true for a not-provably-idle external session and false for an idle one, and that the refused branch still reports no confirmable-class check as passed.
   - **Boundary**: no second check id for the two cases — one row, one id, a class that reads the evidence
 
 - [ ] 1_3 Report a check that never applied as not applying

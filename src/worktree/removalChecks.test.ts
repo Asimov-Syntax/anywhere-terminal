@@ -58,6 +58,10 @@ describe("checksFor", () => {
   it("reports only the refusal checks when the removal was already refused", () => {
     // No confirmable evidence was gathered once the answer was no, so reporting
     // those checks as passed would claim a read that never happened.
+    //
+    // `externalAgents` is in this list because the sessions WERE read — an
+    // unreadable registry returns `unavailable` before a refusal is reached —
+    // so it is a refusal-class check here, not confirmable evidence.
     const checks = checksFor({
       kind: "refused",
       isMain: false,
@@ -66,7 +70,7 @@ describe("checksFor", () => {
       containsWorktrees: [{ worktreeId: "/wt/a", displayPath: "a" }],
     });
 
-    expect(checks.map((c) => c.id)).toEqual(["isMain", "busyAgents", "containsWorktrees"]);
+    expect(checks.map((c) => c.id)).toEqual(["isMain", "busyAgents", "containsWorktrees", "externalAgents"]);
     expect(checks.every((c) => c.cls === "refusal")).toBe(true);
     expect(isRefusedByChecks(checks)).toBe(true);
     expect(countOf(checks, "busyAgents")).toBe(2);
@@ -114,5 +118,67 @@ describe("checksFor", () => {
     for (const assessment of kinds) {
       expect(checksFor(assessment).some((c) => c.outcome === "notApplicable")).toBe(false);
     }
+  });
+});
+
+describe("a check whose class its evidence decides (round-3 design.md D1)", () => {
+  const refusedBy = (liveExternalSessionIds: readonly string[]): RemovalAssessment => ({
+    kind: "refused",
+    isMain: false,
+    busyAgents: 0,
+    containsWorktrees: [],
+    liveExternalSessionIds,
+  });
+
+  it("reports externalAgents as a refusal when the session is not provably idle", () => {
+    const checks = checksFor(refusedBy(["s-1"]));
+    const external = checks.find((c) => c.id === "externalAgents");
+
+    expect(external).toMatchObject({ cls: "refusal", outcome: "failed", count: 1 });
+    expect(isRefusedByChecks(checks)).toBe(true);
+  });
+
+  it("reports externalAgents as confirmable when the session is provably idle", () => {
+    // Same id, same row, different class — the class is what decides whether a
+    // typed confirmation can authorize it, and that answer is the evidence's.
+    const checks = checksFor(confirmable({ externalSessionIds: ["s-1"] }));
+    const external = checks.find((c) => c.id === "externalAgents");
+
+    expect(external).toMatchObject({ cls: "confirmable", outcome: "failed", count: 1 });
+    expect(isRefusedByChecks(checks)).toBe(false);
+  });
+
+  it("keeps one id for both classes", () => {
+    // Two ids would make the check list differ by outcome, which is the failure
+    // the single catalogue exists to prevent, and would make the UI treat one
+    // row as two.
+    const refused = checksFor(refusedBy(["s-1"])).filter((c) => c.id === "externalAgents");
+    const idle = checksFor(confirmable({})).filter((c) => c.id === "externalAgents");
+
+    expect(refused).toHaveLength(1);
+    expect(idle).toHaveLength(1);
+  });
+
+  it("keeps every check in a refusal refusal-class, including this one", () => {
+    // `cls` answers whether a confirmation could authorize the check, and a
+    // refusal authorizes nothing — so the class is uniform in that branch even
+    // for the check whose class the evidence otherwise decides.
+    for (const assessment of [refusedBy(["s-1"]), refusedBy([])]) {
+      expect(checksFor(assessment).every((c) => c.cls === "refusal")).toBe(true);
+    }
+  });
+
+  it("reports externalAgents passed, not absent, when a refusal came from elsewhere", () => {
+    // A worktree refused for being main still had its sessions read, and a
+    // check that ran and found nothing is a different report from one omitted.
+    const checks = checksFor({
+      kind: "refused",
+      isMain: true,
+      busyAgents: 0,
+      containsWorktrees: [],
+      liveExternalSessionIds: [],
+    });
+
+    expect(checks.find((c) => c.id === "externalAgents")).toMatchObject({ outcome: "passed", count: 0 });
   });
 });
