@@ -6,9 +6,23 @@
 // suite needs neither a disk nor a git.
 
 import { isPathInside } from "../utils/pathBoundary";
+import { afterDelay, type Deadline } from "./deadline";
 
 /** How old a lock must be before it counts as abandoned. Recorded, not tuned. */
 export const LOCK_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long the whole lock read may take before it answers `unproven`.
+ *
+ * The reads are awaited inside the removal assessment's own `Promise.all`, so an
+ * unbounded one does not report a slow proof — it holds the removal open, and a
+ * removal that never returns is a removal refused by a proof (round-1 B3).
+ *
+ * This is a bound on ONE read, not the shared in-flight registry WT-013.1's
+ * round-5 W3 asks for: an expired read here is abandoned exactly as that finding
+ * describes, and it stays open and unwaived.
+ */
+export const MAX_LOCK_READ_MS = 2_000;
 
 /** What one proof established, or why it could not. `notApplicable` is not a failure. */
 export type ProofOutcome = "passed" | "failed" | "unproven" | "notApplicable";
@@ -35,7 +49,11 @@ export interface OrphanProofSubject {
   locked: boolean;
   /** Absent when the worktree is detached or bare. */
   branch?: string;
-  sessions: ProofSourceRead<readonly ProofSessionRecord[]>;
+  /**
+   * Accepted unresolved so the two proofs that need no registry do not wait on
+   * one. Only the ownership proof joins it (round-1 W2).
+   */
+  sessions: ProofSourceRead<readonly ProofSessionRecord[]> | Promise<ProofSourceRead<readonly ProofSessionRecord[]>>;
 }
 
 export type ProofGitRun = (
@@ -45,6 +63,8 @@ export type ProofGitRun = (
 
 export interface OrphanProofDeps {
   git: ProofGitRun;
+  /** Bounds the lock read. Injected so the suite never waits on a real timer. */
+  wait?: (ms: number) => Deadline;
   /** Epoch ms of the path's last modification. Throws rather than answering 0. */
   lockMtime(absPath: string): Promise<number>;
   /** The worktree's own git directory. */
@@ -60,32 +80,49 @@ export interface OrphanProofDeps {
  * point to an assessment rather than three.
  */
 export async function readOrphanProofs(subject: OrphanProofSubject, deps: OrphanProofDeps): Promise<OrphanProofs> {
-  const [lockAged, branchMerged] = await Promise.all([lockProof(subject, deps), mergeProof(subject, deps)]);
-  return { lockAged, ownerGone: ownerProof(subject), branchMerged };
+  const [lockAged, branchMerged, ownerGone] = await Promise.all([
+    lockProof(subject, deps),
+    mergeProof(subject, deps),
+    ownerProof(subject),
+  ]);
+  return { lockAged, ownerGone, branchMerged };
 }
 
 async function lockProof(subject: OrphanProofSubject, deps: OrphanProofDeps): Promise<ProofOutcome> {
   if (!subject.locked) {
     return "notApplicable";
   }
+  const deadline = (deps.wait ?? afterDelay)(MAX_LOCK_READ_MS);
   try {
     // `git worktree lock` writes this file with or without a reason — zero
     // bytes when there is none, verified on git 2.50.1 — so its presence tracks
     // the lock and its mtime is the lock's age. Content would be no signal.
-    const dir = await deps.gitDir(subject.path);
-    const mtime = await deps.lockMtime(`${dir}/locked`);
+    //
+    // Raced rather than awaited: a read that never returns would otherwise
+    // never reach the catch below, and the answer this proof owes on a stalled
+    // mount is `unproven`, not silence.
+    const mtime = await Promise.race([
+      deps.gitDir(subject.path).then((dir) => deps.lockMtime(`${dir}/locked`)),
+      deadline.elapsed.then(() => undefined),
+    ]);
+    if (mtime === undefined) {
+      return "unproven";
+    }
     return deps.now() - mtime >= LOCK_AGE_MS ? "passed" : "failed";
   } catch {
     // A lock we cannot age is neither stale nor fresh.
     return "unproven";
+  } finally {
+    deadline.cancel();
   }
 }
 
-function ownerProof(subject: OrphanProofSubject): ProofOutcome {
-  if (!subject.sessions.ok) {
+async function ownerProof(subject: OrphanProofSubject): Promise<ProofOutcome> {
+  const sessions = await subject.sessions;
+  if (!sessions.ok) {
     return "unproven";
   }
-  const here = subject.sessions.value.filter((s) => isPathInside(s.cwd, subject.path));
+  const here = sessions.value.filter((s) => isPathInside(s.cwd, subject.path));
   // A dead record is evidence NOBODY is here, which is why the removal path
   // reads records the presence reader discards (worktree-removal.md § 4.1).
   return here.some((s) => s.alive) ? "failed" : "passed";
@@ -127,10 +164,18 @@ async function mergeProof(subject: OrphanProofSubject, deps: OrphanProofDeps): P
  * `init.defaultBranch` in particular is a preference about repositories yet to
  * be created and says nothing about this one.
  */
+const DEFAULT_REMOTE = "origin";
+
 export async function resolveDefaultBranch(worktreePath: string, git: ProofGitRun): Promise<string | undefined> {
-  const named = await ok(git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], worktreePath));
-  // `origin/main` → `main`. Only the last segment is the branch name.
-  const fromRemote = named?.slice(named.lastIndexOf("/") + 1);
+  const named = await ok(git(["symbolic-ref", "--short", `refs/remotes/${DEFAULT_REMOTE}/HEAD`], worktreePath));
+  // `origin/main` → `main`, and `origin/release/2.x` → `release/2.x`. Only the
+  // remote's own name is a prefix; everything after it is the branch, slashes
+  // included. Slicing after the LAST slash truncates a slash-separated default
+  // to its final segment, which is not a local head — so the ladder falls
+  // through to `main` and proves against a branch that is not the default
+  // (round-1 B1). An answer that does not carry the prefix is not an answer to
+  // the question asked, and interpreting it anyway is the same wrong-default bug.
+  const fromRemote = named?.startsWith(`${DEFAULT_REMOTE}/`) ? named.slice(DEFAULT_REMOTE.length + 1) : undefined;
   const configured = await ok(git(["config", "init.defaultBranch"], worktreePath));
   for (const candidate of [fromRemote, configured, "main", "master"]) {
     if (candidate === undefined || candidate.length === 0) {

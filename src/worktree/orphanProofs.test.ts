@@ -236,6 +236,84 @@ describe("the merge proof", () => {
   });
 });
 
+describe("the lock read is bounded", () => {
+  /** Fires at once, so the suite proves the bound without waiting for it. */
+  const immediately = () => {
+    let fire: () => void = () => {};
+    const elapsed = new Promise<void>((resolve) => {
+      fire = resolve;
+    });
+    queueMicrotask(fire);
+    return { elapsed, cancel: () => {} };
+  };
+
+  it("answers unproven when the stat never returns", async () => {
+    // Awaited inside the assessment's own Promise.all, so a stalled mount here
+    // does not report a slow proof — it holds the removal open, which is the
+    // one direction this action must never fail in (round-1 B3).
+    const proofs = await readOrphanProofs(
+      { path: WT, locked: true, sessions: { ok: true, value: [] } },
+      deps({ wait: immediately, lockMtime: () => new Promise<number>(() => {}) }),
+    );
+
+    expect(proofs.lockAged).toBe("unproven");
+  });
+
+  it("answers unproven when the git dir read never returns", async () => {
+    const proofs = await readOrphanProofs(
+      { path: WT, locked: true, sessions: { ok: true, value: [] } },
+      deps({ wait: immediately, gitDir: () => new Promise<string>(() => {}) }),
+    );
+
+    expect(proofs.lockAged).toBe("unproven");
+  });
+
+  it("still answers a stat that returns in time", async () => {
+    // The negative that gives the two above their meaning: the bound must not
+    // cost the reachable case its answer.
+    const proofs = await readOrphanProofs(
+      { path: WT, locked: true, sessions: { ok: true, value: [] } },
+      deps({ lockMtime: async () => NOW - LOCK_AGE_MS - 1 }),
+    );
+
+    expect(proofs.lockAged).toBe("passed");
+  });
+});
+
+describe("the proofs that need no registry do not wait on one", () => {
+  it("issues the lock and merge reads before the session read resolves", async () => {
+    // They joined one `await` on the registry, so registry growth delayed two
+    // reads that never needed it and widened the assessment's own interval
+    // (round-1 W2).
+    const seen: string[][] = [];
+    let admit: (r: { ok: true; value: never[] }) => void = () => {};
+    const sessions = new Promise<{ ok: true; value: never[] }>((resolve) => {
+      admit = resolve;
+    });
+    const lockAsked: string[] = [];
+
+    const done = readOrphanProofs(
+      { path: WT, locked: true, branch: "feat", sessions },
+      deps({
+        git: gitTable({}, seen),
+        gitDir: async () => "/repo/.git/worktrees/wt-a",
+        lockMtime: async (p) => {
+          lockAsked.push(p);
+          return NOW;
+        },
+      }),
+    );
+
+    // Let every microtask that does NOT depend on `sessions` run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(lockAsked, "the lock read waited on the registry").toHaveLength(1);
+    expect(seen.length, "the merge read waited on the registry").toBeGreaterThan(0);
+
+    admit({ ok: true, value: [] });
+    await done;
+  });
+});
+
 describe("resolveDefaultBranch", () => {
   it("prefers what origin/HEAD names", async () => {
     const name = await resolveDefaultBranch(
@@ -275,6 +353,42 @@ describe("resolveDefaultBranch", () => {
         }),
       ),
     ).toBe("master");
+  });
+
+  it("keeps a slash-separated default branch whole", async () => {
+    // Probed on git 2.50.1: a clone whose default is `release/2.x` reports
+    // `origin/release/2.x`. Slicing after the LAST slash gives `2.x`, which is
+    // not a local head — so the ladder falls through to `main`, and the merge
+    // proof then compares against a branch that is not the default at all
+    // (round-1 B1).
+    const name = await resolveDefaultBranch(
+      WT,
+      gitTable({
+        "symbolic-ref --short refs/remotes/origin/HEAD": { code: 0, stdout: "origin/release/2.x\n" },
+        "rev-parse --verify --quiet refs/heads/release/2.x": { code: 0, stdout: "abc\n" },
+        // Present, and must NOT win: this is the branch a truncating resolver
+        // would have proved against.
+        "rev-parse --verify --quiet refs/heads/main": { code: 0, stdout: "def\n" },
+      }),
+    );
+
+    expect(name).toBe("release/2.x");
+  });
+
+  it("refuses a symbolic-ref answer that does not name the remote it asked about", async () => {
+    // Only `origin/<name>` is an answer to the question asked. Anything else is
+    // a string this resolver cannot interpret, and interpreting it anyway is
+    // how a confident wrong default gets chosen.
+    const name = await resolveDefaultBranch(
+      WT,
+      gitTable({
+        "symbolic-ref --short refs/remotes/origin/HEAD": { code: 0, stdout: "upstream/trunk\n" },
+        "rev-parse --verify --quiet refs/heads/trunk": { code: 0, stdout: "abc\n" },
+        "rev-parse --verify --quiet refs/heads/master": { code: 0, stdout: "def\n" },
+      }),
+    );
+
+    expect(name).toBe("master");
   });
 
   it("names nothing when no candidate exists as a local ref", async () => {

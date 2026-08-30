@@ -78,3 +78,16 @@
     3. `src/extension.ts` supplies the reader over the existing runner and the records from 2_1's producer.
     4. Cover in `src/providers/WorktreeHost.actions.test.ts` that the proofs reach the assessment, and in `src/extension.worktreeAssembly.test.ts` that they survive the production boundary — a module test asserting against its own injected fake cannot see a wrapper that drops an argument.
   - **Boundary**: the assessment's await count does not grow — the reads join the existing suspension point
+
+- [x] 4_1 Round-1 fixes: B1, B3(b), W2 — verified: pnpm exec vitest run 'src/worktree/orphanProofs.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_3
+  - **Refs**: design.md D4, D5, D6, D7; .reviews/round-1.md
+  - **Acceptance**:
+    - Outcome: A default branch whose name contains a slash is compared against itself, and a lock read that never returns answers unproven instead of holding the assessment open
+    - Verify: unit src/worktree/orphanProofs.test.ts
+  - **Plan**:
+    1. B1 — `resolveDefaultBranch` in `src/worktree/orphanProofs.ts` strips the exact remote-name prefix from what `symbolic-ref --short` reports and refuses an answer that does not carry it. Slicing after the LAST slash truncates a slash-separated default branch to its final segment, which is not a local head, so the ladder falls through to `main` and can prove a branch merged against a branch that is not the default. Probed on git 2.50.1.
+    2. B3(b) — the lock read is bounded. `lockProof` races the git-dir read and the stat against a recorded deadline built from `src/worktree/deadline.ts`, answering `unproven` on expiry. It is one bounded stat of one small file, which is what design.md's failure-surface inventory already claims it is.
+    3. W2 — the proof producer in `src/extension.ts` starts the lock and merge proofs immediately and joins the sessions promise only where ownership is evaluated. Neither of those two reads needs the registry.
+    4. Cover in `src/worktree/orphanProofs.test.ts`: a slashed default resolves whole and beats a competing local `main`; a `--short` answer without the `origin/` prefix is refused; a stat that never returns answers unproven rather than hanging.
+  - **Boundary**: no new invariant owner — the lock deadline is one bounded read answering unproven, NOT the shared in-flight read registry WT-013.1 round-5 W3 needs, which stays open and unwaived

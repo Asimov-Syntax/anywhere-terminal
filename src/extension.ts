@@ -799,17 +799,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // the ownership proof is about the records that read returns, and a
       // second scan of the same directory could disagree with the first about
       // the same instant (design.md D3).
-      proofs: async (subject, sessions) => {
-        const read = await sessions;
-        return readOrphanProofs(
+      proofs: (subject, sessions) =>
+        readOrphanProofs(
           {
             path: subject.path,
             locked: subject.locked,
             ...(subject.branch === undefined ? {} : { branch: subject.branch }),
+            // Handed UNRESOLVED. The lock and merge proofs need no registry at
+            // all, and awaiting it here made them wait on one (round-1 W2).
+            //
             // `notApplicable` is not a successful read of no records. It is the
             // registry saying its question did not arise, and the proof it
             // feeds must report unproven rather than "nobody is here".
-            sessions: read.ok === true ? { ok: true, value: read.value } : { ok: false },
+            sessions: sessions.then((read) => (read.ok === true ? { ok: true, value: read.value } : { ok: false })),
           },
           {
             git: (args, cwd) => worktreeTreeDeps.runner.run(args, cwd),
@@ -825,8 +827,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               ),
             now: () => Date.now(),
           },
-        );
-      },
+        ),
       // The last completed window pass's claims, keyed by the pane that made
       // each one. Published rather than recomputed: `identify()` reads the
       // process table and falls back to heuristics, so a second copy would cost
