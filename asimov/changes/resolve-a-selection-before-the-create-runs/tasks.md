@@ -14,7 +14,7 @@
     5. Cover in `src/worktree/createResolution.test.ts`: a reported `debris` disposition carries nothing a delete could be built from; each mode; a branch held by a live worktree blocks rather than reuses; a branch held by a `prunable` one does NOT block, because that registration is exactly what reattach repairs; an empty query resolves nothing rather than guessing.
   - **Boundary**: read-only and git-free — this module runs no command and touches no disk
 
-- [ ] 1_2 Corroborate a prunable claim, or decline to offer the repair
+- [x] 1_2 Corroborate a prunable claim, or decline to offer the repair — verified: pnpm exec vitest run 'src/worktree/reattachProbe.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D3; specs/worktree-panel/spec.md#a-stale-registration-is-repaired-in-place-and-only-while-git-can-repair-it
   - **Acceptance**:
