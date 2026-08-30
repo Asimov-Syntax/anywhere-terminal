@@ -3,6 +3,7 @@ import {
   ASIMOV_PROVIDER_FILE,
   type AsimovProviderDeps,
   MAX_MODEL_ROWS,
+  MAX_SCAN,
   readAsimovProvisioning,
 } from "./asimovProvider";
 
@@ -326,5 +327,81 @@ describe("what it refuses to trust (round-1 B2, B7, B8, W1)", () => {
 
     expect(model.problems.map((p) => p.reason)).toEqual(["unreadable"]);
     expect(model.entries).toEqual([]);
+  });
+});
+
+describe("what it refuses to spend (round-2 B7, W6)", () => {
+  it("[B7] stops scanning a directory that matches nothing, rather than reading all of it", async () => {
+    // The cost is the ENUMERATION, not the matches. A directory of names that
+    // all fail the pattern was still materialized, copied and sorted in full.
+    let seen = 0;
+    const huge = {
+      readdir: async function* () {
+        for (;;) {
+          seen += 1;
+          yield `no-match-${seen}.txt`;
+        }
+      },
+    };
+    const deps: AsimovProviderDeps = {
+      ...withYaml("copy:\n  - docs/*.md\n"),
+      readdir: huge.readdir as unknown as AsimovProviderDeps["readdir"],
+    };
+    const model = await readAsimovProvisioning(deps, ROOT);
+
+    expect(seen).toBeLessThanOrEqual(MAX_SCAN + 1);
+    expect(model.entries).toEqual([]);
+    expect(model.problems.some((p) => p.reason === "malformed")).toBe(true);
+  });
+
+  it("[B7] counts ports and setup steps against the same budget as entries", async () => {
+    // The cap read `entries` alone, so three of the four collections it claimed
+    // to bound went straight past it.
+    const ports = Array.from({ length: MAX_MODEL_ROWS + 20 }, (_, i) => `  P${i}: 1`).join("\n");
+    const model = await readAsimovProvisioning(withYaml(`ports:\n${ports}\n`), ROOT);
+
+    expect(model.ports.length).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(model.problems.some((p) => p.reason === "malformed")).toBe(true);
+  });
+
+  it("[B7] bounds the problems an all-escaping directory can emit", async () => {
+    // Every match refused is still a row posted and rendered.
+    const many = Array.from({ length: MAX_MODEL_ROWS + 50 }, (_, i) => `e${String(i).padStart(4, "0")}.md`);
+    const deps = withYaml("copy:\n  - docs/*.md\n", { [`${ROOT}/docs`]: many });
+    const model = await readAsimovProvisioning(
+      { ...deps, realpath: async (p) => (p.includes("/docs/e") ? `/elsewhere/${p}` : p) },
+      ROOT,
+    );
+
+    expect(model.problems.length).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(model.entries).toEqual([]);
+  });
+
+  it("[W6] says unreadable, not outside, when containment could not be decided", async () => {
+    // `isResolvedPathInsideRoot` answers false for a proven escape AND for a
+    // resolution that failed. Reporting both as an escape states something the
+    // code has not established.
+    const deps = withYaml("copy:\n  - .env\n");
+    const model = await readAsimovProvisioning(
+      {
+        ...deps,
+        realpath: async (p) => {
+          if (p.endsWith("/.env")) {
+            throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+          }
+          return p;
+        },
+      },
+      ROOT,
+    );
+
+    expect(model.entries).toEqual([]);
+    expect(model.problems.map((p) => p.reason)).toEqual(["unreadable"]);
+  });
+
+  it("[W6] still says malformed for a path proven to resolve outside", async () => {
+    const model = await readAsimovProvisioning(withYaml("copy:\n  - ../secrets\n"), ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["malformed"]);
   });
 });

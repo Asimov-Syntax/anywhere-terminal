@@ -27,8 +27,15 @@ export const ASIMOV_PROVIDER_FILE = "asimov/worktree.yaml";
 
 export interface AsimovProviderDeps {
   readFile(p: string): Promise<string>;
-  /** Names only, no types — the glob cares what is there, not what kind it is. */
-  readdir(p: string): Promise<readonly string[]>;
+  /**
+   * Names only, no types — the glob cares what is there, not what kind it is.
+   *
+   * An async iterable is accepted so a directory can be scanned under a budget
+   * rather than materialized: the enumeration cost is unbounded even when every
+   * name fails the pattern (.reviews/round-2.md B7). An array is still accepted
+   * for callers that have one already.
+   */
+  readdir(p: string): Promise<readonly string[]> | AsyncIterable<string>;
   realpath?(p: string): Promise<string>;
   lstat?(p: string): Promise<unknown>;
 }
@@ -56,6 +63,16 @@ const KNOWN_KEYS = new Set(["copy", "link", "ports", "setup"]);
  * many small globs cost the same as one large one.
  */
 export const MAX_MODEL_ROWS = 200;
+
+/**
+ * The most directory entries one glob may look at.
+ *
+ * Separate from the row budget because they bound different costs: a directory
+ * of a million non-matching names produces no rows at all and was still read in
+ * full (round-2 B7). Larger than the row budget so an ordinary directory holding
+ * some noise still expands completely.
+ */
+export const MAX_SCAN = 2000;
 
 /**
  * Absence, told apart from failure.
@@ -98,10 +115,41 @@ type Draft = {
   setup: ProvisionSetupStep[];
   ports: ProvisionPort[];
   problems: ProvisionProblem[];
+  /** The budget message has been recorded; do not record it again. */
+  capped?: boolean;
 };
 
 function problem(reason: ProvisionProblem["reason"], detail: string): ProvisionProblem {
   return { file: ASIMOV_PROVIDER_FILE, reason, detail: bounded(detail) };
+}
+
+/**
+ * How many rows the offer has already committed to.
+ *
+ * One budget across ALL four collections. Counting `entries` alone let ports,
+ * setup steps and problems past a cap described as model-wide (round-2 B7) —
+ * and a refused match emits a problem, so an all-escaping directory was as
+ * unbounded as an all-matching one.
+ */
+function emitted(draft: Draft): number {
+  return draft.entries.length + draft.ports.length + draft.setup.length + draft.problems.length;
+}
+
+/** True once the offer is full. Records the reason exactly once. */
+function full(draft: Draft, what: string): boolean {
+  // One slot reserved for the message itself, so the budget bounds the rows the
+  // webview actually receives rather than that number plus one.
+  if (emitted(draft) < MAX_MODEL_ROWS - 1) {
+    return false;
+  }
+  if (!draft.capped) {
+    draft.capped = true;
+    // Reported, never silently truncated: a shorter list than the repository
+    // asked for is the "shown list differs from the copied list" failure this
+    // module exists to prevent.
+    draft.problems.push(problem("malformed", `More than ${MAX_MODEL_ROWS} rows; ${what} and after are not offered.`));
+  }
+  return true;
 }
 
 function emptyModel(): ProvisionModel {
@@ -132,17 +180,75 @@ function splitGlob(relPath: string): { dir: string; prefix: string; suffix: stri
   return { dir, prefix: segment.slice(0, segStar), suffix: segment.slice(segStar + 1) };
 }
 
+/**
+ * Inside, proven outside, or not decidable.
+ *
+ * `isResolvedPathInsideRoot` answers a bare `false` for a path that resolves
+ * outside AND for a resolution that failed — EACCES on a parent, ELOOP on a
+ * cycle. Reporting both as an escape states something the code has not
+ * established (.reviews/round-2.md W6). The refusal is identical either way;
+ * only the reason differs.
+ */
+type Containment = "inside" | "outside" | "unresolvable";
+
 async function contained(
   relPath: string,
   repoRoot: string,
   root: PreparedRoot,
   deps: AsimovProviderDeps,
-): Promise<boolean> {
+): Promise<Containment> {
   if (relPath === "" || path.isAbsolute(relPath)) {
-    return false;
+    return "outside";
   }
   const absolute = path.resolve(repoRoot, relPath);
-  return isResolvedPathInsideRoot(absolute, root, { realpath: deps.realpath, lstat: deps.lstat });
+  if (await isResolvedPathInsideRoot(absolute, root, { realpath: deps.realpath, lstat: deps.lstat })) {
+    return "inside";
+  }
+  // Refused either way. This only asks WHY, and never decides containment —
+  // `resolvedPathBoundary` stays the one authority on that.
+  if (deps.realpath !== undefined) {
+    try {
+      await deps.realpath(absolute);
+    } catch {
+      return "unresolvable";
+    }
+  }
+  return "outside";
+}
+
+/** The problem a refusal deserves, given what could be proven about it. */
+function refusal(where: Containment, relPath: string): ProvisionProblem {
+  return where === "unresolvable"
+    ? problem("unreadable", `\`${relPath}\` could not be resolved.`)
+    : problem("malformed", `\`${relPath}\` does not resolve inside the repository.`);
+}
+
+/**
+ * Read at most `MAX_SCAN` names from a directory.
+ *
+ * Sorted after collection so expansion order stays deterministic, and bounded
+ * before it so a hostile directory cannot be materialized (round-2 B7).
+ */
+async function scanNames(
+  listing: Promise<readonly string[]> | AsyncIterable<string>,
+): Promise<{ names: string[]; truncated: boolean }> {
+  const names: string[] = [];
+  let truncated = false;
+  if (Symbol.asyncIterator in Object(listing)) {
+    for await (const name of listing as AsyncIterable<string>) {
+      if (names.length >= MAX_SCAN) {
+        truncated = true;
+        break;
+      }
+      names.push(name);
+    }
+  } else {
+    const all = await (listing as Promise<readonly string[]>);
+    truncated = all.length > MAX_SCAN;
+    names.push(...all.slice(0, MAX_SCAN));
+  }
+  names.sort();
+  return { names, truncated };
 }
 
 /**
@@ -172,13 +278,17 @@ async function entriesFor(
       continue;
     }
     const relPath = raw.trim();
+    if (full(draft, `\`${relPath}\``)) {
+      return;
+    }
     if (!relPath.includes("*")) {
-      if (await contained(relPath, repoRoot, root, deps)) {
+      const where = await contained(relPath, repoRoot, root, deps);
+      if (where === "inside") {
         draft.entries.push({ id: nextId(), path: relPath, mode, source: ASIMOV_PROVIDER_FILE });
       } else {
         // Refused and reported, never clamped: clamping turns a suspicious
         // entry into a silently different one (§ 7).
-        draft.problems.push(problem("malformed", `\`${relPath}\` does not resolve inside the repository.`));
+        draft.problems.push(refusal(where, relPath));
       }
       continue;
     }
@@ -194,13 +304,16 @@ async function entriesFor(
     // root, and `isResolvedPathInsideRoot` refuses a candidate equal to the root
     // on purpose — its callers are about to read the candidate as a file. Asking
     // it here would report `*.md` as escaping the repository, which is a lie.
-    if (glob.dir !== "" && !(await contained(glob.dir, repoRoot, root, deps))) {
-      draft.problems.push(problem("malformed", `\`${relPath}\` does not resolve inside the repository.`));
-      continue;
+    if (glob.dir !== "") {
+      const parent = await contained(glob.dir, repoRoot, root, deps);
+      if (parent !== "inside") {
+        draft.problems.push(refusal(parent, relPath));
+        continue;
+      }
     }
-    let names: readonly string[];
+    let scanned: { names: string[]; truncated: boolean };
     try {
-      names = await deps.readdir(path.resolve(repoRoot, glob.dir));
+      scanned = await scanNames(deps.readdir(path.resolve(repoRoot, glob.dir)));
     } catch (error) {
       if (!isAbsence(error)) {
         // Present and unreadable is not the same as absent. Reported, so the
@@ -214,34 +327,32 @@ async function entriesFor(
       // legitimately carries optional material (§ 3.1).
       continue;
     }
-    for (const name of [...names].sort()) {
+    if (scanned.truncated) {
+      draft.problems.push(
+        problem("malformed", `\`${relPath}\` names a directory too large to scan; it is not offered.`),
+      );
+      continue;
+    }
+    for (const name of scanned.names) {
       if (name.length < glob.prefix.length + glob.suffix.length) {
         continue;
       }
       if (!name.startsWith(glob.prefix) || !name.endsWith(glob.suffix)) {
         continue;
       }
-      if (draft.entries.length >= MAX_MODEL_ROWS) {
-        // Reported, never silently truncated: a shorter list than the repository
-        // asked for is exactly the "shown list differs from the copied list"
-        // failure this module exists to prevent, so it is stated (B7).
-        draft.problems.push(
-          problem(
-            "malformed",
-            `\`${relPath}\` fills the ${MAX_MODEL_ROWS}-row budget; it and anything after it are not offered.`,
-          ),
-        );
-        // Returns rather than continues: the budget is model-wide, so every
-        // later declaration would be refused too, and one honest message beats
-        // one per remaining path.
+      const expanded = glob.dir === "" ? name : `${glob.dir}/${name}`;
+      // Returns rather than continues: the budget is model-wide, so every later
+      // declaration would be refused too, and one honest message beats one per
+      // remaining path.
+      if (full(draft, `\`${expanded}\``)) {
         return;
       }
-      const expanded = glob.dir === "" ? name : `${glob.dir}/${name}`;
       // Per MATCH, not per parent. A contained directory says nothing about a
       // child symlink, and an expanded entry is what a later task materializes
       // (round-1 B2) — which is the same authorization D4 gives literal entries.
-      if (!(await contained(expanded, repoRoot, root, deps))) {
-        draft.problems.push(problem("malformed", `\`${expanded}\` does not resolve inside the repository.`));
+      const where = await contained(expanded, repoRoot, root, deps);
+      if (where !== "inside") {
+        draft.problems.push(refusal(where, expanded));
         continue;
       }
       draft.entries.push({ id: nextId(), path: expanded, mode, source: ASIMOV_PROVIDER_FILE });
@@ -272,12 +383,14 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
   }
 
   const providers = [{ id: "asimov" as const, file: ASIMOV_PROVIDER_FILE, active: true }];
-  if (!(await contained(ASIMOV_PROVIDER_FILE, repoRoot, root, deps))) {
-    return {
-      ...emptyModel(),
-      providers,
-      problems: [problem("malformed", `\`${ASIMOV_PROVIDER_FILE}\` does not resolve inside the repository.`)],
-    };
+  const providerAt = await contained(ASIMOV_PROVIDER_FILE, repoRoot, root, deps);
+  if (providerAt !== "inside") {
+    // An absent file resolves as unreadable here rather than outside, and the
+    // read below is what tells absence from failure — so only a PROVEN escape
+    // short-circuits, and everything else falls through to be classified there.
+    if (providerAt === "outside") {
+      return { ...emptyModel(), providers, problems: [refusal(providerAt, ASIMOV_PROVIDER_FILE)] };
+    }
   }
 
   const file = path.resolve(repoRoot, ASIMOV_PROVIDER_FILE);
@@ -338,6 +451,9 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
       draft.problems.push(problem("malformed", "`ports` must be a mapping of names."));
     } else {
       for (const name of Object.keys(record.ports as Record<string, unknown>)) {
+        if (full(draft, `port \`${name}\``)) {
+          break;
+        }
         // No number: the name is what the file declares, and probing for a free
         // port is WT-012.6's. The row is offered without one.
         draft.ports.push({ id: nextId(), name, source: ASIMOV_PROVIDER_FILE });
@@ -350,6 +466,9 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
       draft.problems.push(problem("malformed", "`setup` must be a list of commands."));
     } else {
       for (const raw of record.setup) {
+        if (full(draft, "a setup step")) {
+          break;
+        }
         if (typeof raw !== "string" || raw.trim() === "") {
           draft.problems.push(problem("malformed", "`setup` holds an entry that is not a command."));
           continue;

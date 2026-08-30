@@ -137,14 +137,14 @@
     3. In `src/webview/worktree/WorktreeCreateDialog.ts`, register the checkbox listener ONCE outside the redraw and resolve the current offer's selection set at event time — a listener per redraw leaks, and item ids are offer-local so a stale handler writes another offer's set (W5). Cover W5 in `src/webview/worktree/WorktreeCreateDialog.test.ts` and the cache clear in `src/webview/worktree/WorktreeController.test.ts`.
   - **Boundary**: no new webview-to-extension message — a form-close transition is a contract change owned by worktree-rpc.md § 2.4, not a review fix
 
-- [ ] 3_2 Bound the enumeration, and say only what was proven
+- [x] 3_2 Bound the enumeration, and say only what was proven — verified: pnpm exec vitest run 'src/worktree/provisioning/asimovProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: .reviews/round-2.md B7, W6; docs/design/worktree-provisioning.md#7-security; design.md D3, design.md D4
   - **Acceptance**:
     - Outcome: A directory of unmatched names costs a bounded scan, and a path refused for an unreadable parent is not reported as an escape
     - Verify: unit src/worktree/provisioning/asimovProvider.test.ts
   - **Plan**:
-    1. Iterate the glob's directory under a scan budget instead of materializing and sorting the whole listing — the enumeration cost is unbounded even when no name matches (B7).
+    1. In `src/worktree/provisioning/asimovProvider.ts`, iterate the glob's directory under a scan budget instead of materializing and sorting the whole listing — the enumeration cost is unbounded even when no name matches (B7). Cover the new bounds in `src/worktree/provisioning/asimovProvider.test.ts`, and extend the injected deps in `src/worktree/provisioning/provisioningDeps.ts` if the iteration needs a new one.
     2. Apply ONE budget across every emitted collection: entries, ports, setup steps and problems. The row cap currently reads `entries` alone, so the other three bypass it (B7).
     3. Return a discriminated containment result — inside, outside, unresolvable — and report `unreadable` for a resolution that failed, keeping `malformed` for a proven escape (W6). The refusal itself does not change; only the reason it states.
   - **Boundary**: no containment implementation of its own — `src/utils/resolvedPathBoundary.ts` stays the only one

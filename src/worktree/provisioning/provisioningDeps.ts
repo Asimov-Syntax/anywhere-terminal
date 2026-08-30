@@ -5,7 +5,7 @@
 // one place that supplies the real ones, and the one place the byte budget is
 // enforced — the adapter classifies failures, it does not perform them.
 
-import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { lstat, open, opendir, realpath } from "node:fs/promises";
 import type { AsimovProviderDeps } from "./asimovProvider";
 
 /**
@@ -63,7 +63,15 @@ async function readBounded(filePath: string, maxBytes: number): Promise<string> 
 export function createProvisioningDeps(): AsimovProviderDeps {
   return {
     readFile: (p) => readBounded(p, MAX_PROVIDER_BYTES),
-    readdir: (p) => readdir(p),
+    // `opendir` rather than `readdir`: the adapter scans under a budget, and a
+    // whole-directory read would materialize a hostile directory before any
+    // budget could apply (.reviews/round-2.md B7).
+    readdir: async function* (p: string) {
+      const dir = await opendir(p);
+      for await (const entry of dir) {
+        yield entry.name;
+      }
+    },
     realpath: (p) => realpath(p),
     lstat: (p) => lstat(p),
   };
