@@ -195,25 +195,25 @@ export class SnapshotPool {
     const after = await this.readGeneration(dbPath);
     // Nothing is retained once the pool is closed: this snapshot is handed to its
     // caller and deleted at its last release, never left for a sweeper that is gone.
-    if (!this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps)) {
-      const superseded = this.retained.get(dbPath);
-      if (superseded) {
-        this.retained.delete(dbPath);
-        this.retainedBytes -= superseded.bytes;
-      }
+    const stable = !this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
+
+    // Sized BEFORE the accounting, so the accounting itself can be synchronous.
+    let bytes: number | undefined;
+    if (stable) {
+      bytes = await this.sizeOf(entry.file).catch(() => undefined);
+    }
+
+    const evicted: Entry[] = [];
+    if (stable && bytes !== undefined) {
       entry.stamp = after.stamps;
+      entry.bytes = bytes;
       entry.lastUsed = this.now();
-      if (await this.admit(entry)) {
-        entry.retained = true;
-        this.retained.set(dbPath, entry);
-        this.retainedBytes += entry.bytes;
-        this.startSweeping();
-      }
-      if (superseded) {
-        // Never deleted underneath a reader: a superseded entry still being read is
-        // released by its last lease instead (D3).
-        await this.discard(superseded);
-      }
+      this.admitWithinOneTurn(dbPath, entry, evicted);
+    }
+    // Deleting AFTER the accounting keeps that block free of suspension points; an
+    // evicted entry is already out of the pool and is released by its last reader.
+    for (const victim of evicted) {
+      await this.discard(victim);
     }
     return entry;
   }
@@ -241,27 +241,36 @@ export class SnapshotPool {
     };
   }
 
-  /** Make room for `entry`, evicting least-recently-used snapshots until it fits.
-   *  False when it cannot fit at all — it is then leased once and never retained. */
-  private async admit(entry: Entry): Promise<boolean> {
-    try {
-      entry.bytes = await this.sizeOf(entry.file);
-    } catch {
-      return false; // A snapshot whose size is unknown is not one to budget for.
+  /**
+   * The whole admission decision, in one turn: supersede, check both budgets, choose
+   * victims, insert. It MUST contain no `await` — that is what makes it atomic, and
+   * an await here is exactly how concurrent producers came to pass the same capacity
+   * check and leave the pool over its cap (round-3 B6). Victims are collected for the
+   * caller to delete afterwards rather than deleted here.
+   */
+  private admitWithinOneTurn(dbPath: string, entry: Entry, evicted: Entry[]): void {
+    const superseded = this.retained.get(dbPath);
+    if (superseded) {
+      this.retained.delete(dbPath);
+      this.retainedBytes -= superseded.bytes;
+      evicted.push(superseded);
     }
     if (entry.bytes > this.maxBytes) {
-      return false;
+      return; // Can never fit, so it never costs another snapshot its place.
     }
     while (this.retained.size + 1 > this.maxEntries || this.retainedBytes + entry.bytes > this.maxBytes) {
       const victim = this.leastRecentlyUsed();
       if (!victim) {
-        return false;
+        return;
       }
       this.retained.delete(victim[0]);
       this.retainedBytes -= victim[1].bytes;
-      await this.discard(victim[1]);
+      evicted.push(victim[1]);
     }
-    return true;
+    entry.retained = true;
+    this.retained.set(dbPath, entry);
+    this.retainedBytes += entry.bytes;
+    this.startSweeping();
   }
 
   private leastRecentlyUsed(): [string, Entry] | undefined {

@@ -123,7 +123,7 @@
 
 ## 4. Round-3 review fixes
 
-- [ ] 4_1 Make admission a transaction that cannot interleave
+- [x] 4_1 Make admission a transaction that cannot interleave — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: .reviews/round-3.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
   - **Acceptance**:
     - Outcome: concurrent admissions never exceed the pool's budgets

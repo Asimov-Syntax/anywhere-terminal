@@ -493,6 +493,63 @@ describe("SnapshotPool capacity", () => {
     await reused.release();
     await pool.dispose();
   });
+
+  /** Hold every producer at its sizing step until all `n` have arrived, then release
+   *  them together. Without this the producers queue behind real I/O and admit one at
+   *  a time, which is not the situation the budget has to survive. */
+  function sizingBarrier(n: number): (file: string) => Promise<number> {
+    const waiting: Array<() => void> = [];
+    return async (file) => {
+      const size = (await fs.stat(file)).size;
+      await new Promise<void>((resolve) => {
+        waiting.push(resolve);
+        if (waiting.length === n) {
+          for (const release of waiting) {
+            release();
+          }
+        }
+      });
+      return size;
+    };
+  }
+
+  it("never exceeds the entry budget when admissions land concurrently", async () => {
+    let clock = 0;
+    const stores = await Promise.all([store("a"), store("b"), store("c"), store("d")]);
+    const pool = new SnapshotPool({
+      ...deps,
+      maxEntries: 1,
+      now: () => (clock += 10),
+      sizeOf: sizingBarrier(stores.length),
+    });
+
+    // All four are released into admission together: each would pass the capacity
+    // check before any of them inserted, which is how the pool held 9 under a cap of 8.
+    const leases = await Promise.all(stores.map((db) => pool.borrow(db, produce)));
+    await Promise.all(leases.map((l) => l.release()));
+
+    expect(pool.retainedCount).toBe(1);
+    await pool.dispose();
+  });
+
+  it("never exceeds the byte budget when admissions land concurrently", async () => {
+    let clock = 0;
+    const stores = await Promise.all([store("a"), store("b"), store("c"), store("d"), store("e")]);
+    // Room for two snapshots of 100 bytes, not five.
+    const pool = new SnapshotPool({
+      ...deps,
+      maxEntries: 8,
+      maxBytes: 250,
+      now: () => (clock += 10),
+      sizeOf: sizingBarrier(stores.length),
+    });
+
+    const leases = await Promise.all(stores.map((db) => pool.borrow(db, produce)));
+    await Promise.all(leases.map((l) => l.release()));
+
+    expect(pool.retainedCount).toBeLessThanOrEqual(2);
+    await pool.dispose();
+  });
 });
 
 describe("SnapshotPool disposal", () => {
