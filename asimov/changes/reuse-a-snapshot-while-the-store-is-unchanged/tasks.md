@@ -43,3 +43,37 @@
     1. In `src/vault/sqlite.ts`, borrow the snapshot from the pool in `readSqlite` and `withSqliteSnapshot` instead of always producing one, releasing it when the query or callback completes, and expose the pool as an optional dep with one process-wide default.
     2. In `src/extension.ts`, dispose the pool on deactivate so retained snapshots do not outlive the host.
     3. Cover in `src/vault/sqlite.test.ts` that a second read of an unchanged store performs no further snapshot production, and that the atomicity and failure-status guarantees the parent change pinned still hold when reads are served from the pool.
+
+## 2. Round-1 review fixes
+
+- [ ] 2_1 Join an in-flight snapshot only when it started from the caller's store
+  - **Refs**: .reviews/round-1.md; design.md#d4-one-in-flight-snapshot-per-store-joined-only-on-a-matching-generation
+  - **Acceptance**:
+    - Outcome: a reader that has observed a write is never served the snapshot that was already in flight before it
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, carry the producer's stamp on the in-flight entry and join only when the caller's stamp matches it; a caller whose stamp differs awaits the flight, then takes its own snapshot.
+    2. Cover a late joiner that writes to the store after production began: it must produce a second snapshot and see its own write, while two callers at the same generation still share one.
+
+- [ ] 2_2 Bound the pool by capacity, not only by age
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-1.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
+  - **Acceptance**:
+    - Outcome: retained snapshots never exceed the pool's entry and byte budget, whatever a list touches
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, measure each snapshot on retention and evict least-recently-used entries until it fits an entry-count and byte budget; a snapshot that cannot fit is leased once and never retained.
+    2. Make `evictIdle` delete a binding only when the map still holds the entry it captured, so a concurrently replaced snapshot is not orphaned (W1).
+    3. Cover: a budget-exceeding sequence retains only what fits, the evicted file is gone, an entry still borrowed survives its eviction until released, an oversized snapshot is never retained, and a two-store interleaving does not orphan a replacement.
+
+- [ ] 2_3 Make dispose a barrier and correct the lifetime the entry points promise
+  - **Deps**: 2_2
+  - **Refs**: .reviews/round-1.md; design.md#d3a-dispose-is-a-barrier-not-a-sweep
+  - **Acceptance**:
+    - Outcome: after dispose resolves, no snapshot file remains and none can be created
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, make `dispose` reject new borrows, await in-flight productions, refuse post-close retention, and await outstanding leases before deleting what they hold.
+    2. In `src/vault/sqlite.ts`, correct `withSqliteSnapshot`'s doc comment, which still promises a sidecar copy and deletion before return (W2).
+    3. Cover a production in flight across a dispose, a lease outstanding across a dispose, and a borrow attempted after dispose.
+
