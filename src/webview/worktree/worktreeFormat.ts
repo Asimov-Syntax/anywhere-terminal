@@ -328,6 +328,31 @@ export function agentRowTitle(row: WorktreeAgentRow): string {
 }
 
 /**
+ * The preview a row actually draws: withheld when it adds nothing to the row,
+ * verbatim otherwise (worktree-panel § "A row draws its preview only when it adds
+ * something").
+ *
+ * Only the TITLE is normalized. Running `stripDecorations` over the preview too
+ * would read more naturally and is exactly what `worktree-agent-presence` §
+ * "A preview is message text, not a pane title" forbids: it turns `* deploy the
+ * build` into `deploy the build` and a lone `*` into nothing, editing content the
+ * model wrote. So the comparison is raw preview against stripped title, and a
+ * marker the title's stripper would have eaten keeps the preview on screen.
+ *
+ * Compared against `stripDecorations(row.title)` rather than `agentRowTitle`,
+ * because the latter substitutes `(untitled)` — a placeholder, not a title, and a
+ * preview that happens to read the same words is not repeating anything.
+ */
+export function presentedPreview(row: WorktreeAgentRow): string {
+  const preview = row.preview ?? "";
+  if (preview.trim() === "") {
+    return "";
+  }
+  const title = stripDecorations(row.title);
+  return title !== "" && preview === title ? "" : preview;
+}
+
+/**
  * Row tooltip: branch on the first line, the path git reported on the second —
  * the path is never a row element (§ 3.2), so this is one of the two places it lives.
  */

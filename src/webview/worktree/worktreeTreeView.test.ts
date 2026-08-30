@@ -172,3 +172,30 @@ describe("[1_2] a delegation section outside a tree", () => {
     expect(never.textContent).toContain("No session");
   });
 });
+
+describe("a preview that adds nothing to the row", () => {
+  it("draws no second line when it repeats the title", () => {
+    const el = render({ title: "Building", preview: "Building" });
+    expect(previewOf(el)).toBeNull();
+  });
+
+  it("names the sentence once in the row's hover text", () => {
+    const el = render({ title: "Building", preview: "Building" });
+    expect(el.dataset.tip?.split("\n").filter((line) => line === "Building")).toHaveLength(1);
+  });
+
+  it("still draws a preview that differs from the title by one word", () => {
+    const el = render({ title: "Building", preview: "Building the extension" });
+    expect(previewOf(el)?.textContent).toBe("Building the extension");
+  });
+
+  it("still draws a preview whose marker the title's stripper would eat", () => {
+    const el = render({ title: "Building", preview: "* Building" });
+    expect(previewOf(el)?.textContent).toBe("* Building");
+  });
+
+  it("draws the line again once the session says something else", () => {
+    expect(previewOf(render({ title: "Building", preview: "Building" }))).toBeNull();
+    expect(previewOf(render({ title: "Building", preview: "Bash: pnpm test" }))?.textContent).toBe("Bash: pnpm test");
+  });
+});

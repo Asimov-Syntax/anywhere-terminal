@@ -17,6 +17,7 @@ import {
   PRESENTED_ORDER,
   PRESENTED_STRENGTH,
   presentedActivity,
+  presentedPreview,
   stripDecorations,
   strongestActivity,
   worktreeBadges,
@@ -391,5 +392,38 @@ describe("agentCountLabel", () => {
   it("is plural-safe", () => {
     expect(agentCountLabel(1)).toBe("1 agent");
     expect(agentCountLabel(3)).toBe("3 agents");
+  });
+});
+
+describe("presentedPreview", () => {
+  it("withholds a preview that repeats the row's title", () => {
+    expect(presentedPreview(agentRow({ rowId: "a", title: "Building", preview: "Building" }))).toBe("");
+  });
+
+  it("withholds a preview that repeats a title carrying a spinner frame", () => {
+    expect(presentedPreview(agentRow({ rowId: "a", title: "\u280b Building", preview: "Building" }))).toBe("");
+  });
+
+  it.each([[""], ["   "]])("withholds a blank preview (%j)", (preview) => {
+    expect(presentedPreview(agentRow({ rowId: "a", title: "Building", preview }))).toBe("");
+  });
+
+  it("draws a preview that differs from the title by one word", () => {
+    const row = agentRow({ rowId: "a", title: "Building", preview: "Building the extension" });
+    expect(presentedPreview(row)).toBe("Building the extension");
+  });
+
+  it("never normalizes the preview, so a marker the title's stripper would eat survives", () => {
+    // `stripDecorations` turns "* Building" into "Building" and "*" into "". Running
+    // it over a preview is what worktree-agent-presence forbids: in message text the
+    // marker is content, so neither of these is a repeat of the title beside it.
+    expect(presentedPreview(agentRow({ rowId: "a", title: "Building", preview: "* Building" }))).toBe("* Building");
+    expect(presentedPreview(agentRow({ rowId: "a", title: "", preview: "*" }))).toBe("*");
+  });
+
+  it("draws a preview reading like the placeholder on a row with no title", () => {
+    // An untitled row DISPLAYS "(untitled)", but that is a placeholder rather than a
+    // title, so a preview saying the same words is not repeating anything.
+    expect(presentedPreview(agentRow({ rowId: "a", title: "", preview: "(untitled)" }))).toBe("(untitled)");
   });
 });

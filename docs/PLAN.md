@@ -363,7 +363,7 @@ nothing to provision.
 | **Labels** | user-visible-ui |
 | **Notes** | Deferred as "needs a decision, not a patch" — neither the spec nor the preview design carries a rule about what a row shows when two of its lines agree. The decision is exact equality after the normalization the title already receives, never similarity: a near-match still carries something the title did not, and hiding it would replace a redundancy with a worse lie. Every session is a one-message session at its first render, so this is the common case rather than an edge one |
 | **Acceptance** | A row whose preview exactly matches its title presents the title alone; a row whose preview differs by any amount presents both; a session that gains a second message regains its preview line |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-011.5] A Preview Outlives Nothing
 

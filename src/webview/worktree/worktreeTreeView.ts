@@ -22,6 +22,7 @@ import {
   isFallbackActivity,
   type PresenceGroup,
   type PresentedActivity,
+  presentedPreview,
   unchangedFor,
   worktreeBadges,
   worktreePills,
@@ -604,8 +605,10 @@ export function renderAgentRow(row: WorktreeAgentRow, opts: AgentRowOptions, cb:
   // NOT frame-stripped, unlike the title beside it. A preview is transcript
   // message text, where a leading `- ` is a bullet the model wrote, not an
   // animation frame an agent printed (source-the-agent-row-preview D4). It
-  // arrives bounded and single-line from its reader.
-  const previewText = row.preview ?? "";
+  // arrives bounded and single-line from its reader. `presentedPreview` withholds
+  // it when it repeats the title — every session is a one-message session at its
+  // first render — without normalizing it on the way past.
+  const previewText = presentedPreview(row);
   el.dataset.tip = [titleText, previewText, confidenceTip].filter(Boolean).join("\n");
 
   // 6 — collapsed child count. Disappears when expanded; the children show instead.
