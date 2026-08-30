@@ -112,7 +112,7 @@
     4. Export the repo id `src/webview/worktree/worktreeFixtures.ts` already defines, so a test wiring the offer channel names the same repository the seed does.
   - **Boundary**: no edit to `docs/ui/create-worktree.html` or `docs/ui/worktree-create-dialog.css`
 
-- [ ] 2_4 Write down the id obligation the merge task inherits
+- [x] 2_4 Write down the id obligation the merge task inherits — verified: pnpm run check-types && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: .reviews/round-1.md W4; design.md D2, design.md D5
   - **Acceptance**:
