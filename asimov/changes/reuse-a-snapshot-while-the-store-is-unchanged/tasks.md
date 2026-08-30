@@ -66,7 +66,7 @@
     2. Make `evictIdle` delete a binding only when the map still holds the entry it captured, so a concurrently replaced snapshot is not orphaned (W1).
     3. Cover: a budget-exceeding sequence retains only what fits, the evicted file is gone, an entry still borrowed survives its eviction until released, an oversized snapshot is never retained, and a two-store interleaving does not orphan a replacement.
 
-- [ ] 2_3 Make dispose a barrier and correct the lifetime the entry points promise
+- [x] 2_3 Make dispose a barrier and correct the lifetime the entry points promise — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 2_2
   - **Refs**: .reviews/round-1.md; design.md#d3a-dispose-is-a-barrier-not-a-sweep
   - **Acceptance**:

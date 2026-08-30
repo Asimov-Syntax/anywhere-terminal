@@ -4,6 +4,13 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type SnapshotLease, SnapshotPool, type SnapshotPoolDeps } from "./snapshotPool";
 
+/** Long enough for a disposal with real `fs.rm` calls in it to have finished if it
+ *  were not waiting, so "has not settled yet" is a claim about the barrier rather
+ *  than about how few awaits the test happened to use. */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 50));
+}
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => {
@@ -485,5 +492,120 @@ describe("SnapshotPool capacity", () => {
     expect(reused.file).toBe(small.file);
     await reused.release();
     await pool.dispose();
+  });
+});
+
+describe("SnapshotPool disposal", () => {
+  let root: string;
+  let dbPath: string;
+  let deps: SnapshotPoolDeps;
+
+  const produce = async (dest: string): Promise<void> => {
+    await fs.writeFile(dest, "snapshot");
+  };
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "at-pool-dispose-"));
+    dbPath = path.join(root, "store.db");
+    await fs.writeFile(dbPath, "base");
+    deps = {
+      mkdtemp: () => fs.mkdtemp(path.join(root, "snap-")),
+      rmrf: (dir) => fs.rm(dir, { recursive: true, force: true }),
+    };
+  });
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("deletes a snapshot whose production settles after disposal began", async () => {
+    const pool = new SnapshotPool(deps);
+    const gate = deferred();
+    const started = deferred();
+
+    const borrowing = pool.borrow(dbPath, async (dest) => {
+      started.resolve();
+      await gate.promise;
+      await produce(dest);
+    });
+    await started.promise;
+
+    let disposed = false;
+    const disposing = pool.dispose().then(() => {
+      disposed = true;
+    });
+    await flush();
+
+    // The barrier: disposal cannot finish while a snapshot is still being produced,
+    // or that snapshot lands after the sweep meant to remove it.
+    expect(disposed).toBe(false);
+
+    gate.resolve();
+    const lease = await borrowing;
+    await lease.release();
+    await disposing;
+
+    await expect(fs.access(lease.file)).rejects.toThrow();
+    expect(pool.retainedCount).toBe(0);
+  });
+
+  it("waits for an outstanding reader before deleting what it holds", async () => {
+    const pool = new SnapshotPool(deps);
+    const lease = await pool.borrow(dbPath, produce);
+
+    let disposed = false;
+    const disposing = pool.dispose().then(() => {
+      disposed = true;
+    });
+    await flush();
+
+    // Still readable, and dispose has not claimed to be finished.
+    expect(disposed).toBe(false);
+    await expect(fs.access(lease.file)).resolves.toBeUndefined();
+
+    await lease.release();
+    await disposing;
+    expect(disposed).toBe(true);
+    await expect(fs.access(lease.file)).rejects.toThrow();
+    expect(pool.retainedCount).toBe(0);
+  });
+
+  it("refuses to hand out a snapshot once disposed", async () => {
+    const pool = new SnapshotPool(deps);
+    const lease = await pool.borrow(dbPath, produce);
+    await lease.release();
+    await pool.dispose();
+
+    await expect(pool.borrow(dbPath, produce)).rejects.toThrow(/disposed/);
+  });
+  it("refuses a snapshot to a caller that was waiting out another production", async () => {
+    const pool = new SnapshotPool(deps);
+    const gate = deferred();
+    const started = deferred();
+
+    const first = pool.borrow(dbPath, async (dest) => {
+      started.resolve();
+      await gate.promise;
+      await produce(dest);
+    });
+    await started.promise;
+
+    // A different generation, so this caller waits for the flight rather than joining.
+    await fs.writeFile(dbPath, "base-changed");
+    // Handled synchronously: it rejects while the test is awaiting something else,
+    // and an unattached rejection would surface as an unhandled error.
+    const waiting = pool.borrow(dbPath, produce).then(
+      () => "resolved",
+      (err: unknown) => (err as Error).message,
+    );
+
+    const disposing = pool.dispose();
+    gate.resolve();
+    const lease = await first;
+    await lease.release();
+
+    await expect(waiting).resolves.toMatch(/disposed/);
+    await disposing;
+    await expect(fs.readdir(root)).resolves.toEqual(["store.db"]);
   });
 });

@@ -464,9 +464,13 @@ export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps =
 }
 
 /**
- * Copy a live database and its WAL/SHM sidecars once, then run bounded static
- * queries against that one disposable snapshot. The callback cannot access the
- * live path and the snapshot is deleted before this function returns.
+ * Borrow one engine-taken snapshot of a live database, then run bounded static
+ * queries against it. The callback cannot access the live path, and the lease ends
+ * before this function returns.
+ *
+ * The snapshot FILE may outlive the lease: the pool retains it while the store is
+ * provably unchanged, so the next read costs nothing. It is deleted when superseded,
+ * evicted, idle, or disposed at shutdown — never while a reader holds it.
  */
 export async function withSqliteSnapshot<T>(
   dbPath: string,

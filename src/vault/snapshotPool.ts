@@ -94,6 +94,12 @@ export class SnapshotPool {
   private retainedBytes = 0;
   private sweeper: ReturnType<typeof setInterval> | undefined;
   private disposed = false;
+  /** Every entry whose directory still exists, retained or merely on loan. Disposal
+   *  works from this, not from the retained map, so a snapshot produced during
+   *  shutdown cannot slip past the sweep that was meant to remove it (D3a). */
+  private readonly liveEntries = new Set<Entry>();
+  private outstandingLeases = 0;
+  private readonly quiesced: Array<() => void> = [];
 
   constructor(private readonly deps: SnapshotPoolDeps) {
     this.stamp = deps.stamp ?? stampStoreFiles;
@@ -111,6 +117,9 @@ export class SnapshotPool {
    * be mistaken for a store that is empty.
    */
   async borrow(dbPath: string, produce: (dest: string) => Promise<void>): Promise<SnapshotLease> {
+    if (this.disposed) {
+      throw new Error("snapshot pool is disposed");
+    }
     for (let waits = 0; ; waits++) {
       const before = await this.stamp(storePaths(dbPath));
       const hit = this.retained.get(dbPath);
@@ -128,6 +137,12 @@ export class SnapshotPool {
         }
         if (waits < MAX_JOIN_WAITS) {
           await joined.promise.catch(() => {});
+          // Re-checked after the wait: disposal may have captured the in-flight list
+          // while we were parked, and starting a production now would create a file
+          // the sweep has already passed.
+          if (this.disposed) {
+            throw new Error("snapshot pool is disposed");
+          }
           continue;
         }
       }
@@ -158,10 +173,11 @@ export class SnapshotPool {
       lastUsed: this.now(),
       bytes: 0,
     };
+    this.liveEntries.add(entry);
     try {
       await take(entry.file);
     } catch (err) {
-      await this.deps.rmrf(dir).catch(() => {});
+      await this.destroy(entry);
       throw err;
     }
 
@@ -170,7 +186,9 @@ export class SnapshotPool {
     // to neither stamp — retaining it under the earlier one would be a lie the next
     // reader believes.
     const after = await this.stamp(storePaths(dbPath));
-    if (stampable(before, dbPath) && sameStamps(before, after)) {
+    // Nothing is retained once the pool is closed: this snapshot is handed to its
+    // caller and deleted at its last release, never left for a sweeper that is gone.
+    if (!this.disposed && stampable(before, dbPath) && sameStamps(before, after)) {
       const superseded = this.retained.get(dbPath);
       if (superseded) {
         this.retained.delete(dbPath);
@@ -196,6 +214,7 @@ export class SnapshotPool {
   private lease(entry: Entry): SnapshotLease {
     entry.leases += 1;
     entry.lastUsed = this.now();
+    this.outstandingLeases += 1;
     let released = false;
     return {
       file: entry.file,
@@ -206,8 +225,14 @@ export class SnapshotPool {
         released = true;
         entry.leases -= 1;
         entry.lastUsed = this.now();
+        this.outstandingLeases -= 1;
         if (entry.leases === 0 && !entry.retained) {
-          await this.deps.rmrf(entry.dir).catch(() => {});
+          await this.destroy(entry);
+        }
+        if (this.outstandingLeases === 0) {
+          for (const wake of this.quiesced.splice(0)) {
+            wake();
+          }
         }
       },
     };
@@ -246,6 +271,11 @@ export class SnapshotPool {
     return oldest;
   }
 
+  /** How many snapshots the pool is currently holding. */
+  get retainedCount(): number {
+    return this.retained.size;
+  }
+
   /** Release the disk of every retained snapshot no reader has touched for `idleMs`. */
   async evictIdle(): Promise<void> {
     const cutoff = this.now() - this.idleMs;
@@ -263,16 +293,33 @@ export class SnapshotPool {
     }
   }
 
-  /** Extension shutdown: no retained snapshot outlives the process that made it. */
+  /**
+   * Extension shutdown, as a barrier rather than a sweep: no further borrows, every
+   * in-flight production awaited so it cannot outlive the sweep, every outstanding
+   * lease awaited so nothing is deleted under a reader, and then every remaining
+   * snapshot deleted (D3a).
+   */
   async dispose(): Promise<void> {
     this.disposed = true;
     this.stopSweeping();
-    const entries = [...this.retained.values()];
+
+    await Promise.allSettled([...this.inFlight.values()].map((flight) => flight.promise));
+    if (this.outstandingLeases > 0) {
+      await new Promise<void>((resolve) => this.quiesced.push(resolve));
+    }
+
     this.retained.clear();
     this.retainedBytes = 0;
-    for (const entry of entries) {
-      await this.discard(entry);
+    for (const entry of [...this.liveEntries]) {
+      entry.retained = false;
+      await this.destroy(entry);
     }
+  }
+
+  /** Delete an entry's directory and stop tracking it. */
+  private async destroy(entry: Entry): Promise<void> {
+    this.liveEntries.delete(entry);
+    await this.deps.rmrf(entry.dir).catch(() => {});
   }
 
   /** Give up ownership of an entry's disk — now if nobody holds it, otherwise at its
@@ -280,7 +327,7 @@ export class SnapshotPool {
   private async discard(entry: Entry): Promise<void> {
     entry.retained = false;
     if (entry.leases === 0) {
-      await this.deps.rmrf(entry.dir).catch(() => {});
+      await this.destroy(entry);
     }
   }
 
