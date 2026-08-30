@@ -564,3 +564,48 @@ describe("lookupCodexEntry: the query-error that used to look like a miss", () =
     expect(await readCodexEntry(ID, { codexDir: await store(), readSqliteFn: fn })).toBeNull();
   });
 });
+
+describe("round-1 B3: db-unreachable keeps the rollout fallback", () => {
+  const ID = "33333333-3333-4333-8333-333333333333";
+  const roots: string[] = [];
+  const storeWithRollout = async (): Promise<string> => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-codex-b3-"));
+    roots.push(dir);
+    const sessions = path.join(dir, "sessions", "2026", "08");
+    await fsp.mkdir(sessions, { recursive: true });
+    await fsp.writeFile(
+      path.join(sessions, `rollout-2026-08-30T00-00-00-${ID}.jsonl`),
+      `${JSON.stringify({ timestamp: "2026-08-30T00:00:00Z", type: "session_meta", payload: { id: ID, cwd: "/w" } })}\n`,
+    );
+    return dir;
+  };
+
+  afterEach(async () => {
+    for (const dir of roots.splice(0)) {
+      await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("still resolves a session whose rollout is readable when the database is unreachable", async () => {
+    // Before the status split this arrived as no-db and reached the fallback.
+    // Returning unknown ahead of it stopped resolving perfectly readable sessions.
+    const fn = stubSqlite({ status: "db-unreachable", rows: [] });
+    const found = await lookupCodexEntry(ID, { codexDir: await storeWithRollout(), readSqliteFn: fn });
+    expect(found.status).toBe("found");
+  });
+
+  it("says unknown — not absent — when the database is unreachable and no rollout matches", async () => {
+    const fn = stubSqlite({ status: "db-unreachable", rows: [] });
+    const dir = await storeWithRollout();
+    expect(await lookupCodexEntry("44444444-4444-4444-8444-444444444444", { codexDir: dir, readSqliteFn: fn })).toEqual(
+      { status: "unknown" },
+    );
+  });
+
+  it("counts an unreachable database as unreadable in the list path, not as an empty store", async () => {
+    const fn = stubSqlite({ status: "db-unreachable", rows: [] });
+    const { entries, unreadable } = await readCodexSessions({ codexDir: await storeWithRollout(), readSqliteFn: fn });
+    expect(entries).toEqual([]);
+    expect(unreadable).toBe(1);
+  });
+});

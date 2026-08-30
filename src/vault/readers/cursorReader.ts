@@ -48,7 +48,6 @@ import {
   listCursorChatCandidates,
   lookupCursorChatCandidate,
   resolveChangedCursorChatCandidates,
-  resolveCursorChatCandidate,
 } from "./cursorPaths";
 import { readCursorStoreDetail, verifyCursorStoreIdentity } from "./cursorStore";
 import {
@@ -428,47 +427,69 @@ interface ResolvedCursorProjectSession {
   entry: VaultSessionEntry;
 }
 
+type CursorSessionLookup<T> = { status: "found"; value: T } | { status: "absent" } | { status: "unknown" };
+
+async function lookupCursorCliSession(
+  sessionId: string,
+  options: CursorCombinedReaderOptions,
+): Promise<CursorSessionLookup<ResolvedCursorCliSession>> {
+  const located = await lookupCursorChatCandidate(sessionId, options);
+  if (located.status !== "found") {
+    return located;
+  }
+  const candidate = located.candidate;
+  const deps = options.fs ?? REAL_FS;
+  const metaStamp = await statFileOrNull(candidate.metaPath, deps);
+  // Everything past here read a candidate we located, so a failure is a failure
+  // to read it — never proof the session is gone.
+  if (!metaStamp) {
+    return { status: "unknown" };
+  }
+  const meta = await readMeta(candidate, deps);
+  if (!meta || !isCompatibleMeta(meta)) {
+    return { status: "unknown" };
+  }
+  const dbPresent = (await statFileOrNull(candidate.dbPath, deps)) !== null;
+  if (!isEligible(meta, dbPresent)) {
+    return { status: "unknown" }; // present but not launchable is a filter, not a deletion
+  }
+  return { status: "found", value: { candidate, entry: mapCursorMeta(candidate, meta, metaStamp) } };
+}
+
 async function resolveCursorCliSession(
   sessionId: string,
   options: CursorCombinedReaderOptions,
 ): Promise<ResolvedCursorCliSession | null> {
-  const candidate = await resolveCursorChatCandidate(sessionId, options);
-  if (!candidate) {
-    return null;
-  }
-  const deps = options.fs ?? REAL_FS;
-  const metaStamp = await statFileOrNull(candidate.metaPath, deps);
-  if (!metaStamp) {
-    return null;
-  }
-  const meta = await readMeta(candidate, deps);
-  if (!meta || !isCompatibleMeta(meta)) {
-    return null;
-  }
-  const dbPresent = (await statFileOrNull(candidate.dbPath, deps)) !== null;
-  if (!isEligible(meta, dbPresent)) {
-    return null;
-  }
-  return { candidate, entry: mapCursorMeta(candidate, meta, metaStamp) };
+  const found = await lookupCursorCliSession(sessionId, options);
+  return found.status === "found" ? found.value : null;
 }
 
-async function resolveCursorProjectSession(
+async function lookupCursorProjectSession(
   sessionId: string,
   options: CursorCombinedReaderOptions,
-): Promise<ResolvedCursorProjectSession | null> {
-  const candidate = await resolveCursorProjectTranscriptSession(sessionId, options);
-  if (!candidate) {
-    return null;
+): Promise<CursorSessionLookup<ResolvedCursorProjectSession>> {
+  const located = await lookupCursorProjectTranscriptSession(sessionId, options);
+  if (located.status !== "found") {
+    return located;
   }
+  const candidate = located.candidate;
   const deps = options.fs ?? REAL_FS;
   const [stamp, cwd] = await Promise.all([
     statFileOrNull(candidate.filePath, deps),
     resolveCursorProjectCwd(candidate.projectBucket, options),
   ]);
   if (!stamp || !cwd) {
-    return null;
+    return { status: "unknown" };
   }
-  return { candidate, entry: mapCursorProjectEntry(candidate, cwd, stamp) };
+  return { status: "found", value: { candidate, entry: mapCursorProjectEntry(candidate, cwd, stamp) } };
+}
+
+async function resolveCursorProjectSession(
+  sessionId: string,
+  options: CursorCombinedReaderOptions,
+): Promise<ResolvedCursorProjectSession | null> {
+  const found = await lookupCursorProjectSession(sessionId, options);
+  return found.status === "found" ? found.value : null;
 }
 
 /** The exact same-project bucket for `cwd`, or null when that bucket names a
@@ -653,41 +674,10 @@ export async function lookupCursorEntry(
   if (sessionId.startsWith("ide:")) {
     return lookupCursorIdeEntry(sessionId, options);
   }
-  if (sessionId.startsWith("project:")) {
-    const located = await lookupCursorProjectTranscriptSession(sessionId, options);
-    if (located.status !== "found") {
-      return located;
-    }
-    const deps = options.fs ?? REAL_FS;
-    const [stamp, cwd] = await Promise.all([
-      statFileOrNull(located.candidate.filePath, deps),
-      resolveCursorProjectCwd(located.candidate.projectBucket, options),
-    ]);
-    // The transcript was located, so anything failing past here is a failure to
-    // read it — never proof the session is gone.
-    return stamp && cwd
-      ? { status: "found", entry: mapCursorProjectEntry(located.candidate, cwd, stamp) }
-      : { status: "unknown" };
-  }
-  const located = await lookupCursorChatCandidate(sessionId, options);
-  if (located.status !== "found") {
-    return located;
-  }
-  const deps = options.fs ?? REAL_FS;
-  const metaStamp = await statFileOrNull(located.candidate.metaPath, deps);
-  if (!metaStamp) {
-    return { status: "unknown" };
-  }
-  const meta = await readMeta(located.candidate, deps);
-  if (!meta || !isCompatibleMeta(meta)) {
-    return { status: "unknown" };
-  }
-  const dbPresent = (await statFileOrNull(located.candidate.dbPath, deps)) !== null;
-  if (!isEligible(meta, dbPresent)) {
-    // Present but not launchable is a filter, not a deletion.
-    return { status: "unknown" };
-  }
-  return { status: "found", entry: mapCursorMeta(located.candidate, meta, metaStamp) };
+  const found = sessionId.startsWith("project:")
+    ? await lookupCursorProjectSession(sessionId, options)
+    : await lookupCursorCliSession(sessionId, options);
+  return found.status === "found" ? { status: "found", entry: found.value.entry } : found;
 }
 
 /** Explicit detail decoding is isolated from metadata-only list refreshes. Any

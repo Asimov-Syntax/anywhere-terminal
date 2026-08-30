@@ -340,15 +340,18 @@ export async function lookupCursorProjectTranscriptSession(
       complete = complete && provesAbsence(err);
     }
   }
-  if (existing.length === 1) {
-    return { status: "found", candidate: existing[0] };
-  }
   // Two layouts present is a store this reader refuses to guess about, not a
   // session that is gone.
   if (existing.length > 1) {
     return { status: "unknown" };
   }
-  return complete ? { status: "absent" } : { status: "unknown" };
+  // "Exactly one layout exists" is what returning a candidate asserts, so a stat
+  // that failed for a reason other than absence unsettles the found answer as
+  // much as the absent one (round-1 B2).
+  if (!complete) {
+    return { status: "unknown" };
+  }
+  return existing.length === 1 ? { status: "found", candidate: existing[0] } : { status: "absent" };
 }
 
 /** The candidate-or-nothing view, for callers that cannot act on the difference. */

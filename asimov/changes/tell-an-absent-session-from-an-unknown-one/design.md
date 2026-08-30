@@ -125,10 +125,17 @@ in every reader task is threading a status out of an operation that already ran.
 | SQLite `no-db`/`no-sqlite3`, exhaustive rollout scan, no file | `absent` |
 | SQLite `no-db`/`no-sqlite3`, scan skipped an unreadable directory | `unknown` |
 | SQLite `no-db`/`no-sqlite3`, rollout found but the build threw | `unknown` |
+| SQLite `db-unreachable` | the rollout fallback still runs; `absent` only from an exhaustive walk, else `unknown` |
 | SQLite `query-error` | `unknown` |
 
 The `query-error` row is the finding that produced this change: it is the path the reader's own
 comment already labels "unresolved", returned as the same `null` as a genuine miss.
+
+The `db-unreachable` row was amended after round-1 review. It first said `unknown` outright, which
+silently dropped a fallback: before D6, an EACCES on the database arrived as `no-db` and entered the
+rollout scan, so a session with a readable rollout file resolved. Answering `unknown` before that
+scan is a behaviour change for every existing `getEntry` caller, which D3 promises there are none of.
+An unreachable database is a reason to consult the other source, not to stop.
 
 **OpenCode** — `readOpenCodeEntry`
 
@@ -146,8 +153,10 @@ comment already labels "unresolved", returned as the same `null` as a genuine mi
 | Condition | Answer |
 |---|---|
 | A `CURSOR_CHILD_PREFIX` id with no entry in `cursorChildLocators` | `unknown` — see below |
+| A candidate matched, but the enumeration that proves it UNIQUE was incomplete | `unknown` |
 | `ide:` / `project:` / CLI sub-reader resolves an entry | `found` |
 | Sub-reader's enumeration completes with no match | `absent` |
+| IDE header query failed, or its row could not be parsed | `unknown` — the nested query did not run |
 | Sub-reader's database or file access fails | `unknown` |
 
 The child-map row was planned as `absent` on the grounds that the map is host-side truth. It is not:

@@ -3,7 +3,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteSnapshot, withSqliteSnapshot } from "../sqlite";
-import { cursorIdeDbPath, readCursorIdeDetail, readCursorIdeEntry, readCursorIdeSessions } from "./cursorIdeReader";
+import {
+  cursorIdeDbPath,
+  lookupCursorIdeEntry,
+  readCursorIdeDetail,
+  readCursorIdeEntry,
+  readCursorIdeSessions,
+} from "./cursorIdeReader";
 import { readCursorDetail, readCursorSessions } from "./cursorReader";
 import { limitedDetail } from "./detail";
 import { expectDetailContract, expectLimitGrowth } from "./detailContract.testkit";
@@ -350,5 +356,36 @@ describe("Cursor IDE Composer detail", () => {
 describe("cursorIdeDbPath", () => {
   it("honors an explicit test path", () => {
     expect(cursorIdeDbPath({ ideDbPath: "/tmp/cursor-state.vscdb" })).toBe("/tmp/cursor-state.vscdb");
+  });
+});
+
+describe("lookupCursorIdeEntry: an inner query that did not run is not absence", () => {
+  const ID = "ide:d29ya3NwYWNlLTE:composer-1";
+  const snapshotOf = (query: SqliteSnapshot["query"]) =>
+    (async (_path: string, callback: (snapshot: SqliteSnapshot) => Promise<unknown>) => ({
+      status: "ok" as const,
+      value: await callback({ query }),
+    })) as typeof withSqliteSnapshot;
+
+  it("says unknown when the header query failed inside an opened snapshot", async () => {
+    // The outer snapshot opens fine, so this used to read as a completed query
+    // that matched nothing — a false absent that would retire a live row (B1).
+    const fn = snapshotOf(async () => ({ status: "query-error", rows: [], error: "locked" }));
+    expect(await lookupCursorIdeEntry(ID, { withSqliteSnapshotFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("says unknown when the header row is there and cannot be parsed", async () => {
+    const fn = snapshotOf(async () => ({ status: "ok", rows: [{ nothing: "usable" }] }));
+    expect(await lookupCursorIdeEntry(ID, { withSqliteSnapshotFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("still says absent when the header query ran and matched nothing", async () => {
+    const fn = snapshotOf(async () => ({ status: "ok", rows: [] }));
+    expect(await lookupCursorIdeEntry(ID, { withSqliteSnapshotFn: fn })).toEqual({ status: "absent" });
+  });
+
+  it("keeps readCursorIdeEntry nullable for both", async () => {
+    const failed = snapshotOf(async () => ({ status: "query-error", rows: [], error: "locked" }));
+    expect(await readCursorIdeEntry(ID, { withSqliteSnapshotFn: failed })).toBeNull();
   });
 });

@@ -1550,3 +1550,44 @@ describe("lookupCursorEntry: absent only from a store it could read", () => {
     expect(await readCursorEntry("11111111-1111-4111-8111-111111111111", opts())).toBeNull();
   });
 });
+
+describe("round-1: a conclusive answer never outruns what was read", () => {
+  const denied = () => Object.assign(new Error("EACCES"), { code: "EACCES" });
+
+  it("says unknown for a CLI chat it DID find while a bucket stayed unlisted", async () => {
+    // The found answer asserts the id is unique across the store; an unlisted
+    // bucket could hold the duplicate that would have made it ambiguous (B2).
+    const id = "11111111-1111-4111-8111-111111111111";
+    await writeChat("bucket-ok", id, { ...BASE_META, cwd: "/w" });
+    await fs.mkdir(path.join(chatsDir, "locked-bucket"), { recursive: true });
+    const pathsFs = createPassthroughPathFs();
+    const real = pathsFs.readdir;
+    pathsFs.readdir = async (dir: string, o: { withFileTypes: true }) => {
+      if (dir.endsWith("locked-bucket")) {
+        throw denied();
+      }
+      return real(dir, o);
+    };
+    expect(await lookupCursorEntry(id, opts(undefined, pathsFs))).toEqual({ status: "unknown" });
+    // ...and still finds it once every bucket can be listed.
+    expect((await lookupCursorEntry(id, opts())).status).toBe("found");
+  });
+
+  it("says unknown for a project transcript whose other layout could not be stat'd", async () => {
+    const bucket = cursorProjectBucketForCwd("/w");
+    const id = "22222222-2222-4222-8222-222222222222";
+    const dir = path.join(projectsDir, bucket, "agent-transcripts");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, `${id}.jsonl`), "");
+    const pathsFs = createPassthroughPathFs();
+    const real = pathsFs.stat;
+    pathsFs.stat = async (p: string) => {
+      if (p.includes(`${id}/${id}.jsonl`)) {
+        throw denied();
+      }
+      return real(p);
+    };
+    const sid = `project:${Buffer.from(bucket).toString("base64url")}:${id}`;
+    expect(await lookupCursorEntry(sid, opts(undefined, pathsFs))).toEqual({ status: "unknown" });
+  });
+});

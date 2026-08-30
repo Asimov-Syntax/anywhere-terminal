@@ -535,10 +535,12 @@ export async function readCodexSessions(
     const fb = await readCodexJsonlFallback(sessionsDir);
     return { ...fb, cache: { kind: "store", sources: {}, entries: fb.entries, unreadable: fb.unreadable } };
   }
-  if (threadRead.status === "query-error") {
+  if (threadRead.status !== "ok") {
     // Surface, don't mask with the fallback (spec: query-error → unreadable). Cache
     // EMPTY sources so the error is NOT reused as an empty success on the next
-    // refresh — it is retried until the query succeeds (oracle review).
+    // refresh — it is retried until the query succeeds (oracle review). This is
+    // the `ok` gate the status ladder used to leave implicit: `db-unreachable`
+    // fell through it and became a successful EMPTY listing (round-1 B3).
     return { entries: [], unreadable: 1, cache: { kind: "store", sources: {}, entries: [], unreadable: 1 } };
   }
 
@@ -586,20 +588,29 @@ export async function lookupCodexEntry(sessionId: string, options: CodexReaderOp
     // session exists, so this is never absence.
     return entry ? { status: "found", entry } : { status: "unknown" };
   }
-  if (result.status === "no-db" || result.status === "no-sqlite3") {
-    const found = await findCodexRolloutByFilename(sessionId, sessionsDir);
-    if (!found.path) {
-      return found.exhaustive ? { status: "absent" } : { status: "unknown" };
-    }
-    try {
-      const entry = await buildCodexJsonlEntry(found.path, sessionId);
-      return entry ? { status: "found", entry } : { status: "unknown" };
-    } catch {
-      return { status: "unknown" };
-    }
+  if (result.status === "query-error") {
+    // The query ran and failed: the index is the authority here and it did not
+    // answer, so consulting the rollout would be guessing at a different source.
+    return { status: "unknown" };
   }
-  // `db-unreachable` and `query-error` are failures to look, never proof.
-  return { status: "unknown" };
+  // `no-db`, `no-sqlite3` and `db-unreachable` all mean the index could not be
+  // consulted, so the rollout files are the source. An unreachable database used
+  // to arrive here as `no-db` and must keep doing so: answering `unknown` before
+  // the scan would stop resolving sessions whose rollout is perfectly readable
+  // (round-1 B3).
+  const found = await findCodexRolloutByFilename(sessionId, sessionsDir);
+  if (!found.path) {
+    // Only a completed walk proves absence, and only when the database itself
+    // was conclusively missing rather than merely unreachable.
+    const conclusive = found.exhaustive && result.status !== "db-unreachable";
+    return conclusive ? { status: "absent" } : { status: "unknown" };
+  }
+  try {
+    const entry = await buildCodexJsonlEntry(found.path, sessionId);
+    return entry ? { status: "found", entry } : { status: "unknown" };
+  } catch {
+    return { status: "unknown" };
+  }
 }
 
 /** The entry-or-nothing view, for callers that cannot act on the difference. */

@@ -291,10 +291,16 @@ interface LoadedComposer {
   supported: boolean;
 }
 
+/** A header read that could not answer, distinguished from one that answered
+ *  "not here" (round-1 B1). */
+interface ComposerReadFailed {
+  failed: true;
+}
+
 async function composerFromSnapshot(
   snapshot: SqliteSnapshot,
   identity: { workspaceId: string; composerId: string },
-): Promise<LoadedComposer | undefined> {
+): Promise<LoadedComposer | ComposerReadFailed | undefined> {
   const headerResult = await snapshot.query(
     `SELECT composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent, value
      FROM composerHeaders
@@ -302,12 +308,18 @@ async function composerFromSnapshot(
        AND length(CAST(value AS BLOB)) <= ${MAX_JSON_CHARS}
      LIMIT 1`,
   );
-  if (headerResult.status !== "ok" || headerResult.rows.length !== 1) {
-    return undefined;
+  if (headerResult.status !== "ok") {
+    return { failed: true }; // the nested query did not run — never absence
+  }
+  if (headerResult.rows.length !== 1) {
+    return undefined; // ran, matched nothing: genuinely not in this store
   }
   const header = parseHeaderRow(headerResult.rows[0]);
-  if (!header || header.workspaceId !== identity.workspaceId) {
-    return undefined;
+  if (!header) {
+    return { failed: true }; // the row is there and unusable
+  }
+  if (header.workspaceId !== identity.workspaceId) {
+    return undefined; // a real composer, but not this workspace's
   }
   const limited = (): LoadedComposer => ({ composer: header, bubbles: new Map(), supported: false });
 
@@ -476,9 +488,16 @@ export async function lookupCursorIdeEntry(
   }
   const result = await (options.withSqliteSnapshotFn ?? readSnapshot)(cursorIdeDbPath(options), async (snapshot) => {
     const loaded = await composerFromSnapshot(snapshot, identity);
+    if (loaded && "failed" in loaded) {
+      return "failed" as const; // carry the inner failure past the outer `ok`
+    }
     return loaded ? mapEntry(loaded.composer) : null;
   });
   if (result.status === "ok") {
+    if (result.value === "failed") {
+      // The snapshot opened; the query inside it did not answer.
+      return { status: "unknown" };
+    }
     // The query ran: a composer that is not in the store is genuinely not there.
     return result.value ? { status: "found", entry: result.value } : { status: "absent" };
   }
@@ -508,7 +527,7 @@ export async function readCursorIdeDetail(
   }
   const result = await (options.withSqliteSnapshotFn ?? readSnapshot)(cursorIdeDbPath(options), async (snapshot) => {
     const loaded = await composerFromSnapshot(snapshot, identity);
-    if (!loaded) {
+    if (!loaded || "failed" in loaded) {
       return null;
     }
     if (!loaded.supported) {

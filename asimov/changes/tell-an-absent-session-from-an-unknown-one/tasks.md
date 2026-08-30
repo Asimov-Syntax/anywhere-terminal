@@ -81,3 +81,18 @@
     3. Thread a status out of the IDE resolver in `src/vault/readers/cursorIdeReader.ts`, which returns the same nothing for an invalid id, a missing composer, and any non-ok snapshot status.
     4. In `src/vault/readers/cursorReader.ts`, give `lookupCursorEntry` the real classification per the D5 Cursor table, keeping the prefix routing as it is.
     5. Test one absent and one unknown case per locator shape.
+
+## 2. Round-1 review fixes
+
+- [x] 2_1 Stop three conclusive answers from outrunning what was read — verified: pnpm exec vitest run 'src/vault/readers/cursorReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_4, 1_5, 1_6
+  - **Refs**: <!-- .reviews/round-1.md B1, B2, B3, W1; design.md D2, D5 -->
+  - **Acceptance**:
+    - Outcome: no lookup answers found or absent from a read that did not complete
+    - Verify: unit src/vault/readers/cursorReader.test.ts
+  - **Plan**:
+    1. In `src/vault/readers/codexReader.ts`, gate the list path's success branch on `ok` explicitly and treat `db-unreachable` as unreadable and retryable; in the by-id lookup, run the rollout fallback for `db-unreachable` as it did before the status split.
+    2. In `src/vault/readers/cursorIdeReader.ts`, keep the header query's own outcome inside the snapshot callback so a failed or unparseable header answers unknown while a completed zero-row query answers absent.
+    3. In `src/vault/readers/cursorPaths.ts` and `src/vault/readers/cursorTranscript.ts`, require a complete enumeration before returning a unique candidate, since uniqueness is what returning one asserts.
+    4. In `src/vault/readers/cursorReader.ts`, thread classification through the existing CLI and project resolvers instead of the duplicated bodies the first pass introduced, and make the nullable resolvers thin adapters.
+    5. Cover each in `src/vault/readers/cursorReader.test.ts`, `src/vault/readers/cursorIdeReader.test.ts` and `src/vault/readers/codexReader.test.ts`: an inaccessible bucket holding a would-be duplicate, a failed IDE header query, a codex `db-unreachable` with a readable rollout, and a codex `db-unreachable` in the list path.

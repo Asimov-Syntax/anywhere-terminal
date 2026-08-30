@@ -318,12 +318,16 @@ export async function lookupCursorChatCandidate(
     return { status: "absent" };
   }
   const { candidates, ambiguousById, complete } = await listCursorChatCandidates(options);
-  const candidate = candidates.find((c) => c.chatId === chatId);
-  if (candidate) {
-    return { status: "found", candidate };
-  }
   if (ambiguousById[chatId] !== undefined) {
     return { status: "unknown" };
   }
-  return complete ? { status: "absent" } : { status: "unknown" };
+  // Completeness gates the FOUND answer too. Returning a candidate asserts the id
+  // is unique across the store — `listCursorChatCandidates` drops ids that appear
+  // in more than one bucket — so a bucket that could not be listed may hold the
+  // duplicate that would have made this one ambiguous (round-1 B2).
+  if (!complete) {
+    return { status: "unknown" };
+  }
+  const candidate = candidates.find((c) => c.chatId === chatId);
+  return candidate ? { status: "found", candidate } : { status: "absent" };
 }
