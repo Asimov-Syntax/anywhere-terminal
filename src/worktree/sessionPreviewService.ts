@@ -308,19 +308,25 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       }
       if (fresh.status === "unknown") {
         // Established nothing, so it changes nothing — the same shape a timeout
-        // takes, and for the same reason (D33). A row with a usable target
-        // carries on with the entry it already holds; one without has no line to
-        // keep and simply reports none.
-        if (current.target.kind !== "resolved" || current.entry === undefined) {
-          return current.line;
-        }
-      } else {
-        current.entry = fresh.entry;
-        current.confirmedAt = now();
-        if (current.target.kind === "gone") {
-          // gone → unresolved → resolved: the ordinary resolve path recovers it.
-          current.target = { kind: "unresolved" };
-        }
+        // takes, and for the same reason (D33). The row keeps whatever it holds
+        // and the look scores no progress, so the ladder backs the next attempt
+        // off.
+        //
+        // Returning here rather than carrying on with the held entry is what
+        // bounds the store: an `unknown` deliberately does not stamp
+        // `confirmedAt`, so the row stays permanently due, and a fall-through
+        // that reached an unchanged `stat` would set `progressed`, reset the
+        // ladder, and re-ask the store on the ORDINARY cadence — the
+        // history-sized Codex walk at 0.5 Hz that D2 exists to prevent
+        // (round-1 B1). The cost is one skipped freshness check per inconclusive
+        // lookup, on a row that is already showing its last known line.
+        return current.line;
+      }
+      current.entry = fresh.entry;
+      current.confirmedAt = now();
+      if (current.target.kind === "gone") {
+        // gone → unresolved → resolved: the ordinary resolve path recovers it.
+        current.target = { kind: "unresolved" };
       }
     }
     const entry = current.entry;

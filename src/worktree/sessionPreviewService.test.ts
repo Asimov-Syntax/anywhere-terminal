@@ -1000,12 +1000,45 @@ describe("a preview does not outlive its session", () => {
     // overdue rather than settled for another interval (design.md D2).
     store.state.answer = { status: "unknown" };
     clock += 30_000;
+    const statsAfter = stats.length;
+    const readsAfter = reads.length;
     expect(await svc.preview("codex:s1")).toBe("the first answer");
     expect(store.state.calls).toBe(2);
+    // Nothing about the file was asked: an inconclusive answer ends the look
+    // where it stands (round-1 B1).
+    expect(stats.length).toBe(statsAfter);
+    expect(reads.length).toBe(readsAfter);
 
+    // Overdue, so it asks again — but on the retry ladder's 2 × recheckMs, not
+    // the ordinary cadence. Resetting the ladder here is what would re-ask the
+    // store at 0.5 Hz on a row whose `confirmedAt` can never advance.
+    clock += 2000;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(store.state.calls).toBe(2);
     clock += 2000;
     expect(await svc.preview("codex:s1")).toBe("the first answer");
     expect(store.state.calls).toBe(3);
+  });
+
+  it("neither reads nor re-resolves behind an inconclusive lookup", async () => {
+    const store = driven(found());
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000, recheckMs: 2000 });
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+
+    // Both halves of the ordinary look are refused: the transcript has genuinely
+    // moved on, and it is genuinely gone. Neither may reach the row while the
+    // store cannot say whether the session still exists.
+    store.state.answer = { status: "unknown" };
+    await rewrite("a newer answer", clock + 30_000);
+    clock += 30_000;
+    const statsAfter = stats.length;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(stats.length).toBe(statsAfter);
+
+    await fs.rm(rollout);
+    clock += 4000;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(stats.length).toBe(statsAfter);
   });
 
   it("retries an inconclusive lookup without waiting out another interval", async () => {
