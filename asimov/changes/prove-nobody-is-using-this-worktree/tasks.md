@@ -66,7 +66,7 @@
     5. `src/providers/WorktreeHost.ts` supplies the field so the tree compiles — three `unproven` outcomes, which IS this task's Outcome. 3_3 replaces the constant with the reader.
   - **Boundary**: `atRisk`, `isIdentityPreservingSubset` and `digest` gain nothing — a proof is not a risk (D2)
 
-- [ ] 3_3 Take the proof reads where the assessment already suspends
+- [x] 3_3 Take the proof reads where the assessment already suspends — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: design.md D7
   - **Acceptance**:

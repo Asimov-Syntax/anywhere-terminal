@@ -64,6 +64,7 @@ import { rosterFromDetail } from "./worktree/delegations";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
 import { normalizeWorktreePath } from "./worktree/normalizePath";
+import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
@@ -73,6 +74,7 @@ import { checksFor } from "./worktree/removalChecks";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
+import { readWorktreeGitDir } from "./worktree/worktreeGitDir";
 import type { MutationOutcome } from "./worktree/worktreeMutationService";
 import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
 
@@ -791,6 +793,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         } finally {
           paths.dispose();
         }
+      },
+      // The three proofs of worktree-removal.md § 4, over the runner the rest of
+      // the assessment uses. The registry read is HANDED IN, not taken again:
+      // the ownership proof is about the records that read returns, and a
+      // second scan of the same directory could disagree with the first about
+      // the same instant (design.md D3).
+      proofs: async (subject, sessions) => {
+        const read = await sessions;
+        return readOrphanProofs(
+          {
+            path: subject.path,
+            locked: subject.locked,
+            ...(subject.branch === undefined ? {} : { branch: subject.branch }),
+            // `notApplicable` is not a successful read of no records. It is the
+            // registry saying its question did not arise, and the proof it
+            // feeds must report unproven rather than "nobody is here".
+            sessions: read.ok === true ? { ok: true, value: read.value } : { ok: false },
+          },
+          {
+            git: (args, cwd) => worktreeTreeDeps.runner.run(args, cwd),
+            // `stat`, not `lstat`: git writes `locked` as a regular file, and
+            // the mtime wanted is that file's own.
+            lockMtime: async (absPath) => (await fsp.stat(absPath)).mtimeMs,
+            // The same reader `diskIgnoredDeps` uses — git's own answer for this
+            // worktree, never `<repoGitDir>/worktrees/<basename>`, which names
+            // the wrong lock exactly where two worktrees share a basename.
+            gitDir: (worktreePath) =>
+              readWorktreeGitDir(worktreePath, (args, cwd, runOptions) =>
+                worktreeTreeDeps.runner.run(args, cwd, runOptions),
+              ),
+            now: () => Date.now(),
+          },
+        );
       },
       // The last completed window pass's claims, keyed by the pane that made
       // each one. Published rather than recomputed: `identify()` reads the

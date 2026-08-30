@@ -15,6 +15,7 @@ import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { createGitCapabilities, type GitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
+import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
@@ -292,6 +293,12 @@ async function builtHost(
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
     /** Registry sessions the removal assessment should be given. */
     sessions?: readonly SessionRecord[];
+    /** What the proof reader should answer. */
+    proofs?: OrphanProofs;
+    /** Collects every subject the assessment asked the proof reader about. */
+    proofSubjects?: { path: string; locked: boolean; branch?: string }[];
+    /** One entry per call of the registry read. */
+    sessionReads?: number[];
     /** Panes the removal assessment should be given. */
     removalPanes?: readonly PaneFact[];
     /** Identities a pane of this window claimed, keyed entry id → pane id. */
@@ -368,8 +375,16 @@ async function builtHost(
     removalFacts: {
       panes: async () => over.removalPanes ?? [],
       sessions: async () => {
+        over.sessionReads?.push(1);
         await duringAssessment.now();
         return { ok: true, value: over.sessions ?? [] };
+      },
+      proofs: async (subject, sessions) => {
+        // Awaits the read it was handed. A fake that ignored it would hide the
+        // very thing D3 and D7 are about: one registry read, no extra await.
+        await sessions;
+        over.proofSubjects?.push(subject);
+        return over.proofs ?? { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven" };
       },
       ignored: async () => ({ kind: "measured", entries: 0, bytes: 0 }),
       claimedByPane: async () => over.claimedByPane ?? new Map<string, string>(),
@@ -2275,6 +2290,62 @@ describe("a registry session held by a pane of this window", () => {
     const result = await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
 
     expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+    h.dispose();
+  });
+});
+
+// D7: the proofs are read where the assessment already suspends, and a missing
+// worktree is answered without touching a disk that is not there.
+describe("the three proofs reach the assessment", () => {
+  it("reports what the reader answered, unchanged", async () => {
+    const h = await builtHost([windowRow()], false, {
+      statusReadable: true,
+      proofs: { lockAged: "passed", ownerGone: "passed", branchMerged: "failed" },
+    });
+
+    const result = await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect(result).toMatchObject({
+      kind: "confirmable",
+      evidence: { proofs: { lockAged: "passed", ownerGone: "passed", branchMerged: "failed" } },
+    });
+    h.dispose();
+  });
+
+  it("asks about the worktree's own path, once", async () => {
+    const proofSubjects: { path: string; locked: boolean; branch?: string }[] = [];
+    const h = await builtHost([windowRow()], false, { statusReadable: true, proofSubjects });
+
+    await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect(proofSubjects).toHaveLength(1);
+    expect(proofSubjects[0]?.path).toBe(FEAT_PATH);
+    h.dispose();
+  });
+
+  it("scans the registry exactly once, proofs included", async () => {
+    // The proofs are handed the read already in flight. A reader that took its
+    // own would scan the same directory twice in one assessment, and the two
+    // scans could disagree about the same instant (design.md D3).
+    const sessionReads: number[] = [];
+    const h = await builtHost([windowRow()], false, { statusReadable: true, sessionReads });
+
+    await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect(sessionReads).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("claims no lock and no branch for a worktree whose directory is gone", async () => {
+    // Nothing to stat and nothing to compare: asking either question of an
+    // absent directory is a read that fails every time, and the honest answer
+    // is that the question did not arise (design.md D7).
+    const proofSubjects: { path: string; locked: boolean; branch?: string }[] = [];
+    const h = await builtHost([windowRow()], true, { statusReadable: true, proofSubjects });
+
+    await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect(proofSubjects[0]).toEqual({ path: FEAT_PATH, locked: false });
     h.dispose();
   });
 });

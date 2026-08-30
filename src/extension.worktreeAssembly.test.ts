@@ -305,6 +305,20 @@ const STORED_ENTRY: VaultSessionEntry = {
   canResume: true,
 };
 
+/** One entry per call of the session registry reader, so a second scan is visible. */
+const registryReads: number[] = [];
+
+vi.mock("./vault/readers/runningSessions", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./vault/readers/runningSessions")>();
+  return {
+    ...real,
+    listClaudeSessionRecords: (...args: Parameters<typeof real.listClaudeSessionRecords>) => {
+      registryReads.push(1);
+      return real.listClaudeSessionRecords(...args);
+    },
+  };
+});
+
 vi.mock("./providers/WorktreeHost", async (importOriginal) => {
   const real = await importOriginal<typeof import("./providers/WorktreeHost")>();
   return {
@@ -1079,6 +1093,44 @@ describe("the invariants that span the host and the webview", () => {
     // Same node, not merely equal markup: a replaced element is a re-render.
     expect(after).toBe(before);
     expect(outbound.length).toBe(sentBefore);
+  });
+
+  it("carries the three proofs across the production boundary", async () => {
+    // The module test asserts against its own injected fake, so it cannot see a
+    // production wrapper that drops the registry read it was handed — which is
+    // exactly the shape cycle-2 B4 shipped. This runs the real `activate()`
+    // closure: `ownerGone` is answered from the registry, which it can only be
+    // if the read actually reached the reader.
+    await assemble();
+
+    const assessment = await captured.host?.mutationBindings().assessRemoval({
+      repoId: REPO_ID,
+      worktreeId: LINKED,
+    });
+
+    expect(assessment).toMatchObject({ kind: "confirmable" });
+    const proofs = (assessment as unknown as { evidence: { proofs: Record<string, string> } }).evidence.proofs;
+    // Unlocked, so its age was never in question — not "passed", which would
+    // claim a reading nobody took.
+    expect(proofs.lockAged).toBe("notApplicable");
+    // The registry read arrived and named nobody rooted here.
+    expect(proofs.ownerGone).toBe("passed");
+    // And no fetch was issued to answer the merge, whatever it answered.
+    expect(argv.some((c) => c.args.includes("fetch"))).toBe(false);
+  });
+
+  it("scans the session registry once per assessment, proofs included", async () => {
+    // The producer is HANDED the read the assessment already issued. One that
+    // took its own would scan the same directory twice in one assessment, and
+    // the two scans could disagree about the same instant — the second `readdir`
+    // design.md D3 rejects. No module test can see this: the host's own fake
+    // stands in for the production closure that would do the scanning.
+    await assemble();
+    registryReads.length = 0;
+
+    await captured.host?.mutationBindings().assessRemoval({ repoId: REPO_ID, worktreeId: LINKED });
+
+    expect(registryReads).toHaveLength(1);
   });
 
   it("[I14] re-prompts instead of removing when a blocker appears after the confirmation", async () => {

@@ -26,6 +26,7 @@ import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
+import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
   DelegationRoster,
@@ -136,6 +137,18 @@ export interface WorktreeHostOptions {
     panes(): Promise<readonly PaneFact[]>;
     /** Every registry record, live or not — `evaluateRemoval` applies the live filter. */
     sessions(): Promise<SourceRead<readonly SessionRecord[]>>;
+    /**
+     * The three proofs of worktree-removal.md § 4.
+     *
+     * Takes the registry read already in flight rather than issuing its own —
+     * the ownership proof is about the records that read returns, and a second
+     * scan of the same directory could disagree with the first about the same
+     * instant (design.md D3).
+     */
+    proofs(
+      subject: { path: string; locked: boolean; branch?: string },
+      sessions: Promise<SourceRead<readonly SessionRecord[]>>,
+    ): Promise<OrphanProofs>;
     /**
      * One bounded walk of what the removal will delete that git does not track.
      *
@@ -2081,7 +2094,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // state whose ONLY remedy is the removal that prunes its registration
         // (round-3 B8). A measured zero is the honest answer for the walk: there
         // is no directory, so there is no ignored material to delete.
-        const [status, ignored, sessions, panes, claimedByPane] = await Promise.all([
+        // Held so the proofs can await the SAME read rather than take their
+        // own. Both entries below join one `Promise.all`, so this adds a read
+        // to the assessment and not a suspension point (design.md D7).
+        const sessionsRead = facts.sessions();
+        const [status, ignored, sessions, panes, claimedByPane, proofs] = await Promise.all([
           // Run in the worktree itself, not the repo: `--porcelain` is what
           // names the files a force would destroy, and that is per worktree.
           found.wt.missing
@@ -2090,9 +2107,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           found.wt.missing
             ? Promise.resolve<IgnoredMaterial>({ kind: "measured", entries: 0, bytes: 0 })
             : facts.ignored(found.wt.displayPath),
-          facts.sessions(),
+          sessionsRead,
           facts.panes(),
           facts.claimedByPane(),
+          // A missing worktree is answered without touching the disk: no
+          // directory means no lock file and no branch to compare, so only the
+          // ownership proof is answered — from the registry read taken anyway.
+          facts.proofs(
+            found.wt.missing
+              ? { path: found.wt.id, locked: false }
+              : {
+                  path: found.wt.id,
+                  locked: found.wt.locked,
+                  ...(found.wt.branch === undefined ? {} : { branch: found.wt.branch }),
+                },
+            sessionsRead,
+          ),
         ]);
         // Round-9 B8: those two reads take real time, and a rebuild landing in
         // between replaces the listing everything below is derived from — the
@@ -2109,10 +2139,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // fallback. A failed status is not a clean worktree (round-2 B6).
           sessions,
           claimedByPane,
-          // Three unproven proofs until 3_3 supplies the reader: unproven is
-          // what a proof nobody took says, and a removal reports it exactly as
-          // it did before proofs existed.
-          proofs: { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven" },
+          proofs,
           ignored,
           porcelain:
             status === null
