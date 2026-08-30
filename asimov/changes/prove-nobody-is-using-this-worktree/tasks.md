@@ -25,7 +25,7 @@
     3. Cover in `src/worktree/worktreeGitDir.test.ts`: the trimmed path on success, a throw on a non-zero exit, and a throw on a timeout.
   - **Boundary**: no behaviour change to the manifest read — this is the same command, in one place
 
-- [ ] 2_1 The assessment filters the registry itself
+- [x] 2_1 The assessment filters the registry itself — verified: pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D3; archive/260830-2042-assess-a-removal-before-offering-it/design.md D2, D6
   - **Acceptance**:

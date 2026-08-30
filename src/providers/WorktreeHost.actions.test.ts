@@ -21,7 +21,7 @@ import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTree } from "../worktree/types";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
-import type { ExternalSessionFact, PaneFact } from "../worktree/worktreeBlockers";
+import type { PaneFact, SessionRecord } from "../worktree/worktreeBlockers";
 import { createWorktreeHost, type WorktreeActions, type WorktreeHost, type WorktreeSurface } from "./WorktreeHost";
 
 const MAIN_PATH = "/repo";
@@ -291,7 +291,7 @@ async function builtHost(
     launchTargets?: WorktreeActions["launchTargets"];
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
     /** Registry sessions the removal assessment should be given. */
-    externalSessions?: readonly ExternalSessionFact[];
+    sessions?: readonly SessionRecord[];
     /** Panes the removal assessment should be given. */
     removalPanes?: readonly PaneFact[];
     /** Identities a pane of this window claimed, keyed entry id → pane id. */
@@ -367,9 +367,9 @@ async function builtHost(
     // would make every assertion about WHICH git commands it issues vacuous.
     removalFacts: {
       panes: async () => over.removalPanes ?? [],
-      externalSessions: async () => {
+      sessions: async () => {
         await duringAssessment.now();
-        return { ok: true, value: over.externalSessions ?? [] };
+        return { ok: true, value: over.sessions ?? [] };
       },
       ignored: async () => ({ kind: "measured", entries: 0, bytes: 0 }),
       claimedByPane: async () => over.claimedByPane ?? new Map<string, string>(),
@@ -2240,18 +2240,19 @@ describe("the provisioning offer the create form is given", () => {
 // always answered with an empty map would type-check, pass every module test,
 // and quietly restore the round-1 B2 regression it exists to prevent.
 describe("a registry session held by a pane of this window", () => {
-  const SESSION: ExternalSessionFact = {
+  const SESSION: SessionRecord = {
     sessionId: "s-1",
     entryId: "claude:s-1",
     cwd: FEAT_PATH,
     activity: undefined,
+    alive: true,
   };
   const PANE: PaneFact = { paneId: "p-1", cwd: FEAT_PATH, activity: "idle" };
 
   it("is counted once, as the pane, when the host carries the claim", async () => {
     const h = await builtHost([windowRow()], false, {
       statusReadable: true,
-      externalSessions: [SESSION],
+      sessions: [SESSION],
       removalPanes: [PANE],
       claimedByPane: new Map([["claude:s-1", "p-1"]]),
     });
@@ -2267,7 +2268,7 @@ describe("a registry session held by a pane of this window", () => {
     // same session refuses, so the test is measuring the claim and not the fake.
     const h = await builtHost([windowRow()], false, {
       statusReadable: true,
-      externalSessions: [SESSION],
+      sessions: [SESSION],
       removalPanes: [PANE],
     });
 

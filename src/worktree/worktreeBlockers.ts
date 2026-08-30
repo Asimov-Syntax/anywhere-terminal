@@ -147,7 +147,15 @@ export interface PaneFact {
   activity: PaneActivity | undefined;
 }
 
-export interface ExternalSessionFact {
+/**
+ * A registry record as read, whether or not its process still exists.
+ *
+ * The `alive` flag arrives rather than the producer filtering on it, because
+ * the same read now answers two questions: which sessions refuse a removal, and
+ * whether a dead record is the only thing still claiming the worktree
+ * (design.md D3). A producer that filtered could answer only the first.
+ */
+export interface SessionRecord {
   sessionId: string;
   /**
    * The registry identity a window pane's claim would be keyed by.
@@ -169,6 +177,8 @@ export interface ExternalSessionFact {
    * than refusing on a hardcoded value nobody measured.
    */
   activity: PaneActivity | undefined;
+  /** `process.kill(pid, 0)` semantics at the moment of the read. */
+  alive: boolean;
 }
 
 export interface RemovalInput {
@@ -178,7 +188,14 @@ export interface RemovalInput {
   panes: readonly PaneFact[];
   /** Rows the presence projection attributed to the target. */
   rows: readonly AttributedRow[];
-  externalSessions: SourceRead<readonly ExternalSessionFact[]>;
+  /**
+   * Every well-formed registry record, live or not — not the live ones.
+   *
+   * The live filter is applied here rather than by the producer so one read can
+   * serve both this refusal and the ownership proof, which is about the records
+   * this filter discards (design.md D3).
+   */
+  sessions: SourceRead<readonly SessionRecord[]>;
   /**
    * Registry identities a pane of THIS window claimed, mapped to that pane.
    *
@@ -215,7 +232,7 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
   // listing.
   const unreadable: UnreadableSource[] = [
     ...(input.porcelain.ok === false ? (["status"] as const) : []),
-    ...(input.externalSessions.ok === false ? (["sessions"] as const) : []),
+    ...(input.sessions.ok === false ? (["sessions"] as const) : []),
     ...(input.listingDegraded === true ? (["listing"] as const) : []),
   ];
   if (unreadable.length > 0) {
@@ -269,8 +286,13 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
     return paneId !== undefined && idlePanesHere.has(paneId);
   };
 
-  const externalHere = (input.externalSessions.ok === true ? input.externalSessions.value : []).filter(
-    (s) => isPathInside(s.cwd, target.id) && !heldHere(s.entryId),
+  // The live filter and the dedupe both used to live in the producer, and both
+  // land here unchanged: a dead record does not refuse anything, and one
+  // session id is one session however many records carry it.
+  const externalHere = dedupeBySessionId(
+    (input.sessions.ok === true ? input.sessions.value : []).filter(
+      (s) => s.alive && isPathInside(s.cwd, target.id) && !heldHere(s.entryId),
+    ),
   );
   const liveExternalSessionIds = externalHere
     .filter((s) => s.activity !== "idle" && s.activity !== "exited")
@@ -304,11 +326,22 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
       lockReason: target.lockReason ?? null,
       notApplicable: [
         ...(input.porcelain.ok === "notApplicable" ? (["status"] as const) : []),
-        ...(input.externalSessions.ok === "notApplicable" ? (["sessions"] as const) : []),
+        ...(input.sessions.ok === "notApplicable" ? (["sessions"] as const) : []),
       ],
       ignored: input.ignored,
     },
   };
+}
+
+/** First record per session id, in the order they arrived. */
+function dedupeBySessionId(records: readonly SessionRecord[]): readonly SessionRecord[] {
+  const first = new Map<string, SessionRecord>();
+  for (const record of records) {
+    if (!first.has(record.sessionId)) {
+      first.set(record.sessionId, record);
+    }
+  }
+  return [...first.values()];
 }
 
 /**

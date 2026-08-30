@@ -40,10 +40,10 @@ import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
 import { buildWorktreeTreeDetailed, listRepoWorktrees, type WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import {
-  type ExternalSessionFact,
   evaluateRemoval,
   type PaneFact,
   type RemovalAssessment,
+  type SessionRecord,
   type SourceRead,
 } from "../worktree/worktreeBlockers";
 import { type WorktreeWatch, watchRepoStructure } from "../worktree/worktreeWatchTargets";
@@ -134,7 +134,8 @@ export interface WorktreeHostOptions {
   removalFacts?: {
     /** Async because the cwds carry the resolution `PaneFact.cwd` promises. */
     panes(): Promise<readonly PaneFact[]>;
-    externalSessions(): Promise<SourceRead<readonly ExternalSessionFact[]>>;
+    /** Every registry record, live or not — `evaluateRemoval` applies the live filter. */
+    sessions(): Promise<SourceRead<readonly SessionRecord[]>>;
     /**
      * One bounded walk of what the removal will delete that git does not track.
      *
@@ -2089,7 +2090,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           found.wt.missing
             ? Promise.resolve<IgnoredMaterial>({ kind: "measured", entries: 0, bytes: 0 })
             : facts.ignored(found.wt.displayPath),
-          facts.externalSessions(),
+          facts.sessions(),
           facts.panes(),
           facts.claimedByPane(),
         ]);
@@ -2106,7 +2107,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           rows: presence().rowsByWorktreeId[target.worktreeId] ?? [],
           // Every read that can fail is carried as a read, not as its benign
           // fallback. A failed status is not a clean worktree (round-2 B6).
-          externalSessions: sessions,
+          sessions,
           claimedByPane,
           ignored,
           porcelain:

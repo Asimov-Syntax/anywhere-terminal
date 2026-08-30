@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PaneActivity } from "../shared/paneEvidence";
 import type { WorktreeInfo } from "./types";
-import { type ExternalSessionFact, evaluateRemoval, type RemovalInput } from "./worktreeBlockers";
+import { evaluateRemoval, type RemovalInput, type SessionRecord } from "./worktreeBlockers";
 
 function wt(id: string, over: Partial<WorktreeInfo> = {}): WorktreeInfo {
   return {
@@ -23,7 +23,7 @@ function input(over: Partial<RemovalInput> = {}): RemovalInput {
     siblings: [wt("/repo", { kind: "main" }), target],
     panes: [],
     rows: [],
-    externalSessions: { ok: true, value: [] },
+    sessions: { ok: true, value: [] },
     claimedByPane: new Map(),
     porcelain: { ok: true, value: "" },
     ignored: { kind: "measured", entries: 0, bytes: 0 },
@@ -71,9 +71,9 @@ describe("evaluateRemoval", () => {
     const result = evaluateRemoval(
       input({
         rows: [{ scope: "external", activity: "running" }],
-        externalSessions: {
+        sessions: {
           ok: true,
-          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity: "idle" }],
+          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity: "idle", alive: true }],
         },
       }),
     );
@@ -87,9 +87,9 @@ describe("evaluateRemoval", () => {
   describe("an external session that is not provably idle (worktree-removal.md § 2, § 3)", () => {
     const rooted = (activity: PaneActivity | undefined) =>
       input({
-        externalSessions: {
+        sessions: {
           ok: true,
-          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity }],
+          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity, alive: true }],
         },
       });
 
@@ -115,22 +115,60 @@ describe("evaluateRemoval", () => {
     it("ignores a session rooted OUTSIDE the target", () => {
       const result = evaluateRemoval(
         input({
-          externalSessions: {
+          sessions: {
             ok: true,
-            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-b", activity: undefined }],
+            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-b", activity: undefined, alive: true }],
           },
         }),
       );
       expect(result.kind).toBe("confirmable");
     });
 
+    it("ignores a record whose process is gone", () => {
+      // The live filter used to run in the producer, which is why the records
+      // arrive raw now: the ownership proof is about exactly the records this
+      // discards (design.md D3). A dead record refusing a removal would be a
+      // crashed session holding a worktree forever.
+      const result = evaluateRemoval(
+        input({
+          sessions: {
+            ok: true,
+            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: false }],
+          },
+        }),
+      );
+      expect(result.kind).toBe("confirmable");
+      if (result.kind !== "confirmable") {
+        return;
+      }
+      expect(result.evidence.externalSessionIds).toEqual([]);
+    });
+
+    it("names a session once when TWO live records carry its id", () => {
+      // The registry can hold two live pid files for one session, which is why
+      // the reader deduped. That rule moved here with the live filter, and
+      // without it the same session is reported twice on the wire.
+      const result = evaluateRemoval(
+        input({
+          sessions: {
+            ok: true,
+            value: [
+              { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true },
+              { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true },
+            ],
+          },
+        }),
+      );
+      expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+    });
+
     it("counts one session once — refusing, never also as a busy agent", () => {
       const result = evaluateRemoval(
         input({
           rows: [{ scope: "external", activity: "running" }],
-          externalSessions: {
+          sessions: {
             ok: true,
-            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined }],
+            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true }],
           },
         }),
       );
@@ -140,7 +178,7 @@ describe("evaluateRemoval", () => {
     it("stays unavailable, not refused, when the registry could not be read", () => {
       // Unreadable is the absence of an answer; refused is an answer. Only the
       // first is worth retrying.
-      const result = evaluateRemoval(input({ externalSessions: { ok: false } }));
+      const result = evaluateRemoval(input({ sessions: { ok: false } }));
       expect(result).toMatchObject({ kind: "unavailable" });
     });
   });
@@ -251,7 +289,7 @@ describe("evidence that could not be read", () => {
   });
 
   it("reports an unreadable session registry", () => {
-    const result = evaluateRemoval(input({ externalSessions: { ok: false } }));
+    const result = evaluateRemoval(input({ sessions: { ok: false } }));
     expect(result).toEqual({ kind: "unavailable", unreadable: ["sessions"] });
   });
 
@@ -263,9 +301,7 @@ describe("evidence that could not be read", () => {
   });
 
   it("names every source that failed, not just the first", () => {
-    const result = evaluateRemoval(
-      input({ porcelain: { ok: false }, externalSessions: { ok: false }, listingDegraded: true }),
-    );
+    const result = evaluateRemoval(input({ porcelain: { ok: false }, sessions: { ok: false }, listingDegraded: true }));
     expect(result).toMatchObject({ kind: "unavailable", unreadable: ["status", "sessions", "listing"] });
   });
 
@@ -323,7 +359,7 @@ describe("a registration whose directory is gone is still removable", () => {
 
   it("is still unavailable when a source that DOES apply could not be read", () => {
     const result = evaluateRemoval(
-      input({ target: missing, porcelain: { ok: "notApplicable" }, externalSessions: { ok: false } }),
+      input({ target: missing, porcelain: { ok: "notApplicable" }, sessions: { ok: false } }),
     );
     expect(result).toEqual({ kind: "unavailable", unreadable: ["sessions"] });
   });
@@ -370,11 +406,12 @@ describe("the ignored material the removal will delete", () => {
 // where the target and the pane snapshot are both in hand, and only where this
 // same assessment will classify the claiming pane.
 describe("a registry session a pane in this window already holds", () => {
-  const session = (over: Partial<ExternalSessionFact> = {}): ExternalSessionFact => ({
+  const session = (over: Partial<SessionRecord> = {}): SessionRecord => ({
     sessionId: "s-1",
     entryId: "claude:s-1",
     cwd: "/repo/wt-a",
     activity: undefined,
+    alive: true,
     ...over,
   });
 
@@ -383,7 +420,7 @@ describe("a registry session a pane in this window already holds", () => {
       input({
         panes,
         claimedByPane,
-        externalSessions: { ok: true, value: [session()] },
+        sessions: { ok: true, value: [session()] },
       }),
     );
 

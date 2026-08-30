@@ -52,7 +52,7 @@ import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
-import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
+import { listClaudeSessionRecords } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
 import { disposeSnapshotPool } from "./vault/sqlite";
 import { formatEntryId, VAULT_AGENT_IDS } from "./vault/types";
@@ -752,15 +752,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           paths.dispose();
         }
       },
-      externalSessions: async () => {
-        const outcome = await listRunningClaudeSessions();
+      sessions: async () => {
+        const outcome = await listClaudeSessionRecords();
         // The FAILURE is carried, not flattened to an empty list. An unreadable
         // registry is not "no external sessions", and on a forced removal that
         // difference is a session nobody was warned about (round-2 B6).
         if (outcome.kind !== "ok") {
           return { ok: false };
         }
-        // No filtering here. The registry is USER-WIDE, so a Claude in one of
+        // No filtering here — not by liveness either. A dead record is the
+        // ownership proof's evidence that nobody is here, and the live filter
+        // the refusal needs now runs in `evaluateRemoval` (design.md D3).
+        //
+        // The registry is USER-WIDE, so a Claude in one of
         // our own panes writes its own live-pid record and must be counted once
         // — but a claim is only worth applying where the SAME assessment will
         // classify the pane that made it, and this producer holds neither the
@@ -768,10 +772,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // claim instead, and `evaluateRemoval` corroborates it (cycle-2 B5).
         const paths = createTrackedPathResolver(pathMemo);
         try {
-          await paths.prepare(outcome.sessions.map((s) => s.cwd));
+          await paths.prepare(outcome.records.map((s) => s.cwd));
           return {
             ok: true,
-            value: outcome.sessions.map((s) => ({
+            value: outcome.records.map((s) => ({
               sessionId: s.sessionId,
               entryId: formatEntryId("claude", s.sessionId),
               cwd: paths.resolvedOr(s.cwd),
@@ -781,6 +785,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               // (worktree-removal.md § 3). The presence projection's hardcoded
               // "running" would refuse too, but for a reason nobody measured.
               activity: undefined,
+              alive: s.alive,
             })),
           };
         } finally {
