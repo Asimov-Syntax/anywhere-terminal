@@ -139,4 +139,14 @@ Verified at two sites, one of them narrower than the report and one wider:
 This one IS remediation — bounded emission, no new `D#`, no new invariant owner. It is also the reason the thrash stop fires on a second independent count: round 2's B7 already required *"ONE budget across every emitted collection: entries, ports, setup steps and problems,"* task 3_2 implemented it for three of the four, and the same invariant has now survived two fix attempts.
 
 ### Thrash stop
-Fired on three independent conditions from `asimov-build` § Review Fix Loop: the cycle's 3rd round still ends with blockers; the same invariant survived 2 fix attempts (B7); and the chair records cycle 1 as capped. No further fix was attempted. Options presented to the user; fastlane does not auto-choose an artifact handback or a risk acceptance.
+Fired on three independent conditions from `asimov-build` § Review Fix Loop: the cycle's 3rd round still ends with blockers; the same invariant survived 2 fix attempts (B7); and the chair records cycle 1 as capped.
+
+The three options were put to the user and went unanswered for ten minutes (they had said they were going to sleep). Rather than choose for them between a handback and a risk acceptance — neither of which fastlane may auto-choose — the work was split at the line the remediation boundary already draws:
+
+- **B7 closed** as task 3_4 (`450670d4`). It needs no artifact change, and it was going to need fixing under every one of the three options, so doing it now forecloses nothing.
+- **B5 and B6 left untouched.** They are one invariant — the opening's lifetime — and closing them requires an identity on the wire that task 3_1's Boundary reserves for `asimov-plan`. Attempting them here would be the remediation-boundary violation the round-2 triage already refused once.
+
+The change therefore stands at 2 open blockers, and the gate that would let it archive is the user's to open. No review round was requested for 3_4: cycle 1 is capped, and the next review starts cycle 2 in discovery mode.
+
+### 3_4, for whoever reviews it next
+Every problem append now routes through one `report` helper that consults the budget first, and a capped draft stops rather than walking the remaining sections. Four regression tests: a file of nothing but unknown keys, a `copy` list of non-path elements, exactly one cap row with the later sections skipped, and a malformed collection shape still reported when there is room. Verify Gate re-run on `450670d4`: type check pass, 5,629 tests pass, I10 ok, lint byte-identical to the change base.
