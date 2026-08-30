@@ -30,6 +30,10 @@ interface Entry {
   dir: string;
   file: string;
   stamp: Stamp;
+  /** Outstanding leases. A snapshot the pool is not retaining is deleted by its last
+   *  reader, never by its first — concurrent joiners share one file (D4). */
+  leases: number;
+  retained: boolean;
 }
 
 const SNAPSHOT_FILE = "db.sqlite";
@@ -47,6 +51,9 @@ function stampable(stamp: Stamp, dbPath: string): boolean {
 
 export class SnapshotPool {
   private readonly retained = new Map<string, Entry>();
+  /** One production per store. Concurrent readers join it rather than each running
+   *  their own backup — vault list, detail and lookup routinely fire together. */
+  private readonly inFlight = new Map<string, Promise<Entry>>();
   private readonly stamp: (paths: string[]) => Promise<Stamp>;
 
   constructor(private readonly deps: SnapshotPoolDeps) {
@@ -63,13 +70,33 @@ export class SnapshotPool {
     const before = await this.stamp(storePaths(dbPath));
     const hit = this.retained.get(dbPath);
     if (hit && stampable(before, dbPath) && sameStamps(before, hit.stamp)) {
-      return this.lease(hit, false);
+      return this.lease(hit);
     }
 
+    const joined = this.inFlight.get(dbPath);
+    if (joined) {
+      return this.lease(await joined);
+    }
+
+    const flight = this.produce(dbPath, before, produce);
+    this.inFlight.set(dbPath, flight);
+    // Cleared when it settles either way: a failed snapshot must not linger as a
+    // promise later readers await forever.
+    void flight
+      .catch(() => {})
+      .finally(() => {
+        if (this.inFlight.get(dbPath) === flight) {
+          this.inFlight.delete(dbPath);
+        }
+      });
+    return this.lease(await flight);
+  }
+
+  private async produce(dbPath: string, before: Stamp, take: (dest: string) => Promise<void>): Promise<Entry> {
     const dir = await this.deps.mkdtemp();
-    const entry: Entry = { dir, file: path.join(dir, SNAPSHOT_FILE), stamp: before };
+    const entry: Entry = { dir, file: path.join(dir, SNAPSHOT_FILE), stamp: before, leases: 0, retained: false };
     try {
-      await produce(entry.file);
+      await take(entry.file);
     } catch (err) {
       await this.deps.rmrf(dir).catch(() => {});
       throw err;
@@ -80,18 +107,21 @@ export class SnapshotPool {
     // to neither stamp — retaining it under the earlier one would be a lie the next
     // reader believes.
     const after = await this.stamp(storePaths(dbPath));
-    const stable = stampable(before, dbPath) && sameStamps(before, after);
-    if (stable) {
+    if (stampable(before, dbPath) && sameStamps(before, after)) {
       const superseded = this.retained.get(dbPath);
-      this.retained.set(dbPath, { ...entry, stamp: after });
+      entry.stamp = after;
+      entry.retained = true;
+      this.retained.set(dbPath, entry);
       if (superseded) {
+        superseded.retained = false;
         await this.deps.rmrf(superseded.dir).catch(() => {});
       }
     }
-    return this.lease(entry, !stable);
+    return entry;
   }
 
-  private lease(entry: Entry, disposeOnRelease: boolean): SnapshotLease {
+  private lease(entry: Entry): SnapshotLease {
+    entry.leases += 1;
     let released = false;
     return {
       file: entry.file,
@@ -100,7 +130,8 @@ export class SnapshotPool {
           return;
         }
         released = true;
-        if (disposeOnRelease) {
+        entry.leases -= 1;
+        if (entry.leases === 0 && !entry.retained) {
           await this.deps.rmrf(entry.dir).catch(() => {});
         }
       },

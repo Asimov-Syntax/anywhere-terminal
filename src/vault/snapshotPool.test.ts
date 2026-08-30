@@ -130,4 +130,65 @@ describe("SnapshotPool", () => {
     expect(produced).toHaveLength(1);
     await expect(fs.access(after.file)).resolves.toBeUndefined();
   });
+  it("gives concurrent readers of one store a single snapshot", async () => {
+    const pool = new SnapshotPool(deps);
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+
+    const first = pool.borrow(dbPath, async (dest) => {
+      await blocked;
+      await produce(dest);
+    });
+    await Promise.resolve();
+    const second = pool.borrow(dbPath, produce);
+    unblock();
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(produced).toHaveLength(1);
+    expect(b.file).toBe(a.file);
+    await a.release();
+    await b.release();
+  });
+
+  it("keeps a shared unretained snapshot alive until its last reader is done", async () => {
+    const pool = new SnapshotPool(deps);
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+
+    // A write lands during production, so this snapshot is used once and never retained.
+    const first = pool.borrow(dbPath, async (dest) => {
+      await blocked;
+      await produce(dest);
+      await writeToWal();
+    });
+    await Promise.resolve();
+    const second = pool.borrow(dbPath, produce);
+    unblock();
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(b.file).toBe(a.file);
+    expect(produced).toHaveLength(1);
+    await a.release();
+    await expect(fs.access(b.file)).resolves.toBeUndefined();
+    await b.release();
+    await expect(fs.access(b.file)).rejects.toThrow();
+  });
+
+  it("lets the next reader retry after a failed production instead of awaiting it", async () => {
+    const pool = new SnapshotPool(deps);
+
+    await expect(
+      pool.borrow(dbPath, async () => {
+        throw new Error("backup refused");
+      }),
+    ).rejects.toThrow("backup refused");
+
+    const lease = await pool.borrow(dbPath, produce);
+    expect(produced).toHaveLength(1);
+    await lease.release();
+  });
 });

@@ -13,7 +13,7 @@
     3. Treat a stamp that cannot be read as changed, so a failed `stat` forces a fresh snapshot rather than reusing a possibly-stale one.
     4. Cover in `src/vault/snapshotPool.test.ts`: an unchanged store reuses, a store written between reads does not, a store written *during* production is not retained, and an unreadable stamp forces a fresh snapshot.
 
-- [ ] 1_2 Make concurrent readers of one store share a single snapshot
+- [x] 1_2 Make concurrent readers of one store share a single snapshot — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d4-one-in-flight-snapshot-per-store
   - **Acceptance**:
