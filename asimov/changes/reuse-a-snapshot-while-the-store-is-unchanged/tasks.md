@@ -23,7 +23,7 @@
     1. In `src/vault/snapshotPool.ts`, key an in-flight promise by store path, join concurrent callers onto it, and clear it when it settles either way.
     2. Cover concurrent borrows counting one production, and a failed production leaving the next caller free to retry rather than awaiting a settled rejection.
 
-- [ ] 1_3 Give retained snapshots a lifetime and an end
+- [x] 1_3 Give retained snapshots a lifetime and an end — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/agent-session-index/spec.md#wal-safe-read-only-sqlite-access; design.md#d3-the-pool-owns-disk-and-disk-is-released-three-ways
   - **Acceptance**:

@@ -191,4 +191,87 @@ describe("SnapshotPool", () => {
     expect(produced).toHaveLength(1);
     await lease.release();
   });
+  it("deletes a superseded snapshot once its last reader releases it", async () => {
+    const pool = new SnapshotPool(deps);
+
+    const stale = await pool.borrow(dbPath, produce);
+    await writeToWal();
+    const fresh = await pool.borrow(dbPath, produce);
+
+    // Still borrowed, so it must survive being replaced.
+    await expect(fs.access(stale.file)).resolves.toBeUndefined();
+    await stale.release();
+    await expect(fs.access(stale.file)).rejects.toThrow();
+    await expect(fs.access(fresh.file)).resolves.toBeUndefined();
+    await fresh.release();
+  });
+
+  it("deletes a superseded snapshot immediately when nobody is reading it", async () => {
+    const pool = new SnapshotPool(deps);
+
+    const stale = await pool.borrow(dbPath, produce);
+    await stale.release();
+    await writeToWal();
+    const fresh = await pool.borrow(dbPath, produce);
+    await fresh.release();
+
+    await expect(fs.access(stale.file)).rejects.toThrow();
+  });
+
+  it("releases the disk of a snapshot left unused for the idle interval", async () => {
+    let clock = 1_000;
+    const pool = new SnapshotPool({ ...deps, idleMs: 5_000, now: () => clock });
+
+    const lease = await pool.borrow(dbPath, produce);
+    await lease.release();
+
+    clock += 4_000;
+    await pool.evictIdle();
+    await expect(fs.access(lease.file)).resolves.toBeUndefined();
+
+    clock += 2_000;
+    await pool.evictIdle();
+    await expect(fs.access(lease.file)).rejects.toThrow();
+
+    // And the next read takes a fresh snapshot rather than reusing a deleted file.
+    const next = await pool.borrow(dbPath, produce);
+    expect(produced).toHaveLength(2);
+    await next.release();
+    await pool.dispose();
+  });
+
+  it("never evicts a snapshot that is currently borrowed", async () => {
+    let clock = 1_000;
+    const pool = new SnapshotPool({ ...deps, idleMs: 5_000, now: () => clock });
+
+    const lease = await pool.borrow(dbPath, produce);
+    clock += 60_000;
+    await pool.evictIdle();
+
+    await expect(fs.access(lease.file)).resolves.toBeUndefined();
+    await lease.release();
+
+    // And it is still the pool's snapshot for this store, not merely a surviving file.
+    const again = await pool.borrow(dbPath, produce);
+    expect(produced).toHaveLength(1);
+    expect(again.file).toBe(lease.file);
+    await again.release();
+    await pool.dispose();
+  });
+
+  it("deletes every retained snapshot on dispose", async () => {
+    const other = path.join(root, "second.db");
+    await fs.writeFile(other, "base");
+    const pool = new SnapshotPool(deps);
+
+    const a = await pool.borrow(dbPath, produce);
+    await a.release();
+    const b = await pool.borrow(other, produce);
+    await b.release();
+
+    await pool.dispose();
+
+    await expect(fs.access(a.file)).rejects.toThrow();
+    await expect(fs.access(b.file)).rejects.toThrow();
+  });
 });
