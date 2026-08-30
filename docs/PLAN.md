@@ -663,7 +663,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | None |
 | **Notes** | A **spike**, and it gated WT-012.11's `task` variant rather than merely informing it. **Answered: no.** On 1.105.0 — the declared `engines.vscode` floor, not a newer editor — a task scoped to a directory outside the workspace ran in the window's opened folder, for both a hand-built `WorkspaceFolder` and `TaskScope.Workspace`. It did not refuse; it succeeded in the wrong checkout, which is the failure mode a setup step could not survive. The `task` variant is therefore removed and `.vscode/tasks.json` contributes shell steps built from the entry's command, with identity explicitly not preserved. `runOn: "worktreeCreated"` remains a convention we read and dispatch ourselves — its dispatcher is workbench-internal and its enum is a proposed API — which is unchanged by this answer. Settling it here rather than inside WT-012.11 is what kept the discovery ahead of that task's spec |
 | **Acceptance** | The question is answered by a running experiment rather than by reading types: a task declared in a directory outside the workspace is either executed with its identity intact, or shown to be unreachable with the failure recorded; if it is reachable, the mechanism and its constraints are written into the design; if it is not, the `task` variant is removed from the provisioning model, the affected provider row is restated, and every document that names the variant is updated in the same change; either outcome leaves no document claiming the untested behaviour |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.14] Prove Entry Reconstruction on Windows
 

@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "prove-a-task-can-run-where-the-worktree-is"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788102395773,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788102395773,
+          "to": 1788103039747
+        }
+      ],
+      "phases": [
+        {
+          "phase": "build",
+          "from": 1788102395773
+        },
+        {
+          "phase": "plan",
+          "from": 1788103011235
+        }
+      ],
+      "firstAt": 1788102395773,
+      "lastAt": 1788103039538,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "build",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 56,
+          "inputTokens": 112,
+          "outputTokens": 27029,
+          "reasoningTokens": 6583,
+          "cacheWriteTokens": 93321,
+          "cacheReadTokens": 6662140,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 93321,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 3,
+          "inputTokens": 6,
+          "outputTokens": 1518,
+          "reasoningTokens": 404,
+          "cacheWriteTokens": 2815,
+          "cacheReadTokens": 411367,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 2815,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}
