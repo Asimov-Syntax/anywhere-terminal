@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -29,7 +29,6 @@
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none
 Lane: full
 Planned at: 6967dbc3
 

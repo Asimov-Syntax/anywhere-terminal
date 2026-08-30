@@ -20,11 +20,12 @@
     - Outcome: a pane appears under the worktree its cwd resolves into
     - Verify: unit src/worktree/presenceProjector.test.ts
   - **Plan**:
-    1. In `src/worktree/presenceDeps.ts`, resolve the pane cwd through the 1_1 memo where it is read, and replace the `normalize: (p) => path.resolve(p)` comment that documents this exact miss.
-    2. In `src/worktree/presenceProjector.ts`, leave the comparison on `isPathInside` — both sides arrive resolved.
-    3. In `src/worktree/worktreeBlockers.ts`, take the same resolved cwd for the pane and session filters.
-    4. Invalidate the memo entry for a pane whose reported cwd changes.
-    5. Cover both spec scenarios, plus a pane whose cwd fails to resolve keeping the row it has today.
+    1. In `src/utils/resolvedPathMemo.ts` (+ `src/utils/resolvedPathMemo.test.ts`), add the batch/peek pair the sync comparison sites need: resolve many paths at the boundary, then read a settled value synchronously, falling back to the lexical form exactly as today.
+    2. In `src/worktree/presenceDeps.ts`, resolve the pane and session cwds through the memo before the projection compares them, and replace the `normalize: (p) => path.resolve(p)` comment that documents this exact miss.
+    3. In `src/worktree/presenceProjector.ts`, leave the comparison on `isPathInside` — both sides arrive resolved.
+    4. In `src/worktree/worktreeBlockers.ts`, take the same resolved cwd for the pane and session filters.
+    5. Invalidate the memo entry for a pane whose reported cwd changes.
+    6. Cover both spec scenarios, plus a pane whose cwd fails to resolve keeping the row it has today.
 
 - [ ] 1_3 Discover the repository a folder resolves into
   - **Deps**: 1_1
