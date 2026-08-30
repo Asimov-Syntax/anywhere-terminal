@@ -1396,6 +1396,39 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return false;
   }
 
+  /**
+   * Is this window drawing rows against an envelope that was built WITHOUT
+   * enrichment?
+   *
+   * The one join of those two facts. `anyDrawingRows()` alone is not the
+   * question — a drawing window whose envelope is already enriched is owed
+   * nothing — and spelling the conjunction inline at each site is how it came to
+   * be checked at one boundary and missed at two (design.md D1).
+   */
+  function enrichmentOwed(): boolean {
+    return anyDrawingRows() && !projectedEnriched;
+  }
+
+  /**
+   * Settle the row-drawing state after any change to `visible`, `level` or
+   * `displayed` — the three inputs to the predicate — exactly as
+   * `reconcileScan` settles the scan.
+   *
+   * Deliberately NOT an edge check. "Did this call change it" is a different
+   * question from "is enrichment owed", and only the second one matters: a call
+   * that changed nothing while the window sits on a bare envelope should still
+   * ask for the pass. It also removes the `wasDrawing` snapshot that every
+   * mutation site would otherwise have to remember to take.
+   *
+   * `join: true` because this re-runs the projection and re-reads no git; a poll
+   * already in flight is the right thing to join (design.md D2).
+   */
+  function reconcileRowDrawing(): void {
+    if (enrichmentOwed()) {
+      void requestProjection({ external: true, join: true });
+    }
+  }
+
   function armScan(): void {
     scanHandle = arm(() => {
       scanHandle = undefined;
@@ -1619,6 +1652,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           state.displayed = displayed;
           reconcileShowing(surface, state, true);
           reconcileScan();
+          reconcileRowDrawing();
         }
       },
     };
@@ -1631,20 +1665,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     }
     switch (msg.type) {
       case "worktreeViewVisibility": {
-        const wasDrawing = anyDrawingRows();
         state.visible = msg.visible;
         // Absent means `"rows"`: the field is additive and a sender that predates
         // it is declaring what it always declared.
         state.level = msg.level ?? "rows";
         reconcileShowing(surface, state, false);
         reconcileScan();
-        // A window that has just gained its first row-drawing surface, holding an
-        // envelope built without enrichment, has to redo it — a tree request
-        // would only rebroadcast the bare one. Not forced: this re-reads no git,
-        // it re-runs the projection (round-2 W1).
-        if (!wasDrawing && anyDrawingRows() && !projectedEnriched) {
-          void requestProjection({ external: true, join: true });
-        }
+        reconcileRowDrawing();
         return;
       }
       case "requestWorktreeSubagents":

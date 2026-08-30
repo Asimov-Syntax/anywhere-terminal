@@ -1,6 +1,6 @@
 # Tasks: own-the-first-row-drawing-promotion
 
-- [ ] 1_1 One owner for "enrichment is owed"
+- [x] 1_1 One owner for "enrichment is owed" — verified: pnpm exec vitest run 'src/providers/WorktreeHost.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: specs/worktree-agent-presence/spec.md#{a-window-that-begins-drawing-rows-gets-enriched-rows-without-waiting-for-a-scan} <!-- design.md D1, D2 -->
   - **Boundary**: no change to `anyShowing`, `reconcileScan`, or the scan cadence
   - **Acceptance**:

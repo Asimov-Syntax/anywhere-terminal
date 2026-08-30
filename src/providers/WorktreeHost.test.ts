@@ -785,6 +785,56 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
     ).toBe(true);
   });
 
+  it("enriches when a retained rows surface becomes displayed", async () => {
+    // `setDisplayed` mutates an input to the drawing predicate without going
+    // through the visibility handler, so this rise reached no promotion at all:
+    // a reopened rail drew fallback titles and no previews until the next scan.
+    const { worktrees, options } = scoped();
+    const s = surface();
+    const attachment = worktrees.attach(s);
+    attachment.setDisplayed(true);
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    // Collapse to presence-only, then let a bare envelope be published.
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+    worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    await settle();
+    attachment.setDisplayed(false);
+    await settle();
+    options.length = 0;
+
+    // Back to drawing rows, by the route that goes nowhere near the handler.
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+    options.length = 0;
+    attachment.setDisplayed(true);
+    await settle();
+
+    expect(
+      options.some((o) => o?.enrich === true),
+      "a rail that became displayed was left holding the un-enriched envelope",
+    ).toBe(true);
+  });
+
+  it("issues no extra projection when the published envelope is already enriched", async () => {
+    // The obligation is the CONJUNCTION — rows drawn and what we published was
+    // bare. Drawing rows on its own is not a reason to redo anything.
+    const { worktrees, options } = scoped();
+    const s = surface();
+    const attachment = worktrees.attach(s);
+    attachment.setDisplayed(true);
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    worktrees.handleMessage(s, { type: "requestWorktreeTree" });
+    await settle();
+    expect(options.some((o) => o?.enrich === true)).toBe(true);
+
+    options.length = 0;
+    attachment.setDisplayed(true);
+    worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+
+    expect(options, "an already-enriched window redid its projection").toHaveLength(0);
+  });
+
   it("treats a sender that omits the level as drawing rows", async () => {
     // The field is additive; every existing sender means what it always meant.
     const { worktrees, options } = scoped();
