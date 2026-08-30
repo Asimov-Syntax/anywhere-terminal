@@ -5,11 +5,14 @@ import {
   classifyRemoval,
   createWorktree,
   lockWorktree,
+  prunablePaths,
   pruneRepo,
   REMOVE_TIMEOUT_MS,
   type RemovalJournal,
   removeWorktree,
+  repairWorktree,
   unlockWorktree,
+  worktreeHeadOid,
 } from "./worktreeMutations";
 
 function ok(stdout = ""): GitCommandResult {
@@ -317,5 +320,82 @@ describe("branchNameIsValid — git judges the name (round-4 W9)", () => {
       failedToSpawn: false,
     });
     expect(await branchNameIsValid(r, "/repo", "feat/ok")).toBeNull();
+  });
+});
+
+describe("repairWorktree", () => {
+  it("issues `worktree repair` against the path, and never `worktree add`", async () => {
+    const { run, runner: r } = runner();
+    await repairWorktree(r, { repoPath: "/repo", worktreePath: "/repo/wt-a" });
+    expect(run).toHaveBeenCalledWith(["worktree", "repair", "/repo/wt-a"], "/repo");
+    expect(run.mock.calls.map((c) => c[0][1])).not.toContain("add");
+  });
+
+  it("never adds --force, because a repair git refuses is a refusal to surface", async () => {
+    const { run, runner: r } = runner();
+    await repairWorktree(r, { repoPath: "/repo", worktreePath: "/repo/wt-a" });
+    expect(run.mock.calls[0][0]).not.toContain("--force");
+  });
+
+  it("refuses a path that reads as an option, without running anything", async () => {
+    const { run, runner: r } = runner();
+    const result = await repairWorktree(r, { repoPath: "/repo", worktreePath: "--git-dir=/evil" });
+    expect(result).toMatchObject({ ok: false });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("surfaces git's own fatal line when the repair fails", async () => {
+    const { runner: r } = runner(fail("Preparing…\nfatal: not a valid path"));
+    expect(await repairWorktree(r, { repoPath: "/repo", worktreePath: "/repo/wt-a" })).toMatchObject({
+      ok: false,
+      message: "fatal: not a valid path",
+    });
+  });
+});
+
+describe("worktreeHeadOid", () => {
+  it("asks the DIRECTORY, not the repository, and trims what git prints", async () => {
+    const { run, runner: r } = runner(ok("abc123\n"));
+    expect(await worktreeHeadOid(r, "/repo/wt-a")).toBe("abc123");
+    expect(run).toHaveBeenCalledWith(["rev-parse", "HEAD"], "/repo/wt-a");
+  });
+
+  it("answers undefined when git refused, rather than an empty oid", async () => {
+    const { runner: r } = runner(fail("fatal: not a git repository"));
+    expect(await worktreeHeadOid(r, "/repo/wt-a")).toBeUndefined();
+  });
+
+  it("answers undefined when git exited 0 but printed nothing", async () => {
+    // An empty string is not an oid, and returning one would let a comparison
+    // against an equally empty expectation pass.
+    const { runner: r } = runner(ok("  \n"));
+    expect(await worktreeHeadOid(r, "/repo/wt-a")).toBeUndefined();
+  });
+});
+
+describe("prunablePaths", () => {
+  it("names only the registrations git still reports as prunable", async () => {
+    const { run, runner: r } = runner(
+      ok(
+        [
+          "worktree /repo",
+          "HEAD aaa",
+          "branch refs/heads/main",
+          "",
+          "worktree /repo/wt-stale",
+          "HEAD bbb",
+          "branch refs/heads/feat",
+          "prunable gitdir file points to non-existent location",
+          "",
+        ].join("\n"),
+      ),
+    );
+    expect(await prunablePaths(r, "/repo")).toEqual({ ok: true, paths: ["/repo/wt-stale"] });
+    expect(run).toHaveBeenCalledWith(["worktree", "list", "--porcelain"], "/repo");
+  });
+
+  it("answers not-ok when the listing failed, which is not the same as none", async () => {
+    const { runner: r } = runner(fail("fatal: no repo"));
+    expect(await prunablePaths(r, "/repo")).toEqual({ ok: false });
   });
 });

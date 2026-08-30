@@ -9,6 +9,7 @@
 import { readsAsFlag } from "../utils/readsAsFlag";
 import { describeGitFailure } from "./describeGitFailure";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
+import { parseWorktreeList } from "./porcelainParser";
 
 export type MutationResult = { ok: true; stdout: string } | { ok: false; message: string };
 
@@ -296,4 +297,73 @@ function sourceTokens(source: CreateSource): string[] {
     case "detached":
       return [source.ref];
   }
+}
+
+// ── Reattach ─────────────────────────────────────────────────────────────
+
+export interface RepairRequest {
+  repoPath: string;
+  /** Already validated by createPath.ts as an existing directory. */
+  worktreePath: string;
+}
+
+/**
+ * Rewrite a stale registration's two-way link, in place.
+ *
+ * No `--force` and no fallback to `git worktree add`. `repair` only rewrites
+ * the link between an administrative entry and a directory; `add` against the
+ * same path is a different action that writes a working tree, and reaching for
+ * it where the repair could not be made would destroy the checkout this exists
+ * to keep (worktree-create.md § 6).
+ */
+export async function repairWorktree(runner: GitCommandRunner, request: RepairRequest): Promise<MutationResult> {
+  if (readsAsFlag(request.worktreePath)) {
+    return REFUSED_FLAG_LIKE;
+  }
+  return settle(
+    await runner.run(["worktree", "repair", request.worktreePath], request.repoPath),
+    "git worktree repair",
+  );
+}
+
+/**
+ * The DIRECTORY's own `HEAD` commit, asked of the directory itself.
+ *
+ * `undefined` when git could not say — a refusal, a timeout, or a zero exit
+ * with nothing on stdout. An empty string is not an oid, and answering one
+ * would let a comparison against an equally empty expectation pass.
+ */
+export async function worktreeHeadOid(runner: GitCommandRunner, worktreePath: string): Promise<string | undefined> {
+  if (readsAsFlag(worktreePath)) {
+    return undefined;
+  }
+  const result = await runner.run(["rev-parse", "HEAD"], worktreePath);
+  if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
+    return undefined;
+  }
+  const oid = result.stdout.toString("utf8").trim();
+  return oid.length === 0 ? undefined : oid;
+}
+
+/** Every registration git STILL reports prunable, spelled as git spells them. */
+export type PrunablePaths = { ok: true; paths: string[] } | { ok: false };
+
+/**
+ * Which registrations git currently calls stale.
+ *
+ * A listing that failed answers `{ ok: false }` rather than an empty list: the
+ * caller uses this to confirm a repair took, and reading "we could not ask" as
+ * "nothing is stale" would claim a success nobody observed (§ 2.3 condition 4).
+ *
+ * Not `-z`: this runs once, after a repair, on a listing already known to be
+ * small, and the fallback machinery `WorktreeDiscovery` needs for the general
+ * case would buy nothing here.
+ */
+export async function prunablePaths(runner: GitCommandRunner, repoPath: string): Promise<PrunablePaths> {
+  const result = await runner.run(["worktree", "list", "--porcelain"], repoPath);
+  if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
+    return { ok: false };
+  }
+  const parsed = parseWorktreeList(result.stdout);
+  return { ok: true, paths: parsed.worktrees.filter((worktree) => worktree.prunable).map((worktree) => worktree.path) };
 }

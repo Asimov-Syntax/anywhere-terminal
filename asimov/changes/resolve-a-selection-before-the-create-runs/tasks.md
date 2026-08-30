@@ -54,7 +54,7 @@
     4. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts`: base disabled with a reason for reuse and for reattach; enabled for fresh; enabled for fresh WITH an occupied destination; a resolution for a query the user has typed past changes nothing.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited
 
-- [ ] 3_1 Reattach repairs, and re-checks what the user's pause could have changed
+- [x] 3_1 Reattach repairs, and re-checks what the user's pause could have changed — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D3, D6; specs/worktree-panel/spec.md#a-stale-registration-is-repaired-in-place-and-only-while-git-can-repair-it
   - **Acceptance**:
@@ -62,7 +62,7 @@
     - Verify: unit src/worktree/worktreeMutationService.test.ts
   - **Plan**:
     1. `src/worktree/worktreeMutationService.ts` branches on `reattach` BEFORE `sourceOf`, which keeps its throw — reattach is not a `git worktree add` and has no `CreateSource` (D6). `adopt` keeps its throw too; WT-012.15 owns it.
-    2. The repair issues `git worktree repair <path>` and then confirms the listing lost `prunable` (§ 2.3 condition 4). A repair that did not take is reported, never claimed.
+    2. The argv vectors land in `src/worktree/worktreeMutations.ts` beside the other verbs: `git worktree repair <path>`, the directory's own `HEAD`, and the re-read listing that answers § 2.3 condition 4. A repair that did not take is reported, never claimed. Covered in `src/worktree/worktreeMutations.test.ts`.
     3. `expectedOid` is re-checked against the directory immediately before the command. The resolution is a read that authorizes a mutation and the user's decision sits between them, so the guard is at the mutation, not carried from the read (D3).
     4. Cover in `src/worktree/worktreeMutationService.test.ts`: a repair issues `worktree repair` and never `worktree add`; a moved `expectedOid` refuses and issues nothing; a listing still reporting `prunable` afterwards is reported as a failed repair; the working tree is never written.
   - **Boundary**: no `--force` and no fallback to `add` — where the repair cannot be made, it is refused (§ 6)

@@ -88,7 +88,10 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     now: () => 0,
     ...over,
   };
-  return { service: createWorktreeMutationService(deps), order, argv, outcomes, runner };
+  // `deps.runner`, not the local one: an override in `over` replaces it, and
+  // returning the shadowed original made every assertion on a test's own runner
+  // read an object nothing had called.
+  return { service: createWorktreeMutationService(deps), order, argv, outcomes, runner: deps.runner };
 }
 
 describe("a mutation reaches git through the coordinator", () => {
@@ -1119,5 +1122,182 @@ describe("a proof never makes an unforced removal ask for confirmation (design.m
     await h.service.removeWorktree(t, true, blocked.fingerprint ?? "");
 
     expect(h.argv[0]).toEqual(["worktree", "remove", "--force", RAW_PATH]);
+  });
+});
+
+describe("reattach repairs in place, and re-checks the pause", () => {
+  const STALE = "/repo-wt/stale";
+
+  /** A listing whose only prunable record is `paths`. */
+  function listing(paths: readonly string[]): string {
+    return [
+      "worktree /repo",
+      "HEAD aaa",
+      "branch refs/heads/main",
+      "",
+      ...paths.flatMap((p) => [`worktree ${p}`, "HEAD bbb", "branch refs/heads/feat", "prunable gitdir gone", ""]),
+    ].join("\n");
+  }
+
+  /**
+   * A runner that answers each git question separately, so a test can move one
+   * of them without moving the others.
+   */
+  function reattachHarness(over: { head?: string; stillPrunable?: readonly string[]; repairOk?: boolean } = {}) {
+    const h = harness({
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
+        readdir: async () => ["src", ".git"],
+        normalize: async (raw) => raw,
+      },
+      runner: {
+        run: vi.fn(async (args: readonly string[]) => {
+          if (args[0] === "rev-parse") {
+            return ok({ stdout: Buffer.from(`${over.head ?? "oid-1"}\n`) });
+          }
+          if (args[1] === "list") {
+            return ok({ stdout: Buffer.from(listing(over.stillPrunable ?? [])) });
+          }
+          if (args[1] === "repair" && over.repairOk === false) {
+            return { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: no such worktree", ...FAILED };
+          }
+          return ok();
+        }),
+      },
+    });
+    return h;
+  }
+
+  const FAILED = { timedOut: false, failedToSpawn: false };
+
+  async function reattach(h: ReturnType<typeof harness>, expectedOid = "oid-1"): Promise<void> {
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: STALE,
+      afterCreate: { kind: "none" },
+      mode: { kind: "reattach", branch: "feat", repairPath: STALE, expectedOid },
+      disposition: { kind: "free" },
+    });
+  }
+
+  function argvOf(h: ReturnType<typeof harness>): string[][] {
+    return (h.runner.run as ReturnType<typeof vi.fn>).mock.calls.map((c) => [...(c[0] as string[])]);
+  }
+
+  it("issues `worktree repair` and never `worktree add`", async () => {
+    const h = reattachHarness();
+    await reattach(h);
+
+    const argv = argvOf(h);
+    expect(argv).toContainEqual(["worktree", "repair", STALE]);
+    expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(false);
+    expect(h.outcomes[0]).toMatchObject({ kind: "ok", verb: "create" });
+  });
+
+  it("refuses a checkout that moved since it resolved, and issues no mutation", async () => {
+    // The resolution is a read that authorizes a mutation, and the user's
+    // decision sits between them. The guard is at the mutation (D3).
+    const h = reattachHarness({ head: "oid-2" });
+    await reattach(h, "oid-1");
+
+    const argv = argvOf(h);
+    expect(argv.some((a) => a[1] === "repair")).toBe(false);
+    expect(argv.some((a) => a[1] === "add")).toBe(false);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("moved") });
+  });
+
+  it("refuses when the directory's commit cannot be read at all", async () => {
+    // Unreadable is not "matches". Treating it as one would repair against a
+    // checkout nobody established the state of.
+    const h = harness({
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
+        readdir: async () => ["src"],
+        normalize: async (raw) => raw,
+      },
+      runner: {
+        run: vi.fn(async (args: readonly string[]) =>
+          args[0] === "rev-parse"
+            ? { code: 128, stdout: Buffer.alloc(0), stderr: "fatal: not a git repository", ...FAILED }
+            : ok(),
+        ),
+      },
+    });
+    await reattach(h);
+
+    // Asked, and answered nothing usable — not "never asked", which would pass
+    // just as well if the whole branch were missing.
+    expect(argvOf(h).some((a) => a[0] === "rev-parse")).toBe(true);
+    expect(argvOf(h).some((a) => a[1] === "repair")).toBe(false);
+    // The unreadable REASON, not just "some error": dropping this guard leaves
+    // `undefined` to fail the equality check below it and report a checkout
+    // that moved, which is a different and untrue thing to tell the user.
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("could not be read") });
+  });
+
+  it("reports a repair that did not take, rather than claiming it", async () => {
+    // Git exiting 0 is not the claim. § 2.3 condition 4 is the listing losing
+    // `prunable`, and a listing that still reports it is a failed repair.
+    const h = reattachHarness({ stillPrunable: [STALE] });
+    await reattach(h);
+
+    expect(argvOf(h)).toContainEqual(["worktree", "repair", STALE]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("did not take") });
+  });
+
+  it("does not read a listing it could not obtain as a successful repair", async () => {
+    const h = harness({
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
+        readdir: async () => ["src"],
+        normalize: async (raw) => raw,
+      },
+      runner: {
+        run: vi.fn(async (args: readonly string[]) => {
+          if (args[0] === "rev-parse") {
+            return ok({ stdout: Buffer.from("oid-1\n") });
+          }
+          if (args[1] === "list") {
+            return { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: cannot list", ...FAILED };
+          }
+          return ok();
+        }),
+      },
+    });
+    await reattach(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable", verb: "create", unreadable: ["prunable"] });
+  });
+
+  it("never writes the working tree: no add, no checkout, no --force", async () => {
+    const h = reattachHarness();
+    await reattach(h);
+
+    // A repair that RAN and still wrote nothing. Without this line the loop
+    // below is satisfied by a branch that never issued a command at all.
+    expect(argvOf(h)).toContainEqual(["worktree", "repair", STALE]);
+    for (const args of argvOf(h)) {
+      expect(args).not.toContain("--force");
+      expect(args).not.toContain("checkout");
+      expect(args[1]).not.toBe("add");
+    }
+  });
+
+  it("still refuses a directory that is gone, before asking git anything", async () => {
+    const h = harness({
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => null,
+        readdir: async () => null,
+        normalize: async (raw) => raw,
+      },
+    });
+    await reattach(h);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
   });
 });
