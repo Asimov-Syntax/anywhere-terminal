@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -72,3 +72,5 @@ THRASH STOP. B4's invariant has now survived two fix attempts, which is a stop t
 Task 5_1's recorded `--test-change` rationale reads `x`. That is a placeholder I passed while isolating which half of `--cmd` was failing, and the run it landed on is the one that passed and ticked; the CLI refuses a second write, and hand-editing its evidence would forge a record the tool exists to produce. The real rationale, for the reviewer: additions only, +7 assertions, no existing assertion weakened — two cases for the per-call output ceiling `GitRunOptions` did not carry before, two for what the caps bound at the adapter and inside the walk. One pre-existing case shifted meaning without changing what it asserts: "a stat that takes longer than the whole budget" still exercises a stat that returns LATE, which is why the post-await deadline check stayed alongside the new race — its fake resolves instantly while advancing a fake clock, so it cannot express a read that never returns at all.
 
 B5 fixed in task 5_2. The suppression moved out of the producer, which held neither the target nor the pane snapshot, and into `evaluateRemoval`, which holds both. `PresenceProjector` publishes the claim as `entryId → paneId` — the same fact its pass already built, keyed usefully — and a registry session is dropped only where the claiming pane is in the snapshot this assessment was handed, resolves inside the target, and has not exited. Every other shape refuses: no claim, a claim naming a pane the snapshot no longer has, a pane with no cwd, one outside the target, one that exited. Mutation-checked at both boundaries — a host that always answers with an empty map fails the actions suite, and a blocker that trusts any claim without corroborating it fails four cases.
+
+Verify Gate re-run after the cycle-2 fixes (5_1, 5_2): type check clean, `pnpm run test:unit` 258 files / 5711 tests passing, `pnpm run gate:fs-deletion` ok. `pnpm exec biome check src` reports 3 format errors in `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts` and `src/cursor/CursorHookInstaller.test.ts` — none touched by this change, and all three reproduce on a detached worktree at this change's base commit. Warnings are at the 14 baseline.
