@@ -1,6 +1,6 @@
 # Tasks — resolve a selection before the create runs
 
-- [ ] 1_1 Classify a selection from facts the host already holds
+- [x] 1_1 Classify a selection from facts the host already holds — verified: pnpm exec vitest run 'src/worktree/createResolution.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D2, D3, D4; specs/worktree-panel/spec.md#{a-selection-resolves-to-what-the-create-would-actually-do-before-submit, the-resolution-names-both-the-path-the-create-will-take-and-the-one-it-skipped, reporting-an-occupied-destination-does-not-authorize-removing-it}
   - **Acceptance**:
