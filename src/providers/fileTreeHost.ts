@@ -100,6 +100,9 @@ export class FileTreeHost implements RootProvider {
       ) => void)
     | null = null;
   private attachReady: (() => boolean) | null = null;
+  /** Whether the attached webview has processed an `init` — see
+   *  {@link notifyInitDelivered}. */
+  private initDelivered = false;
 
   /**
    * Optional git decoration provider. When provided, the host stamps every
@@ -174,9 +177,29 @@ export class FileTreeHost implements RootProvider {
     this.paths?.dispose();
   }
 
-  /** Push the current root to the attached webview, if one has booted. */
+  /**
+   * The webview has processed an `init`, so it has a controller that can
+   * receive a root correction.
+   *
+   * D7 says a late resolution updates containment "after mount", and `_ready`
+   * is not mount: it means the webview said hello, and the provider then
+   * captures an init payload and may spend a retry window delivering it. A
+   * resolution settling inside that window used to post a correction into a
+   * webview with no controller, which dropped it — and the retry then delivered
+   * the payload captured BEFORE the resolution, leaving that surface comparing
+   * containment lexically for its lifetime (round-5 B11).
+   *
+   * Posting here rather than only setting the flag is the other half: the
+   * correction that was dropped has to be made again once the receiver exists.
+   */
+  notifyInitDelivered(): void {
+    this.initDelivered = true;
+    this.postWorkspaceRoot();
+  }
+
+  /** Push the current root to the attached webview, if one can receive it. */
   private postWorkspaceRoot(): void {
-    if (this.attachReady?.() !== true) {
+    if (this.attachReady?.() !== true || !this.initDelivered) {
       return;
     }
     const post = this.attachPost;
@@ -232,6 +255,9 @@ export class FileTreeHost implements RootProvider {
     this.activeFileTreeRoot = this.workspaceRoot;
     this.attachPost = deps.post;
     this.attachReady = deps.isReady;
+    // Cleared on the way in: this attachment's webview has not processed an
+    // init yet, and the provider is about to send it one (round-5 B11).
+    this.initDelivered = false;
     // Reconciled on the way IN, not only on the next folder event. A view's
     // teardown disposes the listener below and keeps the host, so a workspace
     // change taken while it was detached would otherwise stay invisible until
@@ -297,6 +323,7 @@ export class FileTreeHost implements RootProvider {
         this.fsSubscriptions.clear();
         this.attachPost = null;
         this.attachReady = null;
+        this.initDelivered = false;
       },
     });
   }

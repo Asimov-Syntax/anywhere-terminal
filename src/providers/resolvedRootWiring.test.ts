@@ -17,14 +17,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAll, __setAppRoot, __setWorkspaceFolders } from "../test/__mocks__/vscode";
 
+// A spawn that returns a usable handle, because these surfaces have to get all
+// the way through `init` — the correction this file asserts is gated on a
+// DELIVERED init, so a harness whose init throws proves nothing (round-5 B11).
 vi.mock("../pty/PtyManager", () => ({
-  loadNodePty: vi.fn(() => ({ spawn: vi.fn() })),
+  loadNodePty: vi.fn(() => ({
+    spawn: vi.fn(() => ({
+      onData: vi.fn(() => ({ dispose: () => {} })),
+      onExit: vi.fn(() => ({ dispose: () => {} })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      pid: 12345,
+      process: "zsh",
+    })),
+  })),
   detectShell: vi.fn(() => ({ shell: "/bin/zsh", args: [] })),
   buildEnvironment: vi.fn(() => ({})),
   resolveWorkingDirectory: vi.fn(() => "/tmp"),
 }));
-vi.mock("../pty/PtySession", () => ({ PtySession: class {} }));
-vi.mock("../session/OutputBuffer", () => ({ OutputBuffer: class {} }));
 
 import * as vscode from "vscode";
 import { SessionManager } from "../session/SessionManager";
@@ -50,6 +63,8 @@ afterEach(() => {
 interface Surface {
   posted: unknown[];
   boot: () => void;
+  /** Refuse the first `init` post, so the provider takes its retry path. */
+  failInit?: () => void;
   /** Drive the panel's own teardown, where a permanent close is observed. */
   close?: () => void;
   dispose: () => void;
@@ -64,6 +79,11 @@ function memo(): ResolvedPathMemo {
 function makeWebviewSeam() {
   const handlers: Array<(msg: unknown) => void> = [];
   const posted: unknown[] = [];
+  // `failInit` reproduces the supported transient failure: the provider retries
+  // after 50ms, and a realpath settling inside that window used to post a
+  // correction into a webview with no controller, which dropped it (round-5 B11).
+  let failFirstInit = false;
+  let refused = false;
   const webview = {
     html: "",
     options: {},
@@ -74,6 +94,10 @@ function makeWebviewSeam() {
       return { dispose: () => {} };
     },
     postMessage: vi.fn((msg: unknown) => {
+      if (failFirstInit && !refused && (msg as { type?: string }).type === "init") {
+        refused = true;
+        return Promise.resolve(false);
+      }
       posted.push(msg);
       return Promise.resolve(true);
     }),
@@ -85,7 +109,10 @@ function makeWebviewSeam() {
       h({ type: "ready" });
     }
   };
-  return { webview, posted, boot };
+  const failInit = () => {
+    failFirstInit = true;
+  };
+  return { webview, posted, boot, failInit };
 }
 
 function mockContext(): vscode.ExtensionContext {
@@ -132,7 +159,7 @@ function mountView(m: ResolvedPathMemo, location: "sidebar" | "panel"): Surface 
     null,
     m,
   );
-  const { webview, posted, boot } = makeWebviewSeam();
+  const { webview, posted, boot, failInit } = makeWebviewSeam();
   const webviewView = {
     visible: true,
     viewType: `anywhereTerminal.${location}`,
@@ -141,8 +168,15 @@ function mountView(m: ResolvedPathMemo, location: "sidebar" | "panel"): Surface 
     onDidDispose: () => ({ dispose: () => {} }),
   } as unknown as vscode.WebviewView;
 
-  provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
-  return { posted, boot, dispose: () => sessions.dispose() };
+  return {
+    posted,
+    boot: () => {
+      provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+      boot();
+    },
+    failInit,
+    dispose: () => sessions.dispose(),
+  };
 }
 
 function mountEditor(m: ResolvedPathMemo): Surface {
@@ -209,6 +243,32 @@ describe("every file-tree surface reports where its root resolves", () => {
     surface.close?.();
 
     expect(m.size).toBe(0);
+    surface.dispose();
+  });
+
+  it("corrects the root after an init that only landed on the retry", async () => {
+    // Round-5 B11, end to end. The first `init` post is refused, the provider
+    // waits 50ms and retries, and the realpath settles inside that window. The
+    // correction posted then reached a webview with no controller and was
+    // dropped, and the retry delivered the payload captured BEFORE the
+    // resolution — so the surface compared containment lexically for its
+    // lifetime, which is the defect this whole change exists to remove.
+    let land: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    const m = new ResolvedPathMemo({
+      realpath: async (p) => {
+        await held;
+        return p === SPELLED ? PHYSICAL : p;
+      },
+    });
+    const surface = mountView(m, "sidebar");
+    surface.failInit?.();
+    surface.boot();
+    land();
+
+    await vi.waitFor(() => expect(resolvedRoots(surface.posted)).toContain(PHYSICAL));
     surface.dispose();
   });
 });

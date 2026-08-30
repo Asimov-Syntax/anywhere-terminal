@@ -1003,6 +1003,9 @@ export class TerminalEditorProvider {
           vaultActionsAvailable: false,
         });
         this.postRowActivation();
+        if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
+        }
         if (!initDelivered) {
           console.error("[AnyWhere Terminal] init delivery failed during editor reload — skipping scrollback restore.");
           this.sessionManager.resumeOutputForView(this._viewId);
@@ -1046,6 +1049,9 @@ export class TerminalEditorProvider {
           vaultActionsAvailable: false,
         });
         this.postRowActivation();
+        if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
+        }
         if (!initDelivered) {
           console.error(
             "[AnyWhere Terminal] init delivery failed during editor restore — skipping restoreFromSnapshot posts.",
@@ -1099,6 +1105,7 @@ export class TerminalEditorProvider {
         // Same ordering as the reloaded and restored branches — see W2 in
         // TerminalViewProvider.
         if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
           this.postRowActivation();
         }
       }

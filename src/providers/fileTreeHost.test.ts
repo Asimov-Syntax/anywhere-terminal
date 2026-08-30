@@ -1038,6 +1038,9 @@ describe("FileTreeHost — the resolved workspace root (round-1 B1)", () => {
     // Attached synchronously, before the constructor's realpath can land — so
     // the post under test is the one that fires when resolution completes.
     const sub = host.attach({ isReady: () => true, post: (m) => posted.push(m as never) });
+    // The provider says so once its `init` is actually delivered; the host will
+    // not talk to a webview that has no controller yet (round-5 B11).
+    host.notifyInitDelivered();
 
     await waitFor(() => posted.some((m) => m.resolvedRootPath === "/private/repo"));
 
@@ -1069,6 +1072,45 @@ describe("FileTreeHost path claims", () => {
       (vscode.workspace as { onDidChangeWorkspaceFolders: unknown }).onDidChangeWorkspaceFolders = original;
     }
   }
+
+  it("holds a correction until the webview has processed an init", async () => {
+    // Round-5 B11. `_ready` means the webview said hello; the provider then
+    // captures an init payload and may spend a retry window delivering it. A
+    // correction posted into that window reaches a webview with no controller
+    // and is dropped, and the retry then delivers the payload captured before
+    // the resolution — leaving that surface lexical for its lifetime.
+    setFolders([{ uri: { fsPath: "/link/repo" } }]);
+    const posted: Array<{ type: string; resolvedRootPath?: string | null }> = [];
+    const memo = new ResolvedPathMemo({ realpath: async () => "/private/repo" });
+    const host = new FileTreeHost(null, null, createTrackedPathResolver(memo));
+    const sub = host.attach({ isReady: () => true, post: (m) => posted.push(m as never) });
+
+    await waitFor(() => memo.resolvedOr("/link/repo") === "/private/repo");
+    expect(posted.some((m) => m.type === "workspace-root-changed")).toBe(false);
+
+    host.notifyInitDelivered();
+
+    expect(posted.some((m) => m.type === "workspace-root-changed" && m.resolvedRootPath === "/private/repo")).toBe(
+      true,
+    );
+    sub.dispose();
+  });
+
+  it("needs a fresh init after a detach, because the next attach sends one", async () => {
+    setFolders([{ uri: { fsPath: "/link/repo" } }]);
+    const memo = new ResolvedPathMemo({ realpath: async () => "/private/repo" });
+    const host = new FileTreeHost(null, null, createTrackedPathResolver(memo));
+    const first = host.attach({ isReady: () => true, post: () => {} });
+    host.notifyInitDelivered();
+    first.dispose();
+
+    const posted: Array<{ type: string }> = [];
+    const second = host.attach({ isReady: () => true, post: (m) => posted.push(m as never) });
+    await waitFor(() => memo.resolvedOr("/link/repo") === "/private/repo");
+
+    expect(posted.some((m) => m.type === "workspace-root-changed")).toBe(false);
+    second.dispose();
+  });
 
   it("lets go of the root when the last workspace folder closes", async () => {
     // Round-4 B9. The null-root guard returned before reconciling, so a host

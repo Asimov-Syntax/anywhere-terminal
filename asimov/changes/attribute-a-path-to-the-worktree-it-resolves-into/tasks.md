@@ -127,3 +127,17 @@
     1. B9 — in `src/providers/fileTreeHost.ts`, let `resolveWorkspaceRoot` reconcile a null root as the empty set instead of returning early, so closing the last workspace folder releases the root it claimed.
     2. B10 — reconcile the current root when `attach` begins, so a folder change taken while the view was detached is not invisible until the next one.
     3. Cover both through the attach harness in `src/providers/fileTreeHost.test.ts` — root A, then none, then A retargeted; and detach, change folders, reattach.
+
+## 6. Bounded extension round
+
+- [x] 6_1 Deliver the resolved root to a webview that can receive it — verified: pnpm exec vitest run 'src/providers/resolvedRootWiring.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_1
+  - **Refs**: .reviews/round-5.md; design.md#d7-a-resolution-that-lands-after-mount-updates-containment-never-the-mount
+  - **Acceptance**:
+    - Outcome: a resolution settling during the init retry reaches the webview
+    - Verify: unit src/providers/resolvedRootWiring.test.ts
+  - **Boundary**: B11 only — no other host-to-webview message changes gate
+  - **Plan**:
+    1. In `src/providers/fileTreeHost.ts` (+ `src/providers/fileTreeHost.test.ts`), gate `postWorkspaceRoot` on a DELIVERED init rather than the `_ready` flag, and reset that gate in `attach` since the next attach re-sends init. D7 already says the correction lands after mount; `_ready` means the webview said hello, which is not mount.
+    2. In `src/providers/TerminalViewProvider.ts` and `src/providers/TerminalEditorProvider.ts`, tell the host each time an init is delivered, so the authoritative root is posted once the receiver exists — covering a resolution that settled inside the retry window and was dropped.
+    3. Cover it in `src/providers/resolvedRootWiring.test.ts`: a deferred realpath, a failed first init post, a successful retry, and the physical root required afterwards.
