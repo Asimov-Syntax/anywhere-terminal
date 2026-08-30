@@ -831,13 +831,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * `postMessage`, where the type is gone — so the same exactness is re-checked
    * here or it is not checked at all (round-1 B2, W1).
    *
-   * A key present with `undefined` counts as absent: that is what an optional
-   * field looks like after a structured-clone round trip.
+   * A forbidden key is refused whatever it holds, `undefined` included. Treating
+   * an undefined value as absence sounds harmless — it is what an optional field
+   * can look like after a serialization round trip — but every optional field a
+   * variant legitimately has is already named in its own allow-list, so the only
+   * keys the exemption ever admitted were the forbidden ones: `reuse` with
+   * `baseRef: undefined`, `none` with `agent: undefined` (round-2 W1). Whether an
+   * ALLOWED key may hold `undefined` stays the variant validator's decision.
    */
   function onlyKeys(value: unknown, allowed: readonly string[]): boolean {
-    return Object.entries(value as Record<string, unknown>).every(
-      ([key, held]) => held === undefined || allowed.includes(key),
-    );
+    return Object.keys(value as Record<string, unknown>).every((key) => allowed.includes(key));
   }
 
   /**

@@ -348,8 +348,11 @@ describe("the confirmation states what it destroys and what it spares", () => {
 describe("a check nobody could evaluate (round-1 W2)", () => {
   const unproven = { outcome: "unproven" as const };
 
+  // `textButton` renders `wt-btn wt-btn--danger`. Round-2 W3: the first spelling
+  // of this helper queried `.danger`, which matches nothing, so its assertions
+  // held whether or not the button was there.
   function danger(host: HTMLElement): HTMLElement | null {
-    return host.querySelector(".wt-dialog-actions .danger, button.danger");
+    return host.querySelector("button.wt-btn--danger");
   }
 
   it("withholds force when a confirmable check could not be read", () => {

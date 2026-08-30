@@ -947,6 +947,15 @@ describe("create validates the shape before it delegates", () => {
     await refuses({ mode: { kind: "fresh-detached", baseRef: "HEAD", branch: "feat" } });
     await refuses({ mode: { kind: "fresh", branch: "feat", detach: true } });
   });
+
+  it("refuses a forbidden field even when it holds nothing", async () => {
+    // Round-2 W1: an undefined value is not absence. Every optional field a
+    // variant legitimately has is already in its own allow-list, so exempting
+    // undefined only ever admitted the forbidden keys.
+    await refuses({ mode: { kind: "reuse", branch: "feat", baseRef: undefined } });
+    await refuses({ afterCreate: { kind: "none", agent: undefined } });
+    await refuses({ disposition: { kind: "free", authorization: undefined } });
+  });
 });
 
 // ── What comes back ──────────────────────────────────────────────────────

@@ -85,3 +85,15 @@
     4. In `src/webview/worktree/WorktreeRemoveDialog.ts`, withhold the "Force remove" button whenever any check is `unproven` (W2). The list keys every line on `failed` or a positive count, so an unproven check renders nothing — and force under an empty list asks the user to authorize destroying a risk the dialog just failed to describe. The copy that makes an unreadable report legible is WT-013.4's and WT-013.1 is what first routes an `unproven` check here, so this guard makes the case fail closed rather than inventing that copy now.
     5. In `src/worktree/removalChecks.ts`, make `countOf` yield a magnitude only for a check that actually `failed`. A count riding an `unproven` check is a number nobody measured, and the panel renders it inside a `<b>`. No reachable render moves: `checksFor` attaches no count to an unproven check.
   - **Boundary**: no redemption store and no debris producer — B1 is fixed by refusing, not by implementing WT-012.12 early
+
+- [x] 2_2 Close the exactness gap and the selector that never matched — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-2.md#w1; .reviews/round-2.md#w3
+  - **Acceptance**:
+    - Outcome: A forbidden key is refused even when its value is `undefined`, and the withheld-force assertions fail when the button is present
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. In `src/providers/WorktreeHost.ts`, make `onlyKeys` reject every key outside the allow-list regardless of its value. Each variant's allow-list already names its own optional fields, so whether an ALLOWED key may hold `undefined` stays the variant validator's decision; what the helper must not do is let a forbidden key through because it happens to be undefined.
+    2. In `src/providers/WorktreeHost.actions.test.ts`, add the forbidden-key-set-to-undefined cases.
+    3. In `src/webview/worktree/WorktreeRemoveDialog.test.ts`, query `.wt-btn--danger` — `textButton` renders `wt-btn wt-btn--danger`, so the round-2 helper's `.danger` matched nothing and its assertion held whether or not the button existed.
+  - **Boundary**: no change to which shapes are admitted beyond closing the undefined hole
