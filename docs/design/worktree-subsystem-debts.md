@@ -180,9 +180,20 @@ will be" (`uncovered`). A vault entry that has vanished is neither — it is a *
 naming it in the service keeps the knowledge where the syscall already happens, with no new
 cross-layer push and no second definition of "live" to keep in sync.
 
-The distinction that must not blur: **a transcript that is temporarily unreadable is not a deleted
-entry.** Only the vault entry's absence retires the line; an unreadable file keeps the last known
-line and backs off, per § 2.3.
+The distinction that must not blur: **a transcript that is temporarily unresponsive is not a
+deleted entry.** § 2.3 grants the kept line to a look that *times out*, not to one that fails: a
+read that fails outright already retires the line, and `worktree-agent-presence` § "An agent row's
+preview line says what its session last did" requires exactly that. This debt adds a third case
+either side of that pair — the entry itself is gone — and retires the line permanently rather than
+on the retry ladder.
+
+**What planning found, and what it costs**: the service cannot ask that question yet. `getEntry`
+returns `null` for a deleted entry *and* for a reader that failed — `codexReader.ts` says so in its
+own comment, `// query-error → unresolved (caller treats null as unknown-entry)` — so a mechanism
+built on `null` would retire a live session's line on a transient SQLite error, which is the exact
+confusion this debt exists to end. A conclusive `found | absent | unknown` answer is a change to the
+vault readers' contract and a separate invariant owner, so it was split out as WT-011.8; WT-011.5
+depends on it and settles nothing until it lands.
 
 ## 3. Deferred again, with reasons
 
