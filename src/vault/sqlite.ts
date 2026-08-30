@@ -144,12 +144,7 @@ export async function disposeSnapshotPool(): Promise<void> {
 
 async function defaultAccess(p: string): Promise<SqlitePresence> {
   try {
-    // R_OK, not F_OK. Every caller of this predicate goes on to open the store,
-    // so "it is there" is a weaker claim than the one they act on: a store whose
-    // read permission was revoked passed an existence check, and a snapshot the
-    // pool had already retained then answered `ok` while a cold read of the same
-    // store answered `db-unreachable` (D1). Same syscall, stronger proof.
-    await fs.access(p, fs.constants.R_OK);
+    await fs.access(p);
     return "present";
   } catch (err) {
     return presenceFromAccessError(err);

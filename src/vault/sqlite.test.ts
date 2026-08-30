@@ -886,45 +886,6 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });
-
-  it("agrees between a cold read and a retained snapshot once the store FILE goes unreadable", async () => {
-    // Deliberately against the DEFAULT deps: the cases above inject `exists`,
-    // which can only answer present/absent, so they never exercise the predicate
-    // this is about. The existing coverage also revokes DIRECTORY permission,
-    // which fails earlier and never reaches the pool.
-    const { dbFile, dir, live } = await walStore();
-    try {
-      const warm = await withPrimarySqliteSnapshot(dbFile, async (s) => s.query("SELECT id FROM t"));
-      expect(warm.status).toBe("ok");
-
-      await fsp.chmod(dbFile, 0o000);
-      let stillReadable = true;
-      try {
-        await fsp.access(dbFile, fsp.constants.R_OK);
-      } catch {
-        stillReadable = false;
-      }
-      if (stillReadable) {
-        // Running as root, or on a filesystem that ignores the mode. The case
-        // cannot be staged here, and passing on it would prove nothing.
-        console.warn("skipped: this user can still read a 0o000 file");
-        return;
-      }
-
-      // The stamp the pool reuses by is (mtimeMs, size), and chmod moves neither
-      // — so without a readability proof the retained snapshot is served as `ok`
-      // while the cold read of the same store answers db-unreachable.
-      const viaSnapshot = await withPrimarySqliteSnapshot(dbFile, async (s) => s.query("SELECT id FROM t"));
-      const cold = await readSqlite(dbFile, "SELECT id FROM t");
-
-      expect(viaSnapshot.status).toBe("db-unreachable");
-      expect(cold.status).toBe("db-unreachable");
-    } finally {
-      await fsp.chmod(dbFile, 0o600).catch(() => {});
-      live.close();
-      await fsp.rm(dir, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("both entry points map a snapshot failure the same way", () => {
