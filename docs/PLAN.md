@@ -578,7 +578,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | Independent of the provisioning tasks and can run beside them. The rejected alternative is on the record: source tabs cost height in a narrow modal, split keyboard search across datasets, and force a mode choice before the user has typed. A branch checked out elsewhere is offered disabled because git permits one worktree per branch and failing at submit is the behaviour being removed |
 | **Acceptance** | Refs and a create-new row appear in one list with no tab bar; ordering puts an exact match first, then prefixes, then create-new; a branch already checked out in another worktree is offered disabled and badged with the directory that owns it, and cannot be submitted; the branch name remains the lead input with nothing above it and submission stays blocked until it validates; keyboard traversal covers the whole list |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-012.8] A Branch That Already Exists Is Reused, Not Duplicated
 
