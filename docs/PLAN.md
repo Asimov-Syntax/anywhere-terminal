@@ -405,7 +405,7 @@ nothing to provision.
 | **Labels** | none |
 | **Notes** | Split out of WT-011.3 once the code was visible. WT-011.3 bounds how long one look may take and how many may be outstanding at once, both of which the preview service owns. It cannot bound how many a projection starts in total: the projector enriches one worktree's rows and awaits them before starting the next, so a service-side concurrency limit is never reached and every row still costs a look. The decision this task owns is whether the projector fans its preview requests out in one wave so the service's own limit gates the whole projection, or carries an explicit per-projection budget — a fan-out shape the projector owns, not the preview service |
 | **Acceptance** | A projection over many worktrees provokes a bounded number of transcript reads rather than one per row; rows the bound excludes keep their last known line and are re-checked on a later tick rather than dropped; the bound holds whether the rows are spread across many worktrees or concentrated in one |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-011.8] A Vault Lookup That Knows Absent From Unknown
 
@@ -435,6 +435,20 @@ nothing to provision.
 | **Acceptance** | A store whose read permission is revoked reports the same status through a reused snapshot as through a fresh one; the reuse path does not gain a syscall per hit unless that is the decision recorded; file-level permission revocation is covered for both entry points, not only directory-level |
 | **Status** | todo |
 
+
+### [WT-011.10] An Envelope Is Enriched Only If Its Enrichment Finished
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A surface that reopens after enrichment was cut short asks for a replacement pass instead of drawing the envelope it was left with |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.3 |
+| **Depends On** | WT-011.7 |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | none |
+| **Notes** | Raised as W1 in `bound-the-looks-one-projection-starts` rounds 6 and 7, adjudicated non-blocking both times and left for its own change. The host records `projectedEnriched` from what it REQUESTED, not from whether preview enrichment completed, so a projection whose preview half was skipped by WT-011.7's falling-edge fence still marks the envelope enriched and `enrichmentOwed()` suppresses the replacement pass on reopen. The obvious cheap fix does not work and the attempt is worth not repeating: clearing the flag on the falling edge broke 19 cases, because the host's reconcile is deliberately a state settle rather than an edge check and so runs on every mutation while nothing is drawing. Both routes the reviewer named — propagating whether enrichment completed out of the projection, or holding an explicit outstanding-enrichment obligation — add information to the projector/host seam, which is why this is a decision and not a patch |
+| **Acceptance** | A projection whose preview enrichment was skipped does not leave the envelope recorded as enriched; a surface reopening after such a pass is served a replacement pass rather than waiting for the next external scan; the fix does not fire on mutations that changed nothing |
+| **Status** | todo |
 
 ---
 

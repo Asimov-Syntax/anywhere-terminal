@@ -14,13 +14,13 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
+- [x] Apply deltas: `bun run asm change apply`
 - [ ] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
@@ -102,3 +102,6 @@ Build notes:
   settle rather than an edge check and runs on every mutation while not drawing. Every correct route
   adds interface, which would supersede this round. Non-blocking: the queue stays empty; a reopened
   window just waits for the next external scan rather than re-granting immediately.
+- Round 7: WARN, 0 blocking. B1 verified fixed. W1 stays open and NON-BLOCKING, and the chair was
+  explicit that author acceptance is not risk acceptance — it needs the user's scheduling call, so it
+  leaves here as a named follow-up rather than as an accepted risk. Recorded in docs/PLAN.md.

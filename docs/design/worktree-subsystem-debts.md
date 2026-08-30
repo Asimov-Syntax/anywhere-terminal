@@ -151,6 +151,41 @@ The projector owns how many looks a single projection starts, because it enriche
 and awaits them before the next, so no service-side concurrency limit is ever reached. WT-011.3 takes
 the first; WT-011.7 takes the second.
 
+**What shipped for the second half (WT-011.7).** The projector carries an explicit per-projection
+budget — 16 — spent across every drawn row at once rather than per worktree, so ten rows in one
+worktree and ten spread across ten cost the same. Rows outside the budget are answered synchronously
+from what the preview service already holds rather than skipped, so they keep drawing their last
+line, and only the permitted rows are awaited.
+
+Whose turn it is, is a queue over row IDENTITY holding exactly the ids being drawn now. Two earlier
+mechanisms failed and the reason is worth keeping: an index into a list whose membership changes is
+not a position in any stable order, and a queue that REMEMBERS absent identities cannot be made fair
+either — it must be bounded, a bounded queue must eventually forget one, and a forgotten id is
+indistinguishable from an arrival when it returns. Both attempts at fairness across absence starved
+one population to feed the other. So the promise is narrower than first written and now says so:
+fairness is guaranteed for a row drawn on EVERY projection, structurally — nothing is ever inserted
+ahead of an id already queued, so the count ahead of it never grows — and a row that stops being drawn
+re-enters as an arrival.
+
+Retention is narrower too. An exact declared set could not survive the look timeout, because an
+abandoned look keeps its entry in `outstanding` carrying its pre-stall line and the ordinary ask path
+seats it back. So the cache cap is the retention rule again, and what keeps an excluded row's line is
+that the synchronous read TOUCHES what it returns: every drawn row is touched every projection, so the
+LRU's victims are rows the window has stopped drawing. Past `cap` drawn rows a line can be lost, and
+the row re-looks.
+
+The queue needs an owner for the FALLING edge, which nothing had: it is reconciled only by an enriched
+projection, and that is exactly what stops arriving when the last row-drawing surface goes away. The
+host now settles both directions where it already settled the rising one, and the projector samples a
+generation before the first await of a projection so a pass that started before the edge cannot
+rebuild the queue from rows nobody is drawing.
+
+**Still open after WT-011.7**: the host records an envelope as enriched from what was REQUESTED, not
+from whether preview enrichment completed, so a pass whose preview half that fence skipped still
+suppresses the replacement pass on reopen — a reopened surface can show stale or absent second lines
+until the next five-second scan. Non-blocking, and it needs its own change: both fixes propagate new
+information across the projector/host seam.
+
 **Why it was deferred**: *"Performance-only, on a path already gated by the recheck interval, and a
 timeout on `stat`/`read` is a new failure-surface decision rather than remediation."*
 
