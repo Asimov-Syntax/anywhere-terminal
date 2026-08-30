@@ -793,7 +793,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // The row's second line. The service behind this owns the stamp, the
         // re-check rate and its own bound, so presence rebuilding at the 150 ms
         // cap costs no filesystem work for a session that has said nothing.
-        sessionPreview: (entryId) => sessionPreviews.preview(entryId),
+        sessionPreview: (entryId, mayLook) => sessionPreviews.preview(entryId, mayLook),
         reportedSession: (paneId) => {
           const report = reportedSessions.get(paneId);
           return report === undefined

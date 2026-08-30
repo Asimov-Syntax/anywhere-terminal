@@ -28,13 +28,13 @@ function pane(over: Partial<Pane> & { paneId: string }): Pane {
   return { exited: false, cwd: WT, ...over };
 }
 
-function makeProjector(initial: Pane[] = []) {
+function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = {}) {
   const panes = [...initial];
   const activity = new Map<string, { activity: PaneActivity; rule: ActivityRule }>();
   let lookup: (paneId: string) => SessionLookup = () => ({ kind: "absent" });
   let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
-  let vaultPreview: ((entryId: string) => Promise<string | undefined>) | undefined;
+  let vaultPreview: ((entryId: string, mayLook: boolean) => Promise<string | undefined>) | undefined;
   let vaultUnderCwd: ((agent: VaultAgentId, cwd: string) => Promise<string | undefined>) | undefined;
   let standingReport: ((paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) | undefined;
   let snapshots = 0;
@@ -62,13 +62,14 @@ function makeProjector(initial: Pane[] = []) {
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
-    sessionPreview: (entryId) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
+    sessionPreview: (entryId, mayLook) => (vaultPreview ? vaultPreview(entryId, mayLook) : Promise.resolve(undefined)),
     resolveReportedSession: async (sessionId) => {
       reportedAsked.push(sessionId);
       return reportedSessions[sessionId] ?? null;
     },
     reportedSession: (paneId) => standingReport?.(paneId),
     now: () => clock,
+    ...(over.previewBudget === undefined ? {} : { previewBudget: over.previewBudget }),
   };
 
   return {
@@ -88,7 +89,7 @@ function makeProjector(initial: Pane[] = []) {
     setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
       vaultTitle = next;
     },
-    setVaultPreview(next: (entryId: string) => Promise<string | undefined>) {
+    setVaultPreview(next: (entryId: string, mayLook: boolean) => Promise<string | undefined>) {
       vaultPreview = next;
     },
     setVaultUnderCwd(next: (agent: VaultAgentId, cwd: string) => Promise<string | undefined>) {
@@ -2201,5 +2202,95 @@ describe("attribution through a symlink", () => {
     const projection = await projector.project([PHYSICAL], { external: true });
 
     expect(projection.rowsByWorktreeId[PHYSICAL]?.map((r) => r.scope)).toEqual(["external"]);
+  });
+});
+
+describe("how much one projection looks at", () => {
+  const sessions = (count: number, cwd: string | ((i: number) => string) = WT): RunningClaudeSession[] =>
+    Array.from({ length: count }, (_, i) => ({
+      sessionId: `s${i}`,
+      cwd: typeof cwd === "function" ? cwd(i) : cwd,
+      pid: 4000 + i,
+      startedAt: 1_600_000_000_000,
+      name: `session-${i}`,
+    }));
+
+  /** Records which ids were permitted to look, and answers everyone. */
+  function watchPreview(h: ReturnType<typeof makeProjector>) {
+    const looked: string[][] = [];
+    let round: string[] = [];
+    h.setVaultPreview(async (entryId, mayLook) => {
+      if (mayLook) {
+        round.push(entryId);
+      }
+      return `line for ${entryId}`;
+    });
+    return {
+      looked,
+      endRound() {
+        looked.push(round);
+        round = [];
+      },
+    };
+  }
+
+  it("permits no more looks than its budget, however many rows there are", async () => {
+    const h = makeProjector([], { previewBudget: 3 });
+    h.setRegistry({ kind: "ok", sessions: sessions(9) });
+    const watch = watchPreview(h);
+
+    const presence = await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(presence.rowsByWorktreeId[WT]).toHaveLength(9);
+    expect(watch.looked[0]).toHaveLength(3);
+  });
+
+  it("holds that budget when the same rows are spread across worktrees", async () => {
+    // Nine rows one per worktree cost the same I/O as nine in one; only the
+    // arrival shape differs, which is why the old per-worktree loop could not
+    // bound either.
+    const roots = Array.from({ length: 9 }, (_, i) => `${WT}-${i}`);
+    const h = makeProjector([], { previewBudget: 3 });
+    h.setRegistry({ kind: "ok", sessions: sessions(9, (i) => roots[i]) });
+    const watch = watchPreview(h);
+
+    await h.projector.project(roots);
+    watch.endRound();
+
+    expect(watch.looked[0]).toHaveLength(3);
+  });
+
+  it("still draws a line on a row the budget excluded", async () => {
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(3) });
+    // What the service does for an ask that may not look: hand back what it holds.
+    h.setVaultPreview(async (entryId) => `line for ${entryId}`);
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.preview).toBe(`line for ${row.entryId}`);
+    }
+  });
+
+  it("gives every row its turn rather than looking at the same ones forever", async () => {
+    const h = makeProjector([], { previewBudget: 2 });
+    h.setRegistry({ kind: "ok", sessions: sessions(6) });
+    const watch = watchPreview(h);
+
+    // Six rows, two per projection: three projections must cover all six.
+    for (let i = 0; i < 3; i++) {
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    const served = new Set(watch.looked.flat());
+    expect(served.size).toBe(6);
+    for (const round of watch.looked) {
+      expect(round).toHaveLength(2);
+    }
   });
 });

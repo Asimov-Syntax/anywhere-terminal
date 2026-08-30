@@ -38,7 +38,7 @@ export interface PresenceDepsOptions {
   /** Vault title for a session the registry did not name; see `PresenceProjectorDeps`. */
   sessionTitle?(entryId: string): Promise<string | undefined>;
   /** That session's last activity; see `PresenceProjectorDeps`. */
-  sessionPreview?(entryId: string): Promise<string | undefined>;
+  sessionPreview?(entryId: string, mayLook: boolean): Promise<string | undefined>;
   /** Where the vault keeps a Claude session, by id. */
   sessionPath?(sessionId: string): Promise<string | null>;
   /** Every vault session, indexed once per rebuild for cwd fallbacks. */

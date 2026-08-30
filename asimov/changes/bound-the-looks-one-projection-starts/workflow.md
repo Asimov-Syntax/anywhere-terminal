@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -43,3 +43,7 @@ Stage-2 facts established against current code:
 - `preview` already answers from cache on two paths — inside `nextAt`, and when `outstanding` is full — so the behaviour D3 needs exists; what is missing is a way to ask for it.
 - WT-011.5 landed in this file first: `Target` now has `gone`, and `confirmedAt` gates the store lookup. A cache-only ask must not advance either.
 - The blueprint's option (a) was rejected rather than deferred — see design.md D1. Recorded here because a reader will otherwise wonder why the cheaper option was not taken.
+
+Build notes:
+- Mutation testing: 7 mutations across both tasks, 6 killed on the first pass. M11 (a cache-only ask not touching the LRU) survived because the test that claimed to prove it never exceeded the cap, so nothing was ever evicted; rewritten to force the eviction it asserts against, and it dies.
+- `verify-task` on 1_1 failed once and passed on the retry with the identical tree; `check-types` and `test:unit` both passed standalone in between. Not diagnosed — recorded rather than explained away.

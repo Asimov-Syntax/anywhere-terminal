@@ -173,7 +173,17 @@ export interface PresenceProjectorDeps {
    * can see the file (source-the-agent-row-preview D2). Absence is not
    * degradation — a row with no answer simply carries no preview (D3).
    */
-  sessionPreview?(entryId: string): Promise<string | undefined>;
+  sessionPreview?(entryId: string, mayLook: boolean): Promise<string | undefined>;
+  /**
+   * How many rows one projection may permit to LOOK at their transcripts. The
+   * rest are still asked, and answer from what the service holds.
+   *
+   * This half of the § 2.3 bound is the projector's and not the service's: the
+   * service owns how many looks may be outstanding at once, and its own limit is
+   * the entry cache's size — memory, not work. Borrowing that as the work bound
+   * is the conflation § 2.3 names as the debt.
+   */
+  previewBudget?: number;
   /**
    * Point-resolve a session id an agent reported, against the store that
    * already holds it (§ 4.6).
@@ -360,6 +370,16 @@ function settleContestedSessions(produced: readonly ProducedRow[]): readonly Pro
 
 const TITLE_REFRESH_MS = 60_000;
 
+/**
+ * How many rows one projection permits to look at their transcripts.
+ *
+ * Small on purpose: a projection is a UI refresh, and 16 concurrent transcript
+ * reads is already more than a healthy one needs. Under this, an ordinary window
+ * behaves exactly as it did — the bound only bites on a window drawing more agent
+ * rows than this, which is where the unbounded I/O actually was.
+ */
+const DEFAULT_PROJECTION_LOOK_BUDGET = 16;
+
 /** The one owner of an external row's identity: row creation and eviction share it. */
 function externalRowId(sessionId: string): string {
   return `external:${REGISTRY_AGENT}:${sessionId}`;
@@ -465,6 +485,10 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   /** One vault title read per session, per refresh window. */
   const vaultTitles = new Map<string, { at: number; title: Promise<string | undefined> }>();
 
+  const previewBudget = Math.max(1, deps.previewBudget ?? DEFAULT_PROJECTION_LOOK_BUDGET);
+  /** Where the next projection's look budget starts in the flattened row list. */
+  let previewCursor = 0;
+
   function clock(): number {
     return deps.now?.() ?? Date.now();
   }
@@ -496,17 +520,45 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     if (!read) {
       return;
     }
+    // Flattened, and one wave. Awaiting each worktree in turn made the fan-out a
+    // property of how the rows happen to be distributed: ten rows in one
+    // worktree and ten spread across ten cost the same I/O but arrived as one
+    // wave or as ten, so no projection-wide bound could hold for both.
+    const asked: { worktreeId: string; index: number; entryId: string }[] = [];
     for (const [worktreeId, rows] of Object.entries(rowsByWorktreeId)) {
-      rowsByWorktreeId[worktreeId] = await Promise.all(
-        rows.map(async (row) => {
-          if (row.entryId === undefined) {
-            return row;
-          }
-          const preview = await read(row.entryId).catch(() => undefined);
-          return preview ? { ...row, preview } : row;
-        }),
-      );
+      rows.forEach((row, index) => {
+        if (row.entryId !== undefined) {
+          asked.push({ worktreeId, index, entryId: row.entryId });
+        }
+      });
     }
+    if (asked.length === 0) {
+      return;
+    }
+    // The turn rotates: a fixed budget over a stable order would refresh the
+    // first N rows forever and never the rest. Advancing by the budget lets every
+    // row look within ceil(rows / budget) projections.
+    //
+    // The budget counts permissions GRANTED, not looks performed — a permitted row
+    // still inside its recheck interval answers from cache and spends its grant
+    // anyway. That makes the sweep slower than the ideal and keeps the ceiling
+    // exact, which is the direction to err in for a bound.
+    const start = previewCursor % asked.length;
+    const permitted = Math.min(previewBudget, asked.length);
+    previewCursor = start + permitted;
+    const mayLook = new Set<string>();
+    for (let i = 0; i < permitted; i++) {
+      mayLook.add(asked[(start + i) % asked.length].entryId);
+    }
+    await Promise.all(
+      asked.map(async ({ worktreeId, index, entryId }) => {
+        const preview = await read(entryId, mayLook.has(entryId)).catch(() => undefined);
+        if (preview) {
+          const rows = rowsByWorktreeId[worktreeId];
+          rows[index] = { ...rows[index], preview };
+        }
+      }),
+    );
   }
 
   /** Prefer the vault's session title; registry and pane titles are fallbacks. */

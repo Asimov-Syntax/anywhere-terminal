@@ -10,7 +10,7 @@
     1. In `src/worktree/sessionPreviewService.ts`, give `preview` a second parameter for whether this ask may look, defaulting to the behaviour it has today.
     2. When it may not: return the line already held, touching the session in the LRU; answer a session that was never held without inserting one.
 
-- [ ] 1_2 Spend one budget across the whole projection
+- [x] 1_2 Spend one budget across the whole projection — verified: pnpm exec vitest run 'src/worktree/presenceProjector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-agent-presence/spec.md#one-projection-provokes-a-bounded-number-of-transcript-looks, specs/worktree-agent-presence/spec.md#a-row-the-bound-excludes-keeps-its-line-and-is-looked-at-later <!-- design.md D1, D2, D4 -->
   - **Acceptance**:
