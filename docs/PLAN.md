@@ -448,7 +448,7 @@ nothing to provision.
 | **Labels** | none |
 | **Notes** | Raised as W1 in `bound-the-looks-one-projection-starts` rounds 6 and 7, adjudicated non-blocking both times and left for its own change. The host records `projectedEnriched` from what it REQUESTED, not from whether preview enrichment completed, so a projection whose preview half was skipped by WT-011.7's falling-edge fence still marks the envelope enriched and `enrichmentOwed()` suppresses the replacement pass on reopen. The obvious cheap fix does not work and the attempt is worth not repeating: clearing the flag on the falling edge broke 19 cases, because the host's reconcile is deliberately a state settle rather than an edge check and so runs on every mutation while nothing is drawing. Both routes the reviewer named — propagating whether enrichment completed out of the projection, or holding an explicit outstanding-enrichment obligation — add information to the projector/host seam, which is why this is a decision and not a patch |
 | **Acceptance** | A projection whose preview enrichment was skipped does not leave the envelope recorded as enriched; a surface reopening after such a pass is served a replacement pass rather than waiting for the next external scan; the fix does not fire on mutations that changed nothing |
-| **Status** | in_progress |
+| **Status** | done |
 
 ---
 

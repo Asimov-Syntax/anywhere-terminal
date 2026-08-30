@@ -180,11 +180,30 @@ host now settles both directions where it already settled the rising one, and th
 generation before the first await of a projection so a pass that started before the edge cannot
 rebuild the queue from rows nobody is drawing.
 
-**Still open after WT-011.7**: the host records an envelope as enriched from what was REQUESTED, not
-from whether preview enrichment completed, so a pass whose preview half that fence skipped still
-suppresses the replacement pass on reopen — a reopened surface can show stale or absent second lines
-until the next five-second scan. Non-blocking, and it needs its own change: both fixes propagate new
-information across the projector/host seam.
+**What shipped for the reopen half (WT-011.10).** The host records an envelope as enriched from what
+was REQUESTED, not from whether preview enrichment completed, so a pass whose preview half the fence
+skipped used to suppress the replacement pass on reopen. Rather than widen `WorktreePresence` with a
+"how complete is this" field every consumer would see and one would use, the host keeps an explicit
+obligation beside it: when the row-drawing falling edge fires *while a projection is in flight*, that
+projection is exactly the one the fence will cut short, and the obligation is recorded. The owed
+predicate reads it alongside the envelope's own enrichment.
+
+Where that obligation is discharged took three attempts and only the third is correct. Clearing it
+where the envelope's enrichment is RECORDED fails because the cut-short projection publishes *after*
+the edge and wipes what the edge just recorded. Clearing it where a RUN starts fails worse: projection
+is single-flight, so a surface reopening mid-run joins the run in flight and never reaches a run-level
+clear — the joined pass then completes clean, finds the obligation still standing, dirties itself, and
+does so again on every following pass, so the loop never exits and nothing is ever published. The unit
+is the **pass**: each iteration clears at its own start and only when it is going to enrich. An edge
+landing before an iteration is what that iteration's enrichment answers; an edge landing during it
+re-records, and the loop spends that on exactly one more pass. A run whose projection *rejects* puts
+back what its passes cleared, because a thrown pass leaves the envelope still marked enriched and an
+un-restored obligation would read as satisfied.
+
+The falling edge only ever records; it never requests. The rise spends the obligation through the one
+path that already asks for projections — which is what keeps the reconcile a state settle rather than
+an edge check (clearing the envelope's enrichment there instead fires on every mutation while nothing
+draws, and moved 19 existing cases).
 
 **Why it was deferred**: *"Performance-only, on a path already gated by the recheck interval, and a
 timeout on `stat`/`read` is a new failure-surface decision rather than remediation."*
