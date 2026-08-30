@@ -175,6 +175,13 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   // the least recently asked for. The projector holds no alive set to evict by, so
   // the bound has to be the service's own.
   const held = new Map<string, Held>();
+  // Every look that has not settled, abandoned ones included, keyed by entry id and
+  // holding the entry that owns it. Deliberately NOT keyed off `held`: eviction
+  // drops the object an abandoned look's generation lives on, so a promise-only
+  // registry would let the next ask rebuild a blank entry — losing the row's line,
+  // unfencing the look, and starting a second read against the same stalled path
+  // once per cadence tick for as long as it stayed stalled.
+  const outstanding = new Map<string, Held>();
 
   function touch(entryId: string, entry: Held): void {
     held.delete(entryId);
@@ -309,12 +316,13 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
 
   return {
     async preview(entryId: string): Promise<string | undefined> {
-      const current = held.get(entryId) ?? {
-        target: { kind: "unresolved" as const },
-        nextAt: Number.NEGATIVE_INFINITY,
-        misses: 0,
-        generation: 0,
-      };
+      const current = held.get(entryId) ??
+        outstanding.get(entryId) ?? {
+          target: { kind: "unresolved" as const },
+          nextAt: Number.NEGATIVE_INFINITY,
+          misses: 0,
+          generation: 0,
+        };
       touch(entryId, current);
       const schedule = (): void => {
         current.nextAt = now() + recheckMs * 2 ** Math.min(current.misses, MAX_BACKOFF_SHIFT);
@@ -322,11 +330,18 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       if (current.inflight) {
         return current.inflight; // one read per session, however many rows ask
       }
+      // A look already abandoned at its deadline is still holding a filesystem
+      // operation open. Retrying into it is the unbounded behaviour being removed:
+      // the session waits on the one attempt it has, showing what it last knew.
+      if (outstanding.has(entryId) || outstanding.size >= cap) {
+        return current.line;
+      }
       if (now() < current.nextAt) {
         return current.line;
       }
       const generation = ++current.generation;
       const draft = snapshot(current);
+      outstanding.set(entryId, current);
       const scored = look(entryId, draft).then(
         (line) => {
           if (current.generation !== generation) {
@@ -350,6 +365,15 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
           return forget(current);
         },
       );
+      // Cleanup rides the SCORED promise, whose two handlers make it unrejectable,
+      // and never a bare `finally` on the look: that returns a fresh promise which
+      // adopts the rejection, and nothing observes it — so a read that throws after
+      // its deadline would surface as an unhandled rejection in the extension host.
+      void scored.then(() => {
+        if (outstanding.get(entryId) === current) {
+          outstanding.delete(entryId);
+        }
+      });
       // Tagged rather than compared against a sentinel: a look that answered
       // `undefined` and a look that never answered are different outcomes, and only
       // a discriminant keeps them apart once both are `string | undefined`.

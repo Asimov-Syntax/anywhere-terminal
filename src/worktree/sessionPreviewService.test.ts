@@ -469,64 +469,114 @@ describe("createSessionPreviewService", () => {
     expect(await svc.preview("codex:s1")).toBe("the first answer");
   });
 
-  it("lets a newer entry win when eviction races an in-flight read", async () => {
-    // The re-seat exists so eviction mid-read does not strand the result, but it
-    // must not put the stale instance back over a newer one (round-2 W2-R2). The
-    // clobber is only observable when the two hold DIFFERENT lines — the first
-    // version of this test did not, and passed against the bug (round-3 S1-R3).
-    let release: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let reachedGate: (() => void) | undefined;
+  it("re-adopts an evicted session rather than reading it a second time", async () => {
+    // Eviction used to hand the next ask a blank entry, which is how a stalled look
+    // came to be started twice against the same path — once per cadence tick, for as
+    // long as it stayed stalled. The row that was evicted must come back holding what
+    // it already knew, and must not pay for a second read to learn it.
+    let park: ((value: string | null) => void) | undefined;
+    let parked: (() => void) | undefined;
     const atGate = new Promise<void>((resolve) => {
-      reachedGate = resolve;
+      parked = resolve;
     });
-    // Gate s1's FIRST read by path, not by a counter: which of the two sessions
-    // reaches the reader first is scheduling-dependent, and a counter blocked
-    // whichever arrived, deadlocking the awaited one.
-    let gateS1 = true;
+    let stall = false;
+    const expiries: Array<() => void> = [];
     const other = path.join(sessionsDir, "rollout-other.jsonl");
     await fs.writeFile(other, `${codexEvent("another session")}\n`);
 
     const svc = createSessionPreviewService({
-      entry: async (entryId) => {
-        const sessionId = entryId.slice("codex:".length);
-        return { agent: "codex", sessionId };
-      },
+      entry: async (entryId) => ({ agent: "codex", sessionId: entryId.slice("codex:".length) }),
       read: async (file, format) => {
         reads.push(file);
-        // Read FIRST, then block: the stale look must come back holding the
-        // content it actually saw, not what the file said once it was released.
-        const line = await readLastActivityLine(file, format);
-        if (file === rollout && gateS1) {
-          gateS1 = false;
-          reachedGate?.();
-          await gate;
+        if (!stall || file !== rollout) {
+          return readLastActivityLine(file, format);
         }
-        return line;
+        return new Promise<string | null>((resolve) => {
+          park = resolve;
+          parked?.();
+        });
+      },
+      stat: async (file) => {
+        stats.push(file);
+        try {
+          const st = await fs.stat(file);
+          return { mtimeMs: st.mtimeMs, size: st.size };
+        } catch {
+          return null;
+        }
       },
       roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
       now: () => clock,
       recheckMs: 2000,
       cap: 1,
+      wait: () => {
+        const gate = new Promise<void>((resolve) => {
+          expiries.push(resolve);
+        });
+        return gate;
+      },
     });
 
-    const stale = svc.preview("codex:s1");
-    await atGate; // it has read "the first answer" and is now held there
-    await svc.preview("codex:other"); // cap 1 — evicts the in-flight s1 entry
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
 
-    // s1 says something new before the newer entry reads it.
     await rewrite("the second answer", 2_000_000_000_000);
     clock += 5000;
-    expect(await svc.preview("codex:s1")).toBe("the second answer");
+    stall = true;
+    const stalled = svc.preview("codex:s1");
+    await atGate;
+    expiries.splice(0).forEach((fire) => {
+      fire();
+    });
+    expect(await stalled).toBe("the first answer");
 
-    release?.();
-    expect(await stale).toBe("the first answer");
+    await svc.preview("codex:other"); // cap 1 — evicts the abandoned s1 entry
+    const before = reads.filter((file) => file === rollout).length;
 
-    // Inside the interval, so this is whatever entry is mapped — the newer one,
-    // unless the stale instance clobbered it on its way out.
-    expect(await svc.preview("codex:s1")).toBe("the second answer");
+    // s1 is gone from what the service retains, but its read is still open. The ask
+    // is answered from the entry that owns it, and starts no second read.
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(reads.filter((file) => file === rollout).length).toBe(before);
+
+    park?.("the second answer");
+  });
+
+  it("never has more reads outstanding than the sessions it retains", async () => {
+    // The cap bounds memory on its own; this is the claim that it bounds work. Six
+    // rows ask at once, every read parks, and the service must stop starting them.
+    for (let i = 0; i < 6; i++) {
+      await fs.writeFile(path.join(sessionsDir, `rollout-w${i}.jsonl`), `${codexEvent(`w${i}`)}\n`);
+    }
+    const svc = createSessionPreviewService({
+      entry: async (entryId) => ({ agent: "codex", sessionId: entryId.slice("codex:".length) }),
+      read: async (file) => {
+        reads.push(file);
+        return new Promise<string | null>(() => {});
+      },
+      stat: async (file) => {
+        try {
+          const st = await fs.stat(file);
+          return { mtimeMs: st.mtimeMs, size: st.size };
+        } catch {
+          return null;
+        }
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+      cap: 2,
+      wait: () => new Promise<void>(() => {}),
+    });
+
+    for (let i = 0; i < 6; i++) {
+      void svc.preview(`codex:w${i}`);
+    }
+    // Asserted as an equality, not a ceiling: a flush too short to start any read
+    // would satisfy `<= 2` while proving nothing.
+    for (let turn = 0; turn < 40; turn++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(reads.length).toBe(2);
   });
 
   it("bounds what it holds instead of growing with every session seen", async () => {
@@ -689,6 +739,21 @@ describe("a look that outlives its deadline", () => {
     await harness.svc.preview("codex:s1");
 
     expect(stats.length).toBeGreaterThan(before);
+  });
+
+  it("starts no second read into a session whose abandoned look is still out", async () => {
+    const harness = stallable();
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+    await stallPastDeadline(harness);
+
+    // Far past the backoff, so the cadence gate is open and only the session's own
+    // outstanding read is holding this ask back. Retrying into a stalled path is
+    // what made the work unbounded; the row waits on the attempt it already has.
+    const before = reads.length;
+    clock += 100_000;
+
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+    expect(reads.length).toBe(before);
   });
 
   it("still retires the line when the read fails outright rather than stalling", async () => {

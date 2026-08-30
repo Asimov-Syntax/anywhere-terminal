@@ -74,17 +74,19 @@ on work grounds alone rather than as a correctness crutch.
 
 ### D4: The attempt registry owns the session, and eviction does not release it
 
-A second map, keyed by entry id, holds an `Attempt` record for every look that has not settled —
-abandoned ones included. The record carries the **owning `Held`** and the raced promise, not just a
-promise. `preview` consults it in three places:
+A second map, keyed by entry id, holds the **owning `Held`** for every look that has not settled —
+abandoned ones included. The owner is the point: a promise alone would not carry the row's line or
+the generation the fence lives on. `preview` consults it in two places:
 
 ```ts
-const running = outstanding.get(entryId);
-const current = held.get(entryId) ?? running?.owner ?? freshHeld();
+const current = held.get(entryId) ?? outstanding.get(entryId) ?? freshHeld();
 ...
-if (running) return running.shared;         // before expiry: share it. after: it resolves to the last line
-if (outstanding.size >= cap) return current.line;
+if (current.inflight) return current.inflight;                     // still inside its deadline
+if (outstanding.has(entryId) || outstanding.size >= cap) return current.line;
 ```
+
+The raced promise needs no slot in the record: `Held.inflight` already holds it, and is cleared at
+exactly the moment a caller should stop sharing it — the deadline. A second copy could only disagree.
 
 Adopting `running.owner` before building a fresh `Held` is what makes the bound survive eviction, and
 holding only a promise there does not. `touch` drops the least recently asked entry whenever `held`
