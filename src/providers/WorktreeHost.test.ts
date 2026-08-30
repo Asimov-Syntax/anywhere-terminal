@@ -817,6 +817,7 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
       h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
       await settle();
       h.options.length = 0;
+      h.s.posts.length = 0;
 
       release();
       await settle();
@@ -826,6 +827,11 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
         h.options.some((o) => o?.enrich === true),
         "the reopening surface was never served an enriched pass",
       ).toBe(true);
+      // The pass count alone would stay green if the replacement pass ran and
+      // the broadcast never followed, which is the half of the defect the
+      // reopening surface actually feels (round-2 W1).
+      const published = h.s.posts.filter((m) => m.type === "worktreeTreeResponse");
+      expect(published, "the replacement pass was never published to the reopened surface").toHaveLength(1);
     });
 
     it("still owes the pass when the replacement projection fails", async () => {
