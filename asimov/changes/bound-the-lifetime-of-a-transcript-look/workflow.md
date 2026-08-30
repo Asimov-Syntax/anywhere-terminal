@@ -1,0 +1,37 @@
+# Workflow State: bound-the-lifetime-of-a-transcript-look
+
+> State file, not a procedure — stages live in the asimov-plan/build/archive skills.
+> Source of truth: gates → this file · task completion → `tasks.md`
+> States: `[ ]` pending · `[x]` done · `[-]` skipped/N/A · `[!]` failed non-blocking
+
+## Plan
+
+- [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
+
+## Implement
+
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [ ] Gate: implementation approved
+- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.3`)_
+
+## Archive
+
+- [ ] Apply deltas: `bun run asm change apply`
+- [ ] Archive change: `bun run asm change archive`
+
+> Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
+
+## Notes
+
+<!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
+
+Blueprint: docs/PLAN.md task WT-011.3
+Lane: full — new failure-surface decision (a timeout has to fail in a direction) + escalation flag `re-review`; Mode: fastlane
+Planned at: 04f78aa4
+
+Auto-decision (fastlane): the admission screen ran twice — the deadline and the per-tick work bound look like two invariant owners, but LRU eviction defeats the deadline's fence (an evicted entry re-asks and launches a second operation against the same hung path), so they are one owner: the lifetime and slot of an outstanding look. Not split; WT-011.3 stays whole.
+Oracle round: 3 BLOCK / 3 WARN / 1 SUGGEST. F1 and F2 accepted and redesigned (draft-and-commit; the attempt registry owns the Held across eviction). F3 accepted as a finding, fix relocated to blueprint WT-011.7 — bounding looks per projection is the projector's fan-out decision, not this service's. F4 dissolved by F1's fix, task order kept. F5/F6/F7 accepted.

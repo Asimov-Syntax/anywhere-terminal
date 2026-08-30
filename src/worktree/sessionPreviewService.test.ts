@@ -548,3 +548,164 @@ describe("createSessionPreviewService", () => {
     expect(reads).toEqual([path.join(sessionsDir, "rollout-n0.jsonl")]);
   });
 });
+
+describe("a look that outlives its deadline", () => {
+  /** A deferred the test resolves by hand, so no case waits on a real timer. */
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  /**
+   * Same shape as `service` above, plus the two seams the deadline needs: a `read`
+   * the test can hold open, and a `wait` it can fire on demand. The read rather
+   * than the stat, deliberately — releasing it settles the look on its own
+   * continuation, so a test can assert on what the abandoned attempt did with
+   * what it found rather than race an asynchronous re-resolve.
+   */
+  function stallable() {
+    const expiries: Array<() => void> = [];
+    let held: ((value: string | null) => void) | undefined;
+    let stall = false;
+    // Resolved the moment a read is actually parked. Nothing may expire or release
+    // before that: `stat` is a real syscall, so a deadline fired on a fixed number
+    // of microtasks would land while the look was still short of its read, leaving
+    // no parked read to release and the late settlement this suite exists for
+    // never happening at all.
+    let reached = deferred<void>();
+    return {
+      parked: () => reached.promise,
+      // Fires every deadline queued so far. A look that already answered leaves its
+      // own gate behind, so firing only the oldest would trip that one instead.
+      expire: () => {
+        expiries.splice(0).forEach((fire) => {
+          fire();
+        });
+      },
+      hold: () => {
+        stall = true;
+      },
+      /** Let the abandoned read finish, reporting `answer`, and settle its look. */
+      release: async (answer: string | null) => {
+        await reached.promise;
+        const target = held;
+        held = undefined;
+        stall = false;
+        reached = deferred<void>();
+        target?.(answer);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      },
+      svc: createSessionPreviewService({
+        entry: async (entryId) => (entryId === "codex:s1" ? CODEX : null),
+        read: async (file, format) => {
+          reads.push(file);
+          if (!stall) {
+            return readLastActivityLine(file, format);
+          }
+          const gate = deferred<string | null>();
+          held = gate.resolve;
+          reached.resolve();
+          return gate.promise;
+        },
+        stat: async (file) => {
+          stats.push(file);
+          try {
+            const st = await fs.stat(file);
+            return { mtimeMs: st.mtimeMs, size: st.size };
+          } catch {
+            return null;
+          }
+        },
+        roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+        now: () => clock,
+        recheckMs: 2000,
+        wait: () => {
+          const gate = deferred<void>();
+          expiries.push(gate.resolve);
+          return gate.promise;
+        },
+      }),
+    };
+  }
+
+  /** A look that stalls on the read, expires, and hands the row its old line back. */
+  async function stallPastDeadline(harness: ReturnType<typeof stallable>): Promise<string | undefined> {
+    await rewrite("the second answer", 2_000_000_000_000);
+    clock += 5000;
+    harness.hold();
+    const stalled = harness.svc.preview("codex:s1");
+    await harness.parked();
+    harness.expire();
+    return stalled;
+  }
+
+  it("answers with the line it last read instead of waiting on the filesystem", async () => {
+    const harness = stallable();
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+
+    expect(await stallPastDeadline(harness)).toBe("the first answer");
+  });
+
+  it("commits nothing an abandoned look goes on to find", async () => {
+    const harness = stallable();
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+    await stallPastDeadline(harness);
+
+    // The abandoned read now completes, holding the newer line. It arrives for an
+    // attempt the row has already stopped waiting on, so it establishes nothing —
+    // neither this line nor the stamp that would make the next look skip its read.
+    await harness.release("the second answer");
+
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+  });
+
+  it("does not let an abandoned look retire the line it was told to keep", async () => {
+    const harness = stallable();
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+    await stallPastDeadline(harness);
+
+    // The same interleaving, ending the other way: the abandoned read finds nothing
+    // readable. Committed, that blanks the very line the deadline promised to keep.
+    await harness.release(null);
+
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+  });
+
+  it("scores one hung look once, not once per settlement", async () => {
+    const harness = stallable();
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+    await stallPastDeadline(harness);
+    await harness.release("the second answer");
+
+    // One miss: the next look is due at recheckMs * 2. Scoring the late settlement
+    // as a second miss would push it to * 4 and this ask would find the gate shut.
+    const before = stats.length;
+    clock += 4001;
+    await harness.svc.preview("codex:s1");
+
+    expect(stats.length).toBeGreaterThan(before);
+  });
+
+  it("still retires the line when the read fails outright rather than stalling", async () => {
+    const svc = createSessionPreviewService({
+      entry: async () => CODEX,
+      read: async () => {
+        throw new Error("unreadable");
+      },
+      stat: async (file) => {
+        const st = await fs.stat(file);
+        return { mtimeMs: st.mtimeMs, size: st.size };
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+    });
+
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+  });
+});

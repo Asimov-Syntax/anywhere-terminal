@@ -36,6 +36,10 @@ export interface SessionPreviewDeps {
   now?(): number;
   /** Minimum gap between two looks at one session. */
   recheckMs?: number;
+  /** How long one look may run before the row is answered without it. */
+  lookTimeoutMs?: number;
+  /** The deadline's clock, overridable so a test resolves it rather than waiting. */
+  wait?(ms: number): Promise<void>;
   /** Most sessions held at once; the least recently asked for is dropped past it. */
   cap?: number;
 }
@@ -55,6 +59,14 @@ interface FileStamp {
  * often a session speaks.
  */
 export const DEFAULT_RECHECK_MS = 2000;
+
+/**
+ * Long enough that a healthy but cold read is never abandoned, short enough that a
+ * sleeping volume does not hold a row for the life of the window. The row is
+ * answered at the first opportunity AFTER this elapses — `setTimeout` schedules a
+ * minimum delay, and a busy extension host can only make it later.
+ */
+export const DEFAULT_LOOK_TIMEOUT_MS = 5000;
 
 export const DEFAULT_PREVIEW_CACHE_CAP = 256;
 
@@ -87,7 +99,14 @@ type Target =
   | { kind: "unresolved" }
   | { kind: "resolved"; path: string; format: LastActivityFormat };
 
-interface Held {
+/**
+ * The five fields one look reads and writes. A look owns a *copy* of them and
+ * `preview` commits it back only while that look is still the current attempt —
+ * a look does not confine its writes to its return value (it calls `forget` and
+ * `clearTarget` on its own resolved paths), so an attempt abandoned at its
+ * deadline would otherwise go on to blank the line the deadline promised to keep.
+ */
+interface LookState {
   target: Target;
   /**
    * The vault entry that produced `target`, held beside it.
@@ -106,12 +125,37 @@ interface Held {
   progressed?: boolean;
   stamp?: FileStamp;
   line?: string;
+}
+
+interface Held extends LookState {
   /** Earliest time another look may run. Every outcome sets it, so no path is ungated. */
   nextAt: number;
   /** Consecutive resolution failures, for the backoff above. */
   misses: number;
+  /** Which attempt owns this entry. A look captures it on the way in; the deadline
+   *  bumps it; a settlement commits and scores only while it still matches. */
+  generation: number;
   inflight?: Promise<string | undefined>;
 }
+
+function snapshot(current: Held): LookState {
+  return {
+    target: current.target,
+    entry: current.entry,
+    stamp: current.stamp,
+    line: current.line,
+    progressed: false,
+  };
+}
+
+function commit(current: Held, draft: LookState): void {
+  current.target = draft.target;
+  current.entry = draft.entry;
+  current.stamp = draft.stamp;
+  current.line = draft.line;
+  current.progressed = draft.progressed;
+}
+
 
 /**
  * A session's last activity, read at most once per `recheckMs` and only when the
@@ -124,6 +168,8 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   const stat = deps.stat ?? defaultStat;
   const now = deps.now ?? (() => Date.now());
   const recheckMs = deps.recheckMs ?? DEFAULT_RECHECK_MS;
+  const lookTimeoutMs = deps.lookTimeoutMs ?? DEFAULT_LOOK_TIMEOUT_MS;
+  const wait = deps.wait ?? defaultWait;
   const cap = Math.max(1, deps.cap ?? DEFAULT_PREVIEW_CACHE_CAP);
   // Insertion-ordered, and re-inserted on every ask, so the front of the map is
   // the least recently asked for. The projector holds no alive set to evict by, so
@@ -176,7 +222,7 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
     return { kind: "uncovered" };
   }
 
-  async function look(entryId: string, current: Held): Promise<string | undefined> {
+  async function look(entryId: string, current: LookState): Promise<string | undefined> {
     if (current.target.kind === "uncovered") {
       return undefined;
     }
@@ -248,14 +294,14 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
    * meaningful beside the resolved target it produced, so they are dropped
    * together — the target is the half `look`'s guard actually reads.
    */
-  function clearTarget(current: Held): void {
+  function clearTarget(current: LookState): void {
     current.target = { kind: "unresolved" };
     current.entry = undefined;
   }
 
   /** No preview, and none remembered — a row must not keep text whose source it
    *  can no longer read. */
-  function forget(current: Held): undefined {
+  function forget(current: LookState): undefined {
     current.stamp = undefined;
     current.line = undefined;
     return undefined;
@@ -267,6 +313,7 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
         target: { kind: "unresolved" as const },
         nextAt: Number.NEGATIVE_INFINITY,
         misses: 0,
+        generation: 0,
       };
       touch(entryId, current);
       const schedule = (): void => {
@@ -278,22 +325,49 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       if (now() < current.nextAt) {
         return current.line;
       }
-      current.progressed = false;
-      const inflight = look(entryId, current).then(
+      const generation = ++current.generation;
+      const draft = snapshot(current);
+      const scored = look(entryId, draft).then(
         (line) => {
+          if (current.generation !== generation) {
+            return line; // abandoned at its deadline — commits nothing, scores nothing
+          }
+          commit(current, draft);
           // Progress, not the target's state: a look that paid for resolution and
           // found nothing waits longer, and one that merely reports a stale
           // target cannot pretend it achieved something (W1-R3).
-          current.misses = current.progressed === true ? 0 : current.misses + 1;
+          current.misses = draft.progressed === true ? 0 : current.misses + 1;
           schedule();
           return line;
         },
         () => {
+          if (current.generation !== generation) {
+            return undefined;
+          }
+          commit(current, draft);
           current.misses += 1;
           schedule();
           return forget(current);
         },
       );
+      // Tagged rather than compared against a sentinel: a look that answered
+      // `undefined` and a look that never answered are different outcomes, and only
+      // a discriminant keeps them apart once both are `string | undefined`.
+      const inflight = Promise.race([
+        scored.then((line) => ({ expired: false as const, line })),
+        wait(lookTimeoutMs).then(() => ({ expired: true as const })),
+      ]).then((outcome) => {
+        if (!outcome.expired) {
+          return outcome.line;
+        }
+        // A timeout is the absence of evidence, not evidence of absence: score it
+        // as a look that achieved nothing so it takes the same ladder, and hand
+        // back the line already on the row rather than blanking it (D33).
+        current.generation += 1;
+        current.misses += 1;
+        schedule();
+        return current.line;
+      });
       current.inflight = inflight;
       try {
         return await inflight;
@@ -309,6 +383,13 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       }
     },
   };
+}
+
+/** Unref'd: a deadline still pending must never hold the extension host open. */
+function defaultWait(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms).unref?.();
+  });
 }
 
 async function defaultStat(transcriptPath: string): Promise<FileStamp | null> {
