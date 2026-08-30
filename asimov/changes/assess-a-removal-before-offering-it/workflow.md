@@ -15,8 +15,8 @@
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [x] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -90,3 +90,7 @@ W3 is the one item left open, and it is NOT risk-accepted — nobody has granted
 Recorded disagreement, unresolved on purpose: round 5's own verdict counts 0 blocking findings and `asimov-build` defines WARN as non-blocking unless explicitly accepted as must-fix, so by those severity semantics the fix loop has exited. The chair holds that only user-granted risk acceptance can close W3, and that cycle 2's three-round cap forbids a round 6. Both readings are in the round file; the user picks.
 
 Knowledge candidate: a review chair can return a verdict whose own counts contradict its gating language (`Blocking: 0` beside "only user-granted risk acceptance can make this non-gating") | Surprise: I expected the verdict line and the finding disposition to be one claim, and treated the stricter prose as authoritative before noticing the count disagreed with it | Evidence: .reviews/round-5.md verdict block vs its W3 Triage | Consumer: build | Action: when a report's counts and its prose disagree, put BOTH readings to the user rather than silently adopting either — adopting the strict one stops work the user asked for, adopting the loose one launders a waiver nobody gave
+
+Blueprint sync: `docs/design/worktree-removal.md` § 2.2 gains the one-session-counted-once rule (the registry is user-wide, and a record is dropped only where the same assessment sees the claiming pane idle inside the target), and § 2.3 gains what the budgets do and do not cover — one budget across enumeration and measurement, and a read that outlives the deadline is abandoned rather than cancelled. Nothing else in the file was touched: no command names, no round findings, and nothing about W3, which is open and unapproved and does not belong in a blueprint. `docs/PLAN.md` WT-013.1 set to done.
+
+Implementation approved under the standing fastlane instruction, with W3 carried as an OPEN, UNWAIVED warning — not risk-accepted, because only the user can grant that and the user has not been asked.

@@ -713,7 +713,7 @@ refused outright.
 | **Labels** | security-privacy |
 | **Notes** | The three-class taxonomy is the load-bearing part: "unproven blocks" is too blunt to implement, because an unfetched default branch must not prevent a removal nobody asked to delete a branch for. The ignored-material check exists because `git status --porcelain` says nothing about it, and this subsystem deliberately creates ignored material in every worktree it provisions — a report where everything passed, followed by deleting a `node_modules` and a copied `.env`, omitted the thing that mattered. This task excludes the orphan proofs, which are WT-013.2 |
 | **Acceptance** | Every check is evaluated together and carries its class and one of four outcomes; `notApplicable` is distinguishable from `passed` on every check that can be inapplicable; an unevaluable confirmable risk stays confirmable rather than refusing; a hard refusal cannot be confirmed past; an agent whose activity cannot be determined, in this window or the registry, is treated as live and refuses; ignored content is reported under a time and entry budget and degrades to could-not-be-determined rather than walking an unbounded tree; material this extension provisioned is named as such when the provisioning manifest is readable, and reported undifferentiated when it is not; the registry read preserves live, dead and unreadable records rather than the presence reader's live-only filter; the assessment is re-evaluated before execution and a newly appeared failure re-prompts rather than riding the previous confirmation |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-013.2] Proof That Nobody Is Using This Worktree
 

@@ -77,6 +77,16 @@ Rendering those as "passed" would claim a check ran that never applied.
 **Typing never overrides a proof.** A typed confirmation authorizes confirmable risk; it does not
 manufacture a proof, so it can never unlock a proof-gated option.
 
+**One session is counted once.** The Claude session registry is user-wide, so an agent running in a
+pane of this window writes its own live record there too. Counted twice, it is both an idle pane and
+an unknown external session, and the unknown one refuses — making a worktree unremovable because of
+a terminal this window can already see. A registry record is therefore dropped only where the *same*
+assessment holds the pane that claimed it, resolves it inside the worktree being removed, and sees
+it **idle** there. A pane that is running, waiting, unclassified, exited, or absent from that
+snapshot corroborates nothing, and the registry record stands and refuses. Both directions of
+failure point the same way: an unknown session refuses, and a claim that cannot be corroborated is
+not a claim.
+
 ### 2.3 Removal reports what it will delete, not what git tracks
 
 `git status --porcelain` reports tracked changes and untracked files. It says nothing about
@@ -90,6 +100,14 @@ Ignored content is therefore inspected and reported as its own confirmable risk,
 strategy: a count and a total size, gathered under a time and entry budget, degrading to "could not
 be determined" rather than walking an enormous tree. Unproven here is confirmable, not refusing —
 a slow disk must not make a worktree unremovable.
+
+The budgets cover **enumerating** the content as well as measuring it, and they are one budget
+rather than one per phase: listing a tree is itself unbounded work, so time spent listing is time
+the sizing no longer has. Every terminating condition produces the same answer — budget exhausted,
+unreadable content, or an enumeration that failed — because a partial count rendered as a total is
+worse than no count at all: it reads as a number somebody measured. What the bounds cannot do is
+withdraw work already handed to the operating system; a read that outlives the deadline is
+abandoned rather than cancelled, and the assessment answers without it.
 
 Material this extension itself provisioned is named as such, because "the 4 files this worktree was
 set up with" is a different sentence from "1.2 GB of ignored content". That naming comes from the
