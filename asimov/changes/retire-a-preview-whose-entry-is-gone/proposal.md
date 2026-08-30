@@ -19,6 +19,8 @@ S (≤1d)
 
 - The service noticing, within a bound, that the session behind a held preview is gone
 - Naming that as a third outcome, distinct from "not there yet" and "this source keeps no transcript"
+- Consuming the conclusive `found | absent | unknown` lookup WT-011.8 shipped, so an inconclusive
+  store answer neither retires a line nor blanks one
 - A re-confirmation cadence slow enough that the walk B1-R3 removed does not come back
 
 ### Out of scope
@@ -27,12 +29,13 @@ S (≤1d)
   accepted requirement — `worktree-agent-presence` § "An agent row's preview line says what its
   session last did" — and this change does not reopen it (design.md D3)
 - Any live-entry set pushed from the projector into the service (DESIGN.md § 9 D35 rejects it)
+- The lookup contract itself — readers, `VaultService`, and its wiring shipped as WT-011.8
 - The read deadline and the outstanding-work bounds shipped in WT-011.3
 
 ### Must not
 
 - Restore a `deps.entry` call on the ordinary per-look path
-- Treat a timeout, a failed `stat`, or an unreadable file as the session ceasing to exist
+- Treat a timeout, a failed `stat`, an unreadable file, or an inconclusive store answer as the session ceasing to exist
 - Introduce a second definition of "live" for the service and the projector to keep in sync
 
 ## Risk Level

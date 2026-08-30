@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readLastActivityLine } from "../vault/readers/lastActivity";
-import { createSessionPreviewService, type PreviewEntry } from "./sessionPreviewService";
+import { createSessionPreviewService, type PreviewEntry, type PreviewLookup } from "./sessionPreviewService";
 
 let dir: string;
 let sessionsDir: string;
@@ -50,9 +50,24 @@ afterEach(async () => {
 const CODEX: PreviewEntry = { agent: "codex", sessionId: "s1" };
 
 /** The real reader and a real `stat`, counted on the way through. */
-function service(entries: Record<string, PreviewEntry>, over: { recheckMs?: number; cap?: number } = {}) {
+function service(
+  entries: Record<string, PreviewEntry>,
+  over: {
+    recheckMs?: number;
+    cap?: number;
+    entryRecheckMs?: number;
+    entry?: (entryId: string) => Promise<PreviewLookup>;
+  } = {},
+) {
   return createSessionPreviewService({
-    entry: async (entryId) => entries[entryId] ?? null,
+    // A missing id is a PROVEN absence here; a store that could not answer is
+    // `unknown`, which the cases below inject through `over.entry`.
+    entry:
+      over.entry ??
+      (async (entryId) => {
+        const found = entries[entryId];
+        return found ? { status: "found", entry: found } : { status: "absent" };
+      }),
     read: async (file, format) => {
       reads.push(file);
       return readLastActivityLine(file, format);
@@ -70,6 +85,7 @@ function service(entries: Record<string, PreviewEntry>, over: { recheckMs?: numb
     now: () => clock,
     recheckMs: over.recheckMs ?? 2000,
     ...(over.cap === undefined ? {} : { cap: over.cap }),
+    ...(over.entryRecheckMs === undefined ? {} : { entryRecheckMs: over.entryRecheckMs }),
   });
 }
 
@@ -225,9 +241,12 @@ describe("createSessionPreviewService", () => {
 
       const svc = createSessionPreviewService({
         entry: async () => ({
-          agent: "claude",
-          sessionId: "c2",
-          sessionPath: path.join(linkedProjects, "-repo", "c2.jsonl"),
+          status: "found",
+          entry: {
+            agent: "claude",
+            sessionId: "c2",
+            sessionPath: path.join(linkedProjects, "-repo", "c2.jsonl"),
+          },
         }),
         read: async (file, format) => readLastActivityLine(file, format),
         stat: async (file) => {
@@ -284,7 +303,7 @@ describe("createSessionPreviewService", () => {
       const svc = createSessionPreviewService({
         entry: async () => {
           resolutions += 1;
-          return { agent: "codex", sessionId: "never", sessionPath: undefined };
+          return { status: "found", entry: { agent: "codex", sessionId: "never", sessionPath: undefined } };
         },
         roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
         now: () => clock,
@@ -341,7 +360,7 @@ describe("createSessionPreviewService", () => {
     const svc = createSessionPreviewService({
       entry: async () => {
         lookups += 1;
-        return { agent: "codex", sessionId: "s1", sessionPath: rollout };
+        return { status: "found", entry: { agent: "codex", sessionId: "s1", sessionPath: rollout } };
       },
       stat: async (file) => {
         stats.push(file);
@@ -375,7 +394,7 @@ describe("createSessionPreviewService", () => {
     const svc = createSessionPreviewService({
       entry: async () => {
         lookups += 1;
-        return { agent: "claude", sessionId: "c1", sessionPath };
+        return { status: "found", entry: { agent: "claude", sessionId: "c1", sessionPath } };
       },
       roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
       now: () => clock,
@@ -410,7 +429,7 @@ describe("createSessionPreviewService", () => {
     const svc = createSessionPreviewService({
       entry: async () => {
         lookups += 1;
-        return null;
+        return { status: "absent" };
       },
       roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
       now: () => clock,
@@ -445,7 +464,7 @@ describe("createSessionPreviewService", () => {
         if (fail) {
           throw new Error("vault unavailable");
         }
-        return { agent: "codex", sessionId: "s1", sessionPath: rollout };
+        return { status: "found", entry: { agent: "codex", sessionId: "s1", sessionPath: rollout } };
       },
       roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
       now: () => clock,
@@ -485,7 +504,10 @@ describe("createSessionPreviewService", () => {
     await fs.writeFile(other, `${codexEvent("another session")}\n`);
 
     const svc = createSessionPreviewService({
-      entry: async (entryId) => ({ agent: "codex", sessionId: entryId.slice("codex:".length) }),
+      entry: async (entryId) => ({
+        status: "found",
+        entry: { agent: "codex", sessionId: entryId.slice("codex:".length) },
+      }),
       read: async (file, format) => {
         reads.push(file);
         if (!stall || file !== rollout) {
@@ -550,7 +572,10 @@ describe("createSessionPreviewService", () => {
       await fs.writeFile(path.join(sessionsDir, `rollout-d${i}.jsonl`), `${codexEvent(`d${i}`)}\n`);
     }
     const svc = createSessionPreviewService({
-      entry: async (entryId) => ({ agent: "codex", sessionId: entryId.slice("codex:".length) }),
+      entry: async (entryId) => ({
+        status: "found",
+        entry: { agent: "codex", sessionId: entryId.slice("codex:".length) },
+      }),
       read: async (file, format) => {
         reads.push(file);
         return readLastActivityLine(file, format);
@@ -588,7 +613,10 @@ describe("createSessionPreviewService", () => {
       await fs.writeFile(path.join(sessionsDir, `rollout-w${i}.jsonl`), `${codexEvent(`w${i}`)}\n`);
     }
     const svc = createSessionPreviewService({
-      entry: async (entryId) => ({ agent: "codex", sessionId: entryId.slice("codex:".length) }),
+      entry: async (entryId) => ({
+        status: "found",
+        entry: { agent: "codex", sessionId: entryId.slice("codex:".length) },
+      }),
       read: async (file) => {
         reads.push(file);
         return new Promise<string | null>(() => {});
@@ -701,7 +729,7 @@ describe("a look that outlives its deadline", () => {
         await Promise.resolve();
       },
       svc: createSessionPreviewService({
-        entry: async (entryId) => (entryId === "codex:s1" ? CODEX : null),
+        entry: async (entryId) => (entryId === "codex:s1" ? { status: "found", entry: CODEX } : { status: "absent" }),
         read: async (file, format) => {
           reads.push(file);
           if (!stall) {
@@ -847,7 +875,7 @@ describe("a look that outlives its deadline", () => {
 
   it("still retires the line when the read fails outright rather than stalling", async () => {
     const svc = createSessionPreviewService({
-      entry: async () => CODEX,
+      entry: async () => ({ status: "found", entry: CODEX }),
       read: async () => {
         throw new Error("unreadable");
       },
@@ -861,5 +889,138 @@ describe("a look that outlives its deadline", () => {
     });
 
     expect(await svc.preview("codex:s1")).toBeUndefined();
+  });
+});
+
+describe("a preview does not outlive its session", () => {
+  /** A store whose answer the test drives, counting what the service asked it. */
+  function driven(initial: PreviewLookup) {
+    const state = { answer: initial, calls: 0 };
+    return {
+      state,
+      entry: async (): Promise<PreviewLookup> => {
+        state.calls += 1;
+        return state.answer;
+      },
+    };
+  }
+
+  const found = (): PreviewLookup => ({
+    status: "found",
+    entry: { ...CODEX, sessionPath: rollout },
+  });
+
+  it("retires the line when the store proves the session absent, and stops asking the file", async () => {
+    const store = driven(found());
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000 });
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+
+    store.state.answer = { status: "absent" };
+    clock += 30_000;
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+
+    // The transcript is still on disk and still fresh — only the store's answer
+    // changed, and nothing else may be consulted about it again.
+    const statsAfter = stats.length;
+    const readsAfter = reads.length;
+    clock += 30_000;
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+    expect(stats.length).toBe(statsAfter);
+    expect(reads.length).toBe(readsAfter);
+  });
+
+  it("keeps the line when the store cannot say whether the session exists", async () => {
+    const store = driven(found());
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000 });
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+
+    // `unknown` is the shape a thrown query takes. Blanking the line here is the
+    // same visible harm as retiring it (design.md D4).
+    store.state.answer = { status: "unknown" };
+    clock += 30_000;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+  });
+
+  it("consults the store once across many looks inside one re-confirmation interval", async () => {
+    const store = driven(found());
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000, recheckMs: 2000 });
+    await svc.preview("codex:s1");
+    expect(store.state.calls).toBe(1);
+
+    // Ten ordinary freshness looks: each may `stat`, none may re-ask the store —
+    // for a Codex row that is the history-sized walk round-3 B1-R3 removed.
+    for (let i = 0; i < 10; i++) {
+      clock += 2000;
+      expect(await svc.preview("codex:s1")).toBe("the first answer");
+    }
+    expect(store.state.calls).toBe(1);
+  });
+
+  it("previews again when the session comes back", async () => {
+    const store = driven(found());
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000 });
+    await svc.preview("codex:s1");
+
+    store.state.answer = { status: "absent" };
+    clock += 30_000;
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+
+    store.state.answer = found();
+    clock += 30_000;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+  });
+
+  it("re-confirms a retired session no more often than the interval", async () => {
+    const store = driven({ status: "absent" });
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000, recheckMs: 2000 });
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+    const after = store.state.calls;
+
+    // A retired row stays on the ordinary look cadence rather than decaying up
+    // the retry ladder — it performs no resolution, so the ladder bounds nothing
+    // (design.md D1). What bounds it is the interval.
+    for (let i = 0; i < 10; i++) {
+      clock += 2000;
+      expect(await svc.preview("codex:s1")).toBeUndefined();
+    }
+    expect(store.state.calls).toBe(after);
+    clock += 30_000;
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+    expect(store.state.calls).toBe(after + 1);
+  });
+
+  it("does not let an inconclusive answer stand as a fresh confirmation", async () => {
+    const store = driven(found());
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000, recheckMs: 2000 });
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(store.state.calls).toBe(1);
+
+    // A resolved row re-confirms, and the store cannot answer. The line stands —
+    // and so does the stamp of the LAST conclusive answer, so the row is still
+    // overdue rather than settled for another interval (design.md D2).
+    store.state.answer = { status: "unknown" };
+    clock += 30_000;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(store.state.calls).toBe(2);
+
+    clock += 2000;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(store.state.calls).toBe(3);
+  });
+
+  it("retries an inconclusive lookup without waiting out another interval", async () => {
+    const store = driven({ status: "unknown" });
+    const svc = service({}, { entry: store.entry, entryRecheckMs: 30_000, recheckMs: 2000 });
+    expect(await svc.preview("codex:s1")).toBeUndefined();
+    expect(store.state.calls).toBe(1);
+
+    // `confirmedAt` stamps conclusive answers only, so the next eligible look
+    // asks again rather than treating the failure as a fresh confirmation. The
+    // wait is the retry ladder's, not the interval's: an unproductive look backs
+    // off to 2 × recheckMs, which is still an order of magnitude short of 30 s.
+    store.state.answer = found();
+    clock += 4000;
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+    expect(store.state.calls).toBe(2);
   });
 });

@@ -161,7 +161,10 @@ so the redesign is not blamed for it later.
 ## H. PR-driven creation — a reversed deferral
 
 `2026-08-29-worktree-ui-vs-orca.md` §C records create-from-issue/PR/URL as **deferred by design, not
-debt**, citing `PLAN.md:390-405`.
+debt**, citing `PLAN.md:390-405`. That citation is stale: the current `PLAN.md` Deferred section
+(`:441-454`) does not mention it. The live record is `docs/PLAN.v4.md:396` — *"Issue-tracker and forge
+integration in the create form — deferred. The reference creates worktrees from GitHub / Jira / PR
+references; that is a separate product surface, not a worktree concern."*
 
 On 2026-08-30 the user asked for a PR flow in the create-dialog design brief. That reverses the
 deferral for the PR case specifically (issue/URL creation remains deferred).
@@ -172,8 +175,35 @@ remote when needed, and imports a session share URL from the PR body
 and on-disk paths, trying `-2` through `-100`, and sanitises fork remote names
 (`packages/coding-agent/src/tools/gh-pr-checkout.ts:48-115`).
 
-**Action required.** PLAN.md's Deferred section must be updated, or the brief's PR screen is
-exploration only and must not be read as an accepted scope change.
+**Action required.** `PLAN.v4.md:396` must be amended to carve out the PR case, or the brief's PR
+screens are exploration only and must not be read as an accepted scope change. Note the deferral's
+own reasoning — "a separate product surface, not a worktree concern" — is the argument that has to be
+answered, not just the line edited.
+
+---
+
+## I. WT-009.3 is marked done but one acceptance clause is unmet
+
+`PLAN.md:184-198` — **[WT-009.3] Create Form Reads as a Worktree Form**, `Status: done`. Its
+acceptance already required three of the fixes this redesign is re-deriving:
+
+> "…the resolved destination appears exactly once, shortened, with the exact value reachable without
+> leaving the dialog, and **a collision states the suffixed result without restating a full path**;
+> the agent block is absent unless the user chose to start an agent…"
+
+**The collision clause is not met in shipped code.** The host sends `collidedWith` as `bare` — the
+full absolute path from `suggestFreePath(root, base, …)` (`src/providers/WorktreeHost.ts:971,983`) —
+and the dialog renders it verbatim into the note (`WorktreeCreateDialog.ts:492-500`). The result is
+the paragraph in the 2026-08-30 screenshots:
+
+> `…/Users/huybuidac/Projects/…/worktrees/cyberk-skills already exists, so this is created as cyberk-skills-2.`
+
+That is a restated full path, which is what the clause forbids.
+
+**Consequence for planning.** The redesign is **not new territory** — it is a successor to a task
+already accepted. Either WT-009.3 is reopened for the unmet clause, or a new task supersedes it and
+says so explicitly. Silently redesigning over a `done` task loses the record that its acceptance was
+mis-verified.
 
 ---
 
@@ -188,6 +218,7 @@ exploration only and must not be read as an accepted scope change.
 | E | Copy default | **Resolved**; config must follow |
 | F | Port allocation ownership | Product decision |
 | G | Path scheme repetition | Known bug, deferred |
-| H | PR flow reverses a recorded deferral | Plan bookkeeping |
+| H | PR flow reverses a recorded deferral (`PLAN.v4.md:396`, not `PLAN.md`) | Plan bookkeeping |
+| I | WT-009.3 `done` with an unmet acceptance clause | Verification gap |
 
 **D is the only one that blocks the create-dialog redesign.** The rest can be sequenced after it.

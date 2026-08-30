@@ -679,17 +679,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // interval, the in-flight de-duplication and the bound all live behind it.
   const sessionPreviews = createSessionPreviewService({
     entry: async (entryId) => {
-      const entry = await vaultService.getEntry(entryId);
+      // `lookupEntry`, not `getEntry`: only a PROVEN absence may retire a row's
+      // preview, and `getEntry` is the view that collapses that proof back into
+      // the `null` a failed reader also returns.
+      const found = await vaultService.lookupEntry(entryId);
+      if (found.status !== "found") {
+        return found;
+      }
       // `VaultSessionEntry.agent` is a bare string because it crosses IPC; the
       // service takes the union, so an unrecognised provider is answered here
       // rather than falling through its coverage check as an unknown literal.
-      const agent = VAULT_AGENT_IDS.find((id) => id === entry?.agent);
-      return entry === null || agent === undefined
-        ? null
+      // `unknown` and not `absent`: an agent this build does not know is a fact
+      // about this build's coverage, never proof the session was deleted.
+      const agent = VAULT_AGENT_IDS.find((id) => id === found.entry.agent);
+      return agent === undefined
+        ? { status: "unknown" }
         : {
-            agent,
-            sessionId: entry.sessionId,
-            ...(entry.sessionPath ? { sessionPath: entry.sessionPath } : {}),
+            status: "found",
+            entry: {
+              agent,
+              sessionId: found.entry.sessionId,
+              ...(found.entry.sessionPath ? { sessionPath: found.entry.sessionPath } : {}),
+            },
           };
     },
   });
