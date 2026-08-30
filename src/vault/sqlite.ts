@@ -350,8 +350,15 @@ export async function withSqliteSnapshot<T>(
   try {
     tempDir = await deps.mkdtemp();
     const dbCopy = path.join(tempDir, "db.sqlite");
-    await deps.copy(dbPath, dbCopy);
+    // ORDER MATTERS: sidecars first, base LAST. A checkpoint can land between the
+    // two copies, and only this order survives it — whatever the checkpoint moved
+    // out of the WAL is already in the base file by the time we copy it, and a
+    // now-stale WAL copy is salt-mismatched, so SQLite ignores it in favour of
+    // that newer base. Copying the base first loses those rows twice over: absent
+    // from the older base, and absent from a WAL that is legitimately gone
+    // (round-4 B1-R3).
     await copySidecars(deps, dbPath, dbCopy);
+    await deps.copy(dbPath, dbCopy);
     const snapshot: SqliteSnapshot = {
       query: (sql) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
     };
@@ -382,8 +389,15 @@ async function readSqliteViaCopy(
   try {
     tempDir = await deps.mkdtemp();
     const dbCopy = path.join(tempDir, "db.sqlite");
-    await deps.copy(dbPath, dbCopy);
+    // ORDER MATTERS: sidecars first, base LAST. A checkpoint can land between the
+    // two copies, and only this order survives it — whatever the checkpoint moved
+    // out of the WAL is already in the base file by the time we copy it, and a
+    // now-stale WAL copy is salt-mismatched, so SQLite ignores it in favour of
+    // that newer base. Copying the base first loses those rows twice over: absent
+    // from the older base, and absent from a WAL that is legitimately gone
+    // (round-4 B1-R3).
     await copySidecars(deps, dbPath, dbCopy);
+    await deps.copy(dbPath, dbCopy);
     return useCli ? await runQuery(deps, dbCopy, sql) : await (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql);
   } catch (err) {
     return { rows: [], status: "query-error", error: errorMessage(err) };

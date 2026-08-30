@@ -378,3 +378,85 @@ describe("readSqlite: a sidecar that could not be read is not a smaller database
     expect(queried).toEqual([]);
   });
 });
+
+describe("readSqlite: a checkpoint mid-snapshot cannot empty the result (round-4 B1-R3)", () => {
+  /** A real WAL-mode database whose only row lives in the WAL, plus deps whose
+   *  base-file copy first checkpoints the live store — the exact interleaving
+   *  review reproduced: the WAL is genuinely gone by the time presence is
+   *  checked, so skipping it is correct and the base must already carry the row. */
+  async function walFixture(): Promise<{ dbFile: string; deps: SqliteDeps; dir: string }> {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-wal-"));
+    const dbFile = path.join(dir, "real.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("PRAGMA journal_mode=WAL");
+    seed.exec("CREATE TABLE t(id TEXT)");
+    seed.exec("INSERT INTO t VALUES ('older-session')");
+    seed.close(); // closing checkpoints, so the base file holds ONLY this row
+
+    // The session under test is committed afterwards and lives in the WAL alone —
+    // a base-only copy cannot see it, which is the whole point.
+    const live = new DatabaseSync(dbFile);
+    live.exec("PRAGMA journal_mode=WAL");
+    live.exec("INSERT INTO t VALUES ('live-session')");
+
+    let checkpointed = false;
+    const deps: SqliteDeps = {
+      exec: vi.fn(async () => {
+        throw new Error("command not found: sqlite3"); // force the node:sqlite path
+      }),
+      exists: async (p) => {
+        try {
+          await fsp.access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      copy: async (src, dest) => {
+        await fsp.copyFile(src, dest);
+        // The race, exactly as review reproduced it: the base file is copied, and
+        // ONLY THEN does the store checkpoint and drop its WAL. A later presence
+        // check sees a WAL that is genuinely gone, so skipping it is correct —
+        // which is what makes a base copied before the checkpoint fatal.
+        if (!checkpointed && src === dbFile) {
+          checkpointed = true;
+          live.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+          live.close();
+          for (const suffix of ["-wal", "-shm"]) {
+            await fsp.rm(dbFile + suffix, { force: true });
+          }
+        }
+      },
+      mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
+      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
+      hasNodeSqlite: async () => true,
+    };
+    return { dbFile, deps, dir };
+  }
+
+  it("keeps a WAL-resident row that a concurrent checkpoint moved into the base", async () => {
+    const { dbFile, deps, dir } = await walFixture();
+    try {
+      const result = await readSqlite(dbFile, "SELECT id FROM t WHERE id = 'live-session'", deps);
+      expect(result.status).toBe("ok");
+      expect(result.rows).toEqual([{ id: "live-session" }]);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps it through withSqliteSnapshot too", async () => {
+    const { dbFile, deps, dir } = await walFixture();
+    try {
+      const result = await withSqliteSnapshot(
+        dbFile,
+        async (s) => s.query("SELECT id FROM t WHERE id = 'live-session'"),
+        deps,
+      );
+      expect(result.status).toBe("ok");
+      expect(result.status === "ok" ? result.value.rows : undefined).toEqual([{ id: "live-session" }]);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});

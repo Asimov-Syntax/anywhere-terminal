@@ -109,3 +109,13 @@
     1. In `src/vault/sqlite.ts`, give both snapshot paths one presence-aware sidecar copier: skip a `-wal`/`-shm` only when its absence is proven, and let an unreachable or uncopyable sidecar reach the existing outer catch as `query-error` instead of falling through to a base-only query.
     2. In `src/vault/readers/cursorIdeReader.ts`, move the header size bound out of the WHERE clause into a bounded projection so identity is established unfiltered, and answer unknown for a matched row that is oversized, NULL, or unparseable.
     3. Cover both in `src/vault/sqlite.test.ts` and `src/vault/readers/cursorIdeReader.test.ts`: a WAL that is present but unreadable, a WAL whose copy fails, a sidecar proven absent (still `ok`), an oversized active header, and a NULL header value.
+
+- [x] 3_2 Copy the sidecars before the base, so a checkpoint cannot outrun the snapshot — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: <!-- .reviews/round-4.md B1-R3 persists; design.md D2 -->
+  - **Acceptance**:
+    - Outcome: a checkpoint landing between the two copies still yields a snapshot holding the committed row, never a successful empty one
+    - Verify: unit src/vault/sqlite.test.ts
+  - **Plan**:
+    1. In `src/vault/sqlite.ts`, copy the `-wal`/`-shm` sidecars before the base file in both snapshot paths, so the base is the newest artifact in the snapshot and absorbs anything a concurrent checkpoint moved out of the WAL.
+    2. Cover it in `src/vault/sqlite.test.ts` with a real WAL-mode database whose base copy triggers a checkpoint mid-snapshot, asserting the committed row survives through both `readSqlite` and `withSqliteSnapshot`.
