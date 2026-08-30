@@ -19,6 +19,7 @@ import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { formatEntryId, type VaultSessionDetail, type VaultSessionEntry } from "../types";
@@ -406,6 +407,13 @@ export async function readClaudeSessions(
     const jsonlFiles = await listJsonlFiles(dirPath);
     for (const filePath of jsonlFiles) {
       const sessionId = path.basename(filePath, ".jsonl");
+      // Being LISTED under the root is not evidence of being inside it: a
+      // symlink here resolves wherever it likes, and everything below this line
+      // stats and reads the file. One entry is skipped, not the directory —
+      // a link out of the store is a lost row, not a lost project.
+      if (!(await isResolvedPathInside(filePath, projectsDir))) {
+        continue;
+      }
       try {
         const stat = await fs.stat(filePath);
         const stamp = { mtimeMs: stat.mtimeMs, size: stat.size };

@@ -42,7 +42,7 @@
     1. In `src/worktree/sessionPreviewService.ts` delete `isInside` and route the Claude hint branch of `resolve` through the shared predicate.
     2. In `src/worktree/sessionPreviewService.test.ts` cover a hint escaping through a link — the row stays unresolved and is retried on the ordinary cadence rather than being recorded as uncovered — and a hint under a symlinked root that resolves normally.
 
-- [ ] 1_5 An enumerated file is checked like a resolved one
+- [x] 1_5 An enumerated file is checked like a resolved one — verified: pnpm exec vitest run 'src/vault/readers/claudeReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/agent-session-index/spec.md#{enumeration-is-not-exempt-from-containment} <!-- design.md D2 -->
   - **Acceptance**:

@@ -548,3 +548,51 @@ describe("claude session titles — whole-record classification", () => {
     }
   });
 });
+
+describe("readClaudeSessions: a listed file is still checked for containment", () => {
+  const line = (text: string) =>
+    `${JSON.stringify({ type: "user", message: { role: "user", content: text }, timestamp: "2026-01-01T00:00:00Z", sessionId: "x" })}\n`;
+
+  it("skips a symlink that resolves out of the store and keeps its siblings", async () => {
+    // The listing walks the store's own directories, so nothing upstream has
+    // asked where these files actually live. One escaping link must cost one
+    // row, not the project.
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "claude-listing-"));
+    try {
+      const projects = path.join(tmp, "projects", "-repo");
+      await fsp.mkdir(projects, { recursive: true });
+      const outside = path.join(tmp, "outside");
+      await fsp.mkdir(outside);
+      await fsp.writeFile(path.join(outside, "private.jsonl"), line("not yours"));
+
+      await fsp.writeFile(path.join(projects, "keep-a.jsonl"), line("mine a"));
+      await fsp.writeFile(path.join(projects, "keep-b.jsonl"), line("mine b"));
+      await fsp.symlink(path.join(outside, "private.jsonl"), path.join(projects, "escapes.jsonl"));
+
+      const { entries, unreadable } = await readClaudeSessions({ configDir: tmp });
+      expect(entries.map((e) => e.sessionId).sort()).toEqual(["keep-a", "keep-b"]);
+      // A refused link is not a parse failure — the unreadable tally is what the
+      // UI shows as "some sessions could not be read", and this is not that.
+      expect(unreadable).toBe(0);
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("still lists sessions when the projects root itself is behind a link", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "claude-listing-link-"));
+    try {
+      const realProjects = path.join(tmp, "volume", "projects", "-repo");
+      await fsp.mkdir(realProjects, { recursive: true });
+      await fsp.writeFile(path.join(realProjects, "kept.jsonl"), line("across the volume"));
+      const configDir = path.join(tmp, "config");
+      await fsp.mkdir(configDir);
+      await fsp.symlink(path.join(tmp, "volume", "projects"), path.join(configDir, "projects"));
+
+      const { entries } = await readClaudeSessions({ configDir });
+      expect(entries.map((e) => e.sessionId)).toEqual(["kept"]);
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
