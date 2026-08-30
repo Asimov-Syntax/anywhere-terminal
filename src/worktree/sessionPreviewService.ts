@@ -8,7 +8,7 @@
 // could answer "should this file be opened right now" on its own.
 
 import * as fs from "node:fs/promises";
-import { isResolvedPathInside } from "../utils/pathBoundary";
+import { isResolvedPathInside } from "../utils/resolvedPathBoundary";
 import { claudeRoots } from "../vault/readers/claudePaths";
 import { codexStoreDirs, pickRolloutPath } from "../vault/readers/codexReader";
 import { type LastActivityFormat, readLastActivityLine } from "../vault/readers/lastActivity";

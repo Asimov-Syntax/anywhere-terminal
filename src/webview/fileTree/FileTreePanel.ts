@@ -38,6 +38,7 @@ import type {
   RequestSubscribeFsChangesMessage,
   RequestUnsubscribeFsChangesMessage,
 } from "../../types/messages";
+import { isPathInside } from "../../utils/pathBoundary";
 import type { FileTreeState } from "../state/WebviewState";
 import { attachTooltip } from "../ui/Tooltip";
 import { FileSystemDataSource } from "./FileSystemDataSource";
@@ -1705,18 +1706,6 @@ function basename(p: string): string {
     return p;
   }
   return p.slice(lastSlash + 1) || p;
-}
-
-/**
- * Containment check that's safe across `repo` / `repo2` siblings (a naive
- * `startsWith(root)` matches `/work/repo2/x` against `/work/repo`). Treats
- * `root === absPath` as containment and accepts either path separator.
- */
-function isPathInside(absPath: string, root: string): boolean {
-  if (absPath === root) {
-    return true;
-  }
-  return absPath.startsWith(`${root}/`) || absPath.startsWith(`${root}\\`);
 }
 
 /**

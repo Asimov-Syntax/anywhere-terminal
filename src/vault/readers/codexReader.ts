@@ -13,7 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { provesAbsence } from "../../utils/fsPresence";
-import { isResolvedPathInside } from "../../utils/pathBoundary";
+import { isResolvedPathInside } from "../../utils/resolvedPathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { readPrimarySqlite, type readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";

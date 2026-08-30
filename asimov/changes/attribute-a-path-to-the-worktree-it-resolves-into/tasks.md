@@ -50,7 +50,7 @@
     2. Cover that decorating many files issues no additional resolution, which is the cost half of the acceptance and not a type-check.
     3. This is the second consumer of "resolve a bounded set, forget what left", so move that resolver out of `src/worktree/repoRoots.ts` into `src/utils/resolvedPathMemo.ts` (+ `src/utils/resolvedPathMemo.test.ts`, `src/worktree/repoRoots.test.ts`) rather than duplicating it, and wire the provider from `src/extension.ts`.
 
-- [ ] 1_5 Delete the file tree's private copy of the rule
+- [x] 1_5 Delete the file tree's private copy of the rule — verified: rg -n 'function isPathInside' src/ && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d2-the-comparison-stays-lexical-and-stays-ispathinside
   - **Acceptance**:
@@ -58,4 +58,4 @@
     - Verify: command rg -n 'function isPathInside' src/
   - **Plan**:
     1. In `src/webview/fileTree/FileTreePanel.ts`, delete the local `isPathInside` at line 1715 and import the shared predicate, resolving the workspace root through the memo where the panel receives it.
-    2. Confirm the webview bundle still builds — the shared module must not drag extension-host-only imports into the webview.
+    2. Confirm the webview bundle still builds — the shared module must not drag extension-host-only imports into the webview. It does not today: `node:fs/promises` and `node:path` are there for the RESOLVED predicate only, so move that half out of `src/utils/pathBoundary.ts` into `src/utils/resolvedPathBoundary.ts` (with `src/utils/pathBoundary.test.ts`, `src/utils/resolvedPathBoundary.test.ts` and its five importers — `src/vault/readers/claudePaths.ts`, `src/vault/readers/claudeReader.ts`, `src/vault/readers/codexReader.ts`, `src/vault/readers/subagentLookup.ts`, `src/worktree/sessionPreviewService.ts`) and leave the lexical rule where D2 puts it.

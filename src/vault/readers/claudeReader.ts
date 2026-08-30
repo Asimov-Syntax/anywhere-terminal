@@ -19,7 +19,7 @@ import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
+import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { formatEntryId, type VaultEntryLookup, type VaultSessionDetail, type VaultSessionEntry } from "../types";
