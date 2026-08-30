@@ -114,3 +114,16 @@
     1. B6 — in `src/utils/resolvedPathMemo.ts` (+ `src/utils/resolvedPathMemo.test.ts`), reconcile the whole claimed set rather than a `tracked` half, collapsing `prepare(pinned, tracked)` to `prepare(paths)`. Update the callers in `src/worktree/repoRoots.ts`, `src/providers/gitDecorationProvider.ts`, `src/providers/fileTreeHost.ts` and `src/worktree/presenceDeps.ts`, and the two-argument call sites in `src/worktree/repoRoots.test.ts`, `src/providers/gitDecorationProvider.test.ts` and `src/worktree/presenceProjector.test.ts`.
     2. B7 — give the resolver an idempotent `dispose()` that releases everything it claims, have `src/providers/fileTreeHost.ts` own it, and call it from the permanent teardown in `src/providers/TerminalEditorProvider.ts` (+ `src/providers/fileTreeHost.test.ts`, and `src/providers/resolvedRootWiring.test.ts` for the provider-level proof that a closed panel actually releases).
     3. B8 — in `src/extension.ts`, give each removal assessment its own claim for the length of the transaction and release it in a `finally`, retiring the two long-lived removal handles: an assessment is a transaction, not a standing consumer.
+
+## 5. Round-4 review fixes
+
+- [x] 5_1 Reconcile the file tree's claim on every root transition — verified: pnpm exec vitest run 'src/providers/fileTreeHost.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: .reviews/round-4.md; design.md#d6-a-resolved-path-is-held-by-its-claimants-and-released-when-the-last-one-lets-go
+  - **Acceptance**:
+    - Outcome: the host claims exactly its current root, including none
+    - Verify: unit src/providers/fileTreeHost.test.ts
+  - **Plan**:
+    1. B9 — in `src/providers/fileTreeHost.ts`, let `resolveWorkspaceRoot` reconcile a null root as the empty set instead of returning early, so closing the last workspace folder releases the root it claimed.
+    2. B10 — reconcile the current root when `attach` begins, so a folder change taken while the view was detached is not invisible until the next one.
+    3. Cover both through the attach harness in `src/providers/fileTreeHost.test.ts` — root A, then none, then A retargeted; and detach, change folders, reattach.

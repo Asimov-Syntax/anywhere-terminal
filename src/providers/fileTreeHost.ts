@@ -142,11 +142,15 @@ export class FileTreeHost implements RootProvider {
    */
   private resolveWorkspaceRoot(): void {
     const root = this.workspaceRoot;
-    if (!this.paths || root === null) {
+    if (!this.paths) {
       return;
     }
+    // "No root" is the EMPTY set, not nothing to do. Returning early here left
+    // the previous root claimed by a host that outlives the workspace — the
+    // sidebar and bottom panel do — so a spelling retargeted and reopened
+    // answered from where it used to point (round-4 B9).
     const pass = this.rootGeneration;
-    void this.paths.prepare([root]).then(
+    void this.paths.prepare(root === null ? [] : [root]).then(
       () => {
         if (pass === this.rootGeneration) {
           this.postWorkspaceRoot();
@@ -228,6 +232,12 @@ export class FileTreeHost implements RootProvider {
     this.activeFileTreeRoot = this.workspaceRoot;
     this.attachPost = deps.post;
     this.attachReady = deps.isReady;
+    // Reconciled on the way IN, not only on the next folder event. A view's
+    // teardown disposes the listener below and keeps the host, so a workspace
+    // change taken while it was detached would otherwise stay invisible until
+    // the change after it — and the re-resolved view would initialise on the
+    // lexical root (round-4 B10).
+    this.resolveWorkspaceRoot();
     const workspaceFolderSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
       // The GitDecorationProvider owns its own workspace-folder reset (O-W3
       // — without this, every FileTreeHost would call reset() once on a

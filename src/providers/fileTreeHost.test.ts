@@ -1049,6 +1049,73 @@ describe("FileTreeHost — the resolved workspace root (round-1 B1)", () => {
 });
 
 describe("FileTreeHost path claims", () => {
+  // Defined rather than assigned: an earlier suite in this file leaves
+  // `workspaceFolders` as a getter-only property, so the mock's setter throws.
+  const setFolders = (folders: Array<{ uri: { fsPath: string } }> | undefined) => {
+    Object.defineProperty(vscode.workspace, "workspaceFolders", { value: folders, configurable: true });
+  };
+
+  /** Drive the workspace-folder event the host subscribes to inside `attach`. */
+  function withFolderEvents<T>(body: (fire: () => void) => T): T {
+    let handler: (() => void) | null = null;
+    const original = vscode.workspace.onDidChangeWorkspaceFolders;
+    (vscode.workspace as { onDidChangeWorkspaceFolders: unknown }).onDidChangeWorkspaceFolders = ((h: () => void) => {
+      handler = h;
+      return { dispose: () => {} };
+    }) as unknown;
+    try {
+      return body(() => handler?.());
+    } finally {
+      (vscode.workspace as { onDidChangeWorkspaceFolders: unknown }).onDidChangeWorkspaceFolders = original;
+    }
+  }
+
+  it("lets go of the root when the last workspace folder closes", async () => {
+    // Round-4 B9. The null-root guard returned before reconciling, so a host
+    // that outlives the workspace — the sidebar and the bottom panel do — kept
+    // claiming a root the window no longer has. A spelling retargeted and
+    // reopened then answers from where it used to point.
+    setFolders([{ uri: { fsPath: "/repo" } }]);
+    const links: Record<string, string> = { "/repo": "/private/one" };
+    const memo = new ResolvedPathMemo({ realpath: async (p) => links[p] ?? p });
+    await withFolderEvents(async (fire) => {
+      const host = new FileTreeHost(null, null, createTrackedPathResolver(memo));
+      const sub = host.attach({ isReady: () => true, post: () => {} });
+      await waitFor(() => memo.size === 1);
+
+      setFolders(undefined);
+      fire();
+      await waitFor(() => memo.size === 0);
+
+      expect(memo.resolvedOr("/repo")).toBe("/repo");
+      sub.dispose();
+    });
+  });
+
+  it("reconciles the root it is attaching to, not the one it left", async () => {
+    // Round-4 B10. A view teardown disposes the folder listener and keeps the
+    // host, so folders that changed while the view was detached were invisible
+    // until the NEXT change — the re-resolved sidebar initialising on a lexical
+    // root is the failure this whole change exists to remove.
+    setFolders([{ uri: { fsPath: "/one" } }]);
+    const links: Record<string, string> = { "/one": "/private/one", "/two": "/private/two" };
+    const memo = new ResolvedPathMemo({ realpath: async (p) => links[p] ?? p });
+    await withFolderEvents(async () => {
+      const host = new FileTreeHost(null, null, createTrackedPathResolver(memo));
+      const first = host.attach({ isReady: () => true, post: () => {} });
+      await waitFor(() => memo.resolvedOr("/one") === "/private/one");
+
+      first.dispose();
+      setFolders([{ uri: { fsPath: "/two" } }]);
+      const second = host.attach({ isReady: () => true, post: () => {} });
+      await waitFor(() => memo.resolvedOr("/two") === "/private/two");
+
+      expect(memo.resolvedOr("/one")).toBe("/one");
+      expect(memo.size).toBe(1);
+      second.dispose();
+    });
+  });
+
   it("releases its root when the surface holding it is gone", async () => {
     // Round-3 B7. An editor panel opens and closes without bound; each one used
     // to leave a dead claimant on the root it mounted, which blocks the final
