@@ -68,7 +68,7 @@ Consequences to implement:
 | Search input | Filters session titles | Filters worktree branch + path, and agent titles |
 | "This folder only" filter | Active | Hidden — the tree is already folder-scoped |
 | Refresh button | Refreshes sessions | Forces a tree rebuild |
-| Create ("+") | Absent — nothing to create | Present; see [worktree-actions.md](worktree-actions.md) § 3.2.2 |
+| Create ("+") | Absent — nothing to create | Present; see [worktree-create.md](worktree-create.md) § 7 |
 | Preview overlay | Opens on row activation | Opens on **agent row** activation, unchanged component |
 
 Activating an agent row opens the existing floating session preview (`PreviewController`) for
@@ -176,7 +176,7 @@ Rendered **only when the tree holds more than one repo**. A single-repo workspac
 case — shows worktree rows at the top level with no redundant wrapper.
 
 Header shows: repo label, worktree count, a `degraded` affordance when that repo's last listing
-failed, and a create control on hover or focus (§ 3.2.2 of
+failed, and a create control on hover or focus (§ 7 of
 [worktree-actions.md](worktree-actions.md)). Collapsible; collapse state persisted by `repoId`.
 
 The header is a `treeitem`, which takes its accessible name from its contents — so it names itself
@@ -363,7 +363,7 @@ These are not stylistic preferences; each one prevents a specific false claim.
 | Action error | outcome `error` | Inline, attached to the row it concerns, dismissible |
 | Action indeterminate | outcome `indeterminate` | Inline, distinct from an error: says the mutation partly applied and names what was observed |
 | Action unavailable | outcome `unavailable` | Inline, and **not** error styling: nothing was attempted, because what the action would affect could not be read. It names what was unreadable |
-| Action blocked | outcome `blocked` | The confirmation or refusal surface of [worktree-actions.md](worktree-actions.md) § 3.3, carrying the blocker set the fingerprint authorizes |
+| Action blocked | outcome `blocked` | The confirmation or refusal surface of [worktree-removal.md](worktree-removal.md) § 3, carrying the check set the fingerprint authorizes |
 
 The scoped-terminal empty state belongs to the tab bar, not the panel — see
 [worktree-scope.md](worktree-scope.md) § 4.3.

@@ -53,7 +53,9 @@ Phase = build order; Stage = ship order; `Depends On` is the only structural rel
 | [design/worktree-panel-ui.md](design/worktree-panel-ui.md) | Panel body, two-level toggle, row anatomy, idle tail, inspector, state vocabulary |
 | [design/worktree-scope.md](design/worktree-scope.md) | Scope model, the tab-bar filter, the All chip and its attention badge, layout by location |
 | [design/worktree-activity-ceiling.md](design/worktree-activity-ceiling.md) | The confirmation ceiling on inferred `running` |
-| [design/worktree-actions.md](design/worktree-actions.md) § 3.2.1–3.2.2 | Create form presentation and where create is offered |
+| [design/worktree-create.md](design/worktree-create.md) | The four creation modes, path derivation, the branch/source combobox, form presentation, the PR source, and where create is offered |
+| [design/worktree-provisioning.md](design/worktree-provisioning.md) | Provider detection, the merged model and its provenance, and copy / link / ports / setup |
+| [design/worktree-removal.md](design/worktree-removal.md) | The check set and its fail-closed rules, orphan proofs, guarded branch deletion, force semantics |
 | [design/worktree-agent-presence.md](design/worktree-agent-presence.md) | Evidence model the rows and the scope join both read |
 | [design/worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) | Recorded review debts, their triage lines, and the decisions each still owes |
 
@@ -64,6 +66,11 @@ only once it renders standalone; a reference no reviewer can open is not one. Wh
 design doc disagree, [worktree-panel-ui.md](design/worktree-panel-ui.md) § 7.7 records the
 resolution.
 
+`docs/ui/create-worktree.html` is the visual reference for Phases 12–13, with
+`docs/ui/worktree-create-dialog.css` beside it. Unlike `worktree.html` it renders standalone. The
+brief that produced it is `docs/ui/create-worktree-design-brief.md`; revisions since are recorded
+in `docs/ui/create-worktree-revision-brief.md`.
+
 ## Phases Overview
 
 ```mermaid
@@ -72,6 +79,8 @@ flowchart LR
     P8 --> P10[P10<br>Worktree-first workbench]
     P9 --> P10
     P10 --> P11[P11<br>Recorded debts]
+    P11 --> P12[P12<br>Provisioned create]
+    P12 --> P13[P13<br>Removal as a report]
 ```
 
 | Phase | Est. | Key Deliverable |
@@ -80,12 +89,16 @@ flowchart LR
 | P9 — Glanceability | ~4-6d | The list surfaces the two worktrees that matter, each row says what just happened, and creating one is a worktree question rather than a git one |
 | P10 — Worktree-first workbench | ~9-13d | Selecting a worktree scopes the surface to it — built behind a setting, which WT-010.6 retired once the composition was whole |
 | P11 — Recorded debts | ~8-12d | One rule per concept: containment, promotion, a bounded look, what a row shows, what a lookup means, and who knows an entry is gone |
+| P12 — Provisioned create | ~14-19d | A created worktree arrives usable: the form says what it will be filled with and where that was declared, and every way a branch or a destination can already be taken becomes a choice instead of a git error |
+| P13 — Removal as a report | ~4-6d | Removal shows what was checked, treats unproven as blocking, and can delete a merged branch only under a guard |
 
 | Stage | What the user gets |
 |-------|--------------------|
 | 6 | A list that can be scanned in one second and rows that stop overstating |
 | 7 | Pick a worktree and the workbench follows it |
 | 8 | The same panel, holding up on a symlinked vault, a sleeping disk, and a deleted session |
+| 9 | A new worktree comes with its `.env`, its ports and its install already done, and says where each instruction came from |
+| 10 | Removing a worktree shows its homework, and can take the branch with it only when that is provably safe |
 
 > P10 is detailed here because its design is settled, not because it is next. Per the revision
 > rule, reassess it against what P8 and P9 actually shipped before planning its first task.
@@ -186,21 +199,30 @@ nothing to provision.
 | Field | Value |
 |-------|-------|
 | **Goal** | Restructure the create dialog around the branch name, state the destination once, and reveal the agent block only when the user has asked for an agent |
-| **Design Ref** | [worktree-actions.md](design/worktree-actions.md) § 3.2.1, § 3.2 |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 4 |
 | **Depends On** | None |
 | **Stage** | 6 |
 | **Size** | M |
 | **Labels** | user-visible-ui |
 | **Notes** | The path transparency is a safety property, not clutter — the host states the free path it will actually take before a filesystem write is authorized, and that must survive the restructure rather than be traded for tidiness. What changes is that it is stated once instead of twice, in a dialog whose own tree deliberately shows no path on any row. The always-visible agent block currently contradicts an "After creating: Nothing" selection sitting directly above it |
 | **Acceptance** | The branch name is the lead input with nothing above it, and submission stays blocked until it validates; the resolved destination appears exactly once, shortened, with the exact value reachable without leaving the dialog, and a collision states the suffixed result without restating a full path; the agent block is absent unless the user chose to start an agent, and appears when they do, with the dangerous posture labelled and never preselected; base ref, branch source, and the path override live behind a collapsed advanced section; the host still supplies and displays the free path it will take before the action can be authorized; focus order, the focus trap, and dismissal behave as they did |
-| **Status** | done |
+| **Status** | todo |
+
+> **Reopened 2026-08-30** for one unmet acceptance clause, not for the whole task. Everything else
+> in the list above shipped and stands. The collision clause — *"a collision states the suffixed
+> result without restating a full path"* — is contradicted by the shipped code: the host sends
+> `collidedWith` as the full absolute path and the dialog renders it verbatim, while applying
+> `lastSegment()` to the resolved path a few lines below. The asymmetry is the defect; whichever
+> side shortens, one side does, and the wire field and its rendering agree on which. Reopening
+> rather than superseding keeps the record that this acceptance was mis-verified rather than
+> re-derived. Audit: `docs/audit/2026-08-30-worktree-lifecycle-gaps.md` § I.
 
 ### [WT-009.4] Create Is Offered Where the Intent Arrives
 
 | Field | Value |
 |-------|-------|
 | **Goal** | Add a per-repo create control on group headers and a create action in the body of each empty state, alongside the existing toolbar button and context-menu item |
-| **Design Ref** | [worktree-actions.md](design/worktree-actions.md) § 3.2.2; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.1, § 5 |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 7; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.1, § 5 |
 | **Depends On** | WT-009.3 |
 | **Stage** | 6 |
 | **Size** | S |
@@ -438,12 +460,318 @@ nothing to provision.
 
 ---
 
+## Phase 12 — Provisioned Create
+
+A fresh worktree is a checkout and nothing else. This phase makes the create dialog state what the
+new worktree will be filled with, where each instruction was declared, and what to do when the
+branch or the destination is already taken.
+
+Sequencing inside the phase is deliberate: **read and display before write**. WT-012.5 is the only
+task that writes a config file, and it lands after the states it has to round-trip are drawn.
+
+### [WT-012.0] One Wire Contract for Modes, Offers and Assessments
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Land the message shapes Phase 12 and Phase 13 are built on: the create-mode union, the provisioning offer and its selection, and the removal assessment |
+| **Design Ref** | [worktree-rpc.md](design/worktree-rpc.md) § 2.3, § 2.4, § 2.5, § 4 |
+| **Depends On** | None |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | new-api-contract, cross-boundary |
+| **Notes** | Every UI and execution task in both phases reads this contract, so it lands first rather than being discovered three tasks in. Two of its properties are safety rules expressed as types rather than as validators that can be forgotten: `baseRef` is structurally absent from the modes that must refuse it, and a selection carries ids against a host-held offer rather than command text |
+| **Acceptance** | The create request carries a discriminated branch-mode union in which `baseRef` cannot be expressed for reuse, reattach or adopt, and in which reattach and adopt are separate variants naming different paths and different expected-OID guards, and a destination disposition **independent** of it so an existing branch and a debris-occupied destination can both be stated; the after-create value is a union whose agent fields and setup-wait flag exist only on its agent variant; every selectable provisioning item carries an opaque host-issued id and a selection carries ids only, with no field capable of carrying a command or a path; an unknown or invalidated offer performs no create and no provisioning, re-presents, and requires a second submission; the removal assessment carries a per-check class and a four-value outcome including `notApplicable`, and the legacy boolean blocker record is gone rather than kept beside it; a branch-delete request carries both ref names, both OIDs, and the assessment fingerprint; path validation is mode- and disposition-dependent rather than a blanket non-existence rule |
+| **Status** | todo |
+
+### [WT-012.1] Bring Over States What a Worktree Will Lack
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Render a Bring over section in the create dialog from the repository's own provisioning config, with every entry naming the file that declared it |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 2, § 3.1, § 4.0, § 4.3 |
+| **Depends On** | WT-012.0 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | user-visible-ui |
+| **Notes** | First slice of the provider layer, deliberately one adapter wide — the normalized model and its provenance rule are the contract every later task in this phase consumes, and they are cheaper to get right against one real file than four. This repo's own `asimov/worktree.yaml` is that file. Globs expand at read time because the list shown must be the list that would be copied |
+| **Acceptance** | A repo declaring copy, link, port and setup material shows each of them as its own row, and each row names the source file; a repo declaring none still shows the section, saying the worktree will have no `.env` or `node_modules`; a linked row states that it writes to the main checkout, and that statement is not suppressible; the source badge answers only which file declared the entry, with mode consequences carried separately; nothing in this task writes to disk |
+| **Status** | todo |
+
+### [WT-012.2] The Files a Worktree Needs Are Put There Safely
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Materialize the provision model's files after a successful create — copy, then link — reporting each entry, and never failing or rolling back the create because one failed |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 5, § 5.1, § 5.2, § 7 |
+| **Depends On** | WT-012.1 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | security-privacy, cross-boundary |
+| **Notes** | The destructive-adjacent half of the phase: it writes files into a new directory from paths a checked-in file supplied. Containment is `isPathInside` / `isResolvedPathInside` from `src/utils/pathBoundary.ts` — this code must not spell its own test. An escaping entry is refused and reported, never clamped into range, because clamping turns a suspicious entry into a silently different one |
+| **Acceptance** | Copy runs before link and no entry runs out of order; an existing destination is never overwritten and that holds for every descendant of a directory copy, not only its top-level name; source and destination are validated against different roots; special files are refused; a symlink inside the repository is preserved rather than dereferenced and one resolving outside is refused; an entry resolving outside the repository is refused rather than clamped; validation is redone immediately before each operation; a lockfile is refused with its reason whether it was named for copy or for link; a `node_modules` link is refused with its reason; where the platform cannot symlink, the entry degrades to a copy and says so per entry; a failed entry leaves the worktree and every earlier entry standing |
+| **Status** | todo |
+
+### [WT-012.3] The Section Reads Whatever the Repo Already Uses
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Add the orca and VS Code task adapters behind the same model, with a fixed detection order, and offer a detected-but-unused provider instead of hiding it |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 3.2, § 3.3, § 4.1 |
+| **Depends On** | WT-012.1 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | user-visible-ui |
+| **Notes** | The tasks.json adapter honours `runOn: "worktreeCreated"` as a **convention read from the file** — the enum that would expose it to an extension is a proposed API a published extension cannot enable, and its dispatcher is core-internal and never fires for our worktrees. tasks.json is JSONC, so comments and trailing commas must parse; there is no JSONC dependency in the tree today |
+| **Acceptance** | An orca repo populates the section from `orca.yaml` and `.worktreeinclude` with the right copy/link modes; a repo whose only config is a `worktreeCreated` task populates its setup rows; detection follows the recorded order and the first hit supplies the model; a second detected provider appears as one quiet row offering to switch, never as a merge and never hidden; a JSONC file with comments and trailing commas parses; orca keys outside the two that map are ignored without reporting the repo as misconfigured |
+| **Status** | todo |
+
+### [WT-012.4] One Configuration Assembled From Several Files
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Support `.vscode/worktree.json` with `extends`, inline keys and `exclude`, rendering per-entry provenance for a merged model and naming a config that could not be read |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 3.4, § 4.2, § 4.3, § 9; [worktree-create.md](design/worktree-create.md) § 4.3 |
+| **Depends On** | WT-012.3 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | new-api-contract, user-visible-ui |
+| **Notes** | The merge rule is the contract the UI's per-row badge depends on, so it is what breaks quietly if provenance is dropped anywhere in the pipeline. Four problem reasons are distinct on purpose — a missing `extends` target is not an unreadable file, and the difference decides whether the inline keys still apply |
+| **Acceptance** | A native file extending a provider produces one list whose entries each name their own origin; an inline entry sharing a path with an inherited one wins including its mode; an excluded path is shown as deliberate rather than missing and is not counted in the row total; setup steps from two sources are neither deduped nor reordered; a malformed file, an unknown key, and a missing `extends` target each report distinctly and none of them discards the rest of the file; a missing `extends` target still applies the native file's own inline keys; Create stays enabled through every one of these states |
+| **Status** | todo |
+
+### [WT-012.5] Configure Writes Our File and Only Ours
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Make `[Configure…]` write `.vscode/worktree.json`, preserving an existing file's formatting, and never modify a file another tool owns |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 6 |
+| **Depends On** | WT-012.4 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | user-visible-ui |
+| **Notes** | The only task in the phase that writes a config file, sequenced last among the read tasks for that reason. Switching the active provider is also a write to this file — it rewrites `extends`, never the other framework's file |
+| **Acceptance** | Changing an inherited entry produces an inline entry or an exclude rather than an edit to the provider's file; a provider file is byte-identical after any operation this control offers; a first write points `extends` at whatever detection made active rather than freezing today's resolved list; an existing native file keeps its formatting and comments; switching the active provider rewrites only `extends` |
+| **Status** | todo |
+
+### [WT-012.6] Ports Are Allocated and Named Before They Collide
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Allocate a free port per configured name under a cross-process lock, excluding values sibling worktrees already claim, and write them into the new worktree |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 5.3 |
+| **Depends On** | WT-012.2 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | cross-boundary |
+| **Notes** | Sequenced before setup because setup consumes the values. The lock is what makes the guarantee real — two VS Code windows scanning the same sibling set and probing independently can both pick the same port, so a file scan without a lock proves nothing. The guarantee is bounded on purpose and the acceptance says so: it covers worktrees this extension creates, not unrelated processes |
+| **Acceptance** | Reading claims, choosing values and writing the claim happen under one lock taken in the repository's common git directory, so two windows creating worktrees concurrently never claim the same port; a value already written in any sibling worktree's port file is never handed out; an existing port file in the new checkout is parsed and reused rather than overwritten or ignored, and allocation is skipped where it already covers every name; the port file is added to the repository-local exclude rather than `.gitignore`; a number that differs from what the dialog previewed is reported rather than silently swapped; one name failing to allocate does not prevent the others; the acceptance records that an unrelated process may still bind the port before setup runs |
+| **Status** | todo |
+
+### [WT-012.7] One Box for Every Way a Worktree Starts
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Replace the bare branch field with a single combobox holding refs and a create-new row, ordered by what the typed text most likely means |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 4, § 4.1 |
+| **Depends On** | WT-012.0 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | user-visible-ui |
+| **Notes** | Independent of the provisioning tasks and can run beside them. The rejected alternative is on the record: source tabs cost height in a narrow modal, split keyboard search across datasets, and force a mode choice before the user has typed. A branch checked out elsewhere is offered disabled because git permits one worktree per branch and failing at submit is the behaviour being removed |
+| **Acceptance** | Refs and a create-new row appear in one list with no tab bar; ordering puts an exact match first, then prefixes, then create-new; a branch already checked out in another worktree is offered disabled and badged with the directory that owns it, and cannot be submitted; the branch name remains the lead input with nothing above it and submission stays blocked until it validates; keyboard traversal covers the whole list |
+| **Status** | todo |
+
+### [WT-012.8] A Branch That Already Exists Is Reused, Not Duplicated
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Resolve a selection into fresh, reuse or reattach before submit, report what the destination already holds, and refuse the base ref where it cannot apply |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 2, § 2.1, § 2.3, § 3, § 6 |
+| **Depends On** | WT-012.7 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | None |
+| **Notes** | Recover is deliberately **not** here — it deletes, and is WT-012.12. Adopt is **not** here either: it writes into git's administrative directory and is WT-012.15. Reattach is the subtle one, and was verified against git 2.50.1: it applies **only** while the administrative entry survives, which is exactly git's own `prunable` flag that the model already carries. Once `git worktree prune` has removed that entry neither `repair` nor `add` can attach it, which is why that state is a separate task rather than a clause here. This task must also report the occupied candidate the suffixing skipped, or WT-012.12 has nothing to act on |
+| **Acceptance** | An existing branch resolves to reuse rather than a suffixed near-duplicate; a worktree git reports `prunable`, whose administrative entry still exists and whose directory is on that branch at the expected commit, resolves to reattach and repairs in place rather than running `worktree add`; a registration whose administrative entry is actually gone is never offered as reattach; reattach never rewrites the working tree; the resolution reports both the free path and the occupied candidate it skipped, with what was found there; base ref cannot be expressed for reuse or reattach and is validated for fresh, and a debris disposition does not disable it; each mode is resolved before submit rather than surfacing as a git failure after it |
+| **Status** | todo |
+
+### [WT-012.9] A Pull Request Is a Source, Not a Tab
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Offer pull requests inside the same combobox, resolving one to a deterministic branch and base, and announcing a fork remote before it is configured |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 4.1, § 5 |
+| **Depends On** | WT-012.8 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | user-visible-ui |
+| **Notes** | Reverses a recorded deferral for the PR case only — see the Deferred section. Configuring a fork remote is a repository-level side effect, so it is stated up front rather than discovered afterwards. The deterministic branch is what makes the same PR twice a reuse rather than a second worktree |
+| **Acceptance** | PRs appear in the same list as refs with no additional tab; a PR resolves to a deterministic branch name and its base; a PR whose head is on a fork states the remote that will be configured before the action is authorized; the same PR selected twice resolves to reuse; an unauthenticated or unreachable forge shows one quiet row and leaves ref search working underneath it; a slow PR lookup never blocks local ref search |
+| **Status** | todo |
+
+### [WT-012.10] Uncommitted Work Moves With the Intent
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Offer to move the current worktree's uncommitted changes into the new one, between a successful create and provisioning |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 4, § 6 |
+| **Depends On** | WT-012.2, WT-012.8 |
+| **Stage** | 9 |
+| **Size** | S |
+| **Labels** | None |
+| **Notes** | The Git extension already exposes `migrateChanges`; this is a call and a conditional row, not a reimplementation. Ordering matters — the move lands before setup runs so a setup command sees the moved work |
+| **Acceptance** | The row appears only when the source worktree actually has changes to move and states how many; the move happens after git reports success and before provisioning; a failed move is reported with the worktree standing and the changes left where they were; declining leaves both worktrees untouched |
+| **Status** | todo |
+
+### [WT-012.11] Setup Runs What the User Actually Saw
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Execute the selected setup steps in the new worktree against the host-held offer, reporting each, and surface a failure on the worktree row with a retry |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.0, § 5.4, § 5.5, § 5.6; [worktree-create.md](design/worktree-create.md) § 6 |
+| **Depends On** | WT-012.0, WT-012.3, WT-012.6, WT-012.13 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | security-privacy |
+| **Notes** | The consent-critical half of provisioning, split from WT-012.2 because materializing files and executing repo-supplied commands are different risks with different tests. Two variants exist for a reason: a `tasks.json` step must run through the task system with its identity intact, and flattening it to a string loses what that system needs. Ports precede this task because setup consumes them |
+| **Acceptance** | Steps run after ports and after materialization, sequentially, in the new worktree's directory; what executes is the host-held model the offer id names, never text supplied by the webview and never a re-read of the provider file after submit; an expired or changed offer re-presents the model instead of running; setup checkboxes start unchecked, so an unattended dialog runs nothing; a shell step is passed as the shell's single script argument and never assembled by concatenation; a task step resolves and runs the exact task it named; the documented environment variables are set and `ASIMOV_CHANGE_ID` is not invented; a non-zero exit stops later steps, leaves the worktree and every earlier step standing, and surfaces on the row with a retry that re-runs setup only; the setup-wait choice is honoured — off, the agent starts as soon as the worktree exists, and on, its start is sequenced after the setup runner exits, with a gated failure starting nothing and reporting; a manifest of what was materialized, allocated and run is written into the worktree's administrative directory, and its absence later degrades a claim rather than blocking anything |
+| **Status** | todo |
+
+### [WT-012.12] Crash Debris Is Cleared Deliberately
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Offer recover for a destination holding non-git debris, deleting it only under an explicit authorization bound to what was found there |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 2.0, § 2.2, § 6; [worktree-actions.md](design/worktree-actions.md) § 3.1 |
+| **Depends On** | WT-012.8 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | security-privacy |
+| **Notes** | Its own task because it is the one create path that deletes, and because it is a **named carve-out of the shared "never delete files directly" invariant** — git cannot remove a directory that is deliberately not a worktree. Every bound is load-bearing and each is separately testable, which is what makes it a task rather than a clause in WT-012.8 |
+| **Acceptance** | A destination holding a directory with no `.git` is reported as debris rather than silently skipped by suffixing, and offers recover stating exactly what will be removed; recovery composes with any branch mode, so clearing debris and reusing an existing branch is expressible; a directory holding a `.git` file or directory is never treated as debris; the delete is refused unless the authorization fingerprint matches what the user was shown at that path; the path is re-resolved and its device and inode re-checked immediately before the delete; a path with a symlinked component is refused; the carve-out from the never-delete-directly invariant is recorded in the design rather than left implicit; a partial deletion reports what remains and never reports the create as successful; a bare create never deletes anything |
+| **Status** | todo |
+
+### [WT-012.13] Prove a Task Can Run Where the Worktree Is
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Establish whether an extension can execute a `tasks.json` task for a directory that is not a workspace folder, and record the answer as a design decision |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.0, § 5.4 |
+| **Depends On** | None |
+| **Stage** | 9 |
+| **Size** | S |
+| **Labels** | None |
+| **Notes** | A **spike**, and it gates WT-012.11's task variant rather than merely informing it. The provider set assumes a `tasks.json` step can be run through the task system with its identity intact. The API documents `fetchTasks` as returning tasks *managed by the editor*, which are the ones contributed by open workspace folders — and a worktree the dialog just created is not one. If the task system cannot reach it, the `task` variant collapses into `shell`, one provider leaves the design, and WT-012.11 shrinks. Discovering that during WT-012.11 means discovering it after its spec is written. `runOn: "worktreeCreated"` is upstream and stable in the task schema, but it is dispatched by a workbench-internal contribution for the editor's own sessions and is not reachable by any extension API, so it stays a convention we read and dispatch ourselves either way |
+| **Acceptance** | The question is answered by a running experiment rather than by reading types: a task declared in a directory outside the workspace is either executed with its identity intact, or shown to be unreachable with the failure recorded; if it is reachable, the mechanism and its constraints are written into the design; if it is not, the `task` variant is removed from the provisioning model, the affected provider row is restated, and every document that names the variant is updated in the same change; either outcome leaves no document claiming the untested behaviour |
+| **Status** | todo |
+
+### [WT-012.14] Prove Entry Reconstruction on Windows
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Establish whether an administrative entry written by hand attaches a surviving checkout on Windows, and record the answer as a design decision |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 2.4 |
+| **Depends On** | None |
+| **Stage** | 9 |
+| **Size** | S |
+| **Labels** | None |
+| **Notes** | A **spike**, and it gates WT-012.15. The reconstruction recipe was verified only on macOS with git 2.50.1. Every one of its four files carries a path, one of them absolute, and Windows differs on separator, drive letter, case sensitivity and what `git worktree repair` normalises. The recipe writes into git's own administrative directory, so a platform where it half-works is worse than one where it does not work at all — the failure has to be established before the feature is built on top of it |
+| **Acceptance** | The recipe is executed on Windows against a real repository and the result is recorded: the reconstructed worktree either lists, keeps its branch tip, survives a prune and commits back, or it does not and the exact failure is captured; whichever holds is written into the design, and if adoption cannot be made to work there the mode is refused on that platform with a stated reason rather than offered and left to fail |
+| **Status** | todo |
+
+### [WT-012.15] A Surviving Checkout Is Re-Registered, Not Abandoned
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Offer adopt for a populated checkout whose administrative entry is gone, reconstructing the entry in place, and refuse outright when the branch is already held |
+| **Design Ref** | [worktree-create.md](design/worktree-create.md) § 2.0, § 2.4, § 6; [worktree-rpc.md](design/worktree-rpc.md) § 2.3 |
+| **Depends On** | WT-012.8, WT-012.14 |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | security-privacy |
+| **Notes** | Its own task because it is the only path in the subsystem that **writes into git's administrative directory**, which no other task does and which no git command offers. It is separate from reattach for the same reason reattach is separate from reuse: the recognising condition, the commands and the failure modes all differ. The branch-claimed refusal is the load-bearing part — `git worktree add` performs that check and a reconstructed entry never reaches it, so bypassing it silently produces a commit that reverts another worktree's work with no message at all. Treat the index rebuild as part of the operation, not as cleanup: without it the checkout reports every tracked file as both deleted and untracked |
+| **Acceptance** | A destination holding a populated checkout whose administrative entry is gone is offered as adopt rather than as debris or a suffixed fresh path; the entry is reconstructed and the checkout then lists, holds the branch at the tip the user was shown, survives a prune, and commits back into the repository; the index is rebuilt so a freshly adopted checkout reports only its genuine working-tree state, and no file inside the worktree is modified by the adoption; a branch any live worktree holds is refused before a single file is written, with no confirmation path offered; the branch tip is re-checked immediately before the write and a move refuses rather than attaching to a different commit; what adoption cannot restore is stated to the user before they authorize it, and is stated rather than probed; a directory holding a valid administrative entry is reattach and never reaches this path; base ref cannot be expressed |
+| **Status** | todo |
+
+---
+
+## Phase 13 — Removal as a Report
+
+Removal already has a safety model — a check set, execution-time re-evaluation, and observation
+freshness. What it does not have is a way for the user to see it. This phase makes the model
+legible, adds the proofs it was missing, and admits one guarded destructive option it previously
+refused outright.
+
+### [WT-013.1] Removal Assesses Before It Offers
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Produce the removal assessment host-side: every check classified and evaluated together, including the ignored material this subsystem itself creates |
+| **Design Ref** | [worktree-removal.md](design/worktree-removal.md) § 2, § 2.2, § 2.3, § 3; [worktree-rpc.md](design/worktree-rpc.md) § 2.5 |
+| **Depends On** | WT-012.0 |
+| **Stage** | 10 |
+| **Size** | L |
+| **Labels** | security-privacy |
+| **Notes** | The three-class taxonomy is the load-bearing part: "unproven blocks" is too blunt to implement, because an unfetched default branch must not prevent a removal nobody asked to delete a branch for. The ignored-material check exists because `git status --porcelain` says nothing about it, and this subsystem deliberately creates ignored material in every worktree it provisions — a report where everything passed, followed by deleting a `node_modules` and a copied `.env`, omitted the thing that mattered. This task excludes the orphan proofs, which are WT-013.2 |
+| **Acceptance** | Every check is evaluated together and carries its class and one of four outcomes; `notApplicable` is distinguishable from `passed` on every check that can be inapplicable; an unevaluable confirmable risk stays confirmable rather than refusing; a hard refusal cannot be confirmed past; an agent whose activity cannot be determined, in this window or the registry, is treated as live and refuses; ignored content is reported under a time and entry budget and degrades to could-not-be-determined rather than walking an unbounded tree; material this extension provisioned is named as such when the provisioning manifest is readable, and reported undifferentiated when it is not; the registry read preserves live, dead and unreadable records rather than the presence reader's live-only filter; the assessment is re-evaluated before execution and a newly appeared failure re-prompts rather than riding the previous confirmation |
+| **Status** | todo |
+
+### [WT-013.2] Proof That Nobody Is Using This Worktree
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Compute the three orphan proofs — lock age, owning process, merged branch — and put them on the assessment, without ever removing anything automatically |
+| **Design Ref** | [worktree-removal.md](design/worktree-removal.md) § 4, § 4.1 |
+| **Depends On** | WT-013.1 |
+| **Stage** | 10 |
+| **Size** | M |
+| **Labels** | None |
+| **Notes** | Display only, deliberately. An automatic delete path justified by three heuristics is a new way to lose work in the one area of this extension where mistakes are unrecoverable. Each proof needed a named source before it was implementable: the lock's age comes from the lock file git itself writes, the owning process from the **existing** Claude PID registry rather than an invented ownership file, and the merge from a local-ref ancestry test that never issues a fetch to answer a question the user did not ask |
+| **Acceptance** | Each proof appears on the assessment with its own class and outcome and reads its value from the named source rather than a new one; a proof that cannot be evaluated withholds only the action it gates and never prevents removal; a worktree that is not locked reports the lock proof as `notApplicable`; a worktree the registry never covered reports the ownership proof as `notApplicable`; the merge proof distinguishes not-merged from could-not-determine and never issues a fetch; the three holding together never causes a removal without an explicit press; rendering is WT-013.4's and this task adds no UI |
+| **Status** | todo |
+
+### [WT-013.3] A Branch Goes Only Under a Guard
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Offer branch deletion as a separate opt-in after a successful removal, available only on a proven merge and guarded by the commit the user was shown |
+| **Design Ref** | [worktree-removal.md](design/worktree-removal.md) § 5, § 7 |
+| **Depends On** | WT-013.4 |
+| **Stage** | 10 |
+| **Size** | M |
+| **Labels** | security-privacy |
+| **Notes** | **Reverses a recorded rule** that branch deletion is never part of removal. The reasoning behind that rule is preserved — what changed is that it turned on the word *silently*, and an off-by-default, proof-gated, guarded opt-in is not what it refused. The guard is what makes it safe rather than merely careful: a branch can advance between the merge check and the delete, and without an expected-old-value the window is unbounded |
+| **Acceptance** | The control is off by default and never implied by removing the worktree; it is absent rather than disabled when the merge proof is false or unproven; typing the confirmation never unlocks it; both the branch OID and the default-branch OID recorded with the proof are verified immediately before the delete, and a move in either one fails the delete rather than discarding work; the default branch is never offered for deletion; a branch checked out in another worktree is re-checked immediately before the delete and refused; the control is offered in the pre-removal report and executed only after the removal succeeds; a failed branch delete leaves the removal reported as successful and the branch failure reported separately; `git worktree remove` itself never touches the branch |
+| **Status** | todo |
+### [WT-013.4] The Report Is Legible Before It Is Dangerous
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Render the removal assessment as a report — passed checks included — and ask for a typed confirmation only where one was earned |
+| **Design Ref** | [worktree-removal.md](design/worktree-removal.md) § 1, § 2.1, § 2.3, § 2.4, § 3, § 4 |
+| **Depends On** | WT-013.1, WT-013.2 |
+| **Stage** | 10 |
+| **Size** | M |
+| **Labels** | user-visible-ui |
+| **Notes** | Split from the assessment because a check taxonomy and a dialog are different failures with different tests. The class travels on the wire so the typed-confirmation rule is not re-derived in the webview — a safety rule implemented in two places is a safety rule that will disagree with itself |
+| **Acceptance** | Every check renders with its outcome including the ones that passed, the ordinary checks and the orphan proofs alike; an unproven check never renders as passed and `notApplicable` never renders as either; typed confirmation appears only when a confirmable risk failed or could not be evaluated, and a withheld proof-gated option never triggers it; a hard refusal renders as a refusal with no confirmation control present at all; the confirmation names every failed check at once; the report states that panes inside the worktree are left running rather than closed |
+| **Status** | todo |
+
+---
+
 ## Deferred
 
 - ~~Cross-surface scope sync~~ — deferred per DESIGN.md § 9 D25. Technically supported by the existing host-as-hub RPC, but panes belong to one surface, so a rail driving another surface needs a *primary terminal surface* concept and a multi-panel fan-out policy. Revisit as an opt-in setting holding one host-side scope every surface follows, which needs no primary.
 - ~~An editor tab per worktree~~ — deferred per DESIGN.md § 9 D25. Closest to the reference's feel, but it proliferates tabs and the editor surface is second-class today; that debt is paid before any default UX bets on it. Acceptable later as a manual "Open worktree as tab" action, never as the selection default.
 - ~~Sharing activity confidence with the terminal tab~~ — deferred per DESIGN.md § 9 D27. The tab's indicator claims the terminal is producing output, which stays true past the ceiling. Sharing the confidence would mean widening a shipped protocol union and adding an emitter for a surface whose claim is not false. Revisit if that indicator is ever restated as a claim about work.
 - ~~Group-by / sort-by / visibility filter popover~~ — still deferred. WT-009.1 takes the one part of "hide sleeping" that pays for itself with no filter state; the popover itself remains a response to a scale this view does not have.
+- **Create from a pull request is no longer deferred** (user, 2026-08-30). `docs/PLAN.v4.md:396`
+  defers issue-tracker and forge integration as *"a separate product surface, not a worktree
+  concern"*. The PR case is carved out of that: a PR names a branch **in this repository**, which
+  is the object this dialog creates, so the original reasoning does not reach it. Issue-driven and
+  URL-driven creation stay deferred on exactly that reasoning. `PLAN.v4.md` is outside this
+  document's write scope and still carries the unqualified wording — amending it is a separate,
+  authorized edit, and until it happens the two files disagree.
 - Everything else deferred for the worktree subsystem stays recorded in `docs/PLAN.v4.md` and is not restated here.
 
 ---

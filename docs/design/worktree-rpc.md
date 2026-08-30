@@ -64,7 +64,7 @@ Two invariants carried over from the vault protocol:
   does not exist yet, so there is no host-issued id to re-resolve it from. That path is
   **untrusted input**: canonicalized and validated host-side (§ 4), revalidated after any
   queue wait, and subject to the residual race documented in
-  [worktree-actions.md](worktree-actions.md) § 3.2. An earlier draft of this document claimed
+  [worktree-create.md](worktree-create.md) § 6. An earlier draft of this document claimed
   webview paths are *never* action inputs; that claim was false for this message, and stating
   it absolutely would have hidden the only path-trust boundary in the feature.
 
@@ -90,8 +90,10 @@ Two invariants carried over from the vault protocol:
 | `worktreeResumeHere` | `{ worktreeId, entryId }` | Resume an existing session with cwd overridden to this worktree |
 | `worktreeCopyResumeCommand` | `{ entryId, worktreeId? }` | Copy the resume command; the worktree scopes the cwd override when present |
 | `worktreeLaunchAgent` | `{ worktreeId, agent, permissionChoiceId?, prompt? }` | Launch an agent in the worktree |
-| `worktreeCreate` | `{ repoId, path, branch?, baseRef?, detach?: boolean, openAfter: WorktreeOpenAfterMode }` | Create a worktree. The three branch modes are mutually exclusive shapes, not flags: a new branch sends `branch` + `baseRef`, an existing one sends `branch` alone, and a detached create sends `detach` with an optional `baseRef`. Agent launch is WT-005.3 and is not sent yet |
-| `worktreeRemove` | `{ worktreeId, force: boolean, fingerprint?: string }` | Remove a worktree. `force` and `fingerprint` travel together or not at all — a force carrying no fingerprint authorizes nothing, and an unforced call carrying one is a payload the host never issued |
+| `worktreeCreate` | `{ repoId, path, mode: WorktreeCreateMode, destination: DestinationDisposition, after: WorktreeAfterCreate, provision?: ProvisionSelection, migrateChanges?: boolean }` | Create a worktree. `mode` and `after` are **discriminated unions**, not flag sets — § 2.3 and § 2.6. `provision` names selections against a host-held offer and never carries command text (§ 2.4) |
+| `worktreeCreateProbe` | `{ repoId, query: string, candidatePath?: string }` | Ask what a typed selection would resolve to. `candidatePath` carries an override so its disposition can be assessed too; omitted, the host assesses the derived candidate. Answered by `worktreeCreateResolution` |
+| `worktreeRemove` | `{ worktreeId, force: boolean, fingerprint?: string, deleteBranch?: BranchDeleteRequest }` | Remove a worktree. `force` and `fingerprint` travel together or not at all — a force carrying no fingerprint authorizes nothing, and an unforced call carrying one is a payload the host never issued. `deleteBranch` is absent unless the user opted in against a proof (§ 2.5) |
+| `worktreeRemoveAssess` | `{ worktreeId }` | Ask for the removal report without acting. Answered by `worktreeRemoveAssessment` |
 | `worktreeLock` | `{ worktreeId, reason?: string }` | Lock a worktree |
 | `worktreeUnlock` | `{ worktreeId }` | Unlock a worktree. Two messages rather than one `locked` flag: the verbs take different arguments and a boolean made the payload lie about which |
 | `worktreePrune` | `{ repoId, confirmedCount: number }` | Prune stale registrations. `confirmedCount` is the number the user actually confirmed; the host re-counts before running and abandons the prune when the answer has moved |
@@ -103,7 +105,11 @@ Two invariants carried over from the vault protocol:
 |------|---------|---------|
 | `worktreeTreeResponse` | `{ tree: WorktreeTree, presence: WorktreePresence }` | The whole view state, always both halves together |
 | `worktreeMutationResult` | `{ verb, repoId, worktreeId?, result }` where `result` is `{ kind: "ok", openFailed? }`, `{ kind: "error", message }`, `{ kind: "indeterminate", observed }`, `{ kind: "unavailable", unreadable }` or `{ kind: "blocked", worktreeId, fingerprint, blocker }` | Outcome of any mutating action, delivered to the SURFACE that started it. `unavailable` is not a failure — nothing was attempted, because what the action would affect could not be read. `openFailed` rides on a success: the worktree exists and the window did not open |
-| `worktreeCreateDefaults` | `{ repoId, root, prefix, path, branch?, collidedWith? }` | The destination the create will actually use. `path` is free against BOTH the registry and the filesystem; `collidedWith` names the unsuffixed candidate when it was taken. `branch` echoes the question, so a form can tell a current answer from one it has typed past |
+| `worktreeCreateDefaults` | `{ repoId, root, prefix, path, branch?, collidedWith? }` | The destination the create will actually use. `path` is free against BOTH the registry and the filesystem; `collidedWith` names the **last segment** of the unsuffixed candidate when it was taken — never a full path (§ 4.1). `branch` echoes the question, so a form can tell a current answer from one it has typed past |
+| `worktreeCreateResolution` | `{ repoId, query, mode, occupiedCandidate?: { path, disposition }, freePath, blockedBy?: { ownerPath } }` | What the typed selection resolves to, echoing `query` for staleness. `occupiedCandidate` is the path the suffixing skipped and what was found there — without it, debris is invisible and recover is unreachable. `blockedBy` marks a branch checked out elsewhere: offered disabled, never submittable |
+| `worktreeProvisionOffer` | `{ repoId, offerId, model: ProvisionModel, expiresAt }` | The provision model the dialog displays, and the id a create must cite (§ 2.4) |
+| `worktreeRemoveAssessment` | `{ worktreeId, checks: RemovalCheck[], fingerprint, branchDelete?: BranchDeleteOffer }` | The removal report (§ 2.5) |
+| `worktreeProvisionResult` | `{ worktreeId, steps: ProvisionStepResult[] }` | Per-step outcome after a create. Arrives after the create's own result — provisioning never changes whether the create succeeded |
 
 ```
 WorktreeOpenAfter = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspace"
@@ -113,7 +119,7 @@ WorktreeOpenAfter = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspac
 and rejected otherwise — a launch payload attached to a non-launch mode is a caller bug, not
 a field to ignore. The launch runs **after** the create succeeds and reuses the same path as
 `worktreeLaunchAgent`; a launch failure is reported without rolling back the create
-(see [worktree-actions.md](worktree-actions.md) § 3.2).
+(see [worktree-create.md](worktree-create.md) § 6).
 
 `WorktreeTree`, `WorktreePresence`, `WorktreeAgentRow`, `DelegationRoster`, `WorktreeSubagentRow` are defined in
 [worktree-model.md](worktree-model.md) § 2 and
@@ -131,47 +137,176 @@ instead of two, so a roster and the row it decorates cannot disagree.
 render an agent row whose `worktreeId` is not in the tree it currently holds. One message
 makes that unrepresentable.
 
-## 3. Action semantics
+### 2.3 `WorktreeCreateMode` — a union, not flags
 
-### 3.1 Confirmation is a round trip, not a client-side guess
+The five modes differ in what they *require*, so they are separate shapes. A flag set would admit
+combinations that mean nothing, such as a base ref on a reuse.
 
-A destructive action the host judges unsafe does **not** fail. It returns
-`worktreeActionResult { outcome: "error", needsConfirm }` describing exactly what would be
-lost:
+```ts
+export type WorktreeCreateMode =
+  | { kind: "fresh"; branch: string; baseRef?: string }
+  | { kind: "fresh-detached"; baseRef: string }
+  | { kind: "reuse"; branch: string }
+  | { kind: "reattach"; branch: string; repairPath: string; expectedOid: string }
+  | { kind: "adopt"; branch: string; adoptPath: string; expectedBranchOid: string };
 
-```
-WorktreeRemoveBlocker {
-  fingerprint:  string        // identifies THIS blocker set — see below
-  dirty:        boolean       // tracked modifications present
-  untracked:    number        // untracked file count (0 when none)
-  idlePanes:    number        // panes in this window whose cwd is inside the worktree
-  busyAgents:   number        // rows here whose activity is running or waiting
-  externalAgents: number      // live registry sessions rooted in the worktree
-  locked:       boolean
-  isMain:       boolean       // main worktree — never removable, no confirm can override
+/**
+ * What the destination already holds. Independent of the branch mode — an existing branch and a
+ * debris-occupied destination can hold at once, which a fourth mode could not express.
+ */
+export type DestinationDisposition =
+  | { kind: "free" }
+  | { kind: "debris"; authorization: DebrisAuthorization };
+
+/** Authorizes deleting exactly what the user was shown, at exactly the place they were shown it. */
+export interface DebrisAuthorization {
+  readonly path: string;
+  /** Host-issued over the path and what was found there. Absent → the delete is refused. */
+  readonly fingerprint: string;
 }
 ```
 
-The webview renders a confirmation naming the path and each non-zero blocker, then re-sends
-the same message with `force: true` **and the `fingerprint` it was shown**.
+`baseRef` is **structurally absent** from `reuse`, `reattach`, and `adopt`. The contractual-base rule
+([worktree-create.md](worktree-create.md) § 2.1) is enforced by the type, not by a validator that
+could be forgotten.
 
-**The fingerprint is what makes the confirmation specific.** Without it, `force: true` is a
-blanket authorization: a user who confirmed "3 untracked files" would silently authorize the
-deletion of a worktree that acquired a live agent in the meantime. The host recomputes the
-blocker set at execution and compares:
+`reattach` and `adopt` are separate variants because git treats their starting states differently
+and only one of them has a git command ([worktree-create.md](worktree-create.md) § 2.3, § 2.4).
+Neither names a path to create:
 
-| At execution | Result |
-|--------------|--------|
-| Fingerprint matches | Proceed — the user authorized exactly this |
-| Blockers shrank | Proceed — strictly less is at risk than they approved |
-| A blocker appeared or grew | `needsConfirm` again with the new set and a new fingerprint |
-| `busyAgents > 0` | Refused outright. No fingerprint authorizes it; the agent must be stopped first |
-| `isMain` | Refused unconditionally; `force` cannot override it |
+| Variant | Path field | Guard | What the guard prevents |
+|---|---|---|---|
+| `reattach` | `repairPath` — the surviving directory whose administrative entry is stale | `expectedOid` — the **directory's** `HEAD` at resolution | Repairing a checkout that moved between resolution and submit |
+| `adopt` | `adoptPath` — the surviving directory with no administrative entry at all | `expectedBranchOid` — the **branch tip** at resolution | Reconstructing `HEAD` at a commit other than the one the user was shown |
 
-`force` is **not** a claim that the removal is safe — it authorizes irrevocable deletion of
-everything under that path, whose contents may still change between the check and git's
-delete. [worktree-actions.md](worktree-actions.md) § 3.3 states that limit in full; the
-confirmation copy must not promise more than it.
+The two guards read different things and are named apart on purpose: reattach has a `HEAD` to
+compare against, and adopt does not — that file is exactly what was lost, so the only OID it can
+promise is the branch tip it is about to write into a new one.
+
+`adopt` also carries a precondition no field can express: **no live worktree may hold the branch**.
+Reconstructing an administrative entry bypasses the check `git worktree add` performs, and git
+reports nothing when two entries claim one branch. The host verifies it against
+`git worktree list --porcelain` before writing anything and refuses outright; there is no
+confirmation path and therefore no authorization field to carry
+([worktree-create.md](worktree-create.md) § 2.4).
+
+### 2.4 The provisioning offer
+
+```ts
+export interface ProvisionSelection {
+  /** From `worktreeProvisionOffer`. */
+  readonly offerId: string;
+  /**
+   * Host-issued ids of the items the user left checked — entries, ports and setup steps in one
+   * list, because every offered row is a checkbox and a caller should not have to know which
+   * kind a row was. Never command text.
+   */
+  readonly itemIds: readonly string[];
+}
+```
+
+Every selectable thing in a `ProvisionModel` carries an opaque host-issued `id`
+([worktree-provisioning.md](worktree-provisioning.md) § 2) — entries, ports, and setup steps
+alike. Ids are opaque and per-offer: they are not paths, and they are not stable across offers.
+
+**The webview never sends what to run.** It sends which of the host's own offered items were
+selected. A message carrying command text would make the webview the authority on what executes,
+which is exactly the property the untrusted-provider-file model exists to deny
+([worktree-provisioning.md](worktree-provisioning.md) § 4.0).
+
+**Refresh, stated precisely.** The safety property is *never execute a model the user has not
+seen* — not *never resolve again*, which would be impossible to implement. An `offerId` the host
+no longer holds, or one whose provider files changed underneath it, causes the host to perform
+**no create and no provisioning**, resolve a fresh model, present it, and require a **second
+submission** against the new offer id.
+
+### 2.5 Removal assessment and branch deletion
+
+```ts
+export type RemovalCheckOutcome = "passed" | "failed" | "unproven" | "notApplicable";
+export type RemovalCheckClass = "refusal" | "confirmable" | "proof";
+
+export interface RemovalCheck {
+  readonly id: string;
+  readonly cls: RemovalCheckClass;
+  readonly outcome: RemovalCheckOutcome;
+  /** Bounded, already safe to render. */
+  readonly detail?: string;
+}
+
+/** Present only when the merge proof passed. Absence is how "not offered" is expressed. */
+export interface BranchDeleteOffer {
+  readonly branch: string;
+  readonly branchOid: string;
+  readonly defaultBranch: string;
+  readonly defaultOid: string;
+}
+
+/**
+ * Echoes the offer the user acted on, in full. Both ref NAMES travel as well as both OIDs: an
+ * OID pair alone does not prove the default branch the proof used is the one being verified now.
+ */
+export interface BranchDeleteRequest {
+  readonly branch: string;
+  readonly expectedBranchOid: string;
+  readonly defaultBranch: string;
+  readonly expectedDefaultOid: string;
+  /** The assessment whose BranchDeleteOffer carried these values. */
+  readonly fingerprint: string;
+}
+```
+
+`notApplicable` is on the wire because the UI must not render it as `passed`
+([worktree-removal.md](worktree-removal.md) § 2.2). `cls` travels with each check because the UI's
+decision to show a typed confirmation depends on the class, and re-deriving that mapping in the
+webview would put the safety rule in two places.
+
+A `BranchDeleteRequest` whose OIDs do not match the current refs is refused. The removal still
+stands: the two outcomes are reported separately.
+
+### 2.6 What happens after the create
+
+```ts
+export type WorktreeAfterCreate =
+  | { kind: "none" }
+  | { kind: "terminal" }
+  | { kind: "newWindow" }
+  | { kind: "addToWorkspace" }
+  | {
+      kind: "agent";
+      agentId: string;
+      /** The posture the user chose. Never defaulted — submission waits for a choice. */
+      permissionChoiceId: string;
+      prompt?: string;
+      /** Sequence the agent's start after the setup runner exits (create § 6). */
+      waitForSetup: boolean;
+    };
+```
+
+The agent fields live **only** on the `agent` variant, so a draft that chose "Nothing" is
+structurally incapable of carrying an agent, a posture, or a setup gate. That is the wire
+expression of the form rule that the agent block is absent unless the user asked for it
+([worktree-create.md](worktree-create.md) § 4).
+
+## 3. Action semantics
+
+### 3.1 Confirmation is a round trip against a host-issued assessment
+
+A destructive mutation is never authorized by a client-side guess. The host produces the
+assessment (§ 2.5), the user acts on **that**, and the request echoes its fingerprint.
+
+- A removal with no fingerprint is evaluated fresh. Where it finds any confirmable-risk check
+  failed or unproven, it returns the assessment with `blocked` and runs nothing.
+- A removal carrying a fingerprint is re-assessed immediately before git. **Any change to the
+  assessment re-prompts** — not merely a larger blocker set. The old "same or fewer blockers →
+  proceed" rule cannot survive a model with four outcomes and three classes: a check moving from
+  `failed` to `unproven` is neither larger nor smaller, and a proof moving from passed to unproven
+  must withdraw the option it gated even though nothing about the removal got riskier.
+- A fingerprint the host did not issue, or issued for a different worktree, authorizes nothing.
+
+The legacy `WorktreeRemoveBlocker` boolean record is **retired** by § 2.5. It could not express
+ignored content, proof-gated options, `notApplicable`, or a per-check class, and keeping both would
+put the safety rule in two places that would disagree.
 
 ### 3.2 Every mutating action re-resolves before it runs
 
@@ -203,7 +338,7 @@ Applied host-side on every inbound message, before any git or shell work:
 | `entryId` | Must resolve in the vault store; never used to open a path the webview supplied |
 | `branchName` | Non-empty; passes `git check-ref-format --branch`; rejected if it starts with `-` |
 | `baseRef` | Rejected if it starts with `-`; passed as a single argv token |
-| `path` | Must be absolute after normalization; must not exist, or must be an empty directory; must not be inside any **linked** worktree of the same repo. A path inside the **main** worktree is allowed — that is where the default root lives ([worktree-actions.md](worktree-actions.md) § 3.2) — and must not be the main worktree itself |
+| `path` | Must be absolute after normalization; must not be inside any **linked** worktree of the same repo. A path inside the **main** worktree is allowed — that is where the default root lives ([worktree-create.md](worktree-create.md) § 3) — and must not be the main worktree itself. **Existence is mode-dependent**: it must not exist or be empty for `fresh` / `fresh-detached` / `reuse`; it must be the surviving worktree directory for `reattach` and for `adopt`; and it must hold non-git debris matching the `DebrisAuthorization` fingerprint when the disposition is `debris`. A blanket "must not exist" would make recovery unexpressible |
 | `openAfter` | One of the documented modes. `agent` requires the launch fields; every other mode rejects them |
 | `agent` | Must be a known `VaultAgentId` |
 | `permissionChoiceId` | Must be one the registry declares for that agent |
@@ -241,8 +376,11 @@ thing we can show, and hiding them would make the failure unactionable.
 | Window hides a surface that is showing the view | Pushes stop; the cache is served to it alone when the window displays it again |
 | That re-show delivery is skipped or throws | The transition is not consumed, so the next report serves it |
 | Action arrives during a rebuild | Queued behind it, then re-resolves against the new tree |
-| `worktreeCreate` with a path that exists and is non-empty | Rejected in validation, before git |
-| `worktreeCreate` for a branch already checked out elsewhere | Git refuses; its message is surfaced verbatim |
+| `worktreeCreate` with a path that exists and is non-empty | Rejected in validation for every mode except `reattach` and `adopt`, and for any mode whose disposition is `debris` — those require it |
+| `worktreeCreate` with `adopt` for a branch a live worktree already holds | Refused before any file is written. Git performs this check for `worktree add` and cannot perform it for a reconstructed entry (§ 2.3) |
+| `worktreeCreate` citing an unknown or expired `offerId` | Refused with a fresh offer; never re-resolved and run |
+| `worktreeRemove` with `deleteBranch` whose OIDs are stale | Branch delete refused; the removal itself is unaffected |
+| `worktreeCreate` for a branch already checked out elsewhere | `worktreeCreateResolution` marks it `blockedBy` and the form cannot submit it; reaching git is a race, and git's message is surfaced verbatim |
 | `worktreeRemove` on a `missing` worktree | Runs `git worktree remove`; git prunes the registration |
 | `worktreePrune` with nothing to prune | Succeeds, no-op |
 | `worktreeLaunchAgent` for an agent not installed | Fails with the launcher's existing not-found error |

@@ -81,8 +81,13 @@ per surface today. A surface that gains a subset of the actions is when that bec
 
 1. **argv arrays only.** No git command is ever assembled as a shell string.
 2. **Re-resolve the path host-side** from the id, per [worktree-rpc.md](worktree-rpc.md) § 3.2.
-3. **Never delete files directly.** Directory removal is `git worktree remove`'s job; the
-   extension does not call `rm -rf`, ever. This bounds *our* bugs, not git's consequences:
+3. **Never delete files directly — with exactly one named exception.** Directory removal is
+   `git worktree remove`'s job; the extension does not call `rm -rf`, ever. The single carve-out
+   is **crash-debris recovery** ([worktree-create.md](worktree-create.md) § 2.2), which git cannot
+   perform: `worktree remove` cannot delete a directory that is deliberately not a worktree. That
+   path carries its own bounds — a fingerprinted authorization, no `.git` present, no symlinked
+   component, and a device/inode recheck immediately before the delete. Any *other* direct
+   deletion is a defect. This bounds *our* bugs, not git's consequences:
    `git worktree remove` still recursively deletes, so a wrong-but-valid path is data loss,
    not a safe failure. The invariant is worth keeping because it removes an entire class of
    path-handling bug — it is not a safety net under the ones that remain.
@@ -94,225 +99,26 @@ per surface today. A surface that gains a subset of the actions is when that bec
 
 ### 3.2 Create worktree
 
-Inputs: `repoId`, `branchName`, optional `baseRef`, optional `path`, `createBranch`,
-`openAfter`.
+Owned by **[worktree-create.md](worktree-create.md)** — the four creation modes (fresh, reuse,
+reattach, recover), path derivation and the `info/exclude` consequence, the branch/source
+combobox, form presentation, the PR source, and where create is offered.
 
-**Defaults** (`requestWorktreeCreateDefaults`):
+What a new worktree is *filled with* is
+**[worktree-provisioning.md](worktree-provisioning.md)** — provider detection, the merged model,
+and copy / link / ports / setup.
 
-- Path: `<root>/<sanitized branch>`, where `<root>` is the first of:
-
-  | # | Source | Wins because |
-  |---|--------|--------------|
-  | 1 | `anywhereTerminal.worktree.createRoot`, when the user actually set it | An explicit statement outranks a heuristic |
-  | 2 | The directory most of this repo's existing linked worktrees already live in | The repo's own convention beats ours |
-  | 3 | `.claude/worktrees`, the setting's declared default | Nothing else to go on |
-
-  Detection (2) is the mode of the parent directory of each **linked** worktree, read from the
-  listing the host already holds — no extra git work. It infers the **root only, never the
-  naming pattern**: one root can hold worktrees named two different ways, and a pattern
-  inferred from them encodes one tool's rule as the repo's.
-
-  A relative `createRoot` resolves against the main worktree; an absolute one is used as-is.
-  That is what lets the default be a plain string rather than a template needing a repo-name
-  placeholder. When the computed path exists, append `-2`, `-3`, … until free.
-
-- Branch name: empty. A suggestion is not offered — a wrong-but-plausible branch name is
-  worse than a blank field.
-
-**The default root sits inside the main worktree.** The model supports that
-([worktree-model.md](worktree-model.md) § 6): both worktrees list, and longest-prefix mapping
-keeps panes attributed to the nested one. What it costs is that the new worktree is untracked
-content in the parent's working tree, so a create under a root inside the main worktree adds
-that root to the repository's `info/exclude` once, idempotently. That file is repo-local and
-uncommitted — the right home for a layout this user chose and their collaborators did not.
-`.gitignore` is never touched: it is tracked, and committing an entry on the user's behalf is
-not ours to do. A failed exclusion write is reported and does not block the create — the
-worktree is what was asked for, and a noisy `git status` is a nuisance, not a failure.
-
-**Validation** (before git): per [worktree-rpc.md](worktree-rpc.md) § 4. The branch name
-passes `git check-ref-format --branch`; the path must be absolute, non-existent or empty, and
-outside every **linked** worktree of the repo, and not the main worktree itself. A path *inside*
-the main worktree is allowed — that is where the default root lives — and is the case the
-`info/exclude` handling below exists for. [worktree-rpc.md](worktree-rpc.md) § 4 is the canonical
-statement of this rule; an earlier "outside every existing worktree" wording here contradicted it
-and the default root in the same section.
-
-**The create path is untrusted input, and this is the one action where that is true.** Every
-other action names a host-issued id; create necessarily accepts a path for an object that does
-not exist yet, so there is nothing to re-resolve it from. Three consequences:
-
-- Validation is the *only* barrier, so it runs host-side and its result is never cached across
-  a queue wait. An action that waited behind another mutation on the same repo revalidates
-  against the fresh listing before it runs.
-- The normalizer realpaths the nearest existing ancestor and re-appends the missing segments
-  (`worktree-model.md` § 3.1). Those missing segments are not resolved, so a local process can
-  create a symlink or mount inside them between validation and execution. `lstat` every
-  component that does exist and refuse symlinked components; re-check the existing ancestor's
-  identity immediately before spawning git. This narrows the window; it does not close it.
-- Path aliasing is not fully solvable. UNC paths, mapped drives, and network mounts can denote
-  one object through strings that normalize unequally. Those cases are documented as
-  unsupported rather than papered over with a claim that one canonical path exists on every
-  platform.
-
-**Execution**:
-
-| Case | Command |
-|------|---------|
-| New branch | `git worktree add -b <branch> <path> [<baseRef>]` |
-| Existing branch | `git worktree add <path> <branch>` |
-| Detached at a ref | `git worktree add --detach <path> <baseRef>` |
-
-No `--force`. If the branch is already checked out in another worktree, git refuses and its
-message — which names the other worktree — is exactly what the user needs to see.
-
-**After success**, honour `openAfter`: `terminal` opens a terminal tab in the new path;
-`agent` hands off to § 4 to launch the chosen agent in it; `newWindow` / `addToWorkspace`
-open the folder; `none` just refreshes.
-
-**The create form carries an agent picker.** Creating a worktree in order to put an agent to
-work in it is one intent, and the reference UI treats it as one action — the form offers
-project, branch, and agent together. Splitting it into "create" then "find the row, launch an
-agent" makes the user do the composition every single time. The picker is optional
-(`openAfter: "none"` is a valid choice); the launch itself is the same code path as § 4, not
-a second one.
-
-A failed launch after a **successful** create is reported as exactly that: the worktree
-exists, the agent did not start. The create is never rolled back to make the compound action
-look atomic — deleting a freshly created worktree because a CLI failed to spawn would destroy
-the thing the user asked for in order to tidy up an error message.
-
-#### 3.2.1 Form presentation
-
-The form is a worktree form, not a git-plumbing form. What the user states is a **branch name**;
-everything else is derived, defaulted, or advanced.
-
-| Element | Rule |
-|---------|------|
-| Lead input | Branch name, and nothing above it. It is the one thing only the user can supply |
-| Destination | **One derived line under the lead input**, shortened, and not a field in the common case. The exact value is carried by a tooltip and by a visually-hidden span beside the shortened text — the line's implicit role is `generic`, which prohibits naming, so an `aria-label` on it is not exposed to AT. The line is focusable so the exact value is reachable by keyboard, not by pointer alone |
-| Collision | When the computed path exists and a suffix was appended, one line says so and names the result. It replaces a second full path, it does not add one |
-| "After creating" | Four choices, mapping onto all five `WorktreeOpenAfter` wire values: `Nothing` → `none`; `Open a terminal` → `terminal`; `Start an agent` → `agent`; `Open the folder` → `newWindow` or `addToWorkspace`, chosen by a secondary control on that choice and defaulting to `addToWorkspace` unconditionally. The condition this default once carried — "a workspace that already has folders" — cannot be false where the control exists: the dialog returns early without repos, and a repo implies a folder. Evaluating it would have cost a wire field to answer a question with one answer. No wire value is unreachable from the form |
-| Repo picker | Below the destination line when the workspace has more than one repo. "Nothing above the lead input" is a rule about order; the picker cannot go into Advanced, because the destination is derived from it and burying it would trade one contradiction for another |
-| Agent block | Agent, permission posture, and first prompt are revealed **only when "After creating" is "Start an agent"**. Always-visible with "Nothing" selected states two contradictory things at once. While absent nothing agent-shaped is tabbable and the submitted draft carries no agent details |
-| Advanced | Collapsed by default, holding base ref, branch source (new / existing / detached), and the path override. While collapsed none of them is tabbable. Opened, the override is the only place a full path is *editable* — a different thing from a statement of where the worktree will go. Overriding moves the stated line and withdraws the collision message, which described a derived path the create no longer takes; clearing the field withdraws the override and returns the line to the derivation |
-| Dangerous posture | Offered, labelled, and never preselected. WHERE every posture an agent offers is dangerous, the control holds a non-submittable placeholder rather than falling through to its first option, and submission waits for a choice. Both doors that show the block — create and launch — gate on it; fixing one leaves the other stating the opposite |
-| Submit | Disabled until the value the chosen branch source requires validates — the branch name for new or existing, the **base ref** when detaching, which is the one case the lead input is not what is being validated. Also disabled while a destination request is outstanding, and while a revealed posture list has no choice |
-
-**Path transparency is preserved, not traded away.** The host still states the free path it will
-actually take (§ 3.2), because that is a safety property: the user sees the destination before
-authorizing a filesystem write. What changes is that it is stated **once**, shortened, with the
-exact value one hover away — instead of twice in full in a dialog whose tree view deliberately
-shows no path on any row.
-
-**The dialog submits the offer it was opened against.** The host answers the destination question
-per keystroke and its reply carries the panel's whole live repo record, agent list included.
-Only the *destination* is what was asked for, so only that is taken; the agents an open dialog
-shows and submits stay the ones it was constructed with. Admitting the rest relabels the user's
-posture choice under them as they type, which is the same defect § 3.1's "a launch is submitted as
-the offer it was shown" names for the launch door.
-
-**Whoever owns the caret owns the text.** Nothing writes the derived path into the override field
-while it holds focus. The rule lives at the write, not at its callers: the answer callback arrives
-on the host's schedule and is the one caller that can land mid-edit, so a guard on any single
-caller leaves that one — and every future one — open by construction.
-
-#### 3.2.2 Where create is offered
-
-Four entry points, each for a different way the intent arrives:
-
-| Entry point | Rule |
-|-------------|------|
-| Toolbar "+" | The primary affordance, matching VS Code view-title conventions. Rendered **only** while the Worktrees body is active — a "+" in the sessions toolbar has nothing to create — and only while the tree holds a repository, because an action the view cannot perform is absent rather than present and inert. Availability comes from the tree itself; the workspace's initial "has a repo" hint is deliberately looser than git's own answer, so seeding from it showed a dead button on every cold open |
-| Repo group header "+" | On hover or keyboard focus of the group header. It pre-answers the repo the dialog needs in a multi-repo workspace, matching the native SCM view's per-repo actions. Rendered only where group headers are (§ 3.1 of [worktree-panel-ui.md](worktree-panel-ui.md)) |
-| Empty-state CTA | The state for a repository holding only its main checkout carries the create action in its body. Asking a user to find a 20 px icon in a toolbar is not an empty state doing its job. "No worktrees yet" and "one worktree so far" are one state under two names — a repository holds its main checkout unless its listing FAILED, and that is a degraded repository, not an unbranched one. The CTA renders beside the main row, never instead of it: every supplied worktree stays reachable exactly once, and that row carries the context-menu door |
-| Row context menu | "New Worktree…" already exists — kept, as the discoverable path for keyboard and menu users |
-
-All four open the same dialog and run the same action. The repo-scoped ones differ only in which
-repo the form opens on — which means **every door asks the host about every repository**, not only
-the one it names. The form builds its repository picker once from the seed it opened with, so a
-door that asked about one would offer one, and the doors would differ in more than the selection.
-
-Two rules the create-defaults conversation depends on:
-
-- **An open form's asks carry a branch; an opening ask does not.** That is what tells an answer
-  meant to OPEN a form from one meant to UPDATE the open one. The form's own staleness guard
-  compares the branch an answer is for, so it cannot catch a branch-less leftover — one reaching an
-  open form cleared its wait and rewrote the destination for a branch the user had already typed.
-  The convention is currently unenforced by any type; a `kind` tag on the request and its answer is
-  the follow-up that would enforce it.
-- **A create that can no longer open says so.** The repositories a door asked about can leave the
-  tree while the host resolves. The panel reports that nothing was attempted and names them, using
-  the `unavailable` outcome; a control that silently does nothing when pressed is worse than one
-  that is absent.
+Two rules from this document apply to create and are stated here because they are shared, not
+create-specific: the create path is the one untrusted path input (§ 3.1 rule 2 has nothing to
+re-resolve it from), and a failed compound step never rolls back a successful create (§ 3.6).
 
 ### 3.3 Remove worktree
 
-**Blockers**, evaluated together so the confirmation can name all of them at once:
+Owned by **[worktree-removal.md](worktree-removal.md)** — the check set and its fail-closed
+rules, what a confirmation actually authorizes, orphan proofs, the opt-in guarded branch
+deletion, force semantics, and partial-failure reporting.
 
-| Blocker | How it is determined |
-|---------|---------------------|
-| `isMain` | `kind === "main"` — unconditional refusal |
-| `locked` | From the listing |
-| `dirty` | `git status --porcelain` in the worktree, tracked changes present |
-| `untracked` | Same command, untracked entry count |
-| `idlePanes` | Panes in this window inside the worktree whose agent is not mid-turn — confirmable |
-| `busyAgents` | Rows here whose activity is `running` or `waiting` — **refused, not confirmable** |
-| `externalAgents` | Live registry sessions rooted in the worktree |
-
-`idlePanes`, `busyAgents`, and `externalAgents` are worktree-view-specific and the reason this action is
-worth building here rather than leaving to the terminal: removing the directory out from
-under a running agent is the failure mode a worktree UI is uniquely positioned to prevent.
-
-**Execution**: `git worktree remove <path>`, or `git worktree remove --force <path>` only
-after an explicit confirmation that named the blockers. A locked worktree needs
-`--force --force` — a single `--force` does not override a lock, so the documented
-"confirm past a lock" path fails outright without the second flag. A `missing` worktree
-removes cleanly because git prunes the registration.
-
-**What confirmation actually authorizes.** Earlier drafts said a confirmation "permits rather
-than bypasses" the check. That is true of the *unforced* path and false of the forced one, and
-the difference matters enough to state plainly:
-
-- Re-evaluating blockers before spawning git narrows the window. It does not close it. Git's
-  own clean check is skipped entirely under `--force`, and even unforced removal has a gap
-  between its status read and its recursive delete. A file written after the last check — by
-  an agent, another window, an external editor — is deleted with everything else.
-- Per-repo serialization covers this extension host only. Another VS Code window, a bare
-  `git` invocation, or any other process is outside it.
-- So `--force` is presented for what it is: **irrevocable deletion of everything under that
-  path, whose contents may change after you confirm.** Not "you have reviewed the losses".
-
-Two rules follow, and they are the reason this is a safety model rather than a warning label:
-
-- **A newly appeared blocker re-prompts.** The confirmation is bound to the blocker set the
-  user saw (`worktree-rpc.md` § 3.1). If execution-time re-evaluation finds a *different*
-  blocker — a live agent that was not there when they confirmed dirty files — the action
-  returns `needsConfirm` again rather than proceeding on authority the user never granted.
-- **Force never runs against a working agent.** A row whose activity is `running` or
-  `waiting` blocks removal outright, with no confirm available; the user stops the agent
-  first. An idle pane remains a confirmable blocker — a terminal sitting at a prompt is a
-  different risk from a turn in flight.
-
-**Removal asks the same observation a launch does.** A repository publishes that observation
-only when its own listing was read: withheld when the cache retained a listing it could not
-re-read, withheld for every repository while git itself is unusable, and kept for a repository
-nobody can watch — an unwatched listing was still read, it may just go stale unnoticed, and
-refusing there would disable removal on every host without file watching. Like a launch, the
-claim is re-asked rather than remembered: across the assessment's status and session reads,
-immediately before the destructive command with no `await` in between, and again across the
-post-attempt filesystem read. Evidence gathered under one observation never authorizes a
-command issued under another — at the same path, that is how a replacement would be removed on
-its predecessor's evidence. A mismatch reports the listing as unreadable, which is
-indeterminate, not a refusal: a refusal is an answer, and nobody could read the listing it
-would be derived from.
-
-**Panes are not killed.** Removing a worktree with idle panes inside it leaves those panes
-running in a deleted directory — which is what a terminal does, and what the user asked for
-by confirming. The confirmation says so.
-
-Branch deletion is **not** part of removal. `git worktree remove` leaves the branch; deleting
-it is a separate decision with separate consequences, and silently bundling it would destroy
-work the user believed was merely un-checked-out.
+Removal is the most dangerous action here, and § 3.1 rule 3 — never delete files directly — is
+its load-bearing invariant.
 
 ### 3.4 Lock / unlock
 
@@ -455,7 +261,7 @@ becomes an unrecoverable one.
 | Surface | Control |
 |---------|---------|
 | Branch / ref / path from the webview | Validated per [worktree-rpc.md](worktree-rpc.md) § 4; leading `-` rejected; argv arrays only |
-| Path traversal | Actions on **existing** objects re-resolve host-side from a host-issued id. **Create is the exception**: it takes an untrusted candidate path, canonicalized and validated host-side, with the residual TOCTOU stated in § 3.2 |
+| Path traversal | Actions on **existing** objects re-resolve host-side from a host-issued id. **Create is the exception**: it takes an untrusted candidate path, canonicalized and validated host-side, with the residual TOCTOU stated in [worktree-create.md](worktree-create.md) § 6 |
 | Directory deletion | Never performed directly; delegated to git, whose deletion is still recursive and irreversible (§ 3.1 rule 3) |
 | Prompt text | Passed as an argv token or through the agent's own prefill; never interpolated into a shell command |
 | Environment | **Known limitation, pre-existing.** `PtyManager.buildEnvironment()` clones the entire extension-host `process.env` (`src/pty/PtyManager.ts:193-201`) and the agent's `authEnvAllowlist` is merged *over* that clone rather than filtering it. A launched agent — and every subprocess it spawns — therefore inherits whatever the host holds: `GITHUB_TOKEN`, `AWS_*`, npm and cloud credentials. This affects every vault launch today and is not introduced by this feature, so it is recorded here rather than fixed inside it. Any doc claiming the allowlist restricts the launch environment is wrong; it only adds to it |
@@ -478,31 +284,17 @@ becomes an unrecoverable one.
 - [ ] Create with an agent → worktree created, then the agent launched in it through the same path as a standalone launch
 - [ ] Create succeeds, launch fails → reported as created-but-not-started; the worktree is not rolled back
 - [ ] Create with no agent chosen → no launch attempted
-- [ ] Create with an existing branch → `worktree add <path> <branch>`, no `-b`
-- [ ] Create with a branch already checked out → git's error surfaced verbatim
-- [ ] Create default path collides → suffixed, and the suffixed path is what the form shows
-- [ ] Create path inside a linked worktree → rejected before git runs
-- [ ] Default root with nothing configured and no linked worktree → `.claude/worktrees` under the main worktree
-- [ ] Repo whose linked worktrees share another parent → that parent is the suggested root; a set named two different ways still yields one root and no inferred naming pattern
-- [ ] An explicitly configured `createRoot` outranks detection; a relative value resolves against the main worktree
-- [ ] Create under a root inside the main worktree → the root is excluded once via `info/exclude`, and a second create adds no duplicate entry
-- [ ] The exclusion write fails → the create still succeeds and the failure is reported
-- [ ] Branch name `-x` / invalid ref → rejected by validation
-- [ ] Remove clean, unlocked, no panes → runs without confirmation
-- [ ] Remove dirty → `needsConfirm { dirty: true }`, no git run
-- [ ] Remove with idle panes → `needsConfirm { idlePanes: N }`
-- [ ] Remove with an external agent inside → `needsConfirm { externalAgents: N }`
-- [ ] Confirmed remove → `--force`, idle panes still alive afterwards
-- [ ] Remove with a `running` or `waiting` agent inside → refused outright, no confirm offered
-- [ ] Confirmed for dirty, then a live agent appears before execution → `needsConfirm` again, git never runs
-- [ ] Confirmed remove of a **locked** worktree → `--force --force`, since one `--force` does not override a lock
+
+> Create's own cases — modes, destination disposition, path derivation, the combobox, provisioning
+> — live in [worktree-create.md](worktree-create.md) § 9 and
+> [worktree-provisioning.md](worktree-provisioning.md) § 10. Removal's live in
+> [worktree-removal.md](worktree-removal.md) § 9. They are not duplicated here; a second copy is a
+> second thing to keep in sync, and the assessment model these once described has been replaced.
+
 - [ ] `worktree add` killed by timeout → forced rebuild reports the branch and registration that survived, as indeterminate, not as a clean failure
 - [ ] Removal exiting non-zero with the directory already gone → reported as indeterminate with what was observed
 - [ ] Create path validated, then a symlink appears in a not-yet-existing segment → refused at the pre-spawn re-check
 - [ ] Create queued behind another mutation → revalidated against the fresh listing, not the cached one
-- [ ] Remove main with force → refused
-- [ ] Remove leaves the branch intact
-- [ ] Remove a missing worktree → succeeds
 - [ ] Lock / unlock round-trips into the next listing
 - [ ] Prune not offered with nothing prunable; confirmation names the count when it is
 - [ ] Two mutating actions on one repo serialize
@@ -513,7 +305,9 @@ becomes an unrecoverable one.
 - [ ] Launch with a dangerous permission choice → labelled, not preselected
 - [ ] Launch with a prompt → prefill preferred; when written to the pty, text and Enter are separate writes
 - [ ] Every git invocation is an argv array
-- [ ] No code path in this feature deletes a file or directory directly
+- [ ] No code path in this feature deletes a file or directory directly, except the debris
+      recovery of [worktree-create.md](worktree-create.md) § 2.2, which is covered by its own
+      bounds tests — the `gate:fs-deletion` tripwire allows that one site and nothing else
 
 ---
 
