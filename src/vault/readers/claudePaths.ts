@@ -8,7 +8,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
+import { isResolvedPathInsideRoot, type PreparedRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
 
 /** Separates a parent session id from a subagent file stem in an entry id:
  *  `claude:<parentSessionId>:subagent:<agent-stem>`. */
@@ -107,19 +107,31 @@ export async function resolveClaudeSubagentPath(
   stem: string,
   options: ClaudeReaderOptions = {},
 ): Promise<string | null> {
+  const { projectsDir } = claudeRoots(options);
+  const root = await prepareResolvedRoot(projectsDir);
+  return root === null ? null : resolveClaudeSubagentPathUnder(parentId, stem, projectsDir, root);
+}
+
+/**
+ * The same resolution against an ALREADY-prepared projects root, for a caller
+ * holding several candidates at once — picking among tied subagents resolves the
+ * same root per candidate otherwise (design.md D8, review round-2 W1). Every
+ * candidate still resolves; only the root is shared.
+ */
+export async function resolveClaudeSubagentPathUnder(
+  parentId: string,
+  stem: string,
+  projectsDir: string,
+  root: PreparedRoot,
+): Promise<string | null> {
   if (!isSafeSessionId(parentId) || !isSafeSessionId(stem)) {
     return null;
   }
-  const { projectsDir } = claudeRoots(options);
   let projectDirs: string[];
   try {
     const entries = await fs.readdir(projectsDir, { withFileTypes: true });
     projectDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
-    return null;
-  }
-  const root = await prepareResolvedRoot(projectsDir);
-  if (root === null) {
     return null;
   }
   for (const dir of projectDirs) {

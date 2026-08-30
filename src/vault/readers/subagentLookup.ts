@@ -9,9 +9,10 @@
 // no project-dir encoder), so resolution needs only the parent id + description.
 
 import * as fs from "node:fs/promises";
+import { prepareResolvedRoot } from "../../utils/pathBoundary";
 import { parseEntryId, type VaultSessionDetail } from "../types";
 import { listClaudeSubagentStubs, readClaudeSubagentDetail } from "./claudeChildren";
-import { type ClaudeReaderOptions, resolveClaudeSubagentPath, SUBAGENT_MARKER } from "./claudePaths";
+import { type ClaudeReaderOptions, claudeRoots, resolveClaudeSubagentPathUnder, SUBAGENT_MARKER } from "./claudePaths";
 import { readClaudeDetail } from "./claudeReader";
 
 /** Recover the `agent-*` file stem from a subagent stub's entry id
@@ -37,8 +38,16 @@ async function pickNewestByMtime(
 ): Promise<{ stem: string }> {
   let best = candidates[0];
   let bestMtime = Number.NEGATIVE_INFINITY;
+  // One prepared root for the whole tie: this loop already owns every candidate,
+  // and resolving the same root per candidate is M syscalls for one answer
+  // (design.md D8, review round-2 W1). Each candidate still resolves.
+  const { projectsDir } = claudeRoots(options);
+  const root = await prepareResolvedRoot(projectsDir);
+  if (root === null) {
+    return best;
+  }
   for (const candidate of candidates) {
-    const filePath = await resolveClaudeSubagentPath(parentId, candidate.stem, options);
+    const filePath = await resolveClaudeSubagentPathUnder(parentId, candidate.stem, projectsDir, root);
     let mtime = 0;
     if (filePath) {
       try {

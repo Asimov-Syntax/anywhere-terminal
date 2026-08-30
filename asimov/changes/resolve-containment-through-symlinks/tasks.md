@@ -75,3 +75,14 @@
     2. In `src/vault/readers/claudePaths.ts` prepare the projects root once per resolver call, before its directory loop.
     3. Add the healthy symlinked-root success cases round 1 found missing (S1): `resolveClaudeSubagentPath` and `resolveClaudeWorkflowAgentPath` under a symlinked projects root must still find their transcripts.
     4. Assert the root is resolved once, not once per file — count `realpath` calls against the injected dep rather than inferring it from timing.
+
+- [x] 2_3 One prepared root for one selection — verified: pnpm exec vitest run 'src/vault/readers/subagentLookup.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_2
+  - **Refs**: specs/agent-session-index/spec.md#{enumeration-is-not-exempt-from-containment} <!-- design.md D8 -->
+  - **Acceptance**:
+    - Outcome: picking among tied subagents resolves the projects root once, not once per candidate
+    - Verify: unit src/vault/readers/subagentLookup.test.ts
+  - **Plan**:
+    1. In `src/vault/readers/claudePaths.ts` add a prepared-root variant of the subagent resolver and keep `resolveClaudeSubagentPath` as its one-shot wrapper — the same split `pathBoundary` uses, so there is one idiom for this rather than two.
+    2. In `src/vault/readers/subagentLookup.ts` prepare the root once in `pickNewestByMtime` and pass it per candidate. Every candidate still resolves; nothing is cached.
+    3. In `src/vault/readers/subagentLookup.test.ts` assert the root is resolved once across a tie of several candidates, and that the newest is still the one picked.

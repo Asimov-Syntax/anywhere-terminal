@@ -3,7 +3,26 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * Every `realpath` the lookup asks for. The real implementation is kept — these
+ * tests need a real store on disk — and only counted through, because the claim
+ * is about how MANY times the projects root is resolved, not what it answers.
+ */
+const realpathCalls: string[] = [];
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    default: actual,
+    realpath: (p: Parameters<typeof actual.realpath>[0], ...rest: unknown[]) => {
+      realpathCalls.push(String(p));
+      return (actual.realpath as (...a: unknown[]) => unknown)(p, ...rest);
+    },
+  };
+});
+
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "./subagentLookup";
 
 let tmpRoot: string;
@@ -88,6 +107,27 @@ describe("resolveSubagentDetail", () => {
 
     const detail = await resolveSubagentDetail(PARENT, "Find things", opts());
     expect(detail?.entryId).toBe(`claude:${PARENT}:subagent:agent-new`);
+  });
+
+  it("does not resolve the projects root once per tied candidate", async () => {
+    // The tie-break loop already owns every candidate, so the root is one answer
+    // it should ask for once. Asserted as INDEPENDENCE from the tie's size rather
+    // than as an absolute count: the winner's own detail read legitimately
+    // resolves again, and pinning the total would break on any unrelated change
+    // to that read (design.md D8, review round-2 W1).
+    const projectsDir = path.join(tmpRoot, "projects");
+    const rootResolvesForTieOf = async (stems: string[]): Promise<number> => {
+      for (const stem of stems) {
+        await writeSubagent(stem, `Find things ${stem}`);
+      }
+      realpathCalls.length = 0;
+      expect(await resolveSubagentDetail(PARENT, "Find things", opts())).not.toBeNull();
+      return realpathCalls.filter((p) => p === projectsDir).length;
+    };
+
+    const small = await rootResolvesForTieOf(["agent-a", "agent-b"]);
+    const large = await rootResolvesForTieOf(["agent-c", "agent-d", "agent-e", "agent-f"]);
+    expect(large).toBe(small);
   });
 });
 
