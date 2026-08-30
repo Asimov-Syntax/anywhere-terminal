@@ -14,6 +14,25 @@ function flush(): Promise<void> {
 /** Retention is opt-in: only a store an agent has exactly one of asks for it (D3). */
 const RETAIN = { retain: true } as const;
 
+/** Poll a condition to a deadline rather than sleeping a guessed interval: the
+ *  sweeper runs on real time, and a fixed wait races it on a loaded machine. */
+async function until(predicate: () => Promise<boolean> | boolean, timeoutMs = 2_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return false;
+}
+
+const gone = (file: string): Promise<boolean> =>
+  fs.access(file).then(
+    () => false,
+    () => true,
+  );
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => {
@@ -454,6 +473,33 @@ describe("SnapshotPool retention", () => {
     await pool.dispose();
   });
 
+  it("retries a deletion that failed at release, with nothing retained to sweep", async () => {
+    // The pool never retained anything here, so nothing but the failed deletion keeps
+    // the sweeper alive — and nothing else will ever come along to retry it (W7).
+    let failDeletes = true;
+    const pool = new SnapshotPool({
+      ...deps,
+      idleMs: 30,
+      rmrf: async (dir) => {
+        if (failDeletes) {
+          throw new Error("EBUSY");
+        }
+        await fs.rm(dir, { recursive: true, force: true });
+      },
+    });
+    const a = await store("a");
+
+    const lease = await pool.borrow(a, produce);
+    await lease.release();
+    expect(pool.retainedCount).toBe(0);
+    await expect(fs.access(lease.file)).resolves.toBeUndefined();
+
+    failDeletes = false;
+
+    expect(await until(() => gone(lease.file))).toBe(true);
+    await pool.dispose();
+  });
+
   it("keeps sweeping while a failed deletion is still worth retrying", async () => {
     let failDeletes = false;
     const pool = new SnapshotPool({
@@ -476,15 +522,13 @@ describe("SnapshotPool retention", () => {
 
     // The retained entry ages out while the stuck one is still stuck, so the pool
     // holds nothing — the state that used to stop the sweeper. Nothing borrows again.
-    await flush();
-    expect(pool.retainedCount).toBe(0);
+    expect(await until(() => pool.retainedCount === 0)).toBe(true);
     await expect(fs.access(first.file)).resolves.toBeUndefined();
 
     // Only a still-running sweeper can clear it now, since no admission will come.
     failDeletes = false;
-    await flush();
 
-    await expect(fs.access(first.file)).rejects.toThrow();
+    expect(await until(() => gone(first.file))).toBe(true);
     await pool.dispose();
   });
 });

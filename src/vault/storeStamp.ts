@@ -12,18 +12,15 @@ import { provesAbsence } from "../utils/fsPresence";
 import type { FileStamp } from "./cacheTypes";
 
 /** Stat each path into a `(mtimeMs,size)` stamp; silently omit any that don't exist
- *  (e.g. a checkpointed store with no `-wal`). */
+ *  (e.g. a checkpointed store with no `-wal`).
+ *
+ *  One loop stats a store, and it lives in `readOnce`: the list cache and the reuse
+ *  gate ask the same freshness question, and two hand-written loops are two chances
+ *  to answer it differently. The usability verdict is dropped here on purpose — this
+ *  caller has always treated any unreadable path as "omit", and tightening that is a
+ *  cache-invalidation change, not a de-duplication. */
 export async function stampStoreFiles(paths: string[]): Promise<Record<string, FileStamp>> {
-  const out: Record<string, FileStamp> = {};
-  for (const p of paths) {
-    try {
-      const s = await fs.stat(p);
-      out[p] = { mtimeMs: s.mtimeMs, size: s.size };
-    } catch {
-      // Missing file → omit from the stamp set.
-    }
-  }
-  return out;
+  return (await readOnce(paths, (p) => fs.stat(p))).stamps;
 }
 
 /** True iff two stamp sets cover the same paths with identical `(mtimeMs,size)`. */
@@ -55,14 +52,14 @@ export interface StoreGeneration {
   usable: boolean;
 }
 
-/** One pass: stat each path in order, and refuse to call the result usable when a
- *  path's state could not be determined. Only ENOENT/ENOTDIR read as "not there" —
- *  an EACCES on the `-wal` must never read as a WAL-free store. */
 /** Just enough of `fs.stat` to build a stamp. Injectable so a test can act BETWEEN
  *  two real stats — the only way to drive the interleaving this read exists to
  *  survive, rather than arguing that it does. */
 export type StatFn = (p: string) => Promise<{ mtimeMs: number; size: number }>;
 
+/** One pass: stat each path in order, and refuse to call the result usable when a
+ *  path's state could not be determined. Only ENOENT/ENOTDIR read as "not there" —
+ *  an EACCES on the `-wal` must never read as a WAL-free store. */
 async function readOnce(paths: string[], stat: StatFn): Promise<StoreGeneration> {
   const stamps: Record<string, FileStamp> = {};
   let usable = true;

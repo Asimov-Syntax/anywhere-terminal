@@ -49,6 +49,28 @@ describe("stampStoreFiles", () => {
     expect(stamps[db].size).toBe(5);
     expect(stamps[db].mtimeMs).toBeGreaterThan(0);
   });
+
+  it("omits a path it could not read at all, not only a missing one", async () => {
+    // The list cache treats an unreadable path exactly as it treats an absent one:
+    // a stamp mismatch, so the next refresh does the work. That is the opposite of
+    // the reuse gate, which must refuse to act on an unproven generation — the two
+    // now share one loop, so this pins which verdict this caller keeps.
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), "vault-stamp-denied-"));
+    const db = path.join(dir, "store.db");
+    await fsp.writeFile(db, "hello");
+    const locked = path.join(dir, "locked");
+    await fsp.mkdir(locked);
+    const hidden = path.join(locked, "store.db-wal");
+    await fsp.writeFile(hidden, "wal");
+    await fsp.chmod(locked, 0o000);
+
+    try {
+      const stamps = await stampStoreFiles([db, hidden]);
+      expect(Object.keys(stamps)).toEqual([db]);
+    } finally {
+      await fsp.chmod(locked, 0o700);
+    }
+  });
 });
 
 describe("readStoreGeneration: a generation is proven, not sampled", () => {

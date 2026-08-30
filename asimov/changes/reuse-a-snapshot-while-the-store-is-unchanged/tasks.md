@@ -156,7 +156,7 @@
     4. Opt in explicitly at the three primary-store readers (`src/vault/readers/codexReader.ts`, `src/vault/readers/opencodeReader.ts`, `src/vault/readers/cursorIdeReader.ts`) and leave `src/vault/readers/cursorStore.ts` — the per-chat path — retaining nothing, so the retained key space is the fixed set by construction rather than by default.
     5. Cover: an unretained borrow leaves no file after release, a retained store still reuses, concurrent borrows of distinct stores each keep a readable lease until their own release, and the retained set never exceeds the stores that asked for it.
 
-- [ ] 5_2 Keep retrying cleanup while anything is still on disk
+- [x] 5_2 Keep retrying cleanup while anything is still on disk — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1
   - **Refs**: .reviews/round-4.md; design.md#d3-retention-is-bounded-by-construction-not-by-enforcement
   - **Acceptance**:
@@ -165,4 +165,13 @@
   - **Plan**:
     1. In `src/vault/snapshotPool.ts`, keep the cleanup sweeper alive while retry-eligible undeleted entries remain, and start one after a failed release, rather than stopping because the retained set is empty.
     2. Cover a failed deletion of the last retained entry being retried by a later sweep with nothing retained.
+
+- [x] 5_3 Give the store's stamp loop one owner — verified: pnpm exec vitest run 'src/vault/storeStamp.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_2
+  - **Refs**: .reviews/round-4.md; design.md#d1-reuse-is-gated-on-proven-sameness-never-on-elapsed-time
+  - **Acceptance**:
+    - Outcome: one loop stats a store's files, so the list cache and the reuse gate cannot drift apart
+    - Verify: unit src/vault/storeStamp.test.ts
+  - **Plan**:
+    1. In `src/vault/storeStamp.ts`, have `stampStoreFiles` delegate to `readOnce` and discard its usability verdict, which is exactly the "omit what is missing" behaviour it already has, and reattach the doc comment that drifted onto the wrong declaration.
 
