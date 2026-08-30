@@ -55,7 +55,7 @@
     1. In `src/vault/snapshotPool.ts`, carry the producer's stamp on the in-flight entry and join only when the caller's stamp matches it; a caller whose stamp differs awaits the flight, then takes its own snapshot.
     2. Cover a late joiner that writes to the store after production began: it must produce a second snapshot and see its own write, while two callers at the same generation still share one.
 
-- [ ] 2_2 Bound the pool by capacity, not only by age
+- [x] 2_2 Bound the pool by capacity, not only by age — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: .reviews/round-1.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
   - **Acceptance**:

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SnapshotPool, type SnapshotPoolDeps } from "./snapshotPool";
+import { type SnapshotLease, SnapshotPool, type SnapshotPoolDeps } from "./snapshotPool";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -314,5 +314,176 @@ describe("SnapshotPool", () => {
     expect(produced).toHaveLength(2);
     await a.release();
     await b.release();
+  });
+});
+
+describe("SnapshotPool capacity", () => {
+  let root: string;
+  let produced: string[];
+  let deps: SnapshotPoolDeps;
+
+  const store = async (name: string): Promise<string> => {
+    const db = path.join(root, `${name}.db`);
+    await fs.writeFile(db, `base-${name}`);
+    return db;
+  };
+
+  const produce = async (dest: string): Promise<void> => {
+    produced.push(dest);
+    await fs.writeFile(dest, "x".repeat(100));
+  };
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "at-pool-cap-"));
+    produced = [];
+    deps = {
+      mkdtemp: () => fs.mkdtemp(path.join(root, "snap-")),
+      rmrf: (dir) => fs.rm(dir, { recursive: true, force: true }),
+    };
+  });
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("holds no more snapshots than its entry budget, evicting the least recently used", async () => {
+    let clock = 0;
+    const pool = new SnapshotPool({ ...deps, maxEntries: 2, now: () => (clock += 10) });
+    const a = await store("a");
+    const b = await store("b");
+    const c = await store("c");
+
+    const first = await pool.borrow(a, produce);
+    await first.release();
+    const second = await pool.borrow(b, produce);
+    await second.release();
+    const third = await pool.borrow(c, produce);
+    await third.release();
+
+    // `a` was the least recently used, so it is the one that lost its disk.
+    await expect(fs.access(first.file)).rejects.toThrow();
+    await expect(fs.access(second.file)).resolves.toBeUndefined();
+    await expect(fs.access(third.file)).resolves.toBeUndefined();
+
+    const again = await pool.borrow(a, produce);
+    expect(produced).toHaveLength(4);
+    await again.release();
+    await pool.dispose();
+  });
+
+  it("holds no more bytes than its byte budget", async () => {
+    let clock = 0;
+    const pool = new SnapshotPool({ ...deps, maxBytes: 250, now: () => (clock += 10) });
+    const a = await store("a");
+    const b = await store("b");
+
+    const first = await pool.borrow(a, produce);
+    await first.release();
+    const second = await pool.borrow(b, produce);
+    await second.release();
+    const third = await pool.borrow(await store("c"), produce);
+    await third.release();
+
+    await expect(fs.access(first.file)).rejects.toThrow();
+    await expect(fs.access(third.file)).resolves.toBeUndefined();
+    await pool.dispose();
+  });
+
+  it("never retains a snapshot larger than the whole budget", async () => {
+    const pool = new SnapshotPool({ ...deps, maxBytes: 10 });
+    const a = await store("a");
+
+    const first = await pool.borrow(a, produce);
+    await first.release();
+    // Leased once and dropped, so the next read pays for its own snapshot.
+    const second = await pool.borrow(a, produce);
+
+    await expect(fs.access(first.file)).rejects.toThrow();
+    expect(produced).toHaveLength(2);
+    await second.release();
+    await pool.dispose();
+  });
+
+  it("does not delete an evicted snapshot while a reader still holds it", async () => {
+    let clock = 0;
+    const pool = new SnapshotPool({ ...deps, maxEntries: 1, now: () => (clock += 10) });
+    const a = await store("a");
+    const b = await store("b");
+
+    const held = await pool.borrow(a, produce);
+    const evictor = await pool.borrow(b, produce);
+
+    await expect(fs.access(held.file)).resolves.toBeUndefined();
+    await held.release();
+    await expect(fs.access(held.file)).rejects.toThrow();
+    await evictor.release();
+    await pool.dispose();
+  });
+
+  it("does not orphan a snapshot that replaces one mid-eviction", async () => {
+    let clock = 1_000;
+    let gate: Promise<void> | undefined;
+    const pool = new SnapshotPool({
+      ...deps,
+      idleMs: 5,
+      now: () => clock,
+      rmrf: async (dir) => {
+        // Deleting one store's snapshot yields, and the OTHER store is re-snapshotted
+        // during that window — the interleaving that used to drop the new binding.
+        if (gate) {
+          const pending = gate;
+          gate = undefined;
+          await pending;
+        }
+        await fs.rm(dir, { recursive: true, force: true });
+      },
+    });
+    const a = await store("a");
+    const b = await store("b");
+
+    const staleA = await pool.borrow(a, produce);
+    await staleA.release();
+    const staleB = await pool.borrow(b, produce);
+    await staleB.release();
+
+    clock += 100;
+    let refreshedB: SnapshotLease | undefined;
+    gate = (async () => {
+      clock += 1;
+      await fs.writeFile(b, "base-b-changed");
+      refreshedB = await pool.borrow(b, produce);
+    })();
+    await pool.evictIdle();
+
+    // The replacement is still the pool's snapshot for `b`, not an unreachable file.
+    expect(refreshedB).toBeDefined();
+    await expect(fs.access(refreshedB?.file ?? "")).resolves.toBeUndefined();
+    const reused = await pool.borrow(b, produce);
+    expect(reused.file).toBe(refreshedB?.file);
+    await reused.release();
+    await refreshedB?.release();
+    await pool.dispose();
+    await expect(fs.access(refreshedB?.file ?? "")).rejects.toThrow();
+  });
+  it("does not evict a useful snapshot to make room for one that can never fit", async () => {
+    let clock = 0;
+    const pool = new SnapshotPool({ ...deps, maxBytes: 250, now: () => (clock += 10) });
+    const a = await store("a");
+    const b = await store("b");
+
+    const small = await pool.borrow(a, produce);
+    await small.release();
+    const oversized = await pool.borrow(b, async (dest) => {
+      produced.push(dest);
+      await fs.writeFile(dest, "y".repeat(300));
+    });
+    await oversized.release();
+
+    // `b` could never be retained, so paying for it with `a`'s snapshot buys nothing.
+    await expect(fs.access(small.file)).resolves.toBeUndefined();
+    const reused = await pool.borrow(a, produce);
+    expect(reused.file).toBe(small.file);
+    await reused.release();
+    await pool.dispose();
   });
 });
