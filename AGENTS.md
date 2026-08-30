@@ -15,14 +15,22 @@ For tech stack, architecture, and code conventions, see `cyberk-flow/project.md`
 
 ## Running Tests
 
-Scope every run to what you touched. The full suite is not slow (~8s), but it costs ~63 CPU-seconds
+Scope every run to what you touched. The full suite is not slow (~8.5s), but it costs ~63 CPU-seconds
 and saturates every core for its duration — repeated across an editing loop, and across concurrent
 sessions, that is what makes the machine hot.
 
 - **While editing:** run the directory you changed — `pnpm exec vitest run src/vault`. Measured at
-  1.5s / 7 CPU-seconds, roughly a tenth of a full run.
+  1.6s / 7.4 CPU-seconds: ~12% of the full suite's CPU, ~19% of its wall time. The two ratios
+  differ because a scoped run keeps most of the parallelism; expect roughly this for a directory
+  of `src/vault`'s size (40 of 251 files) and proportionally more for a larger one like
+  `src/webview`.
 - **Unsure which tests cover a change:** `pnpm exec vitest related <changed-file.ts> --run`.
 - **Full suite** — `pnpm run test:unit` — before committing, and after a change that crosses module
-  boundaries. Not after every edit.
-- **Never run the full suite in two sessions at once.** If another agent is mid-run, wait or scope
-  yours down.
+  boundaries. Not after every edit. This is one of four pre-commit gates, not the whole set — see
+  `asimov/project.md` § Commands for `check-types`, `biome check`, and `gate:fs-deletion`.
+- **Scoped runs skip the invariant-coverage gate.** `src/test/invariants/coverageReporter.ts`
+  declines to report on a filtered run by design, so invariant-tag coverage is only checked under
+  `pnpm run test:unit`.
+- **Don't start a full run while another one is in flight.** Two concurrent full runs saturate the
+  machine. Check first: `pgrep -f "vitest run" || true` — if that prints a PID, scope your run down
+  or wait.
