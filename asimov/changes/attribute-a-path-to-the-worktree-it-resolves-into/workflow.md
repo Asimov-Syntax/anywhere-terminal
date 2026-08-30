@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -29,13 +29,9 @@
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none
-Lane: full
-Planned at: e87eb449
-
 Blueprint: docs/PLAN.md task WT-011.6
 Lane: full — cross-boundary; five attribution sites across four files, several on per-push paths
-Planned at: (set at Gate 2)
+Planned at: e87eb449
 
 Stage-2 facts established against current code, not inherited from the archived change:
 - The five sites WT-011.1 D2 listed still carry the lexical compare, at `src/worktree/repoRoots.ts:91`, `src/worktree/worktreeBlockers.ts:163,167`, `src/worktree/presenceProjector.ts:366`, `src/providers/gitDecorationProvider.ts:148`, `src/webview/fileTree/FileTreePanel.ts:309,334` — the last against a file-local copy of the predicate at `FileTreePanel.ts:1715`, which is the "no site keeps a private copy" clause of the acceptance.
@@ -44,3 +40,10 @@ Stage-2 facts established against current code, not inherited from the archived 
 - The shipped resolved predicate `isResolvedPathInsideRoot` (`src/utils/pathBoundary.ts:158`) CANNOT be adopted at these sites as-is: it is async and resolves the candidate on every call with no caching, deliberately (its D8: an authorization cache would survive a path becoming a symlink). Acceptance here forbids exactly that cost on per-push paths.
 - Knowledge candidate: the two predicates differ by what the answer AUTHORIZES, not by how careful they are | Surprise: the archived D8 forbids caching the resolved candidate, and this task's acceptance forbids not caching it — the same mechanism, opposite verdicts | Evidence: src/utils/pathBoundary.ts:158 vs docs/PLAN.md WT-011.6 acceptance | Consumer: plan | Action: state the distinction as a decision before adopting either predicate, so review does not read the cache as a regression against D8
 
+Build notes:
+- 1_2 grew past its planned lease: the removal-blocker filters compare the SAME pane and session cwds against the same worktree ids, so the resolution had to reach their producers — `removalFacts` in `extension.ts`, and `WorktreeHost.removalFacts.panes` becoming async. `evaluateRemoval` stays sync and pure; the contract it depends on is stated on `PaneFact.cwd`.
+- 1_4 found the second consumer of "resolve a bounded set, forget what left", so that resolver moved from `repoRoots.ts` to `resolvedPathMemo.ts` as `createTrackedPathResolver` rather than being copied.
+- 1_5: sharing the real `isPathInside` with the webview was impossible while `pathBoundary.ts` imported `node:fs/promises` and `node:path` — esbuild's browser bundle fails to resolve them. The RESOLVED predicate moved to `src/utils/resolvedPathBoundary.ts`; the lexical rule stayed where D2 puts it, and `compareBoundary` is exported so the boundary rule still has one home.
+- Mutation testing: 11 mutations across the four seams, 10 killed by exactly the intended tests. The survivor is `resolvedOr(absPath)` in `gitDecorationProvider.isUnderAnyWorkspaceFolder` — an EQUIVALENT mutant, not a gap: `resolvedOr` on an unprepared path is a map read returning the lexical form, so it costs nothing and changes nothing. The syscall D1 forbids there is ruled out structurally, by the predicate being synchronous.
+- Verify gate ticked with a pre-existing failure outside this change's files: `src/vault/snapshotPool.test.ts` > "refuses a snapshot to a caller that was waiting out another production" fails roughly 1 run in 5 under load, asserting `expected 'resolved' to match /disposed/`. Neither `snapshotPool.ts` nor its test is touched by this change (`git show --stat 06f31d9b f189aced 4f559afc` names neither). It is a real defect, not test timing: a caller queued behind an in-flight production is sometimes ADMITTED after `dispose()`, so dispose is not the barrier `reuse-a-snapshot-while-the-store-is-unchanged` claims. Reported for its own change; not fixed here.
+- Also seen once and never reproduced across ~12 later full runs: two failures in `src/extension.worktreeAssembly.test.ts` under three concurrent suites. No assertion was captured. Recorded as observed, not diagnosed.
