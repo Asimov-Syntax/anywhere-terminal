@@ -1,0 +1,40 @@
+# Workflow State: snapshot-a-live-store-atomically
+
+> State file, not a procedure — stages live in the asimov-plan/build/archive skills.
+> Source of truth: gates → this file · task completion → `tasks.md`
+> States: `[ ]` pending · `[x]` done · `[-]` skipped/N/A · `[!]` failed non-blocking
+
+## Plan
+
+- [-] Gate 1: direction approved _(no fork: the mechanism was settled by probe before planning)_
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
+
+## Implement
+
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [ ] Gate: implementation approved
+- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+
+## Archive
+
+- [ ] Apply deltas: `bun run asm change apply`
+- [ ] Archive change: `bun run asm change archive`
+
+> Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
+
+## Notes
+
+<!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
+
+Blueprint: none
+Lane: full
+Planned at: 200dee01
+Flags: security-privacy (a false-empty read of another process's live store), re-review (parent handback)
+Origin: handback from tell-an-absent-session-from-an-unknown-one cycle 2 round 5, finding B1-R3. That change depends on this one and its next review starts cycle 3 in discovery mode.
+Blueprint note: no PLAN task of its own — it is the invariant owner split out of WT-011.8 under the remediation boundary, so WT-011.8's row stays the blueprint record.
+Validate warnings triaged: both are "requirement is long". WAL-safe read-only SQLite access (502) is one atomicity contract stated as a SHALL plus the three SHALL-NOTs that define it; splitting it would scatter one contract. SQLite engine selection (707) is inherited verbatim in substance from the shipped requirement — rewriting it further would edit contracts this change does not touch.
+Mechanism evidence gathered before planning, not at build: node:sqlite backup() on Node v24.7.0 snapshots a live WAL store whole (1001/1001 rows incl. the WAL-resident one, integrity_check ok, unaffected by a following checkpoint+VACUUM); read-only source open works even with an unwritable store directory; the D13 "silent empty" case throws ERR_SQLITE_ERROR instead; sqlite3 CLI VACUUM INTO under -readonly exits 0 and is queryable.
+
