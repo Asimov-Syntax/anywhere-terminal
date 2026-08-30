@@ -126,3 +126,16 @@
     5. Regression from 2_3, found while diagnosing the assembly failures and NOT the cause of them: the ignored walk was awaited SERIALLY alongside the other three reads in `src/providers/WorktreeHost.ts`, adding a fourth suspension point to the window round-9 B8 closed. No test caught it — the four reads are independent, so they are taken together and the assessment now spans one suspension point instead of four, narrower than before this change.
     6. The assembly test `src/extension.worktreeAssembly.test.ts` fakes the git process boundary and the projector; its reply table gains the ignored listing, and its projector fake DELEGATES `claimedSessionIds` to the real one rather than stubbing it — a stub returning nothing would make the assembly test agree with the very bug B2 names.
   - **Boundary**: the projection's own filter is unchanged — this reads the fact it already computes, it does not repurpose the pass that computes it
+
+- [x] 4_3 Put the enumeration back under the walk's one budget — verified: pnpm exec vitest run 'src/worktree/ignoredMaterial.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_2
+  - **Refs**: design.md D3
+  - **Acceptance**:
+    - Outcome: Enumeration and sizing share ONE time budget, as D3 approved — the walk's total, not a budget per phase
+    - Verify: unit src/worktree/ignoredMaterial.test.ts
+  - **Plan**:
+    1. Round-2 SUPERSEDED. Fixing B4 I gave git its own full `MAX_IGNORED_MS` and then wrote design.md and the module doc to say the bound was one budget per phase — a change to what D3 decided, not the enforcement of it that accepting B4 authorized. `tasks.md` 2_3 step 2 and D3's own opening still said ONE budget across both, so the change also left the artifacts contradicting each other.
+    2. `measureIgnoredMaterial` owns the deadline: `ignoredEntries` takes the milliseconds still left in the walk's budget, and the adapter in `src/worktree/ignoredMaterial.ts` passes exactly that to the runner. The sizing then continues against the same absolute deadline, so the total is bounded by `MAX_IGNORED_MS` and not by twice it.
+    3. Restore the single-budget wording in `asimov/changes/assess-a-removal-before-offering-it/design.md` D3, keeping only the factual correction about what `git status --ignored` names — that was a wrong fact, not a decision.
+    4. Cover in `src/worktree/ignoredMaterial.test.ts` that the enumeration receives the REMAINING budget, and that time already spent walking is not handed back to it.
+  - **Boundary**: no change to what D3 decided — this restores it

@@ -72,10 +72,10 @@ names every ignored FILE recursively — and NUL-delimited, so git's c-quoting g
 re-implemented here (round-1 W1).
 
 The sizing is what has to be bounded, and so is the enumeration: git buffers its whole listing before
-the first entry is admitted, so the walk's deadline is passed to git as well as applied to the stats
-(round-1 B4). The bound is therefore one budget for the listing plus the same budget for the sizing,
-not one budget across both — stated plainly rather than left as the implication the original wording
-carried.
+the first entry is admitted, so a cap applied only to the stats leaves the listing running on whatever
+the runner's own default happens to be (round-1 B4). The budget still spans both phases — ONE walk,
+one time cap — so `measureIgnoredMaterial` owns the deadline and hands the enumeration the time still
+left in it. Time spent listing is time the sizing no longer has.
 
 ### D4 — Provenance is read, never inferred
 

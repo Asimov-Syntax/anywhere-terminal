@@ -261,9 +261,9 @@ describe("diskIgnoredDeps", () => {
     return { deps, calls };
   }
 
-  async function collect(deps: IgnoredMaterialDeps): Promise<string[]> {
+  async function collect(deps: IgnoredMaterialDeps, budgetMs = MAX_IGNORED_MS): Promise<string[]> {
     const out: string[] = [];
-    for await (const entry of deps.ignoredEntries()) {
+    for await (const entry of deps.ignoredEntries(budgetMs)) {
       out.push(entry);
     }
     return out;
@@ -284,14 +284,16 @@ describe("diskIgnoredDeps", () => {
     expect(calls[0]?.cwd).toBe("/repo/wt-a");
   });
 
-  it("gives git the walk's own deadline rather than the runner's default", async () => {
+  it("gives git the time still left in the walk, not a budget of its own", async () => {
     // Round-1 B4: the whole listing is buffered before the first budget check
     // runs, so without this the enumeration is bounded by the runner's 10s and
-    // not by the 1.5s this walk declares.
+    // not by the 1.5s this walk declares. Round-2: and it is the REMAINING
+    // budget, because D3 bounds one walk and not one walk per phase.
     const { deps, calls } = disk({ replies: { "ls-files": "" } });
-    await collect(deps);
 
-    expect(calls[0]?.timeoutMs).toBe(MAX_IGNORED_MS);
+    await collect(deps, 400);
+
+    expect(calls[0]?.timeoutMs).toBe(400);
   });
 
   it("needs no unquoting, because NUL-delimited output is never quoted", async () => {
@@ -377,5 +379,61 @@ describe("a stat that takes longer than the whole budget", () => {
     };
 
     expect(await measureIgnoredMaterial(deps)).toEqual({ kind: "unproven", reason: "budget" });
+  });
+});
+
+describe("one budget across both phases", () => {
+  it("hands the enumeration the time left, not the whole cap again", async () => {
+    // Round-2 SUPERSEDED. Giving git its own full budget and the stats another
+    // makes the walk's real bound twice what D3 decided. `measureIgnoredMaterial`
+    // owns the deadline; time spent listing is time the sizing no longer has.
+    let clock = 0;
+    let handed: number | undefined;
+    const spent = 600;
+    const deps: IgnoredMaterialDeps = {
+      ignoredEntries: async function* (budgetMs) {
+        handed = budgetMs;
+        yield "a";
+      },
+      size: async () => 1,
+      readManifest: async () => {
+        throw new Error("ENOENT");
+      },
+      // One tick of `spent` before the enumeration is asked for, so the walk has
+      // already used part of its budget by the time it hands the rest over.
+      now: () => {
+        const at = clock;
+        clock += spent;
+        return at;
+      },
+    };
+
+    await measureIgnoredMaterial(deps);
+
+    expect(handed).toBe(MAX_IGNORED_MS - spent);
+  });
+
+  it("asks for nothing rather than for a negative time when the budget is gone", async () => {
+    // A runner handed a negative timeout is, in most implementations, a runner
+    // with no timeout at all — the opposite of what a spent budget means.
+    let handed: number | undefined;
+    let call = 0;
+    const deps: IgnoredMaterialDeps = {
+      ignoredEntries: async function* (budgetMs) {
+        handed = budgetMs;
+        yield "a";
+      },
+      size: async () => 1,
+      readManifest: async () => {
+        throw new Error("ENOENT");
+      },
+      // The clock has already run past the cap by the time the remaining budget
+      // is worked out.
+      now: () => (call++ === 0 ? 0 : MAX_IGNORED_MS * 2),
+    };
+
+    await measureIgnoredMaterial(deps);
+
+    expect(handed).toBe(0);
   });
 });

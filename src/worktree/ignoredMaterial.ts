@@ -18,13 +18,18 @@ export const MAX_IGNORED_MS = 1500;
 
 export interface IgnoredMaterialDeps {
   /**
-   * The worktree's ignored entries, one at a time.
+   * The worktree's ignored entries, one at a time, within `budgetMs`.
    *
    * An async iterable rather than a list: a materialized listing is unbounded
    * before any budget can apply to it, which is the cost this walk exists to
    * bound.
+   *
+   * The budget is passed IN rather than read from a constant here, because D3
+   * bounds one walk and not one walk per phase: `measureIgnoredMaterial` owns
+   * the deadline and hands over what is left of it, so time spent listing is
+   * time the sizing no longer has.
    */
-  ignoredEntries(): AsyncIterable<string>;
+  ignoredEntries(budgetMs: number): AsyncIterable<string>;
   /** Bytes at one entry. Throws rather than answering 0 for a failed stat. */
   size(relPath: string): Promise<number>;
   /**
@@ -88,7 +93,10 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
   let entries = 0;
   let bytes = 0;
   try {
-    for await (const relPath of deps.ignoredEntries()) {
+    // Never negative: a runner handed a negative timeout is, in most
+    // implementations, a runner with no timeout at all.
+    const remaining = Math.max(0, MAX_IGNORED_MS - (deps.now() - startedAt));
+    for await (const relPath of deps.ignoredEntries(remaining)) {
       // Checked before the entry is admitted, so the caps bound what is stat'd
       // and not merely what is reported.
       if (entries >= MAX_IGNORED_ENTRIES || deps.now() - startedAt > MAX_IGNORED_MS) {
@@ -168,14 +176,14 @@ export interface DiskIgnoredOptions {
 export function diskIgnoredDeps(options: DiskIgnoredOptions): IgnoredMaterialDeps {
   const { worktreePath, run, stat, readFile, join } = options;
   return {
-    ignoredEntries: async function* () {
+    ignoredEntries: async function* (budgetMs) {
       // The listing is buffered whole before the first entry is admitted, so
       // the walk's own deadline has to reach git rather than leaving the
-      // enumeration on the runner's much larger default (round-1 B4). The
-      // whole-walk bound is therefore this budget for the listing plus the same
-      // budget for the sizing, not one budget across both.
+      // enumeration on the runner's much larger default (round-1 B4). What
+      // arrives here is the time LEFT in the walk, not a fresh cap — the budget
+      // spans both phases (D3, round-2).
       const result = await run(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], worktreePath, {
-        timeoutMs: MAX_IGNORED_MS,
+        timeoutMs: budgetMs,
       });
       if (result.code !== 0 || result.timedOut) {
         // Not an empty listing: the walk did not establish that there is
