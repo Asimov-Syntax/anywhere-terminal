@@ -88,3 +88,7 @@ Build notes:
   `extension.worktreeAssembly`) wrap a real projector and are cast past the type checker, so they
   compiled against the widened interface and failed only at runtime. Recorded because the same shape
   will hide the next interface change too.
+- Round 5 closed SUPERSEDED, and avoidably. The handback was deliberate — B1 needed a `D#` — so the
+  fix range carried D10 and D11 by construction, and a range carrying a new decision can never be
+  verified. It should have been dispatched as cycle 4's discovery round in the first place. Costs a
+  round; adjudicates nothing. B1-R4 and S1-R3 stay formally open until round 6 covers them.
