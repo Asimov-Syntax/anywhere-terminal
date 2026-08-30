@@ -335,7 +335,7 @@ nothing to provision.
 | **Labels** | re-review |
 | **Notes** | The only debt with no round file of its own — carried as a follow-up note from the subscription-seam fix. The concept decides whether a window subscribes to presence at all, and spelled inline it has already drifted at two boundaries. Adding the missing branches would reproduce the defect; the fix is an owner. Boundary: this does not change WHEN a window subscribes, only which boundaries are recognised as reaching the same state |
 | **Acceptance** | A window that gains its first row-drawing surface is promoted regardless of which boundary it arrives through; the boundaries previously missed are covered by tests naming them; no site decides the transition on its own inline rule |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-011.3] A Transcript Look That Cannot Hang
 

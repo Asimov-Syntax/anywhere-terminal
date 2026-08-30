@@ -64,7 +64,7 @@ And the root is resolved once per *operation* rather than per candidate: a listi
 across project directories, a tie-break over several subagents. The candidate still resolves every
 time, and containment is never cached — a file stamp is not an identity.
 
-### 2.2 A window's "first row-drawing surface" has no single owner
+### 2.2 A window's "first row-drawing surface" has no single owner — SHIPPED (WT-011.2)
 
 The promotion from *presence subscribed* to *rows drawn* is decided in more than one place, and at
 least two boundaries where a window gains its first row-drawing surface do not reach the promotion.
@@ -80,6 +80,22 @@ This is the one debt with no round file of its own; it was carried as a follow-u
 **Boundary**: this task defines the concept and routes every existing boundary through it. It does
 not change when a window subscribes — only which boundaries are recognised as reaching the same
 state.
+
+**What shipped.** The owned concept turned out to be narrower than "is any surface drawing rows",
+which the host could already answer. It is the **conjunction**: rows are drawn *and* the envelope
+already published was built without enrichment. That join is `enrichmentOwed()`, reconciled after
+every change to the three inputs — a window's visibility, its declared level, and whether its
+surface is displayed — with no rising-edge snapshot, because "is enrichment owed now" is the
+question and "did this call change it" is not.
+
+One boundary could not be closed by the trigger alone: a promotion arriving *during* a rebuild
+joins a run that has already decided not to enrich, and a joining caller deliberately does not
+invalidate that run — otherwise every polled scan would buy a second projection. So the run itself
+carries the obligation, and schedules exactly one enriching follow-up when it would otherwise finish
+owing one. It does so only when the pass was **otherwise clean**: an invalidated pass reruns anyway
+and re-reads the predicate, and treating enrichment as invalidation would have stopped a clean pass
+acknowledging the pane evidence it consumed, and downgraded a rerun that new evidence required to
+be a full one.
 
 ### 2.3 The transcript read has no time bound
 

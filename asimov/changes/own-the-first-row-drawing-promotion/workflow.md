@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -34,3 +34,4 @@ Lane: full — flags: re-review. New invariant owner (the promotion rule), so th
 Planned at: 6ed105a9
 Gate 1 `[-]`: no fork — the deferred finding carried its own designed shape.
 Oracle round 1: not ready as written; 6 findings, 4 accepted (2 BLOCK, 2 WARN), 2 were confirmations. The blockers were both mine overloading `projectionDirty`/`nextExternalOnly`, whose existing meanings gate the pane-evidence acknowledgement and the rerun's mode.
+Review cycle 1 round 1: APPROVE, 0/0/0. Chair id af24474eef75ef88b; head c43e5ac7.
