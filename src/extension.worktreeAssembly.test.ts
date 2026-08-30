@@ -703,7 +703,9 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     fs.mkdirSync(first.path, { recursive: true });
     const second = await ask();
     expect(second.path).not.toBe(first.path);
-    expect(second.collidedWith).toBe(first.path);
+    // The taken NAME, so the form can state it beside a destination that
+    // already carries the path (worktree-rpc.md § 2).
+    expect(second.collidedWith).toBe(path.basename(first.path));
 
     // And the answer names the question, so a form can tell it from a stale one.
     expect((await ask("feat/login")).branch).toBe("feat/login");

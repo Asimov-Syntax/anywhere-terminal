@@ -2096,7 +2096,13 @@ export interface WorktreeCreateDefaultsMessage {
   prefix: string;
   /** The branch this answer was computed for, absent when none was named. */
   branch?: string;
-  /** The unsuffixed candidate, present only when it was already taken. */
+  /**
+   * The unsuffixed candidate's directory NAME, present only when it was taken.
+   *
+   * A name, never a path: `path` above already states where the create lands,
+   * and the form draws this beside it. A second full path here is the
+   * duplication WT-009.3 removed (worktree-rpc.md § 2).
+   */
   collidedWith?: string;
 }
 

@@ -1001,7 +1001,10 @@ describe("the destination a create opens on comes from the host", () => {
     // the destination it opens on describe one scheme rather than two.
     expect(defaults.prefix).toBe("repo");
     expect(defaults.path).not.toBe("/trees/repo");
-    expect(defaults.collidedWith).toBe("/trees/repo");
+    // The NAME that was taken, not the path to it. The destination line above
+    // already carries the path, and stating it twice is what WT-009.3's
+    // acceptance forbids (worktree-rpc.md § 2).
+    expect(defaults.collidedWith).toBe("repo");
     dispose();
   });
 
@@ -1184,7 +1187,26 @@ describe("the destination the host resolves for a branch", () => {
       collidedWith?: string;
     };
     expect(answer.path).not.toBe("/trees/repo");
-    expect(answer.collidedWith).toBe("/trees/repo");
+    expect(answer.collidedWith).toBe("repo");
+    dispose();
+  });
+
+  it("never puts a path separator in the taken name", async () => {
+    // The field is rendered verbatim beside a destination that already states
+    // the path. Anything with a separator in it is a second path by definition,
+    // whichever platform drew it.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (candidate: string) => candidate === "/trees/repo",
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+
+    const defaults = view.posts.find((m) => m.type === "worktreeCreateDefaults") as {
+      collidedWith?: string;
+    };
+    expect(defaults.collidedWith).toBeDefined();
+    expect(defaults.collidedWith).not.toMatch(/[/\\]/);
     dispose();
   });
 });

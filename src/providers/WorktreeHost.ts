@@ -1204,7 +1204,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // them, and a form cannot tell a current answer from a stale one
           // without it (round-4 B12).
           ...(msg.branch === undefined ? {} : { branch: msg.branch }),
-          ...(path === bare ? {} : { collidedWith: bare }),
+          // The taken NAME, never the path to it. The destination line the form
+          // draws above this already carries the path, and stating it a second
+          // time is what WT-009.3's acceptance forbids (worktree-rpc.md § 2).
+          // `base` is exactly that name: `bare` is `join(root, base)`, because
+          // the predicate it was resolved with never reports a collision.
+          ...(path === bare ? {} : { collidedWith: base }),
         });
         return;
       }
