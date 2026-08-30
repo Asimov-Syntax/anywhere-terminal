@@ -246,6 +246,22 @@ export interface PresenceProjector {
    * (.reviews/round-3.md B3, design.md D12).
    */
   rankRevision(): number;
+  /**
+   * The registry sessions a pane in THIS window holds, as vault entry ids.
+   *
+   * Published because the registry is USER-WIDE and more than one question is
+   * asked of it. This pass already computes the set so an external row is never
+   * a second row for a pane's own session; the removal assessment needs the
+   * same fact for the same reason — a Claude running in a pane of this window
+   * writes its own live-pid record, and counting it again as an unknown external
+   * session refuses a removal this window can see is only an idle pane
+   * (design.md D6).
+   *
+   * Empty before the first window pass, which claims nothing and leaves every
+   * registry session refusing — the safe direction for the one action that
+   * cannot be undone.
+   */
+  claimedSessionIds(): ReadonlySet<string>;
 }
 
 /** A proven identity, kept so a failed re-read cannot demote the row (D10). */
@@ -1088,6 +1104,10 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
 
     rankRevision() {
       return rankRevision;
+    },
+
+    claimedSessionIds() {
+      return lastWindowPass?.claimed ?? new Set();
     },
   };
 }

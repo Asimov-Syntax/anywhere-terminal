@@ -181,6 +181,7 @@ function fakeProjector() {
       return ranks[id];
     },
     rankRevision: () => revision,
+    claimedSessionIds: () => new Set<string>(),
   };
 
   return {
@@ -221,6 +222,7 @@ function blockingProjector() {
     },
     rank: () => undefined,
     rankRevision: () => 0,
+    claimedSessionIds: () => new Set<string>(),
   };
   return { projector, parked, modes, enriched };
 }

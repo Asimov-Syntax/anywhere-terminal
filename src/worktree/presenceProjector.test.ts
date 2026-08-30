@@ -11,6 +11,7 @@ import type { ActivityRule, PaneActivity } from "../shared/paneEvidence";
 import { createTrackedPathResolver, ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import type { RunningClaudeSession, RunningSessionsOutcome } from "../vault/readers/runningSessions";
 import type { VaultAgentId } from "../vault/types";
+import { formatEntryId } from "../vault/types";
 import type { SessionLookup } from "./agentIdentity";
 import {
   createPresenceProjector,
@@ -2201,5 +2202,55 @@ describe("attribution through a symlink", () => {
     const projection = await projector.project([PHYSICAL], { external: true });
 
     expect(projection.rowsByWorktreeId[PHYSICAL]?.map((r) => r.scope)).toEqual(["external"]);
+  });
+});
+
+describe("the sessions this window already holds", () => {
+  function session(over: Partial<RunningClaudeSession> = {}): RunningClaudeSession {
+    return { sessionId: "s1", cwd: WT, pid: 4242, startedAt: 1_600_000_000_000, ...over };
+  }
+
+  it("names a session a pane in this window claims", async () => {
+    // Round-1 B2: the registry is USER-WIDE, so a Claude running in a pane of
+    // this window writes its own record with a live pid. The removal assessment
+    // reads that registry for a second question and, without this, refuses on a
+    // session this window can already see is an idle pane of its own.
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+    h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1" })] });
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
+
+    await h.projector.project([WT]);
+
+    expect([...h.projector.claimedSessionIds()]).toContain(formatEntryId("claude", "s1"));
+  });
+
+  it("names it even when the claiming pane is inside no worktree", async () => {
+    // The pane produces no row, but it is still a pane in this window and the
+    // session it runs is still not somebody else's.
+    const h = makeProjector([pane({ paneId: "a", cwd: "/somewhere/else" })]);
+    h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1", cwd: WT })] });
+    h.setLookup(() => ({ kind: "resolved", agent: "claude", sessionId: "s1", evidence: "process" }));
+
+    await h.projector.project([WT]);
+
+    expect([...h.projector.claimedSessionIds()]).toContain(formatEntryId("claude", "s1"));
+  });
+
+  it("is empty before any projection has run", async () => {
+    // The removal path reads this on a host that may never have projected. An
+    // empty set claims nothing, so every registry session still refuses —
+    // degrading toward refusing, which is the safe direction here.
+    const h = makeProjector([pane({ paneId: "a", cwd: WT })]);
+
+    expect(h.projector.claimedSessionIds().size).toBe(0);
+  });
+
+  it("does not name a session no pane in this window holds", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: [session({ sessionId: "s1" })] });
+
+    await h.projector.project([WT]);
+
+    expect([...h.projector.claimedSessionIds()]).not.toContain(formatEntryId("claude", "s1"));
   });
 });

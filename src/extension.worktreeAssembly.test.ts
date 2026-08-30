@@ -106,6 +106,11 @@ const SCRIPT: Record<string, { code?: number; stdout?: string; stderr?: string }
   // Clean by default: nothing at risk, so an unforced removal is not blocked.
   // `dirtyPaths` overrides it for the tests that need a blocker set to exist.
   [`${LINKED}|status --porcelain`]: { stdout: "" },
+  // No ignored material either. Left unanswered the walk is `unproven`, and an
+  // unproven walk is a confirmable blocker — correctly, since a removal that
+  // cannot say what it will delete should be confirmed — which would stop every
+  // unforced removal here before it reached git.
+  [`${LINKED}|ls-files --others --ignored --exclude-standard -z`]: { stdout: "" },
   [`${REPO}|worktree prune --dry-run --verbose`]: { stderr: "" },
 };
 
@@ -231,6 +236,10 @@ vi.mock("./worktree/presenceProjector", async (importOriginal) => {
       return {
         rank: (id: string) => inner.rank(id),
         rankRevision: () => inner.rankRevision(),
+        // Delegated, not stubbed: the removal path reads this to avoid counting
+        // a pane's own session twice, and a stub returning nothing would make
+        // this test agree with a production bug rather than catch it.
+        claimedSessionIds: () => inner.claimedSessionIds(),
         project: async (ids: readonly string[], options?: never) => {
           const base = await inner.project(ids, options);
           // Captured here because the host→webview contract drops the fields I6 and I7

@@ -111,3 +111,18 @@
     4. Finding S1: `fsp.lstat` in `src/extension.ts`: the removal deletes the symlink, not its target.
     5. Correct the false sentence about `--ignored` in `asimov/changes/assess-a-removal-before-offering-it/design.md` D3.
   - **Boundary**: B2 is NOT fixed here — it is handed back to `asimov-plan`
+
+- [x] 4_2 Count a session once, in the window that holds it — verified: pnpm exec vitest run 'src/worktree/presenceProjector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-removal-refuses-when-it-cannot-establish-that-nothing-is-using-the-worktree}; design.md D6
+  - **Acceptance**:
+    - Outcome: A registry session this window already holds as a pane does not additionally refuse the removal
+    - Verify: unit src/worktree/presenceProjector.test.ts
+  - **Plan**:
+    1. Publish the window pass's claimed-session set as a read on `PresenceProjector` in `src/worktree/presenceProjector.ts`. It is already built there so an external row is never a second row for a pane's own session; this exposes it rather than rebuilding it. Empty before the first pass, which leaves today's refusing behaviour intact.
+    2. In `src/extension.ts`, drop registry sessions whose entry id is in that set before they become `ExternalSessionFact`s. The session is then counted once, as the idle pane it is.
+    3. Cover in `src/worktree/presenceProjector.test.ts` that the set names a pane's own session and is empty before any projection.
+    4. `PresenceProjector` gains a member, so the hand-built projector fakes in `src/providers/WorktreeHost.actions.test.ts`, `src/providers/WorktreeHost.delegations.test.ts` `src/providers/WorktreeHost.presence.test.ts` and `src/providers/WorktreeHost.test.ts` supply it empty — those suites assert on rows, and an empty claimed set is the shape they already assumed.
+    5. Regression from 2_3, found while diagnosing the assembly failures and NOT the cause of them: the ignored walk was awaited SERIALLY alongside the other three reads in `src/providers/WorktreeHost.ts`, adding a fourth suspension point to the window round-9 B8 closed. No test caught it — the four reads are independent, so they are taken together and the assessment now spans one suspension point instead of four, narrower than before this change.
+    6. The assembly test `src/extension.worktreeAssembly.test.ts` fakes the git process boundary and the projector; its reply table gains the ignored listing, and its projector fake DELEGATES `claimedSessionIds` to the real one rather than stubbing it — a stub returning nothing would make the assembly test agree with the very bug B2 names.
+  - **Boundary**: the projection's own filter is unchanged — this reads the fact it already computes, it does not repurpose the pass that computes it

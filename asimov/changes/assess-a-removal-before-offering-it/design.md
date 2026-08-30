@@ -106,6 +106,32 @@ confirmation time is failed now. A check that stops failing never re-prompts.
 A refusal-class check appearing at re-evaluation is a refusal, not a re-prompt: § 3 says force never
 runs against a working agent, and there is no confirmation for it to ask for.
 
+### D6 — A session is classified once, by the window that holds it
+
+Added on the round-1 B2 handback. `listRunningClaudeSessions()` is USER-WIDE: a Claude running in a
+pane of this window writes its own registry record with a live pid, so D2's "absent activity means
+live" refuses on a session this window can already see is idle. The worktree becomes unremovable
+while an idle local Claude sits in it — against `worktree-actions.md`'s accepted rule that an idle
+pane is confirmable.
+
+**Chosen:** the removal producer drops registry sessions this window has already claimed, so the
+session is counted once — as the idle pane it is. The claimed set is not recomputed: the presence
+projector already builds it (`claimed`, from `identify()`) precisely so an external row is never a
+second row for a pane's own session, and it is published as a read rather than rebuilt. Nothing about
+the projection's own filter changes, which is what task 1_1's Boundary reserved — this reads a fact
+the projector computes, it does not repurpose the pass that computes it.
+
+Absent before the first window pass, the set is empty and every registry session refuses, exactly as
+it does today. The degradation is toward refusing, which is the safe direction for the one action
+that cannot be undone.
+
+Rejected — resolving pane identity a second time inside the removal producer: `identify()` reads the
+process table and falls back to heuristics, so a second copy is both a real cost per assessment and a
+second place for the answer to differ from the one the panel is showing.
+
+Rejected — matching on `cwd` instead of identity: a pane and a registry record sharing a directory
+are not thereby the same session, and two Claudes in one worktree is the case the count exists for.
+
 ## Failure-surface inventory
 
 | Resource | Owns writes | Serialization | Crash mid-write | Failed / malformed read | Two racing hosts |

@@ -682,6 +682,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   });
 
+  // Constructed before the host because `removalFacts` reads it: the removal
+  // assessment asks the user-wide registry a SECOND question, and needs this
+  // pass's answer to which of those sessions this window already holds (D6).
+  const presenceProjector = createPresenceProjector(
+    createPresenceProjectorDeps({
+      store: paneEvidence,
+      cwdMemo: pathMemo,
+      // Fallback only — the projector asks about a session the registry left
+      // unnamed. A user rename outranks the derived title here for the same
+      // reason it does in the vault list (enhance-vault-sessions D1).
+      sessionTitle: async (entryId) => {
+        const entry = await vaultService.getEntry(entryId);
+        return entry?.customName || entry?.title || undefined;
+      },
+      // The row's second line. The service behind this owns the stamp, the
+      // re-check rate and its own bound, so presence rebuilding at the 150 ms
+      // cap costs no filesystem work for a session that has said nothing.
+      sessionPreview: (entryId) => sessionPreviews.preview(entryId),
+      reportedSession: (paneId) => {
+        const report = reportedSessions.get(paneId);
+        return report === undefined
+          ? undefined
+          : { agent: report.agent, entryId: formatEntryId(report.agent, report.sessionId) };
+      },
+      listSessions: async () => (await vaultService.list()).entries,
+    }),
+  );
+
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
     // Without this the create form never receives an offer and the whole
@@ -732,12 +760,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (outcome.kind !== "ok") {
           return { ok: false };
         }
+        // The registry is USER-WIDE, so a Claude running in a pane of THIS
+        // window writes its own record with a live pid. Counted again here it
+        // becomes an unknown external session, and `activity: undefined`
+        // refuses — making a worktree unremovable because of an idle terminal
+        // this window can already see (round-1 B2, design.md D6). Dropped so
+        // the session is counted once, as the pane it is.
+        const claimed = presenceProjector.claimedSessionIds();
+        const unclaimed = outcome.sessions.filter((s) => !claimed.has(formatEntryId("claude", s.sessionId)));
         const paths = createTrackedPathResolver(pathMemo);
         try {
-          await paths.prepare(outcome.sessions.map((s) => s.cwd));
+          await paths.prepare(unclaimed.map((s) => s.cwd));
           return {
             ok: true,
-            value: outcome.sessions.map((s) => ({
+            value: unclaimed.map((s) => ({
               sessionId: s.sessionId,
               cwd: paths.resolvedOr(s.cwd),
               // The registry records pid, cwd and identity — never activity. So
@@ -784,30 +820,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     pool: fsWatcherPool,
     onDidChangeWorkspaceFolders: (listener) => vscode.workspace.onDidChangeWorkspaceFolders(listener),
     // This window's panes, as agent rows under the worktree each one is inside.
-    projector: createPresenceProjector(
-      createPresenceProjectorDeps({
-        store: paneEvidence,
-        cwdMemo: pathMemo,
-        // Fallback only — the projector asks about a session the registry left
-        // unnamed. A user rename outranks the derived title here for the same
-        // reason it does in the vault list (enhance-vault-sessions D1).
-        sessionTitle: async (entryId) => {
-          const entry = await vaultService.getEntry(entryId);
-          return entry?.customName || entry?.title || undefined;
-        },
-        // The row's second line. The service behind this owns the stamp, the
-        // re-check rate and its own bound, so presence rebuilding at the 150 ms
-        // cap costs no filesystem work for a session that has said nothing.
-        sessionPreview: (entryId) => sessionPreviews.preview(entryId),
-        reportedSession: (paneId) => {
-          const report = reportedSessions.get(paneId);
-          return report === undefined
-            ? undefined
-            : { agent: report.agent, entryId: formatEntryId(report.agent, report.sessionId) };
-        },
-        listSessions: async () => (await vaultService.list()).entries,
-      }),
-    ),
+    projector: presenceProjector,
     onPaneChange: (listener) => {
       onPaneEvidenceChange = listener;
       return {

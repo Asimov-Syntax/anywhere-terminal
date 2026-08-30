@@ -698,6 +698,7 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
         },
         rank: () => undefined,
         rankRevision: () => 0,
+        claimedSessionIds: () => new Set<string>(),
       },
     });
     return {

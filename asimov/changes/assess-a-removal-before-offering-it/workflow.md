@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved — no fork; worktree-removal.md § 2.2/§ 2.3/§ 3 settle every question this change asks
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [x] Gate 2: plan approved (re-earned after the round-1 B2 handback: design.md D6 added, task 4_2 scaffolded; fastlane)
 
 ## Implement
 
@@ -54,3 +54,5 @@ B2 is NOT fixed and is handed back to `asimov-plan`. An idle Claude pane in THIS
 Round-1 note: `asm-review-reuse` messaged this session directly with a duplication finding (two copies of a `git status --porcelain` line parser) that did not reach `.reviews/round-1.md`; only its C-quoting half survived, as W1. Its stated failure scenario did not hold — the two quote strips were character-identical, so the copies could not disagree — but the duplication was real, and the B3 fix removed it: the adapter no longer parses porcelain status lines at all.
 
 Knowledge candidate: `git status --ignored` reports an ignored DIRECTORY as one record in BOTH `matching` and `traditional` modes (git 2.50.1) — `git ls-files --others --ignored --exclude-standard -z` is the one that names the files | Surprise: I wrote a code comment, a commit message and a passing unit test all asserting the opposite, because the test faked the output instead of probing git | Evidence: src/worktree/ignoredMaterial.ts#diskIgnoredDeps, .reviews/round-1.md B3 | Consumer: plan, debug | Action: when a task's correctness rests on an external tool's output shape, probe the tool once before designing around it — a hand-written fixture proves only that the code matches the fixture
+
+B2 resolved in task 4_2, not left handed back. `PresenceProjector` publishes the claimed-session set its window pass already builds, and the removal producer drops registry sessions this window holds — so a Claude in a local pane is counted once, as the idle pane it is. Two things fell out of it: the assembly test's projector fake was STUBBING that member, which would have made the assembly agree with the bug rather than catch it, so it delegates to the real projector; and the ignored walk added a fourth serial await to the window round-9 B8 closed, so the four independent reads in `assessRemoval` are now taken together — one suspension point, narrower than before this change. No test caught that second one.

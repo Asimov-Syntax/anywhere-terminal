@@ -2060,20 +2060,30 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // its status fails every time, which D16 correctly reported as
         // `unavailable` — permanently, on the one worktree state whose ONLY
         // remedy is the removal that prunes its registration (round-3 B8).
-        const status = found.wt.missing
-          ? null
-          : await options.deps.runner.run(["status", "--porcelain"], found.wt.displayPath);
-        // Skipped for the same reason as the status: there is no directory to
-        // walk. A measured zero is the honest answer — the removal will delete
-        // no ignored material because there is nothing there to delete.
-        const ignored: IgnoredMaterial = found.wt.missing
-          ? { kind: "measured", entries: 0, bytes: 0 }
-          : await facts.ignored(found.wt.displayPath);
-        const sessions = await facts.externalSessions();
-        // Taken with the other reads, ahead of `stillObserved`, so the whole
-        // assessment is checked against ONE observation. Awaiting it below
-        // would put a suspension point after that check (round-9 B8).
-        const panes = await facts.panes();
+        // All four TOGETHER, not one after another. They are independent, and
+        // each serial await is another moment a rebuild can land and replace the
+        // listing everything below is derived from — the window round-9 B8
+        // closed. Awaiting them as one suspension point is what kept adding the
+        // ignored walk from widening it (round-1 B2 fix round).
+        //
+        // Neither the status nor the ignored walk runs when the directory is
+        // gone. Asking an absent cwd for its status fails every time, which D16
+        // correctly reported as `unavailable` — permanently, on the one worktree
+        // state whose ONLY remedy is the removal that prunes its registration
+        // (round-3 B8). A measured zero is the honest answer for the walk: there
+        // is no directory, so there is no ignored material to delete.
+        const [status, ignored, sessions, panes] = await Promise.all([
+          // Run in the worktree itself, not the repo: `--porcelain` is what
+          // names the files a force would destroy, and that is per worktree.
+          found.wt.missing
+            ? Promise.resolve(null)
+            : options.deps.runner.run(["status", "--porcelain"], found.wt.displayPath),
+          found.wt.missing
+            ? Promise.resolve<IgnoredMaterial>({ kind: "measured", entries: 0, bytes: 0 })
+            : facts.ignored(found.wt.displayPath),
+          facts.externalSessions(),
+          facts.panes(),
+        ]);
         // Round-9 B8: those two reads take real time, and a rebuild landing in
         // between replaces the listing everything below is derived from — the
         // siblings, and the target itself. An assessment spanning two
