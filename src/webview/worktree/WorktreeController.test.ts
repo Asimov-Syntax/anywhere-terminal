@@ -1285,13 +1285,29 @@ describe("the create a toolbar with no repository opens", () => {
     expect(refsHeld(h).get(REPO_A)).toBeDefined();
   });
 
-  it("[1_2] a list that outlived its dialog is stored, not applied", () => {
-    // `applyRefs` is null when no form is open, which is the drop. Storing it
-    // costs nothing: the next OPEN clears the map before it asks again.
+  it("[1_2][r1 W2] a list that outlived a dialog that really opened and closed changes nothing", () => {
+    // The round-1 version asserted this with no dialog ever opened, so
+    // `applyRefs` was null for a reason the test did not name — it could not
+    // have failed. This one opens a real form, closes it, and only then
+    // delivers. The controller cannot unregister the applier (it learns a form
+    // closed only through the view), so the FORM is what goes inert.
     const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    expect(open(), "the form never opened, so closing it proves nothing").toBe(true);
+    const bound = (h.controller as unknown as { applyRefs?: unknown }).applyRefs;
+    expect(bound, "no applier was bound, so a drop is not what this measures").toBeDefined();
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(open()).toBe(false);
+
+    // Reaches the applier the closed form left behind, and must do nothing —
+    // no throw, and no list rendered anywhere.
     h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_A, refs: [{ name: "main" }], truncated: false });
 
-    expect(open()).toBe(false);
+    expect(document.querySelector("#wt-branch-list")).toBeNull();
+    // Stored, though: the next OPEN clears the map before it asks again.
     expect(refsHeld(h).get(REPO_A)).toBeDefined();
   });
 

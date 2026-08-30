@@ -391,8 +391,21 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   /** Every exit goes through here — the tooltip outlives `shell.dispose` alone. */
   const disposeAll = (restoreFocus = true): void => {
     releaseDestTip();
+    // Every applier the controller still holds a reference to goes inert here.
+    // The controller cannot unregister them — it learns a form closed only
+    // through the view — so the form has to be the one that stops answering.
+    //
+    // Defensive, and honestly so: round-1 W2 named this, and the write it stops
+    // is currently unobservable. A reopening rebinds before any reply can be
+    // misrouted, and a reply landing between close and reopen mutates a closure
+    // with no DOM left. No test can tell the two apart, so none pretends to —
+    // the guard is here because writing into a disposed form is wrong, not
+    // because a symptom was measured.
+    closed = true;
     shell.dispose(restoreFocus);
   };
+  /** True once this opening is over. Read by every bound applier. */
+  let closed = false;
 
   shell.dialog.appendChild(dialogTitle("Create worktree", undefined, cancel));
 
@@ -417,6 +430,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   nameInput.setAttribute("aria-autocomplete", "list");
   nameInput.setAttribute("aria-expanded", "false");
   nameInput.setAttribute("aria-controls", "wt-branch-list");
+  // Described by the notice, so the "this list is partial" claim reaches a
+  // reader who never sees it rendered (round-1 S1).
+  nameInput.setAttribute("aria-describedby", "wt-branch-partial");
   nameInput.autocomplete = "off";
 
   const listBox = document.createElement("ul");
@@ -439,6 +455,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   let activeAt = -1;
   let listOpen = false;
 
+  // The popup is positioned against this field, so the field is the containing
+  // block. Scoped to a class rather than `.wt-field` — every other field on the
+  // form would inherit a positioning context it has no use for.
+  nameField.classList.add("wt-field--combo");
   nameField.append(nameInput, listBox, partialNote, nameError);
   shell.dialog.appendChild(nameField);
 
@@ -504,6 +524,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       draft.repoId = repoSelect.value;
       agentBox.setAgents(currentRepo().agents);
       rebuildAfterOptions();
+      // The branch list belongs to a repository. The same typed name can be an
+      // existing branch in one and a new one in the next, and it can be held in
+      // one and free in the other — both are re-answered here (B2, W1).
+      deriveChoice();
+      if (listOpen) {
+        renderList();
+      }
       syncDerived();
     });
     repoField.append(repoSelect, repoHint);
@@ -524,8 +551,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   detachToggle.textContent = "Detach at a ref instead";
   detachToggle.addEventListener("click", () => {
     const now = draft.branchMode !== "detached";
-    draft.branchMode = now ? "detached" : choiceMode(choice);
+    draft.branchMode = now ? "detached" : "new";
     detachToggle.setAttribute("aria-pressed", now ? "true" : "false");
+    // Leaving detached hands the mode back to the box, which has to re-ask the
+    // question: refs may have landed while detached was on, and `choice` was
+    // not being maintained under it.
+    if (!now) {
+      deriveChoice();
+    }
     closeList();
     syncDerived();
   });
@@ -791,11 +824,28 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (draft.branchMode === "detached") {
       return undefined;
     }
-    const typed = draft.branchName.trim();
-    return (
-      offeredRefs().find((r) => r.name === typed)?.heldBy ??
-      (choice.kind === "existing" && choice.ref.name === typed ? choice.ref.heldBy : undefined)
-    );
+    // The CURRENT repository's record, or nothing. Falling back to the standing
+    // selection when the lookup missed could not tell "this repo has the ref and
+    // it is free" from "this repo does not have it", so a switch away from a
+    // held branch kept naming the other repository's directory (round-1 W1).
+    return choice.kind === "existing" ? choice.ref.heldBy : undefined;
+  }
+
+  /**
+   * Re-decide what the typed text means, against the repository the form is on
+   * NOW. The single source D4 claims: mode is derived here and nowhere else.
+   *
+   * Two-way on purpose. Only ever upgrading to `existing` left a branch that
+   * exists in one repository still submitting as `existing` after a switch to
+   * one where it does not (round-1 B2).
+   */
+  function deriveChoice(): void {
+    const typed = nameInput.value.trim();
+    const exact = typed.length === 0 ? undefined : offeredRefs().find((r) => r.name === typed);
+    choice = exact === undefined ? { kind: "new" } : { kind: "existing", ref: exact };
+    if (draft.branchMode !== "detached") {
+      draft.branchMode = choiceMode(choice);
+    }
   }
 
   /** The wire mode a choice means. `detached` is the toggle's and never a row's. */
@@ -887,7 +937,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   /** Take row `at` as the selection, close the list, and re-derive. */
   function commit(at: number): void {
     const picked = choices[at];
-    if (picked === undefined || (picked.kind === "existing" && picked.ref.heldBy !== undefined)) {
+    if (picked === undefined) {
+      return;
+    }
+    if (picked.kind === "existing" && picked.ref.heldBy !== undefined) {
+      // Refused, and SAID. Silence here is indistinguishable from a dropped
+      // keypress, and the explanation already exists (round-1 S2).
+      nameError.textContent = `${picked.ref.name} is checked out in ${picked.ref.heldBy}`;
+      nameError.hidden = false;
       return;
     }
     choice = picked;
@@ -1041,14 +1098,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   nameInput.addEventListener("input", () => {
     // Typing re-decides what the text MEANS, on the same rule the ordering
     // states: an exact match is the branch the user named, anything else is a
-    // branch they are about to create. An explicit pick overrides this on its
-    // own next keystroke, which is what makes the box one control rather than
-    // a text field with a menu beside it.
-    const exact = offeredRefs().find((r) => r.name === nameInput.value.trim());
-    choice = exact === undefined ? { kind: "new" } : { kind: "existing", ref: exact };
-    if (draft.branchMode !== "detached") {
-      draft.branchMode = choiceMode(choice);
-    }
+    // branch they are about to create.
+    deriveChoice();
     openList();
     syncDerived();
   });
@@ -1139,10 +1190,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
 
   // The branch list's own channel, on the same terms: it touches `outstanding`
   // no more than the offer does. Stored here and rendered by the combobox.
+  // Indexed once. A linear scan per reply is O(repos²) across a workspace's
+  // answers — the shape round-1 S1 named on the destination channel (W3).
+  const repoAt = new Map(repos.map((r, at) => [r.repoId, at]));
   deps.bindRefs?.((repoId, refs) => {
-    const at = repos.findIndex((r) => r.repoId === repoId);
-    const opened = repos[at];
-    if (at < 0 || opened === undefined) {
+    if (closed) {
+      return;
+    }
+    const at = repoAt.get(repoId);
+    const opened = at === undefined ? undefined : repos[at];
+    if (at === undefined || opened === undefined) {
       return;
     }
     repos[at] = { ...opened, refs };
@@ -1150,12 +1207,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       return;
     }
     // A list that lands while the user has already typed re-decides what the
-    // typed text means: the name they entered may now be a ref that exists.
-    const exact = refs.list.find((r) => r.name === nameInput.value.trim());
-    if (exact !== undefined && draft.branchMode !== "detached") {
-      choice = { kind: "existing", ref: exact };
-      draft.branchMode = "existing";
-    }
+    // typed text means — in both directions, which is why it goes through the
+    // one derivation rather than upgrading in place (B2).
+    deriveChoice();
     if (listOpen) {
       renderList();
     }

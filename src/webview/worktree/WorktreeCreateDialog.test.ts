@@ -1660,3 +1660,119 @@ describe("a branch another worktree holds is offered but not selectable", () => 
     expect(submitted[0]).toMatchObject({ branchMode: "detached", baseRef: "9f2c1ab" });
   });
 });
+
+// ── Round-1 fixes: the mode is re-decided per repository ───────────────────
+
+describe("switching repository re-decides what the typed name means (round-1 B2, W1)", () => {
+  const create = (q: <T extends HTMLElement>(s: string) => T) => q<HTMLButtonElement>(".wt-btn--primary");
+
+  /** `feat/x` exists in the first repo and does not in the second. */
+  function twoRepos(second: { name: string; heldBy?: string }[]) {
+    return open({
+      repos: [
+        createDefaults({ refs: { list: [{ name: "feat/x" }], truncated: false } }),
+        createDefaults({
+          repoId: "/other/.git",
+          repoLabel: "other",
+          agents: [],
+          refs: { list: second, truncated: false },
+        }),
+      ],
+    });
+  }
+  function switchRepo(q: <T extends HTMLElement>(s: string) => T) {
+    const repo = q<HTMLSelectElement>("#wt-repo-select");
+    repo.value = "/other/.git";
+    repo.dispatchEvent(new Event("change"));
+  }
+
+  it("drops `existing` for a branch the new repository does not have", () => {
+    // Only ever upgrading to existing left the wire carrying `reuse` for a
+    // branch that is not there — the failure D4's single-source rule exists to
+    // stop, arriving through the one route nothing re-derived.
+    const { q, submitted } = twoRepos([{ name: "unrelated" }]);
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    expect(create(q).disabled).toBe(false);
+
+    switchRepo(q);
+    create(q).click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "new", branchName: "feat/x" });
+  });
+
+  it("takes `existing` up when the new repository does have it", () => {
+    const { q, submitted } = twoRepos([{ name: "feat/x" }]);
+    type(q<HTMLInputElement>("#wt-branch"), "nothing-like-it");
+    switchRepo(q);
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    create(q).click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "existing", branchName: "feat/x" });
+  });
+
+  it("drops a holder that belonged to the repository the form left", () => {
+    // The reverse of 2_2's case. A lookup that fell back to the standing
+    // selection whenever the current repo's record had no holder could not tell
+    // "free here" from "absent here", so it kept naming the other repo's
+    // directory and refused a legitimate create.
+    const { q, submitted } = open({
+      repos: [
+        createDefaults({ refs: { list: [{ name: "feat/x", heldBy: "spike" }], truncated: false } }),
+        createDefaults({
+          repoId: "/other/.git",
+          repoLabel: "other",
+          agents: [],
+          refs: { list: [{ name: "feat/x" }], truncated: false },
+        }),
+      ],
+    });
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    expect(create(q).disabled).toBe(true);
+
+    switchRepo(q);
+
+    expect(create(q).disabled).toBe(false);
+    create(q).click();
+    expect(submitted[0]).toMatchObject({ branchMode: "existing", branchName: "feat/x" });
+  });
+
+  it("re-asks the question when detached is switched back off", () => {
+    // `choice` is not maintained under detached, and a list can land while it
+    // is on. Handing the mode back to the box without re-deriving restored
+    // whatever was true before.
+    let apply: ((repoId: string, refs: { list: { name: string }[]; truncated: boolean }) => void) | undefined;
+    const { q, submitted } = open({
+      bindRefs: (fn) => {
+        apply = fn as typeof apply;
+      },
+    });
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    q<HTMLButtonElement>("#wt-detached").click();
+
+    apply?.(REPO_ID, { list: [{ name: "feat/x" }], truncated: false });
+    q<HTMLButtonElement>("#wt-detached").click();
+    create(q).click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "existing", branchName: "feat/x" });
+  });
+
+  it("says why a held row was refused from the keyboard (round-1 S2)", () => {
+    const { q } = open({
+      repos: [createDefaults({ refs: { list: [{ name: "fix/lock", heldBy: "lock-spike" }], truncated: false } })],
+    });
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "fix");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+
+    expect(q<HTMLElement>(".wt-ferror").hidden).toBe(false);
+    expect(q<HTMLElement>(".wt-ferror").textContent).toContain("lock-spike");
+  });
+
+  it("points the combobox at the partial notice (round-1 S1)", () => {
+    const { q } = open({ repos: [createDefaults({ refs: { list: [], truncated: true } })] });
+
+    expect(q<HTMLInputElement>("#wt-branch").getAttribute("aria-describedby")).toBe("wt-branch-partial");
+  });
+});

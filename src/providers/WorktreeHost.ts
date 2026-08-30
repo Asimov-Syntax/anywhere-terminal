@@ -1258,7 +1258,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
       case "requestWorktreeRefs": {
         const read = options.readRefs;
-        const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
+        // One group, not a snapshot of the workspace. This runs once per
+        // repository when the dialog opens, so `cache.read()` here made the
+        // open cost R × O(R + W) in copying alone (round-1 B3).
+        const repo = cache.readRepo(msg.repoId);
         if (read === undefined || repo === undefined) {
           return;
         }

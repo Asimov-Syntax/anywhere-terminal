@@ -1014,6 +1014,101 @@
   font-size: 11px;
   padding: 3px 7px;
 }
+/* The branch-source control is a single toggle now, so the class sits on the
+   button itself — the rule above targets a button INSIDE the container and
+   would not reach it. */
+.wt-dialog button.vault-segmented {
+  align-self: flex-start;
+  padding: 3px 7px;
+  border: 1px solid var(--vscode-checkbox-border, var(--vscode-contrastBorder, transparent));
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  background: transparent;
+  cursor: pointer;
+}
+.wt-dialog button.vault-segmented:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+.wt-dialog button.vault-segmented[aria-pressed="true"] {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.wt-dialog button.vault-segmented:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+/* ── The branch combobox's list ──────────────────────────────────────────
+   A popup, not a block in the form's flow: the field below it must not jump
+   down by the height of the list every time the user types. Bounded and
+   scrollable because the enumeration is capped at MAX_REFS, not at ten. */
+.wt-field--combo {
+  position: relative;
+}
+.wt-branch-list {
+  position: absolute;
+  z-index: 3;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 2px 0 0;
+  padding: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-contrastBorder, transparent));
+  border-radius: 3px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, transparent);
+}
+.wt-branch-list[hidden] {
+  display: none;
+}
+.wt-branch-opt {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 2px;
+  font-size: 11px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.wt-branch-opt:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+/* The keyboard's position. Focus never leaves the input — `aria-activedescendant`
+   is the only thing that moves — so without this a sighted keyboard user cannot
+   see what Enter would take. */
+.wt-branch-opt.is-active {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--vscode-list-activeSelectionBackground);
+}
+/* Offered, and visibly not selectable. Dimmed rather than removed: the row's
+   whole purpose is to say which directory has the branch. */
+.wt-branch-opt[aria-disabled="true"] {
+  color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+  cursor: not-allowed;
+}
+.wt-branch-opt[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.wt-branch-opt[aria-disabled="true"].is-active {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: color-mix(in srgb, var(--vscode-list-activeSelectionBackground) 45%, transparent);
+}
+.wt-branch-held {
+  flex: none;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+.wt-branch-opt[data-kind="new"] {
+  color: var(--vscode-textLink-foreground);
+}
 /* A dangerous permission choice is labelled and never preselected. */
 .wt-danger-tag {
   margin: 0 5px 0 6px;

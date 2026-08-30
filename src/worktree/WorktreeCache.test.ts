@@ -633,3 +633,48 @@ describe("registration generation", () => {
     expect(genOf(cache, "/a/.git")).toBe(before);
   });
 });
+
+describe("WorktreeCache — one repository, without snapshotting the workspace", () => {
+  // `read()` copies every group and every worktree list per call, so a caller
+  // that wants one repository pays for all of them — and a caller that runs
+  // once per repository pays that R times over (offer-every-ref round-1 B3).
+
+  it("answers the same group `read()` would, for the id asked", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(
+      build([REPO_A, REPO_B], {
+        "/a/.git": listing([worktree("/a", { kind: "main" }), worktree("/a-wt")]),
+        "/b/.git": listing([worktree("/b", { kind: "main" })]),
+      }),
+    );
+
+    expect(cache.readRepo("/b/.git")).toEqual(cache.read().repos.find((r) => r.repoId === "/b/.git"));
+  });
+
+  it("carries a repo's own degraded reason, not the tree's roll-up", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    cache.applyRepo("/a/.git", listing([], { degraded: "`git worktree list` timed out." }));
+
+    expect(cache.readRepo("/a/.git")?.degraded).toBe("`git worktree list` timed out.");
+  });
+
+  it("hands out a copy, so a caller cannot edit the cache through it", () => {
+    // The same discipline `read()` applies. A caller that mutated what it was
+    // handed would edit the listing every other consumer reads.
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" }), worktree("/a-wt")]) }));
+
+    cache.readRepo("/a/.git")?.worktrees.pop();
+
+    expect(cache.readRepo("/a/.git")?.worktrees).toHaveLength(2);
+    expect(cache.read().repos[0].worktrees).toHaveLength(2);
+  });
+
+  it("answers nothing for a repository it does not hold", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+
+    expect(cache.readRepo("/nowhere/.git")).toBeUndefined();
+  });
+});

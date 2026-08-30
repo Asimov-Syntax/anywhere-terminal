@@ -60,6 +60,20 @@ export interface WorktreeCache {
   reorder(rank?: WorktreeActivityRank): void;
   /** The assembled tree, in resolved-root order. */
   read(): WorktreeTree;
+  /**
+   * One repository's group, without snapshotting the workspace to get it.
+   *
+   * `read()` copies every group and every worktree list on every call, so a
+   * caller that wants a single repository pays for all of them — and a caller
+   * that runs once per repository pays that R times over (round-1 B3). Same
+   * copying discipline, one group's worth.
+   *
+   * Deliberately narrower than `read()`: no degraded roll-up, no skipped count,
+   * no git-availability marking. Those are claims about the WHOLE tree and a
+   * single-group read cannot make them honestly — a caller that needs them
+   * wants `read()`.
+   */
+  readRepo(repoId: string): WorktreeRepo | undefined;
   roots(): readonly ResolvedRepo[];
   rootFor(repoId: string): ResolvedRepo | undefined;
   normalizedFolders(): readonly string[];
@@ -233,6 +247,22 @@ export function createWorktreeCache(): WorktreeCache {
     }
   }
 
+  /** The copy `read()` makes per group, so the two cannot drift apart. */
+  function copyRepo(cached: CachedRepo): WorktreeRepo {
+    const degraded = composeDegraded(cached.repo.degraded, cached.unwatched);
+    return {
+      ...cached.repo,
+      ...(degraded === undefined ? {} : { degraded }),
+      ...(cached.generation === undefined || !gitAvailable ? {} : { generation: cached.generation }),
+      worktrees: [...cached.repo.worktrees],
+    };
+  }
+
+  function readRepo(repoId: string): WorktreeRepo | undefined {
+    const cached = repos.get(repoId);
+    return cached === undefined ? undefined : copyRepo(cached);
+  }
+
   function read(): WorktreeTree {
     const out: WorktreeRepo[] = [];
     const reasons = new Set<string>();
@@ -249,13 +279,7 @@ export function createWorktreeCache(): WorktreeCache {
       // Composed at read, not merged at write: the listing failure is the more
       // specific and more urgent claim, so it leads, and the watcher warning is
       // appended rather than replacing it (round-7 W8).
-      const degraded = composeDegraded(cached.repo.degraded, cached.unwatched);
-      out.push({
-        ...cached.repo,
-        ...(degraded === undefined ? {} : { degraded }),
-        ...(cached.generation === undefined || !gitAvailable ? {} : { generation: cached.generation }),
-        worktrees: [...cached.repo.worktrees],
-      });
+      out.push(copyRepo(cached));
       count += cached.skipped;
       for (const reason of cached.reasons) {
         reasons.add(reason);
@@ -296,6 +320,7 @@ export function createWorktreeCache(): WorktreeCache {
     markUnwatched,
     reorder,
     read,
+    readRepo,
     roots: () => order,
     rootFor: (repoId) => order.find((one) => one.repoId === repoId),
     normalizedFolders: () => folders,

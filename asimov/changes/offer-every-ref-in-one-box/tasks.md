@@ -75,3 +75,17 @@
     1. Cover in `src/extension.worktreeAssembly.test.ts` that the request reaches the host through the real wiring and the answer reaches the dialog — a module test asserting against its own injected fake cannot see a wrapper that drops an argument.
     2. Assert the held mark is present for the branch the assembly's own linked worktree has checked out, since that is the fact 1_1 derives rather than reads.
   - **Boundary**: no new production code — this task adds coverage, and a defect it finds is fixed in the task that owns the file
+
+- [x] 4_1 Round-1 fixes: styling, mode derivation, and one scoped cache read — verified: bun run vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: design.md D2, D4, D6; .reviews/round-1.md B1, B2, B3, W1, W2, W3, S1, S2
+  - **Acceptance**:
+    - Outcome: Switching repository re-decides the branch mode, and the list renders as a bounded styled popup
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/worktreePanel.css` gains the popup, option, active, held-row and badge rules, plus a detached-toggle rule — the shipped selector is `.wt-dialog .vault-segmented button` and the toggle carries the class on the button itself, so it takes container styling and no button styling (B1).
+    2. `src/webview/worktree/WorktreeCreateDialog.ts`: one derivation of `choice` and `branchMode` from the CURRENT repository's refs and the typed name, called on typing, repository change, every refs answer, and leaving detached (B2). It replaces the fallback in `heldBranch` that could not tell "this repo has the ref and it is free" from "this repo does not have it" (W1). Index the repos by id for `bindRefs` (W3), point `aria-describedby` at the partial notice (S1), and surface the existing "checked out in" explanation when a held row is refused from the keyboard (S2).
+    3. `src/worktree/WorktreeCache.ts` gains a single-repository read, and `src/providers/WorktreeHost.ts`'s refs handler uses it instead of snapshotting the whole workspace per request (B3). The create-defaults handler keeps its own pre-existing `cache.read()` — that cost is not this change's and is recorded rather than folded in.
+    4. `src/worktree/WorktreeCache.test.ts` covers the new single-repository read: same copy discipline as `read()`, and absent rather than a fabricated group for an unknown id.
+    5. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: a switch that must drop `existing`; a switch that must drop a stale holder; and a refs answer delivered after a dialog actually opened and closed — the round-1 case asserted that with no dialog ever open, so it could not fail for the reason it named (W2).
+  - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited — the styling lands in `worktreePanel.css`
