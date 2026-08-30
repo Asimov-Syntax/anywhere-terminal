@@ -43,6 +43,9 @@ const PROBE_TIMEOUT_MS = 2000;
 const QUERY_TIMEOUT_MS = 5000;
 /** Cap for the snapshot step — a backup of a multi-GB store needs headroom. */
 const SNAPSHOT_TIMEOUT_MS = 30000;
+/** Pages per backup step — small enough that the deadline is checked often, large
+ *  enough that stepping does not dominate the copy. */
+const SNAPSHOT_PAGES_PER_STEP = 256;
 /** `sqlite3 -json` output is bounded by the readers' LIMITs; keep headroom. */
 const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
@@ -275,8 +278,9 @@ async function presence(deps: SqliteDeps, dbPath: string): Promise<SqlitePresenc
  * the base file and its sidecars cannot be made correct by ordering them, because
  * the store can checkpoint and vacuum between any two of those copies.
  */
-/** One snapshot, whichever engine is in play. The CLI branch still assembles one
- *  from file copies; task 1_2 replaces it with a read-only `VACUUM INTO`. */
+/** One snapshot, whichever engine is in play: the Online Backup API in process,
+ *  a read-only `VACUUM INTO` on the CLI. Both are atomic against a concurrent
+ *  writer, checkpoint or vacuum; neither copies files. */
 async function takeSnapshot(deps: SqliteDeps, dbPath: string, dest: string, useCli: boolean): Promise<void> {
   await (deps.snapshot ?? (useCli ? cliSnapshot(deps) : defaultSnapshot))(dbPath, dest);
 }
@@ -294,26 +298,56 @@ function cliSnapshot(deps: SqliteDeps): (dbPath: string, dest: string) => Promis
         timeout: SNAPSHOT_TIMEOUT_MS,
       });
     } catch (err) {
-      throw isCannotOpen(err) ? new SnapshotOpenError(errorMessage(err)) : err;
+      throw isOpenClass(err) ? new SnapshotOpenError(errorMessage(err)) : err;
     }
   };
 }
 
 async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
   const { DatabaseSync, backup } = await import("node:sqlite");
-  // node:sqlite opens lazily, so the refusal can surface at the constructor OR at
-  // the backup. Classify by the error, not by where it was thrown: the file is
-  // there — `presence` already said so — so a refusal to open it means "I could
-  // not look", which is never "it is not there" (D2). A WAL store whose `-shm`
-  // index must be created in a directory that denies it lands here.
+  // node:sqlite opens lazily, so a refusal can surface at the constructor OR at
+  // the backup. Classify by the error, not by where it was thrown — and only
+  // after proving the SOURCE is the one refusing (W1): the same SQLITE_CANTOPEN
+  // can come from the destination, and blaming the user's store for our own temp
+  // directory is the misattribution D2 exists to prevent.
   let source: InstanceType<typeof DatabaseSync> | undefined;
+  const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
   try {
     source = new DatabaseSync(dbPath, { readOnly: true });
-    await backup(source, dest);
+    // SQLite RESTARTS an incremental backup whenever the source is written, so a
+    // busy store can starve it indefinitely. Stepping with a progress callback
+    // gives a place to enforce a wall clock, and throwing from it aborts the
+    // backup for real rather than leaving it running behind a settled promise.
+    await backup(source, dest, {
+      rate: SNAPSHOT_PAGES_PER_STEP,
+      progress: () => {
+        if (Date.now() > deadline) {
+          throw new Error(`snapshot exceeded ${SNAPSHOT_TIMEOUT_MS}ms`);
+        }
+      },
+    });
   } catch (err) {
-    throw isCannotOpen(err) ? new SnapshotOpenError(errorMessage(err)) : err;
+    throw isSourceRefusal(err, source) ? new SnapshotOpenError(errorMessage(err)) : err;
   } finally {
     source?.close();
+  }
+}
+
+/** Whether SQLite refused to open the SOURCE, as opposed to failing anywhere else.
+ *  An open-class result code is necessary but not sufficient — the destination
+ *  raises the same codes — so the source is asked to prove it is readable. */
+function isSourceRefusal(err: unknown, source: { prepare(sql: string): { get(): unknown } } | undefined): boolean {
+  if (!isOpenClass(err)) {
+    return false;
+  }
+  if (!source) {
+    return true; // never got a connection at all
+  }
+  try {
+    source.prepare("SELECT 1").get();
+    return false; // the source reads fine — something else refused
+  } catch {
+    return true;
   }
 }
 
@@ -325,7 +359,7 @@ async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
  *  unreadable directory reports SQLITE_CANTOPEN. The CLI gives no code, so its
  *  message is matched instead. */
 const OPEN_REFUSAL_CODES = new Set([3, 8, 14, 23]); // PERM, READONLY, CANTOPEN, AUTH
-function isCannotOpen(err: unknown): boolean {
+function isOpenClass(err: unknown): boolean {
   const errcode = (err as { errcode?: unknown } | undefined)?.errcode;
   if (typeof errcode === "number") {
     return OPEN_REFUSAL_CODES.has(errcode & 0xff);

@@ -41,3 +41,17 @@
     - Verify: command rg -n 'sidecar' asimov/specs/ docs/ src/
   - **Plan**:
     1. Grep `asimov/specs/`, `docs/DESIGN.md`, `docs/design/` and `src/` for the sidecar-copy mechanism and its D13 rationale, and update the owning sections to the atomic-snapshot contract the delta states.
+
+## 2. Round-1 review fixes
+
+- [x] 2_1 Bound the snapshot, guard the race, and blame the right file — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_4
+  - **Refs**: .reviews/round-1.md; design.md#d2-every-snapshot-failure-is-a-status-never-an-empty-result
+  - **Acceptance**:
+    - Outcome: a snapshot interleaved with a checkpoint is whole or fails, and a starved one fails on a deadline
+    - Verify: unit src/vault/sqlite.test.ts
+  - **Plan**:
+    1. In `src/vault/sqlite.ts`, give the in-process backup a wall-clock deadline enforced by throwing from its progress callback, which aborts the backup rather than abandoning it, and report the deadline as `query-error`.
+    2. In `src/vault/sqlite.ts`, prove the source is readable before attributing an open refusal to it, so a destination failure stays `query-error` instead of becoming `db-unreachable`.
+    3. In `src/vault/sqlite.ts`, correct the module comment that still describes the CLI as assembling snapshots from file copies.
+    4. Cover in `src/vault/sqlite.test.ts`: a checkpoint and vacuum fired from inside the backup's own progress callback, the same interleaving driven concurrently against the CLI engine, a starved backup hitting its deadline, and a writable source with an unwritable destination.
