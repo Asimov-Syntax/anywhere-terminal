@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [x] Gate 2: plan approved  <!-- re-earned at round 2 -->
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.9`)_
@@ -82,3 +82,8 @@ Build notes:
   part of the coherence claim, so it is one pass beside the two rather than inside them. D1 records it.
 - Merged `worktree-test-suite-cost-control` before finishing this: it makes the dispose-barrier case
   deterministic by injecting `readGeneration`, and that case was one of the two my probe perturbed.
+- Round-2 B1: the design and the code disagreed, and the code was right. I corrected D1 by one
+  sentence during the build and left D1/D3 otherwise describing the two-pass open/fstat/close
+  mechanism the build had already abandoned, so the authoritative document still prescribed the
+  arrangement that broke in-flight joining. D1 and D3 now describe what shipped, at its real cost,
+  and record the check/use boundary the placement leaves. Gate 2 re-earned.
