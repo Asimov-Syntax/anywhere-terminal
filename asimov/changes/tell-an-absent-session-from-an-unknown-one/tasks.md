@@ -88,7 +88,7 @@
   - **Deps**: 1_4, 1_5, 1_6
   - **Refs**: <!-- .reviews/round-1.md B1, B2, B3, W1; design.md D2, D5 -->
   - **Acceptance**:
-    - Outcome: no lookup answers found or absent from a read that did not complete
+    - Outcome: no lookup answers found or absent from an incomplete read
     - Verify: unit src/vault/readers/cursorReader.test.ts
   - **Plan**:
     1. In `src/vault/readers/codexReader.ts`, gate the list path's success branch on `ok` explicitly and treat `db-unreachable` as unreadable and retryable; in the by-id lookup, run the rollout fallback for `db-unreachable` as it did before the status split.
