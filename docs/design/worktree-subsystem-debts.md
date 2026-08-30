@@ -22,7 +22,7 @@ defers to that doc's contract.
 
 ## 2. The debts
 
-### 2.1 Containment is lexical, and a symlink walks through it
+### 2.1 Containment is lexical, and a symlink walks through it — SHIPPED (WT-011.1)
 
 Four vault path resolvers decide "is this candidate inside the root I control" with
 `path.relative` plus a `..` / absolute test. That is a **string** comparison: a symlink inside the
@@ -49,11 +49,20 @@ transcript that has not been written is the normal early state of a session (see
 [worktree-agent-presence.md](worktree-agent-presence.md) § on the retry ladder). Absence beneath a
 parent that did resolve inside the root is tolerated; every other resolution failure is refused.
 
-**Two consequences, two slices.** The resolvers that gate a transcript *read* are one problem. The
-comparisons that decide which worktree or repository a path belongs to — raw workspace-folder and
-Git API paths, pane cwds, webview paths — carry the same lexical error with a different
-consequence: misattribution, not an escaped read. They run on per-push paths and have their own
-acceptance story, so they are planned separately.
+**Two consequences, two slices.** The resolvers that gate a transcript *read* are one problem, and
+they shipped as WT-011.1. The comparisons that decide which worktree or repository a path belongs
+to — raw workspace-folder and Git API paths, pane cwds, webview paths — carry the same lexical
+error with a different consequence: misattribution, not an escaped read. They run on per-push paths
+and have their own acceptance story, so they are planned separately as WT-011.6.
+
+**What shipped, and the two things review added to it.** `isResolvedPathInside` lives beside
+`isPathInside` in `src/utils/pathBoundary.ts`; the two share their boundary rules through a core
+parameterized by its normalizer, because the one thing they must disagree about is case.
+`isPathInside` folds Windows case, which is right for the worktree ids it compares and fatal for a
+read guard — a case-sensitive directory makes `C:\vault\Store` and `C:\vault\store` two places.
+And the root is resolved once per *operation* rather than per candidate: a listing pass, a scan
+across project directories, a tie-break over several subagents. The candidate still resolves every
+time, and containment is never cached — a file stamp is not an identity.
 
 ### 2.2 A window's "first row-drawing surface" has no single owner
 

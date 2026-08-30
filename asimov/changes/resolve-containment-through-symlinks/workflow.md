@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -40,3 +40,4 @@ Wave 2 soloed rather than fanned out to fillers: four file-disjoint tasks, one d
 1_5 adds one `realpath` per listed file alongside the `stat` already there: same order as the existing per-file cost, and per-file is the granularity the threat lives at.
 Review cycle 1 round 1: BLOCK (1 B / 1 W / 1 S), all accepted, all three routed to a handback — see .reviews/round-1.md. Chair resume id: adb030d402fd7c455; round 1 head 0f2f0858.
 Handback round 1: D1 amended (the two predicates share a normalizer-parameterized core instead of one calling the other), D7 and D8 added. Specs unchanged — a case-distinct sibling IS outside the root, which the accepted requirement already forbids reading.
+Review cycle 1 exited at round 2: 0 gating blockers. Round-2 W1 (root re-prepared per tied subagent candidate) accepted and fixed as 2_3 — remediation, not a handback, because D8 already scopes the root to one operation and pickNewestByMtime is one.
