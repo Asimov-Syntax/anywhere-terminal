@@ -159,6 +159,16 @@ mtime+size), `store` (the `.db` **and** its `-wal`, deliberately not `-shm`),
 `cursor-files` (`cacheTypes.ts:131`; `storeStamp.ts`). Unchanged stamps skip the body read,
 which is what makes a refresh cheap.
 
+A `store` generation proves the files are READABLE, not merely present: `readStoreGeneration`
+runs two ordered stat passes for coherence and then one open-and-close pass over the stamped
+paths, and any refusal — including a `close()` that rejects — makes the generation unusable
+rather than reusable. The readability pass sits BESIDE the stat passes, never inside one:
+adding its latency to either pass widens the window in which a second pooled borrower misses
+the in-flight join and takes a redundant snapshot. This leaves a deliberate check/use boundary
+— permission can be revoked between the proof and the read — so the guarantee is that a
+reused snapshot and a fresh one answer a store's status the same way, not that the read cannot
+fail. The write-side stamp keeps a plain stat; stamping is not a readability claim.
+
 ### 5.3 Refresh coalescing
 
 ```mermaid

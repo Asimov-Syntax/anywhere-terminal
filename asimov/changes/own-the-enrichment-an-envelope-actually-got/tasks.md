@@ -1,6 +1,6 @@
 ## 1. An envelope owes what it did not deliver
 
-- [x] 1_1 Record the enrichment a cut-short projection still owes — verified: pnpm exec vitest run 'src/providers/WorktreeHost.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+- [ ] 1_1 Record the enrichment a cut-short projection still owes — verified: pnpm exec vitest run 'src/providers/WorktreeHost.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/NO-DELTA.md <!-- design.md D1, D2 -->
   - **Acceptance**:
