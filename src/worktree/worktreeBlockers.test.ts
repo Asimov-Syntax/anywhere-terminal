@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { PaneActivity } from "../shared/paneEvidence";
 import type { WorktreeInfo } from "./types";
-import { evaluateRemoval, type RemovalInput, type SessionRecord } from "./worktreeBlockers";
+import {
+  evaluateRemoval,
+  type RemovalInput,
+  type SessionRead,
+  type SessionRecord,
+  type SourceRead,
+} from "./worktreeBlockers";
 
 function wt(id: string, over: Partial<WorktreeInfo> = {}): WorktreeInfo {
   return {
@@ -16,6 +22,15 @@ function wt(id: string, over: Partial<WorktreeInfo> = {}): WorktreeInfo {
   } as WorktreeInfo;
 }
 
+/**
+ * The two views the producer derives from one scan. Tests that do not exercise
+ * the selection pass the same list twice — the canonical winner of a list with
+ * no duplicates is the list.
+ */
+function sessionsOk(records: readonly SessionRecord[], over: Partial<SessionRead> = {}): SourceRead<SessionRead> {
+  return { ok: true, value: { live: records, canonical: records, partial: false, ...over } };
+}
+
 function input(over: Partial<RemovalInput> = {}): RemovalInput {
   const target = over.target ?? wt("/repo/wt-a");
   return {
@@ -23,7 +38,7 @@ function input(over: Partial<RemovalInput> = {}): RemovalInput {
     siblings: [wt("/repo", { kind: "main" }), target],
     panes: [],
     rows: [],
-    sessions: { ok: true, value: [] },
+    sessions: sessionsOk([]),
     claimedByPane: new Map(),
     porcelain: { ok: true, value: "" },
     ignored: { kind: "measured", entries: 0, bytes: 0 },
@@ -72,10 +87,9 @@ describe("evaluateRemoval", () => {
     const result = evaluateRemoval(
       input({
         rows: [{ scope: "external", activity: "running" }],
-        sessions: {
-          ok: true,
-          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity: "idle", alive: true }],
-        },
+        sessions: sessionsOk([
+          { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity: "idle", alive: true },
+        ]),
       }),
     );
     expect(result.kind).toBe("confirmable");
@@ -88,10 +102,9 @@ describe("evaluateRemoval", () => {
   describe("an external session that is not provably idle (worktree-removal.md § 2, § 3)", () => {
     const rooted = (activity: PaneActivity | undefined) =>
       input({
-        sessions: {
-          ok: true,
-          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity, alive: true }],
-        },
+        sessions: sessionsOk([
+          { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity, alive: true },
+        ]),
       });
 
     it.each(["running", "waiting"] as const)("refuses a session reporting %s", (activity) => {
@@ -116,28 +129,25 @@ describe("evaluateRemoval", () => {
     it("ignores a session rooted OUTSIDE the target", () => {
       const result = evaluateRemoval(
         input({
-          sessions: {
-            ok: true,
-            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-b", activity: undefined, alive: true }],
-          },
+          sessions: sessionsOk([
+            { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-b", activity: undefined, alive: true },
+          ]),
         }),
       );
       expect(result.kind).toBe("confirmable");
     });
 
-    it("ignores a record whose process is gone", () => {
-      // The live filter used to run in the producer, which is why the records
-      // arrive raw now: the ownership proof is about exactly the records this
-      // discards (design.md D3). A dead record refusing a removal would be a
-      // crashed session holding a worktree forever.
-      const result = evaluateRemoval(
-        input({
-          sessions: {
-            ok: true,
-            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: false }],
-          },
-        }),
-      );
+    it("a duplicate the registry does not consider canonical does not refuse", () => {
+      // THE ordering contract (round-1 B2). One session id, two live records:
+      // the interactive one is rooted elsewhere and is the registry's canonical
+      // winner; the headless resume record is rooted inside the target. The
+      // winner is chosen over every live record user-wide and only THEN tested
+      // for containment, so this removal is not refused. Choosing from the
+      // records already inside the target reverses that order and refuses.
+      const inside = { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true };
+      const outside = { sessionId: "s-1", entryId: "claude:s-1", cwd: "/elsewhere", activity: undefined, alive: true };
+      const result = evaluateRemoval(input({ sessions: sessionsOk([inside, outside], { canonical: [outside] }) }));
+
       expect(result.kind).toBe("confirmable");
       if (result.kind !== "confirmable") {
         return;
@@ -145,21 +155,12 @@ describe("evaluateRemoval", () => {
       expect(result.evidence.externalSessionIds).toEqual([]);
     });
 
-    it("names a session once when TWO live records carry its id", () => {
-      // The registry can hold two live pid files for one session, which is why
-      // the reader deduped. That rule moved here with the live filter, and
-      // without it the same session is reported twice on the wire.
-      const result = evaluateRemoval(
-        input({
-          sessions: {
-            ok: true,
-            value: [
-              { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true },
-              { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true },
-            ],
-          },
-        }),
-      );
+    it("reports the canonical record it was handed, not one per raw record", () => {
+      // `live` carries both; only `canonical` is consulted, so a session is
+      // named once without this module deduping anything itself.
+      const here = { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true };
+      const result = evaluateRemoval(input({ sessions: sessionsOk([here, here], { canonical: [here] }) }));
+
       expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
     });
 
@@ -167,10 +168,9 @@ describe("evaluateRemoval", () => {
       const result = evaluateRemoval(
         input({
           rows: [{ scope: "external", activity: "running" }],
-          sessions: {
-            ok: true,
-            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true }],
-          },
+          sessions: sessionsOk([
+            { sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined, alive: true },
+          ]),
         }),
       );
       expect(result).toMatchObject({ kind: "refused", busyAgents: 0, liveExternalSessionIds: ["s-1"] });
@@ -421,7 +421,7 @@ describe("a registry session a pane in this window already holds", () => {
       input({
         panes,
         claimedByPane,
-        sessions: { ok: true, value: [session()] },
+        sessions: sessionsOk([session()]),
       }),
     );
 

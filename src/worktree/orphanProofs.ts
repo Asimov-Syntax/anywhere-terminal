@@ -40,8 +40,13 @@ export interface ProofSessionRecord {
   alive: boolean;
 }
 
-/** A read that succeeded, or one that could not be taken at all. */
-export type ProofSourceRead<T> = { ok: true; value: T } | { ok: false };
+/**
+ * A read that succeeded, or one that could not be taken at all.
+ *
+ * `partial` marks a scan that returned real records but skipped a candidate it
+ * could not read. The records are true; their ABSENCE is not evidence.
+ */
+export type ProofSourceRead<T> = { ok: true; value: T; partial?: boolean } | { ok: false };
 
 export interface OrphanProofSubject {
   /** The worktree's own path, as git reports it. */
@@ -125,7 +130,13 @@ async function ownerProof(subject: OrphanProofSubject): Promise<ProofOutcome> {
   const here = sessions.value.filter((s) => isPathInside(s.cwd, subject.path));
   // A dead record is evidence NOBODY is here, which is why the removal path
   // reads records the presence reader discards (worktree-removal.md § 4.1).
-  return here.some((s) => s.alive) ? "failed" : "passed";
+  if (here.some((s) => s.alive)) {
+    return "failed"; // a live owner found is a fact a partial scan cannot weaken
+  }
+  // Not finding one is only evidence when the scan saw everything. A single
+  // EACCES on the live owner's own record would otherwise read as "nobody is
+  // here" about the one action that cannot be undone (round-1 W1).
+  return sessions.partial === true ? "unproven" : "passed";
 }
 
 async function mergeProof(subject: OrphanProofSubject, deps: OrphanProofDeps): Promise<ProofOutcome> {

@@ -382,7 +382,8 @@ async function builtHost(
       sessions: async () => {
         over.sessionReads?.push(1);
         await duringAssessment.now();
-        return { ok: true, value: over.sessions ?? [] };
+        const records = over.sessions ?? [];
+        return { ok: true, value: { live: records, canonical: records, partial: false } };
       },
       proofs: async (subject, sessions) => {
         // Awaits the read it was handed. A fake that ignored it would hide the

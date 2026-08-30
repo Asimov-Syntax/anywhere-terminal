@@ -45,7 +45,7 @@ import {
   evaluateRemoval,
   type PaneFact,
   type RemovalAssessment,
-  type SessionRecord,
+  type SessionRead,
   type SourceRead,
 } from "../worktree/worktreeBlockers";
 import { type WorktreeWatch, watchRepoStructure } from "../worktree/worktreeWatchTargets";
@@ -137,7 +137,7 @@ export interface WorktreeHostOptions {
     /** Async because the cwds carry the resolution `PaneFact.cwd` promises. */
     panes(): Promise<readonly PaneFact[]>;
     /** Every registry record, live or not — `evaluateRemoval` applies the live filter. */
-    sessions(): Promise<SourceRead<readonly SessionRecord[]>>;
+    sessions(): Promise<SourceRead<SessionRead>>;
     /**
      * The three proofs of worktree-removal.md § 4.
      *
@@ -148,7 +148,7 @@ export interface WorktreeHostOptions {
      */
     proofs(
       subject: { path: string; locked: boolean; branch?: string },
-      sessions: Promise<SourceRead<readonly SessionRecord[]>>,
+      sessions: Promise<SourceRead<SessionRead>>,
     ): Promise<OrphanProofs>;
     /**
      * One bounded walk of what the removal will delete that git does not track.

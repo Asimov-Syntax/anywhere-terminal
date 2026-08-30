@@ -52,7 +52,7 @@ import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
-import { listClaudeSessionRecords } from "./vault/readers/runningSessions";
+import { canonicalLiveSessions, listClaudeSessionRecords } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
 import { disposeSnapshotPool } from "./vault/sqlite";
 import { formatEntryId, VAULT_AGENT_IDS } from "./vault/types";
@@ -769,9 +769,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (outcome.kind !== "ok") {
           return { ok: false };
         }
-        // No filtering here — not by liveness either. A dead record is the
-        // ownership proof's evidence that nobody is here, and the live filter
-        // the refusal needs now runs in `evaluateRemoval` (design.md D3).
+        // One scan, two views (design.md D3). The canonical winner per session
+        // id is chosen HERE, over every live record user-wide, before anything
+        // asks which directory a session is rooted in — that order is what
+        // `evaluateRemoval` needs and what it cannot reconstruct itself
+        // (round-1 B2).
         //
         // The registry is USER-WIDE, so a Claude in one of
         // our own panes writes its own live-pid record and must be counted once
@@ -779,23 +781,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // classify the pane that made it, and this producer holds neither the
         // target nor the pane snapshot to check that against. It carries the
         // claim instead, and `evaluateRemoval` corroborates it (cycle-2 B5).
+        const live = outcome.records.filter((s) => s.alive);
+        const canonicalIds = new Set(canonicalLiveSessions(outcome.records).map((s) => s.pid));
         const paths = createTrackedPathResolver(pathMemo);
         try {
-          await paths.prepare(outcome.records.map((s) => s.cwd));
+          // Only the live ones are resolved. A dead crash record is inert in
+          // both views — the proof asks `some(alive)` and the refusal reads
+          // only canonical — so realpathing user-wide stale session history was
+          // unbounded work for an answer nobody reads (round-1 B3a).
+          await paths.prepare(live.map((s) => s.cwd));
+          const asRecord = (s: (typeof live)[number]) => ({
+            sessionId: s.sessionId,
+            entryId: formatEntryId("claude", s.sessionId),
+            cwd: paths.resolvedOr(s.cwd),
+            // The registry records pid, cwd and identity — never activity. So
+            // this is undefined rather than a guess, and undefined refuses:
+            // a session we cannot ask about is not evidence of idleness
+            // (worktree-removal.md § 3). The presence projection's hardcoded
+            // "running" would refuse too, but for a reason nobody measured.
+            activity: undefined,
+            alive: s.alive,
+          });
           return {
             ok: true,
-            value: outcome.records.map((s) => ({
-              sessionId: s.sessionId,
-              entryId: formatEntryId("claude", s.sessionId),
-              cwd: paths.resolvedOr(s.cwd),
-              // The registry records pid, cwd and identity — never activity. So
-              // this is undefined rather than a guess, and undefined refuses:
-              // a session we cannot ask about is not evidence of idleness
-              // (worktree-removal.md § 3). The presence projection's hardcoded
-              // "running" would refuse too, but for a reason nobody measured.
-              activity: undefined,
-              alive: s.alive,
-            })),
+            value: {
+              live: live.map(asRecord),
+              canonical: live.filter((s) => canonicalIds.has(s.pid)).map(asRecord),
+              partial: outcome.partial,
+            },
           };
         } finally {
           paths.dispose();
@@ -818,7 +831,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             // `notApplicable` is not a successful read of no records. It is the
             // registry saying its question did not arise, and the proof it
             // feeds must report unproven rather than "nobody is here".
-            sessions: sessions.then((read) => (read.ok === true ? { ok: true, value: read.value } : { ok: false })),
+            // The UNDEDUPED live records, not the canonical ones: a duplicate
+            // that loses the registry's selection is still a live pid rooted in
+            // that directory, and this proof asks whether any process is there.
+            // `partial` travels with them — a scan that skipped a file it could
+            // not read cannot prove absence (round-1 W1).
+            sessions: sessions.then((read) =>
+              read.ok === true ? { ok: true, value: read.value.live, partial: read.value.partial } : { ok: false },
+            ),
           },
           {
             git: (args, cwd) => worktreeTreeDeps.runner.run(args, cwd),

@@ -101,7 +101,21 @@ export interface ClaudeSessionRecord extends RunningClaudeSession {
   alive: boolean;
 }
 
-export type SessionRecordsOutcome = { kind: "ok"; records: ClaudeSessionRecord[] } | { kind: "failed"; reason: string };
+export type SessionRecordsOutcome =
+  | {
+      kind: "ok";
+      records: ClaudeSessionRecord[];
+      /**
+       * A candidate `<pid>.json` was skipped because it could not be READ.
+       *
+       * The records are still the honest answer to "what did we see", but they
+       * are not the whole directory, and a consumer that reads absence as proof
+       * must say `unproven` instead. A malformed payload is NOT partial: that
+       * file was read and is not a record (round-1 W1).
+       */
+      partial: boolean;
+    }
+  | { kind: "failed"; reason: string };
 
 /** Injectable liveness probe — kept separate from fs so tests stay process-free. */
 export interface RunningSessionsDeps {
@@ -249,11 +263,12 @@ export async function listClaudeSessionRecords(
     names = await fs.readdir(dir);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { kind: "ok", records: [] }; // never run here → genuinely none
+      return { kind: "ok", records: [], partial: false }; // never run here → genuinely none
     }
     return { kind: "failed", reason: describeReadFailure(err) };
   }
   const records: ClaudeSessionRecord[] = [];
+  let partial = false;
   for (const name of names) {
     if (!/^\d+\.json$/.test(name)) {
       continue; // strict guard (claude-code concurrentSessions.ts, #34210)
@@ -262,6 +277,10 @@ export async function listClaudeSessionRecords(
     try {
       text = await fs.readFile(path.join(dir, name), "utf8");
     } catch {
+      // One EACCES on a live owner's record would otherwise leave the scan
+      // looking complete, and the ownership proof would read the survivors as
+      // "nobody is here" about the one action that cannot be undone.
+      partial = true;
       continue;
     }
     const record = parseRecord(name, text);
@@ -269,7 +288,31 @@ export async function listClaudeSessionRecords(
       records.push({ ...record, alive: deps.isAlive(record.pid) });
     }
   }
-  return { kind: "ok", records };
+  return { kind: "ok", records, partial };
+}
+
+/**
+ * One live session per id, chosen by the registry's own rule.
+ *
+ * Exported so the removal path can take the SAME winner from records it already
+ * holds, rather than re-deriving it from selection metadata `SessionRecord`
+ * deliberately does not carry. The choice happens here, over every live record
+ * user-wide, BEFORE any caller asks which directory a session is rooted in —
+ * that order is the contract (round-1 B2, design.md D3).
+ */
+export function canonicalLiveSessions(records: readonly ClaudeSessionRecord[]): RunningClaudeSession[] {
+  const bySession = new Map<string, RunningClaudeSession>();
+  for (const record of records) {
+    if (!record.alive) {
+      continue; // stale (crashed/exited, ESRCH) → ignore
+    }
+    const { alive: _alive, ...entry } = record;
+    const existing = bySession.get(entry.sessionId);
+    if (!existing || winsDedupe(entry, existing)) {
+      bySession.set(entry.sessionId, entry);
+    }
+  }
+  return [...bySession.values()];
 }
 
 /**
@@ -286,18 +329,7 @@ export async function listRunningClaudeSessions(
   if (outcome.kind !== "ok") {
     return outcome;
   }
-  const bySession = new Map<string, RunningClaudeSession>();
-  for (const record of outcome.records) {
-    if (!record.alive) {
-      continue; // stale (crashed/exited, ESRCH) → ignore
-    }
-    const { alive: _alive, ...entry } = record;
-    const existing = bySession.get(entry.sessionId);
-    if (!existing || winsDedupe(entry, existing)) {
-      bySession.set(entry.sessionId, entry);
-    }
-  }
-  return { kind: "ok", sessions: [...bySession.values()] };
+  return { kind: "ok", sessions: canonicalLiveSessions(outcome.records) };
 }
 
 /** The reason shown verbatim in the stale affordance, so it names the real cause. */

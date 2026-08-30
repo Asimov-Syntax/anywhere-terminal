@@ -191,6 +191,27 @@ export interface SessionRecord {
   alive: boolean;
 }
 
+/**
+ * One scan, two views.
+ *
+ * `live` is undeduped on purpose: the ownership proof asks whether ANY live
+ * process is rooted here, and a duplicate that loses the canonical selection is
+ * still a live pid in that directory.
+ */
+export interface SessionRead {
+  /** Every live record, undeduped — the ownership proof's evidence. */
+  live: readonly SessionRecord[];
+  /** One record per session id, chosen before containment. */
+  canonical: readonly SessionRecord[];
+  /**
+   * The scan skipped a candidate file it could not read.
+   *
+   * Both views are true about what was seen; neither is a complete picture of
+   * the directory, so absence proves nothing (round-1 W1).
+   */
+  partial: boolean;
+}
+
 export interface RemovalInput {
   target: WorktreeInfo;
   /** Every registered worktree of the same repository, including the target. */
@@ -199,13 +220,14 @@ export interface RemovalInput {
   /** Rows the presence projection attributed to the target. */
   rows: readonly AttributedRow[];
   /**
-   * Every well-formed registry record, live or not — not the live ones.
+   * The two views one registry scan yields (design.md D3).
    *
-   * The live filter is applied here rather than by the producer so one read can
-   * serve both this refusal and the ownership proof, which is about the records
-   * this filter discards (design.md D3).
+   * `canonical` is what refuses. The winner per session id is chosen over every
+   * live record USER-WIDE and only then tested for containment; choosing it
+   * from the records already inside the target reverses that order and can
+   * refuse a removal the registry's own canonical record does not (round-1 B2).
    */
-  sessions: SourceRead<readonly SessionRecord[]>;
+  sessions: SourceRead<SessionRead>;
   /**
    * Registry identities a pane of THIS window claimed, mapped to that pane.
    *
@@ -298,13 +320,12 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
     return paneId !== undefined && idlePanesHere.has(paneId);
   };
 
-  // The live filter and the dedupe both used to live in the producer, and both
-  // land here unchanged: a dead record does not refuse anything, and one
-  // session id is one session however many records carry it.
-  const externalHere = dedupeBySessionId(
-    (input.sessions.ok === true ? input.sessions.value : []).filter(
-      (s) => s.alive && isPathInside(s.cwd, target.id) && !heldHere(s.entryId),
-    ),
+  // Containment and the pane claim only. The winner per session id was already
+  // chosen, over every live record user-wide, before this module saw them —
+  // deduping the survivors here instead would pick a record the registry does
+  // not consider canonical (round-1 B2).
+  const externalHere = (input.sessions.ok === true ? input.sessions.value.canonical : []).filter(
+    (s) => isPathInside(s.cwd, target.id) && !heldHere(s.entryId),
   );
   const liveExternalSessionIds = externalHere
     .filter((s) => s.activity !== "idle" && s.activity !== "exited")
@@ -344,17 +365,6 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
       proofs: input.proofs,
     },
   };
-}
-
-/** First record per session id, in the order they arrived. */
-function dedupeBySessionId(records: readonly SessionRecord[]): readonly SessionRecord[] {
-  const first = new Map<string, SessionRecord>();
-  for (const record of records) {
-    if (!first.has(record.sessionId)) {
-      first.set(record.sessionId, record);
-    }
-  }
-  return [...first.values()];
 }
 
 /**

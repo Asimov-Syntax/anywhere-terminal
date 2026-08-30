@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  canonicalLiveSessions,
   indexRunningSessions,
   isHeadlessSession,
   listClaudeSessionRecords,
@@ -477,5 +478,55 @@ describe("listClaudeSessionRecords — what the registry says, including what ha
     const outcome = await listClaudeSessionRecords(opts(), aliveDeps([4007]));
 
     expect(outcome.kind === "ok" && outcome.records.map((r) => r.sessionId)).toEqual(["s-ok"]);
+    // Read and rejected is not "could not read": the file was seen in full and
+    // is not a record, so the scan is still complete (round-1 W1).
+    expect(outcome.kind === "ok" && outcome.partial).toBe(false);
+  });
+
+  it("a candidate it could not READ makes the scan partial", async () => {
+    await writePidFile(4008, { pid: 4008, sessionId: "s-ok", cwd: "/repo/wt-a" });
+    const unreadable = path.join(sessionsDir, "4009.json");
+    await fs.writeFile(unreadable, "{}", "utf8");
+    await fs.chmod(unreadable, 0o000);
+
+    const outcome = await listClaudeSessionRecords(opts(), aliveDeps([4008]));
+
+    expect(outcome.kind === "ok" && outcome.records.map((r) => r.sessionId)).toEqual(["s-ok"]);
+    expect(outcome.kind === "ok" && outcome.partial).toBe(true);
+  });
+
+  it("a clean scan is not partial", async () => {
+    await writePidFile(4010, { pid: 4010, sessionId: "s-ok", cwd: "/repo/wt-a" });
+
+    const outcome = await listClaudeSessionRecords(opts(), aliveDeps([4010]));
+
+    expect(outcome.kind === "ok" && outcome.partial).toBe(false);
+  });
+});
+
+describe("canonicalLiveSessions — the winner is chosen before anyone asks where it is rooted", () => {
+  const rec = (over: Record<string, unknown>) =>
+    ({
+      pid: 1,
+      sessionId: "s-1",
+      cwd: "/elsewhere",
+      alive: true,
+      ...over,
+    }) as Parameters<typeof canonicalLiveSessions>[0][number];
+
+  it("picks the interactive record over a headless one rooted elsewhere", () => {
+    // The removal path needs THIS winner, taken over every live record
+    // user-wide. Re-deriving it downstream from the records inside one
+    // directory picks a different session (round-1 B2).
+    const headlessInside = rec({ pid: 2, cwd: "/repo/wt-a", entrypoint: "sdk-ts" });
+    const interactiveOutside = rec({ pid: 3, cwd: "/elsewhere" });
+
+    const winners = canonicalLiveSessions([headlessInside, interactiveOutside]);
+
+    expect(winners.map((w) => w.pid)).toEqual([3]);
+  });
+
+  it("drops a record whose process is gone", () => {
+    expect(canonicalLiveSessions([rec({ pid: 4, alive: false })])).toEqual([]);
   });
 });

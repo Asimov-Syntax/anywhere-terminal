@@ -119,6 +119,30 @@ describe("the ownership proof", () => {
     expect(proofs.ownerGone).toBe("passed");
   });
 
+  it("is unproven when the scan skipped a file it could not read", async () => {
+    // One EACCES on the live owner's own record would otherwise leave the
+    // survivors looking like the whole directory, and "we saw nobody" would be
+    // reported as "nobody is here" about the one action that cannot be undone
+    // (round-1 W1).
+    const proofs = await readOrphanProofs(
+      { path: WT, locked: false, sessions: { ok: true, value: [], partial: true } },
+      deps(),
+    );
+
+    expect(proofs.ownerGone).toBe("unproven");
+  });
+
+  it("still fails on a partial scan that DID find a live owner", async () => {
+    // A live owner found is a fact; an incomplete scan cannot weaken it, and
+    // downgrading it to unproven would offer Force over a running session.
+    const proofs = await readOrphanProofs(
+      { path: WT, locked: false, sessions: { ok: true, value: [record()], partial: true } },
+      deps(),
+    );
+
+    expect(proofs.ownerGone).toBe("failed");
+  });
+
   it("fails when one record rooted here is alive", async () => {
     const proofs = await readOrphanProofs(
       { path: WT, locked: false, sessions: { ok: true, value: [record({ alive: false }), record()] } },

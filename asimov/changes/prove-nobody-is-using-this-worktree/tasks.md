@@ -92,7 +92,7 @@
     4. Cover in `src/worktree/orphanProofs.test.ts`: a slashed default resolves whole and beats a competing local `main`; a `--short` answer without the `origin/` prefix is refused; a stat that never returns answers unproven rather than hanging.
   - **Boundary**: no new invariant owner — the lock deadline is one bounded read answering unproven, NOT the shared in-flight read registry WT-013.1 round-5 W3 needs, which stays open and unwaived
 
-- [ ] 4_2 Round-1 fixes: B2, B3(a), W1 — one scan, two views, and a partial scan that says so
+- [x] 4_2 Round-1 fixes: B2, B3(a), W1 — one scan, two views, and a partial scan that says so — verified: pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md D3; .reviews/round-1.md B2, B3, W1
   - **Acceptance**:
@@ -103,5 +103,6 @@
     2. `src/extension.ts`'s proof producer takes the one raw read and passes both views: the raw records (dead included) for `ownerGone`, and the canonical live list for refusal. `paths.prepare` resolves only the canonical live set, so a long-dead crash record is retained as evidence and never realpathed (B3a).
     3. `src/worktree/worktreeBlockers.ts` drops `dedupeBySessionId` and the live prefilter — it is handed the canonical list as `evaluateRemoval` always was. Selecting the winner globally and only then testing containment is the ORDER 2_1's Boundary requires; the first-record map reversed it (B2).
     4. `listClaudeSessionRecords` carries scan completeness beside the records: a candidate `<pid>.json` whose `readFile` rejects marks the scan partial. `src/worktree/orphanProofs.ts` answers `unproven` on a partial scan rather than `passed` — one EACCES on a live owner's record must not read as "nobody is here" about the one action that cannot be undone. Malformed payloads stay non-records under 1_1's approved parser contract, and the live reader's own behaviour is unchanged (W1).
-    5. Cover in `src/worktree/worktreeBlockers.test.ts`, `src/vault/readers/runningSessions.test.ts` and `src/worktree/orphanProofs.test.ts`: a duplicate session id whose interactive record is outside the target and whose headless record is inside does NOT refuse; a dead record's cwd is never resolved; a skipped unreadable candidate yields `unproven`; a clean scan still yields `passed`.
+    5. `src/providers/WorktreeHost.ts` and `src/providers/WorktreeHost.actions.test.ts` carry the widened `removalFacts` signature — the host declares the producer's return type, so the two-view shape surfaces there even though the host reads neither view.
+    6. Cover in `src/worktree/worktreeBlockers.test.ts`, `src/vault/readers/runningSessions.test.ts` and `src/worktree/orphanProofs.test.ts`: a duplicate session id whose interactive record is outside the target and whose headless record is inside does NOT refuse; a dead record's cwd is never resolved; a skipped unreadable candidate yields `unproven`; a clean scan still yields `passed`.
   - **Boundary**: `SessionRecord` gains no selection metadata — `headless`, `startedAt` and `pid` stay out of it, because re-deriving the winner downstream would put the rule in a second home (D3)
