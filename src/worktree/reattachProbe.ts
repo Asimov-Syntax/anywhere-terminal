@@ -2,6 +2,8 @@
 // See: asimov/changes/resolve-a-selection-before-the-create-runs/design.md D3
 //      docs/design/worktree-create.md § 2.3
 
+import { isAbsolute, join, resolve } from "node:path";
+
 /**
  * What a `.git` entry in a candidate directory turned out to be.
  *
@@ -80,4 +82,49 @@ export async function probeReattach(subject: ReattachSubject, deps: ReattachProb
   }
 
   return { kind: "offer", repairPath: subject.repairPath, expectedOid: head };
+}
+
+/** The two filesystem reads a `.git` entry needs, injected so this is testable. */
+export interface GitLinkFs {
+  /** `null` when the path is not there. Never throws. */
+  lstat(p: string): Promise<{ isDirectory(): boolean } | null>;
+  /** `null` when the file could not be read. Never throws. */
+  readFile(p: string): Promise<string | null>;
+}
+
+const GITDIR_PREFIX = "gitdir:";
+
+/**
+ * Classify a candidate directory's `.git`.
+ *
+ * The `gitdir:` value is git's own two-way link and may be written relative to
+ * the worktree — resolved against the WORKTREE rather than the process cwd,
+ * because a relative path resolved against the wrong base names a directory
+ * that does not exist and would report a healthy link as adopt's state.
+ *
+ * A `.git` file that names no gitdir is `unreadable`, not a link with an empty
+ * target: guessing one would point the existence check at a path nobody wrote.
+ */
+export async function readGitLink(worktreePath: string, fs: GitLinkFs): Promise<GitLink> {
+  const dotGit = join(worktreePath, ".git");
+  const info = await fs.lstat(dotGit);
+  if (info === null) {
+    return { kind: "absent" };
+  }
+  if (info.isDirectory()) {
+    return { kind: "directory" };
+  }
+  const text = await fs.readFile(dotGit);
+  if (text === null) {
+    return { kind: "unreadable" };
+  }
+  const named = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(GITDIR_PREFIX));
+  const gitdir = named?.slice(GITDIR_PREFIX.length).trim() ?? "";
+  if (gitdir.length === 0) {
+    return { kind: "unreadable" };
+  }
+  return { kind: "file", gitdir: isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir) };
 }

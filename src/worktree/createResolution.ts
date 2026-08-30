@@ -2,19 +2,10 @@
 // See: asimov/changes/resolve-a-selection-before-the-create-runs/design.md D2, D3, D4
 //      docs/design/worktree-create.md § 2, § 2.0, § 2.3
 
-import type { DestinationDisposition } from "../types/messages";
+import type { DestinationDisposition, ResolvedDisposition } from "../types/messages";
 import type { WorktreeRef } from "./repoRefs";
 
-/**
- * What the resolution says a destination already holds.
- *
- * Narrower than the wire's `DestinationDisposition` on purpose: that type's
- * `debris` variant carries a `DebrisAuthorization`, and this one has no field a
- * delete could be built from. A probe is sent on every settled edit, so a
- * reported disposition that could authorize a removal would hand one out to
- * nobody's request (design.md D4).
- */
-export type ResolvedDisposition = { kind: "free" } | { kind: "debris" };
+export type { ResolvedDisposition };
 
 /** The fields of a `WorktreeInfo` that answer "what holds this branch?". */
 export interface ResolutionWorktree {

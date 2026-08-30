@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type GitLink, probeReattach, type ReattachProbeDeps } from "./reattachProbe";
+import { type GitLink, type GitLinkFs, probeReattach, type ReattachProbeDeps, readGitLink } from "./reattachProbe";
 
 const SUBJECT = { repairPath: "/wt/stale", branchOid: "abc123" };
 
@@ -81,5 +81,73 @@ describe("probeReattach", () => {
     await probeReattach(SUBJECT, d);
 
     expect(d.asked.some((a) => a.startsWith("head:"))).toBe(false);
+  });
+});
+
+describe("readGitLink", () => {
+  function fs(over: Partial<GitLinkFs> = {}): GitLinkFs {
+    return { lstat: async () => null, readFile: async () => null, ...over };
+  }
+
+  it("resolves a relative `gitdir:` against the worktree, not the process cwd", async () => {
+    expect(
+      await readGitLink(
+        "/repo/wt/stale",
+        fs({
+          lstat: async () => ({ isDirectory: () => false }),
+          readFile: async () => "gitdir: ../../.git/worktrees/stale\n",
+        }),
+      ),
+      // Against the WORKTREE. Resolved against the process cwd this would name
+      // a directory under wherever the extension host happens to be running.
+    ).toEqual({ kind: "file", gitdir: "/repo/.git/worktrees/stale" });
+  });
+
+  it("keeps an absolute `gitdir:` as written", async () => {
+    expect(
+      await readGitLink(
+        "/wt/stale",
+        fs({
+          lstat: async () => ({ isDirectory: () => false }),
+          readFile: async () => "gitdir: /repo/.git/worktrees/stale",
+        }),
+      ),
+    ).toEqual({ kind: "file", gitdir: "/repo/.git/worktrees/stale" });
+  });
+
+  it("calls a `.git` DIRECTORY a directory — a repository is not a linked worktree", async () => {
+    expect(await readGitLink("/repo", fs({ lstat: async () => ({ isDirectory: () => true }) }))).toEqual({
+      kind: "directory",
+    });
+  });
+
+  it("calls a missing `.git` absent, which is not the same as unreadable", async () => {
+    expect(await readGitLink("/wt/none", fs())).toEqual({ kind: "absent" });
+  });
+
+  it("answers unreadable when the file is there but cannot be read", async () => {
+    expect(await readGitLink("/wt/stale", fs({ lstat: async () => ({ isDirectory: () => false }) }))).toEqual({
+      kind: "unreadable",
+    });
+  });
+
+  it("answers unreadable when the file names no gitdir at all", async () => {
+    // A `.git` file with other content is not a link we can follow, and
+    // guessing one would point `adminDirExists` at a path nobody wrote.
+    expect(
+      await readGitLink(
+        "/wt/stale",
+        fs({ lstat: async () => ({ isDirectory: () => false }), readFile: async () => "something else\n" }),
+      ),
+    ).toEqual({ kind: "unreadable" });
+  });
+
+  it("answers unreadable for a `gitdir:` with nothing after it", async () => {
+    expect(
+      await readGitLink(
+        "/wt/stale",
+        fs({ lstat: async () => ({ isDirectory: () => false }), readFile: async () => "gitdir:   \n" }),
+      ),
+    ).toEqual({ kind: "unreadable" });
   });
 });

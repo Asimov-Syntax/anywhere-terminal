@@ -1329,6 +1329,55 @@ describe("the create a toolbar with no repository opens", () => {
     expect(applied).toEqual([REPO_A]);
   });
 
+  it("[2_1] a resolution answering a PREVIOUS opening is dropped, and the current one is kept", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.openCreate();
+
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: REPO_A,
+      token: 1,
+      query: "feat",
+      mode: { kind: "reuse" },
+      freePath: "/trees/stale",
+    });
+
+    expect(h.controller.resolutionFor(REPO_A), "a superseded resolution was kept").toBeUndefined();
+
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: REPO_A,
+      token: 2,
+      query: "feat",
+      mode: { kind: "fresh" },
+      freePath: "/trees/fresh",
+    });
+
+    expect(h.controller.resolutionFor(REPO_A)).toMatchObject({ mode: { kind: "fresh" }, freePath: "/trees/fresh" });
+  });
+
+  it("[2_1] a reopening drops the resolution the previous form was holding", () => {
+    // Kept on the same terms as the branch list: a resolution seeded from the
+    // previous form describes a repository state that may have moved, and the
+    // honest opening state is "not told yet".
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: REPO_A,
+      token: 1,
+      query: "feat",
+      mode: { kind: "fresh" },
+      freePath: "/trees/fresh",
+    });
+    expect(h.controller.resolutionFor(REPO_A), "the setup never stored anything to clear").toBeDefined();
+
+    h.controller.openCreate();
+
+    expect(h.controller.resolutionFor(REPO_A)).toBeUndefined();
+  });
+
   it("[1_2][r1 W2] a list that outlived a dialog that really opened and closed changes nothing", () => {
     // The round-1 version asserted this with no dialog ever opened, so
     // `applyRefs` was null for a reason the test did not name — it could not
@@ -1993,7 +2042,25 @@ describe("the destination follows the branch the user typed", () => {
     const h = ready();
     dialogDeps(h).onBranchChange(REPO, "feat/login");
 
-    expect(h.posts).toEqual([{ type: "requestWorktreeCreateDefaults", repoId: REPO, branch: "feat/login" }]);
+    // Two questions about one settled edit: where the create would GO, and
+    // what it would DO. Still exhaustive — nothing else is asked.
+    expect(h.posts).toEqual([
+      { type: "requestWorktreeCreateDefaults", repoId: REPO, branch: "feat/login" },
+      { type: "worktreeCreateProbe", repoId: REPO, token: 0, query: "feat/login" },
+    ]);
+  });
+
+  it("[2_1] rides the OPENING's token, so a probe cannot be matched to the wrong form", () => {
+    // `repoId` names a repository and `query` separates edits within one
+    // opening. Neither separates two openings of the same dialog on the same
+    // repository, which is what the token is for (design.md D1).
+    const h = ready();
+    h.controller.openCreate();
+    h.controller.openCreate();
+    h.posts.length = 0;
+    dialogDeps(h).onBranchChange(REPO, "feat/login");
+
+    expect(h.posts).toContainEqual({ type: "worktreeCreateProbe", repoId: REPO, token: 2, query: "feat/login" });
   });
 
   it("pushes an unsolicited answer into the form the user already has open", () => {

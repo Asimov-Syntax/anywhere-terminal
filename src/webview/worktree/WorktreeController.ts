@@ -12,6 +12,7 @@ import type {
   VaultLaunchTargetsMessage,
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
+  WorktreeCreateResolutionMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
   WorktreeRefsMessage,
@@ -274,6 +275,13 @@ export class WorktreeController {
    */
   private readonly repoRefs = new Map<string, WorktreeRefsMessage>();
   /**
+   * The host's answer to the last settled selection, per repository.
+   *
+   * Kept beside `repoRefs` and cleared on the same terms: a resolution seeded
+   * from the previous form describes a repository state that may have moved.
+   */
+  private readonly createResolutions = new Map<string, WorktreeCreateResolutionMessage>();
+  /**
    * Which opening of the create dialog the refs conversation belongs to.
    *
    * Bumped per open, echoed by the host, and compared on the way back — the
@@ -408,7 +416,14 @@ export class WorktreeController {
         repos: this.createRepos(),
         // The destination depends on the branch, so every settled branch edit
         // re-asks and the answer replaces the seed in place (round-3 B12).
-        onBranchChange: (repoId, branch) => deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId, branch }),
+        onBranchChange: (repoId, branch) => {
+          deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId, branch });
+          // The same settled edit, asked as the other question: the defaults
+          // answer where a create would GO, and this one answers what it would
+          // DO. Both ride the opening's token, because `repoId` names a
+          // repository and not an opening (design.md D1).
+          deps.postMessage({ type: "worktreeCreateProbe", repoId, token: this.refsToken, query: branch });
+        },
         bindDefaults: (apply) => {
           this.applyCreateDefaults = apply;
         },
@@ -698,6 +713,7 @@ export class WorktreeController {
     // form describes a repository state that may have moved, and the honest
     // opening state is "not told yet".
     this.repoRefs.clear();
+    this.createResolutions.clear();
     this.refsToken += 1;
     this.pendingCreate = {
       // Kept so a create that cannot open can name what it was waiting on: the
@@ -1012,6 +1028,26 @@ export class WorktreeController {
     }
     this.repoRefs.set(msg.repoId, msg);
     this.applyRefs?.(msg.repoId, { list: msg.refs, truncated: msg.truncated });
+  }
+
+  /**
+   * What the host says a create against the settled selection would do.
+   *
+   * Dropped on the token for the same reason `handleRefs` drops on it: a dialog
+   * reopened on the same repository has the same `repoId` and may have the same
+   * `query` on the wire twice, so neither can separate two openings. `query`
+   * echoes for staleness WITHIN one opening, which the form applies.
+   */
+  handleCreateResolution(msg: WorktreeCreateResolutionMessage): void {
+    if (msg.token !== this.refsToken) {
+      return;
+    }
+    this.createResolutions.set(msg.repoId, msg);
+  }
+
+  /** The resolution currently held for a repository, if one has landed. */
+  resolutionFor(repoId: string): WorktreeCreateResolutionMessage | undefined {
+    return this.createResolutions.get(repoId);
   }
 
   /** The host's create destination for one repo, and the form it was asked for. */

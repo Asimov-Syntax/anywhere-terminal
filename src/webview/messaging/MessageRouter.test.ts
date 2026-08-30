@@ -224,4 +224,40 @@ describe("the worktree create dialog's answers reach the controller", () => {
       dispatch({ type: "worktreeRefs", repoId: "/repo/.git", token: 1, refs: [], truncated: false }),
     ).not.toThrow();
   });
+
+  // Declared, posted and handled is only three quarters of a wire:
+  // `requestWorktreeSubagents` shipped inert with every module test green
+  // because nothing routed it. This is the fourth quarter.
+  it("routes the create resolution", () => {
+    const onWorktreeCreateResolution = vi.fn();
+    const dispatch = createMessageRouter({ ...createMockHandlers(), onWorktreeCreateResolution });
+    const msg = {
+      type: "worktreeCreateResolution",
+      repoId: "/repo/.git",
+      token: 3,
+      query: "feat/search",
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" },
+      freePath: "/trees/repo-feat-search",
+      occupiedCandidate: { path: "/trees/repo", disposition: { kind: "debris" } },
+    } as const;
+
+    dispatch(msg);
+
+    expect(onWorktreeCreateResolution).toHaveBeenCalledWith(msg);
+  });
+
+  it("leaves an unhandled create resolution alone rather than throwing", () => {
+    const dispatch = createMessageRouter(createMockHandlers());
+
+    expect(() =>
+      dispatch({
+        type: "worktreeCreateResolution",
+        repoId: "/repo/.git",
+        token: 1,
+        query: "",
+        mode: { kind: "fresh" },
+        freePath: "/trees/repo",
+      }),
+    ).not.toThrow();
+  });
 });

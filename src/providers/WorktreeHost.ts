@@ -11,6 +11,8 @@ import type {
   DestinationDisposition,
   ExtensionToWebViewMessage,
   ProvisionModel,
+  ResolvedDisposition,
+  ResolvedMode,
   WebViewToExtensionMessage,
   WorktreeActionMessage,
   WorktreeAfterCreate,
@@ -19,11 +21,13 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeSubscriptionLevel,
 } from "../types/messages";
+import { isPathInside } from "../utils/pathBoundary";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { VaultLaunchTarget } from "../vault/types";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
+import { resolveSelection } from "../worktree/createResolution";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
 import type { OrphanProofs } from "../worktree/orphanProofs";
@@ -36,6 +40,7 @@ import type {
 } from "../worktree/presenceTypes";
 import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
 import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
+import type { ReattachVerdict } from "../worktree/reattachProbe";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
@@ -216,6 +221,17 @@ export interface WorktreeHostOptions {
    * invites two answers about one instant (offer-every-ref-in-one-box D2).
    */
   readRefs?(input: RepoRefsInput): Promise<RepoRefsRead>;
+  /**
+   * Corroborate a stale registration before a repair is offered (design.md D3).
+   *
+   * Absent — every surface but the real extension entry point — and a prunable
+   * holder resolves to `reuse` at the free path rather than to a repair offer,
+   * which is the same fail-closed the verdict's own `declined` produces.
+   *
+   * Takes the branch NAME rather than its tip: resolving `refs/heads/<branch>`
+   * is a git read, and the host holds a listing, not a ref database.
+   */
+  probeReattach?(input: { repoPath: string; branch: string; repairPath: string }): Promise<ReattachVerdict>;
 }
 
 /**
@@ -530,6 +546,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * completion from a superseded one publishes nothing.
    */
   let provisionGeneration = 0;
+  /**
+   * The branch enumeration each repository's open dialog is riding.
+   *
+   * Bounded by the number of repositories in the workspace, and each entry is
+   * replaced rather than accumulated: a repository has one open create dialog
+   * at a time, and its latest ask is the only one anything reads.
+   */
+  const refsReads = new Map<string, Promise<RepoRefsRead>>();
   const surfaceKeys = new WeakMap<WorktreeSurface, string>();
   let surfaceSeq = 0;
   const surfaceKey = (s: WorktreeSurface): string => {
@@ -1045,6 +1069,123 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   /**
+   * What a create against this selection would do, answered before submit.
+   *
+   * Every input but one is already in the host's hand — the listing answers
+   * which worktrees hold which branches and which registrations git calls
+   * stale, and the enumeration answers which branches exist. The exception is
+   * § 2.3's corroboration, which is a filesystem read and runs ONLY for a
+   * candidate the classification already produced, so the common path adds no
+   * I/O at all (design.md D2, D3).
+   */
+  async function answerCreateProbe(
+    surface: WorktreeSurface,
+    msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>,
+    repo: WorktreeRepo,
+  ): Promise<void> {
+    const linked = repo.worktrees.filter((w) => w.id !== repo.mainPath).map((w) => w.id);
+    const root = resolveCreateRoot({
+      configured: options.createRoot?.() ?? { value: undefined, explicitlySet: false },
+      linkedWorktrees: linked,
+      mainWorktree: repo.mainPath,
+    });
+    const registered = new Set(repo.worktrees.map((w) => w.id));
+    const taken = (candidate: string): boolean => registered.has(candidate) || (options.exists?.(candidate) ?? false);
+
+    // An override is honoured only inside the configured root. The answer
+    // states whether a path is occupied, and assessing an arbitrary one would
+    // turn a probe the form sends per edit into an existence oracle for the
+    // whole filesystem.
+    const override =
+      msg.candidatePath !== undefined && isPathInside(msg.candidatePath, root) ? msg.candidatePath : undefined;
+    const slug = sanitizeBranchForPath(msg.query);
+    const base = slug.length > 0 ? `${repo.label}-${slug}` : repo.label;
+    const bare = override ?? suggestFreePath(root, base, () => false);
+    const freePath = taken(bare) ? suggestFreePath(root, base, taken) : bare;
+    // Present only when the suffixing actually skipped something. `debris` is
+    // the directory nobody registered — a registered worktree is not debris,
+    // and nothing here mints an authorization to delete either (D4).
+    const occupiedCandidate =
+      freePath === bare
+        ? undefined
+        : {
+            path: bare,
+            disposition: dispositionOf(registered.has(bare)),
+          };
+
+    // The enumeration the dialog's opening already took, not a second one: a
+    // probe per settled edit that re-asks git is the per-keystroke read D2
+    // rejected, and two reads of one repository can disagree about one instant.
+    //
+    // Nothing to join, or a read that failed, answers `refs: []`, which
+    // resolves every query to `fresh`. That is the documented fail-OPEN: a
+    // branch we cannot confirm exists is treated as one to create, and git's
+    // own refusal at `add` is the backstop, surfaced verbatim (§ 6).
+    const read = await refsReads.get(msg.repoId)?.catch(() => undefined);
+    const refs = read !== undefined && read.ok === true ? read.refs : [];
+    const selection = resolveSelection({ query: msg.query, refs, worktrees: repo.worktrees });
+
+    let mode: ResolvedMode;
+    switch (selection.mode.kind) {
+      case "none":
+      case "fresh":
+        mode = { kind: "fresh" };
+        break;
+      case "reuse":
+        mode = { kind: "reuse" };
+        break;
+      case "reattachCandidate": {
+        // A candidate is a claim, not an answer. Failing corroboration does NOT
+        // degrade to `fresh` at the same path — that would suffix a
+        // near-duplicate beside a checkout already there — it falls back to the
+        // FREE path the suffixing already computed (D3).
+        const verdict = await corroborate(repo, msg.query, selection.mode.repairPath);
+        mode =
+          verdict?.kind === "offer"
+            ? { kind: "reattach", repairPath: verdict.repairPath, expectedOid: verdict.expectedOid }
+            : verdict?.kind === "adopt"
+              ? { kind: "adopt", adoptPath: verdict.adoptPath }
+              : { kind: "fresh" };
+        break;
+      }
+    }
+
+    // The surface may have detached while git was answering. Posting to a dead
+    // one is at best wasted, and the form it described is gone.
+    if (disposed || !surfaces.has(surface)) {
+      return;
+    }
+    surface.post({
+      type: "worktreeCreateResolution",
+      repoId: msg.repoId,
+      token: msg.token,
+      query: msg.query,
+      mode,
+      freePath,
+      ...(occupiedCandidate === undefined ? {} : { occupiedCandidate }),
+      ...(selection.blockedBy === undefined ? {} : { blockedBy: selection.blockedBy }),
+    });
+  }
+
+  /** A registered worktree is not debris; a directory nobody registered is. */
+  function dispositionOf(isRegistered: boolean): ResolvedDisposition {
+    return isRegistered ? { kind: "free" } : { kind: "debris" };
+  }
+
+  /** § 2.3 conditions 2 and 3, or `undefined` when nobody can ask them. */
+  async function corroborate(
+    repo: WorktreeRepo,
+    branch: string,
+    repairPath: string,
+  ): Promise<ReattachVerdict | undefined> {
+    const probe = options.probeReattach;
+    if (probe === undefined) {
+      return undefined;
+    }
+    return probe({ repoPath: repo.mainPath, branch, repairPath }).catch(() => undefined);
+  }
+
+  /**
    * Perform one read-only action, or nothing at all.
    *
    * Every branch resolves against what the host currently holds and hands the
@@ -1151,6 +1292,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (unlock && repoId !== undefined && actionPath(msg.worktreeId, false) !== undefined) {
           perform(() => unlock({ repoId, worktreeId: msg.worktreeId, origin: surface }));
         }
+        return;
+      }
+      case "worktreeCreateProbe": {
+        const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
+        if (repo === undefined) {
+          return;
+        }
+        void answerCreateProbe(surface, msg, repo);
         return;
       }
       case "requestWorktreeCreateDefaults": {
@@ -1265,7 +1414,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (read === undefined || repo === undefined) {
           return;
         }
-        void read({ cwd: repo.mainPath, worktrees: repo.worktrees })
+        // Kept so the probe can classify against it instead of asking git a
+        // second time for an answer the dialog's opening already paid for
+        // (design.md D2). The PROMISE rather than its value: a settle that
+        // lands before the read resolves joins this one rather than starting
+        // another. One entry per repository, replaced on every ask.
+        const inFlight = read({ cwd: repo.mainPath, worktrees: repo.worktrees });
+        refsReads.set(msg.repoId, inFlight);
+        void inFlight
           .then((answer) => {
             // The surface may have detached while git was answering. Posting to
             // a dead one is at best wasted, and the form it described is gone.
@@ -2024,6 +2180,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreePrune":
       case "requestWorktreeCreateDefaults":
       case "requestWorktreeRefs":
+      case "worktreeCreateProbe":
         handleAction(surface, msg);
         return;
       case "requestWorktreeTree":

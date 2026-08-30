@@ -27,15 +27,15 @@
     4. Cover in `src/worktree/reattachProbe.test.ts`: all three conditions passing offers the repair with the directory's OID; a `.git` DIRECTORY rather than a file is not a linked worktree; a `gitdir:` naming a missing directory answers adopt; a moved HEAD declines; an unreadable link declines rather than throwing.
   - **Boundary**: no writes and no `worktree repair` — this task decides whether to OFFER, and 3_1 acts
 
-- [ ] 2_1 The probe and its resolution travel with the opening that asked
+- [x] 2_1 The probe and its resolution travel with the opening that asked — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D1; specs/worktree-panel/spec.md#a-resolution-belonging-to-a-previous-opening-of-the-dialog-is-discarded
   - **Acceptance**:
     - Outcome: A resolution answering a previous opening is dropped rather than applied
     - Verify: unit src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
-    1. `src/types/messages.ts` gains the pair named in design.md § Interfaces, and `worktreeCreateProbe` joins `WORKTREE_MESSAGE_TYPES`.
-    2. `src/providers/WorktreeHost.ts` answers it from 1_1 and 1_2 over the runner and listing it already holds, echoing `token` and `query` unchanged.
+    1. `src/types/messages.ts` gains the pair named in design.md § Interfaces, and `worktreeCreateProbe` joins `WORKTREE_MESSAGE_TYPES`. `ResolvedDisposition` moves there from `src/worktree/createResolution.ts`, which imports it back — it is a wire type now, and leaving its definition below the wire would make messages.ts import upward from the module that consumes it.
+    2. `src/providers/WorktreeHost.ts` answers it from 1_1 and 1_2 over the listing it already holds, echoing `token` and `query` unchanged. 1_2's corroboration reaches it as an injected `probeReattach` option, assembled in `src/extension.ts` beside `readRefs` — the host holds a listing, not a ref database or a filesystem. Reading a `.git` entry into 1_2's `GitLink` is real parsing with real edge cases, so it lands in `src/worktree/reattachProbe.ts` beside the type it produces, over injected filesystem primitives, and is covered in `src/worktree/reattachProbe.test.ts`. The host's own answer is covered in `src/providers/WorktreeHost.actions.test.ts`, beside the refs pair it mirrors.
     3. `src/webview/worktree/WorktreeController.ts` sends the probe per settled selection and drops an answer whose token is not the current opening's — the same guard the refs pair carries, reusing the existing counter rather than minting a second one.
     4. `src/providers/TerminalViewProvider.worktree.test.ts` holds the routing-completeness fixture keyed on `WORKTREE_MESSAGE_TYPES`; a new inbound type is a compile error there until it has a sample.
     5. The inbound half is only half the wire: `src/webview/messaging/MessageRouter.ts` and `src/webview/main.ts` route the ANSWER, and `src/webview/messaging/MessageRouter.test.ts` covers it. Declared-posted-handled but unrouted is how `requestWorktreeSubagents` shipped inert with every unit test green.

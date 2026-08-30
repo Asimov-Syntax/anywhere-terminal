@@ -1056,6 +1056,56 @@ export interface WorktreeRefsRequestMessage {
   token: number;
 }
 
+/**
+ * What a resolution says a destination already holds — a REPORT, never an
+ * authorization (design.md D4 of resolve-a-selection-before-the-create-runs).
+ *
+ * Narrower than {@link DestinationDisposition} on purpose: that type's `debris`
+ * variant carries a `DebrisAuthorization`, and this one has no field a delete
+ * could be built from. A probe is sent on every settled edit, so a reported
+ * disposition that could authorize a removal would hand one out to nobody's
+ * request.
+ */
+export type ResolvedDisposition = { kind: "free" } | { kind: "debris" };
+
+/**
+ * The classification, carrying only what the form needs to build a
+ * `WorktreeCreateMode` — never the mode itself, because the form owns the base
+ * ref and the detached choice and the resolver does not see them.
+ *
+ * `adopt` is named so the resolver can REPORT the state it detects; the form
+ * does not offer it, and WT-012.15 owns what to do about it.
+ */
+export type ResolvedMode =
+  | { kind: "fresh" }
+  | { kind: "reuse" }
+  | { kind: "reattach"; repairPath: string; expectedOid: string }
+  | { kind: "adopt"; adoptPath: string };
+
+/**
+ * WebView → Extension: what would a create against this selection actually do?
+ *
+ * Sent per SETTLED selection rather than per keystroke. `query` echoes back so
+ * the form can tell a current answer from one it has typed past, and `token`
+ * says which OPENING asked — `repoId` names a repository, not an opening, so a
+ * dialog closed and reopened on the same repository leaves two conversations on
+ * the wire whose answers are otherwise indistinguishable (design.md D1).
+ */
+export interface WorktreeCreateProbeMessage {
+  type: "worktreeCreateProbe";
+  repoId: string;
+  token: number;
+  query: string;
+  /**
+   * A destination to assess INSTEAD of the derived candidate.
+   *
+   * Refused host-side when it is not inside the configured create root: the
+   * answer states whether a path is occupied, and honouring an arbitrary one
+   * would turn the probe into an existence oracle for the whole filesystem.
+   */
+  candidatePath?: string;
+}
+
 export interface WorktreeRemoveRequestMessage {
   type: "worktreeRemove";
   worktreeId: string;
@@ -1287,6 +1337,7 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateRequestMessage
   | WorktreeCreateDefaultsRequestMessage
   | WorktreeRefsRequestMessage
+  | WorktreeCreateProbeMessage
   | WorktreeRemoveRequestMessage
   | WorktreeLockMessage
   | WorktreeUnlockMessage
@@ -1321,6 +1372,7 @@ export type WorktreeInboundMessage = Extract<
 export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
   "requestWorktreeRefs",
+  "worktreeCreateProbe",
   "requestWorktreeTree",
   "requestWorktreeSubagents",
   "worktreeViewVisibility",
@@ -2152,6 +2204,33 @@ export interface WorktreeRefsMessage {
 }
 
 /**
+ * Extension → WebView: what a create against `query` would actually do.
+ *
+ * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
+ */
+export interface WorktreeCreateResolutionMessage {
+  type: "worktreeCreateResolution";
+  repoId: string;
+  /** Echoed from the request. An answer below the current opening is dropped. */
+  token: number;
+  /** Echoed, so a form can tell a current answer from one it has typed past. */
+  query: string;
+  mode: ResolvedMode;
+  /** The path the create would take. Always present — every mode has one. */
+  freePath: string;
+  /**
+   * The path the suffixing SKIPPED, and what was found there.
+   *
+   * A full path rather than the directory name `worktreeCreateDefaults` carries:
+   * this is what WT-012.12 would act on, and a name is not something a removal
+   * can be aimed at.
+   */
+  occupiedCandidate?: { path: string; disposition: ResolvedDisposition };
+  /** A branch checked out elsewhere: offered disabled, never submittable. */
+  blockedBy?: { ownerPath: string };
+}
+
+/**
  * Extension → WebView: the provisioning model this create would apply, under the
  * id the selection quotes back.
  *
@@ -2176,6 +2255,7 @@ export type ExtensionToWebViewMessage =
   | WorktreeMutationResultMessage
   | WorktreeCreateDefaultsMessage
   | WorktreeRefsMessage
+  | WorktreeCreateResolutionMessage
   | WorktreeProvisionOfferMessage
   | InitMessage
   | OutputMessage

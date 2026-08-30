@@ -396,6 +396,7 @@ const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unk
   requestWorktreeTree: { type: "requestWorktreeTree" },
   requestWorktreeCreateDefaults: { type: "requestWorktreeCreateDefaults", repoId: "/repo/.git" },
   requestWorktreeRefs: { type: "requestWorktreeRefs", repoId: "/repo/.git", token: 1 },
+  worktreeCreateProbe: { type: "worktreeCreateProbe", repoId: "/repo/.git", token: 1, query: "feat" },
   requestWorktreeSubagents: EXPANSION,
   worktreeViewVisibility: { type: "worktreeViewVisibility", visible: true },
   worktreeOpenFolder: { type: "worktreeOpenFolder", worktreeId: "/repo-wt/feat", mode: "newWindow" },
