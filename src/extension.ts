@@ -795,7 +795,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // cap costs no filesystem work for a session that has said nothing.
         sessionPreview: (entryId) => sessionPreviews.preview(entryId),
         sessionPreviewLine: (entryId) => sessionPreviews.line(entryId),
-        retainSessionPreviews: (entryIds) => sessionPreviews.retain(entryIds),
         reportedSession: (paneId) => {
           const report = reportedSessions.get(paneId);
           return report === undefined

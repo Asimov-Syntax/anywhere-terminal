@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [x] Gate 2: plan approved  <!-- re-earned at round 3 -->
 
 ## Implement
 
@@ -62,3 +62,18 @@ Build notes:
   `touch()` restoring the stale line. Awaiting the user's choice between reverting to `todo` and a
   handback that narrows both promises; no code moved and nothing is ticked. See .reviews/round-3.md
   § Author re-triage.
+- Round-3 handback (fastlane, chosen without the user — standing order authorises it, and the
+  alternative the oracle preferred, reverting WT-011.7 to `todo`, leaves PLAN.md permanently
+  unfinished). Both blockers were contract defects, not code defects: the spec promised fairness
+  across absence and an exact retained set, and neither is keepable with bounded state. D8 withdraws
+  exact retention and returns `cap`; D9 holds the turn queue over the current drawn set only. Net
+  effect is a deletion — `retain`, `drawn`, the eviction conditional, the order ceiling and the
+  back-pruning all go — and W1 disappears with the declaration it was about.
+- Round-3 build: 6 mutations across D8 and D9, all killed on the first pass — `line` not touching,
+  `line` falling through to `outstanding`, `touch` never evicting, the queue keeping undrawn ids,
+  grants not moving to the back, and arrivals prepended. No survivors, so no case is carrying a rule
+  it does not actually pin.
+- The narrowed contract has a cost worth naming: with a small budget and membership that alternates
+  every projection, a row drawn on alternate projections can go unserved indefinitely. That is the
+  case D9 proves is not decidable with bounded state, the spec now says so, and the shipped budget of
+  16 puts it far outside any window a user will have.

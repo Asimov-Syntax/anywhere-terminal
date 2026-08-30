@@ -1114,7 +1114,7 @@ describe("the line a caller already has", () => {
   });
 });
 
-describe("what a caller says it is drawing", () => {
+describe("what the cap holds, and what reading keeps", () => {
   async function drawnSessions(count: number): Promise<Record<string, PreviewEntry>> {
     const entries: Record<string, PreviewEntry> = {};
     for (let i = 0; i < count; i++) {
@@ -1125,43 +1125,55 @@ describe("what a caller says it is drawing", () => {
     return entries;
   }
 
-  it("keeps every drawn session's line past what the cap alone would hold", async () => {
-    // Four drawn rows against a cap of 2. Under the LRU alone the third and
-    // fourth reads evict the first two, and the rows that lose their slot are
-    // exactly the ones a bounded projection was about to read back (round-1 B2).
-    const ids = ["codex:d0", "codex:d1", "codex:d2", "codex:d3"];
-    const svc = service(await drawnSessions(4), { cap: 2 });
-    svc.retain(ids);
-    for (const id of ids) {
-      expect(await svc.preview(id)).toBe(`answer ${id.slice("codex:d".length)}`);
-    }
-
-    const readsBefore = reads.length;
-    for (const id of ids) {
-      expect(svc.line(id)).toBe(`answer ${id.slice("codex:d".length)}`);
-    }
-    expect(reads.length).toBe(readsBefore);
-  });
-
-  it("drops a session the caller has stopped drawing", async () => {
-    const svc = service(await drawnSessions(2), { cap: 256 });
-    svc.retain(["codex:d0", "codex:d1"]);
+  it("keeps a session's line while the caller keeps reading it", async () => {
+    // Reading TOUCHES. A caller that draws every row either asks it or reads it,
+    // so the least recently touched entry is one the window has stopped drawing —
+    // which is what makes the cap aim at the right victim without being told the
+    // drawn set (D8). Without the touch, d0 is the oldest and loses its line here.
+    const svc = service(await drawnSessions(3), { cap: 2 });
     await svc.preview("codex:d0");
     await svc.preview("codex:d1");
     expect(svc.line("codex:d0")).toBe("answer 0");
 
-    // d0 is no longer drawn, so nothing is holding its line for it.
-    svc.retain(["codex:d1"]);
+    await svc.preview("codex:d2");
+    expect(svc.line("codex:d0")).toBe("answer 0");
+    expect(svc.line("codex:d1")).toBeUndefined();
+  });
+
+  it("bounds itself at the cap however many sessions are drawn", async () => {
+    const svc = service(await drawnSessions(3), { cap: 1 });
+    await svc.preview("codex:d0");
+    await svc.preview("codex:d1");
     expect(svc.line("codex:d0")).toBeUndefined();
     expect(svc.line("codex:d1")).toBe("answer 1");
   });
 
-  it("still bounds itself for a caller that declares nothing", async () => {
-    // The cap is the fallback, not dead: a caller with no drawn set gets the
-    // behaviour the service shipped with.
-    const svc = service(await drawnSessions(3), { cap: 1 });
-    await svc.preview("codex:d0");
+  it("does not hand back a line whose look has since stalled", async () => {
+    // An abandoned look keeps its entry in `outstanding` carrying the line it had
+    // BEFORE it stalled (WT-011.3, deliberately). Reading through to it would
+    // present text whose source the service has since failed to reach, so `line`
+    // reads what is held and nothing else.
+    const entries = await drawnSessions(2);
+    let lookups = 0;
+    const svc = service(entries, {
+      cap: 1,
+      entryRecheckMs: 1,
+      recheckMs: 1,
+      entry: async (entryId) => {
+        lookups += 1;
+        if (entryId === "codex:d0" && lookups > 1) {
+          await new Promise(() => {});
+        }
+        const found = entries[entryId];
+        return found ? { status: "found", entry: found } : { status: "absent" };
+      },
+    });
+    expect(await svc.preview("codex:d0")).toBe("answer 0");
+
+    clock += 60_000;
+    void svc.preview("codex:d0").catch(() => undefined);
     await svc.preview("codex:d1");
+
     expect(svc.line("codex:d0")).toBeUndefined();
   });
 });

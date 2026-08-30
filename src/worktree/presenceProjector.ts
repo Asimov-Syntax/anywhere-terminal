@@ -177,9 +177,6 @@ export interface PresenceProjectorDeps {
   /** The line a session already has, read without starting work. What a row
    *  outside the budget draws — see {@link PresenceProjectorDeps.previewBudget}. */
   sessionPreviewLine?(entryId: string): string | undefined;
-  /** Declare every session being drawn, so the service keeps a line for each
-   *  rather than approximating with an LRU it cannot aim (round-1 B2). */
-  retainSessionPreviews?(entryIds: Iterable<string>): void;
   /**
    * How many rows one projection may permit to LOOK at their transcripts. The
    * rest are still asked, and answer from what the service holds.
@@ -539,50 +536,39 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         }
       });
     }
-    // Declared even when empty: a projection that draws nothing is still a
-    // statement about what is drawn, and the service must not go on holding the
-    // last set forever.
-    deps.retainSessionPreviews?.(asked.map((a) => a.entryId));
     if (asked.length === 0) {
       previewOrder.clear();
       return;
     }
-    // The turn is a queue over row IDENTITY. An index into a list whose
-    // membership changes between projections is not a position in any stable
-    // order: budget 1 over [A,B,C] granted A then B, and the next projection
-    // drawing [A,C] computed 2 % 2 = 0 and granted A again — so C was never
-    // reached, however long the window stayed open (round-1 B1).
+    // The turn is a queue over row IDENTITY, holding exactly what is drawn now.
+    //
+    // An index into a list whose membership changes is not a position in any
+    // stable order (round-1 B1). Neither is a queue that remembers absent ids: it
+    // must be bounded, a bounded queue must eventually forget one, and a
+    // forgotten id cannot be told from an arrival when it returns — so fairness
+    // across absence is not decidable with bounded state, and both attempts at it
+    // starved one population to feed the other (round-3 B1).
+    //
+    // What this queue does keep is structural: nothing is ever inserted AHEAD of
+    // an id already in it — arrivals append, grants move to the back — so for a
+    // row drawn on every projection the count ahead never grows and falls by up
+    // to `previewBudget` each time. It reaches the front within
+    // ceil(position / previewBudget) projections.
     const drawn = new Set(asked.map((a) => a.entryId));
-    for (const { entryId } of asked) {
-      if (!previewOrder.has(entryId)) {
-        previewOrder.add(entryId);
+    for (const entryId of [...previewOrder]) {
+      if (!drawn.has(entryId)) {
+        previewOrder.delete(entryId);
       }
     }
-    // A row that stops being drawn KEEPS its place. Dropping it and re-adding it
-    // at the back is the same starvation in another shape: a row drawn every
-    // other projection would re-enter behind the row being served every time,
-    // and never reach the front.
-    //
-    // What bounds the order instead is a ceiling over the drawn set, pruned from
-    // the back — the end holds whoever was served most recently or joined last,
-    // so it is where the least claim sits.
-    const limit = drawn.size + previewBudget;
-    if (previewOrder.size > limit) {
-      const waiting = [...previewOrder];
-      for (let i = waiting.length - 1; i >= 0 && previewOrder.size > limit; i--) {
-        if (!drawn.has(waiting[i])) {
-          previewOrder.delete(waiting[i]);
-        }
-      }
+    for (const { entryId } of asked) {
+      previewOrder.add(entryId);
     }
     const mayLook = new Set<string>();
     for (const entryId of previewOrder) {
       if (mayLook.size >= previewBudget) {
         break;
       }
-      if (drawn.has(entryId)) {
-        mayLook.add(entryId);
-      }
+      mayLook.add(entryId);
     }
     // Served rows go to the back, so a row that merely stays drawn rises to the
     // front as the others take their turns.

@@ -71,26 +71,17 @@ export interface Deadline {
 export interface SessionPreviewService {
   preview(entryId: string): Promise<string | undefined>;
   /**
-   * The line this session already has, or nothing. Reads state; never creates it,
-   * never starts work, and never stands in for a confirmation.
+   * The line this session already has, or nothing. Never creates state, never
+   * starts work, and never stands in for a confirmation — but it DOES touch what
+   * it returns, which is what keeps an excluded row's line: every drawn row is
+   * either asked or read on every projection, so the least recently touched
+   * entries are the ones the window has stopped drawing (D8).
    *
    * A caller that bounds how many sessions it asks about needs the rest of them
    * to keep drawing what they last said. Skipping them would cost each one its
    * line, and asking them would defeat the bound — so they are read.
    */
   line(entryId: string): string | undefined;
-  /**
-   * Declare the sessions the caller is currently drawing. Everything outside the
-   * set is dropped; nothing inside it is evicted.
-   *
-   * The LRU below caps what is held because the service cannot otherwise know
-   * which sessions still matter. A caller that recomputes its drawn set every
-   * pass CAN know, and an exact rule beats an approximate one: past `cap` drawn
-   * rows, evicting the least recently asked drops the line a caller was about to
-   * read back (round-1 B2). `cap` stays as the rule for callers that declare
-   * nothing.
-   */
-  retain(entryIds: Iterable<string>): void;
 }
 
 interface FileStamp {
@@ -245,9 +236,9 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   const wait = deps.wait ?? defaultWait;
   const cap = Math.max(1, deps.cap ?? DEFAULT_PREVIEW_CACHE_CAP);
   const entryRecheckMs = deps.entryRecheckMs ?? DEFAULT_ENTRY_RECHECK_MS;
-  // Insertion-ordered, and re-inserted on every ask, so the front of the map is
-  // the least recently asked for. The projector holds no alive set to evict by, so
-  // the bound has to be the service's own.
+  // Insertion-ordered, and re-inserted on every ask OR read, so the front of the
+  // map is whatever the caller has gone longest without mentioning. A caller that
+  // touches every row it draws therefore evicts only rows it has stopped drawing.
   const held = new Map<string, Held>();
   // Every look that has not settled, abandoned ones included, keyed by entry id and
   // holding the entry that owns it. Deliberately NOT keyed off `held`: eviction
@@ -257,15 +248,10 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   // once per cadence tick for as long as it stayed stalled.
   const outstanding = new Map<string, Held>();
 
-  /** What the caller says it is drawing, or `null` while none has said (D5). */
-  let drawn: ReadonlySet<string> | null = null;
-
   function touch(entryId: string, entry: Held): void {
     held.delete(entryId);
     held.set(entryId, entry);
-    // A declared set is exact, so there is nothing to approximate: everything
-    // held is drawn, and dropping any of it would lose a line the caller keeps.
-    while (drawn === null && held.size > cap) {
+    while (held.size > cap) {
       const oldest = held.keys().next().value;
       if (oldest === undefined) {
         return;
@@ -432,16 +418,15 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
 
   return {
     line(entryId: string): string | undefined {
-      return (held.get(entryId) ?? outstanding.get(entryId))?.line;
-    },
-
-    retain(entryIds: Iterable<string>): void {
-      drawn = new Set(entryIds);
-      for (const entryId of [...held.keys()]) {
-        if (!drawn.has(entryId)) {
-          held.delete(entryId);
-        }
+      // `held` only. An abandoned look keeps its entry in `outstanding` with the
+      // line it had before it stalled, and reading through to it would present
+      // text whose source the service has since failed to reach.
+      const current = held.get(entryId);
+      if (current === undefined) {
+        return undefined;
       }
+      touch(entryId, current);
+      return current.line;
     },
 
     async preview(entryId: string): Promise<string | undefined> {

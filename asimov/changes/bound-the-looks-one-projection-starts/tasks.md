@@ -38,3 +38,19 @@
     5. Mirror the changed dep in `src/worktree/presenceDeps.ts` and at `src/extension.ts`.
     6. Rework the `mayLook` cases in `src/worktree/sessionPreviewService.test.ts` onto the two new entry points, and add one drawing more sessions than the cap.
     7. Cover in `src/worktree/presenceProjector.test.ts`: a row drawn throughout while others appear and disappear; a projection set that shrinks and grows again; and the shipped default budget, both above and below it.
+
+## 3. Review fixes — round 3
+
+- [x] 3_1 Narrow the two promises to what bounded state can keep — verified: pnpm exec vitest run 'src/worktree/presenceProjector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: specs/worktree-agent-presence/spec.md#a-row-the-bound-excludes-keeps-its-line, specs/worktree-agent-presence/spec.md#a-row-drawn-on-every-projection-is-looked-at-within-a-bounded-number-of-them, specs/worktree-agent-presence/spec.md#one-projection-provokes-a-bounded-number-of-transcript-looks <!-- design.md D8, D9; .reviews/round-3.md B1, B2, W1, S1 -->
+  - **Acceptance**:
+    - Outcome: a row drawn on every projection is permitted to look within a bounded number of them
+    - Verify: unit src/worktree/presenceProjector.test.ts
+  - **Plan**:
+    1. In `src/worktree/sessionPreviewService.ts`, remove the declared-set entry point and the state behind it, restoring the cache cap as the unconditional retention rule; make the synchronous read touch what it returns and read only what is held.
+    2. In `src/worktree/presenceProjector.ts`, hold the turn queue over exactly the ids drawn now: drop what is not drawn, append what is newly drawn, grant the front, move the granted to the back. Remove the ceiling and the back-pruning that retaining absent ids required.
+    3. Drop the declaration dep from `src/worktree/presenceDeps.ts` and its wiring at `src/extension.ts`.
+    4. In `src/worktree/presenceProjector.test.ts`, replace the cases that assert a place is kept across an absence with ones asserting a returning row is granted as an arrival; add a case for a row drawn on every projection among churning others.
+    5. Exercise the shipped default in `src/worktree/presenceProjector.test.ts` with no budget override: at most 16 rows permitted above it, all rows permitted at or below it (S1).
+    6. Rework the declared-set cases in `src/worktree/sessionPreviewService.test.ts` onto the cap, keeping the one that draws more sessions than the cap.

@@ -16,18 +16,28 @@ or are spread across many.
 - **WHEN** the same rows are spread one per worktree instead
 - **THEN** no more than the bound's worth of sessions look at their transcripts
 
-### Requirement: A row the bound excludes keeps its line and is looked at later
+### Requirement: A row the bound excludes keeps its line
 
-A row the bound excludes SHALL still present the line it last read, and SHALL be permitted to look on
-a later projection. No row SHALL be excluded on every projection while others are looked at
-repeatedly.
+A row the bound excludes SHALL still present the line the preview service holds for it, rather than
+losing its second line. A session the window has stopped drawing is not covered.
 
 #### Scenario: An excluded row still draws its line
 
 - **WHEN** a row that has a previously read line falls outside a projection's bound
 - **THEN** it draws that line, rather than losing its second line
 
-#### Scenario: Every row gets its turn
+### Requirement: A row drawn on every projection is looked at within a bounded number of them
+
+A row drawn on every projection SHALL be permitted to look within a bounded number of projections. A
+row that stops being drawn takes its turn afresh when it returns.
+
+#### Scenario: Every continuously drawn row gets its turn
 
 - **WHEN** projections repeat over more rows than the bound allows
-- **THEN** each row is permitted to look within a bounded number of projections
+- **AND** one row is drawn on every one of them
+- **THEN** it is permitted to look within a bounded number of projections
+
+#### Scenario: A returning row takes a fresh turn
+
+- **WHEN** a row is absent from one projection and drawn again on the next
+- **THEN** it is permitted to look on a later projection rather than being dropped

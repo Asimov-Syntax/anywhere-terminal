@@ -36,7 +36,6 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
   let vaultPreview: ((entryId: string) => Promise<string | undefined>) | undefined;
   let previewLines: Map<string, string> | undefined;
-  let retained: string[][] | undefined;
   let vaultUnderCwd: ((agent: VaultAgentId, cwd: string) => Promise<string | undefined>) | undefined;
   let standingReport: ((paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) | undefined;
   let snapshots = 0;
@@ -66,9 +65,6 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
     sessionPreview: (entryId) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
     sessionPreviewLine: (entryId) => previewLines?.get(entryId),
-    retainSessionPreviews: (entryIds) => {
-      retained?.push([...entryIds]);
-    },
     resolveReportedSession: async (sessionId) => {
       reportedAsked.push(sessionId);
       return reportedSessions[sessionId] ?? null;
@@ -97,9 +93,6 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
     },
     setPreviewLines(next: Map<string, string>) {
       previewLines = next;
-    },
-    trackRetained(sink: string[][]) {
-      retained = sink;
     },
     setVaultPreview(next: (entryId: string) => Promise<string | undefined>) {
       vaultPreview = next;
@@ -2291,21 +2284,6 @@ describe("how much one projection looks at", () => {
     }
   });
 
-  it("tells the service every row it is drawing, not only the ones it looks at", async () => {
-    // The service cannot keep a line for a row it does not know is drawn, and a
-    // capped LRU cannot hold more lines than its cap (round-1 B2).
-    const retained: string[][] = [];
-    const h = makeProjector([], { previewBudget: 1 });
-    h.trackRetained(retained);
-    h.setRegistry({ kind: "ok", sessions: sessions(upTo(4)) });
-    watchPreview(h, upTo(4));
-
-    await h.projector.project([WT]);
-
-    expect(retained).toHaveLength(1);
-    expect([...retained[0]].sort()).toEqual(["claude:s0", "claude:s1", "claude:s2", "claude:s3"]);
-  });
-
   it("gives every row its turn rather than looking at the same ones forever", async () => {
     const h = makeProjector([], { previewBudget: 2 });
     h.setRegistry({ kind: "ok", sessions: sessions(upTo(6)) });
@@ -2343,27 +2321,30 @@ describe("how much one projection looks at", () => {
     expect(served).toContain("claude:s2");
   });
 
-  it("does not let a smaller projection undo the progress of a larger one", async () => {
+  it("takes a returning row as an arrival rather than dropping it", async () => {
+    // The queue holds exactly what is drawn now, so a row that leaves loses its
+    // place — remembering one is not implementable against unbounded identity
+    // churn with bounded state (round-3 B1, D9). What IS promised is that it
+    // re-enters and is reached once it stays drawn.
     const h = makeProjector([], { previewBudget: 1 });
     const watch = watchPreview(h, upTo(3));
 
-    // Large, then small, then large again. A cursor advanced by what a small
-    // projection permitted would rewind the turn for the rows that left.
-    for (const ids of [[0, 1, 2], [0], [0, 1, 2], [0], [0, 1, 2]]) {
+    for (const ids of [[0, 1, 2], [0], [0, 1, 2], [0, 1, 2], [0, 1, 2]]) {
       h.setRegistry({ kind: "ok", sessions: sessions(ids) });
       await h.projector.project([WT]);
       watch.endRound();
       clock += 60_000;
     }
 
-    expect(new Set(watch.looked.flat())).toContain("claude:s2");
+    const served = watch.looked.flat();
+    expect(served).toContain("claude:s1");
+    expect(served).toContain("claude:s2");
   });
 
-  it("keeps a drawn row's place when the waiting order is pruned", async () => {
-    // The order is bounded, so rows that left have to be dropped eventually —
-    // but only rows that left. Pruning from the back without checking takes the
-    // row served most recently, which is a DRAWN one, and it then re-enters at
-    // the back on every projection and is never reached.
+  it("reaches a row that stays drawn as the window shrinks around it", async () => {
+    // The queue drops what is no longer drawn, so the survivors close up rather
+    // than waiting behind departed ids. s4 sat behind three rows that left, and
+    // is reached on the projection after they do.
     const h = makeProjector([], { previewBudget: 1 });
     const watch = watchPreview(h, upTo(5));
 

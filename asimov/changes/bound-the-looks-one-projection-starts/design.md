@@ -79,6 +79,12 @@ lines last time — state it does not keep, for a case that only bites past 16 r
 
 ### D5: The drawn set is the retention set
 
+> **Superseded by D8 (round-3 B2).** Exact retention is withdrawn: keeping the declared set exact
+> across the look timeout needs the exclusion order, the `preview()` finalizer and the
+> generation-mismatch return path to agree, and that lifecycle cost buys a promise the spec no longer
+> makes. `cap` returns as the only retention rule. Kept to show what D8 replaces.
+
+
 `held` is bounded by `cap` and evicts the least recently asked. Its own comment says why: *"The
 projector holds no alive set to evict by, so the bound has to be the service's own."* That premise
 died with D2 — the projector now flattens every drawn row on every projection, so an exact alive set
@@ -117,6 +123,10 @@ reads the rest straight out of the map.
 
 ### D7: Rotation is a queue over row identity, not a cursor over indices
 
+> **Superseded by D9 (round-3 B1).** Rotation over identity is right; retaining a place across an
+> absence is not implementable. Kept to show what D9 replaces.
+
+
 D4's rule was right and its mechanism was not. `previewCursor % asked.length` is an index into a list
 whose membership changes between projections, so the modulus silently remaps: budget 1 over `[A,B,C]`
 grants A then B, and a projection drawing `[A,C]` computes `2 % 2 = 0` and grants A again — leaving
@@ -131,12 +141,62 @@ position is the identity's own place in the queue.
 This is the same ordered set `retain` declares, so D5 and D7 share one structure rather than keeping
 two views of "what is drawn" in step.
 
+### D8: `cap` is the retention rule, and the spec says so
+
+D5 replaced an approximate eviction rule with an exact one, and the exactness did not survive contact
+with the look timeout. `held` is not the only place a line lives: an abandoned look keeps its entry in
+`outstanding` (WT-011.3, deliberately — see the map's comment), `preview` recovers that entry with
+`held.get(id) ?? outstanding.get(id)`, and `touch` seats it back into `held`. So a session dropped from
+the declared set returns through the ordinary ask path carrying the line it had before, and the
+declared set is exact only for as long as nothing times out (round-3 B2).
+
+Making it true again means ordering exclusion against the timeout, invalidating the in-flight attempt's
+commit, clearing `line` and `stamp` on exclusion, and returning the retained line rather than the
+outcome's on a generation mismatch. Four interacting rules, to keep a promise that matters only past
+`cap` drawn rows.
+
+So `retain` goes, and with it `drawn` and the conditional in `touch`. `cap` bounds `held` again,
+unconditionally. What keeps the excluded row's line is that `line(entryId)` **touches**: every drawn
+row is either asked or read on every projection, so the least recently touched entries are the ones the
+window has stopped drawing, and those are the right victims. Below `cap` drawn rows — every real window
+— retention is exact as a consequence rather than as a rule.
+
+Past `cap` drawn rows a line can be lost, and the spec now says that: "the line the preview service
+still holds for it". That is a narrower promise than D3 made, and it is the honest one — the row
+re-looks on a later projection and recovers.
+
+This also retires round-3 W1 and shrinks S1's cone: with nothing declared, there is no declaration to
+make on the row-mode falling edge, and the service's lifetime is again its own.
+
+### D9: The turn queue holds the current drawn set, and only it
+
+D7's queue kept a departed id's place so that a row drawn every other projection would not re-enter
+behind the row being served. That is the right instinct and it cannot be paid for. A queue that
+remembers absent identities must be bounded, a bounded queue must eventually forget one, and a
+forgotten id is indistinguishable from an arrival on its return — so fairness across absence is not
+decidable with bounded state against unbounded identity churn. Both attempts proved it from opposite
+ends: dropping absent ids starves the intermittently drawn row, and privileging never-served ids
+starves the continuously drawn one (`[A,X1]`, `[A,X2]`, … grants each new `Xn` and never returns to
+`A`).
+
+The queue therefore holds exactly what is drawn now. Each projection removes ids that are not drawn,
+appends ids that are newly drawn, grants the budget to the front, and moves exactly those to the back.
+
+Fairness follows structurally: nothing is ever inserted **ahead** of an id already in the queue —
+arrivals append, and grants move to the back. So for a row drawn on every projection the count of ids
+ahead of it never grows, and shrinks by up to `budget` each projection; it reaches the front within
+`ceil(position / budget)` projections. That is the spec's bound, and it is the one the queue can
+actually keep.
+
+A row that stops being drawn re-enters as an arrival. The spec says so rather than the code implying
+it.
+
 ## Failure-surface inventory
 
 | Resource | Answer |
 |---|---|
-| Preview entry cache and `outstanding` | Owned and mutated only by the preview service, single-threaded in the extension host. This change adds no writer: `mayLook: false` reads, touches the LRU, and returns. n/a for crash and concurrency — nothing is persisted and there is no second host |
-| The rotation queue | An insertion-ordered set on the projector's closure, single-owner, reset with the projector. It is also the set `retain` declares. A wrong entry costs a row its turn for one projection; it authorises nothing |
+| Preview entry cache and `outstanding` | Owned and mutated only by the preview service, single-threaded in the extension host. This change adds no writer: `line` reads, touches the LRU, and returns. n/a for crash and concurrency — nothing is persisted and there is no second host |
+| The rotation queue | An insertion-ordered set on the projector's closure, single-owner, reset with the projector, holding exactly the ids drawn now (D9). A wrong entry costs a row its turn for one projection; it authorises nothing |
 | Transcript files on disk | Read-only, and the read is already bounded by WT-011.3's deadline. This change strictly reduces how many are opened; a failed or slow read keeps the outcomes that shipped there |
 
 ## Risk Map
@@ -146,7 +206,7 @@ two views of "what is drawn" in step.
 | `previewFromVault` | The flattening loses the per-worktree write-back and rows land under the wrong worktree | The flattened list carries its worktree id; unit test asserts each row's preview lands on the row it belongs to |
 | Budget | A row outside the budget loses its line — the regression this task exists to avoid | D3 asks with `mayLook: false` rather than skipping; unit test asserts an excluded row still draws its previously read line |
 | Rotation | A row is excluded on every projection, including across changing membership | D7's queue; unit tests drive successive projections with rows appearing and disappearing, and with the set shrinking and growing again, asserting every persistently drawn row is permitted |
-| Retention | A drawn row past `cap` loses the line the bound promised to keep | D5 — retention follows the declared set; unit test draws more than `cap` rows continuously across a full rotation and asserts none loses its line |
-| `retain` | A session dropped from the declared set is one still being drawn, so its line is lost | The set is the flattened drawn list D2 already builds; unit test asserts a row absent from one projection and back in the next is treated as an arrival, not as a loss |
+| Retention | A drawn row loses the line the bound promised to keep | D8 — `line` touches, so every drawn row is touched every projection and the LRU's victims are rows the window stopped drawing; unit test draws `cap` rows across a full rotation and asserts none loses its line. Past `cap` the spec permits the loss and the row re-looks |
+| Rotation across absence | A row that leaves and returns is starved | Not promised, by D9 — it re-enters as an arrival. Unit test asserts it is granted rather than dropped, without claiming it keeps a place |
 | `preview(id, false)` | The cache-only path starts work anyway, defeating the bound | Unit test counts vault lookups, stats and reads across a projection and asserts they stop at the budget |
-| LRU | An excluded row is evicted and loses the line the bound promised to keep | D3 touches on the cache-only path; unit test asks past `cap` with a mix of permitted and excluded rows |
+| LRU | An excluded row is evicted and loses the line the bound promised to keep | D8 touches on the synchronous read; unit test asks past `cap` with a mix of permitted and excluded rows |
