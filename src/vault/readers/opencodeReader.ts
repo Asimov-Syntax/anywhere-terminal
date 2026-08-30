@@ -281,34 +281,39 @@ export async function readOpenCodeSessions(
  * filter so a child (subagent) session is still resolvable by id. Returns null
  * for an unsafe id or a missing row.
  */
-export async function readOpenCodeEntry(
-  sessionId: string,
-  options: OpenCodeReaderOptions = {},
-): Promise<VaultSessionEntry | null> {
-  if (!isSafeOpenCodeId(sessionId)) {
-    return null;
-  }
-  const { dbPath, readSqliteFn } = resolveOpencodePaths(options);
-  // `sessionId` is validated to `[A-Za-z0-9_-]+` above, so embedding it is safe.
-  const result = await readSqliteFn(dbPath, `${OPENCODE_SESSION_SELECT} WHERE s.id = '${sessionId}' LIMIT 1`);
-  if (result.status !== "ok" || result.rows.length === 0) {
-    return null;
-  }
-  return mapSessionRow(result.rows[0]);
-}
-
-/**
- * OpenCode by-id lookup, as the conclusive answer the adapter contract asks for.
- * Task 1_1 wraps the existing reader without classifying: a non-null read is
- * `found`, everything else is `unknown`, which is what the caller already assumed.
- * Task 1_5 replaces this body with the real classification.
- */
 export async function lookupOpenCodeEntry(
   sessionId: string,
   options: OpenCodeReaderOptions = {},
 ): Promise<VaultEntryLookup> {
-  const entry = await readOpenCodeEntry(sessionId, options);
-  return entry ? { status: "found", entry } : { status: "unknown" };
+  if (!isSafeOpenCodeId(sessionId)) {
+    return { status: "absent" };
+  }
+  const { dbPath, readSqliteFn } = resolveOpencodePaths(options);
+  // `sessionId` is validated to `[A-Za-z0-9_-]+` above, so embedding it is safe.
+  const result = await readSqliteFn(dbPath, `${OPENCODE_SESSION_SELECT} WHERE s.id = '${sessionId}' LIMIT 1`);
+  if (result.status === "ok") {
+    if (result.rows.length === 0) {
+      return { status: "absent" }; // the query ran and the store has no such row
+    }
+    const entry = mapSessionRow(result.rows[0]);
+    // A row the store conclusively holds and this reader could not map: the
+    // session exists, so this is never absence.
+    return entry ? { status: "found", entry } : { status: "unknown" };
+  }
+  // `no-db` is a CONFIRMED missing database since D6, and OpenCode keeps its
+  // sessions nowhere else — an uninstalled or deleted store holds none. Every
+  // other status is a failure to look: an unreachable path, no sqlite engine, or
+  // a query that threw.
+  return result.status === "no-db" ? { status: "absent" } : { status: "unknown" };
+}
+
+/** The entry-or-nothing view, for callers that cannot act on the difference. */
+export async function readOpenCodeEntry(
+  sessionId: string,
+  options: OpenCodeReaderOptions = {},
+): Promise<VaultSessionEntry | null> {
+  const found = await lookupOpenCodeEntry(sessionId, options);
+  return found.status === "found" ? found.entry : null;
 }
 
 // ── On-demand session detail (redesign-vault-panel-ui 2_3) ──────────────────

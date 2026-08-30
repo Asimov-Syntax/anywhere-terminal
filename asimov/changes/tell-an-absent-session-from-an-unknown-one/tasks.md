@@ -56,7 +56,7 @@
     3. Report unknown when `mapThreadRow` rejects a row the query returned, and absent when the rollout root itself is missing.
     4. Test every `SqliteStatus`, both rollout outcomes, a scan over a tree holding one unreadable directory, and a returned-but-unmappable row.
 
-- [ ] 1_5 Let the OpenCode reader say which of the three it means
+- [x] 1_5 Let the OpenCode reader say which of the three it means — verified: pnpm exec vitest run 'src/vault/readers/opencodeReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: <!-- design.md D2, D5 (OpenCode), D6 -->
   - **Boundary**: no fallback source is added for OpenCode; the `no-db`/access-failure split is task 1_2's and is consumed here, not redefined

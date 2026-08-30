@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SqliteResult } from "../sqlite";
-import { readOpenCodeEntry, readOpenCodeSessions } from "./opencodeReader";
+import { lookupOpenCodeEntry, readOpenCodeEntry, readOpenCodeSessions } from "./opencodeReader";
 
 function stubSqlite(result: SqliteResult) {
   return vi.fn(async (_dbPath: string, _sql: string) => result);
@@ -212,5 +212,43 @@ describe("readOpenCodeSessions: incremental store stamp", () => {
     await fsp.utimes(path.join(dir, "opencode.db"), future, future);
     await readOpenCodeSessions({ dataDir: dir, readSqliteFn: fn }, first.cache);
     expect(fn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("lookupOpenCodeEntry: absent only from a query that ran", () => {
+  const ID = "ses_abc123";
+
+  it("says absent when the query ran and the store has no such row", async () => {
+    const fn = stubSqlite({ status: "ok", rows: [] });
+    expect(await lookupOpenCodeEntry(ID, { dataDir: "/x/oc", readSqliteFn: fn })).toEqual({ status: "absent" });
+  });
+
+  it("says absent for a confirmed-missing database — opencode keeps sessions nowhere else", async () => {
+    const fn = stubSqlite({ status: "no-db", rows: [] });
+    expect(await lookupOpenCodeEntry(ID, { dataDir: "/x/oc", readSqliteFn: fn })).toEqual({ status: "absent" });
+  });
+
+  it.each(["db-unreachable", "no-sqlite3", "query-error"] as const)("says unknown for %s", async (status) => {
+    // The line between this and the case above is exactly what task 1_2 bought:
+    // before it, all four of these arrived as no-db.
+    const fn = stubSqlite({ status, rows: [] });
+    expect(await lookupOpenCodeEntry(ID, { dataDir: "/x/oc", readSqliteFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("says unknown for a row the store holds and the reader cannot map", async () => {
+    const fn = stubSqlite({ status: "ok", rows: [{ nothing: "usable" }] });
+    expect(await lookupOpenCodeEntry(ID, { dataDir: "/x/oc", readSqliteFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("says absent for an id no store could carry", async () => {
+    const fn = stubSqlite({ status: "ok", rows: [] });
+    expect(await lookupOpenCodeEntry("../escape", { dataDir: "/x/oc", readSqliteFn: fn })).toEqual({
+      status: "absent",
+    });
+  });
+
+  it("keeps readOpenCodeEntry nullable for callers that cannot act on the difference", async () => {
+    const fn = stubSqlite({ status: "query-error", rows: [], error: "boom" });
+    expect(await readOpenCodeEntry(ID, { dataDir: "/x/oc", readSqliteFn: fn })).toBeNull();
   });
 });

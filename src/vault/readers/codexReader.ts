@@ -12,10 +12,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { provesAbsence } from "../../utils/fsPresence";
 import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { provesAbsence } from "../../utils/fsPresence";
 import { readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
 import { sameStamps, stampStoreFiles } from "../storeStamp";
 import {
@@ -566,12 +566,10 @@ export async function readCodexSessions(
  * counterpart to readCodexSessions, used by VaultService.getEntry for fast
  * resume/fork (a `threads` point lookup, not the full-store scan; D3). Falls back
  * to the rollout jsonl (located by its filename uuid) when no SQLite DB exists.
- * Returns null for an unsafe id or an unlocatable session.
+ * Answers conclusively: `absent` only from a query that ran or a rollout walk
+ * that completed, `unknown` from anything that failed to look.
  */
-export async function lookupCodexEntry(
-  sessionId: string,
-  options: CodexReaderOptions = {},
-): Promise<VaultEntryLookup> {
+export async function lookupCodexEntry(sessionId: string, options: CodexReaderOptions = {}): Promise<VaultEntryLookup> {
   if (!isSafeCodexId(sessionId)) {
     return { status: "absent" };
   }
@@ -612,7 +610,6 @@ export async function readCodexEntry(
   const found = await lookupCodexEntry(sessionId, options);
   return found.status === "found" ? found.entry : null;
 }
-
 
 // ── On-demand session detail (redesign-vault-panel-ui 2_4) ──────────────────
 //

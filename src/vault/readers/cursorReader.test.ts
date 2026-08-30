@@ -1490,7 +1490,6 @@ describe("readCursorMessageRecord: no raw-record access to store.db", () => {
   });
 });
 
-
 describe("lookupCursorEntry: absent only from a store it could read", () => {
   const denied = () => Object.assign(new Error("EACCES"), { code: "EACCES" });
 

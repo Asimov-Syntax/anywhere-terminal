@@ -509,7 +509,6 @@ describe("pickRolloutPath containment", () => {
   });
 });
 
-
 describe("lookupCodexEntry: the query-error that used to look like a miss", () => {
   const ID = "11111111-1111-4111-8111-111111111111";
   const roots: string[] = [];
