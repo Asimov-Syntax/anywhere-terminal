@@ -38,14 +38,14 @@
 
 ## 2. What the removal will actually delete
 
-- [ ] 2_1 Measure ignored material under one budget, or report that it could not be
-  - **Deps**: 1_3
+- [x] 2_1 Measure ignored material under one budget, or report that it could not be — verified: pnpm exec vitest run 'src/worktree/ignoredMaterial.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-removal-reports-the-ignored-material-it-will-delete}; docs/design/worktree-removal.md#23-removal-reports-what-it-will-delete-not-what-git-tracks; design.md D3
   - **Acceptance**:
     - Outcome: An oversized ignored tree yields `unproven`, never a partial count presented as a total
     - Verify: unit src/worktree/ignoredMaterial.test.ts
   - **Plan**:
-    1. Add `src/worktree/ignoredMaterial.ts` exporting the bounded measurement and the `IgnoredMaterial` type from design.md § Interfaces. Take the enumeration and the stat as injected dependencies, matching how `src/worktree/provisioning/asimovProvider.ts` takes its reads, so the suite needs no disk.
+    1. Add `src/worktree/ignoredMaterial.ts` exporting the bounded measurement and the `IgnoredMaterial` type from design.md § Interfaces. Take the enumeration and the stat as injected dependencies — the enumeration as an async iterable so it can be cut off mid-listing — so the suite needs no disk. The provisioning adapter already reads this way; follow it rather than inventing a second seam shape.
     2. Apply ONE entry budget and ONE time budget across both phases — enumeration and sizing. An enormous listing must exhaust the entry cap before any stat runs.
     3. Return `{ kind: "unproven" }` for every terminating condition: budget reached, a directory that could not be read, or the enumeration throwing. A partial count is never returned as `measured`.
     4. Cover in `src/worktree/ignoredMaterial.test.ts`: a small measured tree, an entry-cap trip, a time-cap trip, an unreadable directory, and a throwing enumeration — each asserting `kind`, not a count.
@@ -64,7 +64,7 @@
   - **Boundary**: no provenance inferred from a path or a name — `.env.worktree` looking like ours is not evidence it is ours
 
 - [ ] 2_3 Put ignored material on the assessment as a confirmable risk
-  - **Deps**: 2_2
+  - **Deps**: 1_3, 2_2
   - **Refs**: specs/worktree-panel/spec.md#{a-removal-reports-the-ignored-material-it-will-delete}; docs/design/worktree-rpc.md#25-removal-assessment-and-branch-deletion
   - **Acceptance**:
     - Outcome: The assessment carries an `ignored` check in the confirmable class
