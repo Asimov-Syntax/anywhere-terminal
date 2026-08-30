@@ -64,7 +64,7 @@
     2. In `src/utils/pathBoundary.ts` split the resolved predicate into `prepareResolvedRoot` and `isResolvedPathInsideRoot`, keeping `isResolvedPathInside` as the single-shot form (design.md § Interfaces, D8).
     3. Cover in `src/utils/pathBoundary.test.ts`: a candidate under `C:\vault\store` against root `C:\vault\Store` refused while `isPathInside` still accepts it; drive-letter case still folded; POSIX case still significant; a prepared root reused across several candidates; a prepared root whose directory has been replaced refusing rather than admitting.
 
-- [ ] 2_2 The listing adopters prepare the root once
+- [x] 2_2 The listing adopters prepare the root once — verified: pnpm exec vitest run 'src/vault/readers/claudePaths.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/agent-session-index/spec.md#{enumeration-is-not-exempt-from-containment} <!-- design.md D8 -->
   - **Acceptance**:

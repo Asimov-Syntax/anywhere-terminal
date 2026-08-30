@@ -8,7 +8,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { isResolvedPathInside } from "../../utils/pathBoundary";
+import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
 
 /** Separates a parent session id from a subagent file stem in an entry id:
  *  `claude:<parentSessionId>:subagent:<agent-stem>`. */
@@ -74,9 +74,14 @@ export async function resolveClaudeSessionPath(
   } catch {
     return null;
   }
+  // Once for the scan, not once per project directory (D8).
+  const root = await prepareResolvedRoot(projectsDir);
+  if (root === null) {
+    return null;
+  }
   for (const dir of projectDirs) {
     const candidate = path.join(projectsDir, dir, `${sessionId}.jsonl`);
-    if (!(await isResolvedPathInside(candidate, projectsDir))) {
+    if (!(await isResolvedPathInsideRoot(candidate, root))) {
       continue; // resolves outside the store root — never read it
     }
     try {
@@ -113,9 +118,13 @@ export async function resolveClaudeSubagentPath(
   } catch {
     return null;
   }
+  const root = await prepareResolvedRoot(projectsDir);
+  if (root === null) {
+    return null;
+  }
   for (const dir of projectDirs) {
     const candidate = path.join(projectsDir, dir, parentId, "subagents", `${stem}.jsonl`);
-    if (!(await isResolvedPathInside(candidate, projectsDir))) {
+    if (!(await isResolvedPathInsideRoot(candidate, root))) {
       continue;
     }
     try {
@@ -151,7 +160,8 @@ export async function resolveClaudeWorkflowAgentPath(
   }
   const candidate = path.join(path.dirname(parentPath), parentId, "subagents", "workflows", wfId, `${stem}.jsonl`);
   const { projectsDir } = claudeRoots(options);
-  if (!(await isResolvedPathInside(candidate, projectsDir))) {
+  const root = await prepareResolvedRoot(projectsDir);
+  if (root === null || !(await isResolvedPathInsideRoot(candidate, root))) {
     return null;
   }
   try {

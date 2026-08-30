@@ -19,7 +19,7 @@ import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { isResolvedPathInside } from "../../utils/pathBoundary";
+import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { formatEntryId, type VaultSessionDetail, type VaultSessionEntry } from "../types";
@@ -402,6 +402,15 @@ export async function readClaudeSessions(
   const entries: VaultSessionEntry[] = [];
   let unreadable = 0;
 
+  // Once for the whole listing, not once per file — the root cannot move within
+  // a pass in any way this pass would observe, and a store with a long history
+  // makes that a syscall per session (D8). Null means the root itself does not
+  // resolve, so nothing is inside it and there is nothing to list.
+  const resolvedProjectsRoot = await prepareResolvedRoot(projectsDir);
+  if (resolvedProjectsRoot === null) {
+    return { entries: [], unreadable: 0, cache: { kind: "files", files } };
+  }
+
   for (const projectDir of projectDirs) {
     const dirPath = path.join(projectsDir, projectDir);
     const jsonlFiles = await listJsonlFiles(dirPath);
@@ -411,7 +420,7 @@ export async function readClaudeSessions(
       // symlink here resolves wherever it likes, and everything below this line
       // stats and reads the file. One entry is skipped, not the directory —
       // a link out of the store is a lost row, not a lost project.
-      if (!(await isResolvedPathInside(filePath, projectsDir))) {
+      if (!(await isResolvedPathInsideRoot(filePath, resolvedProjectsRoot))) {
         continue;
       }
       try {

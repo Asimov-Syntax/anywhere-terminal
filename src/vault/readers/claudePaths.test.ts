@@ -9,7 +9,26 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * Every `realpath` the resolvers ask for, in order. The real implementation is
+ * kept — these tests need a real filesystem — and only counted through, because
+ * D8's claim is about how MANY times the root is resolved, not what it answers.
+ */
+const realpathCalls: string[] = [];
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    default: actual,
+    realpath: (p: Parameters<typeof actual.realpath>[0], ...rest: unknown[]) => {
+      realpathCalls.push(String(p));
+      return (actual.realpath as (...a: unknown[]) => unknown)(p, ...rest);
+    },
+  };
+});
+
 import { resolveClaudeSessionPath, resolveClaudeSubagentPath, resolveClaudeWorkflowAgentPath } from "./claudePaths";
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
@@ -84,6 +103,21 @@ describe("claudePaths resolvers", () => {
       await fs.symlink(escapeTarget, path.join(dir, `${stem}.jsonl`));
       expect(await resolveClaudeSubagentPath(SESSION, stem, options())).toBeNull();
     });
+
+    it("still finds one when the projects root itself is behind a link", async () => {
+      // The nested join builds a deeper candidate than the session resolver's,
+      // so the session resolver's success case does not cover this one.
+      const realStore = path.join(tmp, "volume", "projects");
+      const dir = path.join(realStore, "-repo", SESSION, "subagents");
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, `${stem}.jsonl`), "{}\n");
+      const linkedConfig = path.join(tmp, "linked-config");
+      await fs.mkdir(linkedConfig);
+      await fs.symlink(realStore, path.join(linkedConfig, "projects"));
+
+      const found = await resolveClaudeSubagentPath(SESSION, stem, { configDir: linkedConfig });
+      expect(found).toBe(path.join(linkedConfig, "projects", "-repo", SESSION, "subagents", `${stem}.jsonl`));
+    });
   });
 
   describe("resolveClaudeWorkflowAgentPath", () => {
@@ -107,6 +141,41 @@ describe("claudePaths resolvers", () => {
       await fs.writeFile(escapeTarget, "{}\n");
       await fs.symlink(escapeTarget, path.join(dir, `${stem}.jsonl`));
       expect(await resolveClaudeWorkflowAgentPath(SESSION, wfId, stem, options())).toBeNull();
+    });
+
+    it("still finds one when the projects root itself is behind a link", async () => {
+      // This resolver derives its candidate from an ALREADY-resolved parent
+      // path, so it is the branch most likely to double-resolve and refuse a
+      // healthy store. Its own success case is the only thing that says it does not.
+      const realStore = path.join(tmp, "volume", "projects");
+      await fs.mkdir(path.join(realStore, "-repo"), { recursive: true });
+      await fs.writeFile(path.join(realStore, "-repo", `${SESSION}.jsonl`), "{}\n");
+      const dir = path.join(realStore, "-repo", SESSION, "subagents", "workflows", wfId);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, `${stem}.jsonl`), "{}\n");
+      const linkedConfig = path.join(tmp, "linked-config");
+      await fs.mkdir(linkedConfig);
+      await fs.symlink(realStore, path.join(linkedConfig, "projects"));
+
+      const found = await resolveClaudeWorkflowAgentPath(SESSION, wfId, stem, { configDir: linkedConfig });
+      expect(found).not.toBeNull();
+      expect(path.basename(found as string)).toBe(`${stem}.jsonl`);
+    });
+  });
+
+  describe("the root is resolved once per scan", () => {
+    it("does not re-resolve the projects root per project directory", async () => {
+      // The scan visits every project dir looking for one session id. Resolving
+      // the root inside that loop is a syscall per directory for an answer that
+      // cannot change within the scan (design.md D8).
+      for (const name of ["-a", "-b", "-c", "-d"]) {
+        await fs.mkdir(path.join(projectsDir, name), { recursive: true });
+      }
+      await fs.writeFile(path.join(projectsDir, "-d", `${SESSION}.jsonl`), "{}\n");
+
+      realpathCalls.length = 0;
+      expect(await resolveClaudeSessionPath(SESSION, options())).toBeTruthy();
+      expect(realpathCalls.filter((p) => p === projectsDir)).toHaveLength(1);
     });
   });
 });
