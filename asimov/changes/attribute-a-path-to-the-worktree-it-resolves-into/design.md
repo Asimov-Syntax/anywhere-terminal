@@ -70,6 +70,13 @@ folder set changing, or a pane's reported cwd changing. A TTL would add a second
 answering nothing — a symlink that is repointed without any of those events is the accepted residual
 named in the Risk Map.
 
+This clause was written when each consumer held its own memo, and 1_4 made the memo shared without
+restating it. On a shared memo the events above no longer say the same thing. A pane closing does not
+mean the directory moved — the filesystem is unchanged — it means one claimant stopped needing the
+answer. Reading it as staleness lets one consumer's bookkeeping delete a fact another consumer is
+still standing on, which is round-2 B4. **When a path is released is D6's question, not D4's**: D4
+governs freshness, and only a genuine filesystem-shape event makes an entry stale.
+
 ### D5: `presenceDeps.normalize` becomes the seam it already documents
 
 `src/worktree/presenceDeps.ts:73-77` is `normalize: (p) => path.resolve(p)` with a comment naming
@@ -81,6 +88,45 @@ pane's cwd is read, and `normalize` receives an already-resolved value.
 `normalizeWorktreePath` (`src/worktree/normalizePath.ts:79`) already realpaths worktree ids through
 `realpathTolerant`, so the root side of the presence comparisons needs no change — only the
 candidate side does. Verified against current code rather than inherited from the archived design.
+
+### D6: A resolved path is held by its claimants and released when the last one lets go
+
+The memo is shared, so no single consumer knows whether a path is still wanted. Presence releasing a
+cwd on pane retirement is memory bookkeeping, and today it reaches the shared entry directly: the
+last pane leaving the workspace folder deletes the entry the decoration provider is standing on, and
+decorations do not re-prepare — `resolveFolders` runs at construction and on workspace-folder change
+only — so containment falls back to the lexical answer for the window's life. That is the exact
+defect this change exists to remove, reintroduced through the release path (round-2 B4).
+
+Each entry therefore records **which consumers claim it**, and a release drops the claim rather than
+the entry. The entry goes when the claim set empties. `invalidateAll` is unaffected: a structural
+event under D4 makes the answer wrong for everyone, so it clears regardless of claims.
+
+The claimant is the handle a consumer already holds. `createTrackedPathResolver` is exactly "a
+bounded set, re-prepared when it changes, forgetting what left" — it gains an identity, and its
+existing prune becomes a release of its own claim. The consequence is a deletion rather than an
+addition: presence's bespoke `prepareCwds`/`forgetCwd` pair and its two hand-written set differences
+are the same logic spelled a second time, so presence adopts two resolver handles — panes and
+sessions, which retire on different triggers — and that code goes.
+
+**Rejected — every standing consumer re-prepares on a broadcast.** It turns each pane close into a
+full decoration rebuild, which is W2's waste on a hot trigger instead of a cold one.
+
+**Rejected — give each consumer its own memo again.** It resolves the same path once per consumer
+and reopens what 1_4 closed, to avoid tracking a claim set that is at most one entry per consumer.
+
+### D7: A resolution that lands after mount updates containment, never the mount
+
+The resolved workspace root reaches the webview as its own field (round-1 B1), and it arrives late by
+construction: the host posts the mounted root immediately and re-posts once `realpath` settles. The
+controller treats any `workspace-root-changed` as a re-root — exits search, disposes the tree, clears
+expanded paths, remounts — so the late arrival would discard the user's expansion and search state
+every time a window opens, for a message in which the mounted root did not change (round-2 W1).
+
+An update whose `rootPath` and generation are unchanged carries containment metadata only, and is
+applied to the resolved pair alone. This stays inside the message contract rather than adding a type:
+the field is already optional and already means "containment only", and the mount identity the
+controller keys on is the pair that did not change.
 
 ## Failure-surface inventory
 

@@ -8,12 +8,12 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -48,3 +48,4 @@ Build notes:
 - Verify gate ticked with a pre-existing failure outside this change's files: `src/vault/snapshotPool.test.ts` > "refuses a snapshot to a caller that was waiting out another production" fails roughly 1 run in 5 under load, asserting `expected 'resolved' to match /disposed/`. Neither `snapshotPool.ts` nor its test is touched by this change (`git show --stat 06f31d9b f189aced 4f559afc` names neither). It is a real defect, not test timing: a caller queued behind an in-flight production is sometimes ADMITTED after `dispose()`, so dispose is not the barrier `reuse-a-snapshot-while-the-store-is-unchanged` claims. Reported for its own change; not fixed here.
 - Also seen once and never reproduced across ~12 later full runs: two failures in `src/extension.worktreeAssembly.test.ts` under three concurrent suites. No assertion was captured. Recorded as observed, not diagnosed.
 - Round-2 handback: B4 accepted and NOT fixed as remediation. Closing it needs an owner for "who still needs this path" over the shared memo, which either mints a lifecycle owner or restates D4 — a pane closing is not a structural filesystem change, so presence's retirement release is memory-bounding claiming D4's cover, and round-1 B4 (leak) and round-2 B4 (over-release) are irreconcilable until that owner exists. B1 rides along: its fix is "register a standing consumer with the shared memo", the same seam. W1/W2 sit inside B1's cone.
+- Round-2 plan (fastlane): D4 restated — it governs freshness, D6 governs release. D6 folds into ResolvedPathMemo, the owner 1_2 already minted, so this stays one change rather than spawning a child. 3_1's 10 files are one seam by construction: the memo's release signature changes, so every consumer handle moves with it; splitting would land a half-claimed memo. Rejected alternatives are in D6.

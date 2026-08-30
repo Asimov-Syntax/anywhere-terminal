@@ -75,3 +75,29 @@
     4. B2 — in `src/providers/gitDecorationProvider.ts` (+ `src/providers/gitDecorationProvider.test.ts`), rebuild once the folder resolution settles, guarded by a generation so a superseded pass cannot reset over a newer one.
     5. B1 — carry the resolved workspace root to the webview as its own field on the init and `workspace-root-changed` payloads (`src/types/messages.ts`, `src/providers/fileTreeHost.ts`, `src/providers/fileTreeHost.test.ts`), keep `workspaceRoot` as the user's spelling for mounting and display, and compare containment against the resolved one in `src/webview/fileTree/FileTreePanel.ts`, `src/webview/fileTree/FileTreeController.ts`, `src/webview/main.ts` and `src/webview/messaging/MessageRouter.test.ts`.
     6. S1 — prove the per-event candidate stays lexical against a memo that HAS its spelling prepared, which is the case my equivalence claim missed.
+
+## 3. Round-2 review fixes
+
+- [ ] 3_1 Hold a resolved path by its claimants, and give presence the resolver everyone else uses
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-2.md; design.md#d6-a-resolved-path-is-held-by-its-claimants-and-released-when-the-last-one-lets-go; design.md#d4-resolution-is-lazy-and-per-distinct-path-never-an-eager-sweep
+  - **Acceptance**:
+    - Outcome: a released path stays resolved for its other claimants
+    - Verify: unit src/utils/resolvedPathMemo.test.ts
+  - **Plan**:
+    1. In `src/utils/resolvedPathMemo.ts` (+ `src/utils/resolvedPathMemo.test.ts`), record per entry which claimants hold it; a release drops that claimant's claim and the entry only when the set empties. `invalidateAll` still clears regardless — a D4 event makes the answer wrong for every claimant.
+    2. Give `createTrackedPathResolver` an identity, so its existing prune releases its own claim rather than deleting the shared entry.
+    3. In `src/worktree/presenceProjector.ts` (+ `src/worktree/presenceProjector.test.ts`) and `src/worktree/presenceDeps.ts`, replace `prepareCwds`/`forgetCwd` and the two hand-written set differences with two resolver handles — panes and sessions — keeping the session handle's release gated on a successful registry read.
+    4. In `src/extension.ts`, `src/worktree/repoRoots.ts`, `src/worktree/worktreeDeps.ts` and `src/providers/gitDecorationProvider.ts` (+ `src/providers/gitDecorationProvider.test.ts`), give each standing consumer its own handle over the one shared memo.
+
+- [ ] 3_2 Wire the resolved root into every surface that shows a file tree
+  - **Deps**: 3_1
+  - **Refs**: .reviews/round-2.md; design.md#d7-a-resolution-that-lands-after-mount-updates-containment-never-the-mount
+  - **Acceptance**:
+    - Outcome: every production file-tree surface posts a resolved containment root
+    - Verify: unit src/providers/fileTreeHost.test.ts
+  - **Plan**:
+    1. In `src/providers/TerminalViewProvider.ts` and `src/providers/TerminalEditorProvider.ts`, pass a resolver handle into `FileTreeHost` on every construction, including editor revival through `src/providers/TerminalPanelSerializer.ts`, threading it from the shared memo in `src/extension.ts`.
+    2. Cover it where the gap was: a provider-level test that constructs each provider the way production does and asserts the root it posts. An injected-host test cannot see missing wiring.
+    3. W1 — in `src/webview/fileTree/FileTreeController.ts` (+ `src/webview/fileTree/FileTreeController.test.ts`), apply a `workspace-root-changed` whose `rootPath` and generation are unchanged to the resolved pair alone, leaving search, the mounted tree and expanded paths intact.
+    4. W2 — in `src/providers/gitDecorationProvider.ts` (+ `src/providers/gitDecorationProvider.test.ts`), let the workspace-folder handler clear stale state without a second full rebuild, so the post-resolution reset is the only authoritative one.
