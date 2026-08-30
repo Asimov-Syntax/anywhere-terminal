@@ -788,8 +788,7 @@ A repository whose worktree listing failed SHALL NOT by itself cause any row und
 
 ### Requirement: A worktree can be selected, and selection is an explicit act
 
-WHERE the workbench setting is enabled, the panel SHALL let the user select one worktree, and
-SHALL treat selection as a deliberate act:
+The panel SHALL let the user select one worktree, and SHALL treat selection as a deliberate act:
 no worktree SHALL be selected on the user's behalf at first render, on a reload, or on any push
 that changes the tree. At most one worktree SHALL be selected at a time, and selecting another
 SHALL replace the first rather than adding to it.
@@ -805,11 +804,6 @@ Selection SHALL be reachable by keyboard as well as by pointer.
 
 - **WHEN** the user selects one worktree and then another
 - **THEN** only the second is marked as selected
-
-#### Scenario: The workbench setting is off
-
-- **WHEN** the workbench setting is disabled and the user activates a worktree row
-- **THEN** no worktree becomes selected, and the panel marks what it marked before selection existed
 
 ### Requirement: The selected worktree is the only one marked as selected
 
@@ -859,10 +853,10 @@ in the width the row's own last activity needs.
 
 ### Requirement: The control that swaps the body is separate from the one that groups a body
 
-WHERE the workbench setting is enabled, the panel SHALL present one control whose values are the
-two bodies it can show, and SHALL present the control that chooses a grouping only while the
-sessions body is showing. Both values of the body control SHALL be named on screen at every panel
-width, so it answers "which body am I in" without a hover, a focus, or a widening.
+The panel SHALL present one control whose values are the two bodies it can show, and SHALL present
+the control that chooses a grouping only while the sessions body is showing. Both values of the
+body control SHALL be named on screen at every panel width, so it answers "which body am I in"
+without a hover, a focus, or a widening.
 
 #### Scenario: The grouping control is not offered where it would group nothing
 
@@ -876,18 +870,16 @@ width, so it answers "which body am I in" without a hover, a focus, or a widenin
 - **THEN** the grouping control is presented again, showing the grouping that was in effect before
   the user left — the choice is not reset by having been away
 
-#### Scenario: The workbench setting is off
+#### Scenario: No second presentation of the same controls remains
 
-- **WHEN** the workbench setting is disabled
-- **THEN** the panel presents the control it shipped with, unchanged, and none of the two-level
-  presentation appears
+- **WHEN** the panel builds its toolbar
+- **THEN** a single flat control naming all four values is not built under any configuration
 
 ### Requirement: A control that chooses among values says so and is reachable by keyboard
 
-WHERE the workbench setting is enabled, neither the body control nor the grouping control SHALL be
-presented as a plain button that merely looks selected. Each SHALL declare, to assistive
-technology, that it is one choice among a set and which of its values is currently chosen, and each
-SHALL be operable from the keyboard alone.
+Neither the body control nor the grouping control SHALL be presented as a plain button that merely
+looks selected. Each SHALL declare, to assistive technology, that it is one choice among a set and
+which of its values is currently chosen, and each SHALL be operable from the keyboard alone.
 
 #### Scenario: Moving through a control's values without a pointer
 
@@ -933,9 +925,9 @@ that only rows consume. Presence a subscriber can see SHALL be identical either 
 
 ### Requirement: A selection in the narrow layout hands the room back
 
-WHERE the workbench setting is enabled and the panel is rendered in the stacked layout — the one
-used where two columns do not fit — selecting a worktree SHALL collapse the rail to its header
-strip, so the selection reads as "choose, then view".
+WHERE the panel is rendered in the stacked layout — the one used where two columns do not fit —
+selecting a worktree SHALL collapse the rail to its header strip, so the selection reads as
+"choose, then view".
 
 The collapse SHALL be a consequence of the selection and of nothing else: no timer, no push, no
 re-render, and no change of scope from any other source SHALL cause it.
@@ -955,11 +947,6 @@ re-render, and no change of scope from any other source SHALL cause it.
 
 - **WHEN** the user selects a worktree while the rail and the terminal are shown side by side
 - **THEN** the rail stays open — it is not taking the room the terminal needs
-
-#### Scenario: The workbench setting is off
-
-- **WHEN** the workbench setting is disabled and the user activates a worktree row
-- **THEN** the rail's open state is whatever the user left it as, and nothing collapses it
 
 ### Requirement: A collapse the user did not ask for is not their choice
 
@@ -985,24 +972,14 @@ is shown beside the terminal, stacked above it, or collapsed to its header strip
 
 ### Requirement: Selecting a worktree opens an inspector under the tree
 
-WHERE the workbench setting is enabled, selecting a worktree SHALL open an inspector region
-**below** the tree rather than in place of it. Selecting a different worktree SHALL replace that
-region's contents rather than adding a second region.
+Selecting a worktree SHALL open an inspector region **below** the tree rather than in place of it.
+Selecting a different worktree SHALL replace that region's contents rather than adding a second
+region.
 
 #### Scenario: A second selection replaces the first
 
 - **WHEN** the user selects one worktree and then another
 - **THEN** exactly one inspector region is present, and it describes the second worktree
-
-#### Scenario: The rollout setting is off
-
-- **WHEN** the workbench setting is disabled and the user activates a worktree row
-- **THEN** no inspector region is shown
-
-#### Scenario: The rollout setting is turned off while the inspector is open
-
-- **WHEN** the workbench setting changes to disabled with the inspector open
-- **THEN** the inspector is no longer shown
 
 ### Requirement: The inspector is bounded so the tree stays scannable
 
@@ -1155,4 +1132,21 @@ to the row that opened it, or to the tree itself where that row is no longer ren
 
 - **WHEN** the user activates the inspector's close control
 - **THEN** focus is on the worktree row the inspector was describing
+
+### Requirement: A setting the panel no longer reads decides nothing
+
+The panel SHALL present the workbench composition regardless of any
+`anywhereTerminal.worktree.workbench` value a user's configuration still holds, and SHALL NOT read
+that value.
+
+#### Scenario: A configuration that still turns the rollout off
+
+- **WHEN** the user's settings hold `anywhereTerminal.worktree.workbench` set to `false` and the
+  panel opens
+- **THEN** the panel presents the workbench composition, and a worktree can be selected
+
+#### Scenario: A configuration that never mentioned it
+
+- **WHEN** the user has never configured the setting and the panel opens
+- **THEN** the panel presents the workbench composition
 

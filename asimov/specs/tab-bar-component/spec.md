@@ -227,18 +227,6 @@ unscoped.
 - **WHEN** a surface reloads with a persisted scope whose worktree is not in the tree it now holds
 - **THEN** the surface is unscoped and its tab bar hides nothing
 
-### Requirement: Scoping is offered only where it has been turned on
-
-The scoped tab bar, the scope chip, and worktree selection SHALL be offered only while the
-`anywhereTerminal.worktree.workbench` setting is enabled, and that setting SHALL default to
-disabled. While it is disabled no tab SHALL be hidden, no chip SHALL be rendered, and no persisted
-scope SHALL take effect.
-
-#### Scenario: The setting is off
-
-- **WHEN** the setting is disabled, including by default, and a surface holds a persisted scope
-- **THEN** no tab is hidden, no chip is rendered, and selecting a worktree scopes nothing
-
 ### Requirement: A hidden tab that needs a human is counted
 
 While a surface is scoped, its scope-clearing control SHALL carry a count of the tabs that scope is
