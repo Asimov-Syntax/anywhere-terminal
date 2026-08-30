@@ -8,6 +8,11 @@
 `docs/audit/2026-08-29-worktree-ui-vs-orca.md` — the truthfulness ceiling on inferred activity,
 the glanceability findings, and the worktree-first workbench redesign.
 
+Phase 11 extends that scope once: the review debts the audit did not raise and the redesign
+accumulated — findings adjudicated valid, deferred with reasons, and left without an owner.
+[worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) records them and the ones
+deliberately deferred again.
+
 `docs/PLAN.v4.md` is the shipped record of WT phases 0–7 (discovery, panel shell, live tree,
 agent presence, actions, hook pipeline, hardening). Its task IDs remain the tracker keys for
 that work; this plan continues the same `WT` epic from Phase 8 and Stage 6.
@@ -50,6 +55,7 @@ Phase = build order; Stage = ship order; `Depends On` is the only structural rel
 | [design/worktree-activity-ceiling.md](design/worktree-activity-ceiling.md) | The confirmation ceiling on inferred `running` |
 | [design/worktree-actions.md](design/worktree-actions.md) § 3.2.1–3.2.2 | Create form presentation and where create is offered |
 | [design/worktree-agent-presence.md](design/worktree-agent-presence.md) | Evidence model the rows and the scope join both read |
+| [design/worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) | Recorded review debts, their triage lines, and the decisions each still owes |
 
 **Reference artifact**: `docs/ui/worktree.html` is the visual reference for Phase 10. It is
 uncommitted at the time of writing and **cannot render** — its entire `wk-*` design language
@@ -65,6 +71,7 @@ flowchart LR
     P8[P8<br>Truthful activity] --> P9[P9<br>Glanceability]
     P8 --> P10[P10<br>Worktree-first workbench]
     P9 --> P10
+    P10 --> P11[P11<br>Recorded debts]
 ```
 
 | Phase | Est. | Key Deliverable |
@@ -72,11 +79,13 @@ flowchart LR
 | P8 — Truthful activity | ~2-3d | Every state is legible by shape, and a row stops spinning once nothing has confirmed it |
 | P9 — Glanceability | ~4-6d | The list surfaces the two worktrees that matter, each row says what just happened, and creating one is a worktree question rather than a git one |
 | P10 — Worktree-first workbench | ~9-13d | Selecting a worktree scopes the surface to it — built behind a setting, which WT-010.6 retired once the composition was whole |
+| P11 — Recorded debts | ~4-6d | One rule per concept: containment, promotion, a bounded look, what a row shows, and who knows an entry is gone |
 
 | Stage | What the user gets |
 |-------|--------------------|
 | 6 | A list that can be scanned in one second and rows that stop overstating |
 | 7 | Pick a worktree and the workbench follows it |
+| 8 | The same panel, holding up on a symlinked vault, a sleeping disk, and a deleted session |
 
 > P10 is detailed here because its design is settled, not because it is next. Per the revision
 > rule, reassess it against what P8 and P9 actually shipped before planning its first task.
@@ -289,6 +298,86 @@ nothing to provision.
 | **Notes** | The gate's purpose ends when the composition is whole; leaving it registered leaves two supported layouts to test forever. Removing the old control is the point of the task — a flag flipped but never cleaned up is how a codebase acquires a permanent second UI. Verification requirement, not an observable outcome: no dead style, state key, or unreachable branch is left behind for the retired path, which the review round confirms by reading the diff |
 | **Acceptance** | The workbench composition is what a user sees with no setting configured; the superseded four-segment control and the layout branch it guarded are gone rather than merely unreachable; a user who had explicitly set the flag either way lands on the workbench rather than on a path that no longer exists; the registry and the design docs no longer describe the setting as live |
 | **Status** | done |
+
+---
+
+## Phase 11 — Recorded Debts
+
+> **Goal**: the subsystem holds one rule per concept rather than one per call site. Every task
+> here closes a finding review already adjudicated valid and then deferred with a written reason —
+> see [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) for each one's triage line.
+> Nothing here changes what the panel presents when everything is healthy, which is what makes the
+> phase reviewable as hardening rather than as feature work.
+
+### [WT-011.1] Containment That Survives a Symlink
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Every vault path resolver decides containment on resolved paths rather than on strings, so a symlink inside the root cannot resolve outside it |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.1; [DESIGN.md](DESIGN.md) § 8.5, § 9 D31 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | M |
+| **Labels** | security-privacy, cross-boundary, re-review |
+| **Notes** | Deferred as repo-wide work precisely because fixing one resolver leaves it the only site with a different rule. The repo already owns a tolerant realpath helper built for this exact problem — resolving through the nearest existing ancestor — so this is applying one rule everywhere, not writing one. Tolerance is load-bearing: a resolver that hard-fails on a missing file turns "no transcript yet", the normal early state of a session, into an error |
+| **Acceptance** | A candidate reached through a symlink that escapes the root is refused, at every vault resolver; a candidate legitimately inside the root is still accepted when its own tail does not exist yet; a path on which nothing resolves degrades to the previous lexical answer rather than throwing; no resolver keeps a second containment rule |
+| **Status** | todo |
+
+### [WT-011.2] One Definition of a Window's First Row-Drawing Surface
+
+| Field | Value |
+|-------|-------|
+| **Goal** | The transition to "this window draws rows" is defined in one place, and every boundary that reaches that state routes through it |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.2; [DESIGN.md](DESIGN.md) § 9 D32 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | re-review |
+| **Notes** | The only debt with no round file of its own — carried as a follow-up note from the subscription-seam fix. The concept decides whether a window subscribes to presence at all, and spelled inline it has already drifted at two boundaries. Adding the missing branches would reproduce the defect; the fix is an owner. Boundary: this does not change WHEN a window subscribes, only which boundaries are recognised as reaching the same state |
+| **Acceptance** | A window that gains its first row-drawing surface is promoted regardless of which boundary it arrives through; the boundaries previously missed are covered by tests naming them; no site decides the transition on its own inline rule |
+| **Status** | todo |
+
+### [WT-011.3] A Transcript Look That Cannot Hang
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A transcript read is time-bounded, and a look that times out is treated as a look that achieved nothing rather than as a result or an error |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.3; [DESIGN.md](DESIGN.md) § 9 D33 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | M |
+| **Labels** | re-review |
+| **Notes** | Deferred as "a new failure-surface decision rather than remediation", which is the whole task: a timeout has to fail in a direction, and the direction is soft. The cadence gate bounds how often a look starts, never how long one takes, so a stalled network mount or a sleeping volume holds its slot forever. Second, related invariant in the same seam: the cache cap bounds how many entries are held, not how much re-checking they provoke per tick — a window with many rows does bounded-size bookkeeping over unbounded I/O |
+| **Acceptance** | A read against an unresponsive path abandons within a bound instead of blocking the look; a timed-out look backs off through the existing retry ladder and is not recorded as a resolution; a row whose transcript timed out keeps its last known line rather than blanking; the work provoked per cadence tick is bounded, not only the entries retained |
+| **Status** | todo |
+
+### [WT-011.4] A Row Never Says the Same Thing Twice
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A row's preview is suppressed when it repeats the row's own title, so a one-message session does not present the same sentence twice |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.4; [worktree-panel-ui.md](design/worktree-panel-ui.md) § 3.3; [DESIGN.md](DESIGN.md) § 9 D34 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | user-visible-ui |
+| **Notes** | Deferred as "needs a decision, not a patch" — neither the spec nor the preview design carries a rule about what a row shows when two of its lines agree. The decision is exact equality after the normalization the title already receives, never similarity: a near-match still carries something the title did not, and hiding it would replace a redundancy with a worse lie. Every session is a one-message session at its first render, so this is the common case rather than an edge one |
+| **Acceptance** | A row whose preview exactly matches its title presents the title alone; a row whose preview differs by any amount presents both; a session that gains a second message regains its preview line |
+| **Status** | todo |
+
+### [WT-011.5] A Preview Outlives Nothing
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A preview line is retired when the vault entry that sourced it is gone, while a transcript that is merely unreadable keeps its line |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.5; [DESIGN.md](DESIGN.md) § 9 D35 |
+| **Depends On** | WT-011.3 |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | re-review |
+| **Notes** | Deferred because the obvious fix — handing the projector's live entry-id set to the service — moves ownership a shipped decision assigned elsewhere. The chosen owner is the service itself: it already re-resolves on cadence and already separates "not there yet" from "never will be", so a vanished entry is a third outcome named where the syscall already happens, with no cross-layer push and no second definition of "live". Depends on WT-011.3 because both change how a failed look is classified, and classifying deletion before timeouts fail soft would make the two rules contradict |
+| **Acceptance** | A row whose vault entry has been deleted stops presenting its preview; a row whose transcript is temporarily unreadable keeps its last known line and backs off; the two outcomes are distinguishable in the service rather than inferred by the caller; no live-entry set is pushed across the layer boundary |
+| **Status** | todo |
 
 ---
 

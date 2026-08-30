@@ -405,6 +405,16 @@ shared with the tracker; the *instance* is not.
 
 ---
 
+### 8.7 Recorded debts
+
+Findings that review adjudicated valid and non-gating, each deferred with a written reason
+because its blast radius exceeded the change that found it. They are planned as their own
+slices rather than folded into whatever change next opens the file — a rule applied at one call
+site while three others keep the old one leaves the codebase less consistent, not more.
+
+Inventory, triage lines, and the decisions each one still owes:
+[worktree-subsystem-debts.md](design/worktree-subsystem-debts.md).
+
 ## 9. Key Design Decisions — Worktree Subsystem
 
 | # | Decision | Alternative rejected | Rationale |
@@ -438,6 +448,11 @@ shared with the tracker; the *instance* is not.
 | D28 | Sessions is demoted to the second value of a `Worktrees \| Sessions` toggle; Recent / Agent / Folder becomes a grouping control inside Sessions | Keep four flat segments | Three of the four are grouping modes of one body and the fourth swaps the body. The squeeze that drops labels from unselected segments is the visible symptom of the mismatch. The two persisted keys are already independent, so the correction needs no migration |
 | D29 | Selecting a worktree opens an inspector **drawer** under the tree | Replace the panel body with a detail view | At sidebar width, replacing the body makes selection destructive: the user loses the list they were comparing against and needs a back control to return. The drawer keeps the rail scannable and is where the path lives |
 | D30 | Agentless worktrees dim to one line and fold under a single disclosure from four upward | Ship the reference's filter popover; or leave the tail at full weight | It is the part of "hide sleeping" that pays for itself with no filter state to explain, no popover, and no protocol. The popover stays deferred |
+| D31 | Containment is resolved, not spelled — every vault resolver realpaths both sides | Keep lexical `path.relative` containment; or fix only the resolver a review happened to open | A symlink inside the root satisfies every lexical test while resolving outside it. The repo already states the stricter rule for webview-supplied paths (§ 8.5), and `realpathTolerant` already exists for it. One rule at every site; fixing one site alone makes it the odd one out |
+| D32 | A window's "first row-drawing surface" is defined once and every boundary routes through it | Add the missing branches at each site that decides it inline | The concept decides whether a window subscribes to presence at all. Spelled inline it has drifted at two boundaries already; the defect is the absence of an owner, so adding branches would reproduce it |
+| D33 | A transcript look is time-bounded and **fails soft** — a timeout means "achieved nothing" | No timeout; or surface a read timeout as an error state on the row | The cadence gate bounds how often a look starts, never how long one takes, so a hung mount holds its slot forever. Failing soft feeds the existing retry ladder: a slow transcript is usually readable later, and a row that blanks on a sleeping volume tells a worse lie than one keeping its last known line |
+| D34 | A preview is suppressed only on exact equality with the title, after the same normalization | Fuzzy or prefix similarity; or leave the duplicate line | Every session is a one-message session at first render, so the row draws one sentence twice. But a near-match still carries something the title did not — a heuristic that hid it would replace a redundancy with a worse lie |
+| D35 | The preview service owns "this entry is gone", as a third outcome beside unresolved and uncovered | Push the projector's live entry-id set down into the service | The service already re-resolves on cadence and already distinguishes "not there yet" from "never will be". Naming deletion there keeps the knowledge where the syscall happens, with no cross-layer push and no second definition of "live" to keep in sync. A temporarily unreadable transcript is explicitly NOT a deletion |
 | D24 | The launch environment gap is recorded, not fixed here | Fold an env-policy fix into this feature | It affects every vault launch, predates this feature, and changing it touches unrelated paths. Fixing it inside a worktree feature would hide a security change in an unrelated diff |
 
 Decisions made on the user's behalf and recorded rather than asked: D3, D4, D5, D8, D11, D14,
@@ -515,6 +530,9 @@ other doc references it rather than restating it.
 | Output watermarks | 100 000 high / 5 000 low, adaptive flush 4–16 ms | [output-buffering.md](design/output-buffering.md) § 2 | flow-user-input, session-manager |
 | PTY default geometry | 80 cols × 30 rows | `src/pty/PtySession.ts:139-140` | pty-manager, session-manager |
 | Editor-panel grace destroy | 5 000 ms | `src/providers/TerminalEditorProvider.ts:42` | session-manager, webview-provider, flow-view-lifecycle |
+| Vault path containment | Resolved on both sides — realpath through the nearest existing ancestor, then the relative test. One rule at every vault resolver | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.1 | § 8.5, § 9 D31 |
+| A failed transcript look | Three outcomes, never conflated: `unresolved` (not there yet — retried), `uncovered` (this source keeps no transcript — never retried), and a vanished vault entry (retires the line). A timeout is `unresolved`, not a fourth | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.3, § 2.5 | § 9 D33, D35 |
+| Preview suppression | Exact equality with the row's title after the title's own normalization — never a prefix or similarity test | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.4 | ui § 3.3, § 9 D34 |
 | Default scrollback | 10 000 lines | `src/settings/SettingsReader.ts:22` | xterm-integration, build-system |
 | `TerminalActivityStatus` | `idle` \| `running` \| `waiting`; precedence `waiting > (semanticWorking \|\| outputActive) > idle`, idle delay 1500 ms | `src/webview/terminal/TerminalActivityTracker.ts:1,30,119-123` | agent-cli-integration, xterm-integration, and § 10's activity-vocabulary row above |
 | Max pasted image | 20 MiB | `src/shared/imagePasteTrigger.ts:21` | flow-clipboard, keyboard-input, link-detection |
