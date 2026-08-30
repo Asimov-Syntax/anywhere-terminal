@@ -152,6 +152,23 @@ function full(draft: Draft, what: string): boolean {
   return true;
 }
 
+/**
+ * Record a problem, unless the budget is already spent.
+ *
+ * EVERY problem append goes through here. 3_2 put the cap in front of the three
+ * row collections and in front of a refused match, which left the file that can
+ * produce the most output entirely unbounded: an unrecognized key emits a
+ * problem and nothing else, so a file of nothing but unknown keys never reached
+ * a check (.reviews/round-3.md B7). The cap protects the postMessage and the
+ * DOM, and a problem row costs those exactly what an entry row costs.
+ */
+function report(draft: Draft, what: string, p: ProvisionProblem): void {
+  if (full(draft, what)) {
+    return;
+  }
+  draft.problems.push(p);
+}
+
 function emptyModel(): ProvisionModel {
   return { entries: [], setup: [], ports: [], providers: [], excluded: [], problems: [] };
 }
@@ -269,12 +286,12 @@ async function entriesFor(
   draft: Draft,
 ): Promise<void> {
   if (!Array.isArray(declared)) {
-    draft.problems.push(problem("malformed", `\`${mode}\` must be a list of paths.`));
+    report(draft, `\`${mode}\``, problem("malformed", `\`${mode}\` must be a list of paths.`));
     return;
   }
   for (const raw of declared) {
     if (typeof raw !== "string" || raw.trim() === "") {
-      draft.problems.push(problem("malformed", `\`${mode}\` holds an entry that is not a path.`));
+      report(draft, `\`${mode}\``, problem("malformed", `\`${mode}\` holds an entry that is not a path.`));
       continue;
     }
     const relPath = raw.trim();
@@ -288,13 +305,17 @@ async function entriesFor(
       } else {
         // Refused and reported, never clamped: clamping turns a suspicious
         // entry into a silently different one (§ 7).
-        draft.problems.push(refusal(where, relPath));
+        report(draft, `\`${relPath}\``, refusal(where, relPath));
       }
       continue;
     }
     const glob = splitGlob(relPath);
     if (glob === null) {
-      draft.problems.push(problem("malformed", `\`${relPath}\` may hold one \`*\`, in its last segment only.`));
+      report(
+        draft,
+        `\`${relPath}\``,
+        problem("malformed", `\`${relPath}\` may hold one \`*\`, in its last segment only.`),
+      );
       continue;
     }
     // The DIRECTORY is checked before it is read, so a `../*` pattern cannot
@@ -307,7 +328,7 @@ async function entriesFor(
     if (glob.dir !== "") {
       const parent = await contained(glob.dir, repoRoot, root, deps);
       if (parent !== "inside") {
-        draft.problems.push(refusal(parent, relPath));
+        report(draft, `\`${relPath}\``, refusal(parent, relPath));
         continue;
       }
     }
@@ -318,7 +339,9 @@ async function entriesFor(
       if (!isAbsence(error)) {
         // Present and unreadable is not the same as absent. Reported, so the
         // section does not claim the repository declared nothing (B8).
-        draft.problems.push(
+        report(
+          draft,
+          `\`${relPath}\``,
           problem("unreadable", `\`${glob.dir === "" ? "." : glob.dir}\` could not be read (${errnoOf(error)}).`),
         );
         continue;
@@ -328,7 +351,9 @@ async function entriesFor(
       continue;
     }
     if (scanned.truncated) {
-      draft.problems.push(
+      report(
+        draft,
+        `\`${relPath}\``,
         problem("malformed", `\`${relPath}\` names a directory too large to scan; it is not offered.`),
       );
       continue;
@@ -352,7 +377,7 @@ async function entriesFor(
       // (round-1 B2) — which is the same authorization D4 gives literal entries.
       const where = await contained(expanded, repoRoot, root, deps);
       if (where !== "inside") {
-        draft.problems.push(refusal(where, expanded));
+        report(draft, `\`${expanded}\``, refusal(where, expanded));
         continue;
       }
       draft.entries.push({ id: nextId(), path: expanded, mode, source: ASIMOV_PROVIDER_FILE });
@@ -434,21 +459,29 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
   const record = parsed as Record<string, unknown>;
 
   for (const key of Object.keys(record)) {
+    if (draft.capped) {
+      break;
+    }
     if (!KNOWN_KEYS.has(key)) {
-      draft.problems.push(problem("unknownKey", `\`${key}\` is not a key this reads.`));
+      report(draft, `\`${key}\``, problem("unknownKey", `\`${key}\` is not a key this reads.`));
     }
   }
 
-  if (record.copy !== undefined) {
+  // Once the cap is recorded the model is closed, so the remaining sections are
+  // not walked at all. Skipping them is what keeps a capped draft cheap and
+  // keeps the cap to exactly one row — every section below would otherwise call
+  // `report`, find the budget spent, and do nothing, one no-op per declaration
+  // in a file we have already refused to finish reading (round-3 B7).
+  if (record.copy !== undefined && !draft.capped) {
     await entriesFor(record.copy, "copy", repoRoot, root, deps, nextId, draft);
   }
-  if (record.link !== undefined) {
+  if (record.link !== undefined && !draft.capped) {
     await entriesFor(record.link, "link", repoRoot, root, deps, nextId, draft);
   }
 
-  if (record.ports !== undefined) {
+  if (record.ports !== undefined && !draft.capped) {
     if (typeof record.ports !== "object" || record.ports === null || Array.isArray(record.ports)) {
-      draft.problems.push(problem("malformed", "`ports` must be a mapping of names."));
+      report(draft, "`ports`", problem("malformed", "`ports` must be a mapping of names."));
     } else {
       for (const name of Object.keys(record.ports as Record<string, unknown>)) {
         if (full(draft, `port \`${name}\``)) {
@@ -461,16 +494,16 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
     }
   }
 
-  if (record.setup !== undefined) {
+  if (record.setup !== undefined && !draft.capped) {
     if (!Array.isArray(record.setup)) {
-      draft.problems.push(problem("malformed", "`setup` must be a list of commands."));
+      report(draft, "`setup`", problem("malformed", "`setup` must be a list of commands."));
     } else {
       for (const raw of record.setup) {
         if (full(draft, "a setup step")) {
           break;
         }
         if (typeof raw !== "string" || raw.trim() === "") {
-          draft.problems.push(problem("malformed", "`setup` holds an entry that is not a command."));
+          report(draft, "a setup step", problem("malformed", "`setup` holds an entry that is not a command."));
           continue;
         }
         // Stored exactly as written. It is display text here and the shell's

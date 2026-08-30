@@ -160,3 +160,15 @@
     2. Update the `ProvisionItemId` doc comment in `src/types/messages.ts` that 2_4 added: it warned that a merge preserving adapter-local ids would collide, which is now stale — `issue` remints, so the comment states an enforced property rather than an outstanding obligation.
     3. Cover the property in `src/worktree/provisioning/offerStore.test.ts`, and narrow the two assertions in `src/providers/WorktreeHost.actions.test.ts` that compared a published offer to the adapter model by value: an offer no longer equals the model it was built from, and what those tests assert is which read was published, which the entry path says.
   - **Boundary**: the id format stays opaque and non-derived — never a path, never a hash of one
+
+- [x] 3_4 Put every problem the file can produce under the one budget — verified: pnpm exec vitest run 'src/worktree/provisioning/asimovProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_3
+  - **Refs**: .reviews/round-3.md B7; docs/design/worktree-provisioning.md#7-security; design.md D3
+  - **Acceptance**:
+    - Outcome: A provider file inside the byte budget cannot emit more than `MAX_MODEL_ROWS` rows by any route, including one made only of unrecognized keys
+    - Verify: unit src/worktree/provisioning/asimovProvider.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/asimovProvider.ts`, route every problem append through one budget-aware helper. 3_2 applied the cap to the three row collections and to refused matches, but the unknown-key loop consults nothing, and a non-string `copy`/`link` element reports and continues one line before the check — so the file that produces the MOST rows is the one still unbounded.
+    2. Stop the remaining sections once the cap is recorded, so a capped draft costs nothing further and carries exactly one cap row.
+    3. Cover in `src/worktree/provisioning/asimovProvider.test.ts`: a file of nothing but unknown keys, a `copy` list of non-string elements, and a malformed collection shape arriving at an already-full draft.
+  - **Boundary**: the cap message stays one row and stays a `malformed` problem — this bounds emission, it does not restate what round 2 settled about how a refusal is worded

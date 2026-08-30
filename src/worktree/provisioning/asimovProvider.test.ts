@@ -405,3 +405,56 @@ describe("what it refuses to spend (round-2 B7, W6)", () => {
     expect(model.problems.map((p) => p.reason)).toEqual(["malformed"]);
   });
 });
+
+describe("what it refuses to spend on problems (round-3 B7)", () => {
+  /** Every row the offer carries, whichever collection holds it. */
+  function rows(model: Awaited<ReturnType<typeof readAsimovProvisioning>>): number {
+    return model.entries.length + model.ports.length + model.setup.length + model.problems.length;
+  }
+
+  it("[B7] bounds a file made of nothing but keys it does not read", async () => {
+    // The cap was applied to the three ROW collections and to refused matches.
+    // The file that produces the most output produces none of those: an
+    // unrecognized key emits a problem, and that loop consulted nothing.
+    const keys = Array.from({ length: MAX_MODEL_ROWS + 80 }, (_, i) => `unknown${i}: 1`).join("\n");
+    const model = await readAsimovProvisioning(withYaml(`${keys}\n`), ROOT);
+
+    expect(rows(model)).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(model.problems.filter((p) => p.detail.includes("not offered"))).toHaveLength(1);
+  });
+
+  it("[B7] bounds a copy list whose elements are not paths", async () => {
+    // Reported and skipped one line BEFORE the budget check, so the whole list
+    // was emitted however long it was.
+    const junk = Array.from({ length: MAX_MODEL_ROWS + 40 }, () => "  - []").join("\n");
+    const model = await readAsimovProvisioning(withYaml(`copy:\n${junk}\n`), ROOT);
+
+    expect(rows(model)).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(model.entries).toEqual([]);
+  });
+
+  it("[B7] records the cap once, and stops rather than filling the rest", async () => {
+    // A capped draft costs nothing further: later sections are not walked, and
+    // no second cap row is added by whichever one would have been next.
+    const keys = Array.from({ length: MAX_MODEL_ROWS + 5 }, (_, i) => `unknown${i}: 1`).join("\n");
+    const ports = Array.from({ length: 50 }, (_, i) => `  P${i}: 1`).join("\n");
+    const model = await readAsimovProvisioning(
+      withYaml(`${keys}\ncopy:\n  - .env\nports:\n${ports}\nsetup:\n  - pnpm install\n`),
+      ROOT,
+    );
+
+    expect(rows(model)).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(model.problems.filter((p) => p.detail.includes("not offered"))).toHaveLength(1);
+    expect(model.ports).toEqual([]);
+    expect(model.setup).toEqual([]);
+  });
+
+  it("[B7] still reports a malformed collection shape when there is room", async () => {
+    // The budget bounds emission; it does not silence a file that is simply
+    // wrong. One row is still one row.
+    const model = await readAsimovProvisioning(withYaml("ports:\n  - APP\nsetup: 7\n"), ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["malformed", "malformed"]);
+    expect(model.problems.some((p) => p.detail.includes("not offered"))).toBe(false);
+  });
+});
