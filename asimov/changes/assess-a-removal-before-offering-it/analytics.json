@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "assess-a-removal-before-offering-it"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788115344205,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788115344205,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788115344205
+        }
+      ],
+      "firstAt": 1788115344205,
+      "lastAt": 1788115344205,
+      "buckets": []
+    }
+  ]
+}
