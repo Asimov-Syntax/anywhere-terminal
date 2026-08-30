@@ -43,29 +43,12 @@ a snapshot from separately-timed copies of the database file and its `-wal`/`-sh
 NOT query the live store in place, and SHALL NOT open the live store for writing in order to
 snapshot it.
 
-A read MAY be served from a snapshot taken for an earlier read, but ONLY while the store is provably
-unchanged since that snapshot was taken, established by the `(mtimeMs, size)` stamp of the database
-file and its `-wal`. A read whose store's stamp differs from the retained snapshot's SHALL take a
-fresh snapshot. Concurrent reads of the same unchanged store SHALL share one snapshot operation
-rather than each taking their own.
-
 #### Scenario: A session committed only to the WAL survives a concurrent checkpoint
 
 - **WHEN** a store holds a committed row resident in its `-wal` and not yet in the base file, and the
   live agent checkpoints and vacuums that store while the snapshot is being taken
 - **THEN** the snapshot SHALL either contain that row or report a failure status, and SHALL NOT
   return `ok` with the row missing
-
-#### Scenario: A write between two reads is never served from the earlier snapshot
-
-- **WHEN** a session is written to a store between one read and the next
-- **THEN** the second read SHALL take a fresh snapshot, and SHALL NOT answer from the snapshot taken
-  before that write
-
-#### Scenario: A retained snapshot does not outlive the process that made it
-
-- **WHEN** the extension shuts down while snapshots are retained
-- **THEN** every retained snapshot file SHALL be deleted
 
 ### Requirement: Aggregate and sort sessions
 
@@ -245,4 +228,23 @@ being inside it, and an entry that fails the check SHALL be skipped without fail
   file outside that root
 - **THEN** it does not become an index entry, and the remaining entries in that directory are
   indexed normally
+
+### Requirement: SQLite engine selection and result discrimination
+
+The system SHALL access SQLite preferring the built-in `node:sqlite` module, falling back to the host
+`sqlite3` binary in read-only mode WHEN `node:sqlite` is unavailable, without any new native
+dependency. The read SHALL return a discriminated result distinguishing `ok` / `no-db` /
+`db-unreachable` / `no-sqlite3` / `query-error`, never a bare empty array, and a failure to produce a
+snapshot SHALL surface as `db-unreachable` or `query-error` rather than as `ok` with zero rows.
+
+WHEN neither engine is available the read SHALL return `no-sqlite3` and SQLite-backed agents SHALL
+degrade to their fallback without raising; a `query-error` SHALL be counted as unreadable and
+surfaced, not silently dropped.
+
+#### Scenario: A store that cannot be opened for snapshotting is not an empty store
+
+- **WHEN** the snapshot cannot be produced because the store's directory denies the access the engine
+  needs to open a WAL database
+- **THEN** the read SHALL report `db-unreachable` or `query-error`, and SHALL NOT report `ok` with
+  zero rows
 
