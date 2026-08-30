@@ -11,7 +11,7 @@
 
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
 import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
-import { type CreatePathContext, type CreatePathDeps, identityOf, validateCreatePath } from "./createPath";
+import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
@@ -467,7 +467,12 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
         deps.report(fail("That repository is gone."), request.origin);
         return;
       }
-      const first = await validateCreatePath(request.path, before, deps.pathDeps);
+      // Resolved ONCE and used for both observations. Deriving it separately in
+      // each phase would let the two checks disagree about what the destination
+      // was supposed to be, which is the one thing the two-phase check exists to
+      // detect.
+      const intent = intentFor(request.mode, request.disposition);
+      const first = await validateCreatePath(request.path, before, deps.pathDeps, intent);
       if (!first.ok) {
         deps.report(fail(first.reason), request.origin);
         return;
@@ -484,7 +489,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             // PHASE 2 — the FULL check again, not a spot-check. Lexical walk,
             // normalization, containment, type and emptiness all re-run here,
             // because any of them can have changed during the wait.
-            const check = await validateCreatePath(request.path, ctx, deps.pathDeps);
+            const check = await validateCreatePath(request.path, ctx, deps.pathDeps, intent);
             if (!check.ok) {
               return fail(check.reason);
             }

@@ -31,7 +31,7 @@
     7. In `src/webview/worktree/worktreeViewTypes.ts`, re-export `WorktreeCreateMode`, `DestinationDisposition` and `WorktreeAfterCreate` beside the other message types the webview reads.
     8. Update `src/webview/worktree/worktreeFixtures.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeController.test.ts` and the suites named in Plan paths to the new shape, changing inputs only and never an assertion about behaviour — except in `src/worktree/worktreeMutationService.test.ts`, which gains the case design.md D2 names: a `fresh` mode with no `baseRef` reaches git as `newBranch`, not `existingBranch`.
 
-- [ ] 1_3 Make the destination rule depend on what the mode needs
+- [x] 1_3 Make the destination rule depend on what the mode needs — verified: bun test 'src/worktree/createPath.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D3
   - **Acceptance**:

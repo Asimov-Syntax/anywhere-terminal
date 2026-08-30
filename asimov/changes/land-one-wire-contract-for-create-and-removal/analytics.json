@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "land-one-wire-contract-for-create-and-removal"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788105831942,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788105831942,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788105831942
+        }
+      ],
+      "firstAt": 1788105831942,
+      "lastAt": 1788106169814,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 26,
+          "inputTokens": 52,
+          "outputTokens": 19800,
+          "reasoningTokens": 1712,
+          "cacheWriteTokens": 35135,
+          "cacheReadTokens": 7261013,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 35135,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

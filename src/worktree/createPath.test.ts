@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type CreatePathContext,
   type CreatePathDeps,
+  intentFor,
   resolveCreateRoot,
   suggestFreePath,
   validateCreatePath,
@@ -360,5 +361,79 @@ describe("a create path carrying characters nobody typed", () => {
   it("still accepts an ordinary path, spaces and unicode included", async () => {
     // The negative that keeps the rule from being "reject anything unusual".
     expect(await validateCreatePath("/trees/my worktree \u2014 caf\u00e9", ctx, deps)).toMatchObject({ ok: true });
+  });
+});
+
+describe("the destination rule depends on what the mode needs", () => {
+  const surviving = { dirs: { "/repo": [], "/trees/feat": ["README.md", ".git"] } };
+
+  it("refuses a non-empty directory for a fresh create, as it always has", async () => {
+    const result = await validateCreatePath("/trees/feat", ctx, fsOf(surviving), { kind: "mustBeFreeOrEmpty" });
+    expect(result).toMatchObject({ ok: false, reason: "That directory already exists and is not empty." });
+  });
+
+  it("accepts the same directory for a recovery mode, which is the point of one", async () => {
+    // reattach and adopt both name a checkout that SURVIVED. A blanket
+    // "must not exist" makes recovery unexpressible.
+    const result = await validateCreatePath("/trees/feat", ctx, fsOf(surviving), {
+      kind: "mustBeExistingDirectory",
+    });
+    expect(result).toMatchObject({ ok: true, path: "/trees/feat" });
+  });
+
+  it("does not ask a recovered directory to still be empty at the re-check", async () => {
+    const result = await validateCreatePath("/trees/feat", ctx, fsOf(surviving), {
+      kind: "mustBeExistingDirectory",
+    });
+    expect(result).toMatchObject({ mustBeEmpty: false, recheckPath: "/trees/feat" });
+  });
+
+  it("refuses a recovery mode pointed at nothing", async () => {
+    const result = await validateCreatePath("/trees/gone", ctx, fsOf({ dirs: { "/repo": [] } }), {
+      kind: "mustBeExistingDirectory",
+    });
+    expect(result).toMatchObject({ ok: false });
+  });
+
+  it("still refuses a path inside another worktree, whatever the intent", async () => {
+    // The containment barrier is not a property of the mode.
+    const result = await validateCreatePath(
+      "/repo/wt-existing/nested",
+      ctx,
+      fsOf({ dirs: { "/repo": [], "/repo/wt-existing/nested": ["x"] } }),
+      { kind: "mustBeExistingDirectory" },
+    );
+    expect(result).toMatchObject({ ok: false, reason: "That path is inside another worktree of this repository." });
+  });
+});
+
+describe("intentFor", () => {
+  it("asks for a free destination for the three modes that create one", async () => {
+    for (const mode of [
+      { kind: "fresh", branch: "feat" },
+      { kind: "fresh-detached", baseRef: "HEAD" },
+      { kind: "reuse", branch: "feat" },
+    ] as const) {
+      expect(intentFor(mode, { kind: "free" })).toEqual({ kind: "mustBeFreeOrEmpty" });
+    }
+  });
+
+  it("asks for a surviving directory for the two recovery modes", async () => {
+    for (const mode of [
+      { kind: "reattach", branch: "feat", repairPath: "/trees/feat", expectedOid: "abc" },
+      { kind: "adopt", branch: "feat", adoptPath: "/trees/feat", expectedBranchOid: "abc" },
+    ] as const) {
+      expect(intentFor(mode, { kind: "free" })).toEqual({ kind: "mustBeExistingDirectory" });
+    }
+  });
+
+  it("lets a debris disposition override the mode's own rule", async () => {
+    // The two axes are independent: a fresh create into a crash-debris
+    // destination is the case a single mode enum could not express.
+    const authorization = { path: "/trees/feat", fingerprint: "fp-1" };
+    expect(intentFor({ kind: "fresh", branch: "feat" }, { kind: "debris", authorization })).toEqual({
+      kind: "mustMatchDebrisAuthorization",
+      authorization,
+    });
   });
 });

@@ -5,6 +5,7 @@
 // validation is the only barrier between a webview-supplied string and git.
 
 import * as nodePath from "node:path";
+import type { DebrisAuthorization, DestinationDisposition, WorktreeCreateMode } from "../types/messages";
 import { isPathInside } from "../utils/pathBoundary";
 
 export interface CreatePathDeps {
@@ -55,6 +56,57 @@ export interface CreatePathContext {
   linkedWorktrees: readonly string[];
 }
 
+/**
+ * What the destination must already be, for this create.
+ *
+ * Derived from the branch mode and the destination disposition by `intentFor`,
+ * and taken here as an intent rather than as the mode itself: this module has no
+ * business knowing that `adopt` and `reattach` are different git operations,
+ * because they impose the same requirement on the path.
+ */
+export type CreatePathIntent =
+  /** `fresh`, `fresh-detached`, `reuse`: absent, or an existing empty directory. */
+  | { kind: "mustBeFreeOrEmpty" }
+  /**
+   * `reattach`, `adopt`: the checkout that survived. It must exist and it must
+   * be a directory; emptiness is not required and must not be, because the whole
+   * point of a recovery mode is the content that is still there.
+   */
+  | { kind: "mustBeExistingDirectory" }
+  /**
+   * A destination holding crash debris the user authorized deleting.
+   *
+   * This module checks only what it can see — that something is there to delete.
+   * Classifying the debris as non-git, and redeeming the fingerprint against the
+   * host that issued it, happen before this is called; a fingerprint cannot be
+   * verified by a function with no issuer to ask.
+   */
+  | { kind: "mustMatchDebrisAuthorization"; authorization: DebrisAuthorization };
+
+/**
+ * The intent a mode and a disposition imply. The ONLY place the two axes are
+ * mapped to a path rule.
+ *
+ * The disposition wins where it is `debris`: a fresh create into a destination
+ * holding crash debris is exactly the combination a single mode enum could not
+ * express, which is why `DestinationDisposition` is a separate axis
+ * (worktree-rpc.md § 2.3).
+ */
+export function intentFor(mode: WorktreeCreateMode, disposition: DestinationDisposition): CreatePathIntent {
+  if (disposition.kind === "debris") {
+    return { kind: "mustMatchDebrisAuthorization", authorization: disposition.authorization };
+  }
+  switch (mode.kind) {
+    case "reattach":
+    case "adopt":
+      return { kind: "mustBeExistingDirectory" };
+    case "fresh":
+    case "fresh-detached":
+    case "reuse":
+      return { kind: "mustBeFreeOrEmpty" };
+  }
+}
+
 export type CreatePathResult =
   | {
       ok: true;
@@ -87,6 +139,7 @@ export async function validateCreatePath(
   raw: string,
   ctx: CreatePathContext,
   deps: CreatePathDeps,
+  intent: CreatePathIntent = { kind: "mustBeFreeOrEmpty" },
 ): Promise<CreatePathResult> {
   const api = deps.platform === "win32" ? nodePath.win32 : nodePath.posix;
   if (raw.trim().length === 0 || !api.isAbsolute(raw)) {
@@ -114,16 +167,31 @@ export async function validateCreatePath(
     return { ok: false, reason: "The worktree path could not be resolved." };
   }
 
-  // 3. Absent, or an empty directory.
+  // 3. What the intent demands of the destination. This is the ONLY step the
+  //    intent changes — the symlink walk above and the containment barrier
+  //    below hold for every mode, because neither is a property of the mode.
   const stat = await deps.lstat(normalized);
-  if (stat !== null) {
-    if (!stat.isDirectory()) {
-      return { ok: false, reason: "That path already exists and is not a directory." };
+  if (stat !== null && !stat.isDirectory()) {
+    return { ok: false, reason: "That path already exists and is not a directory." };
+  }
+  if (intent.kind === "mustBeFreeOrEmpty") {
+    if (stat !== null) {
+      const entries = await deps.readdir(normalized);
+      if (entries === null || entries.length > 0) {
+        return { ok: false, reason: "That directory already exists and is not empty." };
+      }
     }
-    const entries = await deps.readdir(normalized);
-    if (entries === null || entries.length > 0) {
-      return { ok: false, reason: "That directory already exists and is not empty." };
-    }
+  } else if (stat === null) {
+    // Both other intents name a directory that is already there. A recovery
+    // pointed at nothing has nothing to recover, and debris that is gone needs
+    // no authorization to delete.
+    return {
+      ok: false,
+      reason:
+        intent.kind === "mustBeExistingDirectory"
+          ? "That directory is gone, so there is nothing to re-register."
+          : "That directory is gone, so there is nothing to clear.",
+    };
   }
 
   // 4. Not the main worktree, and not inside a LINKED one. Inside MAIN is
@@ -146,7 +214,10 @@ export async function validateCreatePath(
     ok: true,
     path: normalized,
     recheckPath,
-    mustBeEmpty: exists,
+    // Only the free-or-empty intent asked for emptiness in the first place, so
+    // only it may ask for it again: re-checking it for a recovery would refuse
+    // the very directory that mode exists to reuse.
+    mustBeEmpty: exists && intent.kind === "mustBeFreeOrEmpty",
     recheckIdentity: identityOf(exists ? stat : await deps.lstat(recheckPath)),
   };
 }
