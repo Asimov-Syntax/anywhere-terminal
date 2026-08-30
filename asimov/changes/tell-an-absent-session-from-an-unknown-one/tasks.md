@@ -43,7 +43,7 @@
     4. In `src/vault/readers/claudeReader.ts`, give `lookupClaudeEntry` the real classification from the D5 Claude table, reporting unknown when the entry build returns nothing or raises.
     5. Test each row of the table, asserting unknown specifically on the failure paths rather than "not found".
 
-- [ ] 1_4 Let the Codex reader say which of the three it means
+- [x] 1_4 Let the Codex reader say which of the three it means — verified: pnpm exec vitest run 'src/vault/readers/codexReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: <!-- design.md D2, D4, D5 (Codex), D6 -->
   - **Boundary**: the SQLite-first / rollout-fallback order is unchanged; no new probe is added

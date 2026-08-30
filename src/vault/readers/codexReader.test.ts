@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VAULT_CACHE_VERSION } from "../cacheTypes";
 import type { SqliteResult } from "../sqlite";
-import { pickRolloutPath, readCodexEntry, readCodexSessions } from "./codexReader";
+import { lookupCodexEntry, pickRolloutPath, readCodexEntry, readCodexSessions } from "./codexReader";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_CODEX_DIR = path.join(here, "..", "__fixtures__", "codex");
@@ -506,5 +506,62 @@ describe("pickRolloutPath containment", () => {
     const real = path.join(sessionsDir, `rollout-2026-01-01T00-00-00-${SESSION}.jsonl`);
     await fsp.writeFile(real, "{}\n");
     expect(await pickRolloutPath({ rolloutPath: sessionsDir }, SESSION, sessionsDir)).toBe(real);
+  });
+});
+
+
+describe("lookupCodexEntry: the query-error that used to look like a miss", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const roots: string[] = [];
+  const store = async (): Promise<string> => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-codex-lookup-"));
+    roots.push(dir);
+    await fsp.mkdir(path.join(dir, "sessions"), { recursive: true });
+    return dir;
+  };
+
+  afterEach(async () => {
+    for (const dir of roots.splice(0)) {
+      await fsp.chmod(path.join(dir, "sessions"), 0o755).catch(() => {});
+      await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("says absent when the thread query ran and indexed nothing", async () => {
+    const fn = stubSqlite({ status: "ok", rows: [] });
+    expect(await lookupCodexEntry(ID, { codexDir: await store(), readSqliteFn: fn })).toEqual({ status: "absent" });
+  });
+
+  it("says unknown for a query error — the case this whole change exists for", async () => {
+    const fn = stubSqlite({ status: "query-error", rows: [], error: "database is locked" });
+    expect(await lookupCodexEntry(ID, { codexDir: await store(), readSqliteFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("says unknown for a store it could not reach", async () => {
+    const fn = stubSqlite({ status: "db-unreachable", rows: [] });
+    expect(await lookupCodexEntry(ID, { codexDir: await store(), readSqliteFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("says unknown for a row the store holds and the reader cannot map", async () => {
+    const fn = stubSqlite({ status: "ok", rows: [{ nothing: "usable" }] });
+    expect(await lookupCodexEntry(ID, { codexDir: await store(), readSqliteFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("says absent when no database sends it to an exhaustive rollout scan that finds nothing", async () => {
+    const fn = stubSqlite({ status: "no-db", rows: [] });
+    expect(await lookupCodexEntry(ID, { codexDir: await store(), readSqliteFn: fn })).toEqual({ status: "absent" });
+  });
+
+  it.skipIf(process.getuid?.() === 0)("says unknown when the rollout walk could not enter a directory", async () => {
+    const dir = await store();
+    await fsp.mkdir(path.join(dir, "sessions", "2026"), { recursive: true });
+    await fsp.chmod(path.join(dir, "sessions", "2026"), 0o000);
+    const fn = stubSqlite({ status: "no-db", rows: [] });
+    expect(await lookupCodexEntry(ID, { codexDir: dir, readSqliteFn: fn })).toEqual({ status: "unknown" });
+  });
+
+  it("keeps readCodexEntry nullable for callers that cannot act on the difference", async () => {
+    const fn = stubSqlite({ status: "query-error", rows: [], error: "boom" });
+    expect(await readCodexEntry(ID, { codexDir: await store(), readSqliteFn: fn })).toBeNull();
   });
 });

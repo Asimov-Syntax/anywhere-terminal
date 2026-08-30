@@ -15,6 +15,7 @@ import * as readline from "node:readline";
 import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
+import { provesAbsence } from "../../utils/fsPresence";
 import { readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
 import { sameStamps, stampStoreFiles } from "../storeStamp";
 import {
@@ -567,44 +568,51 @@ export async function readCodexSessions(
  * to the rollout jsonl (located by its filename uuid) when no SQLite DB exists.
  * Returns null for an unsafe id or an unlocatable session.
  */
-export async function readCodexEntry(
+export async function lookupCodexEntry(
   sessionId: string,
   options: CodexReaderOptions = {},
-): Promise<VaultSessionEntry | null> {
+): Promise<VaultEntryLookup> {
   if (!isSafeCodexId(sessionId)) {
-    return null;
+    return { status: "absent" };
   }
   const { dbPath, sessionsDir } = codexDirs(options);
   const readSqliteFn = options.readSqliteFn ?? readSqlite;
 
   const result = await readSqliteFn(dbPath, codexThreadByIdSql(sessionId));
   if (result.status === "ok") {
-    return result.rows.length > 0 ? mapThreadRow(result.rows[0]) : null;
+    if (result.rows.length === 0) {
+      return { status: "absent" }; // the query ran and the thread is not indexed
+    }
+    const entry = mapThreadRow(result.rows[0]);
+    // A row the store conclusively holds and this reader could not map: the
+    // session exists, so this is never absence.
+    return entry ? { status: "found", entry } : { status: "unknown" };
   }
   if (result.status === "no-db" || result.status === "no-sqlite3") {
-    const filePath = await findCodexRolloutByFilename(sessionId, sessionsDir);
-    if (!filePath) {
-      return null;
+    const found = await findCodexRolloutByFilename(sessionId, sessionsDir);
+    if (!found.path) {
+      return found.exhaustive ? { status: "absent" } : { status: "unknown" };
     }
     try {
-      return await buildCodexJsonlEntry(filePath, sessionId);
+      const entry = await buildCodexJsonlEntry(found.path, sessionId);
+      return entry ? { status: "found", entry } : { status: "unknown" };
     } catch {
-      return null;
+      return { status: "unknown" };
     }
   }
-  return null; // query-error → unresolved (caller treats null as unknown-entry)
+  // `db-unreachable` and `query-error` are failures to look, never proof.
+  return { status: "unknown" };
 }
 
-/**
- * Codex by-id lookup, as the conclusive answer the adapter contract asks for.
- * Task 1_1 wraps the existing reader without classifying: a non-null read is
- * `found`, everything else is `unknown`, which is what the caller already assumed.
- * Task 1_4 replaces this body with the real classification.
- */
-export async function lookupCodexEntry(sessionId: string, options: CodexReaderOptions = {}): Promise<VaultEntryLookup> {
-  const entry = await readCodexEntry(sessionId, options);
-  return entry ? { status: "found", entry } : { status: "unknown" };
+/** The entry-or-nothing view, for callers that cannot act on the difference. */
+export async function readCodexEntry(
+  sessionId: string,
+  options: CodexReaderOptions = {},
+): Promise<VaultSessionEntry | null> {
+  const found = await lookupCodexEntry(sessionId, options);
+  return found.status === "found" ? found.entry : null;
 }
+
 
 // ── On-demand session detail (redesign-vault-panel-ui 2_4) ──────────────────
 //
@@ -1075,10 +1083,17 @@ async function streamCodexRecords(
 }
 
 /** Find the rollout jsonl by the session uuid embedded in its filename. */
-async function findCodexRolloutByFilename(sessionId: string, sessionsDir: string): Promise<string | null> {
+/** `exhaustive` is false when the walk could not enter a directory for a reason
+ *  that does not prove it is missing, so a null path no longer doubles as proof
+ *  the rollout is not there (D4). */
+async function findCodexRolloutByFilename(
+  sessionId: string,
+  sessionsDir: string,
+): Promise<{ path: string | null; exhaustive: boolean }> {
   const suffix = `-${sessionId}.jsonl`;
   let dirents: import("node:fs").Dirent[];
   const stack = [sessionsDir];
+  let exhaustive = true;
   while (stack.length > 0) {
     const dir = stack.pop();
     if (!dir) {
@@ -1086,7 +1101,10 @@ async function findCodexRolloutByFilename(sessionId: string, sessionsDir: string
     }
     try {
       dirents = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      // A directory that is not there contributes nothing and leaves the walk
+      // complete; anything else leaves a subtree unsearched.
+      exhaustive = exhaustive && provesAbsence(err);
       continue;
     }
     for (const dirent of dirents) {
@@ -1094,11 +1112,11 @@ async function findCodexRolloutByFilename(sessionId: string, sessionsDir: string
       if (dirent.isDirectory()) {
         stack.push(full);
       } else if (dirent.isFile() && dirent.name.endsWith(suffix)) {
-        return full;
+        return { path: full, exhaustive: true };
       }
     }
   }
-  return null;
+  return { path: null, exhaustive };
 }
 
 /** Best-effort: the `threads` index row for one session (rollout_path + first prompt). */
@@ -1173,7 +1191,7 @@ async function readCodexChildJsonlMeta(
       // Fall back to filename lookup below.
     }
   }
-  const foundRolloutPath = await findCodexRolloutByFilename(childThreadId, sessionsDir);
+  const foundRolloutPath = (await findCodexRolloutByFilename(childThreadId, sessionsDir)).path;
   if (!foundRolloutPath) {
     return null;
   }
@@ -1310,7 +1328,7 @@ export async function pickRolloutPath(
   if (thread?.rolloutPath && (await isResolvedPathInside(thread.rolloutPath, sessionsDir))) {
     return thread.rolloutPath;
   }
-  return (await findCodexRolloutByFilename(sessionId, sessionsDir)) ?? undefined;
+  return (await findCodexRolloutByFilename(sessionId, sessionsDir)).path ?? undefined;
 }
 
 export async function readCodexDetail(
