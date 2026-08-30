@@ -160,16 +160,14 @@ describe("readSqlite: query execution", () => {
     expect(result.rows).toEqual([]);
   });
 
-  it("snapshots the db + its -wal/-shm sidecars before querying (never reads the live store in place; D13)", async () => {
-    const deps = makeDeps({
-      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
-      exists: vi.fn(async () => true), // db + both sidecars present
-    });
+  it("snapshots the live store with a read-only VACUUM INTO, never reading it in place (D13)", async () => {
+    const deps = makeDeps({ exec: execWith(async () => ({ stdout: "[]", stderr: "" })), snapshot: undefined });
     await readSqlite("/x/state.sqlite", "SELECT 1", deps);
-    const copyCalls = (deps.copy as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
-    expect(copyCalls).toContain("/x/state.sqlite");
-    expect(copyCalls).toContain("/x/state.sqlite-wal");
-    expect(copyCalls).toContain("/x/state.sqlite-shm");
+    const calls = (deps.exec as ReturnType<typeof vi.fn>).mock.calls;
+    const snapshotCall = calls.find((c) => String(c[1][2] ?? "").startsWith("VACUUM INTO"));
+    expect(snapshotCall?.[1]).toEqual(["-readonly", "/x/state.sqlite", "VACUUM INTO '/tmp/at-vault-xyz/db.sqlite'"]);
+    // No sidecar assembly: the engine produces the whole snapshot in one operation.
+    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("runs the query read-only over the temp snapshot, never the live db", async () => {
@@ -317,155 +315,6 @@ describe("readSqlite: engine selection (node:sqlite preferred)", () => {
   });
 });
 
-describe("readSqlite: a sidecar that could not be read is not a smaller database (round-3 B1)", () => {
-  /** Presence that answers per path, so the db and its WAL can differ. */
-  function accessing(bySuffix: Record<string, "present" | "absent" | "unreachable">) {
-    return vi.fn(async (p: string) => {
-      if (p.endsWith("-wal")) {
-        return bySuffix["-wal"] ?? "present";
-      }
-      if (p.endsWith("-shm")) {
-        return bySuffix["-shm"] ?? "present";
-      }
-      return "present" as const;
-    });
-  }
-
-  it("reports query-error rather than an empty ok when the WAL is present but unreachable", async () => {
-    const deps = makeDeps({
-      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
-      access: accessing({ "-wal": "unreachable" }),
-    });
-    const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
-    expect(result.status).toBe("query-error");
-    expect(result.rows).toEqual([]);
-  });
-
-  it("reports query-error when the WAL exists but cannot be copied", async () => {
-    const deps = makeDeps({
-      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
-      access: accessing({}),
-      copy: vi.fn(async (src: string) => {
-        if (src.endsWith("-wal")) {
-          throw Object.assign(new Error("EIO"), { code: "EIO" });
-        }
-      }),
-    });
-    const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
-    expect(result.status).toBe("query-error");
-  });
-
-  it("still answers ok when a sidecar is PROVEN absent — a checkpointed db has no WAL", async () => {
-    const deps = makeDeps({
-      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
-      access: accessing({ "-wal": "absent", "-shm": "absent" }),
-    });
-    const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
-    expect(result.status).toBe("ok");
-    const copied = (deps.copy as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
-    expect(copied).toEqual(["/x/state.sqlite"]);
-  });
-
-  it("applies the same rule inside withSqliteSnapshot", async () => {
-    const deps = makeDeps({
-      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
-      access: accessing({ "-wal": "unreachable" }),
-    });
-    const result = await withSqliteSnapshot("/x/state.sqlite", async () => "queried", deps);
-    expect(result.status).toBe("query-error");
-  });
-
-  it("does not run the query at all once a sidecar read has failed", async () => {
-    const exec = execWith(async () => ({ stdout: "[]", stderr: "" }));
-    const deps = makeDeps({ exec, access: accessing({ "-wal": "unreachable" }) });
-    await readSqlite("/x/state.sqlite", "SELECT 1", deps);
-    const queried = exec.mock.calls.filter((c) => !c[1].includes(":memory:"));
-    expect(queried).toEqual([]);
-  });
-});
-
-describe("readSqlite: a checkpoint mid-snapshot cannot empty the result (round-4 B1-R3)", () => {
-  /** A real WAL-mode database whose only row lives in the WAL, plus deps whose
-   *  base-file copy first checkpoints the live store — the exact interleaving
-   *  review reproduced: the WAL is genuinely gone by the time presence is
-   *  checked, so skipping it is correct and the base must already carry the row. */
-  async function walFixture(): Promise<{ dbFile: string; deps: SqliteDeps; dir: string }> {
-    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-wal-"));
-    const dbFile = path.join(dir, "real.sqlite");
-    const seed = new DatabaseSync(dbFile);
-    seed.exec("PRAGMA journal_mode=WAL");
-    seed.exec("CREATE TABLE t(id TEXT)");
-    seed.exec("INSERT INTO t VALUES ('older-session')");
-    seed.close(); // closing checkpoints, so the base file holds ONLY this row
-
-    // The session under test is committed afterwards and lives in the WAL alone —
-    // a base-only copy cannot see it, which is the whole point.
-    const live = new DatabaseSync(dbFile);
-    live.exec("PRAGMA journal_mode=WAL");
-    live.exec("INSERT INTO t VALUES ('live-session')");
-
-    let checkpointed = false;
-    const deps: SqliteDeps = {
-      exec: vi.fn(async () => {
-        throw new Error("command not found: sqlite3"); // force the node:sqlite path
-      }),
-      exists: async (p) => {
-        try {
-          await fsp.access(p);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      copy: async (src, dest) => {
-        await fsp.copyFile(src, dest);
-        // The race, exactly as review reproduced it: the base file is copied, and
-        // ONLY THEN does the store checkpoint and drop its WAL. A later presence
-        // check sees a WAL that is genuinely gone, so skipping it is correct —
-        // which is what makes a base copied before the checkpoint fatal.
-        if (!checkpointed && src === dbFile) {
-          checkpointed = true;
-          live.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-          live.close();
-          for (const suffix of ["-wal", "-shm"]) {
-            await fsp.rm(dbFile + suffix, { force: true });
-          }
-        }
-      },
-      mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
-      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
-      hasNodeSqlite: async () => true,
-    };
-    return { dbFile, deps, dir };
-  }
-
-  it("keeps a WAL-resident row that a concurrent checkpoint moved into the base", async () => {
-    const { dbFile, deps, dir } = await walFixture();
-    try {
-      const result = await readSqlite(dbFile, "SELECT id FROM t WHERE id = 'live-session'", deps);
-      expect(result.status).toBe("ok");
-      expect(result.rows).toEqual([{ id: "live-session" }]);
-    } finally {
-      await fsp.rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps it through withSqliteSnapshot too", async () => {
-    const { dbFile, deps, dir } = await walFixture();
-    try {
-      const result = await withSqliteSnapshot(
-        dbFile,
-        async (s) => s.query("SELECT id FROM t WHERE id = 'live-session'"),
-        deps,
-      );
-      expect(result.status).toBe("ok");
-      expect(result.status === "ok" ? result.value.rows : undefined).toEqual([{ id: "live-session" }]);
-    } finally {
-      await fsp.rm(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("readSqlite: the snapshot is taken by the engine, atomically", () => {
   /** A real WAL-mode store with a SECOND connection left open holding a committed
    *  row in the WAL — what a running agent's database actually looks like. */
@@ -558,5 +407,87 @@ describe("readSqlite: the snapshot is taken by the engine, atomically", () => {
       live.close();
       await fsp.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("readSqlite: the CLI fallback snapshots atomically too", () => {
+  it("reads a WAL-resident row from a live store through the real sqlite3 binary", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-cli-"));
+    const dbFile = path.join(dir, "live.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("PRAGMA journal_mode=WAL");
+    seed.exec("CREATE TABLE t(id TEXT)");
+    seed.exec("INSERT INTO t VALUES ('base-row')");
+    seed.close();
+    const live = new DatabaseSync(dbFile);
+    live.exec("PRAGMA journal_mode=WAL");
+    live.exec("INSERT INTO t VALUES ('wal-row')"); // committed, WAL-resident
+
+    // Real fs + real `sqlite3`, with node:sqlite forced off so the CLI path runs.
+    const deps: SqliteDeps = {
+      exec: async (file, args, options) => {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const { stdout, stderr } = await promisify(execFile)(file, args, { timeout: options.timeout });
+        return { stdout: String(stdout), stderr: String(stderr) };
+      },
+      exists: async (p) => {
+        try {
+          await fsp.access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      copy: (src, dest) => fsp.copyFile(src, dest),
+      mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
+      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
+      hasNodeSqlite: async () => false,
+    };
+    try {
+      const result = await readSqlite(dbFile, "SELECT id FROM t ORDER BY id", deps);
+      expect(result.status).toBe("ok");
+      expect(result.rows).toEqual([{ id: "base-row" }, { id: "wal-row" }]);
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("withSqliteSnapshot: the other entry point snapshots the same way", () => {
+  it("takes one engine snapshot and serves every query from it", async () => {
+    const runNodeQuery = vi.fn(async (_dbCopy: string, _sql: string) => ({
+      rows: [{ id: "n1" }],
+      status: "ok" as const,
+    }));
+    const deps = makeDeps({ hasNodeSqlite: vi.fn(async () => true), runNodeQuery });
+    const result = await withSqliteSnapshot(
+      "/x/state.sqlite",
+      async (s) => {
+        await s.query("SELECT 1");
+        await s.query("SELECT 2");
+        return "done";
+      },
+      deps,
+    );
+    expect(result.status).toBe("ok");
+    expect(deps.snapshot).toHaveBeenCalledTimes(1); // one snapshot, two queries
+    expect(deps.copy).not.toHaveBeenCalled();
+    expect(runNodeQuery.mock.calls.map((c) => c[0])).toEqual([
+      "/tmp/at-vault-xyz/db.sqlite",
+      "/tmp/at-vault-xyz/db.sqlite",
+    ]);
+  });
+
+  it("reports query-error when the snapshot cannot be taken", async () => {
+    const deps = makeDeps({
+      hasNodeSqlite: vi.fn(async () => true),
+      snapshot: vi.fn(async () => {
+        throw new Error("disk went away");
+      }),
+    });
+    const result = await withSqliteSnapshot("/x/state.sqlite", async () => "unreachable", deps);
+    expect(result.status).toBe("query-error");
   });
 });

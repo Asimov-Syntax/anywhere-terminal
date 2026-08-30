@@ -300,12 +300,21 @@ async function presence(deps: SqliteDeps, dbPath: string): Promise<SqlitePresenc
 /** One snapshot, whichever engine is in play. The CLI branch still assembles one
  *  from file copies; task 1_2 replaces it with a read-only `VACUUM INTO`. */
 async function takeSnapshot(deps: SqliteDeps, dbPath: string, dest: string, useCli: boolean): Promise<void> {
-  if (!useCli) {
-    await (deps.snapshot ?? defaultSnapshot)(dbPath, dest);
-    return;
-  }
-  await copySidecars(deps, dbPath, dest);
-  await deps.copy(dbPath, dest);
+  await (deps.snapshot ?? (useCli ? cliSnapshot(deps) : defaultSnapshot))(dbPath, dest);
+}
+
+/** The CLI engine's snapshot: `VACUUM INTO` under `-readonly`. VACUUM INTO runs
+ *  inside a read transaction, so it is atomic against a concurrent checkpoint or
+ *  vacuum the same way the Online Backup API is. `.backup` would do as well but
+ *  opens the source read-WRITE, which D3 forbids for a store a live agent owns.
+ *  The destination is quoted as a SQL string literal — it is a path we minted
+ *  under `mkdtemp`, never caller input. */
+function cliSnapshot(deps: SqliteDeps): (dbPath: string, dest: string) => Promise<void> {
+  return async (dbPath, dest) => {
+    await deps.exec("sqlite3", ["-readonly", dbPath, `VACUUM INTO '${dest.replaceAll("'", "''")}'`], {
+      timeout: COPY_TIMEOUT_MS,
+    });
+  };
 }
 
 async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
@@ -315,28 +324,6 @@ async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
     await backup(source, dest);
   } finally {
     source.close();
-  }
-}
-
-/** Copy the `-wal`/`-shm` sidecars beside a snapshot, PRESERVING the reason a
- *  sidecar could not be read. A WAL holds committed rows the base file does not,
- *  so querying a base-only copy after a failed sidecar read returns a smaller
- *  database, not a smaller answer — and its empty result is indistinguishable
- *  from a genuine miss, which D5 then maps to `absent` (round-3 B1). Only a
- *  PROVEN absence is safe to skip: an unreachable or uncopyable sidecar throws,
- *  and the caller's existing catch reports `query-error`, which every reader
- *  already reads as "could not find out". */
-async function copySidecars(deps: SqliteDeps, dbPath: string, dbCopy: string): Promise<void> {
-  for (const suffix of ["-wal", "-shm"]) {
-    const sidecar = dbPath + suffix;
-    const found = await presence(deps, sidecar);
-    if (found === "absent") {
-      continue; // checkpointed or never in WAL mode — the base copy is whole
-    }
-    if (found === "unreachable") {
-      throw new Error(`sidecar ${suffix} could not be reached`);
-    }
-    await deps.copy(sidecar, dbCopy + suffix);
   }
 }
 

@@ -13,7 +13,7 @@
     3. Delete `copySidecars` and the tests that pin copy ordering rather than status, since this task removes the mechanism they describe.
     4. Cover in `src/vault/sqlite.test.ts` with a real WAL store plus a second live connection: the row survives, and the checkpoint-and-vacuum interleaving that defeated both prior patches either contains the row or reports a failure status.
 
-- [ ] 1_2 Give the CLI fallback the same guarantee
+- [x] 1_2 Give the CLI fallback the same guarantee — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/agent-session-index/spec.md#sqlite-engine-selection-and-result-discrimination; design.md#d1-the-engine-takes-the-snapshot-not-the-filesystem; design.md#d3-the-snapshot-never-opens-the-live-store-read-write
   - **Acceptance**:
