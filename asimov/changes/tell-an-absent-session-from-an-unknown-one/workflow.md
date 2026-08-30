@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -41,3 +41,6 @@ No fork at Gate 1: the only candidate alternative — a separate `entryExists` p
 Spec: NO-DELTA. Nothing user-observable changes; the consumer (WT-011.5) owns the visible delta.
 Oracle round: 5 BLOCK / 1 WARN / 1 SUGGEST, all verified against code and all accepted. Triage in .reviews/oracle-triage.md; it reversed D2's missing-store rule, demoted the Cursor child-map miss from absent to unknown, and added task 1_2. Peer file map that seeded two of the findings: .reviews/explore-evidence.md.
 Validator warning triaged, not fixed: task 1_1 names 9 files. Its edit is a ~5-line wrapper in each of the four readers plus one type, one interface and two tests — well inside the sizing rule by lines. Splitting it would put src/vault/VaultService.ts back into the parallel wave, which is the contention an earlier validate run flagged.
+Verify Gate: type check clean; biome check src at its 4/14/3 baseline; 5372 unit tests pass; I10 gate ok.
+Deviation (1_3): the oracle's F3 placed the Claude fix on the per-candidate `stat` catch, where it is unreachable — `isResolvedPathInsideRoot` returns false for EACCES before the stat runs. The scan therefore treats ANY containment refusal as non-exhaustive. Tightening it needs pathBoundary to report its reason, which is a shipped security predicate with seven call sites and its own task.
+Deviation (1_2, 1_3): the errno-to-presence decision was extracted to src/utils/fsPresence.ts rather than restated in each scanner.
