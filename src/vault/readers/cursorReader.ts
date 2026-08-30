@@ -33,6 +33,7 @@ import {
 import {
   type CursorIdeReaderOptions,
   cursorIdeDbPath,
+  lookupCursorIdeEntry,
   readCursorIdeDetail,
   readCursorIdeEntry,
   readCursorIdeSessions,
@@ -45,6 +46,7 @@ import {
   cursorChatsRoot,
   isSafeCursorChatId,
   listCursorChatCandidates,
+  lookupCursorChatCandidate,
   resolveChangedCursorChatCandidates,
   resolveCursorChatCandidate,
 } from "./cursorPaths";
@@ -54,6 +56,7 @@ import {
   cursorProjectBucketForCwd,
   cursorProjectSessionId,
   cursorProjectsRoot,
+  lookupCursorProjectTranscriptSession,
   readCursorTranscript,
   resolveCursorProjectCwd,
   resolveCursorProjectTranscriptSession,
@@ -633,13 +636,8 @@ export async function readCursorEntry(
   sessionId: string,
   options: CursorCombinedReaderOptions = {},
 ): Promise<VaultSessionEntry | null> {
-  if (sessionId.startsWith("ide:")) {
-    return readCursorIdeEntry(sessionId, options);
-  }
-  if (sessionId.startsWith("project:")) {
-    return (await resolveCursorProjectSession(sessionId, options))?.entry ?? null;
-  }
-  return (await resolveCursorCliSession(sessionId, options))?.entry ?? null;
+  const found = await lookupCursorEntry(sessionId, options);
+  return found.status === "found" ? found.entry : null;
 }
 
 /**
@@ -652,8 +650,44 @@ export async function lookupCursorEntry(
   sessionId: string,
   options: CursorCombinedReaderOptions = {},
 ): Promise<VaultEntryLookup> {
-  const entry = await readCursorEntry(sessionId, options);
-  return entry ? { status: "found", entry } : { status: "unknown" };
+  if (sessionId.startsWith("ide:")) {
+    return lookupCursorIdeEntry(sessionId, options);
+  }
+  if (sessionId.startsWith("project:")) {
+    const located = await lookupCursorProjectTranscriptSession(sessionId, options);
+    if (located.status !== "found") {
+      return located;
+    }
+    const deps = options.fs ?? REAL_FS;
+    const [stamp, cwd] = await Promise.all([
+      statFileOrNull(located.candidate.filePath, deps),
+      resolveCursorProjectCwd(located.candidate.projectBucket, options),
+    ]);
+    // The transcript was located, so anything failing past here is a failure to
+    // read it — never proof the session is gone.
+    return stamp && cwd
+      ? { status: "found", entry: mapCursorProjectEntry(located.candidate, cwd, stamp) }
+      : { status: "unknown" };
+  }
+  const located = await lookupCursorChatCandidate(sessionId, options);
+  if (located.status !== "found") {
+    return located;
+  }
+  const deps = options.fs ?? REAL_FS;
+  const metaStamp = await statFileOrNull(located.candidate.metaPath, deps);
+  if (!metaStamp) {
+    return { status: "unknown" };
+  }
+  const meta = await readMeta(located.candidate, deps);
+  if (!meta || !isCompatibleMeta(meta)) {
+    return { status: "unknown" };
+  }
+  const dbPresent = (await statFileOrNull(located.candidate.dbPath, deps)) !== null;
+  if (!isEligible(meta, dbPresent)) {
+    // Present but not launchable is a filter, not a deletion.
+    return { status: "unknown" };
+  }
+  return { status: "found", entry: mapCursorMeta(located.candidate, meta, metaStamp) };
 }
 
 /** Explicit detail decoding is isolated from metadata-only list refreshes. Any

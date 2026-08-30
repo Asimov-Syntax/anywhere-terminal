@@ -68,7 +68,7 @@
     2. Report unknown when `mapSessionRow` rejects a row the query returned, rather than passing its nullable result straight out.
     3. Test each status, with the confirmed-missing database reporting absent and the unreachable one reporting unknown.
 
-- [ ] 1_6 Let the Cursor reader say which of the three it means
+- [x] 1_6 Let the Cursor reader say which of the three it means — verified: pnpm exec vitest run 'src/vault/readers/cursorReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: <!-- design.md D2, D5 (Cursor) -->
   - **Boundary**: the three locator shapes keep their current routing, and the host-side child locator map is task 1_1's, not this one's. Largest of the reader tasks — four files, three independent resolvers

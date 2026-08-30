@@ -601,10 +601,7 @@ export async function readCodexEntry(
  * `found`, everything else is `unknown`, which is what the caller already assumed.
  * Task 1_4 replaces this body with the real classification.
  */
-export async function lookupCodexEntry(
-  sessionId: string,
-  options: CodexReaderOptions = {},
-): Promise<VaultEntryLookup> {
+export async function lookupCodexEntry(sessionId: string, options: CodexReaderOptions = {}): Promise<VaultEntryLookup> {
   const entry = await readCodexEntry(sessionId, options);
   return entry ? { status: "found", entry } : { status: "unknown" };
 }

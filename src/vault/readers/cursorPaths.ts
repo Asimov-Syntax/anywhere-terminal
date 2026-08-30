@@ -12,6 +12,7 @@ import type { FileHandle } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { provesAbsence } from "../../utils/fsPresence";
 import {
   type CursorLocationIndex,
   isSafeCursorBucketId,
@@ -78,15 +79,23 @@ export interface CursorChatCandidate {
   dbPath: string;
 }
 
-async function listDirNames(dir: string, deps: CursorPathFsDeps): Promise<string[]> {
+/** `complete` is false when the directory could not be listed for a reason that
+ *  does not prove it is missing — the caller then cannot claim it enumerated
+ *  everything (tell-an-absent-session-from-an-unknown-one D4). */
+async function listDirNames(dir: string, deps: CursorPathFsDeps): Promise<{ names: string[]; complete: boolean }> {
   try {
     const entries = await deps.readdir(dir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-  } catch {
-    return []; // missing root/bucket contributes zero entries, not a failure
+    return {
+      names: entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort(),
+      complete: true,
+    };
+  } catch (err) {
+    // A missing root/bucket contributes zero entries and is still a complete
+    // answer; anything else means this process could not look.
+    return { names: [], complete: provesAbsence(err) };
   }
 }
 
@@ -145,10 +154,15 @@ export async function listCursorChatCandidates(options: CursorReaderOptions = {}
   ambiguousById: Record<string, number>;
   locations: CursorLocationIndex;
   rejected: number;
+  /** True only when the root and EVERY bucket were listed. A point lookup may
+   *  report absence only from a complete enumeration. */
+  complete: boolean;
 }> {
   const root = cursorChatsRoot(options);
   const deps = options.pathsFs ?? REAL_PATH_FS;
-  const buckets = await listDirNames(root, deps);
+  const rootListing = await listDirNames(root, deps);
+  const buckets = rootListing.names;
+  let complete = rootListing.complete;
   const byId = new Map<string, CursorChatCandidate[]>();
   let rejected = 0;
 
@@ -158,8 +172,9 @@ export async function listCursorChatCandidates(options: CursorReaderOptions = {}
       continue;
     }
     const bucketDir = path.join(root, bucket);
-    const chatIds = await listDirNames(bucketDir, deps);
-    for (const chatId of chatIds) {
+    const bucketListing = await listDirNames(bucketDir, deps);
+    complete = complete && bucketListing.complete;
+    for (const chatId of bucketListing.names) {
       if (!isSafeCursorChatId(chatId)) {
         rejected++;
         continue; // unsafe id — counted, but never joined into a path
@@ -187,7 +202,7 @@ export async function listCursorChatCandidates(options: CursorReaderOptions = {}
     }
     candidates.push(group[0]);
   }
-  return { candidates, ambiguousById, locations: locationIndexFromCandidates(byId), rejected };
+  return { candidates, ambiguousById, locations: locationIndexFromCandidates(byId), rejected, complete };
 }
 
 /** Resolve validated watcher buckets directly, consulting persisted locations only
@@ -279,9 +294,36 @@ export async function resolveCursorChatCandidate(
   chatId: string,
   options: CursorReaderOptions = {},
 ): Promise<CursorChatCandidate | null> {
+  const found = await lookupCursorChatCandidate(chatId, options);
+  return found.status === "found" ? found.candidate : null;
+}
+
+/** What a point lookup could establish about one chat id. */
+export type CursorChatCandidateLookup =
+  | { status: "found"; candidate: CursorChatCandidate }
+  | { status: "absent" }
+  | { status: "unknown" };
+
+/**
+ * The same resolution, saying WHY it found nothing. An id no store can carry, and
+ * an id missing from a complete enumeration, are absent. An incomplete
+ * enumeration and a deliberately-omitted ambiguous id are not: the second means
+ * the chat exists more than once, which is the opposite of gone.
+ */
+export async function lookupCursorChatCandidate(
+  chatId: string,
+  options: CursorReaderOptions = {},
+): Promise<CursorChatCandidateLookup> {
   if (!isSafeCursorChatId(chatId)) {
-    return null;
+    return { status: "absent" };
   }
-  const { candidates } = await listCursorChatCandidates(options);
-  return candidates.find((c) => c.chatId === chatId) ?? null;
+  const { candidates, ambiguousById, complete } = await listCursorChatCandidates(options);
+  const candidate = candidates.find((c) => c.chatId === chatId);
+  if (candidate) {
+    return { status: "found", candidate };
+  }
+  if (ambiguousById[chatId] !== undefined) {
+    return { status: "unknown" };
+  }
+  return complete ? { status: "absent" } : { status: "unknown" };
 }

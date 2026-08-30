@@ -3,6 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { provesAbsence } from "../../utils/fsPresence";
 import type { VaultActivityStep, VaultTimelineItem } from "../types";
 import {
   type CursorNormalizedRecord,
@@ -298,17 +299,27 @@ function decodeProjectBucket(value: string): string | undefined {
   }
 }
 
-export async function resolveCursorProjectTranscriptSession(
+export type CursorTranscriptLookup =
+  | { status: "found"; candidate: CursorTranscriptCandidate }
+  | { status: "absent" }
+  | { status: "unknown" };
+
+/**
+ * Locate one project transcript, saying WHY it found nothing. Exactly one of the
+ * two supported layouts must exist; a stat that failed for a reason other than
+ * absence leaves that unknowable (D4).
+ */
+export async function lookupCursorProjectTranscriptSession(
   sessionId: string,
   options: CursorTranscriptOptions = {},
-): Promise<CursorTranscriptCandidate | null> {
+): Promise<CursorTranscriptLookup> {
   const match = /^project:([A-Za-z0-9_-]+):([A-Za-z0-9._-]+)$/.exec(sessionId);
   if (!match || !isSafeCursorChatId(match[2])) {
-    return null;
+    return { status: "absent" };
   }
   const projectBucket = decodeProjectBucket(match[1]);
   if (!projectBucket) {
-    return null;
+    return { status: "absent" };
   }
   const root = cursorProjectsRoot(options);
   const transcriptsDir = path.join(root, projectBucket, "agent-transcripts");
@@ -318,16 +329,35 @@ export async function resolveCursorProjectTranscriptSession(
   ].filter((item): item is CursorTranscriptCandidate => !!item);
   const deps = options.pathsFs ?? REAL_PATH_FS;
   const existing: CursorTranscriptCandidate[] = [];
+  let complete = true;
   for (const item of candidates) {
     try {
       if (!(await deps.stat(item.filePath)).isDirectory()) {
         existing.push(item);
       }
-    } catch {
-      // Missing candidates are ignored; exactly one supported layout must exist.
+    } catch (err) {
+      // A missing candidate is a real answer; any other failure is not.
+      complete = complete && provesAbsence(err);
     }
   }
-  return existing.length === 1 ? existing[0] : null;
+  if (existing.length === 1) {
+    return { status: "found", candidate: existing[0] };
+  }
+  // Two layouts present is a store this reader refuses to guess about, not a
+  // session that is gone.
+  if (existing.length > 1) {
+    return { status: "unknown" };
+  }
+  return complete ? { status: "absent" } : { status: "unknown" };
+}
+
+/** The candidate-or-nothing view, for callers that cannot act on the difference. */
+export async function resolveCursorProjectTranscriptSession(
+  sessionId: string,
+  options: CursorTranscriptOptions = {},
+): Promise<CursorTranscriptCandidate | null> {
+  const found = await lookupCursorProjectTranscriptSession(sessionId, options);
+  return found.status === "found" ? found.candidate : null;
 }
 
 export async function resolveCursorTranscriptCandidate(

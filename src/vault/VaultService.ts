@@ -15,11 +15,16 @@ import {
 } from "./cacheTypes";
 import { canForkOpenCode } from "./forkSupport";
 import { claudeRoots, resolveClaudeSessionPath } from "./readers/claudePaths";
-import { readClaudeDetail, lookupClaudeEntry, readClaudeMessageRecord, readClaudeSessions } from "./readers/claudeReader";
+import {
+  lookupClaudeEntry,
+  readClaudeDetail,
+  readClaudeMessageRecord,
+  readClaudeSessions,
+} from "./readers/claudeReader";
 import {
   codexStoreDirs,
-  readCodexDetail,
   lookupCodexEntry,
+  readCodexDetail,
   readCodexMessageRecord,
   readCodexSessions,
   renameCodexThread,
@@ -29,8 +34,8 @@ import { cursorChatsRoot } from "./readers/cursorPaths";
 import {
   type CursorCombinedReaderOptions,
   type CursorDetailReaderOptions,
-  readCursorDetail,
   lookupCursorEntry,
+  readCursorDetail,
   readCursorMessageRecord,
   readCursorSessions,
   resolveCursorLaunchTarget,
@@ -39,9 +44,9 @@ import {
 } from "./readers/cursorReader";
 import { clampDetailLimit } from "./readers/detail";
 import {
+  lookupOpenCodeEntry,
   opencodeStoreDirs,
   readOpenCodeDetail,
-  lookupOpenCodeEntry,
   readOpenCodeMessageRecord,
   readOpenCodeSessions,
   renameOpenCodeSession,
@@ -949,7 +954,6 @@ export class VaultService {
     const found = await this.lookupEntry(entryId);
     return found.status === "found" ? found.entry : null;
   }
-
 
   /**
    * One launch resolution per explicit action (B17). Only a Cursor CLI entry has

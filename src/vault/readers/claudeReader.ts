@@ -38,9 +38,9 @@ import {
   isSafeSessionId,
   listJsonlFiles,
   resolveClaudeSessionPath,
-  scanClaudeSessionPath,
   resolveClaudeSubagentPath,
   resolveClaudeWorkflowAgentPath,
+  scanClaudeSessionPath,
 } from "./claudePaths";
 import { extractUserText, readLatestTailFields, streamClaudeRecords } from "./claudeRecords";
 import {

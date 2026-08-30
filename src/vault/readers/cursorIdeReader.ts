@@ -7,6 +7,7 @@ import { withSqliteSnapshot as readSnapshot, type SqliteSnapshot } from "../sqli
 import {
   formatEntryId,
   type VaultActivityStep,
+  type VaultEntryLookup,
   type VaultSessionDetail,
   type VaultSessionEntry,
   type VaultTimelineItem,
@@ -465,19 +466,35 @@ function normalizeBubble(
     : { timeline: [], activity: [] };
 }
 
-export async function readCursorIdeEntry(
+export async function lookupCursorIdeEntry(
   sessionId: string,
   options: CursorIdeReaderOptions = {},
-): Promise<VaultSessionEntry | null> {
+): Promise<VaultEntryLookup> {
   const identity = parseSessionId(sessionId);
   if (!identity) {
-    return null;
+    return { status: "absent" };
   }
   const result = await (options.withSqliteSnapshotFn ?? readSnapshot)(cursorIdeDbPath(options), async (snapshot) => {
     const loaded = await composerFromSnapshot(snapshot, identity);
     return loaded ? mapEntry(loaded.composer) : null;
   });
-  return result.status === "ok" ? result.value : null;
+  if (result.status === "ok") {
+    // The query ran: a composer that is not in the store is genuinely not there.
+    return result.value ? { status: "found", entry: result.value } : { status: "absent" };
+  }
+  // `no-db` is now a CONFIRMED missing database (D6), so an IDE store that was
+  // uninstalled or deleted carries no sessions. Every other status is a failure
+  // to look.
+  return result.status === "no-db" ? { status: "absent" } : { status: "unknown" };
+}
+
+/** The entry-or-nothing view, for callers that cannot act on the difference. */
+export async function readCursorIdeEntry(
+  sessionId: string,
+  options: CursorIdeReaderOptions = {},
+): Promise<VaultSessionEntry | null> {
+  const found = await lookupCursorIdeEntry(sessionId, options);
+  return found.status === "found" ? found.entry : null;
 }
 
 export async function readCursorIdeDetail(

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderListCache } from "../cacheTypes";
 import {
   type CursorFsDeps,
+  lookupCursorEntry,
   MAX_META_BYTES,
   readCursorDetail,
   readCursorEntry,
@@ -1486,5 +1487,67 @@ describe("readCursorMessageRecord: no raw-record access to store.db", () => {
     await writeChat("bucket-a", "chat-record", BASE_META);
     const result = await readCursorMessageRecord("chat-record", "#1");
     expect(result).toEqual({ ok: false, reason: "not-found" });
+  });
+});
+
+
+describe("lookupCursorEntry: absent only from a store it could read", () => {
+  const denied = () => Object.assign(new Error("EACCES"), { code: "EACCES" });
+
+  it("says absent for an id no locator shape can carry", async () => {
+    expect(await lookupCursorEntry("project:not-a-valid-shape", opts())).toEqual({ status: "absent" });
+    expect(await lookupCursorEntry("../escape", opts())).toEqual({ status: "absent" });
+  });
+
+  it("says absent for a CLI chat missing from a complete enumeration", async () => {
+    expect(await lookupCursorEntry("11111111-1111-4111-8111-111111111111", opts())).toEqual({ status: "absent" });
+  });
+
+  it("says unknown when the chats root could not be listed", async () => {
+    // Same empty candidate set as above; the difference is whether we looked.
+    const pathsFs = createPassthroughPathFs();
+    pathsFs.readdir = async () => {
+      throw denied();
+    };
+    expect(await lookupCursorEntry("11111111-1111-4111-8111-111111111111", opts(undefined, pathsFs))).toEqual({
+      status: "unknown",
+    });
+  });
+
+  it("says unknown when a bucket inside the chats root could not be listed", async () => {
+    await fs.mkdir(path.join(chatsDir, "bucket-a"), { recursive: true });
+    const pathsFs = createPassthroughPathFs();
+    const real = pathsFs.readdir;
+    pathsFs.readdir = async (dir: string, o: { withFileTypes: true }) => {
+      if (dir.endsWith("bucket-a")) {
+        throw denied();
+      }
+      return real(dir, o);
+    };
+    expect(await lookupCursorEntry("11111111-1111-4111-8111-111111111111", opts(undefined, pathsFs))).toEqual({
+      status: "unknown",
+    });
+  });
+
+  it("says absent for a project transcript neither supported layout holds", async () => {
+    const bucket = cursorProjectBucketForCwd("/w");
+    await fs.mkdir(path.join(projectsDir, bucket, "agent-transcripts"), { recursive: true });
+    const id = `project:${Buffer.from(bucket).toString("base64url")}:22222222-2222-4222-8222-222222222222`;
+    expect(await lookupCursorEntry(id, opts())).toEqual({ status: "absent" });
+  });
+
+  it("says unknown when a project transcript stat failed for a reason other than absence", async () => {
+    const bucket = cursorProjectBucketForCwd("/w");
+    await fs.mkdir(path.join(projectsDir, bucket, "agent-transcripts"), { recursive: true });
+    const pathsFs = createPassthroughPathFs();
+    pathsFs.stat = async () => {
+      throw denied();
+    };
+    const id = `project:${Buffer.from(bucket).toString("base64url")}:22222222-2222-4222-8222-222222222222`;
+    expect(await lookupCursorEntry(id, opts(undefined, pathsFs))).toEqual({ status: "unknown" });
+  });
+
+  it("keeps readCursorEntry nullable for callers that cannot act on the difference", async () => {
+    expect(await readCursorEntry("11111111-1111-4111-8111-111111111111", opts())).toBeNull();
   });
 });
