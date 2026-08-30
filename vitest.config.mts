@@ -6,6 +6,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
+    // Worker threads, not forked child processes. Same 251 files pass either way, but forks
+    // cost ~29% more wall clock and spawn a process per file — every fresh exec pays for a
+    // macOS Gatekeeper signature check, which is what turns a repeated full run into heat.
+    // Isolation stays ON: --no-isolate leaks state and fails 22 tests (PTY_LOAD_FAILED,
+    // SessionManager.*).
+    pool: "threads",
     // Discover colocated test files under src/
     include: ["src/**/*.test.ts"],
     // Exclude integration tests and build artifacts
