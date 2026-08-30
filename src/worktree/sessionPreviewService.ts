@@ -69,7 +69,18 @@ export interface Deadline {
 }
 
 export interface SessionPreviewService {
-  preview(entryId: string): Promise<string | undefined>;
+  /**
+   * The session's last activity line.
+   *
+   * `mayLook` is the caller's budget, not the service's: the projector owns how
+   * many looks one projection starts, and this service owns how many may be
+   * outstanding at once (`worktree-subsystem-debts.md` § 2.3). `false` means
+   * *answer from what you already hold* — the held line, and no vault lookup,
+   * resolve, `stat` or read. A row outside its caller's bound is still a row the
+   * window is drawing, so it is asked this way rather than skipped: skipping
+   * would cost it the line it last read.
+   */
+  preview(entryId: string, mayLook?: boolean): Promise<string | undefined>;
 }
 
 interface FileStamp {
@@ -405,14 +416,26 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   }
 
   return {
-    async preview(entryId: string): Promise<string | undefined> {
-      const current = held.get(entryId) ??
-        outstanding.get(entryId) ?? {
-          target: { kind: "unresolved" as const },
-          nextAt: Number.NEGATIVE_INFINITY,
-          misses: 0,
-          generation: 0,
-        };
+    async preview(entryId: string, mayLook = true): Promise<string | undefined> {
+      const existing = held.get(entryId) ?? outstanding.get(entryId);
+      if (!mayLook) {
+        // Nothing held means nothing to keep, and storing a blank here would let
+        // an excluded session evict a held one to remember that it has no line.
+        if (existing === undefined) {
+          return undefined;
+        }
+        // Touched, though: the caller is drawing this row, and evicting it would
+        // lose exactly the line the caller's bound promised it would keep.
+        // Nothing else moves — not the ladder, not `nextAt`, not `confirmedAt`.
+        touch(entryId, existing);
+        return existing.line;
+      }
+      const current = existing ?? {
+        target: { kind: "unresolved" as const },
+        nextAt: Number.NEGATIVE_INFINITY,
+        misses: 0,
+        generation: 0,
+      };
       touch(entryId, current);
       const schedule = (): void => {
         current.nextAt = now() + recheckMs * 2 ** Math.min(current.misses, MAX_BACKOFF_SHIFT);

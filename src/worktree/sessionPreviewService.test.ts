@@ -1057,3 +1057,83 @@ describe("a preview does not outlive its session", () => {
     expect(store.state.calls).toBe(2);
   });
 });
+
+describe("an ask that may not look", () => {
+  it("returns the line it holds and starts nothing", async () => {
+    const svc = service({ "codex:s1": { ...CODEX, sessionPath: rollout } });
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+
+    // The transcript has genuinely moved on and the recheck interval has passed,
+    // so an ordinary ask would stat and read. This one may not look.
+    await rewrite("a newer answer", clock + 10_000);
+    clock += 10_000;
+    const statsAfter = stats.length;
+    const readsAfter = reads.length;
+    expect(await svc.preview("codex:s1", false)).toBe("the first answer");
+    expect(stats.length).toBe(statsAfter);
+    expect(reads.length).toBe(readsAfter);
+  });
+
+  it("consults the store for nothing", async () => {
+    let calls = 0;
+    const svc = service(
+      {},
+      {
+        entry: async () => {
+          calls += 1;
+          return { status: "found", entry: { ...CODEX, sessionPath: rollout } };
+        },
+        entryRecheckMs: 30_000,
+      },
+    );
+    await svc.preview("codex:s1");
+    expect(calls).toBe(1);
+
+    // Overdue for re-confirmation, and still not asked: a cache-only ask must not
+    // advance the ladder or the confirmation stamp either.
+    clock += 30_000;
+    expect(await svc.preview("codex:s1", false)).toBe("the first answer");
+    expect(calls).toBe(1);
+
+    // Still overdue on the next ask that IS allowed to look — the excluded ask
+    // did not stand in for a confirmation.
+    expect(await svc.preview("codex:s1", true)).toBe("the first answer");
+    expect(calls).toBe(2);
+  });
+
+  it("holds a session the bound excluded rather than letting it fall out", async () => {
+    const files: string[] = [];
+    const entries: Record<string, PreviewEntry> = {};
+    for (let i = 0; i < 3; i++) {
+      const file = path.join(sessionsDir, `rollout-n${i}.jsonl`);
+      await fs.writeFile(file, `${codexEvent(`answer ${i}`)}\n`);
+      files.push(file);
+      entries[`codex:n${i}`] = { agent: "codex", sessionId: `n${i}`, sessionPath: file };
+    }
+    const svc = service(entries, { cap: 2 });
+    expect(await svc.preview("codex:n0")).toBe("answer 0");
+    expect(await svc.preview("codex:n1")).toBe("answer 1");
+
+    // n0 is now the least recently asked, so the third session evicts it — unless
+    // the cache-only ask counts as the window still drawing it. It must: the line
+    // n0 holds is exactly what the bound promised to keep.
+    expect(await svc.preview("codex:n0", false)).toBe("answer 0");
+    await svc.preview("codex:n2");
+
+    const readsBefore = reads.length;
+    expect(await svc.preview("codex:n0", false)).toBe("answer 0");
+    expect(reads.length).toBe(readsBefore);
+    expect(files).toHaveLength(3);
+  });
+
+  it("answers a session it has never held without taking a slot for it", async () => {
+    const svc = service({ "codex:s1": { ...CODEX, sessionPath: rollout } }, { cap: 1 });
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
+
+    // Nothing to keep, so nothing is stored — inserting a blank would let an
+    // excluded row evict a held one to remember that it has no line.
+    expect(await svc.preview("codex:never", false)).toBeUndefined();
+    expect(await svc.preview("codex:s1", false)).toBe("the first answer");
+    expect(stats).toEqual([rollout]);
+  });
+});
