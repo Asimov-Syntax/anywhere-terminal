@@ -52,3 +52,13 @@ Build notes:
 - 2_1 and 2_2 merged at build: removing `mayLook` breaks `extension.ts` in the same commit that removes it, so a service-only task cannot leave the tree type-checking. One seam, one task — the split was a planning error, not a scope change.
 - Round-1 build: D7's queue needed one correction the design did not anticipate — dropping a departed id loses its waiting position, so a row drawn every OTHER projection re-entered behind the row being served and starved exactly as the index cursor did. Ids now keep their place while absent, and the order is bounded by `drawn + budget`, pruned from the back and only where the id is not drawn.
 - Mutation testing: 9 mutations across the service and the projector, 7 killed on the first pass. M19 (`line` clearing the ladder and the confirmation stamp) survived because the case read the line while already overdue; M21 (pruning without checking `drawn`) survived because no case put a drawn row at the back of an over-long order. Both now have cases that separate them.
+- Round-3 STALL (thrash stop, cycle 2). B1 and B2 both fall outside the remediation boundary, so no
+  fix round can close them: B1's spec sentence ("No row SHALL be excluded on every projection while
+  others are looked at repeatedly") cannot be satisfied with bounded state against unbounded identity
+  churn — a bounded order must forget an absent id, and cannot then distinguish its return from an
+  arrival. Both fix attempts implemented an impossibility, each starving the population the other
+  served. B2 needs the exclusion/timeout order, the `preview()` finalizer's re-seat, and the
+  generation-mismatch return path changed together; dropping the `outstanding` fallback alone leaves
+  `touch()` restoring the stale line. Awaiting the user's choice between reverting to `todo` and a
+  handback that narrows both promises; no code moved and nothing is ticked. See .reviews/round-3.md
+  § Author re-triage.
