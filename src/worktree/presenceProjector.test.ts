@@ -38,6 +38,7 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
   let previewLines: Map<string, string> | undefined;
   let vaultUnderCwd: ((agent: VaultAgentId, cwd: string) => Promise<string | undefined>) | undefined;
   let standingReport: ((paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) | undefined;
+  let beforeSnapshot: (() => Promise<void>) | undefined;
   let snapshots = 0;
   let resolves = 0;
   let underCwdCalls = 0;
@@ -48,6 +49,7 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
     panes: () => panes,
     activityFor: (paneId) => activity.get(paneId) ?? { activity: "idle", rule: "quiet" },
     openSnapshot: async () => {
+      await beforeSnapshot?.();
       snapshots += 1;
       return {
         resolve: async (p) => {
@@ -92,6 +94,11 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
     },
     setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
       vaultTitle = next;
+    },
+    /** Run inside the FIRST await `project` performs, so a test can land an edge
+     *  in the window before enrichment is reached. */
+    setBeforeSnapshot(next: () => Promise<void>) {
+      beforeSnapshot = next;
     },
     setPreviewLines(next: Map<string, string>) {
       previewLines = next;
@@ -2397,6 +2404,28 @@ describe("how much one projection looks at", () => {
     h.setVaultTitle(async (entryId) => {
       h.projector.forgetDrawOrder();
       return `title for ${entryId}`;
+    });
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toEqual([]);
+  });
+
+  it("does not rebuild the order after an edge in the pass's earliest await", async () => {
+    // `project` suspends five times before enrichment. An edge in any of them
+    // advances the generation before a sample taken at the enrichment block could
+    // read it, so the equality check passed and the order was rebuilt with nothing
+    // drawing rows — the smallest window fenced, the largest left open (round-6 B1).
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    const watch = watchPreview(h, upTo(3));
+    let landed = false;
+    h.setBeforeSnapshot(async () => {
+      if (!landed) {
+        landed = true;
+        h.projector.forgetDrawOrder();
+      }
     });
 
     await h.projector.project([WT]);

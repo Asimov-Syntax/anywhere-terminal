@@ -92,3 +92,13 @@ Build notes:
   fix range carried D10 and D11 by construction, and a range carrying a new decision can never be
   verified. It should have been dispatched as cycle 4's discovery round in the first place. Costs a
   round; adjudicates nothing. B1-R4 and S1-R3 stay formally open until round 6 covers them.
+- Round-6 B1: my own fencing argument was the defect. I told the chair only the awaited
+  `titleFromVault` could land an edge inside a projection and sampled the generation there; `project`
+  actually suspends five times before that point, so an edge in any of them advanced the generation
+  before it was read and the check passed. Sampled at entry now, before the first await. One
+  mutation, killed — moving the sample back to the enrichment block reproduces the finding exactly.
+- Round-6 W1 accepted but NOT fixed here, and it needs a user decision. The cheap fix (clearing
+  `projectedEnriched` on the falling edge) broke 19 cases, because `reconcileRowDrawing` is a state
+  settle rather than an edge check and runs on every mutation while not drawing. Every correct route
+  adds interface, which would supersede this round. Non-blocking: the queue stays empty; a reopened
+  window just waits for the next external scan rather than re-granting immediately.

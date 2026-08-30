@@ -1077,6 +1077,14 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     },
 
     async project(worktreeIds, options) {
+      // Sampled HERE, before the first await, because `project` suspends five
+      // times before enrichment — the snapshot, the pane cwds, the pane
+      // projection, the session read and the session cwds. An edge landing in
+      // any of them advances the generation before a later sample could read
+      // it, so the equality check passes and the order is rebuilt with nothing
+      // drawing rows: fencing from the enrichment block covered the smallest
+      // window and left the largest open (round-6 B1, D10).
+      const generation = drawGeneration;
       const now = clock();
       const snapshot = await deps.openSnapshot();
 
@@ -1172,12 +1180,8 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // and so is unaffected — deliberately: a ranking left stale while nobody
       // drew rows would reorder every group the moment the rail reopened.
       if (options?.enrich !== false) {
-        // Every write `previewFromVault` makes to the turn order happens before
-        // its own first `await`, so an edge landing inside it cannot repopulate
-        // the order. An edge landing during the TITLE pass can, which is the one
-        // window this generation closes — and skipping the preview pass is the
-        // right answer there, because no surface is left to draw what it fetches.
-        const generation = drawGeneration;
+        // Skipping the preview pass is the right answer when the generation has
+        // moved: no surface is left to draw what it would fetch.
         await titleFromVault(rowsByWorktreeId, now);
         if (generation === drawGeneration) {
           await previewFromVault(rowsByWorktreeId);
