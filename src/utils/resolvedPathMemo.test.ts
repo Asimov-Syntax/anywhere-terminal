@@ -213,7 +213,7 @@ describe("ResolvedPathMemo", () => {
     const fs = counting({ "/link/wt": "/private/real/wt" });
     const memo = new ResolvedPathMemo(fs);
 
-    await createTrackedPathResolver(memo).prepare([], ["/link/wt"]);
+    await createTrackedPathResolver(memo).prepare(["/link/wt"]);
 
     expect(memo.resolvedOr("/link/wt")).toBe("/private/real/wt");
   });
@@ -232,7 +232,7 @@ describe("ResolvedPathMemo", () => {
     const fs = counting({ "/a": "/real/a", "/b": "/real/b" });
     const memo = new ResolvedPathMemo(fs);
 
-    await createTrackedPathResolver(memo).prepare([], ["/a", "/b", "/a", "/a/../a"]);
+    await createTrackedPathResolver(memo).prepare(["/a", "/b", "/a", "/a/../a"]);
 
     expect(fs.calls.sort()).toEqual(["/a", "/b"]);
     expect(memo.resolvedOr("/b")).toBe("/real/b");
@@ -242,7 +242,7 @@ describe("ResolvedPathMemo", () => {
     const fs = counting({ "/link/wt": "/private/real/wt" });
     const memo = new ResolvedPathMemo(fs);
 
-    await createTrackedPathResolver(memo).prepare([], ["/link/wt"]);
+    await createTrackedPathResolver(memo).prepare(["/link/wt"]);
     memo.invalidate("/link/wt");
 
     expect(memo.resolvedOr("/link/wt")).toBe(path.resolve("/link/wt"));
@@ -260,9 +260,9 @@ describe("createTrackedPathResolver claims", () => {
     const decorations = createTrackedPathResolver(memo);
     const panes = createTrackedPathResolver(memo);
 
-    await decorations.prepare([], ["/link/root"]);
-    await panes.prepare([], ["/link/root"]);
-    await panes.prepare([], []);
+    await decorations.prepare(["/link/root"]);
+    await panes.prepare(["/link/root"]);
+    await panes.prepare([]);
 
     expect(decorations.resolvedOr("/link/root")).toBe("/private/root");
     expect(memo.size).toBe(1);
@@ -274,25 +274,13 @@ describe("createTrackedPathResolver claims", () => {
     const decorations = createTrackedPathResolver(memo);
     const panes = createTrackedPathResolver(memo);
 
-    await decorations.prepare([], ["/link/root"]);
-    await panes.prepare([], ["/link/root"]);
-    await panes.prepare([], []);
-    await decorations.prepare([], []);
+    await decorations.prepare(["/link/root"]);
+    await panes.prepare(["/link/root"]);
+    await panes.prepare([]);
+    await decorations.prepare([]);
 
     expect(memo.size).toBe(0);
     expect(memo.resolvedOr("/link/root")).toBe("/link/root");
-  });
-
-  it("never releases a pinned path, however the tracked set moves", async () => {
-    const fs = counting({ "/link/root": "/private/root", "/link/wt": "/private/wt" });
-    const memo = new ResolvedPathMemo(fs);
-    const repos = createTrackedPathResolver(memo);
-
-    await repos.prepare(["/link/root"], ["/link/wt"]);
-    await repos.prepare(["/link/root"], []);
-
-    expect(repos.resolvedOr("/link/root")).toBe("/private/root");
-    expect(repos.resolvedOr("/link/wt")).toBe("/link/wt");
   });
 
   it("clears claimed entries too when a structural event invalidates everything", async () => {
@@ -302,7 +290,7 @@ describe("createTrackedPathResolver claims", () => {
     const memo = new ResolvedPathMemo(fs);
     const decorations = createTrackedPathResolver(memo);
 
-    await decorations.prepare([], ["/link/root"]);
+    await decorations.prepare(["/link/root"]);
     memo.invalidateAll();
 
     expect(memo.size).toBe(0);
@@ -316,11 +304,83 @@ describe("createTrackedPathResolver claims", () => {
     const memo = new ResolvedPathMemo(fs);
     const panes = createTrackedPathResolver(memo);
 
-    await panes.prepare([], ["/link/root"]);
-    await panes.prepare([], []);
-    await panes.prepare([], ["/link/root"]);
+    await panes.prepare(["/link/root"]);
+    await panes.prepare([]);
+    await panes.prepare(["/link/root"]);
 
     expect(panes.resolvedOr("/link/root")).toBe("/private/root");
     expect(fs.calls).toEqual(["/link/root", "/link/root"]);
+  });
+});
+
+describe("a claim ends", () => {
+  it("releases a path that leaves the set, wherever in the set it was", async () => {
+    // Round-3 B6. `prepare` reconciled a `tracked` half and claimed a `pinned`
+    // half forever, on the theory that pinned was the caller's standing set.
+    // Repository discovery passes the workspace folders there and those change,
+    // so a closed folder kept a claim nothing could ever drop.
+    const fs = counting({ "/link/a": "/private/a", "/link/b": "/private/b" });
+    const memo = new ResolvedPathMemo(fs);
+    const repos = createTrackedPathResolver(memo);
+
+    await repos.prepare(["/link/a", "/link/b"]);
+    await repos.prepare(["/link/b"]);
+
+    expect(memo.size).toBe(1);
+    expect(memo.resolvedOr("/link/a")).toBe("/link/a");
+    expect(repos.resolvedOr("/link/b")).toBe("/private/b");
+  });
+
+  it("lets go of everything when its owner disposes", async () => {
+    // Round-3 B7. Every file-tree surface mints a resolver and closing the
+    // surface released nothing, so opening and closing the same editor left a
+    // dead claimant holding the root — which blocks the final release rather
+    // than merely leaking one entry.
+    const fs = counting({ "/link/root": "/private/root" });
+    const memo = new ResolvedPathMemo(fs);
+    const surface = createTrackedPathResolver(memo);
+
+    await surface.prepare(["/link/root"]);
+    surface.dispose();
+
+    expect(memo.size).toBe(0);
+  });
+
+  it("survives a second dispose", async () => {
+    const fs = counting({ "/link/root": "/private/root" });
+    const memo = new ResolvedPathMemo(fs);
+    const standing = createTrackedPathResolver(memo);
+    const surface = createTrackedPathResolver(memo);
+
+    await standing.prepare(["/link/root"]);
+    await surface.prepare(["/link/root"]);
+    surface.dispose();
+    surface.dispose();
+
+    expect(standing.resolvedOr("/link/root")).toBe("/private/root");
+    expect(memo.size).toBe(1);
+  });
+
+  it("does not let one transaction release another's in-flight paths", async () => {
+    // Round-3 B8. `prepare` mutates its set synchronously and then awaits, so a
+    // second pass through ONE handle released the first pass's paths mid-flight;
+    // the superseded resolution then declined to publish and the first caller
+    // read its paths lexically. On the removal path that answer is the blocker
+    // set for an irreversible destroy, so the miss is a pane nobody was warned
+    // about. Separate transactions, separate claims.
+    const fs = counting({ "/link/a": "/private/a", "/link/b": "/private/b" });
+    const memo = new ResolvedPathMemo(fs);
+
+    const first = createTrackedPathResolver(memo);
+    const second = createTrackedPathResolver(memo);
+    const a = first.prepare(["/link/a"]);
+    const b = second.prepare(["/link/b"]);
+    await Promise.all([a, b]);
+
+    expect(first.resolvedOr("/link/a")).toBe("/private/a");
+    expect(second.resolvedOr("/link/b")).toBe("/private/b");
+    first.dispose();
+    second.dispose();
+    expect(memo.size).toBe(0);
   });
 });

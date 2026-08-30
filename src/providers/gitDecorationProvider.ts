@@ -192,7 +192,7 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
         rebuild();
       }
     };
-    void options.paths.prepare([], getWorkspaceFolders()).then(settle, () => {
+    void options.paths.prepare(getWorkspaceFolders()).then(settle, () => {
       // Defensive, and untested because it is unreachable through a failing
       // realpath: `ResolvedPathMemo.resolve` answers lexically rather than
       // rejecting, so an unresolvable folder settles through the branch above

@@ -146,7 +146,7 @@ export class FileTreeHost implements RootProvider {
       return;
     }
     const pass = this.rootGeneration;
-    void this.paths.prepare([], [root]).then(
+    void this.paths.prepare([root]).then(
       () => {
         if (pass === this.rootGeneration) {
           this.postWorkspaceRoot();
@@ -154,6 +154,20 @@ export class FileTreeHost implements RootProvider {
       },
       () => {},
     );
+  }
+
+  /**
+   * Let go of the root this host claims, because the surface holding it is
+   * gone for good.
+   *
+   * Only an EDITOR panel needs this: the sidebar and bottom-panel providers
+   * live as long as the window, and their view disposal is a teardown the next
+   * `resolveWebviewView` undoes — releasing there would leave the re-resolved
+   * view claiming nothing. Editor panels open and close without bound, and each
+   * one left a dead claimant holding its root (round-3 B7).
+   */
+  dispose(): void {
+    this.paths?.dispose();
   }
 
   /** Push the current root to the attached webview, if one has booted. */

@@ -50,6 +50,8 @@ afterEach(() => {
 interface Surface {
   posted: unknown[];
   boot: () => void;
+  /** Drive the panel's own teardown, where a permanent close is observed. */
+  close?: () => void;
   dispose: () => void;
 }
 
@@ -92,18 +94,27 @@ function mockContext(): vscode.ExtensionContext {
 
 function makePanelSeam() {
   const { webview, posted, boot } = makeWebviewSeam();
+  const closers: Array<() => void> = [];
   const panel = {
     visible: true,
     active: true,
     viewColumn: 1,
     title: "Terminal",
     webview,
-    onDidDispose: () => ({ dispose: () => {} }),
+    onDidDispose: (h: () => void) => {
+      closers.push(h);
+      return { dispose: () => {} };
+    },
     onDidChangeViewState: () => ({ dispose: () => {} }),
     reveal: vi.fn(),
     dispose: vi.fn(),
   } as unknown as vscode.WebviewPanel;
-  return { panel, posted, boot };
+  const close = () => {
+    for (const h of closers) {
+      h();
+    }
+  };
+  return { panel, posted, boot, close };
 }
 
 function mountView(m: ResolvedPathMemo, location: "sidebar" | "panel"): Surface {
@@ -136,18 +147,18 @@ function mountView(m: ResolvedPathMemo, location: "sidebar" | "panel"): Surface 
 
 function mountEditor(m: ResolvedPathMemo): Surface {
   const sessions = new SessionManager();
-  const { panel, posted, boot } = makePanelSeam();
+  const { panel, posted, boot, close } = makePanelSeam();
   vi.spyOn(vscode.window, "createWebviewPanel").mockReturnValue(panel);
   TerminalEditorProvider.createPanel(mockContext(), sessions, null, null, null, null, null, m);
-  return { posted, boot, dispose: () => sessions.dispose() };
+  return { posted, boot, close, dispose: () => sessions.dispose() };
 }
 
 async function mountRevivedEditor(m: ResolvedPathMemo): Promise<Surface> {
   const sessions = new SessionManager();
-  const { panel, posted, boot } = makePanelSeam();
+  const { panel, posted, boot, close } = makePanelSeam();
   const serializer = new TerminalPanelSerializer(mockContext(), sessions, null, null, null, null, null, m);
   await serializer.deserializeWebviewPanel(panel, { panelId: "panel-1" });
-  return { posted, boot, dispose: () => sessions.dispose() };
+  return { posted, boot, close, dispose: () => sessions.dispose() };
 }
 
 /** Every resolved root this surface has told its webview about — the init
@@ -185,4 +196,19 @@ describe("every file-tree surface reports where its root resolves", () => {
       surface.dispose();
     });
   }
+
+  it("releases the root it claimed when the editor panel closes", async () => {
+    // Round-3 B7, at the seam that hides it. Editor panels open and close
+    // without bound, and the release lives in the panel's own teardown — a host
+    // unit test cannot see whether anything calls it, which is how the round-1
+    // wiring gap happened in the first place.
+    const m = memo();
+    const surface = await mountEditor(m);
+    await vi.waitFor(() => expect(m.size).toBe(1));
+
+    surface.close?.();
+
+    expect(m.size).toBe(0);
+    surface.dispose();
+  });
 });

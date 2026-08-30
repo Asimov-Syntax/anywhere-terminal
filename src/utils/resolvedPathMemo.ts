@@ -145,23 +145,42 @@ export class ResolvedPathMemo {
 /**
  * A bounded set of paths, resolved together and re-read when the set changes.
  *
- * Two sites need exactly this and would otherwise each grow their own copy:
- * repository discovery over the git API's open repositories, and the decoration
- * provider over the workspace folders. Both are producer-bounded, both compare
- * synchronously afterwards, and both need the SAME structural invalidation —
- * a path leaving the set means a directory was closed, and one opened at that
- * spelling later can resolve somewhere else entirely (D4).
+ * Several sites need exactly this and would otherwise each grow their own copy:
+ * repository discovery over the git API's open repositories, the decoration
+ * provider over the workspace folders, a file tree over its mounted root, and a
+ * removal assessment over the panes it is about to name. All are producer-
+ * bounded, all compare synchronously afterwards, and all need the SAME
+ * structural invalidation — a path leaving the set means a directory was
+ * closed, and one opened at that spelling later can resolve somewhere else
+ * entirely (D4).
+ *
+ * A resolver is also the unit of ISOLATION. Two overlapping passes through one
+ * resolver release each other's paths mid-flight, so anything that reads its
+ * answers right after preparing them — a transaction, not a standing consumer —
+ * takes a resolver of its own and disposes it when it is done (round-3 B8).
  */
 export interface TrackedPathResolver {
   /**
-   * Resolve `pinned` and `tracked`, forgetting every tracked path that was in
-   * the previous call and is not in this one. `pinned` is never released: it
-   * is the caller's own standing set, and pruning it would re-resolve on every
-   * pass — the syscall-per-comparison D1 forbids.
+   * Claim exactly `paths`, releasing every path this resolver claimed last time
+   * and does not now.
+   *
+   * One set, not a pinned half and a tracked half. That split claimed the
+   * pinned side forever on the theory it was the caller's standing set, and
+   * repository discovery passes the workspace folders there — a set that
+   * changes, leaving a closed folder claimed by a claimant that could never
+   * drop it (round-3 B6). Reconciling costs nothing it saved: an unchanged
+   * path is a set membership test, never a second syscall.
    */
-  prepare(pinned: readonly string[], tracked: readonly string[]): Promise<void>;
+  prepare(paths: readonly string[]): Promise<void>;
   /** Where `p` resolved, or its lexical form when nothing prepared it. */
   resolvedOr(p: string): string;
+  /**
+   * Let go of everything, because the consumer holding this resolver is gone.
+   * Idempotent, and the end of the lifecycle D6 describes: without it a closed
+   * surface leaves a dead claimant that blocks the final release rather than
+   * merely leaking one entry (round-3 B7).
+   */
+  dispose(): void;
 }
 
 /** The parts of {@link ResolvedPathMemo} a {@link TrackedPathResolver} needs. */
@@ -174,18 +193,24 @@ export type TrackablePathMemo = Pick<ResolvedPathMemo, "claim" | "release" | "re
  */
 export function createTrackedPathResolver(memo: TrackablePathMemo): TrackedPathResolver {
   const owner = Symbol("tracked-paths");
-  let last: readonly string[] = [];
+  let claimed: ReadonlySet<string> = new Set();
   return {
-    async prepare(pinned, tracked) {
-      const held = new Set(tracked);
-      for (const gone of last) {
+    async prepare(paths) {
+      const held = new Set(paths);
+      for (const gone of claimed) {
         if (!held.has(gone)) {
           memo.release(owner, gone);
         }
       }
-      last = [...tracked];
-      await Promise.all([...pinned, ...tracked].map((p) => memo.claim(owner, p)));
+      claimed = held;
+      await Promise.all([...held].map((p) => memo.claim(owner, p)));
     },
     resolvedOr: (p) => memo.resolvedOr(p),
+    dispose() {
+      for (const p of claimed) {
+        memo.release(owner, p);
+      }
+      claimed = new Set();
+    },
   };
 }

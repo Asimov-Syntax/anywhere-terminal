@@ -488,11 +488,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // own tracker, because what counts as "this set changed" differs per site —
   // but they must never disagree about where a directory is (design.md D1, D5).
   const pathMemo = new ResolvedPathMemo();
-  // A removal assessment is a consumer like any other: it claims the set it is
-  // about to compare and releases the previous one, so its paths are neither
-  // stranded in the memo nor deleted out from under a standing consumer (D6).
-  const removalPanePaths = createTrackedPathResolver(pathMemo);
-  const removalSessionPaths = createTrackedPathResolver(pathMemo);
 
   const gitDecorationProvider = createGitDecorationProvider({ paths: createTrackedPathResolver(pathMemo) });
   context.subscriptions.push(gitDecorationProvider);
@@ -719,14 +714,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           cwd: pane.cwd,
           activity: paneEvidence.activityFor(pane.paneId),
         }));
-        await removalPanePaths.prepare(
-          [],
-          observed.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])),
-        );
-        return observed.map((pane) => ({
-          ...pane,
-          cwd: pane.cwd === undefined ? undefined : removalPanePaths.resolvedOr(pane.cwd),
-        }));
+        // Its OWN claim, for the length of this assessment. Two assessments
+        // sharing one resolver release each other's paths mid-flight — the
+        // second `prepare` drops the first's set before its realpath lands, the
+        // superseded resolution declines to publish, and the first assessment
+        // reads its panes lexically. That answer is the blocker set for an
+        // irreversible destroy, so the miss is a pane nobody was warned about
+        // (round-3 B8).
+        const paths = createTrackedPathResolver(pathMemo);
+        try {
+          await paths.prepare(observed.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
+          return observed.map((pane) => ({
+            ...pane,
+            cwd: pane.cwd === undefined ? undefined : paths.resolvedOr(pane.cwd),
+          }));
+        } finally {
+          paths.dispose();
+        }
       },
       externalSessions: async () => {
         const outcome = await listRunningClaudeSessions();
@@ -736,17 +740,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (outcome.kind !== "ok") {
           return { ok: false };
         }
-        await removalSessionPaths.prepare(
-          [],
-          outcome.sessions.map((s) => s.cwd),
-        );
-        return {
-          ok: true,
-          value: outcome.sessions.map((s) => ({
-            sessionId: s.sessionId,
-            cwd: removalSessionPaths.resolvedOr(s.cwd),
-          })),
-        };
+        const paths = createTrackedPathResolver(pathMemo);
+        try {
+          await paths.prepare(outcome.sessions.map((s) => s.cwd));
+          return {
+            ok: true,
+            value: outcome.sessions.map((s) => ({
+              sessionId: s.sessionId,
+              cwd: paths.resolvedOr(s.cwd),
+            })),
+          };
+        } finally {
+          paths.dispose();
+        }
       },
     },
     workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),

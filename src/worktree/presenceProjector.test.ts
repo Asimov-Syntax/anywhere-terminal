@@ -2004,8 +2004,8 @@ describe("attribution through a symlink", () => {
         resolve: async () => ({ kind: "absent" }) as SessionLookup,
         sessions: async () => ({ kind: "ok", sessions: [] }),
       }),
-      holdPaneCwds: (paths) => paneCwds.prepare([], paths),
-      holdSessionCwds: (paths) => sessionCwds.prepare([], paths),
+      holdPaneCwds: (paths) => paneCwds.prepare(paths),
+      holdSessionCwds: (paths) => sessionCwds.prepare(paths),
       normalize: (p) => memo.resolvedOr(p),
       now: () => clock,
     };
@@ -2119,7 +2119,7 @@ describe("attribution through a symlink", () => {
     // with a terminal open in it is the ordinary case, not an exotic one.
     const h = symlinked({ [SPELLED]: PHYSICAL }, [pane({ paneId: "p1", cwd: SPELLED })]);
     const decorations = createTrackedPathResolver(h.memo);
-    await decorations.prepare([], [SPELLED]);
+    await decorations.prepare([SPELLED]);
 
     await h.projector.project([PHYSICAL]);
     h.panes.length = 0;
@@ -2156,7 +2156,7 @@ describe("attribution through a symlink", () => {
         resolve: async () => ({ kind: "absent" }) as SessionLookup,
         sessions: async () => registry,
       }),
-      holdSessionCwds: (paths) => sessionCwds.prepare([], paths),
+      holdSessionCwds: (paths) => sessionCwds.prepare(paths),
       normalize: (p) => memo.resolvedOr(p),
       now: () => clock,
     });
@@ -2193,7 +2193,7 @@ describe("attribution through a symlink", () => {
           ],
         }),
       }),
-      holdSessionCwds: (paths) => createTrackedPathResolver(memo).prepare([], paths),
+      holdSessionCwds: (paths) => createTrackedPathResolver(memo).prepare(paths),
       normalize: (p) => memo.resolvedOr(p),
       now: () => clock,
     });

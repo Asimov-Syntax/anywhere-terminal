@@ -382,12 +382,12 @@ describe("matching a repository through a symlink", () => {
     const links: Record<string, string> = { "/link/repo": "/physical/one" };
     const { paths, realpaths } = symlinked(links);
 
-    await paths.prepare([], ["/link/repo"]);
+    await paths.prepare(["/link/repo"]);
     expect(paths.resolvedOr("/link/repo")).toBe("/physical/one");
 
-    await paths.prepare([], []);
+    await paths.prepare([]);
     links["/link/repo"] = "/physical/two";
-    await paths.prepare([], ["/link/repo"]);
+    await paths.prepare(["/link/repo"]);
 
     expect(paths.resolvedOr("/link/repo")).toBe("/physical/two");
     expect(realpaths).toEqual(["/link/repo", "/link/repo"]);
@@ -396,9 +396,9 @@ describe("matching a repository through a symlink", () => {
   it("keeps a root that stayed open, so a steady workspace costs nothing", async () => {
     const { paths, realpaths } = symlinked({ "/link/repo": "/physical/one" });
 
-    await paths.prepare([], ["/link/repo"]);
-    await paths.prepare([], ["/link/repo"]);
-    await paths.prepare([], ["/link/repo"]);
+    await paths.prepare(["/link/repo"]);
+    await paths.prepare(["/link/repo"]);
+    await paths.prepare(["/link/repo"]);
 
     expect(realpaths).toEqual(["/link/repo"]);
   });

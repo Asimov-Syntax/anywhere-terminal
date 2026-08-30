@@ -419,6 +419,11 @@ export class TerminalEditorProvider {
       }
       // Cancel + dispose any in-flight preview tokens (D10).
       this.cancelAllPreviewTokens();
+      // Permanent for this panel — it leaves `_instances` on the next line — so
+      // the root it claimed in the shared path memo is released here. Panels
+      // open and close without bound, and a closed one used to leave a dead
+      // claimant that blocked the root's final release (round-3 B7).
+      this.fileTreeHost.dispose();
       TerminalEditorProvider._activePanels.delete(this._panel);
       TerminalEditorProvider._instances.delete(this._panel);
       this.sessionManager.scheduleDestroyForView(this._viewId, GRACE_PERIOD_MS, () => {

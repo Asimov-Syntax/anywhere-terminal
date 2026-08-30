@@ -1047,3 +1047,18 @@ describe("FileTreeHost — the resolved workspace root (round-1 B1)", () => {
     sub.dispose();
   });
 });
+
+describe("FileTreeHost path claims", () => {
+  it("releases its root when the surface holding it is gone", async () => {
+    // Round-3 B7. An editor panel opens and closes without bound; each one used
+    // to leave a dead claimant on the root it mounted, which blocks the final
+    // release rather than merely leaking one entry.
+    const memo = new ResolvedPathMemo({ realpath: async () => "/private/repo" });
+    const host = new FileTreeHost(null, null, createTrackedPathResolver(memo));
+    await waitFor(() => memo.size === 1);
+
+    host.dispose();
+
+    expect(memo.size).toBe(0);
+  });
+});

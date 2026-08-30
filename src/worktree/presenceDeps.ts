@@ -90,8 +90,8 @@ export function createPresenceProjectorDeps(options: PresenceDepsOptions): Prese
     // shell reports a symlinked cwd where git reported the physical path used to
     // be attributed to no worktree at all. The claims below do the resolving in
     // one bounded pass per projection, which is what lets this stay synchronous.
-    holdPaneCwds: (paths) => paneCwds.prepare([], paths),
-    holdSessionCwds: (paths) => sessionCwds.prepare([], paths),
+    holdPaneCwds: (paths) => paneCwds.prepare(paths),
+    holdSessionCwds: (paths) => sessionCwds.prepare(paths),
     normalize: (p) => cwdMemo.resolvedOr(p),
 
     ...(options.sessionTitle ? { sessionTitle: options.sessionTitle } : {}),

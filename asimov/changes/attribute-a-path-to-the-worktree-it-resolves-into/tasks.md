@@ -101,3 +101,16 @@
     2. Cover it where the gap was: `src/providers/resolvedRootWiring.test.ts`, a provider-level test that constructs each surface the way production does — sidebar, bottom panel, editor panel, revived editor panel — and asserts the root it posts. An injected-host test cannot see missing wiring.
     3. W1 — in `src/webview/fileTree/FileTreeController.ts` (+ `src/webview/fileTree/FileTreeController.test.ts`), apply a `workspace-root-changed` whose `rootPath` and generation are unchanged to the resolved pair alone, leaving search, the mounted tree and expanded paths intact.
     4. W2 — in `src/providers/gitDecorationProvider.ts` (+ `src/providers/gitDecorationProvider.test.ts`), let the workspace-folder handler clear stale state without a second full rebuild, so the post-resolution reset is the only authoritative one.
+
+## 4. Round-3 review fixes
+
+- [x] 4_1 End a claim: reconcile every claimed path, and let a claimant let go — verified: pnpm exec vitest run 'src/utils/resolvedPathMemo.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_2
+  - **Refs**: .reviews/round-3.md; design.md#d6-a-resolved-path-is-held-by-its-claimants-and-released-when-the-last-one-lets-go
+  - **Acceptance**:
+    - Outcome: a claim ends when its set drops the path, its owner disposes, or its transaction finishes
+    - Verify: unit src/utils/resolvedPathMemo.test.ts
+  - **Plan**:
+    1. B6 — in `src/utils/resolvedPathMemo.ts` (+ `src/utils/resolvedPathMemo.test.ts`), reconcile the whole claimed set rather than a `tracked` half, collapsing `prepare(pinned, tracked)` to `prepare(paths)`. Update the callers in `src/worktree/repoRoots.ts`, `src/providers/gitDecorationProvider.ts`, `src/providers/fileTreeHost.ts` and `src/worktree/presenceDeps.ts`, and the two-argument call sites in `src/worktree/repoRoots.test.ts`, `src/providers/gitDecorationProvider.test.ts` and `src/worktree/presenceProjector.test.ts`.
+    2. B7 — give the resolver an idempotent `dispose()` that releases everything it claims, have `src/providers/fileTreeHost.ts` own it, and call it from the permanent teardown in `src/providers/TerminalEditorProvider.ts` (+ `src/providers/fileTreeHost.test.ts`, and `src/providers/resolvedRootWiring.test.ts` for the provider-level proof that a closed panel actually releases).
+    3. B8 — in `src/extension.ts`, give each removal assessment its own claim for the length of the transaction and release it in a `finally`, retiring the two long-lived removal handles: an assessment is a transaction, not a standing consumer.

@@ -179,7 +179,7 @@ export async function resolveRepoOutcomes(
   // One pass over both bounded sets, before any of them is compared. Resolving
   // inside `matchRepository` instead would be a syscall per folder per repo
   // per rebuild, which is the cost half of this change's acceptance (D1, D4).
-  await deps.paths?.prepare(folders, openRepoRoots(deps));
+  await deps.paths?.prepare([...folders, ...openRepoRoots(deps)]);
 
   for (const folder of folders) {
     out.push({ folder, outcome: await resolveOne(folder, deps) });
