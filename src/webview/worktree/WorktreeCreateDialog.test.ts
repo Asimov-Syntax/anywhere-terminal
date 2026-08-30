@@ -300,7 +300,7 @@ describe("create worktree — invalid and collided (§ 10)", () => {
   });
 
   it("switches the required field to the base ref in detached mode", () => {
-    const { host, q, submitted } = open();
+    const { q, submitted } = open();
     // Branch source moved into the disclosure, so reaching it is now a step.
     q<HTMLButtonElement>(".wt-advanced-toggle").click();
     // The branch-source control is the detached toggle now — new-versus-existing
@@ -1317,8 +1317,7 @@ describe("the create dialog offers branches and a create-new entry in one list",
     return open({ repos: [createDefaults({ refs: { list: [...REFS], truncated } })] });
   }
 
-  const rows = (host: HTMLElement) =>
-    Array.from(host.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']"));
+  const rows = (host: HTMLElement) => Array.from(host.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']"));
   const labels = (host: HTMLElement) => rows(host).map((r) => r.dataset.branch ?? r.dataset.kind);
   const listOpen = (host: HTMLElement) => host.querySelector<HTMLElement>("#wt-branch-list")?.hidden === false;
 
@@ -1597,9 +1596,9 @@ describe("a branch another worktree holds is offered but not selectable", () => 
     const { q, host, submitted } = held();
     type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
     create(q).disabled = false;
-    host.querySelector(".wt-dialog")?.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
-    );
+    host
+      .querySelector(".wt-dialog")
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
 
     expect(submitted).toEqual([]);
   });

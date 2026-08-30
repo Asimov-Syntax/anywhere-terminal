@@ -992,11 +992,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
 
     const heldBy = heldBranch();
-    const error = heldBy !== undefined
-      ? `${draft.branchName.trim()} is checked out in ${heldBy}`
-      : detached
-        ? undefined
-        : deps.validateBranch?.(draft.branchName);
+    const error =
+      heldBy !== undefined
+        ? `${draft.branchName.trim()} is checked out in ${heldBy}`
+        : detached
+          ? undefined
+          : deps.validateBranch?.(draft.branchName);
     draft.branchError = error;
     nameError.textContent = error ?? "";
     nameError.hidden = !error;
@@ -1022,7 +1023,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // picked, which is the whole point of never preselecting one.
     const postureMissing = afterChoice === "agent" && agentBox.needsPosture();
     createBtn.disabled =
-      Boolean(error) || heldBy !== undefined || !named || draft.path.trim().length === 0 || outstanding || postureMissing;
+      Boolean(error) ||
+      heldBy !== undefined ||
+      !named ||
+      draft.path.trim().length === 0 ||
+      outstanding ||
+      postureMissing;
     shell.refreshFocusTrap();
   }
 

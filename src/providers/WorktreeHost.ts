@@ -27,7 +27,6 @@ import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
 import type { OrphanProofs } from "../worktree/orphanProofs";
-import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
   DelegationRoster,
@@ -38,6 +37,7 @@ import type {
 import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
 import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
+import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
 import { buildWorktreeTreeDetailed, listRepoWorktrees, type WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";

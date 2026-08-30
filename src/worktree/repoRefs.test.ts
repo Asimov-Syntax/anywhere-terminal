@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GitCommandResult, GitCommandRunner, GitRunOptions } from "./gitCommandRunner";
-import { MAX_REFS, readRepoRefs, type RepoRefsWorktree } from "./repoRefs";
+import { MAX_REFS, type RepoRefsWorktree, readRepoRefs } from "./repoRefs";
 
 interface RunCall {
   args: readonly string[];
@@ -149,10 +149,7 @@ describe("readRepoRefs", () => {
 
     const read = await readRepoRefs(runner, {
       cwd: "/repo",
-      worktrees: [
-        linked("/wt/detached"),
-        { displayPath: "/repo/bare", bare: true, detached: false, branch: "main" },
-      ],
+      worktrees: [linked("/wt/detached"), { displayPath: "/repo/bare", bare: true, detached: false, branch: "main" }],
     });
 
     expect(read.ok === true && read.refs).toEqual([{ name: "main" }]);
