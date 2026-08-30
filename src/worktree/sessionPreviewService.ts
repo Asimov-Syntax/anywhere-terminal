@@ -353,34 +353,23 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       const generation = ++current.generation;
       const draft = snapshot(current);
       outstanding.set(entryId, current);
-      const scored = look(entryId, draft).then(
-        (line) => {
-          if (current.generation !== generation) {
-            return line; // abandoned at its deadline — commits nothing, scores nothing
-          }
-          commit(current, draft);
-          // Progress, not the target's state: a look that paid for resolution and
-          // found nothing waits longer, and one that merely reports a stale
-          // target cannot pretend it achieved something (W1-R3).
-          current.misses = draft.progressed === true ? 0 : current.misses + 1;
-          schedule();
-          return line;
-        },
-        () => {
-          if (current.generation !== generation) {
-            return undefined;
-          }
-          commit(current, draft);
-          current.misses += 1;
-          schedule();
-          return forget(current);
-        },
+      // Inert: the attempt reports what it found and changes nothing on the entry.
+      // Committing inside these handlers meant committing BEFORE the race had said
+      // who won, and `Promise.race` picks whichever array promise settles first
+      // rather than whichever event fired first — so a further `.then` on this side
+      // handed a same-tick race to the deadline even when the look finished first,
+      // and a healthy read was scored a miss (round-3 B1-R3). Tagged here, both
+      // sides are one microtask from settling and nothing is written until the
+      // continuation below knows which happened.
+      const attempt = look(entryId, draft).then(
+        (line) => ({ expired: false as const, ok: true as const, line }),
+        () => ({ expired: false as const, ok: false as const, line: undefined }),
       );
       // Cleanup rides the SCORED promise, whose two handlers make it unrejectable,
       // and never a bare `finally` on the look: that returns a fresh promise which
       // adopts the rejection, and nothing observes it — so a read that throws after
       // its deadline would surface as an unhandled rejection in the extension host.
-      void scored.then(() => {
+      void attempt.then(() => {
         if (outstanding.get(entryId) === current) {
           outstanding.delete(entryId);
         }
@@ -389,22 +378,38 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       // `undefined` and a look that never answered are different outcomes, and only
       // a discriminant keeps them apart once both are `string | undefined`.
       const deadline = wait(lookTimeoutMs);
-      const inflight = Promise.race([
-        scored.then((line) => ({ expired: false as const, line })),
-        deadline.elapsed.then(() => ({ expired: true as const })),
-      ]).then((outcome) => {
-        if (!outcome.expired) {
+      const inflight = Promise.race([attempt, deadline.elapsed.then(() => ({ expired: true as const }))]).then(
+        (outcome) => {
+          if (outcome.expired) {
+            // A timeout is the absence of evidence, not evidence of absence: score
+            // it as a look that achieved nothing so it takes the same ladder, and
+            // hand back the line already on the row rather than blanking it (D33).
+            current.generation += 1;
+            current.misses += 1;
+            schedule();
+            return current.line;
+          }
           deadline.cancel();
-          return outcome.line;
-        }
-        // A timeout is the absence of evidence, not evidence of absence: score it
-        // as a look that achieved nothing so it takes the same ladder, and hand
-        // back the line already on the row rather than blanking it (D33).
-        current.generation += 1;
-        current.misses += 1;
-        schedule();
-        return current.line;
-      });
+          // Redundant now that nothing commits before the race has chosen, and kept
+          // deliberately: a second, independent guard on the property round 3 showed
+          // can fall to promise plumbing alone, for the cost of one comparison.
+          if (current.generation !== generation) {
+            return outcome.line;
+          }
+          commit(current, draft);
+          if (outcome.ok) {
+            // Progress, not the target's state: a look that paid for resolution and
+            // found nothing waits longer, and one that merely reports a stale target
+            // cannot pretend it achieved something (W1-R3).
+            current.misses = draft.progressed === true ? 0 : current.misses + 1;
+            schedule();
+            return outcome.line;
+          }
+          current.misses += 1;
+          schedule();
+          return forget(current);
+        },
+      );
       current.inflight = inflight;
       try {
         return await inflight;

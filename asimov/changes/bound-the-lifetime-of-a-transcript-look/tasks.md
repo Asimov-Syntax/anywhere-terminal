@@ -38,3 +38,18 @@
     2. In `preview`, hold the `Deadline` the attempt created and call `cancel()` from the race's continuation whenever `outcome.expired` is false.
     3. Update the two test harnesses in `src/worktree/sessionPreviewService.test.ts` that supply `wait` to return the new shape, counting deadlines created and cancelled.
     4. Add a test completing more than `cap` healthy distinct sessions without firing any deadline, asserting armed deadlines (created minus cancelled) stay at or below `cap`.
+
+## 3. Round-3 review
+
+- [x] 3_1 Let the look report rather than commit, so only the race winner changes the entry — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: specs/vault-session-preview/spec.md#an-abandoned-look-is-scored-as-no-progress-and-commits-nothing <!-- design.md D2, D3 -->
+  - **Acceptance**:
+    - Outcome: a look that finished is never scored as one that expired
+    - Verify: unit src/worktree/sessionPreviewService.test.ts
+  - **Plan**:
+    1. In `src/worktree/sessionPreviewService.ts`, replace the `scored` promise with an inert `attempt` whose two handlers only tag the outcome — `{ expired: false, ok: true, line }` or `{ expired: false, ok: false }` — mutating nothing on the `Held`.
+    2. Race `attempt` directly against `deadline.elapsed.then(() => ({ expired: true }))`, with no further `.then` on the attempt side, so both sides are one microtask from settling.
+    3. Move `commit`, the `misses` scoring, `schedule()`, and `forget` into the race continuation's non-expired branch, still behind the generation check; leave the expired branch as it is.
+    4. Keep the `outstanding` cleanup riding `attempt`, which still cannot reject.
+    5. Add a test to `src/worktree/sessionPreviewService.test.ts` resolving the read and firing the deadline in one synchronous tick, look first, asserting the fresh line is returned and the entry is due again at the plain cadence rather than a backoff rung.

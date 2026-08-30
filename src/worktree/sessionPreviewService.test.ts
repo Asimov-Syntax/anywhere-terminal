@@ -679,6 +679,15 @@ describe("a look that outlives its deadline", () => {
       hold: () => {
         stall = true;
       },
+      /** Release the parked read WITHOUT yielding, so a test can fire the deadline
+       *  in the same synchronous tick and pin which side of the race wins. */
+      releaseNow: (answer: string | null) => {
+        const target = held;
+        held = undefined;
+        stall = false;
+        reached = deferred<void>();
+        target?.(answer);
+      },
       /** Let the abandoned read finish, reporting `answer`, and settle its look. */
       release: async (answer: string | null) => {
         await reached.promise;
@@ -775,6 +784,45 @@ describe("a look that outlives its deadline", () => {
 
     // One miss: the next look is due at recheckMs * 2. Scoring the late settlement
     // as a second miss would push it to * 4 and this ask would find the gate shut.
+    const before = stats.length;
+    clock += 4001;
+    await harness.svc.preview("codex:s1");
+
+    expect(stats.length).toBeGreaterThan(before);
+  });
+
+  it("resolves a same-tick tie as an expiry that commits nothing and scores once", async () => {
+    const harness = stallable();
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+    await rewrite("the second answer", 2_000_000_000_000);
+    clock += 5000;
+    harness.hold();
+    const racing = harness.svc.preview("codex:s1");
+    await harness.parked();
+
+    // Both settle in one synchronous tick, the look first. The tie goes to the
+    // deadline — `look` is an async function, so its own resumption costs hops the
+    // deadline side does not have, and no arrangement of `.then`s changes that.
+    // What must hold is that the losing side wrote nothing: previously the commit
+    // happened inside the look's own handler, BEFORE the race said who won, so the
+    // row took the new line and the expiry branch then scored it a miss on top
+    // (round-3 B1-R3). Whether a read landing in the same microtask as the 5 s mark
+    // is honoured or discarded is beneath anything the row can perceive; being
+    // committed and scored as abandoned at once is not.
+    harness.releaseNow("the second answer");
+    harness.expire();
+    expect(await racing).toBe("the first answer");
+
+    // Asked again after the losing look has fully unwound. Reading the answer alone
+    // would miss the defect: the late commit lands after the race continuation has
+    // already returned, so the corruption is only visible on the NEXT ask.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await harness.svc.preview("codex:s1")).toBe("the first answer");
+
+    // And scored exactly once — one miss puts the next look at recheckMs * 2. The
+    // double-score this finding produced would have put it at * 4, shutting this gate.
     const before = stats.length;
     clock += 4001;
     await harness.svc.preview("codex:s1");
