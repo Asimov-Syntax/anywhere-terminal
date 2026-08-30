@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -55,4 +55,7 @@ Evidence correction (4_1): the suite-change record for 4_1 names five files, but
 Lint baseline drift: `biome check src` now reports 0 errors / 14 warnings / 0 infos rather than the recorded 4/14/3 baseline, because that same external auto-fix cleared errors this change never touched (useTemplate in CursorHookInstaller.test.ts, formatter diffs elsewhere). The drop is not this change's doing and is not claimed as its work; every formatter diff in this change's own files was hand-applied.
 Cycle-4 fixes: check-types clean, 5442 unit tests, I10 ok. `biome check src` now reports 0 errors / 14 warnings / 0 infos; the 4 errors and 3 infos of the recorded baseline were cleared by the external auto-fix noted above and by that session's own commit, not by this change. This change's own formatter diffs were hand-applied throughout.
 B6 note: it took three attempts to build a mutation that reproduces the concurrent-admission bug — a bare microtask before the block, and sizing moved back inside it, both left the tests green. Only reintroducing a suspension BETWEEN the capacity decision and the insert fails them, which is the interleaving B6 actually describes.
+
+Pending triage (cycle 4, out-of-band from the reuse specialist, verified before recording): `stampStoreFiles` (storeStamp.ts:16-26) and `readOnce` (:66-80) each build `{mtimeMs,size}` from a stat, differing only in error policy. Accepted at SUGGEST. Taking a simpler fix than proposed: `stampStoreFiles` delegates to `readOnce` and ignores `usable`, since both already omit a path on any error and the stamps are identical — that removes the second loop rather than parameterizing it, and each caller keeps its own policy by choosing whether to read `usable`. Same drift class as W4: a future `FileStamp` field updated in one loop and not the other would put the list cache and the reuse gate back into disagreement about freshness. Held until the round-4 report lands so it is triaged with the rest rather than committed inside the range under review.
+Handback (cycle 4 round 4): B8 is the shape finding, and the capacity machinery is cut rather than patched. Evidence that decided it — 72 Cursor per-chat stores at 60KB each (~4MB total) against opencode.db at 1.4GB, state.vscdb at 122MB, state_5.sqlite at 400KB. Retention becomes opt-in and keyed to the fixed one-per-agent stores; LRU, byte budgets, capacity eviction and reservation all go.
 

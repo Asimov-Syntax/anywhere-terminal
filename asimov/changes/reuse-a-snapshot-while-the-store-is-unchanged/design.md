@@ -57,46 +57,41 @@ The snapshot is atomic either way, so the caller's answer is correct either way.
 while the store was being written cannot be attributed to either stamp, so it is used once and
 dropped. Retaining it under `stamp_before` would be a lie the next reader would believe.
 
-### D3: The pool owns disk, and disk is bounded by capacity as well as by age
+### D3: Retention is bounded by construction, not by enforcement
 
-A retained snapshot is a real file, and the pool is capped at both a snapshot COUNT and a total BYTE
-budget. On admission, the pool evicts least-recently-used retained entries until the new snapshot
-fits; if it still does not fit, the snapshot is returned as a one-shot lease and never retained.
-Disk is therefore released five ways: superseded by a fresher snapshot for the same store, evicted to
-make room, idle past an interval, disposed at shutdown, and — for anything unretained — released by
-its last reader.
+Retention is opt-in per call site, and only the readers of an agent's ONE primary store ask for it.
+The retained set is therefore keyed by a fixed, small set of paths computed from fixed locations —
+one per agent — and needs no LRU, no byte budget, no capacity eviction and no reservation. The bound
+is a property of what can be a key, not of a policy that has to be enforced correctly under
+concurrency.
 
-**Corrected premise (round-1 B2).** The first draft of this decision claimed the pool holds "at most
-one snapshot per store, and there are at most a handful of stores (one per agent)", and dismissed byte
-accounting on that basis. That is false: Cursor CLI gives every chat its own `store.db`
-(`cursorPaths.ts:132`) and a list walks every candidate (`cursorReader.ts:407`). One snapshot per
-store is thousands of snapshots, not a handful, and individual supported stores already exceed 1 GB.
-An age-only bound limits how long a snapshot lives, never how much disk exists at once, so a burst
-inside one idle window is unbounded. Capacity is the bound that matters; the idle interval only
-reclaims a quiet pool.
+Disk is released three ways: superseded by a fresher snapshot for the same store, unused past an idle
+interval, and disposed at shutdown. A snapshot nobody asked to retain — the per-chat Cursor path — is
+deleted by its last reader, exactly as an unretained one always was.
 
-A snapshot a caller is currently reading is never deleted underneath them, whichever path releases it:
-entries are borrowed and released by refcount, and an entry removed from the pool for any reason is
-deleted at its last release.
+**Why this is the right bound (round-4 B8, measured).** Cursor CLI gives every chat its own
+`store.db`: on the development machine, 72 of them at 60 KB each, about 4 MB in total. The stores that
+are expensive to snapshot are a fixed set — `opencode.db` at 1.4 GB, Cursor IDE's `state.vscdb` at
+122 MB, Codex's `state_5.sqlite` at 400 KB — one per agent. The earlier design put both classes in one
+pool and then needed LRU and byte accounting to referee them. That contest was never real: the
+unbounded-count axis is entirely files too small to be worth retaining, and the costly files cannot
+grow in number. Removing the contest removes the machinery.
 
-**Admission is one synchronous transaction (round-3 B6).** Sizing the snapshot and deleting evicted
-victims both happen OUTSIDE the accounting: the block that reads the budget, chooses victims, removes
-them and inserts the newcomer contains no `await`. A JavaScript turn runs to completion, so a block
-with no suspension point is atomic by construction — concurrent producers cannot interleave between
-the capacity check and the insert, which is exactly how the pool came to hold nine entries under an
-eight-entry cap. This removes the defect class rather than guarding it, so there is no mutex, no
-reservation and no rollback path to get wrong.
+**Rejected**: keeping the byte budget and fixing its accounting. Three cycles of local counters
+(B2 → B6 → B8) failed to make "live bytes" a hard cap, because bytes are subtracted from victims
+before their disk is releasable and newcomers are published before deletions complete. A cap that
+must be maintained correctly across suspension points is a weaker guarantee than a key space that
+cannot grow.
 
-**The budget counts disk the pool still owns, not just disk it is reusing (round-3 W6).** An entry
-whose deletion failed keeps its owner (W3) but stops being counted the moment it leaves the retained
-map, so repeated failures accumulate real gigabytes the budget cannot see. Undeleted entries stay in a
-retry set, count against the pool's live byte total, and are retried on later admissions and idle
-sweeps with bounded backoff. Backpressure applies to what is on disk, not to what is useful.
+**A lease is taken at publication (round-4 B7).** An entry becomes visible to the pool only once its
+producing borrow holds a lease on it, so it can never be superseded and deleted in the window before
+its own reader receives it. With cross-store eviction gone there is no foreign victim at all; this
+closes the remaining same-store case.
 
-**Ownership ends when the disk does, not when the bookkeeping does (round-2 W3).** An entry is dropped
-from the pool's live registry only after its directory is actually gone. A deletion that fails keeps
-its entry, so it still has an owner and can be retried, and disposal reports what it could not remove
-instead of reporting success over a file that is still there.
+**Ownership ends when the disk does (round-2 W3, round-4 W7).** An entry is dropped only after its
+directory is actually gone; a failed deletion keeps its entry and is retried, and the cleanup sweeper
+stays alive while anything retry-eligible remains, rather than stopping because no snapshot is
+currently retained.
 
 ### D3a: Dispose is a barrier, not a sweep
 

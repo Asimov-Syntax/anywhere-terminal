@@ -142,3 +142,27 @@
     1. In `src/vault/snapshotPool.ts`, keep undeleted entries in a retry set that counts against the pool's live byte total and is retried on admission and on idle sweeps with bounded backoff.
     2. Cover that repeated deletion failures apply backpressure rather than accumulating unbudgeted, and that a later successful retry releases the budget.
 
+## 5. Round-4 review fixes
+
+- [ ] 5_1 Retain only what a fixed set of stores asks to retain
+  - **Refs**: .reviews/round-4.md; design.md#d3-retention-is-bounded-by-construction-not-by-enforcement
+  - **Acceptance**:
+    - Outcome: a store nobody asked to retain leaves nothing behind after its last reader
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, make retention opt-in per borrow and delete the LRU, byte-budget, capacity-eviction and live-byte accounting that existed to referee an unbounded retained set.
+    2. Take the producing borrow's lease at publication, so an entry is never visible to the pool before its own reader holds it.
+    3. In `src/vault/sqlite.ts`, pass the opt-in through from the entry points so a caller can say whether this store is one worth retaining.
+    4. In `src/vault/readers/cursorStore.ts`, read the per-chat stores without retention; leave the primary-store readers retaining.
+    5. Cover: an unretained borrow leaves no file after release, a retained store still reuses, concurrent borrows of distinct stores each keep a readable lease until their own release, and the retained set never exceeds the stores that asked for it.
+
+- [ ] 5_2 Keep retrying cleanup while anything is still on disk
+  - **Deps**: 5_1
+  - **Refs**: .reviews/round-4.md; design.md#d3-retention-is-bounded-by-construction-not-by-enforcement
+  - **Acceptance**:
+    - Outcome: a failed deletion is retried even when nothing is retained
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, keep the cleanup sweeper alive while retry-eligible undeleted entries remain, and start one after a failed release, rather than stopping because the retained set is empty.
+    2. Cover a failed deletion of the last retained entry being retried by a later sweep with nothing retained.
+
