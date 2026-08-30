@@ -69,3 +69,19 @@
     1. Add `src/types/messages.contract.test.ts` asserting with `@ts-expect-error`, one case per line with a comment naming the rule: a `reuse` carrying `baseRef`, a `reattach` carrying `baseRef`, an `adopt` carrying `baseRef`, a `fresh-detached` carrying `branch`, a non-`agent` `WorktreeAfterCreate` carrying `agentId` or `waitForSetup`, and a `ProvisionSelection` carrying a command or a path field.
     2. In the same file, assert positively that each of the five modes and the `agent` after-create variant construct without error, so a union accidentally widened to `any` fails rather than passes.
     3. Add one runtime `expect` so the file is a valid Vitest suite; the type assertions are what `pnpm run check-types` judges.
+
+## 2. Review round 1 fixes
+
+- [x] 2_1 Make the boundary refuse what the union cannot express — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_5
+  - **Refs**: .reviews/round-1.md#b1; .reviews/round-1.md#b2; .reviews/round-1.md#w1; .reviews/round-1.md#w2; design.md D1, design.md D5
+  - **Acceptance**:
+    - Outcome: A forged disposition, a malformed variant, or a field the variant forbids is refused before any capability runs, and an unproven refusal check refuses a removal
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. In `src/providers/WorktreeHost.ts`, add `isKnownDisposition` and check it beside the mode and after-create guards. Accept only the exact `free` variant: `debris` has no producer and no redemption store in this change, so admitting it would let an inbound message pick `mustMatchDebrisAuthorization` with an authorization the host never issued (B1).
+    2. In the same file, make all three validators **exact** rather than merely sufficient — a variant carrying a field its shape does not declare is refused, not silently ignored. `agent` requires a boolean `waitForSetup`; the four non-agent arms reject agent-only fields; `reuse` rejects `baseRef`; `fresh-detached` rejects `branch` (B2, W1).
+    3. In `src/providers/WorktreeHost.actions.test.ts`, mirror `src/types/messages.contract.test.ts`'s negative cases across the serialized edge, and restore the launch-riding-a-non-launch-mode case task 1_2 deleted — `postMessage` erases the union, so that test was measuring the boundary, not the type.
+    4. In `src/webview/worktree/WorktreeRemoveDialog.ts`, withhold the "Force remove" button whenever any check is `unproven` (W2). The list keys every line on `failed` or a positive count, so an unproven check renders nothing — and force under an empty list asks the user to authorize destroying a risk the dialog just failed to describe. The copy that makes an unreadable report legible is WT-013.4's and WT-013.1 is what first routes an `unproven` check here, so this guard makes the case fail closed rather than inventing that copy now.
+    5. In `src/worktree/removalChecks.ts`, make `countOf` yield a magnitude only for a check that actually `failed`. A count riding an `unproven` check is a number nobody measured, and the panel renders it inside a `<b>`. No reachable render moves: `checksFor` attaches no count to an unproven check.
+  - **Boundary**: no redemption store and no debris producer — B1 is fixed by refusing, not by implementing WT-012.12 early

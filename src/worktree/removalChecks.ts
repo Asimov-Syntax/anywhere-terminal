@@ -103,9 +103,19 @@ export function isRefusedByChecks(checks: readonly RemovalCheck[]): boolean {
   return checks.some((c) => c.cls === "refusal" && c.outcome === "failed");
 }
 
-/** The count a check reported, or 0 — the shape the panel's clauses are keyed on. */
+/**
+ * The magnitude a check actually measured, or 0 — the shape the panel's clauses
+ * are keyed on.
+ *
+ * Only a `failed` check yields one. A count riding an `unproven` check is a
+ * number nobody measured, and the panel renders it inside a `<b>`: "2 untracked
+ * files" reads as a reading that was taken. `checksFor` attaches no count to an
+ * unproven check, so this moves no reachable rendering — it stops the next
+ * producer from being able to (round-1 W2).
+ */
 export function countOf(checks: readonly RemovalCheck[], id: string): number {
-  return checks.find((c) => c.id === id)?.count ?? 0;
+  const found = checks.find((c) => c.id === id);
+  return found?.outcome === "failed" ? (found.count ?? 0) : 0;
 }
 
 /** Did this check fail? Unproven is not failed, and must not render as passed either. */

@@ -899,6 +899,54 @@ describe("create validates the shape before it delegates", () => {
     expect(calls).toEqual([]);
     dispose();
   });
+
+  // Round-1 B1/B2/W1: `messages.contract.test.ts` proves a typed producer cannot
+  // build these. `postMessage` erases that proof, so the same shapes are asserted
+  // again HERE, where the value arrives as `unknown` and the type is gone.
+
+  async function refuses(over: Record<string, unknown>): Promise<void> {
+    const { host, view, calls, dispose } = await builtHost();
+    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, ...over } as never);
+    await settle();
+
+    expect(calls).toEqual([]);
+    dispose();
+  }
+
+  it("refuses a debris disposition, which no producer in this change can have issued", async () => {
+    // The authorization would select `mustMatchDebrisAuthorization`, which drops
+    // the emptiness requirement — on an authorization the host never issued and
+    // has no store to redeem against. WT-012.12 builds the producer; until then
+    // the only admissible disposition is the exact `free` one.
+    await refuses({ disposition: { kind: "debris", authorization: { path: "/trees/feat", fingerprint: "forged" } } });
+  });
+
+  it("refuses a disposition that is not one of the documented ones", async () => {
+    await refuses({ disposition: { kind: "somethingElse" } });
+    await refuses({ disposition: undefined });
+    await refuses({ disposition: { kind: "free", authorization: { path: "/x", fingerprint: "f" } } });
+  });
+
+  it("refuses an agent after-create whose setup gate is missing or not a boolean", async () => {
+    // `waitForSetup` sequences the agent against the setup runner. Absent, it
+    // reaches the capability as `undefined` and the sequencing silently changes.
+    await refuses({ afterCreate: { kind: "agent", agent: "claude" } });
+    await refuses({ afterCreate: { kind: "agent", agent: "claude", waitForSetup: "yes" } });
+  });
+
+  it("refuses launch details riding an after-create that is not launching", async () => {
+    // Restored: task 1_2 deleted this on the grounds that the union makes the
+    // arrangement unrepresentable. That is true of our own code and false of a
+    // message, which is the only place this test ever applied.
+    await refuses({ afterCreate: { kind: "none", agent: "claude" } });
+    await refuses({ afterCreate: { kind: "terminal", waitForSetup: true } });
+  });
+
+  it("refuses a mode carrying a field its own shape does not declare", async () => {
+    await refuses({ mode: { kind: "reuse", branch: "feat", baseRef: "main" } });
+    await refuses({ mode: { kind: "fresh-detached", baseRef: "HEAD", branch: "feat" } });
+    await refuses({ mode: { kind: "fresh", branch: "feat", detach: true } });
+  });
 });
 
 // ── What comes back ──────────────────────────────────────────────────────

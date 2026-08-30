@@ -316,15 +316,29 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
 
   shell.dialog.append(buildBlockerList(checks, info), buildForceWarning(checks, info));
   const cancelBtn = textButton("Cancel", "plain", cancel);
-  shell.actions.append(
-    cancelBtn,
-    textButton("Force remove", "danger", () => {
-      // Re-sent with the fingerprint the user was SHOWN: force is authorization for
-      // this blocker set, not a blanket one.
-      deps.onConfirm(deps.report.fingerprint);
-      shell.dispose();
-    }),
-  );
+  shell.actions.append(cancelBtn);
+  // A check nobody could evaluate renders nothing — `buildBlockerList` keys every
+  // line on `failed` or a positive count, and `unproven` is neither. Offering
+  // force underneath that empty list would ask the user to authorize destroying a
+  // risk set the dialog just failed to describe, which is the one direction this
+  // action must never fail in (round-1 W2).
+  //
+  // Withholding the button rather than explaining the gap is deliberate. The
+  // copy that makes an unreadable report legible is WT-013.4's, and WT-013.1 is
+  // what first routes an `unproven` check here at all — today `checksFor` emits
+  // one only for an `unavailable` assessment, which the service answers
+  // elsewhere. So this guard changes no reachable rendering; it makes the
+  // unreachable case fail closed instead of fail open when that changes.
+  if (!checks.some((c) => c.outcome === "unproven")) {
+    shell.actions.append(
+      textButton("Force remove", "danger", () => {
+        // Re-sent with the fingerprint the user was SHOWN: force is authorization for
+        // this blocker set, not a blanket one.
+        deps.onConfirm(deps.report.fingerprint);
+        shell.dispose();
+      }),
+    );
+  }
   shell.dialog.appendChild(shell.actions);
   shell.refreshFocusTrap();
   // Focus lands on Cancel, never on the destructive button: an accidental Enter

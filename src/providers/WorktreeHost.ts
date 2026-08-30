@@ -822,6 +822,25 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
 
   /** The launcher's option bag, with absent fields absent rather than undefined. */
   /**
+   * Does this object carry ONLY the keys its variant declares?
+   *
+   * A variant that merely has the fields it requires is not the variant: the
+   * union's whole safety property is that `reuse` cannot carry a base ref and a
+   * non-launching after-create cannot carry an agent. `messages.contract.test.ts`
+   * proves a typed producer cannot build those, but a message crosses
+   * `postMessage`, where the type is gone — so the same exactness is re-checked
+   * here or it is not checked at all (round-1 B2, W1).
+   *
+   * A key present with `undefined` counts as absent: that is what an optional
+   * field looks like after a structured-clone round trip.
+   */
+  function onlyKeys(value: unknown, allowed: readonly string[]): boolean {
+    return Object.entries(value as Record<string, unknown>).every(
+      ([key, held]) => held === undefined || allowed.includes(key),
+    );
+  }
+
+  /**
    * Does this inbound value name one of the five branch modes, with the fields
    * that mode requires?
    *
@@ -836,15 +855,25 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     const named = (v: unknown): boolean => typeof v === "string" && v.length > 0;
     switch (m.kind) {
       case "fresh":
-        return named(m.branch) && (m.baseRef === undefined || named(m.baseRef));
+        return (
+          onlyKeys(mode, ["kind", "branch", "baseRef"]) &&
+          named(m.branch) &&
+          (m.baseRef === undefined || named(m.baseRef))
+        );
       case "fresh-detached":
-        return named(m.baseRef);
+        return onlyKeys(mode, ["kind", "baseRef"]) && named(m.baseRef);
       case "reuse":
-        return named(m.branch);
+        return onlyKeys(mode, ["kind", "branch"]) && named(m.branch);
       case "reattach":
-        return named(m.branch) && named(m.repairPath) && named((mode as { expectedOid?: unknown }).expectedOid);
+        return (
+          onlyKeys(mode, ["kind", "branch", "repairPath", "expectedOid"]) &&
+          named(m.branch) &&
+          named(m.repairPath) &&
+          named((mode as { expectedOid?: unknown }).expectedOid)
+        );
       case "adopt":
         return (
+          onlyKeys(mode, ["kind", "branch", "adoptPath", "expectedBranchOid"]) &&
           named(m.branch) &&
           named((mode as { adoptPath?: unknown }).adoptPath) &&
           named((mode as { expectedBranchOid?: unknown }).expectedBranchOid)
@@ -854,20 +883,49 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     }
   }
 
+  /**
+   * Which destination rule the create may ask for.
+   *
+   * `debris` is refused outright, not merely unvalidated. It selects
+   * `mustMatchDebrisAuthorization`, which drops the emptiness requirement on the
+   * strength of a fingerprint the host issued — and this extension has no debris
+   * producer and no store to redeem one against until WT-012.12. Admitting the
+   * variant here would let an inbound message weaken the destination rule with
+   * an authorization nobody ever granted (round-1 B1).
+   */
+  function isKnownDisposition(disposition: unknown): disposition is DestinationDisposition {
+    if (typeof disposition !== "object" || disposition === null) {
+      return false;
+    }
+    return (disposition as { kind?: unknown }).kind === "free" && onlyKeys(disposition, ["kind"]);
+  }
+
   /** The same check for what happens afterwards; the agent variant must name an agent. */
   function isKnownAfterCreate(after: unknown): after is WorktreeAfterCreate {
     if (typeof after !== "object" || after === null) {
       return false;
     }
-    const a = after as { kind?: unknown; agent?: unknown };
+    const a = after as { kind?: unknown; agent?: unknown; waitForSetup?: unknown };
     switch (a.kind) {
       case "none":
       case "terminal":
       case "newWindow":
       case "addToWorkspace":
-        return true;
+        // Exact, not merely sufficient: an agent field on a variant that does not
+        // launch is refused rather than ignored. Ignoring it accepts a message
+        // that contradicts itself, and leaves the next reader to decide which
+        // half was meant (round-1 B2).
+        return onlyKeys(after, ["kind"]);
       case "agent":
-        return typeof a.agent === "string" && a.agent.length > 0;
+        return (
+          onlyKeys(after, ["kind", "waitForSetup", "agent", "permissionChoiceId", "prompt", "offerId", "generation"]) &&
+          // The gate that sequences the agent behind the setup runner. Absent, it
+          // reaches the capability as `undefined` and the sequencing changes
+          // silently, which is why the boolean is required rather than defaulted.
+          typeof a.waitForSetup === "boolean" &&
+          typeof a.agent === "string" &&
+          a.agent.length > 0
+        );
       default:
         return false;
     }
@@ -923,7 +981,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // boundary. worktree-rpc.md § 4 asks for the check on every inbound
         // message, so an unknown discriminant fails closed here rather than
         // reaching a `switch` that has no arm for it.
-        if (!isKnownCreateMode(msg.mode) || !isKnownAfterCreate(msg.afterCreate)) {
+        if (
+          !isKnownCreateMode(msg.mode) ||
+          !isKnownAfterCreate(msg.afterCreate) ||
+          !isKnownDisposition(msg.disposition)
+        ) {
           return;
         }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {

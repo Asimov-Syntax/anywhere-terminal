@@ -344,3 +344,43 @@ describe("the confirmation states what it destroys and what it spares", () => {
     expect(text).toMatch(/files written after you confirm/i);
   });
 });
+
+describe("a check nobody could evaluate (round-1 W2)", () => {
+  const unproven = { outcome: "unproven" as const };
+
+  function danger(host: HTMLElement): HTMLElement | null {
+    return host.querySelector(".wt-dialog-actions .danger, button.danger");
+  }
+
+  it("withholds force when a confirmable check could not be read", () => {
+    // `buildBlockerList` keys every line on `failed` or a positive count, so an
+    // unproven check renders nothing. Force underneath an empty list would ask
+    // the user to authorize destroying a risk the dialog failed to describe.
+    const { host } = open(
+      withChecks(confirmableBlocker, {
+        dirty: unproven,
+        untracked: unproven,
+        idlePanes: unproven,
+        externalAgents: unproven,
+        locked: unproven,
+      }),
+    );
+
+    expect(host.querySelectorAll(".wt-blockers li").length).toBe(0);
+    expect(danger(host)).toBeNull();
+    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Force remove");
+  });
+
+  it("withholds force when a refusal-class check could not be read", () => {
+    const { host } = open(withChecks(confirmableBlocker, { busyAgents: unproven }));
+
+    expect(danger(host)).toBeNull();
+  });
+
+  it("still offers force when every check was actually evaluated", () => {
+    // The guard must not cost the reachable case its confirmation.
+    const { host } = open(confirmableBlocker);
+
+    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain("Force remove");
+  });
+});
