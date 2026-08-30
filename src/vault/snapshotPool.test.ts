@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type SnapshotLease, SnapshotPool, type SnapshotPoolDeps } from "./snapshotPool";
+import { SnapshotPool, type SnapshotPoolDeps } from "./snapshotPool";
 
 /** Long enough for a disposal with real `fs.rm` calls in it to have finished if it
  *  were not waiting, so "has not settled yet" is a claim about the barrier rather
@@ -114,10 +114,14 @@ describe("SnapshotPool", () => {
   it("does not retain a snapshot taken while the store was being written", async () => {
     const pool = new SnapshotPool(deps);
 
-    const racy = await pool.borrow(dbPath, async (dest) => {
-      await produce(dest);
-      await writeToWal();
-    }, RETAIN);
+    const racy = await pool.borrow(
+      dbPath,
+      async (dest) => {
+        await produce(dest);
+        await writeToWal();
+      },
+      RETAIN,
+    );
     await racy.release();
 
     // The store is now quiet, so a retained snapshot would be reused. It must not be:
@@ -131,10 +135,14 @@ describe("SnapshotPool", () => {
   it("deletes the snapshot it refused to retain", async () => {
     const pool = new SnapshotPool(deps);
 
-    const racy = await pool.borrow(dbPath, async (dest) => {
-      await produce(dest);
-      await writeToWal();
-    }, RETAIN);
+    const racy = await pool.borrow(
+      dbPath,
+      async (dest) => {
+        await produce(dest);
+        await writeToWal();
+      },
+      RETAIN,
+    );
     const file = racy.file;
     await racy.release();
 
@@ -159,9 +167,13 @@ describe("SnapshotPool", () => {
     const pool = new SnapshotPool(deps);
 
     await expect(
-      pool.borrow(dbPath, async () => {
-        throw new Error("backup refused");
-      }, RETAIN),
+      pool.borrow(
+        dbPath,
+        async () => {
+          throw new Error("backup refused");
+        },
+        RETAIN,
+      ),
     ).rejects.toThrow("backup refused");
 
     const after = await pool.borrow(dbPath, produce, RETAIN);
@@ -174,11 +186,15 @@ describe("SnapshotPool", () => {
     const gate = deferred();
     const started = deferred();
 
-    const first = pool.borrow(dbPath, async (dest) => {
-      started.resolve();
-      await gate.promise;
-      await produce(dest);
-    }, RETAIN);
+    const first = pool.borrow(
+      dbPath,
+      async (dest) => {
+        started.resolve();
+        await gate.promise;
+        await produce(dest);
+      },
+      RETAIN,
+    );
     // Wait for production to actually be in flight — a microtask tick is not enough,
     // since `borrow` stats the store first.
     await started.promise;
@@ -198,12 +214,16 @@ describe("SnapshotPool", () => {
     const started = deferred();
 
     // A write lands during production, so this snapshot is used once and never retained.
-    const first = pool.borrow(dbPath, async (dest) => {
-      started.resolve();
-      await gate.promise;
-      await produce(dest);
-      await writeToWal();
-    }, RETAIN);
+    const first = pool.borrow(
+      dbPath,
+      async (dest) => {
+        started.resolve();
+        await gate.promise;
+        await produce(dest);
+        await writeToWal();
+      },
+      RETAIN,
+    );
     await started.promise;
     const second = pool.borrow(dbPath, produce, RETAIN);
     gate.resolve();
@@ -221,9 +241,13 @@ describe("SnapshotPool", () => {
     const pool = new SnapshotPool(deps);
 
     await expect(
-      pool.borrow(dbPath, async () => {
-        throw new Error("backup refused");
-      }, RETAIN),
+      pool.borrow(
+        dbPath,
+        async () => {
+          throw new Error("backup refused");
+        },
+        RETAIN,
+      ),
     ).rejects.toThrow("backup refused");
 
     const lease = await pool.borrow(dbPath, produce, RETAIN);
@@ -324,11 +348,15 @@ describe("SnapshotPool", () => {
       await fs.copyFile(`${dbPath}-wal`, dest);
     };
 
-    const first = pool.borrow(dbPath, async (dest) => {
-      started.resolve();
-      await gate.promise;
-      await copyWal(dest);
-    }, RETAIN);
+    const first = pool.borrow(
+      dbPath,
+      async (dest) => {
+        started.resolve();
+        await gate.promise;
+        await copyWal(dest);
+      },
+      RETAIN,
+    );
     await started.promise;
 
     // A session commits while that snapshot is in flight, and only now does the
@@ -561,11 +589,15 @@ describe("SnapshotPool disposal", () => {
     const gate = deferred();
     const started = deferred();
 
-    const borrowing = pool.borrow(dbPath, async (dest) => {
-      started.resolve();
-      await gate.promise;
-      await produce(dest);
-    }, RETAIN);
+    const borrowing = pool.borrow(
+      dbPath,
+      async (dest) => {
+        started.resolve();
+        await gate.promise;
+        await produce(dest);
+      },
+      RETAIN,
+    );
     await started.promise;
 
     let disposed = false;
@@ -621,11 +653,15 @@ describe("SnapshotPool disposal", () => {
     const gate = deferred();
     const started = deferred();
 
-    const first = pool.borrow(dbPath, async (dest) => {
-      started.resolve();
-      await gate.promise;
-      await produce(dest);
-    }, RETAIN);
+    const first = pool.borrow(
+      dbPath,
+      async (dest) => {
+        started.resolve();
+        await gate.promise;
+        await produce(dest);
+      },
+      RETAIN,
+    );
     await started.promise;
 
     // A different generation, so this caller waits for the flight rather than joining.
@@ -714,10 +750,14 @@ describe("SnapshotPool disposal", () => {
 
     // An unretained snapshot whose deletion fails at release: it must not be
     // forgotten, or the file has no owner left to remove it.
-    const lease = await pool.borrow(dbPath, async (dest) => {
-      await produce(dest);
-      await fs.writeFile(`${dbPath}-wal`, "written-during");
-    }, RETAIN);
+    const lease = await pool.borrow(
+      dbPath,
+      async (dest) => {
+        await produce(dest);
+        await fs.writeFile(`${dbPath}-wal`, "written-during");
+      },
+      RETAIN,
+    );
     await lease.release();
     await expect(fs.access(lease.file)).resolves.toBeUndefined();
 

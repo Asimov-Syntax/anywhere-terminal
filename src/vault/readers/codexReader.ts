@@ -16,7 +16,7 @@ import { provesAbsence } from "../../utils/fsPresence";
 import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { readPrimarySqlite, readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
+import { readPrimarySqlite, type readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
 import { sameStamps, stampStoreFiles, storeFilePaths } from "../storeStamp";
 import {
   formatEntryId,

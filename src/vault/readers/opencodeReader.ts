@@ -10,7 +10,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { readPrimarySqlite, readSqlite, withPrimarySqliteSnapshot, withSqliteSnapshot, writeSqlite } from "../sqlite";
+import {
+  readPrimarySqlite,
+  type readSqlite,
+  withPrimarySqliteSnapshot,
+  type withSqliteSnapshot,
+  writeSqlite,
+} from "../sqlite";
 import { sameStamps, stampStoreFiles, storeFilePaths } from "../storeStamp";
 import {
   formatEntryId,

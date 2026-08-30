@@ -207,8 +207,7 @@ export class SnapshotPool {
     const after = await this.readGeneration(dbPath);
     // Nothing is retained once the pool is closed: this snapshot is handed to its
     // caller and deleted at its last release, never left for a sweeper that is gone.
-    const stable =
-      retain && !this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
+    const stable = retain && !this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
 
     // The producer's own lease is taken BEFORE publication and nothing suspends in
     // between, so no other caller can observe this entry, supersede it, and delete it

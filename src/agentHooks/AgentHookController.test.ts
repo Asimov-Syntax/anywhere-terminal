@@ -89,24 +89,23 @@ describe("AgentHookController", () => {
     expect(events).toEqual(["detach", "runtime:false", "runtime:true", "attach"]);
   });
 
-  it.each([
-    "unsupported-config",
-    "write-failed",
-    "windows-probe-failed",
-  ] as const)("detaches and disables after %s installation failure", async (reason) => {
-    const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
-      initialEnabled: true,
-      install: async () => ({ installed: false, reason }),
-    });
+  it.each(["unsupported-config", "write-failed", "windows-probe-failed"] as const)(
+    "detaches and disables after %s installation failure",
+    async (reason) => {
+      const { controller, events, onWarning, runtime, setContributor } = controllerDeps({
+        initialEnabled: true,
+        install: async () => ({ installed: false, reason }),
+      });
 
-    await controller.start();
+      await controller.start();
 
-    expect(runtime.setAgentEnabled).not.toHaveBeenCalledWith("cursor", true);
-    expect(setContributor).not.toHaveBeenCalledWith(runtime);
-    expect(events.at(-2)).toBe("detach");
-    expect(events.at(-1)).toBe("runtime:false");
-    expect(onWarning).toHaveBeenCalledWith("cursor", "install", reason);
-  });
+      expect(runtime.setAgentEnabled).not.toHaveBeenCalledWith("cursor", true);
+      expect(setContributor).not.toHaveBeenCalledWith(runtime);
+      expect(events.at(-2)).toBe("detach");
+      expect(events.at(-1)).toBe("runtime:false");
+      expect(onWarning).toHaveBeenCalledWith("cursor", "install", reason);
+    },
+  );
 
   it("grants authority and warns separately when install commits but lock cleanup leaves residue (D5, D9)", async () => {
     const { controller, events, onWarning, runtime, setContributor } = controllerDeps({

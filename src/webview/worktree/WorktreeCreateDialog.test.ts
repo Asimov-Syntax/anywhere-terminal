@@ -735,7 +735,6 @@ describe("round-1 review fixes", () => {
     expect(path.value).toBe("   ");
     expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
   });
-
 });
 
 describe("round-2 review fixes", () => {

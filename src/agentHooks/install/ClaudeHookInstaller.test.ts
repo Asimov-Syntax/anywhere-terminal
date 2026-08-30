@@ -423,19 +423,18 @@ describe("D7 frozen POSIX command", () => {
     });
   });
 
-  it.each([
-    "A".repeat(64),
-    "0".repeat(63),
-    "0".repeat(65),
-  ])("rejects a malformed runtime token %s and sends nothing", async (badToken) => {
-    await withHttpListener(async (port, requests) => {
-      const url = loopbackUrl(port, "segment", badToken);
-      const result = await runD7('{"event":"Stop"}', { ANYWHERE_TERMINAL_CLAUDE_URL: url });
-      expect(result.stdout).toBe("{}\n");
-      expect(result.code).toBe(0);
-      expect(requests).toHaveLength(0);
-    });
-  });
+  it.each(["A".repeat(64), "0".repeat(63), "0".repeat(65)])(
+    "rejects a malformed runtime token %s and sends nothing",
+    async (badToken) => {
+      await withHttpListener(async (port, requests) => {
+        const url = loopbackUrl(port, "segment", badToken);
+        const result = await runD7('{"event":"Stop"}', { ANYWHERE_TERMINAL_CLAUDE_URL: url });
+        expect(result.stdout).toBe("{}\n");
+        expect(result.code).toBe(0);
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
 
   it("rejects a non-HTTP scheme and sends nothing", async () => {
     await withHttpListener(async (port, requests) => {

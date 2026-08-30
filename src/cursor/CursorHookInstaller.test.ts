@@ -420,38 +420,38 @@ describe("CursorHookInstaller", () => {
     await expect(readFile(lockPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.each([
-    "install",
-    "uninstall",
-  ] as const)("reports a final POSIX lock-release failure after %s without erasing committed state", async (operation) => {
-    const paths = await fixture();
-    await writeFile(
-      paths.configPath,
-      JSON.stringify({
-        version: 1,
-        hooks: operation === "uninstall" ? { sessionStart: [{ command: CURSOR_HOOK_COMMAND, timeout: 2 }] } : {},
-      }),
-    );
-    const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
-    const installer = new CursorHookInstaller(paths, {
-      fs: {
-        unlink: async (path) => {
-          if (String(path) === lockPath) {
-            throw Object.assign(new Error("denied"), { code: "EACCES" });
-          }
-          await unlink(path);
+  it.each(["install", "uninstall"] as const)(
+    "reports a final POSIX lock-release failure after %s without erasing committed state",
+    async (operation) => {
+      const paths = await fixture();
+      await writeFile(
+        paths.configPath,
+        JSON.stringify({
+          version: 1,
+          hooks: operation === "uninstall" ? { sessionStart: [{ command: CURSOR_HOOK_COMMAND, timeout: 2 }] } : {},
+        }),
+      );
+      const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
+      const installer = new CursorHookInstaller(paths, {
+        fs: {
+          unlink: async (path) => {
+            if (String(path) === lockPath) {
+              throw Object.assign(new Error("denied"), { code: "EACCES" });
+            }
+            await unlink(path);
+          },
         },
-      },
-    });
+      });
 
-    const result = await installer[operation]();
-    expect(result).toEqual(
-      operation === "install"
-        ? { installed: true, reason: "lock-release-failed", unresolved: [lockPath] }
-        : { removed: true, reason: "lock-release-failed", unresolved: [lockPath] },
-    );
-    expect(await readFile(lockPath, "utf8")).toBe("");
-  });
+      const result = await installer[operation]();
+      expect(result).toEqual(
+        operation === "install"
+          ? { installed: true, reason: "lock-release-failed", unresolved: [lockPath] }
+          : { removed: true, reason: "lock-release-failed", unresolved: [lockPath] },
+      );
+      expect(await readFile(lockPath, "utf8")).toBe("");
+    },
+  );
 
   it("returns lock-unavailable after a bounded number of lock attempts", async () => {
     const paths = await fixture();
@@ -631,70 +631,70 @@ describe("CursorHookInstaller", () => {
     expect(document).toMatchObject({ version: 1, hooks: { sessionStart: [] } });
   });
 
-  it.each([
-    "install",
-    "uninstall",
-  ] as const)("retains the released Windows wrapper when %s preserves a custom event reference", async (operation) => {
-    const storagePath =
-      "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
-    const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
-    const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
-      {
-        version: 1,
-        hooks: {
-          sessionStart: [{ command: legacyCommand, timeout: 2 }],
-          customEvent: [{ command: legacyCommand, timeout: 2 }],
+  it.each(["install", "uninstall"] as const)(
+    "retains the released Windows wrapper when %s preserves a custom event reference",
+    async (operation) => {
+      const storagePath =
+        "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
+      const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
+      const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
+        {
+          version: 1,
+          hooks: {
+            sessionStart: [{ command: legacyCommand, timeout: 2 }],
+            customEvent: [{ command: legacyCommand, timeout: 2 }],
+          },
         },
-      },
-      "legacy",
-    );
-    const installer = new CursorHookInstaller(paths, { fs: memoryFs });
+        "legacy",
+      );
+      const installer = new CursorHookInstaller(paths, { fs: memoryFs });
 
-    await expect(installer[operation]()).resolves.toEqual(
-      operation === "install"
-        ? { installed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] }
-        : { removed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] },
-    );
-    const document = JSON.parse(files.get(paths.configPath) ?? "") as {
-      hooks: Record<string, Array<Record<string, unknown>>>;
-    };
-    expect(document.hooks.sessionStart).toEqual([]);
-    expect(document.hooks.customEvent).toEqual([{ command: legacyCommand, timeout: 2 }]);
-    expect(files.get(wrapperPath)).toBe("legacy");
-  });
+      await expect(installer[operation]()).resolves.toEqual(
+        operation === "install"
+          ? { installed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] }
+          : { removed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] },
+      );
+      const document = JSON.parse(files.get(paths.configPath) ?? "") as {
+        hooks: Record<string, Array<Record<string, unknown>>>;
+      };
+      expect(document.hooks.sessionStart).toEqual([]);
+      expect(document.hooks.customEvent).toEqual([{ command: legacyCommand, timeout: 2 }]);
+      expect(files.get(wrapperPath)).toBe("legacy");
+    },
+  );
 
-  it.each([
-    "install",
-    "uninstall",
-  ] as const)("reports a final Windows lock-release failure after %s without erasing committed state", async (operation) => {
-    const storagePath =
-      "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
-    const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
-    const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
-      {
-        version: 1,
-        hooks: { sessionStart: [{ command: legacyCommand, timeout: 2 }] },
-      },
-      "legacy",
-    );
-    const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
-    const baseUnlink = memoryFs.unlink;
-    memoryFs.unlink = vi.fn(async (path: import("node:fs").PathLike) => {
-      if (String(path) === lockPath) {
-        throw Object.assign(new Error("denied"), { code: "EACCES" });
-      }
-      await baseUnlink(path);
-    });
-    const installer = new CursorHookInstaller(paths, { fs: memoryFs });
+  it.each(["install", "uninstall"] as const)(
+    "reports a final Windows lock-release failure after %s without erasing committed state",
+    async (operation) => {
+      const storagePath =
+        "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
+      const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
+      const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
+        {
+          version: 1,
+          hooks: { sessionStart: [{ command: legacyCommand, timeout: 2 }] },
+        },
+        "legacy",
+      );
+      const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
+      const baseUnlink = memoryFs.unlink;
+      memoryFs.unlink = vi.fn(async (path: import("node:fs").PathLike) => {
+        if (String(path) === lockPath) {
+          throw Object.assign(new Error("denied"), { code: "EACCES" });
+        }
+        await baseUnlink(path);
+      });
+      const installer = new CursorHookInstaller(paths, { fs: memoryFs });
 
-    await expect(installer[operation]()).resolves.toEqual(
-      operation === "install"
-        ? { installed: false, reason: "lock-release-failed", unresolved: [lockPath] }
-        : { removed: true, reason: "lock-release-failed", unresolved: [lockPath] },
-    );
-    expect(files.has(wrapperPath)).toBe(false);
-    expect(files.has(lockPath)).toBe(true);
-  });
+      await expect(installer[operation]()).resolves.toEqual(
+        operation === "install"
+          ? { installed: false, reason: "lock-release-failed", unresolved: [lockPath] }
+          : { removed: true, reason: "lock-release-failed", unresolved: [lockPath] },
+      );
+      expect(files.has(wrapperPath)).toBe(false);
+      expect(files.has(lockPath)).toBe(true);
+    },
+  );
 
   it("returns unsupported-platform without creating a Windows wrapper when nothing was installed", async () => {
     const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture({ version: 1, hooks: {} });
@@ -732,9 +732,9 @@ describe("CursorHookInstaller", () => {
 
     it.each([
       ["missing", undefined],
-      ["non-loopback", "http://example.invalid:80/123e4567-e89b-12d3-a456-426614174000/" + "a".repeat(64)],
-      ["nonnumeric port", "http://127.0.0.1:nope/123e4567-e89b-12d3-a456-426614174000/" + "a".repeat(64)],
-      ["query", "http://127.0.0.1:80/123e4567-e89b-12d3-a456-426614174000/" + "a".repeat(64) + "?to=elsewhere"],
+      ["non-loopback", `http://example.invalid:80/123e4567-e89b-12d3-a456-426614174000/${"a".repeat(64)}`],
+      ["nonnumeric port", `http://127.0.0.1:nope/123e4567-e89b-12d3-a456-426614174000/${"a".repeat(64)}`],
+      ["query", `http://127.0.0.1:80/123e4567-e89b-12d3-a456-426614174000/${"a".repeat(64)}?to=elsewhere`],
       ["short token", "http://127.0.0.1:80/123e4567-e89b-12d3-a456-426614174000/abc"],
     ])("drains input and sends nothing for %s coordinates", async (_name, url) => {
       const listener = await httpRecorder();

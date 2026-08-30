@@ -37,10 +37,14 @@
         {
           "phase": "build",
           "from": 1788081937868
+        },
+        {
+          "phase": "plan",
+          "from": 1788082009912
         }
       ],
       "firstAt": 1788073096969,
-      "lastAt": 1788081969065,
+      "lastAt": 1788082564836,
       "buckets": [
         {
           "runtime": "claude",
@@ -101,15 +105,15 @@
           "phase": "build",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 96,
-          "inputTokens": 192,
-          "outputTokens": 86699,
-          "reasoningTokens": 29516,
-          "cacheWriteTokens": 238516,
-          "cacheReadTokens": 13344755,
+          "messages": 99,
+          "inputTokens": 198,
+          "outputTokens": 87638,
+          "reasoningTokens": 29665,
+          "cacheWriteTokens": 240873,
+          "cacheReadTokens": 13873908,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 238516,
+            "cacheWrite1hTokens": 240873,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -209,15 +213,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 135,
-          "inputTokens": 270,
-          "outputTokens": 143423,
-          "reasoningTokens": 44580,
-          "cacheWriteTokens": 179371,
-          "cacheReadTokens": 34442342,
+          "messages": 143,
+          "inputTokens": 286,
+          "outputTokens": 146895,
+          "reasoningTokens": 45487,
+          "cacheWriteTokens": 185713,
+          "cacheReadTokens": 35899230,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 179371,
+            "cacheWrite1hTokens": 185713,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -335,12 +339,12 @@
           "phase": "build",
           "agent": "asm-librarian",
           "model": "gpt-5.6-sol",
-          "messages": 4,
-          "inputTokens": 47904,
-          "outputTokens": 1516,
+          "messages": 5,
+          "inputTokens": 57373,
+          "outputTokens": 2252,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 166400,
+          "cacheReadTokens": 262144,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -353,12 +357,12 @@
           "phase": "plan",
           "agent": "asm-librarian",
           "model": "gpt-5.6-sol",
-          "messages": 2,
-          "inputTokens": 16692,
-          "outputTokens": 732,
+          "messages": 3,
+          "inputTokens": 20081,
+          "outputTokens": 1006,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 82944,
+          "cacheReadTokens": 196096,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
