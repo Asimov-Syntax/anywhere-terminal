@@ -181,7 +181,13 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
   return rows;
 }
 
-/** `2 copied · 1 linked · 1 port · 1 setup step` — what the section will do. */
+/**
+ * `2 copied · 1 linked · 1 port · 1 setup step` — what the section will do.
+ *
+ * Three states, three sentences. "Nothing configured" is a repository that
+ * declares nothing; "Could not be read" is a provider file that failed. They are
+ * not the same claim, and a single blank summary would make them look alike.
+ */
 function bringSummary(model: WorktreeProvisionOffer["model"]): string {
   const copied = model.entries.filter((e) => e.mode === "copy").length;
   const linked = model.entries.length - copied;
@@ -198,7 +204,33 @@ function bringSummary(model: WorktreeProvisionOffer["model"]): string {
   if (model.setup.length > 0) {
     parts.push(`${model.setup.length} setup step${model.setup.length === 1 ? "" : "s"}`);
   }
-  return parts.join(" \u00b7 ");
+  if (parts.length > 0) {
+    return parts.join(" \u00b7 ");
+  }
+  // Nothing to do. WHY there is nothing is the distinction that matters: a file
+  // that failed to parse would have produced entries if it had parsed.
+  return model.problems.length > 0 ? "Could not be read" : "Nothing configured";
+}
+
+/**
+ * A provider file that is present and unusable, named.
+ *
+ * `detail` can quote arbitrary content back out of a parser, so it is set with
+ * `textContent` and never interpreted. There is no "Open file" affordance: the
+ * only open-a-file message this webview has resolves its path against a
+ * terminal's cwd, and an inert button is worse than none.
+ */
+function bringProblem(problem: WorktreeProvisionOffer["model"]["problems"][number]): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "wt-bring-problem";
+  const file = document.createElement("b");
+  file.className = "wt-bring-problem-file";
+  file.textContent = problem.file;
+  const detail = document.createElement("span");
+  detail.className = "wt-bring-problem-detail";
+  detail.textContent = problem.detail;
+  el.append(file, detail);
+  return el;
 }
 
 /**
@@ -431,7 +463,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   bringField.firstChild?.appendChild(bringSum);
   const bringBox = document.createElement("div");
   bringBox.className = "wt-bring-box";
-  bringField.appendChild(bringBox);
+  // Not an empty list. "This repository needs nothing brought over" and "we did
+  // not look" are different statements, and an empty box says neither — so the
+  // empty case is the sentence, naming what the worktree will actually lack.
+  const bringEmpty = document.createElement("div");
+  bringEmpty.className = "wt-bring-empty";
+  bringEmpty.textContent = "This worktree will have no .env and no node_modules.";
+  bringField.append(bringBox, bringEmpty);
   shell.dialog.appendChild(bringField);
 
   /** Redraw the section from the repo's offer. Called on every derive. */
@@ -447,7 +485,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     bringField.hidden = false;
     bringSum.textContent = bringSummary(offer.model);
-    bringBox.replaceChildren(...bringRows(offer.model).map((row, i) => bringRow(row, i)));
+    const rows = bringRows(offer.model);
+    // Problems sit inside the box beside the rows, not instead of them: an
+    // unknown key does not discard the keys that parsed, and reporting only the
+    // problem would understate what the create is about to do.
+    bringBox.replaceChildren(
+      ...rows.map((row, i) => bringRow(row, i)),
+      ...offer.model.problems.map((problem) => bringProblem(problem)),
+    );
+    bringBox.hidden = bringBox.childElementCount === 0;
+    // The sentence stands in only where there is genuinely nothing to list. A
+    // file that failed to parse has a problem row, which is a different answer.
+    bringEmpty.hidden = bringBox.childElementCount > 0;
   }
 
   // ── After creating ──────────────────────────────────────────────────────

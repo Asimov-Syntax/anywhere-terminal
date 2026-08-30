@@ -57,7 +57,7 @@
     6. Route the offer to the controller through `src/webview/messaging/MessageRouter.ts` and `src/webview/main.ts`, the way `worktreeCreateDefaults` already routes, and add the offer fixtures to `src/webview/worktree/worktreeFixtures.ts`. Cover the controller's own hold-and-attach in `src/webview/worktree/WorktreeController.test.ts`.
   - **Boundary**: no edit to `docs/ui/create-worktree.html` or `docs/ui/worktree-create-dialog.css`
 
-- [ ] 1_5 Say what a repository that declares nothing will still lack
+- [x] 1_5 Say what a repository that declares nothing will still lack — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_4
   - **Refs**: specs/worktree-panel/spec.md#{the-create-form-states-what-the-new-worktree-will-lack, a-provisioning-file-that-cannot-be-read-does-not-block-a-create}; docs/design/worktree-provisioning.md#9-edge-cases
   - **Acceptance**:
@@ -67,3 +67,4 @@
     1. In `src/webview/worktree/WorktreeCreateDialog.ts`, render the empty model as the sentence the spec requires rather than as an empty list — the distinction that matters is "needs nothing" against "we did not look".
     2. In the same file, render `problems[]` as named rows offering to open the file, and assert in `src/webview/worktree/WorktreeCreateDialog.test.ts` that the create button stays enabled: a broken provisioning config is not a reason to refuse to make a worktree.
     3. Add the empty-model and malformed-model fixtures to `src/webview/worktree/worktreeFixtures.ts` beside the ones 1_4 added.
+    4. Style both states in `src/webview/worktree/worktreePanel.css`, beside the section's own rules.

@@ -5,7 +5,13 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openWorktreeCreateDialog, sanitizeBranchForPath } from "./WorktreeCreateDialog";
-import { createDefaults, provisionModel, provisionOffer } from "./worktreeFixtures";
+import {
+  createDefaults,
+  emptyProvisionModel,
+  malformedProvisionModel,
+  provisionModel,
+  provisionOffer,
+} from "./worktreeFixtures";
 import type { WorktreeCreateDraft } from "./worktreeViewTypes";
 
 afterEach(() => {
@@ -989,5 +995,90 @@ describe("Bring over — what the new worktree will lack", () => {
     const { q } = open({ repos: [createDefaults()] });
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+});
+
+describe("Bring over — a repository that declares nothing, and a file that cannot be read", () => {
+  function withModel(model: ReturnType<typeof provisionModel>) {
+    return open({ repos: [createDefaults({ provisioning: provisionOffer({ model }) })] });
+  }
+
+  it("says what an empty repository will still lack, rather than showing an empty list", () => {
+    // "This repo needs nothing brought over" and "we did not look" are different
+    // statements, and only the second is a defect. An empty box says neither.
+    const { host } = withModel(emptyProvisionModel());
+    expect(host.querySelectorAll(".wt-brow")).toHaveLength(0);
+    const said = host.querySelector(".wt-bring-empty")?.textContent ?? "";
+    expect(said).toContain(".env");
+    expect(said).toContain("node_modules");
+  });
+
+  it("marks the empty section as configuring nothing, not as unread", () => {
+    const { host } = withModel(emptyProvisionModel());
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Nothing configured");
+  });
+
+  it("shows nothing at all until an offer arrives", () => {
+    // Absent is not empty: the form has not been told yet, and an empty section
+    // here would claim the repository needs nothing.
+    const { host } = open({ repos: [createDefaults()] });
+    expect(host.querySelector(".wt-bring")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("names a provider file it could not read", () => {
+    const { host } = withModel(malformedProvisionModel());
+    const problem = host.querySelector(".wt-bring-problem");
+    expect(problem?.querySelector(".wt-bring-problem-file")?.textContent).toBe("asimov/worktree.yaml");
+    expect(problem?.textContent).toContain("Unexpected key `copyFiles` at line 12.");
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Could not be read");
+  });
+
+  it("still offers Create when the provider file is malformed", () => {
+    // A broken provisioning config is not a reason to refuse to make a worktree.
+    const { host, q } = withModel(malformedProvisionModel());
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    expect(host.querySelector(".wt-bring-problem")).not.toBeNull();
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+
+  it("quotes a parser message as text, never as markup", () => {
+    // The detail can carry arbitrary file content back out of the parser.
+    const { host } = withModel(
+      malformedProvisionModel({
+        problems: [{ file: "asimov/worktree.yaml", reason: "malformed", detail: "<b>at</b> line 12" }],
+      }),
+    );
+    // Scoped to the detail: the row's own file name is a `<b>`, so asking the
+    // whole row whether it holds one proves nothing either way.
+    const detail = host.querySelector(".wt-bring-problem-detail");
+    expect(detail?.textContent).toBe("<b>at</b> line 12");
+    expect(detail?.childElementCount).toBe(0);
+  });
+
+  it("shows the rows it did read beside the key it could not", () => {
+    // An unknown key does not discard the keys that parsed. Reporting only the
+    // problem would understate what the create is about to do.
+    const { host } = withModel(
+      provisionModel({
+        problems: [{ file: "asimov/worktree.yaml", reason: "unknownKey", detail: "`exclude` is not a key this reads." }],
+      }),
+    );
+    expect(host.querySelectorAll(".wt-brow")).toHaveLength(5);
+    expect(host.querySelectorAll(".wt-bring-problem")).toHaveLength(1);
+    // The summary still describes what will happen, not the problem.
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("2 copied · 1 linked · 1 port · 1 setup step");
+  });
+
+  it("names every unreadable file, not just the first", () => {
+    const { host } = withModel(
+      malformedProvisionModel({
+        problems: [
+          { file: "asimov/worktree.yaml", reason: "malformed", detail: "bad" },
+          { file: ".vscode/worktree.json", reason: "unreadable", detail: "denied" },
+        ],
+      }),
+    );
+    const files = Array.from(host.querySelectorAll(".wt-bring-problem-file")).map((f) => f.textContent);
+    expect(files).toEqual(["asimov/worktree.yaml", ".vscode/worktree.json"]);
   });
 });

@@ -1162,6 +1162,42 @@
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
+/* A repository that declares nothing still gets a sentence — an empty box would
+   say neither "needs nothing" nor "we did not look", and only the second is a
+   defect. */
+.wt-bring-empty {
+  padding: 8px 9px;
+  border: 1px dashed color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+  text-wrap: pretty;
+}
+/* A provider file that failed. Named, never a gate: the create stays enabled. */
+.wt-bring-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-editorWarning-foreground);
+}
+.wt-bring-problem-file {
+  flex: 0 0 auto;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 600;
+}
+/* Parser text, which can quote arbitrary file content — wrapped rather than
+   truncated so the message that names the line is readable. */
+.wt-bring-problem-detail {
+  min-width: 0;
+  color: var(--vscode-descriptionForeground);
+  overflow-wrap: anywhere;
+}
+
 /* Derived and overriding inputs, behind one disclosure. `hidden` on the body is
    what keeps them out of the dialog's focus trap while it is closed. */
 .wt-advanced {

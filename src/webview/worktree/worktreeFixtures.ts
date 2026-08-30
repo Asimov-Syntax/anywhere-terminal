@@ -354,3 +354,18 @@ export function provisionModel(over: Partial<ProvisionModel> = {}): ProvisionMod
 export function provisionOffer(over: Partial<WorktreeProvisionOffer> = {}): WorktreeProvisionOffer {
   return { offerId: "provision-1", model: provisionModel(), ...over };
 }
+
+/** A repository that declares nothing — no provider file at all, not a failed read. */
+export function emptyProvisionModel(): ProvisionModel {
+  return { entries: [], ports: [], setup: [], providers: [], excluded: [], problems: [] };
+}
+
+/** A provider file that is present and unusable. The model survives; the file is named. */
+export function malformedProvisionModel(over: Partial<ProvisionModel> = {}): ProvisionModel {
+  return {
+    ...emptyProvisionModel(),
+    providers: [{ id: "asimov", file: YAML, active: true }],
+    problems: [{ file: YAML, reason: "malformed", detail: "Unexpected key `copyFiles` at line 12." }],
+    ...over,
+  };
+}
