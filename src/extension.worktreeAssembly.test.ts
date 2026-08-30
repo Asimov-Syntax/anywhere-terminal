@@ -231,6 +231,7 @@ vi.mock("./worktree/presenceProjector", async (importOriginal) => {
       return {
         rank: (id: string) => inner.rank(id),
         rankRevision: () => inner.rankRevision(),
+        forgetDrawOrder: () => inner.forgetDrawOrder(),
         project: async (ids: readonly string[], options?: never) => {
           const base = await inner.project(ids, options);
           // Captured here because the host→webview contract drops the fields I6 and I7

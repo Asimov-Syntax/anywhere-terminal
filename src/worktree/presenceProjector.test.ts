@@ -63,8 +63,10 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
-    sessionPreview: (entryId) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
-    sessionPreviewLine: (entryId) => previewLines?.get(entryId),
+    sessionPreviews: {
+      preview: (entryId: string) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
+      line: (entryId: string) => previewLines?.get(entryId),
+    },
     resolveReportedSession: async (sessionId) => {
       reportedAsked.push(sessionId);
       return reportedSessions[sessionId] ?? null;
@@ -2361,6 +2363,46 @@ describe("how much one projection looks at", () => {
     }
 
     expect(watch.looked.flat()).toContain("claude:s4");
+  });
+
+  it("takes every returned row as an arrival once the order is forgotten", async () => {
+    // The turn order holds exactly the ids drawn NOW, and nothing reconciles it
+    // while nothing is drawing: an enriched projection is the only reconciler and
+    // it is precisely what stops arriving (round-4 B1, D10). Without the reset the
+    // second round grants s1, by a position earned before the window went away.
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    const watch = watchPreview(h, upTo(3));
+
+    await h.projector.project([WT]);
+    watch.endRound();
+    clock += 60_000;
+
+    h.projector.forgetDrawOrder();
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[1]).toEqual(watch.looked[0]);
+  });
+
+  it("does not rebuild the order from a pass that started before the edge", async () => {
+    // The title pass is awaited before the preview pass, so an edge landing in it
+    // would otherwise let the preview pass repopulate the order from rows nobody
+    // is drawing. Every write the preview pass makes is before its own await, so
+    // this is the only window that needs the fence (D10).
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    const watch = watchPreview(h, upTo(3));
+    h.setVaultTitle(async (entryId) => {
+      h.projector.forgetDrawOrder();
+      return `title for ${entryId}`;
+    });
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toEqual([]);
   });
 
   it("permits the shipped default when nothing overrides it", async () => {

@@ -1433,15 +1433,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * `reconcileScan` settles the scan.
    *
    * Deliberately NOT an edge check. "Did this call change it" is a different
-   * question from "is enrichment owed", and only the second one matters: a call
+   * question from "what is owed now", and only the second one matters: a call
    * that changed nothing while the window sits on a bare envelope should still
-   * ask for the pass. It also removes the `wasDrawing` snapshot that every
-   * mutation site would otherwise have to remember to take.
+   * ask for the pass, and one that changed nothing while nothing is drawing
+   * should still leave no turn order standing. It also removes the `wasDrawing`
+   * snapshot that every mutation site would otherwise have to remember to take.
    *
    * `join: true` because this re-runs the projection and re-reads no git; a poll
    * already in flight is the right thing to join (design.md D2).
    */
   function reconcileRowDrawing(): void {
+    // The falling direction, which had no owner anywhere: the projector's turn
+    // order holds exactly the ids being drawn, and the only thing that
+    // reconciles it is an enriched projection — which is exactly what stops
+    // arriving once nothing is drawing rows. Left unsaid, the order survives
+    // hide, detach and the drop to presence-only, and a reopened window grants
+    // by pre-hide position (round-4 B1, design.md D10).
+    if (!anyDrawingRows()) {
+      projector?.forgetDrawOrder();
+      return;
+    }
     if (enrichmentOwed()) {
       void requestProjection({ external: true, join: true });
     }
@@ -1661,8 +1672,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       dispose: () => {
         surfaces.delete(surface);
         // Detaching is a falling edge too: the last showing surface going away
-        // this way would otherwise leave the scan armed for the window's life.
+        // this way would otherwise leave the scan armed for the window's life,
+        // and the last ROW-DRAWING surface would leave a turn order standing
+        // over identities nothing is drawing (design.md D10).
         reconcileScan();
+        reconcileRowDrawing();
       },
       setDisplayed: (displayed: boolean) => {
         const state = surfaces.get(surface);

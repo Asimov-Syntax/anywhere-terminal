@@ -54,3 +54,19 @@
     4. In `src/worktree/presenceProjector.test.ts`, replace the cases that assert a place is kept across an absence with ones asserting a returning row is granted as an arrival; add a case for a row drawn on every projection among churning others.
     5. Exercise the shipped default in `src/worktree/presenceProjector.test.ts` with no budget override: at most 16 rows permitted above it, all rows permitted at or below it (S1).
     6. Rework the declared-set cases in `src/worktree/sessionPreviewService.test.ts` onto the cap, keeping the one that draws more sessions than the cap.
+
+## 4. Review fixes — round 4
+
+- [x] 4_1 Give the falling edge an owner, and the preview pair one shape — verified: pnpm exec vitest run 'src/worktree/presenceProjector.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/worktree-agent-presence/spec.md#a-row-drawn-on-every-projection-is-looked-at-within-a-bounded-number-of-them <!-- design.md D10, D11; .reviews/round-4.md B1, S1 -->
+  - **Acceptance**:
+    - Outcome: a window that stops drawing rows and starts again grants every returned row as an arrival
+    - Verify: unit src/worktree/presenceProjector.test.ts
+  - **Plan**:
+    1. In `src/worktree/presenceProjector.ts`, expose a way to tell the projector its rows are no longer drawn, clearing the turn order and bumping a generation; capture that generation before the enrichment block and skip the preview pass when it has moved.
+    2. In `src/providers/WorktreeHost.ts`, settle the falling edge where the rising one is already settled, and on the path that tears the surface down.
+    3. In `src/worktree/presenceDeps.ts`, make the two preview operations one optional capability, and mirror it at `src/extension.ts`.
+    4. Cover in `src/worktree/presenceProjector.test.ts`: a returned row granted as an arrival after the order is forgotten, and an edge landing between the title and preview passes leaving the queue empty.
+    5. Cover the host edges in `src/providers/WorktreeHost.test.ts`: rows to presence-only, rows to hidden, and detach.
+    6. Extend the projector stubs in `src/providers/WorktreeHost.actions.test.ts`, `src/providers/WorktreeHost.delegations.test.ts` `src/providers/WorktreeHost.presence.test.ts`, `src/providers/WorktreeHost.secondSurface.test.ts` and `src/extension.worktreeAssembly.test.ts` with the new operation — the last two wrap a real projector and are cast past the type checker, so they fail only at runtime.

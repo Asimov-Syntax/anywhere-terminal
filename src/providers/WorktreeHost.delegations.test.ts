@@ -102,6 +102,7 @@ function controlledProjector() {
     project: async () => (parking ? new Promise<WorktreePresence>((resolve) => parked.push(resolve)) : answer),
     rank: () => undefined,
     rankRevision: () => 0,
+    forgetDrawOrder: () => {},
   };
 
   return {

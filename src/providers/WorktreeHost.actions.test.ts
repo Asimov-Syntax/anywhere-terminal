@@ -295,6 +295,7 @@ async function builtHost(
     project: async () => presence,
     rank: () => undefined,
     rankRevision: () => 0,
+    forgetDrawOrder: () => {},
   };
   const { actions, calls, reconciles } = recordingActions();
   // One runner for the whole host, so a test can observe which git commands the
@@ -677,7 +678,12 @@ describe("the host without capabilities behaves as it did before actions existed
       workspaceFolders: () => ["/repo"],
       pool: { subscribePattern: () => ({ active: true, dispose: () => {} }) },
       clock,
-      projector: { project: async () => presence, rank: () => undefined, rankRevision: () => 0 },
+      projector: {
+        project: async () => presence,
+        rank: () => undefined,
+        rankRevision: () => 0,
+        forgetDrawOrder: () => {},
+      },
       now: () => 1000,
     });
     const view = surface();

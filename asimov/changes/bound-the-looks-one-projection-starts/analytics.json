@@ -14,7 +14,7 @@
       "windows": [
         {
           "from": 1788097789451,
-          "to": null
+          "to": 1788105594929
         }
       ],
       "phases": [
@@ -24,7 +24,7 @@
         }
       ],
       "firstAt": 1788097789451,
-      "lastAt": 1788104919710,
+      "lastAt": 1788105575860,
       "buckets": [
         {
           "runtime": "claude",
@@ -103,9 +103,9 @@
           "phase": "plan",
           "agent": "asm-review-master",
           "model": "gpt-5.6-sol",
-          "messages": 50,
-          "inputTokens": 377256,
-          "outputTokens": 54811,
+          "messages": 51,
+          "inputTokens": 401069,
+          "outputTokens": 54893,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
           "cacheReadTokens": 4968448,
@@ -175,15 +175,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 65,
-          "inputTokens": 130,
-          "outputTokens": 76032,
-          "reasoningTokens": 24578,
-          "cacheWriteTokens": 158555,
-          "cacheReadTokens": 17638196,
+          "messages": 108,
+          "inputTokens": 216,
+          "outputTokens": 108261,
+          "reasoningTokens": 35729,
+          "cacheWriteTokens": 209630,
+          "cacheReadTokens": 23475942,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 158555,
+            "cacheWrite1hTokens": 209630,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }

@@ -191,12 +191,53 @@ actually keep.
 A row that stops being drawn re-enters as an arrival. The spec says so rather than the code implying
 it.
 
+### D10: The falling edge owns the queue, because nothing else can see it
+
+D9 says the queue holds exactly the ids drawn now, and the code keeps that true only while
+projections keep arriving with enrichment on. `previewFromVault` is the sole reconciler, and
+`project()` skips it whenever `enrich === false` (`presenceProjector.ts:1145`). On the host side
+`reconcileRowDrawing` (`src/providers/WorktreeHost.ts:1442`) is deliberately not an edge check — it
+asks "is enrichment owed", which is `anyDrawingRows() && !projectedEnriched`, so it fires on the
+RISING edge and does nothing at all when the last row-drawing surface goes away. Hide, detach and the
+drop to presence-only therefore leave the queue holding ids the window has stopped drawing, and a
+reopened window grants by pre-hide position instead of treating every returned identity as an
+arrival (round-4 B1).
+
+This is the deferred follow-up the blueprint already carries — "a single owned definition of 'the
+window gained its first row-drawing surface'" — arriving from its other side. The rising edge got an
+owner; the falling edge never did.
+
+So `reconcileRowDrawing` settles both directions: when nothing is drawing rows it tells the projector
+to forget its turn order. That extends the existing owner rather than minting one — the predicate
+(`anyDrawingRows`), the settle function, and its three mutation sites all exist and are already the
+one join of those facts.
+
+**The in-flight pass has to be fenced, and one of the two races does not need it.** All of
+`previewFromVault`'s writes to the queue happen synchronously before its `await`, so an edge landing
+during its own `Promise.all` cannot repopulate it. The edge landing during `titleFromVault` — awaited
+first, in the same block — can: the reset would run, and then `previewFromVault` would rebuild the
+queue from rows nobody is drawing. A generation counter bumped by the reset, captured before the
+enrichment block and re-read between the two passes, closes exactly that window; when it has moved,
+the preview pass is skipped entirely, which is the right answer because no surface is drawing rows to
+receive it.
+
+### D11: The two preview operations are one capability
+
+`sessionPreview` and `sessionPreviewLine` are independently optional, so a caller may supply the
+first without the second. That type-checks, turns bounded enrichment on, and silently gives every
+excluded row no line — the exact regression D3 exists to prevent, reachable by omission rather than
+by error (round-4 S1, and round-1 S1 surviving a second restructuring).
+
+They are one capability: the budget is only meaningful if the rows outside it can still be answered.
+One optional object holding both makes supplying half of it a compile error, which is what the
+production wiring already does by hand.
+
 ## Failure-surface inventory
 
 | Resource | Answer |
 |---|---|
 | Preview entry cache and `outstanding` | Owned and mutated only by the preview service, single-threaded in the extension host. This change adds no writer: `line` reads, touches the LRU, and returns. n/a for crash and concurrency — nothing is persisted and there is no second host |
-| The rotation queue | An insertion-ordered set on the projector's closure, single-owner, reset with the projector, holding exactly the ids drawn now (D9). A wrong entry costs a row its turn for one projection; it authorises nothing |
+| The rotation queue | An insertion-ordered set on the projector's closure, single-owner, holding exactly the ids drawn now (D9). Written only by `previewFromVault`, synchronously and before its first `await`; cleared by the host on the row-drawing falling edge, with a generation fence for the pass already in flight (D10). A wrong entry costs a row its turn for one projection; it authorises nothing |
 | Transcript files on disk | Read-only, and the read is already bounded by WT-011.3's deadline. This change strictly reduces how many are opened; a failed or slow read keeps the outcomes that shipped there |
 
 ## Risk Map
@@ -209,4 +250,6 @@ it.
 | Retention | A drawn row loses the line the bound promised to keep | D8 — `line` touches, so every drawn row is touched every projection and the LRU's victims are rows the window stopped drawing; unit test draws `cap` rows across a full rotation and asserts none loses its line. Past `cap` the spec permits the loss and the row re-looks |
 | Rotation across absence | A row that leaves and returns is starved | Not promised, by D9 — it re-enters as an arrival. Unit test asserts it is granted rather than dropped, without claiming it keeps a place |
 | `preview(id, false)` | The cache-only path starts work anyway, defeating the bound | Unit test counts vault lookups, stats and reads across a projection and asserts they stop at the budget |
+| Row-drawing lifecycle | The queue outlives the surfaces that filled it, so a reopened window grants by pre-hide position | D10 — `reconcileRowDrawing` settles both directions; unit tests cover rows → presence-only → rows, rows → hidden → rows, detach, and an edge landing between the title and preview passes |
+| Dep surface | Bounded enrichment is enabled with no way to answer the excluded rows | D11 — one capability object, so half of it will not compile |
 | LRU | An excluded row is evicted and loses the line the bound promised to keep | D8 touches on the synchronous read; unit test asks past `cap` with a mix of permitted and excluded rows |

@@ -181,6 +181,7 @@ function fakeProjector() {
       return ranks[id];
     },
     rankRevision: () => revision,
+    forgetDrawOrder: () => {},
   };
 
   return {
@@ -221,6 +222,7 @@ function blockingProjector() {
     },
     rank: () => undefined,
     rankRevision: () => 0,
+    forgetDrawOrder: () => {},
   };
   return { projector, parked, modes, enriched };
 }

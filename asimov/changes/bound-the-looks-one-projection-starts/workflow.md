@@ -77,3 +77,14 @@ Build notes:
   every projection, a row drawn on alternate projections can go unserved indefinitely. That is the
   case D9 proves is not decidable with bounded state, the spec now says so, and the shipped budget of
   16 puts it far outside any window a user will have.
+- Round-4 handback (cycle 3). B1 is not remediation: the row-drawing FALLING edge has no owner
+  anywhere, and giving it one adds a projector seam and a host branch. Cycle 3's cap makes option 1
+  mandatory in any case, and this is option 1. Correcting my own round-3 note — removing `retain` did
+  not retire W1, it moved the unowned lifecycle from the preview service's retained set to the
+  projector's turn queue. S1 folded in: same dep surface, one decision.
+- Round-4 build: 4 mutations across D10, all killed — the reset not clearing the order, the
+  generation fence removed, the host's falling branch removed, and detach not settling row drawing.
+- D11 surfaced a real defect while being applied: two projector stubs (`WorktreeHost.secondSurface`,
+  `extension.worktreeAssembly`) wrap a real projector and are cast past the type checker, so they
+  compiled against the widened interface and failed only at runtime. Recorded because the same shape
+  will hide the next interface change too.

@@ -173,10 +173,20 @@ export interface PresenceProjectorDeps {
    * can see the file (source-the-agent-row-preview D2). Absence is not
    * degradation — a row with no answer simply carries no preview (D3).
    */
-  sessionPreview?(entryId: string): Promise<string | undefined>;
-  /** The line a session already has, read without starting work. What a row
-   *  outside the budget draws — see {@link PresenceProjectorDeps.previewBudget}. */
-  sessionPreviewLine?(entryId: string): string | undefined;
+  /**
+   * One capability, not two operations: the budget is only meaningful if the
+   * rows outside it can still be answered, so a caller supplying the look
+   * without the read turns bounded enrichment on and silently leaves every
+   * excluded row with no line (round-4 S1, D11). One object makes half of it a
+   * compile error.
+   */
+  sessionPreviews?: {
+    /** Look at a session's transcript, subject to the service's own bounds. */
+    preview(entryId: string): Promise<string | undefined>;
+    /** The line a session already has, read without starting work. What a row
+     *  outside the budget draws — see {@link PresenceProjectorDeps.previewBudget}. */
+    line(entryId: string): string | undefined;
+  };
   /**
    * How many rows one projection may permit to LOOK at their transcripts. The
    * rest are still asked, and answer from what the service holds.
@@ -259,6 +269,17 @@ export interface PresenceProjector {
    * (.reviews/round-3.md B3, design.md D12).
    */
   rankRevision(): number;
+  /**
+   * Tell the projector nothing is drawing its rows any more.
+   *
+   * The turn order holds exactly the ids drawn NOW (D9), and the only thing that
+   * reconciles it is an enriched projection — which is precisely what stops
+   * arriving when the last row-drawing surface goes away. Without this the order
+   * survives hide, detach and the drop to presence-only, and a reopened window
+   * grants by pre-hide position instead of taking every returned identity as an
+   * arrival (round-4 B1, D10).
+   */
+  forgetDrawOrder(): void;
 }
 
 /** A proven identity, kept so a failed re-read cannot demote the row (D10). */
@@ -492,6 +513,9 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   /** Whose turn it is, in order. Insertion-ordered, so the front is whoever has
    *  waited longest and a served row goes to the back. */
   const previewOrder = new Set<string>();
+  /** Bumped whenever the order is forgotten, so an enrichment pass that started
+   *  before the edge cannot rebuild it from rows nobody is drawing (D10). */
+  let drawGeneration = 0;
 
   function clock(): number {
     return deps.now?.() ?? Date.now();
@@ -520,7 +544,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
    * exactly what a row that cannot prove something must not show.
    */
   async function previewFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>): Promise<void> {
-    const read = deps.sessionPreview;
+    const read = deps.sessionPreviews?.preview;
     if (!read) {
       return;
     }
@@ -588,7 +612,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     };
     for (const { worktreeId, index, entryId } of asked) {
       if (!mayLook.has(entryId)) {
-        write(worktreeId, index, deps.sessionPreviewLine?.(entryId));
+        write(worktreeId, index, deps.sessionPreviews?.line(entryId));
       }
     }
     await Promise.all(
@@ -1047,6 +1071,11 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   }
 
   return {
+    forgetDrawOrder(): void {
+      previewOrder.clear();
+      drawGeneration += 1;
+    },
+
     async project(worktreeIds, options) {
       const now = clock();
       const snapshot = await deps.openSnapshot();
@@ -1143,8 +1172,16 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // and so is unaffected — deliberately: a ranking left stale while nobody
       // drew rows would reorder every group the moment the rail reopened.
       if (options?.enrich !== false) {
+        // Every write `previewFromVault` makes to the turn order happens before
+        // its own first `await`, so an edge landing inside it cannot repopulate
+        // the order. An edge landing during the TITLE pass can, which is the one
+        // window this generation closes — and skipping the preview pass is the
+        // right answer there, because no surface is left to draw what it fetches.
+        const generation = drawGeneration;
         await titleFromVault(rowsByWorktreeId, now);
-        await previewFromVault(rowsByWorktreeId);
+        if (generation === drawGeneration) {
+          await previewFromVault(rowsByWorktreeId);
+        }
       }
 
       // A source that answered this rebuild clears its entry; one still failing

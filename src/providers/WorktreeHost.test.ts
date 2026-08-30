@@ -671,6 +671,7 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
   function scoped() {
     const { runner } = oneRepo(MAIN, FEAT);
     const options: ({ external?: boolean; enrich?: boolean } | undefined)[] = [];
+    let forgotten = 0;
     const presence: WorktreePresence = { rowsByWorktreeId: {}, scannedAt: 1, degradedSources: [] };
     const timers = new Map<number, () => void>();
     let nextHandle = 1;
@@ -698,11 +699,16 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
         },
         rank: () => undefined,
         rankRevision: () => 0,
+        forgetDrawOrder: () => {
+          forgotten += 1;
+        },
       },
     });
     return {
       worktrees,
       options,
+      /** How many times the projector was told its rows are no longer drawn. */
+      forgotten: () => forgotten,
       /** How many timers are currently armed. */
       armed: () => timers.size,
       /** Fire every armed timer once. */
@@ -715,6 +721,46 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
       },
     };
   }
+
+  describe("the row-drawing falling edge", () => {
+    /** Drive a surface up to drawing rows and hand back the forget count there. */
+    async function drawingRows() {
+      const h = scoped();
+      const s = surface();
+      const attachment = h.worktrees.attach(s);
+      attachment.setDisplayed(true);
+      h.worktrees.handleMessage(s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+      await settle();
+      return { ...h, s, attachment, before: h.forgotten() };
+    }
+
+    // The projector's turn order holds exactly the ids being drawn, and the only
+    // thing that reconciles it is an ENRICHED projection — which is exactly what
+    // stops arriving once nothing draws rows. Each edge below left the order
+    // standing, so a reopened window granted by pre-hide position rather than
+    // taking every returned identity as an arrival (round-4 B1, design.md D10).
+
+    it("forgets the order when the last drawing surface collapses to presence-only", async () => {
+      const h = await drawingRows();
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+      await settle();
+      expect(h.forgotten()).toBeGreaterThan(h.before);
+    });
+
+    it("forgets the order when the last drawing surface stops being displayed", async () => {
+      const h = await drawingRows();
+      h.attachment.setDisplayed(false);
+      await settle();
+      expect(h.forgotten()).toBeGreaterThan(h.before);
+    });
+
+    it("forgets the order when the last drawing surface detaches", async () => {
+      const h = await drawingRows();
+      h.attachment.dispose();
+      await settle();
+      expect(h.forgotten()).toBeGreaterThan(h.before);
+    });
+  });
 
   it("still serves a presence-only subscriber", async () => {
     // The whole point: a scope's chip, escape control and count survive a
