@@ -42,4 +42,5 @@ Watch: the new tests do real sqlite and real sqlite3-CLI I/O inside the parallel
 Dead code removed with the mechanism: the `copy` dep, `cloneOrCopy`, and `readSqliteViaCopy`'s name — nothing in this module copies a store any more.
 ARCHIVE BLOCKED: round-1 W2 (a ~190x read regression on large stores: 522 MB measured at 951 ms via backup vs 5 ms via APFS clone) is acknowledged, not risk-accepted. It is owned by `reuse-a-snapshot-while-the-store-is-unchanged`; this change must not archive until that lands and cycle 2 discovery reviews the seam.
 Cycle 1 closed at its 3-round cap with B1 fixed in 2_3 but unreviewed. Next review is cycle 2, round 1, discovery.
+ARCHIVE UNBLOCKED (2026-08-30): `reuse-a-snapshot-while-the-store-is-unchanged` archived as `archive/260830-0956-...`. Round-1 W2's regression is answered rather than accepted: the pool now sits behind both entry points of THIS change, and the cost it measured is paid once per store generation instead of once per read. Measured on the live 1.5 GB `opencode.db`: 2.4-3.0 s unretained, 1 ms reused, and a write correctly forces a fresh snapshot. W2 asked for the cost to stop being per-read; it is.
 
