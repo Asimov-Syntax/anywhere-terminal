@@ -714,7 +714,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   shell.dialog.appendChild(shell.actions);
 
   function submit(): void {
-    if (createBtn.disabled) {
+    if (createBtn.disabled || heldBranch() !== undefined) {
       return;
     }
     const launch = afterChoice === "agent" ? agentBox.read() : {};
@@ -781,6 +781,23 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
   }
 
+  /**
+   * The directory holding the branch this form would submit, if one does.
+   *
+   * The guard, stated once and read in two places: `syncDerived` to disable
+   * Create, and `submit` to refuse a route that reached it without re-deriving.
+   */
+  function heldBranch(): string | undefined {
+    if (draft.branchMode === "detached") {
+      return undefined;
+    }
+    const typed = draft.branchName.trim();
+    return (
+      offeredRefs().find((r) => r.name === typed)?.heldBy ??
+      (choice.kind === "existing" && choice.ref.name === typed ? choice.ref.heldBy : undefined)
+    );
+  }
+
   /** The wire mode a choice means. `detached` is the toggle's and never a row's. */
   function choiceMode(c: BranchChoice): WorktreeBranchMode {
     return c.kind === "existing" ? "existing" : "new";
@@ -824,6 +841,20 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
         row.dataset.kind = "existing";
         row.dataset.branch = c.ref.name;
         row.textContent = c.ref.name;
+        if (c.ref.heldBy !== undefined) {
+          // `aria-disabled`, never `disabled`: the row's whole purpose is to say
+          // WHY the branch is unavailable and which directory has it, so it has
+          // to stay reachable and announced. Removing it would put the name back
+          // to looking free, which is the failure this task deletes (D5).
+          row.setAttribute("aria-disabled", "true");
+          row.dataset.heldBy = c.ref.heldBy;
+          const badge = document.createElement("span");
+          badge.className = "wt-branch-held";
+          // A NAME, never a path — the badge is the narrowest slot in the form
+          // and the host already applied the shortening (D2, § 4.2).
+          badge.textContent = `in ${c.ref.heldBy}`;
+          row.appendChild(badge);
+        }
       }
       row.addEventListener("mousedown", (ev) => {
         // `mousedown`, not `click`: the input blurs first otherwise and the
@@ -856,7 +887,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   /** Take row `at` as the selection, close the list, and re-derive. */
   function commit(at: number): void {
     const picked = choices[at];
-    if (picked === undefined) {
+    if (picked === undefined || (picked.kind === "existing" && picked.ref.heldBy !== undefined)) {
       return;
     }
     choice = picked;
@@ -960,7 +991,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       }
     }
 
-    const error = detached ? undefined : deps.validateBranch?.(draft.branchName);
+    const heldBy = heldBranch();
+    const error = heldBy !== undefined
+      ? `${draft.branchName.trim()} is checked out in ${heldBy}`
+      : detached
+        ? undefined
+        : deps.validateBranch?.(draft.branchName);
     draft.branchError = error;
     nameError.textContent = error ?? "";
     nameError.hidden = !error;
@@ -985,7 +1021,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // default — submitting here would launch under a posture the user never
     // picked, which is the whole point of never preselecting one.
     const postureMissing = afterChoice === "agent" && agentBox.needsPosture();
-    createBtn.disabled = Boolean(error) || !named || draft.path.trim().length === 0 || outstanding || postureMissing;
+    createBtn.disabled =
+      Boolean(error) || heldBy !== undefined || !named || draft.path.trim().length === 0 || outstanding || postureMissing;
     shell.refreshFocusTrap();
   }
 

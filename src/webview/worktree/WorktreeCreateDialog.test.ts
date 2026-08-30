@@ -1508,3 +1508,156 @@ describe("Escape closes the branch list before it dismisses the dialog (D7)", ()
     expect(cancelled).toEqual([true]);
   });
 });
+
+// ── A held branch is offered, explained, and unsubmittable (D5) ────────────
+
+describe("a branch another worktree holds is offered but not selectable", () => {
+  const REFS = [{ name: "main" }, { name: "fix/lock", heldBy: "lock-spike" }];
+
+  function held(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
+    return open({ repos: [createDefaults({ refs: { list: REFS, truncated: false } })], ...over });
+  }
+  const rowFor = (host: HTMLElement, branch: string) =>
+    host.querySelector<HTMLElement>(`#wt-branch-list [data-branch="${branch}"]`);
+  const create = (q: <T extends HTMLElement>(s: string) => T) => q<HTMLButtonElement>(".wt-btn--primary");
+
+  it("names the directory holding it, and never a path", () => {
+    const { host, q } = held();
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    const badge = rowFor(host, "fix/lock")?.querySelector(".wt-branch-held")?.textContent ?? "";
+
+    expect(badge).toContain("lock-spike");
+    expect(badge).not.toContain("/");
+  });
+
+  it("stays reachable and announced rather than hidden", () => {
+    // Removing the row would return the branch to looking free — which is the
+    // failure this task deletes, not a tidier list.
+    const { host, q } = held();
+    q<HTMLInputElement>("#wt-branch").focus();
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    const row = rowFor(host, "fix/lock");
+
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute("aria-disabled")).toBe("true");
+    expect(row?.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("refuses a create for a held branch the user TYPED rather than clicked", () => {
+    // The route that never touches the row. A guard living on the attribute
+    // cannot see this at all.
+    const { q, submitted } = held();
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+
+    expect(create(q).disabled).toBe(true);
+    create(q).click();
+    expect(submitted).toEqual([]);
+  });
+
+  it("says which directory has it rather than failing silently", () => {
+    const { q } = held();
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+
+    expect(q<HTMLElement>(".wt-ferror").textContent).toContain("lock-spike");
+    expect(q<HTMLElement>(".wt-ferror").hidden).toBe(false);
+  });
+
+  it("does not take a held row when it is committed from the keyboard", () => {
+    const { q } = held();
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "fix");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+
+    expect(input.value).toBe("fix");
+  });
+
+  it("refuses when the list arrives AFTER the name was typed", () => {
+    // The name was free when it was typed. The answer that says otherwise lands
+    // later, and a form that only checked at typing time would submit it.
+    let apply: ((repoId: string, refs: { list: typeof REFS; truncated: boolean }) => void) | undefined;
+    const { q, submitted } = open({
+      bindRefs: (fn) => {
+        apply = fn as typeof apply;
+      },
+    });
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    expect(create(q).disabled).toBe(false);
+
+    apply?.(REPO_ID, { list: REFS, truncated: false });
+
+    expect(create(q).disabled).toBe(true);
+    create(q).click();
+    expect(submitted).toEqual([]);
+  });
+
+  it("submit itself refuses, not only the disabled button", () => {
+    // The button is a rendering too. A route that reached submit without
+    // re-deriving — a keyboard shortcut, a stale render — still stops.
+    const { q, host, submitted } = held();
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    create(q).disabled = false;
+    host.querySelector(".wt-dialog")?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
+    );
+
+    expect(submitted).toEqual([]);
+  });
+
+  it("lets a free branch through untouched", () => {
+    const { q, submitted } = held();
+    type(q<HTMLInputElement>("#wt-branch"), "main");
+    create(q).click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "existing", branchName: "main" });
+  });
+
+  it("a failed enumeration still permits a create", () => {
+    // No list is not "every branch is taken". The create-new row is not gated
+    // on the enumeration, and neither is this guard.
+    const { q, submitted } = open();
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    create(q).click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "new", branchName: "fix/lock" });
+  });
+
+  it("re-checks against the repository the form is now on, not the one it was typed under", () => {
+    // The selection is a ref object from the OLD repo's list. Switching
+    // repositories changes which branches are taken without changing a
+    // character of the typed name, so a guard reading only the picked object
+    // would carry the old repository's answer into the new one.
+    const { q, submitted } = open({
+      repos: [
+        createDefaults({ refs: { list: [{ name: "fix/lock" }], truncated: false } }),
+        createDefaults({
+          repoId: "/other/.git",
+          repoLabel: "other",
+          agents: [],
+          refs: { list: [{ name: "fix/lock", heldBy: "lock-spike" }], truncated: false },
+        }),
+      ],
+    });
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    expect(create(q).disabled).toBe(false);
+
+    const repo = q<HTMLSelectElement>("#wt-repo-select");
+    repo.value = "/other/.git";
+    repo.dispatchEvent(new Event("change"));
+
+    expect(create(q).disabled).toBe(true);
+    create(q).click();
+    expect(submitted).toEqual([]);
+  });
+
+  it("a detached create is not blocked by a held branch name", () => {
+    const { q, submitted } = held();
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    q<HTMLButtonElement>("#wt-detached").click();
+    type(q<HTMLInputElement>("#wt-base"), "9f2c1ab");
+    create(q).click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "detached", baseRef: "9f2c1ab" });
+  });
+});

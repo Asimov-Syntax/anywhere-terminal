@@ -41,14 +41,14 @@
     4. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts`: the ordering; the create-new row present at every query including one matching nothing; the list absent before the answer arrives and present after; Escape's two levels; that the existing focus-order, focus-trap and dismissal cases still pass untouched.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited — if the control cannot be built without them, STOP and ask
 
-- [ ] 2_2 A held branch is shown, explained, and unsubmittable
+- [x] 2_2 A held branch is shown, explained, and unsubmittable — verified: bun run vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: design.md D2, D5; specs/worktree-panel/spec.md#{a-branch-another-worktree-holds-is-offered-but-not-selectable, an-entry-that-cannot-be-selected-stays-reachable, an-incomplete-branch-list-is-stated-as-incomplete}
   - **Acceptance**:
     - Outcome: A create naming a branch another worktree holds issues no request, by any route into submit
     - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
   - **Plan**:
-    1. A held row renders with its holder's directory name and `aria-disabled`, staying reachable and announced rather than hidden (D5).
+    1. In `src/webview/worktree/WorktreeCreateDialog.ts`, a held row renders with its holder's directory name and `aria-disabled`, staying reachable and announced rather than hidden (D5).
     2. The submit guard reads the selection rather than the DOM, so a held branch cannot be submitted even when it reached the draft by a route that never touched the row — a typed exact match, or a list that answered after the name was typed.
     3. A truncated list states that it is partial, and the create-new row stays selectable underneath it.
     4. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts`: the badge names a directory and not a path; submit is refused for a held branch typed by hand rather than clicked; the partial notice appears only when the answer says truncated; a failed enumeration still permits a create.
