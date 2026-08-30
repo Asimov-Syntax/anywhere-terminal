@@ -476,7 +476,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * offer — each superseding the last (.reviews/round-1.md B5). The unit that
    * closes the guard has to be the pass in flight, not the pass that finished.
    */
-  const provisionReading = new Set<string>();
+  const provisionReading = new Map<string, number>();
+  /**
+   * Which OPENING a read belongs to.
+   *
+   * Keying only by surface and repository made a form that closed and reopened
+   * inside the read window join its predecessor's read and receive its answer.
+   * "One read per form" is not the same property as "no two reads at once"
+   * (.reviews/round-2.md B5), so each opening takes a generation and a
+   * completion from a superseded one publishes nothing.
+   */
+  let provisionGeneration = 0;
   const surfaceKeys = new WeakMap<WorktreeSurface, string>();
   let surfaceSeq = 0;
   const surfaceKey = (s: WorktreeSurface): string => {
@@ -1142,8 +1152,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         const opening = msg.branch === undefined;
         const offerKey = { surface: surfaceKey(surface), repoId: msg.repoId };
         const reading = `${offerKey.surface} ${msg.repoId}`;
-        if (options.readProvisioning && opening && !provisionReading.has(reading)) {
-          provisionReading.add(reading);
+        if (options.readProvisioning && opening) {
+          // Every opening supersedes the last, so a reopening does NOT join the
+          // read in flight — it starts its own and retires the other's right to
+          // publish. Marked before the await, which is what the round-1 guard
+          // got wrong.
+          provisionGeneration += 1;
+          const mine = provisionGeneration;
+          provisionReading.set(reading, mine);
           void options
             .readProvisioning(repo.mainPath)
             .then((model) => {
@@ -1151,6 +1167,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               // post to a dead surface is at best wasted and at worst revives an
               // offer the detach was supposed to forget (B6).
               if (disposed || !surfaces.has(surface)) {
+                return;
+              }
+              // A later opening already took over this form. Its own read is in
+              // flight or answered, and this model describes a form the user has
+              // closed.
+              if (provisionReading.get(reading) !== mine) {
                 return;
               }
               const offer = offers.issue(offerKey, model);
@@ -1165,7 +1187,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             // answer must not delay or refuse the destination the form needs.
             .catch(() => {})
             .finally(() => {
-              provisionReading.delete(reading);
+              // Only the generation that still owns the slot clears it — a
+              // superseded read finishing late must not unlock the live one.
+              if (provisionReading.get(reading) === mine) {
+                provisionReading.delete(reading);
+              }
             });
         }
         surface.post({

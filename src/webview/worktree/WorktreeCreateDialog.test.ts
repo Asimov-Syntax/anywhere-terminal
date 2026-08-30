@@ -1217,6 +1217,54 @@ describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () =
     expect(back).toEqual([true, true, true, true, true]);
   });
 
+  it("[r2 W5] a redraw does not leave a handler writing another offer's selection", () => {
+    // A listener per redraw, each closing over that redraw's set — and item ids
+    // are offer-local, every offer starting at `i1`, so toggling in one repo
+    // wrote the SAME id into the other repo's saved selection.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let applyOffer: ((repoId: string, offer: ReturnType<typeof provisionOffer>) => void) | undefined;
+    const other = createDefaults({ repoId: "/other/.git", repoLabel: "other", mainPath: "/other" });
+    openWorktreeCreateDialog(host, {
+      repos: [createDefaults(), other],
+      onSubmit: () => {},
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    applyOffer?.(REPO_ID, provisionOffer());
+    // A second repository whose offer carries the same adapter-local ids.
+    applyOffer?.("/other/.git", provisionOffer({ offerId: "provision-2" }));
+
+    const picker = host.querySelector<HTMLSelectElement>("#wt-repo-select");
+    if (!picker) {
+      throw new Error("expected a repo picker");
+    }
+    const switchTo = (repoId: string) => {
+      picker.value = repoId;
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const boxes = () => Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+    // Several redraws, which is what stacked the handlers.
+    switchTo("/other/.git");
+    switchTo(REPO_ID);
+    switchTo("/other/.git");
+    switchTo(REPO_ID);
+
+    // Untick the first row in THIS repository only.
+    const first = boxes()[0];
+    if (!first) {
+      throw new Error("expected rows");
+    }
+    first.checked = false;
+    first.dispatchEvent(new Event("change", { bubbles: true }));
+
+    switchTo("/other/.git");
+
+    // The other repository never had a box touched, so its defaults stand.
+    expect(boxes().map((cb) => cb.checked)).toEqual([true, true, true, true, false]);
+  });
+
   it("[W3] names each checkbox by its subject, not only by its verb", () => {
     // Five rows from one provider otherwise announce as five identical
     // "Copy asimov/worktree.yaml".

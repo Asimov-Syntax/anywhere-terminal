@@ -1230,6 +1230,22 @@ describe("the create a toolbar with no repository opens", () => {
     expect(document.querySelectorAll(".wt-brow")).toHaveLength(5);
   });
 
+  it("[r2 B6] opening a form drops the previous form's offer", () => {
+    // A reopened dialog seeded from the cache showed the old model while its own
+    // read was still outstanding — and if that read FAILED, kept showing it.
+    const h = ready(twoRepoResponse());
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO_A,
+      offerId: "provision-1",
+      model: provisionModel(),
+    });
+    h.controller.openCreate();
+    const held = (h.controller as unknown as { provisionOffers: Map<string, unknown> }).provisionOffers;
+
+    expect(held.size).toBe(0);
+  });
+
   it("[1_4] forgets an offer for a repository that has left the workspace", () => {
     // The offer names a model the host holds for a repo it no longer answers
     // for. Kept, it would render a section for a repository that is gone.

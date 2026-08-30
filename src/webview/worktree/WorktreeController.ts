@@ -661,6 +661,12 @@ export class WorktreeController {
     if (targets.length === 0 || (repoId !== undefined && !targets.includes(repoId))) {
       return;
     }
+    // A new form starts with no provisioning. Seeding it from the previous
+    // form's offer meant a fresh read that FAILED left the old model on screen,
+    // still resolvable, attributed to a form that had closed
+    // (.reviews/round-2.md B6). Absent renders as "not told yet", which is the
+    // honest state until the host answers.
+    this.provisionOffers.clear();
     this.pendingCreate = {
       // Kept so a create that cannot open can name what it was waiting on: the
       // outstanding set is empty by the time that is known.

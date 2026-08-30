@@ -503,6 +503,24 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    */
   const checkedByOffer = new Map<string, Set<string>>();
 
+  // Registered ONCE. Inside the redraw it added a handler per rebuild, each
+  // closing over that redraw's own set — and item ids are offer-local, every
+  // offer starting at `i1`, so a stale handler wrote another offer's selection
+  // under a colliding id (.reviews/round-2.md W5). The set is resolved at event
+  // time instead of captured.
+  bringBox.addEventListener("change", (ev) => {
+    const cb = ev.target;
+    if (!(cb instanceof HTMLInputElement) || !cb.classList.contains("wt-brow-cb") || drawnOfferId === null) {
+      return;
+    }
+    const ticked = checkedByOffer.get(drawnOfferId);
+    if (cb.checked) {
+      ticked?.add(cb.value);
+    } else {
+      ticked?.delete(cb.value);
+    }
+  });
+
   /** Redraw the section from the repo's offer. Called on every derive. */
   function syncBringOver(offer: WorktreeProvisionOffer | undefined): void {
     if (offer === undefined) {
@@ -543,16 +561,6 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       ...rows.map((row, i) => bringRow(row, i)),
       ...offer.model.problems.map((problem) => bringProblem(problem)),
     );
-    bringBox.addEventListener("change", (ev) => {
-      const cb = ev.target;
-      if (cb instanceof HTMLInputElement && cb.classList.contains("wt-brow-cb")) {
-        if (cb.checked) {
-          held.add(cb.value);
-        } else {
-          held.delete(cb.value);
-        }
-      }
-    });
     bringBox.hidden = bringBox.childElementCount === 0;
     // The sentence stands in only where there is genuinely nothing to list. A
     // file that failed to parse has a problem row, which is a different answer.

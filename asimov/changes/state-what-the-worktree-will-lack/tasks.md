@@ -122,3 +122,40 @@
     1. State on `ProvisionItemId` in `src/types/messages.ts` that ids are unique within ONE offer only, that each adapter mints from its own counter, and that whatever assembles several adapters into one offer owns reminting them.
     2. No id scheme changes here: minting in an assembly layer that does not exist, or a per-adapter prefix guessing the merge's shape, is the seam-from-one-example design.md D2 rejects.
   - **Boundary**: documentation only — no behavior change, no id format change
+
+## 3. Round-2 review fixes
+
+- [x] 3_1 Bind the offer to the opening that asked for it — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_4
+  - **Refs**: .reviews/round-2.md B5, B6, W5; docs/design/worktree-rpc.md#24-the-provisioning-offer; design.md D5
+  - **Acceptance**:
+    - Outcome: A form reopened while its predecessor's read is in flight never receives the predecessor's model
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. In `src/providers/WorktreeHost.ts`, mint a generation per form-opening ask and record it with the read in flight. A completion whose generation is no longer current publishes nothing and the reopening starts its own read (B5).
+    2. In `src/webview/worktree/WorktreeController.ts`, drop a repository's cached offer when a create form opens, so a reopened dialog is never seeded from the previous form's model and a failed fresh read leaves no stale section on screen (B6).
+    3. In `src/webview/worktree/WorktreeCreateDialog.ts`, register the checkbox listener ONCE outside the redraw and resolve the current offer's selection set at event time — a listener per redraw leaks, and item ids are offer-local so a stale handler writes another offer's set (W5). Cover W5 in `src/webview/worktree/WorktreeCreateDialog.test.ts` and the cache clear in `src/webview/worktree/WorktreeController.test.ts`.
+  - **Boundary**: no new webview-to-extension message — a form-close transition is a contract change owned by worktree-rpc.md § 2.4, not a review fix
+
+- [ ] 3_2 Bound the enumeration, and say only what was proven
+  - **Deps**: 3_1
+  - **Refs**: .reviews/round-2.md B7, W6; docs/design/worktree-provisioning.md#7-security; design.md D3, design.md D4
+  - **Acceptance**:
+    - Outcome: A directory of unmatched names costs a bounded scan, and a path refused for an unreadable parent is not reported as an escape
+    - Verify: unit src/worktree/provisioning/asimovProvider.test.ts
+  - **Plan**:
+    1. Iterate the glob's directory under a scan budget instead of materializing and sorting the whole listing — the enumeration cost is unbounded even when no name matches (B7).
+    2. Apply ONE budget across every emitted collection: entries, ports, setup steps and problems. The row cap currently reads `entries` alone, so the other three bypass it (B7).
+    3. Return a discriminated containment result — inside, outside, unresolvable — and report `unreadable` for a resolution that failed, keeping `malformed` for a proven escape (W6). The refusal itself does not change; only the reason it states.
+  - **Boundary**: no containment implementation of its own — `src/utils/resolvedPathBoundary.ts` stays the only one
+
+- [ ] 3_3 Make the ids offer-scoped where the offer is assembled
+  - **Deps**: 3_2
+  - **Refs**: .reviews/round-2.md W4; design.md D2, design.md D5
+  - **Acceptance**:
+    - Outcome: Two models carrying the same adapter-local ids become one offer whose ids are distinct
+    - Verify: unit src/worktree/provisioning/offerStore.test.ts
+  - **Plan**:
+    1. Remint every selectable id in `src/worktree/provisioning/offerStore.ts`'s `issue`, which already receives the completed model — no registry, no detection order and no merge algorithm, which is what made reminting look like WT-012.4's job.
+    2. Keep the `ProvisionItemId` doc comment 2_4 added: it states the property, and `issue` now enforces it.
+  - **Boundary**: the id format stays opaque and non-derived — never a path, never a hash of one

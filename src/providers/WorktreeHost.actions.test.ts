@@ -2057,12 +2057,11 @@ describe("the provisioning offer the create form is given", () => {
     dispose();
   });
 
-  it("[B5] does not start a second read while the first is still in flight", async () => {
-    // The repaired version of the test above. Its fake resolved synchronously,
-    // so there was no suspension for a second caller to arrive in and it could
-    // not observe the property it named: the guard read `offers.current()`,
-    // which stays empty until a read RESOLVES. Holding one read open is what
-    // makes the assertion mean anything.
+  it("[B5] publishes one offer even when a read is still in flight", async () => {
+    // Round 1 asserted that a second form-opening ask JOINS the read in flight.
+    // Round 2 showed that is the defect, not the property: joining is how a
+    // reopened form inherits its predecessor's model. What must hold is that one
+    // live form ends up with one offer — see the reopen test below for the rest.
     let reads = 0;
     let release: (() => void) | undefined;
     const held = new Promise<void>((resolve) => {
@@ -2078,16 +2077,53 @@ describe("the provisioning offer the create form is given", () => {
 
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
     await settle();
-    // A second form-open ask arrives while the first read has not answered.
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
-    await settle();
+    expect(reads).toBe(1);
+    // Typing does not re-read; only an opening does.
+    for (const branch of ["f", "fe"]) {
+      host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, branch });
+      await settle();
+    }
     expect(reads).toBe(1);
 
     release?.();
     await settle();
 
-    expect(reads).toBe(1);
     expect(offersIn(view)).toHaveLength(1);
+    dispose();
+  });
+
+  it("[r2 B5] a reopened form never receives its predecessor's model", async () => {
+    // Keying the read by surface+repo alone made a reopening JOIN the read
+    // already in flight, so the second form was handed the first form's answer.
+    // One read per form is not the same property as no two reads at once.
+    const releases: (() => void)[] = [];
+    const models = [".env.first", ".env.second"];
+    let reads = 0;
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => {
+        const mine = models[reads] ?? ".env.other";
+        reads += 1;
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return model(mine);
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+    // The form closes and a new one opens while the first read is unanswered.
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+    expect(reads).toBe(2);
+
+    for (const release of releases) {
+      release();
+    }
+    await settle();
+
+    // The stale generation published nothing; only the live form was answered.
+    const offers = offersIn(view);
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ model: model(".env.second") });
     dispose();
   });
 
