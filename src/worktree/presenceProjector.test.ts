@@ -34,7 +34,9 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
   let lookup: (paneId: string) => SessionLookup = () => ({ kind: "absent" });
   let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
-  let vaultPreview: ((entryId: string, mayLook: boolean) => Promise<string | undefined>) | undefined;
+  let vaultPreview: ((entryId: string) => Promise<string | undefined>) | undefined;
+  let previewLines: Map<string, string> | undefined;
+  let retained: string[][] | undefined;
   let vaultUnderCwd: ((agent: VaultAgentId, cwd: string) => Promise<string | undefined>) | undefined;
   let standingReport: ((paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) | undefined;
   let snapshots = 0;
@@ -62,7 +64,11 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
-    sessionPreview: (entryId, mayLook) => (vaultPreview ? vaultPreview(entryId, mayLook) : Promise.resolve(undefined)),
+    sessionPreview: (entryId) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
+    sessionPreviewLine: (entryId) => previewLines?.get(entryId),
+    retainSessionPreviews: (entryIds) => {
+      retained?.push([...entryIds]);
+    },
     resolveReportedSession: async (sessionId) => {
       reportedAsked.push(sessionId);
       return reportedSessions[sessionId] ?? null;
@@ -89,7 +95,13 @@ function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = 
     setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
       vaultTitle = next;
     },
-    setVaultPreview(next: (entryId: string, mayLook: boolean) => Promise<string | undefined>) {
+    setPreviewLines(next: Map<string, string>) {
+      previewLines = next;
+    },
+    trackRetained(sink: string[][]) {
+      retained = sink;
+    },
+    setVaultPreview(next: (entryId: string) => Promise<string | undefined>) {
       vaultPreview = next;
     },
     setVaultUnderCwd(next: (agent: VaultAgentId, cwd: string) => Promise<string | undefined>) {
@@ -2206,8 +2218,8 @@ describe("attribution through a symlink", () => {
 });
 
 describe("how much one projection looks at", () => {
-  const sessions = (count: number, cwd: string | ((i: number) => string) = WT): RunningClaudeSession[] =>
-    Array.from({ length: count }, (_, i) => ({
+  const sessions = (ids: number[], cwd: string | ((i: number) => string) = WT): RunningClaudeSession[] =>
+    ids.map((i) => ({
       sessionId: `s${i}`,
       cwd: typeof cwd === "function" ? cwd(i) : cwd,
       pid: 4000 + i,
@@ -2215,15 +2227,20 @@ describe("how much one projection looks at", () => {
       name: `session-${i}`,
     }));
 
-  /** Records which ids were permitted to look, and answers everyone. */
-  function watchPreview(h: ReturnType<typeof makeProjector>) {
+  const upTo = (count: number): number[] => Array.from({ length: count }, (_, i) => i);
+
+  /**
+   * Records which ids were permitted to look. The lines map stands in for what
+   * the service holds, so an excluded row is answered rather than skipped.
+   */
+  function watchPreview(h: ReturnType<typeof makeProjector>, ids: number[]) {
+    const lines = new Map(ids.map((i) => [`claude:s${i}`, `line for s${i}`]));
+    h.setPreviewLines(lines);
     const looked: string[][] = [];
     let round: string[] = [];
-    h.setVaultPreview(async (entryId, mayLook) => {
-      if (mayLook) {
-        round.push(entryId);
-      }
-      return `line for ${entryId}`;
+    h.setVaultPreview(async (entryId) => {
+      round.push(entryId);
+      return lines.get(entryId);
     });
     return {
       looked,
@@ -2236,8 +2253,8 @@ describe("how much one projection looks at", () => {
 
   it("permits no more looks than its budget, however many rows there are", async () => {
     const h = makeProjector([], { previewBudget: 3 });
-    h.setRegistry({ kind: "ok", sessions: sessions(9) });
-    const watch = watchPreview(h);
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(9)) });
+    const watch = watchPreview(h, upTo(9));
 
     const presence = await h.projector.project([WT]);
     watch.endRound();
@@ -2252,8 +2269,8 @@ describe("how much one projection looks at", () => {
     // bound either.
     const roots = Array.from({ length: 9 }, (_, i) => `${WT}-${i}`);
     const h = makeProjector([], { previewBudget: 3 });
-    h.setRegistry({ kind: "ok", sessions: sessions(9, (i) => roots[i]) });
-    const watch = watchPreview(h);
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(9), (i) => roots[i]) });
+    const watch = watchPreview(h, upTo(9));
 
     await h.projector.project(roots);
     watch.endRound();
@@ -2263,34 +2280,127 @@ describe("how much one projection looks at", () => {
 
   it("still draws a line on a row the budget excluded", async () => {
     const h = makeProjector([], { previewBudget: 1 });
-    h.setRegistry({ kind: "ok", sessions: sessions(3) });
-    // What the service does for an ask that may not look: hand back what it holds.
-    h.setVaultPreview(async (entryId) => `line for ${entryId}`);
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    watchPreview(h, upTo(3));
 
     const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
 
     expect(rows).toHaveLength(3);
     for (const row of rows) {
-      expect(row.preview).toBe(`line for ${row.entryId}`);
+      expect(row.preview).toBe(`line for ${row.entryId?.slice("claude:".length)}`);
     }
+  });
+
+  it("tells the service every row it is drawing, not only the ones it looks at", async () => {
+    // The service cannot keep a line for a row it does not know is drawn, and a
+    // capped LRU cannot hold more lines than its cap (round-1 B2).
+    const retained: string[][] = [];
+    const h = makeProjector([], { previewBudget: 1 });
+    h.trackRetained(retained);
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(4)) });
+    watchPreview(h, upTo(4));
+
+    await h.projector.project([WT]);
+
+    expect(retained).toHaveLength(1);
+    expect([...retained[0]].sort()).toEqual(["claude:s0", "claude:s1", "claude:s2", "claude:s3"]);
   });
 
   it("gives every row its turn rather than looking at the same ones forever", async () => {
     const h = makeProjector([], { previewBudget: 2 });
-    h.setRegistry({ kind: "ok", sessions: sessions(6) });
-    const watch = watchPreview(h);
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(6)) });
+    const watch = watchPreview(h, upTo(6));
 
-    // Six rows, two per projection: three projections must cover all six.
     for (let i = 0; i < 3; i++) {
       await h.projector.project([WT]);
       watch.endRound();
       clock += 60_000;
     }
 
-    const served = new Set(watch.looked.flat());
-    expect(served.size).toBe(6);
+    expect(new Set(watch.looked.flat()).size).toBe(6);
     for (const round of watch.looked) {
       expect(round).toHaveLength(2);
     }
+  });
+
+  it("gives a row its turn even while other rows come and go", async () => {
+    // An index into a list whose membership changes is not a position in any
+    // stable order: budget 1 over [A,B,C] then [A,C] repeatedly re-granted A and
+    // B and never reached C (round-1 B1).
+    const h = makeProjector([], { previewBudget: 1 });
+    const watch = watchPreview(h, upTo(3));
+
+    for (let i = 0; i < 6; i++) {
+      h.setRegistry({ kind: "ok", sessions: sessions(i % 2 === 0 ? [0, 1, 2] : [0, 2]) });
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    // s0 and s2 are drawn on every projection, so neither may be starved.
+    const served = watch.looked.flat();
+    expect(served).toContain("claude:s0");
+    expect(served).toContain("claude:s2");
+  });
+
+  it("does not let a smaller projection undo the progress of a larger one", async () => {
+    const h = makeProjector([], { previewBudget: 1 });
+    const watch = watchPreview(h, upTo(3));
+
+    // Large, then small, then large again. A cursor advanced by what a small
+    // projection permitted would rewind the turn for the rows that left.
+    for (const ids of [[0, 1, 2], [0], [0, 1, 2], [0], [0, 1, 2]]) {
+      h.setRegistry({ kind: "ok", sessions: sessions(ids) });
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    expect(new Set(watch.looked.flat())).toContain("claude:s2");
+  });
+
+  it("keeps a drawn row's place when the waiting order is pruned", async () => {
+    // The order is bounded, so rows that left have to be dropped eventually —
+    // but only rows that left. Pruning from the back without checking takes the
+    // row served most recently, which is a DRAWN one, and it then re-enters at
+    // the back on every projection and is never reached.
+    const h = makeProjector([], { previewBudget: 1 });
+    const watch = watchPreview(h, upTo(5));
+
+    h.setRegistry({ kind: "ok", sessions: sessions([0, 1, 2, 3, 4]) });
+    await h.projector.project([WT]);
+    watch.endRound();
+    clock += 60_000;
+
+    for (let i = 0; i < 3; i++) {
+      h.setRegistry({ kind: "ok", sessions: sessions([1, 4]) });
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    expect(watch.looked.flat()).toContain("claude:s4");
+  });
+
+  it("permits the shipped default when nothing overrides it", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(20)) });
+    const watch = watchPreview(h, upTo(20));
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toHaveLength(16);
+  });
+
+  it("permits every row when there are fewer than the default budget", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(5)) });
+    const watch = watchPreview(h, upTo(5));
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toHaveLength(5);
   });
 });

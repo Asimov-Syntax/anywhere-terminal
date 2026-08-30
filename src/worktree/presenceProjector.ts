@@ -173,7 +173,13 @@ export interface PresenceProjectorDeps {
    * can see the file (source-the-agent-row-preview D2). Absence is not
    * degradation — a row with no answer simply carries no preview (D3).
    */
-  sessionPreview?(entryId: string, mayLook: boolean): Promise<string | undefined>;
+  sessionPreview?(entryId: string): Promise<string | undefined>;
+  /** The line a session already has, read without starting work. What a row
+   *  outside the budget draws — see {@link PresenceProjectorDeps.previewBudget}. */
+  sessionPreviewLine?(entryId: string): string | undefined;
+  /** Declare every session being drawn, so the service keeps a line for each
+   *  rather than approximating with an LRU it cannot aim (round-1 B2). */
+  retainSessionPreviews?(entryIds: Iterable<string>): void;
   /**
    * How many rows one projection may permit to LOOK at their transcripts. The
    * rest are still asked, and answer from what the service holds.
@@ -486,8 +492,9 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   const vaultTitles = new Map<string, { at: number; title: Promise<string | undefined> }>();
 
   const previewBudget = Math.max(1, deps.previewBudget ?? DEFAULT_PROJECTION_LOOK_BUDGET);
-  /** Where the next projection's look budget starts in the flattened row list. */
-  let previewCursor = 0;
+  /** Whose turn it is, in order. Insertion-ordered, so the front is whoever has
+   *  waited longest and a served row goes to the back. */
+  const previewOrder = new Set<string>();
 
   function clock(): number {
     return deps.now?.() ?? Date.now();
@@ -532,32 +539,78 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         }
       });
     }
+    // Declared even when empty: a projection that draws nothing is still a
+    // statement about what is drawn, and the service must not go on holding the
+    // last set forever.
+    deps.retainSessionPreviews?.(asked.map((a) => a.entryId));
     if (asked.length === 0) {
+      previewOrder.clear();
       return;
     }
-    // The turn rotates: a fixed budget over a stable order would refresh the
-    // first N rows forever and never the rest. Advancing by the budget lets every
-    // row look within ceil(rows / budget) projections.
+    // The turn is a queue over row IDENTITY. An index into a list whose
+    // membership changes between projections is not a position in any stable
+    // order: budget 1 over [A,B,C] granted A then B, and the next projection
+    // drawing [A,C] computed 2 % 2 = 0 and granted A again — so C was never
+    // reached, however long the window stayed open (round-1 B1).
+    const drawn = new Set(asked.map((a) => a.entryId));
+    for (const { entryId } of asked) {
+      if (!previewOrder.has(entryId)) {
+        previewOrder.add(entryId);
+      }
+    }
+    // A row that stops being drawn KEEPS its place. Dropping it and re-adding it
+    // at the back is the same starvation in another shape: a row drawn every
+    // other projection would re-enter behind the row being served every time,
+    // and never reach the front.
     //
-    // The budget counts permissions GRANTED, not looks performed — a permitted row
-    // still inside its recheck interval answers from cache and spends its grant
-    // anyway. That makes the sweep slower than the ideal and keeps the ceiling
-    // exact, which is the direction to err in for a bound.
-    const start = previewCursor % asked.length;
-    const permitted = Math.min(previewBudget, asked.length);
-    previewCursor = start + permitted;
+    // What bounds the order instead is a ceiling over the drawn set, pruned from
+    // the back — the end holds whoever was served most recently or joined last,
+    // so it is where the least claim sits.
+    const limit = drawn.size + previewBudget;
+    if (previewOrder.size > limit) {
+      const waiting = [...previewOrder];
+      for (let i = waiting.length - 1; i >= 0 && previewOrder.size > limit; i--) {
+        if (!drawn.has(waiting[i])) {
+          previewOrder.delete(waiting[i]);
+        }
+      }
+    }
     const mayLook = new Set<string>();
-    for (let i = 0; i < permitted; i++) {
-      mayLook.add(asked[(start + i) % asked.length].entryId);
+    for (const entryId of previewOrder) {
+      if (mayLook.size >= previewBudget) {
+        break;
+      }
+      if (drawn.has(entryId)) {
+        mayLook.add(entryId);
+      }
+    }
+    // Served rows go to the back, so a row that merely stays drawn rises to the
+    // front as the others take their turns.
+    for (const entryId of mayLook) {
+      previewOrder.delete(entryId);
+      previewOrder.add(entryId);
+    }
+    // Only the permitted rows are awaited. Fanning every row out allocated an
+    // async invocation per row to permit `previewBudget` of them, so a
+    // thousand-row projection started a thousand promises for sixteen looks
+    // (round-1 W1). The rest are a map read.
+    const write = (worktreeId: string, index: number, preview: string | undefined): void => {
+      if (preview) {
+        const rows = rowsByWorktreeId[worktreeId];
+        rows[index] = { ...rows[index], preview };
+      }
+    };
+    for (const { worktreeId, index, entryId } of asked) {
+      if (!mayLook.has(entryId)) {
+        write(worktreeId, index, deps.sessionPreviewLine?.(entryId));
+      }
     }
     await Promise.all(
-      asked.map(async ({ worktreeId, index, entryId }) => {
-        const preview = await read(entryId, mayLook.has(entryId)).catch(() => undefined);
-        if (preview) {
-          const rows = rowsByWorktreeId[worktreeId];
-          rows[index] = { ...rows[index], preview };
-        }
-      }),
+      asked
+        .filter((a) => mayLook.has(a.entryId))
+        .map(async ({ worktreeId, index, entryId }) => {
+          write(worktreeId, index, await read(entryId).catch(() => undefined));
+        }),
     );
   }
 

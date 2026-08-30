@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "bound-the-looks-one-projection-starts"
+  },
+  "sessions": [
+    {
+      "sessionId": "069d5382-fa6a-4334-aecd-ad19660fbb1e",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788097789451,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788097789451,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788097789451
+        }
+      ],
+      "firstAt": 1788097789451,
+      "lastAt": 1788098512190,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-performance",
+          "model": "gpt-5.6-sol",
+          "messages": 5,
+          "inputTokens": 28144,
+          "outputTokens": 3695,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 178688,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-master",
+          "model": "gpt-5.6-sol",
+          "messages": 14,
+          "inputTokens": 107442,
+          "outputTokens": 18177,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 1154560,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-contracts",
+          "model": "claude-sonnet-5",
+          "messages": 17,
+          "inputTokens": 34,
+          "outputTokens": 4099,
+          "reasoningTokens": 2818,
+          "cacheWriteTokens": 48795,
+          "cacheReadTokens": 1116339,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 48795,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-logic",
+          "model": "gpt-5.6-terra",
+          "messages": 6,
+          "inputTokens": 61913,
+          "outputTokens": 4423,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 215552,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-finder",
+          "model": "gpt-5.6-luna",
+          "messages": 10,
+          "inputTokens": 69715,
+          "outputTokens": 3431,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 477184,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 23,
+          "inputTokens": 46,
+          "outputTokens": 12235,
+          "reasoningTokens": 1831,
+          "cacheWriteTokens": 20882,
+          "cacheReadTokens": 5717770,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 20882,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

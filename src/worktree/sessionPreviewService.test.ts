@@ -1058,23 +1058,23 @@ describe("a preview does not outlive its session", () => {
   });
 });
 
-describe("an ask that may not look", () => {
-  it("returns the line it holds and starts nothing", async () => {
+describe("the line a caller already has", () => {
+  it("reads back the held line without touching the filesystem", async () => {
     const svc = service({ "codex:s1": { ...CODEX, sessionPath: rollout } });
     expect(await svc.preview("codex:s1")).toBe("the first answer");
 
-    // The transcript has genuinely moved on and the recheck interval has passed,
-    // so an ordinary ask would stat and read. This one may not look.
+    // The transcript has moved on and the recheck interval has passed, so an
+    // ordinary ask would stat and read. This one is not an ask at all.
     await rewrite("a newer answer", clock + 10_000);
     clock += 10_000;
     const statsAfter = stats.length;
     const readsAfter = reads.length;
-    expect(await svc.preview("codex:s1", false)).toBe("the first answer");
+    expect(svc.line("codex:s1")).toBe("the first answer");
     expect(stats.length).toBe(statsAfter);
     expect(reads.length).toBe(readsAfter);
   });
 
-  it("consults the store for nothing", async () => {
+  it("stands in for no confirmation", async () => {
     let calls = 0;
     const svc = service(
       {},
@@ -1089,51 +1089,79 @@ describe("an ask that may not look", () => {
     await svc.preview("codex:s1");
     expect(calls).toBe(1);
 
-    // Overdue for re-confirmation, and still not asked: a cache-only ask must not
-    // advance the ladder or the confirmation stamp either.
-    clock += 30_000;
-    expect(await svc.preview("codex:s1", false)).toBe("the first answer");
+    // Not yet due for anything: inside both the freshness gate and the
+    // re-confirmation interval. Reading the line must leave both exactly where
+    // they were, so the next real ask still does nothing.
+    const statsAfter = stats.length;
+    clock += 500;
+    expect(svc.line("codex:s1")).toBe("the first answer");
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
     expect(calls).toBe(1);
+    expect(stats.length).toBe(statsAfter);
 
-    // Still overdue on the next ask that IS allowed to look — the excluded ask
-    // did not stand in for a confirmation.
-    expect(await svc.preview("codex:s1", true)).toBe("the first answer");
+    // And overdue is still overdue — reading the line did not stand in for the
+    // confirmation the interval was waiting for.
+    clock += 30_000;
+    expect(svc.line("codex:s1")).toBe("the first answer");
+    expect(calls).toBe(1);
+    expect(await svc.preview("codex:s1")).toBe("the first answer");
     expect(calls).toBe(2);
   });
 
-  it("holds a session the bound excluded rather than letting it fall out", async () => {
-    const files: string[] = [];
-    const entries: Record<string, PreviewEntry> = {};
-    for (let i = 0; i < 3; i++) {
-      const file = path.join(sessionsDir, `rollout-n${i}.jsonl`);
-      await fs.writeFile(file, `${codexEvent(`answer ${i}`)}\n`);
-      files.push(file);
-      entries[`codex:n${i}`] = { agent: "codex", sessionId: `n${i}`, sessionPath: file };
-    }
-    const svc = service(entries, { cap: 2 });
-    expect(await svc.preview("codex:n0")).toBe("answer 0");
-    expect(await svc.preview("codex:n1")).toBe("answer 1");
+  it("answers a session it has never held", () => {
+    const svc = service({});
+    expect(svc.line("codex:never")).toBeUndefined();
+  });
+});
 
-    // n0 is now the least recently asked, so the third session evicts it — unless
-    // the cache-only ask counts as the window still drawing it. It must: the line
-    // n0 holds is exactly what the bound promised to keep.
-    expect(await svc.preview("codex:n0", false)).toBe("answer 0");
-    await svc.preview("codex:n2");
+describe("what a caller says it is drawing", () => {
+  async function drawnSessions(count: number): Promise<Record<string, PreviewEntry>> {
+    const entries: Record<string, PreviewEntry> = {};
+    for (let i = 0; i < count; i++) {
+      const file = path.join(sessionsDir, `rollout-d${i}.jsonl`);
+      await fs.writeFile(file, `${codexEvent(`answer ${i}`)}\n`);
+      entries[`codex:d${i}`] = { agent: "codex", sessionId: `d${i}`, sessionPath: file };
+    }
+    return entries;
+  }
+
+  it("keeps every drawn session's line past what the cap alone would hold", async () => {
+    // Four drawn rows against a cap of 2. Under the LRU alone the third and
+    // fourth reads evict the first two, and the rows that lose their slot are
+    // exactly the ones a bounded projection was about to read back (round-1 B2).
+    const ids = ["codex:d0", "codex:d1", "codex:d2", "codex:d3"];
+    const svc = service(await drawnSessions(4), { cap: 2 });
+    svc.retain(ids);
+    for (const id of ids) {
+      expect(await svc.preview(id)).toBe(`answer ${id.slice("codex:d".length)}`);
+    }
 
     const readsBefore = reads.length;
-    expect(await svc.preview("codex:n0", false)).toBe("answer 0");
+    for (const id of ids) {
+      expect(svc.line(id)).toBe(`answer ${id.slice("codex:d".length)}`);
+    }
     expect(reads.length).toBe(readsBefore);
-    expect(files).toHaveLength(3);
   });
 
-  it("answers a session it has never held without taking a slot for it", async () => {
-    const svc = service({ "codex:s1": { ...CODEX, sessionPath: rollout } }, { cap: 1 });
-    expect(await svc.preview("codex:s1")).toBe("the first answer");
+  it("drops a session the caller has stopped drawing", async () => {
+    const svc = service(await drawnSessions(2), { cap: 256 });
+    svc.retain(["codex:d0", "codex:d1"]);
+    await svc.preview("codex:d0");
+    await svc.preview("codex:d1");
+    expect(svc.line("codex:d0")).toBe("answer 0");
 
-    // Nothing to keep, so nothing is stored — inserting a blank would let an
-    // excluded row evict a held one to remember that it has no line.
-    expect(await svc.preview("codex:never", false)).toBeUndefined();
-    expect(await svc.preview("codex:s1", false)).toBe("the first answer");
-    expect(stats).toEqual([rollout]);
+    // d0 is no longer drawn, so nothing is holding its line for it.
+    svc.retain(["codex:d1"]);
+    expect(svc.line("codex:d0")).toBeUndefined();
+    expect(svc.line("codex:d1")).toBe("answer 1");
+  });
+
+  it("still bounds itself for a caller that declares nothing", async () => {
+    // The cap is the fallback, not dead: a caller with no drawn set gets the
+    // behaviour the service shipped with.
+    const svc = service(await drawnSessions(3), { cap: 1 });
+    await svc.preview("codex:d0");
+    await svc.preview("codex:d1");
+    expect(svc.line("codex:d0")).toBeUndefined();
   });
 });

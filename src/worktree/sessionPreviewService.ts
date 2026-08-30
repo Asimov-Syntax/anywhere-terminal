@@ -69,18 +69,28 @@ export interface Deadline {
 }
 
 export interface SessionPreviewService {
+  preview(entryId: string): Promise<string | undefined>;
   /**
-   * The session's last activity line.
+   * The line this session already has, or nothing. Reads state; never creates it,
+   * never starts work, and never stands in for a confirmation.
    *
-   * `mayLook` is the caller's budget, not the service's: the projector owns how
-   * many looks one projection starts, and this service owns how many may be
-   * outstanding at once (`worktree-subsystem-debts.md` § 2.3). `false` means
-   * *answer from what you already hold* — the held line, and no vault lookup,
-   * resolve, `stat` or read. A row outside its caller's bound is still a row the
-   * window is drawing, so it is asked this way rather than skipped: skipping
-   * would cost it the line it last read.
+   * A caller that bounds how many sessions it asks about needs the rest of them
+   * to keep drawing what they last said. Skipping them would cost each one its
+   * line, and asking them would defeat the bound — so they are read.
    */
-  preview(entryId: string, mayLook?: boolean): Promise<string | undefined>;
+  line(entryId: string): string | undefined;
+  /**
+   * Declare the sessions the caller is currently drawing. Everything outside the
+   * set is dropped; nothing inside it is evicted.
+   *
+   * The LRU below caps what is held because the service cannot otherwise know
+   * which sessions still matter. A caller that recomputes its drawn set every
+   * pass CAN know, and an exact rule beats an approximate one: past `cap` drawn
+   * rows, evicting the least recently asked drops the line a caller was about to
+   * read back (round-1 B2). `cap` stays as the rule for callers that declare
+   * nothing.
+   */
+  retain(entryIds: Iterable<string>): void;
 }
 
 interface FileStamp {
@@ -247,10 +257,15 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   // once per cadence tick for as long as it stayed stalled.
   const outstanding = new Map<string, Held>();
 
+  /** What the caller says it is drawing, or `null` while none has said (D5). */
+  let drawn: ReadonlySet<string> | null = null;
+
   function touch(entryId: string, entry: Held): void {
     held.delete(entryId);
     held.set(entryId, entry);
-    while (held.size > cap) {
+    // A declared set is exact, so there is nothing to approximate: everything
+    // held is drawn, and dropping any of it would lose a line the caller keeps.
+    while (drawn === null && held.size > cap) {
       const oldest = held.keys().next().value;
       if (oldest === undefined) {
         return;
@@ -416,26 +431,27 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   }
 
   return {
-    async preview(entryId: string, mayLook = true): Promise<string | undefined> {
-      const existing = held.get(entryId) ?? outstanding.get(entryId);
-      if (!mayLook) {
-        // Nothing held means nothing to keep, and storing a blank here would let
-        // an excluded session evict a held one to remember that it has no line.
-        if (existing === undefined) {
-          return undefined;
+    line(entryId: string): string | undefined {
+      return (held.get(entryId) ?? outstanding.get(entryId))?.line;
+    },
+
+    retain(entryIds: Iterable<string>): void {
+      drawn = new Set(entryIds);
+      for (const entryId of [...held.keys()]) {
+        if (!drawn.has(entryId)) {
+          held.delete(entryId);
         }
-        // Touched, though: the caller is drawing this row, and evicting it would
-        // lose exactly the line the caller's bound promised it would keep.
-        // Nothing else moves — not the ladder, not `nextAt`, not `confirmedAt`.
-        touch(entryId, existing);
-        return existing.line;
       }
-      const current = existing ?? {
-        target: { kind: "unresolved" as const },
-        nextAt: Number.NEGATIVE_INFINITY,
-        misses: 0,
-        generation: 0,
-      };
+    },
+
+    async preview(entryId: string): Promise<string | undefined> {
+      const current = held.get(entryId) ??
+        outstanding.get(entryId) ?? {
+          target: { kind: "unresolved" as const },
+          nextAt: Number.NEGATIVE_INFINITY,
+          misses: 0,
+          generation: 0,
+        };
       touch(entryId, current);
       const schedule = (): void => {
         current.nextAt = now() + recheckMs * 2 ** Math.min(current.misses, MAX_BACKOFF_SHIFT);
