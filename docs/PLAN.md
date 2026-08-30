@@ -79,7 +79,7 @@ flowchart LR
 | P8 — Truthful activity | ~2-3d | Every state is legible by shape, and a row stops spinning once nothing has confirmed it |
 | P9 — Glanceability | ~4-6d | The list surfaces the two worktrees that matter, each row says what just happened, and creating one is a worktree question rather than a git one |
 | P10 — Worktree-first workbench | ~9-13d | Selecting a worktree scopes the surface to it — built behind a setting, which WT-010.6 retired once the composition was whole |
-| P11 — Recorded debts | ~5-8d | One rule per concept: containment, promotion, a bounded look, what a row shows, and who knows an entry is gone |
+| P11 — Recorded debts | ~6-9d | One rule per concept: containment, promotion, a bounded look, what a row shows, and who knows an entry is gone |
 
 | Stage | What the user gets |
 |-------|--------------------|
@@ -347,9 +347,9 @@ nothing to provision.
 | **Stage** | 8 |
 | **Size** | M |
 | **Labels** | re-review |
-| **Notes** | Deferred as "a new failure-surface decision rather than remediation", which is the whole task: a timeout has to fail in a direction, and the direction is soft. The cadence gate bounds how often a look starts, never how long one takes, so a stalled network mount or a sleeping volume holds its slot forever. Second, related invariant in the same seam: the cache cap bounds how many entries are held, not how much re-checking they provoke per tick — a window with many rows does bounded-size bookkeeping over unbounded I/O |
-| **Acceptance** | A read against an unresponsive path abandons within a bound instead of blocking the look; a timed-out look backs off through the existing retry ladder and is not recorded as a resolution; a row whose transcript timed out keeps its last known line rather than blanking; the work provoked per cadence tick is bounded, not only the entries retained |
-| **Status** | todo |
+| **Notes** | Deferred as "a new failure-surface decision rather than remediation", which is the whole task: a timeout has to fail in a direction, and the direction is soft. The cadence gate bounds how often a look starts, never how long one takes, so a stalled network mount or a sleeping volume holds its slot forever. The cache cap belongs here too, but only its own half: eviction currently releases a session whose look is still stalled, so the next ask launches a second read against the same hung path — the bound on outstanding work has to survive eviction, which is why it cannot be split from the timeout. Bounding the *count* of looks a single projection provokes is a different owner and became WT-011.7 |
+| **Acceptance** | A read against an unresponsive path abandons within a bound instead of blocking the look; a timed-out look backs off through the existing retry ladder, is not recorded as a resolution, and commits nothing it goes on to observe; a row whose transcript timed out keeps its last known line rather than blanking; outstanding reads stay bounded however many rows ask and whatever the cache evicts |
+| **Status** | done |
 
 ### [WT-011.4] A Row Never Says the Same Thing Twice
 
@@ -391,6 +391,20 @@ nothing to provision.
 | **Labels** | cross-boundary |
 | **Notes** | Surfaced while planning WT-011.1, which established the rule and scoped itself to the resolvers that gate a transcript read. Five further sites compare raw workspace-folder, Git API, pane-cwd and webview paths lexically — the same error with a different consequence: a session whose cwd resolves elsewhere is attributed to the wrong worktree, and repository discovery can pick the wrong root. Held back from WT-011.1 deliberately: none of them authorizes a read, several run per push, and "attribution is wrong" is a different acceptance story from "a read escaped the store". Whether the fix is resolution at these sites or resolution once at the boundary that produces the paths is the decision this task owns |
 | **Acceptance** | A pane whose cwd resolves outside a worktree is not attributed to it, and one that resolves inside it still is, whatever either spells; repository discovery picks the root a path resolves into; the per-push paths do not gain an unbounded syscall per comparison; no site keeps a private copy of the containment rule |
+| **Status** | todo |
+
+### [WT-011.7] A Projection Tick Provokes Bounded Work
+
+| Field | Value |
+|-------|-------|
+| **Goal** | One projection provokes a bounded number of transcript reads, whatever the window draws |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.3; [DESIGN.md](DESIGN.md) § 9 D33 |
+| **Depends On** | WT-011.3 |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | none |
+| **Notes** | Split out of WT-011.3 once the code was visible. WT-011.3 bounds how long one look may take and how many may be outstanding at once, both of which the preview service owns. It cannot bound how many a projection starts in total: the projector enriches one worktree's rows and awaits them before starting the next, so a service-side concurrency limit is never reached and every row still costs a look. The decision this task owns is whether the projector fans its preview requests out in one wave so the service's own limit gates the whole projection, or carries an explicit per-projection budget — a fan-out shape the projector owns, not the preview service |
+| **Acceptance** | A projection over many worktrees provokes a bounded number of transcript reads rather than one per row; rows the bound excludes keep their last known line and are re-checked on a later tick rather than dropped; the bound holds whether the rows are spread across many worktrees or concentrated in one |
 | **Status** | todo |
 
 ---

@@ -97,7 +97,7 @@ and re-reads the predicate, and treating enrichment as invalidation would have s
 acknowledging the pane evidence it consumed, and downgraded a rerun that new evidence required to
 be a full one.
 
-### 2.3 The transcript read has no time bound
+### 2.3 The transcript read has no time bound — SHIPPED (WT-011.3)
 
 The preview path issues `stat` and `read` against files on the user's disk with no timeout and no
 cancellation. A slow or hung filesystem — a stalled network mount, a sleeping external volume —
@@ -107,6 +107,25 @@ one may take, so a hung read holds its slot indefinitely.
 Related but distinct: the cache cap bounds **memory**, not **work**. It caps how many entries are
 held; it does not cap how much re-checking those entries provoke per cadence tick. A window with
 many rows does bounded-size bookkeeping over an unbounded amount of I/O.
+
+**What shipped.** A look now carries one deadline covering resolution and reading alike. Expiry is a
+third settlement class beside success and failure: it scores a miss, takes the same retry ladder, and
+hands the row back the line it last read. The attempt it abandons keeps running — nothing on this
+path takes an `AbortSignal` — but writes through a draft only the winner of the race commits, so a
+read that completes thirty seconds late cannot blank the line the deadline preserved. Reviews found
+that mechanism twice from opposite directions: a generation fence on the settlement handlers alone
+left `look`'s own `forget`/`clearTarget` calls unfenced, and committing inside the look's handler
+still ran before the race had said who won. Outstanding work is bounded at one look per session and
+`cap` in total, tracked outside the entry cache so eviction cannot release a stalled session; the
+deadline a look outruns is cancelled, because `outstanding` releases the look and would never have
+counted its timer.
+
+That second half has two owners, and planning WT-011.3 separated them. The preview service owns how
+many looks may be outstanding at once — and must, because its own eviction is what releases a session
+whose look is still stalled, letting the next ask launch a second read against the same hung path.
+The projector owns how many looks a single projection starts, because it enriches one worktree's rows
+and awaits them before the next, so no service-side concurrency limit is ever reached. WT-011.3 takes
+the first; WT-011.7 takes the second.
 
 **Why it was deferred**: *"Performance-only, on a path already gated by the recheck interval, and a
 timeout on `stat`/`read` is a new failure-surface decision rather than remediation."*
