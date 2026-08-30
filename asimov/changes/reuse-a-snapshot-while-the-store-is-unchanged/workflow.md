@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -53,3 +53,6 @@ Handback (cycle 3 round 3, mandatory at the cycle cap): B6 and W6 both change D3
 
 Evidence correction (4_1): the suite-change record for 4_1 names five files, but only `src/vault/snapshotPool.test.ts` is this change's. `AgentHookController.test.ts`, `ClaudeHookInstaller.test.ts`, `CursorHookInstaller.test.ts` and `WorktreeCreateDialog.test.ts` were reformatted at 15:31:06 by another session sharing this working tree running biome in write mode; 4_1's `--test-change` text was written before I noticed them and reads as if all five were mine. They are not authored, staged or committed by this change, and 4_1 claims nothing about them. `verify-task` refuses to re-record a done task, so the correction lives here.
 Lint baseline drift: `biome check src` now reports 0 errors / 14 warnings / 0 infos rather than the recorded 4/14/3 baseline, because that same external auto-fix cleared errors this change never touched (useTemplate in CursorHookInstaller.test.ts, formatter diffs elsewhere). The drop is not this change's doing and is not claimed as its work; every formatter diff in this change's own files was hand-applied.
+Cycle-4 fixes: check-types clean, 5442 unit tests, I10 ok. `biome check src` now reports 0 errors / 14 warnings / 0 infos; the 4 errors and 3 infos of the recorded baseline were cleared by the external auto-fix noted above and by that session's own commit, not by this change. This change's own formatter diffs were hand-applied throughout.
+B6 note: it took three attempts to build a mutation that reproduces the concurrent-admission bug — a bare microtask before the block, and sizing moved back inside it, both left the tests green. Only reintroducing a suspension BETWEEN the capacity decision and the insert fails them, which is the interleaving B6 actually describes.
+
