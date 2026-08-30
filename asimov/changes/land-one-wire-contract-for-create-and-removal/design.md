@@ -20,21 +20,41 @@ exactly the forgettable check rpc § 2.3 replaces.
 Consequence: three signatures change together in one task, and the flat `branch?` / `baseRef?` /
 `detach?` / `openAfter` / `launch?` fields disappear rather than being kept as an overload.
 
-### D2: Today's dialog maps onto two of the five modes, and gains no new control
+### D2: The dialog already makes the choice; the wire is what loses it
 
-| Draft state today | Mode it becomes |
-|---|---|
-| `branchMode !== "detached"`, `branchName` non-empty | `{ kind: "fresh", branch, baseRef? }` |
-| `branchMode === "detached"` | `{ kind: "fresh-detached", baseRef }` |
+`WorktreeCreateDialog` has offered three branch modes since before this change, and
+`WorktreeController` already branches on all three. Only the message is impoverished:
 
-`reuse`, `reattach` and `adopt` become *expressible* and are produced by nothing. That is the
-correct end state for a contract task: the surfaces that produce them are WT-012.8, and WT-012.15,
-and each is separately rejectable.
+| `draft.branchMode` today | What the wire carries today | Mode it becomes |
+|---|---|---|
+| `new` | `{ branch, baseRef? }` | `{ kind: "fresh", branch, baseRef? }` |
+| `existing` | `{ branch }` | `{ kind: "reuse", branch }` |
+| `detached` | `{ detach: true, baseRef? }` | `{ kind: "fresh-detached", baseRef }` |
 
-The detached case is where the mapping is not mechanical. Today the dialog puts the ref the user
+`new` and `existing` are **indistinguishable on the wire**, so
+`worktreeMutationService.ts` `sourceOf` guesses: it picks `newBranch` only when `baseRef` is also
+present, and otherwise falls through to `existingBranch`. A new-branch create with the base ref left
+blank — the ordinary case — therefore runs `git worktree add <path> <branch>` against a branch that
+does not exist, and git answers `fatal: invalid reference`. The round-3 B11 fix stopped the empty
+string at the controller and never reached this derivation.
+
+The union removes the guess rather than repairing it: `sourceOf` becomes a total map from
+`WorktreeCreateMode` to `CreateSource` with no inference left to get wrong. That makes the repair a
+consequence of the contract, not a separate decision — there is no version of this union that keeps
+the defect — and it is why this change carries a `worktree-panel` delta instead of NO-DELTA.
+
+`reuse` therefore **has** a producer here. `reattach` and `adopt` do not: WT-012.15 builds those,
+and WT-012.8 still owns everything `reuse` needs around it — detecting that a branch already exists,
+refusing one checked out elsewhere, and offering recovery.
+
+The detached case is the one mapping that is not mechanical. Today the dialog puts the ref the user
 typed in `baseRef` and *also* reads it as the branch name for the path slug
 (`WorktreeCreateDialog.ts` — `detached ? draft.baseRef : draft.branchName`). `fresh-detached` has
 one field and no `branch`, so the slug derivation reads the mode rather than the draft.
+
+`fresh-detached` declares `baseRef` **required** while the controller sends it optionally. The
+controller supplies `"HEAD"` where the field is blank, which is what `sourceOf` already substitutes
+today — the default moves to the producer, where the type can insist on it.
 
 ### D3: Path validation takes the intent, not the mode
 
@@ -116,7 +136,8 @@ the assertion real: `@ts-expect-error` on a line that *does* compile is itself a
 | Component | Risk | Mitigation |
 |---|---|---|
 | `WorktreeRemoveDialog` | A projection defect silently changes the rendered blocker list on the one action that cannot be undone | D5 — the existing render assertions are kept verbatim and re-pointed at the new input; the task fails if any rendered string moves |
-| `worktreeMutationService` create path | Flattening the mode at the service boundary to avoid touching `worktreeMutations` re-introduces the forgettable validator | D1 — the union is the parameter type; `git`-argv assembly stays where it is and reads the mode |
+| `worktreeMutationService` create path | Flattening the mode at the service boundary to avoid touching `worktreeMutations` re-introduces the forgettable validator | D1 — the union is the parameter type. `worktreeMutations`' own `CreateSource` union stays: it is git's vocabulary, and `reattach`/`adopt` are not `git worktree add` at all. `sourceOf` becomes a total map between the two, with no field-presence inference |
+| New-branch create | The repair D2 describes is landed but never demonstrated, so a later refactor can silently restore the guess | Task 1_2's Verify exercises the empty-base-ref case end to end; the `worktree-panel` delta makes it a requirement rather than an incidental fix |
 | `validateCreatePath` | A mode-dependent existence rule weakens the `fresh` case by accident, allowing a create into a non-empty directory | D3 — `mustBeFreeOrEmpty` keeps today's behaviour exactly; the existing `createPath.test.ts` cases are unchanged and must still pass |
 | Path handling | A hand-rolled containment check enters `src/` alongside the new intent | Task 1_3's Boundary — `src/utils/pathBoundary.ts` stays the only definition, and the Boundary names the grep that proves it |
 | Offer / branch-delete types | Types nobody produces rot before their consumer arrives | D6 — compile-time assertions run on every `check-types`, so a shape that drifts fails the build rather than waiting for WT-012.1 |

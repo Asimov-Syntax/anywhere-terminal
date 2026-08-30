@@ -48,12 +48,14 @@ M (≤3d)
 - Keep the legacy blocker record beside the check model. Two encodings of one safety rule will
   disagree, and the one that disagrees silently is the one on the destructive action.
 - Hand-roll path containment. `src/utils/pathBoundary.ts` is the only definition in `src/`.
-- Change what the user sees. This change is invisible in the panel; a diff in the rendered removal
-  list is a defect, not a bonus.
+- Change what the user sees, beyond the one repair the contract forces. A new-branch create with no
+  base ref starts working (design.md D2, `specs/worktree-panel/spec.md`). Everything else is
+  invisible: a diff in the rendered removal list is a defect, not a bonus.
 
 ## Risk Level
 
-MEDIUM — the diff is wide (the create path from dialog to git, and the whole removal report) but
-every step is behaviour-preserving and covered by suites that already exist. The risk is a silent
-render regression in the removal dialog, which is why the projection is verified against the
-current rendered output rather than only against the new types.
+MEDIUM — the diff is wide (the create path from dialog to git, and the whole removal report) and
+one step is deliberately behaviour-changing: it repairs a create that fails today. Everything else
+is covered by suites that already exist. The two risks are a silent render regression in the removal
+dialog — which is why the projection is verified against the current rendered output rather than
+against the new types — and the repair being landed without a test that would catch its return.
