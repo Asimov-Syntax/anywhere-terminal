@@ -40,7 +40,7 @@ fs.mkdirSync(REPO, { recursive: true });
 fs.mkdirSync(LINKED, { recursive: true });
 
 /** Every git invocation the whole assembly made, in order. */
-let argv: { args: string[]; cwd: string }[] = [];
+let argv: { args: string[]; cwd: string; timeoutMs?: number }[] = [];
 
 /** What this fake repository currently has registered. `worktree remove` drops from it. */
 let registered: string[] = [];
@@ -119,8 +119,8 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
   return {
     ...real,
     createGitCommandRunner: () => ({
-      run: async (args: readonly string[], cwd: string) => {
-        argv.push({ args: [...args], cwd });
+      run: async (args: readonly string[], cwd: string, runOptions?: { timeoutMs?: number }) => {
+        argv.push({ args: [...args], cwd, timeoutMs: runOptions?.timeoutMs });
         if (args[0] === "worktree" && args[1] === "remove") {
           // Real git drops the registration AND the directory; the host reads
           // both independently, so a fake that moved only one would leave every
@@ -557,6 +557,21 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
   it("renders the linked worktree the shipped discovery found", async () => {
     await assemble();
     expect(document.body.textContent).toContain("feature");
+  });
+
+  it("bounds the ignored walk at the process, not only in the module that computes the bound", async () => {
+    // Cycle-2 B4. The production wrapper was `(args, cwd) => runner.run(args, cwd)`
+    // — a two-parameter arrow that silently DROPPED the third, so every deadline
+    // the walk computed was discarded here while the module's own unit test,
+    // which asserts against its own injected fake, stayed green. This is the
+    // boundary the bound has to survive, so this is where it is asserted.
+    await assemble();
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    const listing = argv.find((c) => c.args[0] === "ls-files");
+    expect(listing, "the removal never asked for the ignored listing").toBeDefined();
+    expect(listing?.timeoutMs).toBeGreaterThan(0);
   });
 
   it("removes: menu item → webview message → host → coordinator → git argv", async () => {

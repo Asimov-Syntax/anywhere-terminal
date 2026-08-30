@@ -139,3 +139,15 @@
     3. Restore the single-budget wording in `asimov/changes/assess-a-removal-before-offering-it/design.md` D3, keeping only the factual correction about what `git status --ignored` names — that was a wrong fact, not a decision.
     4. Cover in `src/worktree/ignoredMaterial.test.ts` that the enumeration receives the REMAINING budget, and that time already spent walking is not handed back to it.
   - **Boundary**: no change to what D3 decided — this restores it
+
+- [x] 4_4 Let the walk's deadline actually reach git — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_3
+  - **Refs**: design.md D3
+  - **Acceptance**:
+    - Outcome: The deadline the walk computes reaches the git process in production, and a spent budget never starts one
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. Cycle-2 B4. `src/extension.ts` injects `run: (args, cwd) => runner.run(args, cwd)` — a two-parameter wrapper that silently DROPS the third. Every deadline 4_1 and 4_3 computed was discarded at the production boundary while the unit test, which asserts against its own injected fake, stayed green. Forward the options.
+    2. `execFile` treats a timeout of `0` as no timeout at all, so flooring a spent budget at zero disables the very bound it was meant to express. `measureIgnoredMaterial` in `src/worktree/ignoredMaterial.ts` returns `unproven` before it asks for entries at all, and `diskIgnoredDeps` refuses to start git on a spent budget.
+    3. Cover it where it broke: `src/extension.worktreeAssembly.test.ts` fakes the real git boundary, so its recorder gains the per-call options and asserts the ignored listing carries a deadline. A unit test against an injected fake could not have caught this and did not.
+  - **Boundary**: no change to D3 — this makes the approved bound reach the process it was always meant to bound

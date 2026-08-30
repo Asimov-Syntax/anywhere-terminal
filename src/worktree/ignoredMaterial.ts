@@ -93,9 +93,14 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
   let entries = 0;
   let bytes = 0;
   try {
-    // Never negative: a runner handed a negative timeout is, in most
-    // implementations, a runner with no timeout at all.
-    const remaining = Math.max(0, MAX_IGNORED_MS - (deps.now() - startedAt));
+    const remaining = MAX_IGNORED_MS - (deps.now() - startedAt);
+    // Not floored at zero and handed over anyway: `execFile` reads a timeout of
+    // `0` as NO timeout, so a spent budget would disable the very bound it is
+    // supposed to express. A walk with nothing left to spend does not start one
+    // (cycle-2 B4).
+    if (remaining <= 0) {
+      return { kind: "unproven", reason: "budget" };
+    }
     for await (const relPath of deps.ignoredEntries(remaining)) {
       // Checked before the entry is admitted, so the caps bound what is stat'd
       // and not merely what is reported.
@@ -177,6 +182,12 @@ export function diskIgnoredDeps(options: DiskIgnoredOptions): IgnoredMaterialDep
   const { worktreePath, run, stat, readFile, join } = options;
   return {
     ignoredEntries: async function* (budgetMs) {
+      // Guarded here too, because this is an exported seam: `execFile` treats a
+      // timeout of `0` as no timeout, so starting git on a spent budget is
+      // strictly worse than not starting it.
+      if (budgetMs <= 0) {
+        throw new Error("the ignored walk had no budget left to list with");
+      }
       // The listing is buffered whole before the first entry is admitted, so
       // the walk's own deadline has to reach git rather than leaving the
       // enumeration on the runner's much larger default (round-1 B4). What

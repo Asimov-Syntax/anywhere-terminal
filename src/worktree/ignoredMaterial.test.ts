@@ -413,9 +413,10 @@ describe("one budget across both phases", () => {
     expect(handed).toBe(MAX_IGNORED_MS - spent);
   });
 
-  it("asks for nothing rather than for a negative time when the budget is gone", async () => {
-    // A runner handed a negative timeout is, in most implementations, a runner
-    // with no timeout at all — the opposite of what a spent budget means.
+  it("does not start a listing at all when the budget is already gone", async () => {
+    // Cycle-2 B4: `execFile` reads a timeout of `0` as NO timeout, so handing a
+    // spent budget over — floored at zero or not — disables the very bound it
+    // was meant to express. The walk reports what it is: out of budget.
     let handed: number | undefined;
     let call = 0;
     const deps: IgnoredMaterialDeps = {
@@ -432,8 +433,7 @@ describe("one budget across both phases", () => {
       now: () => (call++ === 0 ? 0 : MAX_IGNORED_MS * 2),
     };
 
-    await measureIgnoredMaterial(deps);
-
-    expect(handed).toBe(0);
+    expect(await measureIgnoredMaterial(deps)).toEqual({ kind: "unproven", reason: "budget" });
+    expect(handed).toBeUndefined();
   });
 });

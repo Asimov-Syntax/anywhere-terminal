@@ -12,7 +12,7 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
+- [ ] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
@@ -60,3 +60,11 @@ B2 resolved in task 4_2, not left handed back. `PresenceProjector` publishes the
 Review round 2 (verification): SUPERSEDED, and the chair was right. Fixing round-1 B4 I gave git its own full `MAX_IGNORED_MS` and then wrote design.md and the module doc to say the walk's bound was one budget PER PHASE. That is a change to what D3 decided, not the enforcement of it that accepting B4 authorised — and it left three artifacts disagreeing, since D3's own opening and tasks.md 2_3 step 2 both still said ONE budget across both phases. Task 4_3 restores the approved contract rather than seeking approval for the new one: `measureIgnoredMaterial` owns the deadline and hands `ignoredEntries` the time still LEFT in it, so time spent listing is time the sizing no longer has and the total is bounded by `MAX_IGNORED_MS` rather than twice it. Verified by mutation — restoring the full cap in either place fails three cases.
 
 Cycle 1 closed as superseded. The next review is cycle 2's discovery round and the round cap restarts with it.
+
+Review cycle 2, round 3 (discovery): BLOCK — 2 findings, both accepted, both verified against the code rather than taken on report.
+
+B4 partly fixed in task 4_4. Two boundaries were plain wiring defects: `src/extension.ts` injected `run: (args, cwd) => runner.run(args, cwd)`, a two-parameter wrapper that silently dropped the third, so every deadline tasks 4_1 and 4_3 computed was discarded at the production boundary — while the module's unit test, asserting against its own injected fake, stayed green throughout. And `execFile` reads a timeout of `0` as NO timeout, so flooring a spent budget at zero disabled the bound it expressed. Both closed, the first mutation-checked at the assembly boundary. The remaining two boundaries — streaming and cancelling git at the entry cap, and a deadline around each `lstat` — need a `GitCommandRunner` that can stream (it returns a fully buffered result) and a cancellable stat. Those are new capabilities and a changed D3, which is exactly what round 2 established I may not land as a fix.
+
+B5 accepted and NOT fixed. `claimedSessionIds()` is the last COMPLETED window pass; an identity is claimed before the pane is attributed to a worktree, and `PaneFact` carries no session identity for the assessment to join on — so a live Claude rooted in the target can vanish from BOTH evidence sources when its claiming pane has no attributable cwd, or when pane evidence moves before the debounced projection catches up. **design.md D6 is wrong as written**: I claimed the degradation is toward refusing, which holds only before the first pass; a stale or unattributed claim degrades toward PROCEEDING, on the one action that cannot be undone.
+
+THRASH STOP. B4's invariant has now survived two fix attempts, which is a stop trigger on its own; B5 needs a new invariant owner. Both go to the user as options rather than to a third attempt. Tasks are un-ticked and the change does not proceed to approval, blueprint sync, or archive until that decision lands.

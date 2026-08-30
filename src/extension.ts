@@ -797,7 +797,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         measureIgnoredMaterial(
           diskIgnoredDeps({
             worktreePath,
-            run: (args, cwd) => worktreeTreeDeps.runner.run(args, cwd),
+            // `runOptions` FORWARDED. A two-parameter wrapper here silently
+            // dropped the third, so every deadline the walk computed was
+            // discarded at this boundary while the module's own unit test —
+            // which asserts against its own injected fake — stayed green
+            // (cycle-2 B4).
+            run: (args, cwd, runOptions) => worktreeTreeDeps.runner.run(args, cwd, runOptions),
             // `lstat`, never `stat`: a removal deletes an ignored SYMLINK, not
             // whatever it points at, and following it sizes bytes that live
             // outside the worktree entirely (round-1 S1).
