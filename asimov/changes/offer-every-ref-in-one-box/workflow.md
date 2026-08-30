@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done — cycle 1, rounds 1-3; round 3 returned WARN with 0 gating blockers
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
@@ -43,3 +43,5 @@ Task 2_3 added mid-build: 1_2 named `WorktreeHost` as the answerer and nothing n
 
 - 4_2 verify gate: check-types 0, 5859 tests pass, biome check back at the recorded baseline (3 pre-existing format errors in agentHooks/cursor files this change does not touch, plus the standing warning set).
 - W2's `closed`-on-dismissal half stays declared-defensive and has no test: after Escape the form's DOM is gone, so a write into it is unobservable — the exact reason round 2 was right that my previous test passed for the wrong reason. What IS observable is supersession, and the token guard is covered and mutation-proven. Writing another test around `closed` would repeat the mistake rather than fix it.
+
+- Round 3 closed the cycle at its cap with 0 blockers. Both WARNs accepted and fixed in 4_2 rather than carried: W4 (two cleanup regressions made vacuous by the token gate) and S3 (a CSS `calc` that read as a measurement without being one). Neither was rebutted, so no further re-review round is owed — the cycle ends at Re-Verify.

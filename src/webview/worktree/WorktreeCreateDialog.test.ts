@@ -1475,6 +1475,24 @@ describe("Escape closes the branch list before it dismisses the dialog (D7)", ()
   const esc = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   const listOpen = (host: HTMLElement) => host.querySelector<HTMLElement>("#wt-branch-list")?.hidden === false;
 
+  it("[4_2][r3 S3] bounds the popup by the room measured below the input", () => {
+    // CSS cannot compute this: `calc(100vh - 100%)` resolves `100%` against the
+    // FIELD's height, not its position, so the round-2 rule read as a
+    // measurement without being one. The element publishes the number instead.
+    const { host } = open({ repos: [createDefaults({ refs: { list: REFS, truncated: false } })] });
+    const input = host.querySelector<HTMLInputElement>("#wt-branch");
+    if (input === null) {
+      throw new Error("no branch input");
+    }
+    input.getBoundingClientRect = () => ({ bottom: 600 }) as DOMRect;
+    Object.defineProperty(window, "innerHeight", { value: 700, configurable: true });
+
+    type(input, "feat");
+
+    const listBox = host.querySelector<HTMLElement>("#wt-branch-list");
+    expect(listBox?.style.getPropertyValue("--wt-branch-room")).toBe("88px");
+  });
+
   it("[4_2][r2 B1] scrolls the row the keyboard moved to into view", () => {
     // The popup scrolls, and focus never leaves the input — only
     // `aria-activedescendant` moves. Without this, arrowing past the visible

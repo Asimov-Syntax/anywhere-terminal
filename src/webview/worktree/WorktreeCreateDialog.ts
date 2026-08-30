@@ -937,7 +937,25 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     renderList();
     listBox.hidden = false;
     nameInput.setAttribute("aria-expanded", "true");
+    measureRoom();
     shell.refreshFocusTrap();
+  }
+
+  /**
+   * Publish the room actually below the input, for the popup's ceiling.
+   *
+   * CSS alone cannot express this: a `calc` against `100%` resolves to the
+   * FIELD's height, not to where the field sits in the viewport, so the round-2
+   * attempt read as a measurement and was not one (round-3 S3). The element is
+   * the only thing that knows its own position, so it hands the number over.
+   */
+  function measureRoom(): void {
+    const room = nameInput.getBoundingClientRect?.();
+    if (room === undefined) {
+      return; // jsdom, or a detached node — the stylesheet's own floor applies
+    }
+    const below = Math.round(window.innerHeight - room.bottom - 12);
+    listBox.style.setProperty("--wt-branch-room", `${Math.max(below, 0)}px`);
   }
 
   function closeList(): void {

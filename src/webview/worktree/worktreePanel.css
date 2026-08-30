@@ -1054,10 +1054,13 @@
   right: 0;
   margin: 2px 0 0;
   padding: 2px;
-  /* Bounded by the space actually below the input, so a short editor window
-     clips less of the list than a fixed height does (round-2 S3). The floor
-     keeps a couple of rows visible when there is almost none. */
-  max-height: max(72px, min(220px, calc(100vh - 100% - 48px)));
+  /* Bounded by the room the form measured below the input, so a short editor
+     window clips less of the list than a fixed height does (round-3 S3). CSS
+     cannot compute this itself — `100%` here is the FIELD's height, not its
+     position — so `--wt-branch-room` is set by the dialog. The floor keeps a
+     couple of rows visible when there is almost none, and the fallback is the
+     old flat ceiling for any path that never measured. */
+  max-height: max(72px, min(220px, var(--wt-branch-room, 220px)));
   overflow-y: auto;
   list-style: none;
   border: 1px solid var(--vscode-widget-border, var(--vscode-contrastBorder, transparent));

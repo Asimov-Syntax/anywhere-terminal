@@ -1365,7 +1365,13 @@ describe("the create a toolbar with no repository opens", () => {
     // Same rule as r2 B6 for the offer: a list seeded from the last form
     // describes a repository state that may have moved, and would keep showing
     // if this form's own enumeration failed.
+    //
+    // The first open is what mints the token this answer carries. Delivering
+    // one to a controller that never opened is dropped on the token, and the
+    // map is then empty for a reason the assertion did not name — which is how
+    // this stopped being able to fail (round-3 W4).
     const h = ready(twoRepoResponse());
+    h.controller.openCreate();
     h.controller.handleRefs({
       type: "worktreeRefs",
       repoId: REPO_A,
@@ -1373,6 +1379,8 @@ describe("the create a toolbar with no repository opens", () => {
       refs: [{ name: "main" }],
       truncated: false,
     });
+    expect(refsHeld(h).get(REPO_A), "nothing was stored, so clearing it proves nothing").toBeDefined();
+
     h.controller.openCreate();
 
     expect(refsHeld(h).size).toBe(0);
@@ -1380,6 +1388,7 @@ describe("the create a toolbar with no repository opens", () => {
 
   it("[1_2] forgets the list for a repository that has left the workspace", () => {
     const h = ready(twoRepoResponse());
+    h.controller.openCreate();
     h.controller.handleRefs({
       type: "worktreeRefs",
       repoId: REPO_B,
@@ -1387,6 +1396,8 @@ describe("the create a toolbar with no repository opens", () => {
       refs: [{ name: "main" }],
       truncated: false,
     });
+    expect(refsHeld(h).has(REPO_B), "repo B's list was never stored, so pruning it proves nothing").toBe(true);
+
     h.controller.handleTreeResponse({
       type: "worktreeTreeResponse",
       tree: singleRepoTree(),
