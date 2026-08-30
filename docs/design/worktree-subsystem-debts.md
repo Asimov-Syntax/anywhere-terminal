@@ -22,7 +22,7 @@ defers to that doc's contract.
 
 ## 2. The debts
 
-### 2.1 Containment is lexical, and a symlink walks through it — SHIPPED (WT-011.1)
+### 2.1 Containment is lexical, and a symlink walks through it — SHIPPED (WT-011.1, WT-011.6)
 
 Four vault path resolvers decide "is this candidate inside the root I control" with
 `path.relative` plus a `..` / absolute test. That is a **string** comparison: a symlink inside the
@@ -53,7 +53,31 @@ parent that did resolve inside the root is tolerated; every other resolution fai
 they shipped as WT-011.1. The comparisons that decide which worktree or repository a path belongs
 to — raw workspace-folder and Git API paths, pane cwds, webview paths — carry the same lexical
 error with a different consequence: misattribution, not an escaped read. They run on per-push paths
-and have their own acceptance story, so they are planned separately as WT-011.6.
+and have their own acceptance story, so they shipped separately as WT-011.6.
+
+**What WT-011.6 shipped: the bounded side resolves, the unbounded side does not.** A read guard
+resolves its candidate every time because the answer authorizes something. Attribution decides which
+heading a row appears under, so it may cache — and must, since these comparisons run per presence
+push and per git refresh. The rule that fell out is about *who produced the path*: a path that comes
+from a bounded set the window owns — the panes it holds, the folders it has open, the repositories
+the Git API lists, the root a tree is mounted on — is resolved ONCE where that set is produced, and
+a path arriving per event is not resolved at all. `normalizeWorktreePath` already realpathed the
+worktree ids, so only the candidate side was ever unresolved.
+
+That cache is a shared `ResolvedPathMemo`, and sharing it is what made the lifetime the hard part
+rather than the resolution. Four review rounds were spent there and all of them on the same
+question: **when does a path stop being needed?** An entry records its claimants; a release drops
+one claim and the entry goes when the set empties. A pane closing is not a structural filesystem
+event — the directory did not move — it says one consumer stopped asking, which is why "invalidate"
+and "release" had to become two different verbs. A consumer that reads its answers immediately
+rather than standing on them (a removal assessment) takes its own claim and drops it in a `finally`,
+because two passes through one claim release each other's paths mid-flight.
+
+The webview half needed its own care: the resolved root travels as a SEPARATE field from the mounted
+one, because `workspaceRoot` mounts the tree and is shown to the user — realpathing it in place would
+display `/private/var/...` where the user typed `/var/...`. And the correction that carries it is
+gated on a *delivered* init rather than on the webview announcing itself, since a resolution settling
+inside the init retry window would otherwise reach a webview with no controller and be dropped.
 
 **What shipped, and the two things review added to it.** `isResolvedPathInside` lives beside
 `isPathInside` in `src/utils/pathBoundary.ts`; the two share their boundary rules through a core

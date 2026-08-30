@@ -15,13 +15,13 @@
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [x] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -56,3 +56,4 @@ Build notes:
 - Thrash-stop resolution: the user was asked to choose between a designed fix, risk acceptance, and one bounded extension round, and did not answer within the question's window. Chose the bounded extension round on the reading that B11 is a CONFORMANCE fix, not a design change: D7 already says the correction lands "after mount", and `_ready` — the webview said hello — is not mount. No D was changed and no owner minted, so the remediation boundary was not crossed. Risk acceptance was never available to me: it needs an owner and an expiry only the user can grant.
 - Round-6 build: `postWorkspaceRoot` is gated on a delivered init and reset on attach and detach; both providers tell the host at all six init sites. Mutation testing: 3 mutations, all killed. The wiring harness needed a real pty mock — its `init` had been throwing `pty.spawn is not a function`, so those four tests had been passing on the post-resolution correction alone and never exercised init at all. That is worth stating plainly: the harness was weaker than it looked when it was written in round 2.
 - Review closed with 0 gating blockers: B11 fixed, cycle 2 not reopened per the chair's instruction not to run a round 6.
+- Blueprint sync: § 2.1 records the attribution slice as shipped, DESIGN.md gains D37 (the D31 counterpart — what the answer authorizes decides whether a resolved path may be cached) and a § 12 attribution row; WT-011.6 Status → done.
