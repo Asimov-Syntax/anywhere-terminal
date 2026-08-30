@@ -79,7 +79,7 @@ flowchart LR
     P8 --> P10[P10<br>Worktree-first workbench]
     P9 --> P10
     P10 --> P11[P11<br>Recorded debts]
-    P11 --> P12[P12<br>Provisioned create]
+    P10 --> P12[P12<br>Provisioned create]
     P12 --> P13[P13<br>Removal as a report]
 ```
 
@@ -502,7 +502,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | Field | Value |
 |-------|-------|
 | **Goal** | Materialize the provision model's files after a successful create — copy, then link — reporting each entry, and never failing or rolling back the create because one failed |
-| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 5, § 5.1, § 5.2, § 7 |
+| **Design Ref** | [worktree-apply.md](design/worktree-apply.md) § 1, § 2.1, § 2.2, § 3 |
 | **Depends On** | WT-012.1 |
 | **Stage** | 9 |
 | **Size** | L |
@@ -558,7 +558,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | Field | Value |
 |-------|-------|
 | **Goal** | Allocate a free port per configured name under a cross-process lock, excluding values sibling worktrees already claim, and write them into the new worktree |
-| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 5.3 |
+| **Design Ref** | [worktree-apply.md](design/worktree-apply.md) § 2.3 |
 | **Depends On** | WT-012.2 |
 | **Stage** | 9 |
 | **Size** | M |
@@ -628,7 +628,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | Field | Value |
 |-------|-------|
 | **Goal** | Execute the selected setup steps in the new worktree against the host-held offer, reporting each, and surface a failure on the worktree row with a retry |
-| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.0, § 5.4, § 5.5, § 5.6; [worktree-create.md](design/worktree-create.md) § 6 |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.0; [worktree-apply.md](design/worktree-apply.md) § 2.4, § 2.5, § 2.6; [worktree-create.md](design/worktree-create.md) § 6 |
 | **Depends On** | WT-012.0, WT-012.3, WT-012.6, WT-012.13 |
 | **Stage** | 9 |
 | **Size** | L |
@@ -656,7 +656,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | Field | Value |
 |-------|-------|
 | **Goal** | Establish whether an extension can execute a `tasks.json` task for a directory that is not a workspace folder, and record the answer as a design decision |
-| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.0, § 5.4 |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.0; [worktree-apply.md](design/worktree-apply.md) § 2.4 |
 | **Depends On** | None |
 | **Stage** | 9 |
 | **Size** | S |

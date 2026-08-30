@@ -93,7 +93,7 @@ a slow disk must not make a worktree unremovable.
 
 Material this extension itself provisioned is named as such, because "the 4 files this worktree was
 set up with" is a different sentence from "1.2 GB of ignored content". That naming comes from the
-provisioning manifest ([worktree-provisioning.md](worktree-provisioning.md) § 5.6), which is what
+provisioning manifest ([worktree-apply.md](worktree-apply.md) § 2.6), which is what
 makes the claim survive a host restart. Where the manifest is missing or unreadable, the report
 falls back to the undifferentiated count and says so — it never guesses which files were ours.
 

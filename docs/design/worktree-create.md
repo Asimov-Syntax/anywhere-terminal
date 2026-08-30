@@ -400,7 +400,7 @@ yet, so there is nothing to re-resolve it from. Three consequences:
   than papered over.
 
 **After git succeeds**, provisioning runs
-([worktree-provisioning.md](worktree-provisioning.md) § 5) and `openAfter` is honoured:
+([worktree-apply.md](worktree-apply.md) § 1) and `openAfter` is honoured:
 `terminal` opens a terminal tab in the new path; `agent` hands off to
 [worktree-actions.md](worktree-actions.md) § 4; `newWindow` / `addToWorkspace` open the folder;
 `none` refreshes.
