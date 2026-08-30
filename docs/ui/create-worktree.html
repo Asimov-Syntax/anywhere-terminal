@@ -108,8 +108,8 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
     <div class="cw-box">
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-setup" /><label class="cw-brow-top" for="c-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-copy" /><label class="cw-brow-top" for="c-copy"><b>Copy 2 files</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json</span></div></div>
-      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-link" /><label class="cw-brow-top" for="c-link"><b>Link 1 file</b><span class="cw-lbl-sp"></span><span class="cw-src">writes to main</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
-      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-port" /><label class="cw-brow-top" for="c-port"><b>Allocate 2 ports</b><span class="cw-lbl-sp"></span><span class="cw-src">ASIMOV_PORT_APP, _DB</span></label></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-link" /><label class="cw-brow-top" for="c-link"><b>Link 1 file</b><span class="cw-warnchip">writes to main</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-port" /><label class="cw-brow-top" for="c-port"><b>Allocate 2 ports</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc cw-num">ASIMOV_PORT_APP=5183 · ASIMOV_PORT_DB=5433</span></div></div>
       <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
     </div>
   </div>
@@ -282,7 +282,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
     <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">2 copied · 1 linked</span></div>
     <div class="cw-box">
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-setup2" /><label class="cw-brow-top" for="c-setup2"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
-      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-files2" /><label class="cw-brow-top" for="c-files2"><b>Copy 2 files, link 1</b><span class="cw-lbl-sp"></span><span class="cw-src">1 writes to main</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json, .env.local</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-files2" /><label class="cw-brow-top" for="c-files2"><b>Copy 2 files, link 1</b><span class="cw-warnchip">1 writes to main</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json, .env.local</span></div></div>
       <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
     </div>
   </div>
@@ -372,7 +372,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <div class="mockup-label">8b · <b>Bring over — degraded honestly</b> · Windows cannot symlink without elevation, so the row says <em>copied</em> instead of promising a link</div>
 <div class="strip">
   <div class="cw-box">
-    <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-win" /><label class="cw-brow-top" for="c-win"><b>Link 1 file</b><span class="cw-lbl-sp"></span><span class="cw-src">copied on Windows</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
+    <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-win" /><label class="cw-brow-top" for="c-win"><b>Link 1 file</b><span class="cw-warnchip">copied on Windows</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
     <div class="cw-hint" style="padding-left:21px"><span class="cw-hint-txt">Symlinks need Developer Mode; this file is copied instead.</span></div>
   </div>
 </div>
@@ -392,6 +392,18 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
     <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">View output</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Retry setup</button></div>
   </div>
   <div class="strip-cap">Rendered in the panel, on the worktree it belongs to — not in a toast that outlives its context</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">7b · <b>Allocated port differs from the preview</b> · ports are re-probed just before <code style="font-family:inherit">.env.worktree</code> is written · <em>reported, never silently swapped</em></div>
+<div class="strip">
+  <div class="cw-notif">
+    <svg><use href="#i-warn"></use></svg>
+    <div><b>Port changed</b> in feat-search-2 — <span class="cw-code cw-num">ASIMOV_PORT_APP=5184</span>, not the <span class="cw-num">5183</span> shown while creating. 5183 was claimed by another worktree in between.</div>
+    <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Open .env.worktree</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Copy value</button></div>
+  </div>
+  <div class="strip-cap">The dialog's number is a preview; the written file is authoritative. Only the changed variable is named — unchanged allocations stay silent.</div>
 </div>
 </div>
 
@@ -454,6 +466,248 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 </div>
 </div>
 
+</div>
+
+<!-- ══════════ COLUMN 5 — where the provisioning config comes from ══════════ -->
+<div class="mockup-col">
+
+<div>
+<div class="mockup-label">16 · <b>Provenance — all three cases</b> · <em>the badge slot answers "which file said so"; a warning chip answers "what will this do"</em></div>
+<div class="strip">
+  <div class="strip-cap">Single source — pass 1's shape, unchanged. The common case does not get worse.</div>
+  <div class="cw-box">
+    <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="p-a" /><label class="cw-brow-top" for="p-a"><b>Copy 2 files</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json</span></div></div>
+  </div>
+  <div class="strip-cap">Mixed source, collapsed — the badge states the count and becomes the disclosure</div>
+  <div class="cw-box">
+    <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="p-b" /><label class="cw-brow-top" for="p-b"><b>Copy 3 files</b><span class="cw-lbl-sp"></span><button class="cw-srcbtn" aria-expanded="false"><svg><use href="#i-chev"></use></svg>2 sources</button></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json, .env.local</span></div></div>
+  </div>
+  <div class="strip-cap">Mixed source, expanded — per-path provenance, and the excluded path in the same list</div>
+  <div class="cw-box">
+    <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="p-c" /><label class="cw-brow-top" for="p-c"><b>Copy 3 files</b><span class="cw-lbl-sp"></span><button class="cw-srcbtn is-open" aria-expanded="true"><svg><use href="#i-chev"></use></svg>2 sources</button></label>
+      <div class="cw-plist">
+        <div class="cw-prow"><span class="cw-ppath">.env</span><span class="cw-lbl-sp"></span><span class="cw-psrc">asimov/worktree.yaml</span></div>
+        <div class="cw-prow"><span class="cw-ppath">.claude/settings.local.json</span><span class="cw-lbl-sp"></span><span class="cw-psrc">asimov/worktree.yaml</span></div>
+        <div class="cw-prow"><span class="cw-ppath">.env.local</span><span class="cw-lbl-sp"></span><span class="cw-psrc">.vscode/worktree.json</span></div>
+        <div class="cw-prow cw-prow--excl"><span class="cw-ppath">.code-review-graph</span><span class="cw-lbl-sp"></span><span class="cw-psrc">excluded here</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">17 · <b>Merged configuration</b> · <code style="font-family:inherit">.vscode/worktree.json</code> extends <code style="font-family:inherit">asimov/worktree.yaml</code> · summary names both sources · one path excluded</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/<b>feat-search-2</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">3 copied · 1 linked · 2 sources</span></div>
+    <div class="cw-box">
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="m-setup" /><label class="cw-brow-top" for="m-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="m-copy" /><label class="cw-brow-top" for="m-copy"><b>Copy 3 files</b><span class="cw-lbl-sp"></span><button class="cw-srcbtn is-open" aria-expanded="true"><svg><use href="#i-chev"></use></svg>2 sources</button></label>
+        <div class="cw-plist">
+          <div class="cw-prow"><span class="cw-ppath">.env</span><span class="cw-lbl-sp"></span><span class="cw-psrc">asimov/worktree.yaml</span></div>
+          <div class="cw-prow"><span class="cw-ppath">.claude/settings.local.json</span><span class="cw-lbl-sp"></span><span class="cw-psrc">asimov/worktree.yaml</span></div>
+          <div class="cw-prow"><span class="cw-ppath">.env.local</span><span class="cw-lbl-sp"></span><span class="cw-psrc">.vscode/worktree.json</span></div>
+          <div class="cw-prow cw-prow--excl"><span class="cw-ppath">.code-review-graph</span><span class="cw-lbl-sp"></span><span class="cw-psrc">excluded here</span></div>
+        </div>
+      </div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="m-link" /><label class="cw-brow-top" for="m-link"><b>Link 1 directory</b><span class="cw-warnchip">writes to main</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.cache/turbo</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="m-port" /><label class="cw-brow-top" for="m-port"><b>Allocate 2 ports</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc cw-num">ASIMOV_PORT_APP=5183 · ASIMOV_PORT_DB=5433</span></div></div>
+      <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
+    </div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">18 · <b>Several providers, one chosen</b> · first hit wins, and says so · one quiet row inside the box, no banner</div>
+<div class="strip">
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">2 copied · 1 linked</span></div>
+    <div class="cw-box">
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="s-setup" /><label class="cw-brow-top" for="s-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="s-copy" /><label class="cw-brow-top" for="s-copy"><b>Copy 2 files</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="s-link" /><label class="cw-brow-top" for="s-link"><b>Link 1 file</b><span class="cw-warnchip">writes to main</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
+      <div class="cw-mquiet" style="padding:0"><svg style="width:12px;height:12px;flex:0 0 auto"><use href="#i-repo"></use></svg><span class="cw-hint-txt">orca.yaml is also present</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Use it instead</button></div>
+    </div>
+  </div>
+  <div class="strip-cap">Switching rewrites <code style="font-family:ui-monospace,Menlo,monospace">extends</code> in .vscode/worktree.json — it never edits orca.yaml</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">19 · <b>extends target missing</b> · the native file was read fine — the inherited half is gone · <em>inline keys still apply, and are still listed</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/<b>feat-search-2</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">1 copied · inherited half missing</span></div>
+    <div class="cw-notif">
+      <svg><use href="#i-warn"></use></svg>
+      <div><b>.vscode/worktree.json</b> extends <span class="cw-code">asimov/worktree.yaml</span>, which does not exist. Its own keys below still apply; everything inherited is gone.</div>
+      <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Open file</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Retry</button></div>
+    </div>
+    <div class="cw-box">
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="x-setup" /><label class="cw-brow-top" for="x-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="x-copy" /><label class="cw-brow-top" for="x-copy"><b>Copy 1 file</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
+      <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
+    </div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">After creating</div>
+    <div class="cw-seg" role="radiogroup" aria-label="After creating"><button role="radio" aria-checked="true">Nothing</button><button role="radio" aria-checked="false">Open folder</button><button role="radio" aria-checked="false">Start an agent</button></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">19b · <b>The file itself could not be read</b> · malformed YAML · nothing survives, so the section says so · Create stays enabled</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/<b>feat-search-2</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">Could not be read</span></div>
+    <div class="cw-notif">
+      <svg><use href="#i-warn"></use></svg>
+      <div><b>asimov/worktree.yaml</b> could not be parsed — unexpected key <span class="cw-code">copyFiles</span> at line 12. Nothing will be copied, linked or run.</div>
+      <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Open file</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Retry</button></div>
+    </div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">After creating</div>
+    <div class="cw-seg" role="radiogroup" aria-label="After creating"><button role="radio" aria-checked="true">Nothing</button><button role="radio" aria-checked="false">Open folder</button><button role="radio" aria-checked="false">Start an agent</button></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">19c · <b>Malformed vs. empty</b> · <em>the two states side by side, so the difference is legible</em></div>
+<div class="strip">
+  <div class="strip-cap">Malformed — names the file, the line, and what was lost</div>
+  <div class="cw-notif"><svg><use href="#i-warn"></use></svg><div><b>asimov/worktree.yaml</b> could not be parsed — unexpected key <span class="cw-code">copyFiles</span> at line 12.</div><div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Open file</button></div></div>
+  <div class="strip-cap">Empty — no provider file at all; an invitation, not a failure</div>
+  <div class="cw-quiet"><svg style="width:12px;height:12px;flex:0 0 auto;color:var(--vscode-editorWarning-foreground)"><use href="#i-warn"></use></svg><span class="cw-quiet-txt">This worktree will have no <code>.env</code> or <code>node_modules</code>.</span><button class="cw-btn" style="padding:3px 9px;font-size:11px">Set up…</button></div>
+</div>
+</div>
+
+</div>
+
+<!-- ══════════ COLUMN 6 — four first-class selections, resolved before submit ══════════ -->
+<div class="mockup-col">
+
+<div>
+<div class="mockup-label">20 · <b>Reattach</b> · registration pruned, directory survived · field-local amber, same register as collision · <em>Base refused, and says why</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/checkout-v2" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-hint cw-hint--warn cw-hint--wrap"><svg><use href="#i-link"></use></svg><span class="cw-hint-txt"><span class="cw-mut">Directory exists, not registered — will reattach</span> <span class="cw-code">feat-checkout-v2</span></span></div>
+    <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Create separate instead</button></div>
+  </div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied when reattaching</span></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge cw-badge--exist">Existing</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-checkout-v2">…/anywhere-terminal/<b>feat-checkout-v2</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">Skipped</span></div>
+    <div class="cw-quiet"><svg style="width:12px;height:12px;flex:0 0 auto"><use href="#i-check"></use></svg><span class="cw-quiet-txt">The directory keeps the files it already has — nothing is copied and setup does not re-run.</span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">After reattaching</div>
+    <div class="cw-seg" role="radiogroup" aria-label="After reattaching"><button role="radio" aria-checked="false">Nothing</button><button role="radio" aria-checked="true">Open folder</button><button role="radio" aria-checked="false">Start an agent</button></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Reattach worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">21 · <b>Recover</b> · crash debris at the destination, no <code style="font-family:inherit">.git</code> pointer · <em>deletes something, so a bare Create will not do it</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-hint cw-hint--warn cw-hint--wrap"><svg><use href="#i-warn"></use></svg><span class="cw-hint-txt"><span class="cw-mut">A folder is already at this destination, and git does not know it</span></span></div>
+  </div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied while recovering</span></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge cw-badge--exist">Occupied</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search">…/anywhere-terminal/<b>feat-search</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Will be removed first</div>
+    <div class="cw-box">
+      <div class="cw-prow"><span class="cw-ppath">…/.claude/worktrees/feat-search/</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Reveal</button></div>
+      <div class="cw-prow"><span class="cw-hint-txt">14 entries · 2.3 MB · no git metadata · last written 3 days ago</span></div>
+      <div class="cw-prow cw-prow--prose"><span class="cw-hint-txt">Debris from an interrupted create. Nothing here is tracked by git, so nothing can be recovered from it.</span></div>
+    </div>
+    <label class="cw-cbl"><input class="cw-cb" type="checkbox" /><span>Delete that folder, then create the worktree</span></label>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--danger" disabled>Delete and create</button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">22 · <b>Base is contractual</b> · <em>four selections, one line each — a base that will not be applied is never left looking live</em></div>
+<div class="strip">
+  <div class="strip-cap">Fresh — a new branch is cut from Base, so Base is editable</div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="strip-cap">Reuse — the branch already exists at its own commit</div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied to an existing branch</span></div>
+  <div class="strip-cap">Reattach — the directory's checkout is whatever it was</div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied when reattaching</span></div>
+  <div class="strip-cap">Recover — debris removed, then the existing branch is checked out</div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied while recovering</span></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">23 · <b>The four selections in the omnibox</b> · <em>resolved in the list, before submit — never a dialog that appears after a failure</em></div>
+<div class="strip">
+  <div class="cw-menu" role="listbox">
+    <div class="cw-mgrp">Local</div>
+    <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">feat/vault-privacy</span><span class="cw-mbadge">Reuse branch</span></div>
+    <div class="cw-mrow is-disabled" role="option" aria-disabled="true" title="Already checked out in feat-search — git allows one worktree per branch"><span class="cw-mglyph"><svg><use href="#i-lock"></use></svg></span><span class="cw-mname">feat/search-ranking</span><span class="cw-mbadge">In feat-search</span></div>
+    <div class="cw-mrow is-active" role="option" aria-selected="true"><span class="cw-mglyph"><svg><use href="#i-link"></use></svg></span><span class="cw-mname">feat/checkout-v2</span><span class="cw-mbadge">Reattach</span><span class="cw-msub">Directory exists, registration was pruned</span></div>
+    <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-warn"></use></svg></span><span class="cw-mname">feat/search</span><span class="cw-mbadge">Recover</span><span class="cw-msub">Folder at destination, no git metadata · 14 entries</span></div>
+    <div class="cw-msep"></div>
+    <div class="cw-mrow cw-mrow--new" role="option"><span class="cw-mglyph"><svg><use href="#i-plus"></use></svg></span><span class="cw-mname">Create new branch <b>"feat/checkout-v3"</b> from main</span></div>
+  </div>
+  <div class="strip-cap">Reattach and Recover are states of a branch, so they are badges in the same list — not extra sources and not a fifth tab</div>
+</div>
+</div>
+
 <div class="notes">
 <h4>What changed, and why</h4>
 <ul>
@@ -464,13 +718,36 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <li><b>Setup failure is not create failure.</b> Screen 7 lives on the created worktree; no rollback, no red.</li>
 <li><b>Removal is a report.</b> Passed checks are shown so the warnings are legible; unproven checks render as <code>?</code> and block; the typed confirmation appears only when something failed.</li>
 </ul>
+<h4>Pass 2 — provenance</h4>
+<ul>
+<li><b>The badge slot means one thing again.</b> Every row's badge names the file that said so. <em>writes to main</em> and <em>copied on Windows</em> moved to an amber warning chip beside the row name, because they are consequences of the mode, not statements of origin. A linked row carries both.</li>
+<li><b>Mixed provenance is click-to-expand.</b> Collapsed, the badge counts sources (<em>2 sources</em>); expanded, each path names its own provider. Mixed is rare, so it costs the common case nothing — screen 16 draws single, collapsed and expanded together.</li>
+<li><b>Excluded paths live in the expanded list</b>, struck through and labelled <em>excluded here</em> — visible without opening a file, and legible as deliberate rather than as a failure. They are not counted in the row's total.</li>
+<li><b>Ports name their numbers.</b> The source file took back the badge slot; <code>ASIMOV_PORT_APP=5183</code> now sits in the meta line, which is the only way the row pays off the port-collision finding.</li>
+<li><b>Unreadable is its own state</b> (19). The section names the file and what was lost, offers <em>Open file</em>, and leaves Create enabled. 19b puts malformed and empty side by side.</li>
+<li><b>A losing provider gets one quiet row</b> (18), inside the box, in the manner of the PR sign-in row. Switching rewrites <code>extends</code> in <code>.vscode/worktree.json</code> and never touches the other framework's file.</li>
+</ul>
+<h4>Pass 3 — four selections, and two corrections</h4>
+<ul>
+<li><b>A missing <code>extends</code> target is not an unreadable file.</b> 19 now says the native file extends something that does not exist, and still lists what its own keys contribute, each badged <code>.vscode/worktree.json</code>. 19b is the genuinely unparseable file, where “nothing will be copied, linked or run” is true. 19c keeps malformed and empty side by side.</li>
+<li><b>Reattach and Recover are badges in the omnibox</b> (23), resolved in the list before submit. Reattach names the directory it will adopt; Recover states entry count, size, age and that nothing is tracked, then requires its own checkbox — <em>Delete and create</em> is red and disabled until it is ticked.</li>
+<li><b>Base is refused, not ignored</b> (22). Reuse, reattach and recover each disable the Base line with the reason on the same row, so a ref that will not be applied never sits in the form looking as though it will.</li>
+<li><b>The port preview is not a promise</b> (7b). Ports are re-probed before <code>.env.worktree</code> is written, so a changed allocation is reported on the worktree row, naming only the variable that moved.</li>
+</ul>
 <h4>Decisions to confirm</h4>
 <ul>
 <li><b>Destination label and value are on two lines</b>, not one as in the brief's sketch. At 480px the label, <em>Automatic</em> badge, three icon buttons and a path tail cannot share a row without truncating the path to uselessness. Label row carries badge + actions; the path owns its own line.</li>
 <li><b>Default destination stays <code>…/.claude/worktrees/&lt;name&gt;</code></b> (what your build does now), shown as <code>…/anywhere-terminal/feat-search-2</code>. Say the word if the sibling <code>&lt;repo&gt;-&lt;branch&gt;</code> default should come back.</li>
 <li><b>Bring over rows are two lines</b> (name + source badge, then the command/paths chip). The brief's three-column row does not survive 480px.</li>
+<li><b>Merged sections summarize as <em>3 copied · 1 linked · 2 sources</em></b> — counts first, provenance last. The excluded path stays out of that count and appears only in the expanded list \u2014 settled in pass 3.</li>
+<li><b>Provenance labels are file paths, not framework names</b> (<code>asimov/worktree.yaml</code>, not “asimov”). Longer, but it is the thing you open. Screen 17 shows <code>.vscode/worktree.json</code> owning Run setup because the native file overrode the inherited command.</li>
+<li><b>Expansion state is per row and not remembered.</b> Every dialog opens collapsed. If mixed provenance turns out to be common in your repos, always-expanded-when-mixed is the cheaper change.</li>
+<li><b>Reattach offers <em>Create separate</em> as the escape hatch</b>, in the collision line's <em>Use name</em> position — it falls back to a fresh worktree at a deduplicated path. The alternative is forcing a Cancel and a rename.</li>
+<li><b>Recover's button is red and reads <em>Delete and create</em></b> rather than a neutral Create, because the destructive half happens first. Bring over is not drawn on that screen — recovery makes a fresh worktree, so provisioning runs normally; say the word if you want it shown for reassurance.</li>
+<li><b>Reattach skips Bring over entirely.</b> The surviving directory keeps its files, and re-running setup over a folder someone was working in is the riskier default. Alternative: offer setup as an opt-in checkbox.</li>
+<li><b>Occupied vs. Existing</b> are two destination badges (amber, same treatment). If one word should cover both, <em>Existing</em> is the one to keep.</li>
 <li><b>Base is hidden while Advanced is open</b> — it would otherwise appear twice, since Base ref lives there too. Alternative: drop Base ref from Advanced entirely and keep only the compact line.</li>
-<li><b>Not drawn:</b> the "Create more" batch flow, issue-driven creation, remote hosts — out of scope per the brief.</li>
+<li><b>Not drawn:</b> the "Create more" batch flow, issue-driven creation, remote hosts, and the <code>[Configure…]</code> editor itself — out of scope per the brief. Also not drawn: <code>.vscode/tasks.json</code> as the winning provider, which behaves like any other single source.</li>
 </ul>
 </div>
 
