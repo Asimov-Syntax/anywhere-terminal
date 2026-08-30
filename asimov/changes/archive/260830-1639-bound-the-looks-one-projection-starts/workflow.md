@@ -21,17 +21,13 @@
 ## Archive
 
 - [x] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
-
-Blueprint: none
-Lane: full
-Planned at: 317c54e7
 
 Blueprint: docs/PLAN.md task WT-011.7
 Lane: full — the § 2.3 debt's second half; a new argument on an internal service seam and a changed enrichment shape
