@@ -31,6 +31,26 @@ than silently reading as a WAL-free store. This is the repository's existing rul
 An unusable generation is never a reason to serve a stale answer: the read produces a fresh snapshot
 and retains nothing.
 
+**The premise is sourced, not assumed** (`docs/research/20260830-opencode-orca-sqlite-idle-cadence.md`).
+Reuse only pays if the files sit still between reads, so OpenCode's own writer was read: WAL,
+`synchronous=NORMAL`, one long-lived connection, and no `wal_autocheckpoint` setting — with no idle
+timer that writes or checkpoints. Its only checkpoint is one PASSIVE call at startup, and SQLite's
+automatic checkpoints are commit-driven, not clock-driven. An idle store therefore does not churn
+its own generation. Measured against the live 1.5 GB `opencode.db`: 2.4–3.0 s per read without
+retention, 1 ms with.
+
+The same research shows Orca solving the neighbouring problem with a WEAKER key — its OpenCode usage
+cache compares `(mtimeMs,size)` of the `.db` alone. A commit still resident in the WAL leaves the
+`.db` untouched, so that key reuses across a completed write. That is the false-`absent` failure this
+chain exists to close, which is why `-wal` is in the key and `-shm` is not.
+
+**Rejected**: `PRAGMA data_version` as the generation. It is strictly better than mtime on
+granularity — it moves only when ANOTHER connection commits — but it is comparable only between two
+reads on the SAME connection. Using it would mean holding a long-lived read-only handle open on
+every agent's store for the life of the host, which is a new resource the pool would own on the live
+store, against a risk (two writes inside one mtime tick at an identical size) the list cache already
+accepts.
+
 **Rejected**: a short TTL (1–2 s) instead of a generation. It would answer `absent` for a session written
 during the window, which is the precise failure the whole parent chain exists to remove, and it would
 buy nothing a stamp does not — the stamp is two `stat` calls.
@@ -137,7 +157,7 @@ process-wide instance.
 |---|---|
 | Who owns writes to the live store | The agent process, as before. This change adds no write and takes no lock on it |
 | Who owns writes to retained snapshots | The pool alone. Each snapshot is written once by the engine into a `mkdtemp` directory, then read-only in effect |
-| What serializes concurrent access | D4's in-flight map serializes production per store, and joins it only on a matching generation. Borrow/release refcounts serialize deletion against readers, including under capacity eviction |
+| What serializes concurrent access | D4's in-flight map serializes production per store, and joins it only on a matching generation. Borrow/release refcounts serialize deletion against readers, and the producing borrow holds its lease from publication |
 | Crash mid-write | A snapshot whose production threw is never retained (D2/D4), and its temp dir is removed by the same `finally` that removes an unpooled one |
 | Failed or malformed read: open or closed | Closed, unchanged from the parent change: a snapshot that cannot be produced is `db-unreachable`/`query-error`, never `ok` with zero rows. A stamp that cannot be read (the `stat` fails) is treated as "changed", so it forces a fresh snapshot rather than reusing a possibly-stale one |
 | Two racing hosts | Two extension hosts keep independent pools in independent temp dirs and never share a file. Neither can observe the other's snapshot |
@@ -149,11 +169,12 @@ process-wide instance.
 |---|---|
 | A reused snapshot serves a stale answer, and `absent` deletes a live row | D1 gates on proven sameness, and the acceptance is behavioural: a session written between two reads must never be answered from the earlier snapshot |
 | The double stamp still admits a write that lands inside one mtime tick | Inherited and stated (D1), not widened. Called out here so review can weigh it rather than discover it |
-| Retained snapshots leak disk across a long session | D3's capacity bound (count + bytes, LRU) plus its release paths, each with its own test |
-| A burst of per-chat stores fills the temp volume inside one idle window | D3's byte budget, admitted after round-1 B2 disproved the "handful of stores" premise |
+| Retained snapshots leak disk across a long session | D3's fixed key space — one snapshot per agent, not per read — plus its three release paths, each with its own test |
+| A burst of per-chat stores fills the temp volume inside one idle window | Those stores retain nothing (D3): each is deleted by its own last reader, as an unretained snapshot always was |
 | A snapshot outlives a clean shutdown | D3a makes dispose a barrier over in-flight productions and outstanding leases, not a single sweep |
 | A snapshot is deleted while a reader is mid-query | Borrow/release refcounting, with the superseded entry deleted only after its last release |
-| The win is assumed rather than measured | Acceptance includes a measured comparison: a second read of an unchanged large store must not repeat the snapshot cost |
+| The win is assumed rather than measured | Measured on the live 1.5 GB `opencode.db`: 2.4–3.0 s per read unretained, 1 ms reused, and a write correctly forces a fresh snapshot |
+| The win is real but never realised, because the store never sits still | Read from OpenCode's source rather than assumed: no idle write or checkpoint timer exists (D1) |
 | A generation is read across a write and looks unchanged | D1's coherent double read in fixed order, whose failing interleaving is self-contradictory; acceptance drives the interleaving rather than arguing it |
 | A stat failure is read as "no WAL" | D1 defers to `provesAbsence`: only ENOENT/ENOTDIR reads as absence, everything else makes the generation unusable |
 | Shutdown races work the barrier cannot see | D3a's admitted-work registry, entered before the first await |
