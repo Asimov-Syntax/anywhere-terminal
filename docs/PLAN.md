@@ -163,7 +163,7 @@ nothing to provision.
 | **Stage** | 6 |
 | **Size** | S |
 | **Labels** | user-visible-ui |
-| **Notes** | Corrected at planning: the data does NOT already exist on the row. `WorktreeAgentRow` declares `preview` and the row renderer already draws it, but the presence projector never populates it, so the span is empty on every row. The vault session list renders no preview line either, so the reuse pressure this task was warned about is not there. Sourcing the content means reading transcript text the `agent-session-index` spec currently forbids reading beyond a bounded title preview — that decision is WT-009.5's, and this task keeps only the layout half. Two things to hold: the preview is decoration-stripped like every other title, and it is a render-signature input, so a preview that changes must repaint while a spinner frame must not |
+| **Notes** | Corrected at planning: the data does NOT already exist on the row. `WorktreeAgentRow` declares `preview` and the row renderer already draws it, but the presence projector never populates it, so the span is empty on every row. The vault session list renders no preview line either, so the reuse pressure this task was warned about is not there. Sourcing the content means reading transcript text the `agent-session-index` spec currently forbids reading beyond a bounded title preview — that decision is WT-009.5's, and this task keeps only the layout half. Two things to hold: the preview is decoration-stripped like every other title, and it is a render-signature input, so a preview that changes must repaint while a spinner frame must not. **Superseded in part**: the decoration-stripping half of that last sentence, and the spinner clause in Acceptance below, were reversed by WT-009.5 — a preview is message text, so a leading marker is content — and the stale spec requirement was retired by WT-011.4. The layout half stands |
 | **Acceptance** | An agent row renders two lines — identity, marks and age above, its last-activity preview below — and never a third; neither line wraps and each truncates independently, the preview consuming none of the first line's width; a row with nothing to preview renders no empty second line and no placeholder; a spinner frame is neither displayed in the preview nor able to trigger a re-render; the model id no longer appears on any list row and is absent entirely when unknown; the age column and the leading glyphs never truncate. What fills the preview is WT-009.5's |
 | **Status** | done |
 
@@ -363,7 +363,7 @@ nothing to provision.
 | **Labels** | user-visible-ui |
 | **Notes** | Deferred as "needs a decision, not a patch" — neither the spec nor the preview design carries a rule about what a row shows when two of its lines agree. The decision is exact equality after the normalization the title already receives, never similarity: a near-match still carries something the title did not, and hiding it would replace a redundancy with a worse lie. Every session is a one-message session at its first render, so this is the common case rather than an edge one |
 | **Acceptance** | A row whose preview exactly matches its title presents the title alone; a row whose preview differs by any amount presents both; a session that gains a second message regains its preview line |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-011.5] A Preview Outlives Nothing
 

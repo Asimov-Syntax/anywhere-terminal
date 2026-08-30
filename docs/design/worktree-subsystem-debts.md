@@ -137,7 +137,7 @@ backs off, rather than being recorded as a resolution or as an error the user se
 that is slow today is usually readable tomorrow, and a row that blanks on a slow disk would be a
 worse lie than a row that keeps its last known line.
 
-### 2.4 A row can draw the same sentence twice
+### 2.4 A row can draw the same sentence twice — SHIPPED (WT-011.4)
 
 A row's tooltip joins its title, its preview, and its confidence caveat. For a session whose only
 message *is* its title — a one-message session, which is every session at its first render — the
@@ -146,6 +146,14 @@ preview repeats the title verbatim, and the row shows the same sentence on two l
 **Why it was deferred**: *"Real, and a row drawing the same sentence twice is worth fixing — but
 'suppress the preview when it equals the title' is a new rule about what a row shows, which
 neither the spec nor D3 carries. It needs a decision, not a patch."*
+
+**What shipped.** One pure `presentedPreview` in the view's format layer decides it, and both the
+second line and the row's hover text read from it. Planning found two further answers to the same
+question already on the books and retired them: `worktree-panel` still required decorative frames to
+be stripped from a preview, a rule `source-the-agent-row-preview` reversed in code and in the UI doc
+without withdrawing it, and its neighbouring scenario made a marker-only preview render as no line at
+all — which the newer presence contract explicitly forbids. Three rules for what a preview shows are
+now one.
 
 The decision this task must make and record: **the preview is suppressed when it adds nothing.**
 "Adds nothing" is exact equality after the same normalization the title already receives — not

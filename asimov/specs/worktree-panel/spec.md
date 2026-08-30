@@ -828,22 +828,11 @@ An agent row SHALL render at most two lines: identity, marks and age on the firs
 last-activity preview on the second. A row with no preview SHALL render exactly one line, costing
 no vertical space and offering no placeholder in the preview's stead.
 
-#### Scenario: A preview that is only decoration
-
-- **WHEN** a row's preview consists only of decorative animation frames or whitespace
-- **THEN** the row renders as one line, exactly as a row carrying no preview at all does
-
 ### Requirement: Each of an agent row's lines truncates on its own
 
 Neither of an agent row's lines SHALL wrap, and each SHALL truncate independently with an
 ellipsis. The preview SHALL consume none of the first line's width, and the age and the leading
 glyphs SHALL NOT truncate at any width.
-
-### Requirement: A decorative frame is neither shown in a preview nor a reason to repaint
-
-Decorative animation frames SHALL be stripped from a preview wherever it is presented — the line
-itself, and any hover or focus text that repeats it — and a preview that differs from what is
-already rendered only in those frames SHALL cause no rendering work.
 
 ### Requirement: A list row does not name the model
 
@@ -1149,4 +1138,34 @@ that value.
 
 - **WHEN** the user has never configured the setting and the panel opens
 - **THEN** the panel presents the workbench composition
+
+### Requirement: A row draws its preview only when it adds something
+
+An agent row SHALL withhold its preview — from its second line and from any hover text repeating it
+— WHEN that preview is blank, or equals the row's title after the decoration the title's own
+presentation removes is taken off **the title alone**.
+
+Every other preview SHALL be drawn verbatim, however slightly it differs, and no similarity, prefix,
+or truncated comparison SHALL suppress one.
+
+#### Scenario: A session whose only message is its title
+
+- **WHEN** a row's title and its preview are the same sentence
+- **THEN** the row renders as one line, and its hover text names that sentence once
+
+#### Scenario: A session that gains a second message
+
+- **WHEN** a row whose preview was withheld for repeating its title reports different activity
+- **THEN** the row draws its preview line again
+
+#### Scenario: A preview that differs from the title only slightly
+
+- **WHEN** a row's preview and title differ by a single trailing word
+- **THEN** the preview is drawn in full
+
+#### Scenario: A preview whose marker the title's stripper would eat
+
+- **WHEN** a row's preview is a lone `*` or `- ` marker, or opens with one, and its title is that
+  same text without the marker
+- **THEN** the preview is drawn in full, because only the title was normalized
 
