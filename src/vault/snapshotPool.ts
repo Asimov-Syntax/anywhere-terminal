@@ -315,9 +315,17 @@ export class SnapshotPool {
 
     this.retained.clear();
     this.retainedBytes = 0;
+    const undeleted: string[] = [];
     for (const entry of [...this.liveEntries]) {
       entry.retained = false;
-      await this.destroy(entry);
+      if (!(await this.destroy(entry))) {
+        undeleted.push(entry.dir);
+      }
+    }
+    if (undeleted.length > 0) {
+      // Surfaced rather than swallowed: these are session snapshots still on disk
+      // after a shutdown that would otherwise report itself clean.
+      throw new Error(`snapshot pool could not delete ${undeleted.length} snapshot(s): ${undeleted.join(", ")}`);
     }
   }
 
@@ -329,10 +337,20 @@ export class SnapshotPool {
     }
   }
 
-  /** Delete an entry's directory and stop tracking it. */
-  private async destroy(entry: Entry): Promise<void> {
+  /**
+   * Delete an entry's directory, and give up ownership of it ONLY once that
+   * succeeded. A failed delete keeps its entry, so the file still has an owner and a
+   * later disposal retries it rather than reporting success over a snapshot that is
+   * still on disk (round-2 W3).
+   */
+  private async destroy(entry: Entry): Promise<boolean> {
+    try {
+      await this.deps.rmrf(entry.dir);
+    } catch {
+      return false;
+    }
     this.liveEntries.delete(entry);
-    await this.deps.rmrf(entry.dir).catch(() => {});
+    return true;
   }
 
   /** Give up ownership of an entry's disk — now if nobody holds it, otherwise at its

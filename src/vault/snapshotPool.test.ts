@@ -660,4 +660,48 @@ describe("SnapshotPool disposal", () => {
     expect(disposed).toBe(true);
     await expect(fs.readdir(root)).resolves.toEqual(["store.db"]);
   });
+  it("keeps a snapshot it failed to delete, and retries it at disposal", async () => {
+    let failDeletes = true;
+    const attempts: string[] = [];
+    const pool = new SnapshotPool({
+      ...deps,
+      rmrf: async (dir) => {
+        attempts.push(dir);
+        if (failDeletes) {
+          throw new Error("EBUSY");
+        }
+        await fs.rm(dir, { recursive: true, force: true });
+      },
+    });
+
+    // An unretained snapshot whose deletion fails at release: it must not be
+    // forgotten, or the file has no owner left to remove it.
+    const lease = await pool.borrow(dbPath, async (dest) => {
+      await produce(dest);
+      await fs.writeFile(`${dbPath}-wal`, "written-during");
+    });
+    await lease.release();
+    await expect(fs.access(lease.file)).resolves.toBeUndefined();
+
+    failDeletes = false;
+    await pool.dispose();
+
+    await expect(fs.access(lease.file)).rejects.toThrow();
+    expect(attempts.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reports what disposal could not delete instead of resolving over it", async () => {
+    const pool = new SnapshotPool({
+      ...deps,
+      rmrf: async () => {
+        throw new Error("EBUSY");
+      },
+    });
+
+    const lease = await pool.borrow(dbPath, produce);
+    await lease.release();
+
+    await expect(pool.dispose()).rejects.toThrow(/could not delete/);
+    await expect(fs.access(lease.file)).resolves.toBeUndefined();
+  });
 });

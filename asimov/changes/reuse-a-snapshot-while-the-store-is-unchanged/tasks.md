@@ -102,7 +102,7 @@
     1. In `src/vault/snapshotPool.ts`, admit every borrow to a registry before its first await and remove it when it settles; drain that registry to quiescence in `dispose` instead of the joinable-flight map.
     2. Cover a borrow parked on its first stamp across a dispose, and a producer displaced from the per-store binding by a waiting caller.
 
-- [ ] 3_3 Give up a snapshot's ownership only once its disk is gone
+- [x] 3_3 Give up a snapshot's ownership only once its disk is gone — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 3_2
   - **Refs**: .reviews/round-2.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
   - **Acceptance**:
