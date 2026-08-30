@@ -1,0 +1,54 @@
+# Tasks: resolve-containment-through-symlinks
+
+- [ ] 1_1 One predicate that resolves before it compares
+  - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D1, D3, D4, D5 -->
+  - **Acceptance**:
+    - Outcome: containment is decided on resolved paths, and a path the filesystem declines to resolve is refused rather than compared literally
+    - Verify: unit src/utils/pathBoundary.test.ts
+  - **Plan**:
+    1. In `src/utils/pathBoundary.ts` add the async resolved predicate beside `isPathInside`, resolving both sides through `realpath` and finishing with `isPathInside` so the lexical rules stay defined once (design.md D1).
+    2. Tolerate one failure only: an `ENOENT` tail beneath a parent that itself resolved inside the root. Refuse every other error and refuse an existing symlink whose target will not resolve — do not reuse `realpathTolerant`, which swallows all of them (design.md D3).
+    3. Make the test strict about equality: `candidate === root` is not contained, unlike `isPathInside` (design.md D5).
+    4. In `src/utils/pathBoundary.test.ts` cover the escaping link, the symlinked root, the not-yet-created tail, the **dangling** link whose target does not exist, `ELOOP`, `EACCES`, and the equality case.
+
+- [ ] 1_2 The Claude resolvers ask the shared question
+  - **Deps**: 1_1
+  - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D2, D6 -->
+  - **Acceptance**:
+    - Outcome: a Claude transcript reached through a link out of the projects root is not returned
+    - Verify: unit src/vault/readers/claudePaths.test.ts
+  - **Plan**:
+    1. In `src/vault/readers/claudePaths.ts` replace the three inline `path.relative` containment blocks — session, subagent, and workflow-agent resolution — with the shared predicate, deleting the open-coded checks rather than leaving them beside it (design.md D6).
+    2. `claudePaths.ts` has no test file of its own — its resolvers are exercised through `src/vault/readers/claudeReader.detail.test.ts`. Add `src/vault/readers/claudePaths.test.ts` covering each resolver directly: the escaping link, and a genuinely contained transcript under a symlinked projects root that is still found.
+
+- [ ] 1_3 The Codex reader asks the shared question
+  - **Deps**: 1_1
+  - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D2, D5, D6 -->
+  - **Acceptance**:
+    - Outcome: an index-supplied rollout path that resolves outside the sessions root is ignored in favour of the filename scan
+    - Verify: unit src/vault/readers/codexReader.test.ts
+  - **Plan**:
+    1. In `src/vault/readers/codexReader.ts` delete `isUnder` and route both callers — the child-thread meta read and `pickRolloutPath` — through the shared predicate.
+    2. In `src/vault/readers/codexReader.test.ts` cover a stored `rolloutPath` that escapes through a link, asserting the reader falls back to the filename scan rather than reading it, and one that is contained under a symlinked sessions root and is used.
+    3. Keep the regression `isUnder` guarded: a `rolloutPath` equal to the sessions directory must still be rejected so the filename scan runs (design.md D5).
+
+- [ ] 1_4 The preview service asks the shared question
+  - **Deps**: 1_1
+  - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D2, D6 -->
+  - **Acceptance**:
+    - Outcome: a vault hint that resolves outside the projects root leaves the row unresolved rather than previewed
+    - Verify: unit src/worktree/sessionPreviewService.test.ts
+  - **Plan**:
+    1. In `src/worktree/sessionPreviewService.ts` delete `isInside` and route the Claude hint branch of `resolve` through the shared predicate.
+    2. In `src/worktree/sessionPreviewService.test.ts` cover a hint escaping through a link — the row stays unresolved and is retried on the ordinary cadence rather than being recorded as uncovered — and a hint under a symlinked root that resolves normally.
+
+- [ ] 1_5 An enumerated file is checked like a resolved one
+  - **Deps**: 1_1
+  - **Refs**: specs/agent-session-index/spec.md#{enumeration-is-not-exempt-from-containment} <!-- design.md D2 -->
+  - **Acceptance**:
+    - Outcome: a listed session file that resolves outside the projects root is skipped, and its siblings are still indexed
+    - Verify: unit src/vault/readers/claudeReader.test.ts
+  - **Plan**:
+    1. `src/vault/readers/claudeReader.ts` stats and reads every path `listJsonlFiles` returns with no containment check at all — the one adopter that reaches transcripts by enumeration rather than by resolving an id. Gate the per-file branch on the shared predicate before `stat`.
+    2. Skip, do not throw: a link out of the store is one entry lost, not a directory lost. The existing per-file tolerance already models this.
+    3. In `src/vault/readers/claudeReader.test.ts` cover a directory holding one escaping symlink beside two ordinary transcripts, asserting exactly the two are indexed.

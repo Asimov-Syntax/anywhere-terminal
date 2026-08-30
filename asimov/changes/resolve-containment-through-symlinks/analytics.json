@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "resolve-containment-through-symlinks"
+  },
+  "sessions": [
+    {
+      "sessionId": "069d5382-fa6a-4334-aecd-ad19660fbb1e",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788048878402,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788048878402,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788048878402
+        }
+      ],
+      "firstAt": 1788048878402,
+      "lastAt": 1788049556942,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-oracle",
+          "model": "gpt-5.6-sol",
+          "messages": 14,
+          "inputTokens": 115413,
+          "outputTokens": 11436,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 1421824,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 21,
+          "inputTokens": 42,
+          "outputTokens": 21650,
+          "reasoningTokens": 5637,
+          "cacheWriteTokens": 33943,
+          "cacheReadTokens": 6812526,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 33943,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}
