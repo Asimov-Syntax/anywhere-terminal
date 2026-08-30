@@ -27,12 +27,12 @@ import type {
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeCreateDefaults,
-  WorktreeProvisionOffer,
   WorktreeCreateMode,
   WorktreeInfo,
   WorktreeLaunchAgent,
   WorktreeOpenAfter,
   WorktreePresence,
+  WorktreeProvisionOffer,
   WorktreeRowActivation,
   WorktreeTree,
 } from "./worktreeViewTypes";

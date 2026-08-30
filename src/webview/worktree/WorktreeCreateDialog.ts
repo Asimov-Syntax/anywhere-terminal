@@ -527,7 +527,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     bringSum.textContent = bringSummary(offer.model);
     let ticked = checkedByOffer.get(offer.offerId);
     if (ticked === undefined) {
-      ticked = new Set(bringRows(offer.model).filter((r) => r.checked).map((r) => r.id));
+      ticked = new Set(
+        bringRows(offer.model)
+          .filter((r) => r.checked)
+          .map((r) => r.id),
+      );
       checkedByOffer.set(offer.offerId, ticked);
     }
     const held = ticked;

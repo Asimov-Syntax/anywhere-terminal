@@ -1184,12 +1184,14 @@ describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () =
     offer();
     const names = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).map((cb) => {
       const ids = (cb.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
-      return ids
-        // `getElementById` rather than a selector: this jsdom has no CSS.escape.
-        .map((id) => document.getElementById(id)?.textContent ?? "")
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim();
+      return (
+        ids
+          // `getElementById` rather than a selector: this jsdom has no CSS.escape.
+          .map((id) => document.getElementById(id)?.textContent ?? "")
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim()
+      );
     });
 
     expect(names).toHaveLength(5);
