@@ -23,6 +23,7 @@ import type {
   WorktreeCreateDraft,
   WorktreeOpenAfter,
   WorktreeProvisionOffer,
+  WorktreeRef,
   WorktreeRefOffer,
 } from "./worktreeViewTypes";
 
@@ -49,11 +50,39 @@ function lastSegment(path: string): string {
   return segments(path).at(-1) ?? path;
 }
 
-const BRANCH_MODES: readonly { id: WorktreeBranchMode; label: string }[] = [
-  { id: "new", label: "New branch" },
-  { id: "existing", label: "Existing" },
-  { id: "detached", label: "Detached" },
-];
+/**
+ * One row of the branch list: an existing ref, or the always-present entry that
+ * creates the typed name.
+ *
+ * The create-new row is a member rather than a special case below the list —
+ * it is what makes a repository whose enumeration failed still usable, so it
+ * cannot be something the list's presence gates.
+ */
+type BranchChoice = { kind: "existing"; ref: WorktreeRef } | { kind: "new" };
+
+/** How many characters of a typed name the create-new row echoes back. */
+const CREATE_ROW_LABEL = "Create branch";
+
+/**
+ * Ordered by what the typed text most likely means: the exact match, then the
+ * prefixes, then create-new. With nothing typed every ref is offered.
+ *
+ * Refs that neither match exactly nor by prefix are dropped — the list is a
+ * filter over one dataset, which is the whole reason § 4.1 rejected tabs.
+ */
+function orderChoices(refs: readonly WorktreeRef[], typed: string): BranchChoice[] {
+  const query = typed.trim();
+  const exact: BranchChoice[] = [];
+  const prefixed: BranchChoice[] = [];
+  for (const ref of refs) {
+    if (query.length === 0 || ref.name === query) {
+      (query.length === 0 ? prefixed : exact).push({ kind: "existing", ref });
+    } else if (ref.name.startsWith(query)) {
+      prefixed.push({ kind: "existing", ref });
+    }
+  }
+  return [...exact, ...prefixed, { kind: "new" }];
+}
 
 /**
  * What the form OFFERS, which is not the wire vocabulary. Opening the folder is
@@ -343,6 +372,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       releaseDestTip();
       deps.onCancel?.();
     },
+    // The list owns Escape only while it is open (D7). Asked by the shell
+    // rather than raced with it: the shell binds Escape on `document` in the
+    // capture phase before this form exists, so nothing added here could run
+    // first, and two owners deciding by registration order is not a contract.
+    onEscape: () => {
+      if (!listOpen) {
+        return false;
+      }
+      closeList();
+      return true;
+    },
   });
   const cancel = (): void => {
     deps.onCancel?.();
@@ -368,7 +408,38 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const nameError = document.createElement("span");
   nameError.className = "wt-ferror";
   nameError.hidden = true;
-  nameField.append(nameInput, nameError);
+
+  // ── The branch list — one box, refs and create-new together ─────────────
+  // Plain listbox markup rather than the vendored virtualized widget: the list
+  // is capped host-side, and the widget brings its own focus and keyboard model
+  // into a dialog that already owns a focus trap and an Escape contract (D6).
+  nameInput.setAttribute("role", "combobox");
+  nameInput.setAttribute("aria-autocomplete", "list");
+  nameInput.setAttribute("aria-expanded", "false");
+  nameInput.setAttribute("aria-controls", "wt-branch-list");
+  nameInput.autocomplete = "off";
+
+  const listBox = document.createElement("ul");
+  listBox.className = "wt-branch-list";
+  listBox.id = "wt-branch-list";
+  listBox.setAttribute("role", "listbox");
+  listBox.setAttribute("aria-label", "Branches");
+  listBox.hidden = true;
+
+  const partialNote = document.createElement("span");
+  partialNote.className = "wt-fhint";
+  partialNote.id = "wt-branch-partial";
+  partialNote.hidden = true;
+
+  /** What the user picked, and the ONLY source of new-versus-existing (D4). */
+  let choice: BranchChoice = { kind: "new" };
+  /** Rows the list is currently offering, in order. Index into `listBox`. */
+  let choices: BranchChoice[] = [];
+  /** Which row is active while the list is open; -1 when none is. */
+  let activeAt = -1;
+  let listOpen = false;
+
+  nameField.append(nameInput, listBox, partialNote, nameError);
   shell.dialog.appendChild(nameField);
 
   // ── Destination — one derived line, not a field ─────────────────────────
@@ -440,28 +511,25 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   }
 
   // ── Branch source — inside the disclosure (built below) ─────────────────
+  // Only `detached` lives here now. New-versus-existing is the combobox's, and
+  // one wire value never takes two sources (D4): a control that also wrote
+  // `branchMode` would disagree with the row the user picked.
   const modeField = field("Branch source");
-  const segmented = document.createElement("div");
-  segmented.className = "vault-segmented";
-  segmented.setAttribute("role", "tablist");
-  segmented.setAttribute("aria-label", "Branch mode");
-  for (const mode of BRANCH_MODES) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.dataset.mode = mode.id;
-    btn.setAttribute("role", "tab");
-    btn.setAttribute("aria-selected", mode.id === draft.branchMode ? "true" : "false");
-    btn.textContent = mode.label;
-    btn.addEventListener("click", () => {
-      draft.branchMode = mode.id;
-      for (const other of Array.from(segmented.querySelectorAll<HTMLButtonElement>("button"))) {
-        other.setAttribute("aria-selected", other.dataset.mode === draft.branchMode ? "true" : "false");
-      }
-      syncDerived();
-    });
-    segmented.appendChild(btn);
-  }
-  modeField.appendChild(segmented);
+  const detachToggle = document.createElement("button");
+  detachToggle.type = "button";
+  detachToggle.className = "vault-segmented";
+  detachToggle.id = "wt-detached";
+  detachToggle.dataset.mode = "detached";
+  detachToggle.setAttribute("aria-pressed", "false");
+  detachToggle.textContent = "Detach at a ref instead";
+  detachToggle.addEventListener("click", () => {
+    const now = draft.branchMode !== "detached";
+    draft.branchMode = now ? "detached" : choiceMode(choice);
+    detachToggle.setAttribute("aria-pressed", now ? "true" : "false");
+    closeList();
+    syncDerived();
+  });
+  modeField.appendChild(detachToggle);
 
   const baseField = field("Base ref", "wt-base", true);
   const baseInput = document.createElement("input");
@@ -713,6 +781,96 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
   }
 
+  /** The wire mode a choice means. `detached` is the toggle's and never a row's. */
+  function choiceMode(c: BranchChoice): WorktreeBranchMode {
+    return c.kind === "existing" ? "existing" : "new";
+  }
+
+  /** The refs the current repository was told about; empty until it is told. */
+  function offeredRefs(): readonly WorktreeRef[] {
+    return currentRepo().refs?.list ?? [];
+  }
+
+  function setActive(next: number): void {
+    activeAt = next;
+    const rows = Array.from(listBox.children) as HTMLElement[];
+    rows.forEach((row, at) => {
+      row.classList.toggle("is-active", at === activeAt);
+      row.setAttribute("aria-selected", at === activeAt ? "true" : "false");
+    });
+    const active = activeAt >= 0 ? rows[activeAt] : undefined;
+    if (active === undefined) {
+      nameInput.removeAttribute("aria-activedescendant");
+    } else {
+      nameInput.setAttribute("aria-activedescendant", active.id);
+    }
+  }
+
+  /** Redraw the rows for the text currently typed. Does not open or close. */
+  function renderList(): void {
+    choices = orderChoices(offeredRefs(), nameInput.value);
+    listBox.replaceChildren();
+    choices.forEach((c, at) => {
+      const row = document.createElement("li");
+      row.id = `wt-branch-opt-${at}`;
+      row.className = "wt-branch-opt";
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", "false");
+      if (c.kind === "new") {
+        row.dataset.kind = "new";
+        const typed = nameInput.value.trim();
+        row.textContent = typed.length > 0 ? `${CREATE_ROW_LABEL} “${typed}”` : CREATE_ROW_LABEL;
+      } else {
+        row.dataset.kind = "existing";
+        row.dataset.branch = c.ref.name;
+        row.textContent = c.ref.name;
+      }
+      row.addEventListener("mousedown", (ev) => {
+        // `mousedown`, not `click`: the input blurs first otherwise and the
+        // blur handler closes the list out from under the pointer.
+        ev.preventDefault();
+        commit(at);
+      });
+      listBox.appendChild(row);
+    });
+    setActive(Math.min(activeAt, choices.length - 1));
+  }
+
+  function openList(): void {
+    listOpen = true;
+    renderList();
+    listBox.hidden = false;
+    nameInput.setAttribute("aria-expanded", "true");
+    shell.refreshFocusTrap();
+  }
+
+  function closeList(): void {
+    listOpen = false;
+    listBox.hidden = true;
+    nameInput.setAttribute("aria-expanded", "false");
+    nameInput.removeAttribute("aria-activedescendant");
+    activeAt = -1;
+    shell.refreshFocusTrap();
+  }
+
+  /** Take row `at` as the selection, close the list, and re-derive. */
+  function commit(at: number): void {
+    const picked = choices[at];
+    if (picked === undefined) {
+      return;
+    }
+    choice = picked;
+    if (picked.kind === "existing") {
+      nameInput.value = picked.ref.name;
+    }
+    if (draft.branchMode !== "detached") {
+      draft.branchMode = choiceMode(choice);
+    }
+    closeList();
+    nameInput.focus();
+    syncDerived();
+  }
+
   /**
    * Re-derive the path and its hint from the branch, and re-validate. The hint
    * names the collided path AND the suffixed one the create will actually use —
@@ -727,6 +885,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     nameInput.disabled = detached;
     nameInput.placeholder = draft.branchMode === "existing" ? "existing-branch" : "feat/…";
     baseInput.placeholder = detached ? "a ref to detach at" : "HEAD";
+    // Said, rather than left to look complete: a capped list presented as the
+    // repository's whole set is the one claim this control must not make.
+    const truncated = repo.refs?.truncated === true;
+    partialNote.hidden = !truncated;
+    partialNote.textContent = truncated ? "Showing part of this repository's branches — type to find others." : "";
 
     draft.branchName = nameInput.value;
     draft.baseRef = baseInput.value;
@@ -832,8 +995,45 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const edited = (): void => {
     syncDerived();
   };
-  nameInput.addEventListener("input", () => syncDerived());
+  nameInput.addEventListener("input", () => {
+    // Typing re-decides what the text MEANS, on the same rule the ordering
+    // states: an exact match is the branch the user named, anything else is a
+    // branch they are about to create. An explicit pick overrides this on its
+    // own next keystroke, which is what makes the box one control rather than
+    // a text field with a menu beside it.
+    const exact = offeredRefs().find((r) => r.name === nameInput.value.trim());
+    choice = exact === undefined ? { kind: "new" } : { kind: "existing", ref: exact };
+    if (draft.branchMode !== "detached") {
+      draft.branchMode = choiceMode(choice);
+    }
+    openList();
+    syncDerived();
+  });
   nameInput.addEventListener("change", edited);
+  nameInput.addEventListener("blur", () => {
+    closeList();
+    syncDerived();
+  });
+  nameInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      if (!listOpen) {
+        openList();
+      }
+      if (choices.length > 0) {
+        const step = ev.key === "ArrowDown" ? 1 : -1;
+        setActive((activeAt + step + choices.length) % choices.length);
+      }
+      return;
+    }
+    // Enter takes the ACTIVE row while the list is open, and otherwise falls
+    // through to the form — a listbox that swallowed Enter with nothing active
+    // would make the keyboard path unable to submit at all.
+    if (ev.key === "Enter" && listOpen && activeAt >= 0) {
+      ev.preventDefault();
+      commit(activeAt);
+    }
+  });
   baseInput.addEventListener("input", () => syncDerived());
   baseInput.addEventListener("change", edited);
   pathInput.addEventListener("input", () => {
@@ -903,6 +1103,20 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       return;
     }
     repos[at] = { ...opened, refs };
+    if (repoId !== draft.repoId) {
+      return;
+    }
+    // A list that lands while the user has already typed re-decides what the
+    // typed text means: the name they entered may now be a ref that exists.
+    const exact = refs.list.find((r) => r.name === nameInput.value.trim());
+    if (exact !== undefined && draft.branchMode !== "detached") {
+      choice = { kind: "existing", ref: exact };
+      draft.branchMode = "existing";
+    }
+    if (listOpen) {
+      renderList();
+    }
+    syncDerived();
   });
 
   syncOpenAfter();

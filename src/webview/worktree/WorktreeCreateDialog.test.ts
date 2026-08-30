@@ -303,10 +303,9 @@ describe("create worktree — invalid and collided (§ 10)", () => {
     const { host, q, submitted } = open();
     // Branch source moved into the disclosure, so reaching it is now a step.
     q<HTMLButtonElement>(".wt-advanced-toggle").click();
-    const detached = Array.from(host.querySelectorAll<HTMLButtonElement>(".vault-segmented button")).find(
-      (b) => b.dataset.mode === "detached",
-    );
-    detached?.click();
+    // The branch-source control is the detached toggle now — new-versus-existing
+    // is the combobox's, and one wire value never takes two sources (D4).
+    q<HTMLButtonElement>("#wt-detached").click();
     expect(q<HTMLInputElement>("#wt-branch").disabled).toBe(true);
     expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
     type(q<HTMLInputElement>("#wt-base"), "9f2c1ab");
@@ -1301,5 +1300,211 @@ describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () =
     expect(new Set(names).size).toBe(5);
     expect(names[0]).toContain(".env");
     expect(names.at(-1)).toContain("pnpm install --frozen-lockfile");
+  });
+});
+
+// ── The branch list — one box, refs and create-new together (§ 4.1) ────────
+
+describe("the create dialog offers branches and a create-new entry in one list", () => {
+  const REFS = [
+    { name: "main" },
+    { name: "feat/search" },
+    { name: "feat/search-ui" },
+    { name: "fix/lock", heldBy: "lock-spike" },
+  ] as const;
+
+  function withRefs(truncated = false) {
+    return open({ repos: [createDefaults({ refs: { list: [...REFS], truncated } })] });
+  }
+
+  const rows = (host: HTMLElement) =>
+    Array.from(host.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']"));
+  const labels = (host: HTMLElement) => rows(host).map((r) => r.dataset.branch ?? r.dataset.kind);
+  const listOpen = (host: HTMLElement) => host.querySelector<HTMLElement>("#wt-branch-list")?.hidden === false;
+
+  it("carries no tab bar — one list, not a mode chosen before typing", () => {
+    const { host } = withRefs();
+    expect(host.querySelector("[role='tablist']")).toBeNull();
+  });
+
+  it("offers every branch and the create-new entry when nothing is typed", () => {
+    const { host, q } = withRefs();
+    q<HTMLInputElement>("#wt-branch").focus();
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+
+    expect(labels(host)).toEqual(["main", "feat/search", "feat/search-ui", "fix/lock", "new"]);
+  });
+
+  it("orders the exact match first, then the prefixes, then create-new", () => {
+    const { host, q } = withRefs();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/search");
+
+    expect(labels(host)).toEqual(["feat/search", "feat/search-ui", "new"]);
+  });
+
+  it("keeps the create-new entry for a name that matches nothing", () => {
+    // The row is not gated on the list: a repository whose enumeration failed,
+    // or simply a new name, must still be creatable.
+    const { host, q } = withRefs();
+    type(q<HTMLInputElement>("#wt-branch"), "totally-new");
+
+    expect(labels(host)).toEqual(["new"]);
+    expect(rows(host)[0]?.textContent).toContain("totally-new");
+  });
+
+  it("offers the create-new entry with no list at all", () => {
+    const { host, q } = open();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+
+    expect(labels(host)).toEqual(["new"]);
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+
+  it("gains the list when the host's answer lands after the form opened", () => {
+    let apply: ((repoId: string, refs: { list: typeof REFS; truncated: boolean }) => void) | undefined;
+    const { host, q } = open({
+      bindRefs: (fn) => {
+        apply = fn as typeof apply;
+      },
+    });
+    type(q<HTMLInputElement>("#wt-branch"), "feat/search");
+    expect(labels(host)).toEqual(["new"]);
+
+    apply?.(REPO_ID, { list: REFS, truncated: false });
+
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    expect(labels(host)).toEqual(["feat/search", "feat/search-ui", "new"]);
+  });
+
+  it("says a capped list is partial rather than showing it as the whole set", () => {
+    const { q } = withRefs(true);
+    expect(q<HTMLElement>("#wt-branch-partial").hidden).toBe(false);
+    expect(q<HTMLElement>("#wt-branch-partial").textContent).toContain("part of");
+  });
+
+  it("claims nothing about completeness when the list is whole", () => {
+    const { q } = withRefs(false);
+    expect(q<HTMLElement>("#wt-branch-partial").hidden).toBe(true);
+  });
+
+  it("picking a ref means existing; the create-new row means new", () => {
+    const { host, q, submitted } = withRefs();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/search");
+    rows(host)[0]?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "existing", branchName: "feat/search" });
+  });
+
+  it("a typed name that matches no ref submits as a new branch", () => {
+    const { q, submitted } = withRefs();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/brand-new");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "new", branchName: "feat/brand-new" });
+  });
+
+  it("a typed name that IS a ref submits as existing — the exact match is what it means", () => {
+    const { q, submitted } = withRefs();
+    type(q<HTMLInputElement>("#wt-branch"), "main");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]).toMatchObject({ branchMode: "existing", branchName: "main" });
+  });
+
+  it("reaches every entry from the keyboard, including the last", () => {
+    const { host, q } = withRefs();
+    const input = q<HTMLInputElement>("#wt-branch");
+    input.focus();
+    const seen: (string | undefined)[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+      seen.push(input.getAttribute("aria-activedescendant") ?? undefined);
+    }
+
+    expect(seen).toEqual(rows(host).map((r) => r.id));
+  });
+
+  it("wraps from the last entry back to the first rather than dead-ending", () => {
+    const { host, q } = withRefs();
+    const input = q<HTMLInputElement>("#wt-branch");
+    input.focus();
+    for (let i = 0; i < 6; i += 1) {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    }
+
+    expect(input.getAttribute("aria-activedescendant")).toBe(rows(host)[0]?.id);
+  });
+
+  it("does not intercept the arrow keys while the list is closed", () => {
+    const { host, q } = withRefs();
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "feat/search");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(listOpen(host)).toBe(false);
+
+    // Reopening is the arrow's own job; what it must not do is move a hidden
+    // selection that a screen reader would then announce.
+    expect(input.getAttribute("aria-activedescendant")).toBeNull();
+  });
+
+  it("takes the active entry on Enter while the list is open", () => {
+    const { q, submitted } = withRefs();
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "feat/search");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+
+    expect(input.value).toBe("feat/search");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(submitted[0]).toMatchObject({ branchMode: "existing", branchName: "feat/search" });
+  });
+});
+
+describe("Escape closes the branch list before it dismisses the dialog (D7)", () => {
+  const REFS = [{ name: "main" }, { name: "feat/search" }];
+
+  function openWithList() {
+    const cancelled: true[] = [];
+    const h = open({
+      repos: [createDefaults({ refs: { list: REFS, truncated: false } })],
+      onCancel: () => cancelled.push(true),
+    });
+    type(h.q<HTMLInputElement>("#wt-branch"), "feat");
+    return { ...h, cancelled };
+  }
+  const esc = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  const listOpen = (host: HTMLElement) => host.querySelector<HTMLElement>("#wt-branch-list")?.hidden === false;
+
+  it("the first Escape closes the list and leaves the dialog standing", () => {
+    const { host, cancelled } = openWithList();
+    expect(listOpen(host)).toBe(true);
+
+    esc();
+
+    expect(listOpen(host)).toBe(false);
+    expect(host.querySelector(".wt-dialog")).not.toBeNull();
+    expect(cancelled).toEqual([]);
+  });
+
+  it("the second Escape dismisses the dialog", () => {
+    const { host, cancelled } = openWithList();
+    esc();
+    esc();
+
+    expect(host.querySelector(".wt-dialog")).toBeNull();
+    expect(cancelled).toEqual([true]);
+  });
+
+  it("Escape dismisses on the first press when no list is open", () => {
+    const cancelled: true[] = [];
+    const { host } = open({
+      repos: [createDefaults({ refs: { list: REFS, truncated: false } })],
+      onCancel: () => cancelled.push(true),
+    });
+    esc();
+
+    expect(host.querySelector(".wt-dialog")).toBeNull();
+    expect(cancelled).toEqual([true]);
   });
 });

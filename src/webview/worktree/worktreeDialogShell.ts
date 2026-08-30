@@ -29,6 +29,16 @@ export interface DialogShellOptions {
   wide?: boolean;
 
   onDismiss?: () => void;
+  /**
+   * First refusal on Escape. Return true to say the key was consumed by
+   * something inside the card — an open popup, a listbox — and the dialog stays.
+   *
+   * A hook rather than a listener the owner adds itself: this shell binds
+   * Escape on `document` in the CAPTURE phase before the form exists, so no
+   * listener the form registers can run first. Two Escape owners racing on
+   * registration order is the bug this avoids.
+   */
+  onEscape?: () => boolean;
 }
 
 /**
@@ -75,8 +85,12 @@ export function openDialogShell(root: HTMLElement, opts: DialogShellOptions): Di
 
   function onKeyDown(ev: KeyboardEvent): void {
     if (ev.key === "Escape") {
-      // The tree's own Esc handler (and the preview's) must not also fire.
+      // The tree's own Esc handler (and the preview's) must not also fire —
+      // whether the card dismissed or something inside it consumed the key.
       ev.stopPropagation();
+      if (opts.onEscape?.() === true) {
+        return;
+      }
       opts.onDismiss?.();
       dispose();
       return;

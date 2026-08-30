@@ -28,7 +28,7 @@
     6. The inbound half is only half the wire: `src/webview/messaging/MessageRouter.ts` and `src/webview/main.ts` route the ANSWER to the controller. Declared-posted-handled but unrouted is exactly how `requestWorktreeSubagents` shipped inert with every unit test green, so `src/webview/messaging/MessageRouter.test.ts` covers the new case.
   - **Boundary**: `worktreeCreateDefaults` gains nothing — it is answered per settled branch edit and the refs are not a per-keystroke fact (D1)
 
-- [ ] 2_1 The lead input becomes the combobox
+- [x] 2_1 The lead input becomes the combobox — verified: bun run vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D4, D6, D7; specs/worktree-panel/spec.md#{the-create-dialog-offers-branches-and-a-create-new-entry-in-one-list, the-branch-list-is-ordered-by-what-the-typed-text-most-likely-means, a-branch-can-be-created-when-the-list-is-unavailable-or-incomplete, create-dialog-keyboard-and-dismissal-behaviour, escape-closes-the-branch-list-before-it-dismisses-the-dialog}
   - **Acceptance**:
@@ -37,7 +37,7 @@
   - **Plan**:
     1. In `src/webview/worktree/WorktreeCreateDialog.ts`, the branch input gains combobox semantics over a listbox of the refs from 1_2 plus a create-new row, with plain markup rather than the vendored widget (D6).
     2. Selecting a ref sets the draft's branch mode to existing; the create-new row sets it to new. The Advanced branch-source control keeps only the detached case (D4).
-    3. Escape closes an open list and reaches the dialog only when the list is closed; arrow keys move the active option only while open (D7).
+    3. Escape closes an open list and reaches the dialog only when the list is closed; arrow keys move the active option only while open (D7). The shell owns Escape on a `document` CAPTURE listener registered before the form exists, so no listener the form adds can run first — `src/webview/worktree/worktreeDialogShell.ts` gains an optional "was this handled?" hook instead, keeping one Escape owner rather than two racing ones.
     4. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts`: the ordering; the create-new row present at every query including one matching nothing; the list absent before the answer arrives and present after; Escape's two levels; that the existing focus-order, focus-trap and dismissal cases still pass untouched.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited — if the control cannot be built without them, STOP and ask
 
