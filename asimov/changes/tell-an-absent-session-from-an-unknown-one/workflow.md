@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,11 +31,11 @@
 
 Blueprint: none
 Lane: full
-Planned at: 16cd5756
+Planned at: 6967dbc3
 
 Blueprint: docs/PLAN.md task WT-011.8
 Lane: full — widens a shipped adapter contract across four readers; escalation flag `new-api-contract`; Mode: fastlane
-Planned at: 16cd5756
+Planned at: 6967dbc3
 Origin: split out of WT-011.5 at planning, when oracle review showed its mechanism did not exist. That change is parked and depends on this one.
 No fork at Gate 1: the only candidate alternative — a separate `entryExists` probe beside `entry` — asks each store the same question twice and lets the two answers disagree, so it was rejected in design.md D1 rather than asked.
 Spec: NO-DELTA. Nothing user-observable changes; the consumer (WT-011.5) owns the visible delta.

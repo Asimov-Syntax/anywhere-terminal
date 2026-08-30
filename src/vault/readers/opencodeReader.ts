@@ -15,6 +15,7 @@ import { sameStamps, stampStoreFiles } from "../storeStamp";
 import {
   formatEntryId,
   type VaultActivityStep,
+  type VaultEntryLookup,
   type VaultMessageTokens,
   type VaultSessionDetail,
   type VaultSessionEntry,
@@ -293,6 +294,20 @@ export async function readOpenCodeEntry(
     return null;
   }
   return mapSessionRow(result.rows[0]);
+}
+
+/**
+ * OpenCode by-id lookup, as the conclusive answer the adapter contract asks for.
+ * Task 1_1 wraps the existing reader without classifying: a non-null read is
+ * `found`, everything else is `unknown`, which is what the caller already assumed.
+ * Task 1_5 replaces this body with the real classification.
+ */
+export async function lookupOpenCodeEntry(
+  sessionId: string,
+  options: OpenCodeReaderOptions = {},
+): Promise<VaultEntryLookup> {
+  const entry = await readOpenCodeEntry(sessionId, options);
+  return entry ? { status: "found", entry } : { status: "unknown" };
 }
 
 // ── On-demand session detail (redesign-vault-panel-ui 2_3) ──────────────────

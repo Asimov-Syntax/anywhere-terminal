@@ -15,11 +15,11 @@ import {
 } from "./cacheTypes";
 import { canForkOpenCode } from "./forkSupport";
 import { claudeRoots, resolveClaudeSessionPath } from "./readers/claudePaths";
-import { readClaudeDetail, readClaudeEntry, readClaudeMessageRecord, readClaudeSessions } from "./readers/claudeReader";
+import { readClaudeDetail, lookupClaudeEntry, readClaudeMessageRecord, readClaudeSessions } from "./readers/claudeReader";
 import {
   codexStoreDirs,
   readCodexDetail,
-  readCodexEntry,
+  lookupCodexEntry,
   readCodexMessageRecord,
   readCodexSessions,
   renameCodexThread,
@@ -30,7 +30,7 @@ import {
   type CursorCombinedReaderOptions,
   type CursorDetailReaderOptions,
   readCursorDetail,
-  readCursorEntry,
+  lookupCursorEntry,
   readCursorMessageRecord,
   readCursorSessions,
   resolveCursorLaunchTarget,
@@ -41,14 +41,20 @@ import { clampDetailLimit } from "./readers/detail";
 import {
   opencodeStoreDirs,
   readOpenCodeDetail,
-  readOpenCodeEntry,
+  lookupOpenCodeEntry,
   readOpenCodeMessageRecord,
   readOpenCodeSessions,
   renameOpenCodeSession,
 } from "./readers/opencodeReader";
 import type { RecordLineResult } from "./readers/recordLine";
 import { getAgentDefinition, VAULT_AGENT_IDS, type VaultAgentId } from "./registry";
-import { parseEntryId, type VaultListResult, type VaultSessionDetail, type VaultSessionEntry } from "./types";
+import {
+  parseEntryId,
+  type VaultEntryLookup,
+  type VaultListResult,
+  type VaultSessionDetail,
+  type VaultSessionEntry,
+} from "./types";
 import type { VaultAgentAdapter, VaultWatchTarget } from "./VaultAgentAdapter";
 import type { VaultCacheStore } from "./VaultCacheStore";
 import { normalizeVaultCustomName, type VaultCustomNameRegistry } from "./VaultCustomNameRegistry";
@@ -188,7 +194,7 @@ const defaultAdapters = {
   claude: {
     list: (prev) => readClaudeSessions({}, prev),
     detail: (sessionId, limit) => readClaudeDetail(sessionId, {}, limit),
-    entry: (sessionId) => readClaudeEntry(sessionId),
+    entry: (sessionId) => lookupClaudeEntry(sessionId),
     record: (sessionId, msgRef) => readClaudeMessageRecord(sessionId, msgRef),
     storeWatchTargets: () => [{ baseDir: claudeRoots({}).projectsDir, glob: "**/*.jsonl" }],
     sessionWatchTargets: async (sessionId) => {
@@ -202,7 +208,7 @@ const defaultAdapters = {
   codex: {
     list: (prev) => readCodexSessions({}, prev),
     detail: (sessionId, limit) => readCodexDetail(sessionId, {}, limit),
-    entry: (sessionId) => readCodexEntry(sessionId),
+    entry: (sessionId) => lookupCodexEntry(sessionId),
     record: (sessionId, msgRef) => readCodexMessageRecord(sessionId, msgRef),
     renameNative: (sessionId, name) => renameCodexThread(sessionId, name),
     storeWatchTargets: () => {
@@ -226,7 +232,7 @@ const defaultAdapters = {
   opencode: {
     list: (prev) => readOpenCodeSessions({}, prev),
     detail: (sessionId, limit) => readOpenCodeDetail(sessionId, {}, limit),
-    entry: (sessionId) => readOpenCodeEntry(sessionId),
+    entry: (sessionId) => lookupOpenCodeEntry(sessionId),
     record: (sessionId, msgRef) => readOpenCodeMessageRecord(sessionId, msgRef),
     renameNative: (sessionId, name) => renameOpenCodeSession(sessionId, name),
     storeWatchTargets: () => {
@@ -246,7 +252,7 @@ const defaultAdapters = {
     // which is where `cursorReaderOptions` and the child-locator issuer exist.
     list: (prev, hint) => readCursorSessions(prev, {}, hint),
     detail: (sessionId, limit) => readCursorDetail(sessionId, limit),
-    entry: (sessionId) => readCursorEntry(sessionId),
+    entry: (sessionId) => lookupCursorEntry(sessionId),
     record: (sessionId, msgRef) => readCursorMessageRecord(sessionId, msgRef),
   },
 } satisfies Record<VaultAgentId, VaultAgentAdapter>;
@@ -324,7 +330,7 @@ export class VaultService {
             ...this.cursorReaderOptions,
             issueChildLocator: (child) => this.issueCursorChildLocator(child),
           }),
-        entry: (sessionId) => readCursorEntry(sessionId, this.cursorReaderOptions),
+        entry: (sessionId) => lookupCursorEntry(sessionId, this.cursorReaderOptions),
         storeWatchTargets: () => {
           const chats = cursorChatsRoot(this.cursorReaderOptions);
           const ide = cursorIdeDbPath(this.cursorReaderOptions);
@@ -355,7 +361,17 @@ export class VaultService {
           ...base[id],
           ...(deps.readers ? { list: deps.readers[id] } : {}),
           ...(deps.detailReaders ? { detail: deps.detailReaders[id] } : {}),
-          ...(deps.entryReaders ? { entry: deps.entryReaders[id] } : {}),
+          ...(deps.entryReaders
+            ? {
+                // The seam stays `VaultSessionEntry | null` so every injected reader
+                // keeps working unchanged; wrapping here is what widening it would
+                // have cost every caller (tell-an-absent-session… 1_1).
+                entry: async (sessionId: string): Promise<VaultEntryLookup> => {
+                  const injected = await deps.entryReaders?.[id](sessionId);
+                  return injected ? { status: "found", entry: injected } : { status: "unknown" };
+                },
+              }
+            : {}),
           ...(deps.recordReaders ? { record: deps.recordReaders[id] } : {}),
           ...(deps.nativeRenamers ? { renameNative: deps.nativeRenamers[id] } : {}),
           ...definedRequiredCapabilities(deps.adapters?.[id]),
@@ -891,24 +907,28 @@ export class VaultService {
    * (resolve-by-id, no cache; D3). Returns null for an unknown agent or an
    * unresolvable session. canFork is resolved the same way as in list().
    */
-  async getEntry(entryId: string): Promise<VaultSessionEntry | null> {
+  async lookupEntry(entryId: string): Promise<VaultEntryLookup> {
     const parsed = parseEntryId(entryId);
     if (!parsed || !isVaultAgentId(parsed.agent)) {
-      return null;
+      return { status: "absent" };
     }
-    let entry: VaultSessionEntry | null;
+    let found: VaultEntryLookup;
     if (parsed.agent === "cursor") {
       const source = this.resolveCursorRequest(parsed.sessionId);
-      entry = source ? await this.adapters.cursor.entry(source) : null;
-      if (entry && source !== parsed.sessionId) {
-        entry = { ...entry, id: entryId, sessionId: parsed.sessionId };
+      // A child locator this process cannot decode is NOT proof the session is
+      // gone: the registry is per-process and evicts its oldest key on capacity,
+      // so a miss can be a restart or an eviction while the transcript survives.
+      found = source ? await this.adapters.cursor.entry(source) : { status: "unknown" };
+      if (found.status === "found" && source !== parsed.sessionId) {
+        found = { status: "found", entry: { ...found.entry, id: entryId, sessionId: parsed.sessionId } };
       }
     } else {
-      entry = await this.adapters[parsed.agent].entry(parsed.sessionId);
+      found = await this.adapters[parsed.agent].entry(parsed.sessionId);
     }
-    if (!entry) {
-      return null;
+    if (found.status !== "found") {
+      return found;
     }
+    const entry = found.entry;
     let opencodeCanFork = false;
     if (entry.agent === "opencode") {
       const opencodeMin = getAgentDefinition("opencode")?.forkMinVersion ?? "1.1.54";
@@ -919,8 +939,17 @@ export class VaultService {
       }
     }
     entry.canFork = resolveCanFork(entry, opencodeCanFork);
-    return entry;
+    return { status: "found", entry };
   }
+
+  /** The launchable-entry-or-nothing view of `lookupEntry`, unchanged for every
+   *  caller: both inconclusive statuses collapse back to `null`, including the
+   *  synthetic nesting ids `vault-session-launch` requires it to reject. */
+  async getEntry(entryId: string): Promise<VaultSessionEntry | null> {
+    const found = await this.lookupEntry(entryId);
+    return found.status === "found" ? found.entry : null;
+  }
+
 
   /**
    * One launch resolution per explicit action (B17). Only a Cursor CLI entry has

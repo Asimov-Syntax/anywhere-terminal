@@ -63,7 +63,7 @@ const m = vi.hoisted(() => ({
 vi.mock("./readers/claudeReader", () => ({
   readClaudeSessions: m.claudeSessions,
   readClaudeDetail: m.claudeDetail,
-  readClaudeEntry: m.claudeEntry,
+  lookupClaudeEntry: m.claudeEntry,
   readClaudeMessageRecord: m.claudeRecord,
 }));
 vi.mock("./readers/claudePaths", () => ({
@@ -73,7 +73,7 @@ vi.mock("./readers/claudePaths", () => ({
 vi.mock("./readers/codexReader", () => ({
   readCodexSessions: m.codexSessions,
   readCodexDetail: m.codexDetail,
-  readCodexEntry: m.codexEntry,
+  lookupCodexEntry: m.codexEntry,
   readCodexMessageRecord: m.codexRecord,
   renameCodexThread: m.codexRename,
   codexStoreDirs: () => ({ dbPath: "/home/.codex/state_5.sqlite", sessionsDir: "/home/.codex/sessions" }),
@@ -81,7 +81,7 @@ vi.mock("./readers/codexReader", () => ({
 vi.mock("./readers/opencodeReader", () => ({
   readOpenCodeSessions: m.opencodeSessions,
   readOpenCodeDetail: m.opencodeDetail,
-  readOpenCodeEntry: m.opencodeEntry,
+  lookupOpenCodeEntry: m.opencodeEntry,
   readOpenCodeMessageRecord: m.opencodeRecord,
   renameOpenCodeSession: m.opencodeRename,
   opencodeStoreDirs: () => ({ dbPath: "/home/.local/share/opencode/opencode.db" }),
@@ -89,7 +89,7 @@ vi.mock("./readers/opencodeReader", () => ({
 vi.mock("./readers/cursorReader", () => ({
   readCursorSessions: m.cursorSessions,
   readCursorDetail: m.cursorDetail,
-  readCursorEntry: m.cursorEntry,
+  lookupCursorEntry: m.cursorEntry,
   readCursorMessageRecord: m.cursorRecord,
   resolveCursorSessionWatchPaths: m.cursorWatchPaths,
   resolveCursorLaunchTarget: vi.fn(async () => null),
@@ -107,8 +107,10 @@ beforeEach(() => {
   for (const fn of [m.claudeDetail, m.codexDetail, m.opencodeDetail, m.cursorDetail]) {
     fn.mockImplementation(async (id: string) => detail(id));
   }
+  // The registrations now bind the `lookup*Entry` functions, whose answer is
+  // conclusive rather than nullable (tell-an-absent-session… D1).
   for (const fn of [m.claudeEntry, m.codexEntry, m.opencodeEntry, m.cursorEntry]) {
-    fn.mockImplementation(async (id: string) => entry(id));
+    fn.mockImplementation(async (id: string) => ({ status: "found", entry: entry(id) }));
   }
   for (const fn of [m.claudeRecord, m.codexRecord, m.opencodeRecord, m.cursorRecord]) {
     fn.mockResolvedValue(record());

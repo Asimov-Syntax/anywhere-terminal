@@ -20,6 +20,7 @@ import { sameStamps, stampStoreFiles } from "../storeStamp";
 import {
   formatEntryId,
   type VaultActivityStep,
+  type VaultEntryLookup,
   type VaultSessionDetail,
   type VaultSessionEntry,
   type VaultTimelineItem,
@@ -592,6 +593,20 @@ export async function readCodexEntry(
     }
   }
   return null; // query-error → unresolved (caller treats null as unknown-entry)
+}
+
+/**
+ * Codex by-id lookup, as the conclusive answer the adapter contract asks for.
+ * Task 1_1 wraps the existing reader without classifying: a non-null read is
+ * `found`, everything else is `unknown`, which is what the caller already assumed.
+ * Task 1_4 replaces this body with the real classification.
+ */
+export async function lookupCodexEntry(
+  sessionId: string,
+  options: CodexReaderOptions = {},
+): Promise<VaultEntryLookup> {
+  const entry = await readCodexEntry(sessionId, options);
+  return entry ? { status: "found", entry } : { status: "unknown" };
 }
 
 // ── On-demand session detail (redesign-vault-panel-ui 2_4) ──────────────────

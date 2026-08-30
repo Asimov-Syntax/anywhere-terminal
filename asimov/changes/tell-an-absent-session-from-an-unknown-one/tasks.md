@@ -1,6 +1,6 @@
 ## 1. One answer shape, then one reader at a time
 
-- [ ] 1_1 Give a by-id lookup somewhere to say "I could not find out"
+- [x] 1_1 Give a by-id lookup somewhere to say "I could not find out" — verified: pnpm exec vitest run 'src/vault/VaultService.wiring.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: <!-- design.md D1, D3 -->
   - **Boundary**: no reader classifies its own paths yet — each is wrapped so a non-null read is found and a null read is unknown, which is behaviour-identical

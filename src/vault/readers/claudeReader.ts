@@ -22,7 +22,7 @@ import * as readline from "node:readline";
 import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { formatEntryId, type VaultSessionDetail, type VaultSessionEntry } from "../types";
+import { formatEntryId, type VaultEntryLookup, type VaultSessionDetail, type VaultSessionEntry } from "../types";
 import { type ClaudeChildId, parseClaudeChildId } from "./claudeChildIds";
 import {
   listClaudeSubagentStubs,
@@ -481,4 +481,18 @@ export async function readClaudeEntry(
   } catch {
     return null;
   }
+}
+
+/**
+ * Claude by-id lookup, as the conclusive answer the adapter contract asks for.
+ * Task 1_1 wraps the existing reader without classifying: a non-null read is
+ * `found`, everything else is `unknown`, which is what the caller already assumed.
+ * Task 1_3 replaces this body with the real classification.
+ */
+export async function lookupClaudeEntry(
+  sessionId: string,
+  options: ClaudeReaderOptions = {},
+): Promise<VaultEntryLookup> {
+  const entry = await readClaudeEntry(sessionId, options);
+  return entry ? { status: "found", entry } : { status: "unknown" };
 }

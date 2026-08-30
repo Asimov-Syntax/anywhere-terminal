@@ -176,6 +176,57 @@ describe("VaultService.getEntry: single-entry resolve", () => {
     expect(cursor).not.toHaveBeenCalled();
   });
 
+  it("says absent for an id no store could carry — an unknown agent or a malformed id", async () => {
+    // The two the service itself decides, before any reader is consulted.
+    const svc = new VaultService({ entryReaders: makeEntryReaders(), canForkOpenCodeFn: async () => false });
+    for (const id of ["bogus:x", "no-colon"]) {
+      expect(await svc.lookupEntry(id)).toEqual({ status: "absent" });
+      expect(await svc.getEntry(id)).toBeNull();
+    }
+  });
+
+  it("still rejects a synthetic nesting id, which vault-session-launch requires", async () => {
+    // Its status stays `unknown` until the reader tasks classify their own safety
+    // check; what the accepted requirement pins is the null, and that is unchanged.
+    const svc = new VaultService({ entryReaders: makeEntryReaders(), canForkOpenCodeFn: async () => false });
+    for (const id of ["claude:c1:subagent:2", "claude:m1:turn:3"]) {
+      expect(await svc.getEntry(id)).toBeNull();
+    }
+  });
+
+  it("says unknown — not absent — when a reader could not resolve the session", async () => {
+    // The wrapped legacy seam is nullable, and a null there has never been proof
+    // of anything. Reporting `absent` would let a consumer retire a live row.
+    const svc = new VaultService({
+      entryReaders: makeEntryReaders({ codex: vi.fn(async () => null) }),
+      canForkOpenCodeFn: async () => false,
+    });
+    expect(await svc.lookupEntry("codex:missing")).toEqual({ status: "unknown" });
+    expect(await svc.getEntry("codex:missing")).toBeNull();
+  });
+
+  it("says unknown for a cursor child locator this process cannot decode", async () => {
+    // The locator registry is per-process and evicts its oldest key on capacity,
+    // so a miss can be a restart or an eviction while the transcript still exists.
+    const cursor = vi.fn(async () => null);
+    const svc = new VaultService({
+      entryReaders: makeEntryReaders({ cursor }),
+      canForkOpenCodeFn: async () => false,
+    });
+    expect(await svc.lookupEntry("cursor:child:never-issued")).toEqual({ status: "unknown" });
+    expect(cursor).not.toHaveBeenCalled();
+  });
+
+  it("carries the enriched entry on the found branch", async () => {
+    const svc = new VaultService({
+      entryReaders: makeEntryReaders({ opencode: vi.fn(async () => entry("opencode", "o1", 1)) }),
+      canForkOpenCodeFn: async () => true,
+    });
+    const found = await svc.lookupEntry("opencode:o1");
+    expect(found.status).toBe("found");
+    expect(found.status === "found" && found.entry.canFork).toBe(true);
+  });
+
   it("returns null for an unknown agent or a malformed id", async () => {
     const svc = new VaultService({ entryReaders: makeEntryReaders(), canForkOpenCodeFn: async () => false });
     expect(await svc.getEntry("bogus:x")).toBeNull();

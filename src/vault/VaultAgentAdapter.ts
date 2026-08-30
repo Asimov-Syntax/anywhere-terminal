@@ -10,7 +10,7 @@
 import type { ListReader } from "./cacheTypes";
 import type { RecordLineResult } from "./readers/recordLine";
 import type { VaultAgentId } from "./registry";
-import type { VaultSessionDetail, VaultSessionEntry } from "./types";
+import type { VaultEntryLookup, VaultSessionDetail } from "./types";
 
 /** A directory + glob to hand to `WatcherPool.subscribePattern` (enhance-vault-sessions
  *  D4/D5). Resolved from the reader path helpers so watch targets never drift. */
@@ -33,8 +33,10 @@ export interface VaultAgentAdapter {
   /** On-demand single-session detail. `limit` bounds the returned timeline
    *  (most-recent kept) so the webview can load older messages incrementally. */
   detail: (sessionId: string, limit?: number) => Promise<VaultSessionDetail | null>;
-  /** Resolve ONE launch entry by id, with no full scan — the resume/fork fast path. */
-  entry: (sessionId: string) => Promise<VaultSessionEntry | null>;
+  /** Resolve ONE launch entry by id, with no full scan — the resume/fork fast path.
+   *  Answers conclusively: a session that is not there is `absent`, a lookup that
+   *  could not find out is `unknown` (tell-an-absent-session-from-an-unknown-one D1). */
+  entry: (sessionId: string) => Promise<VaultEntryLookup>;
   /** Resolve the `msgRef` a timeline item carries back to its stored record
    *  (improve-vault-transcript-messages D5). */
   record: (sessionId: string, msgRef: string) => Promise<RecordLineResult>;

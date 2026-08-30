@@ -200,6 +200,25 @@ export interface VaultLaunchTarget {
   canSeedPrompt: boolean;
 }
 
+/**
+ * What a by-id lookup could establish about ONE session. `absent` is a proof the
+ * session is not there — reachable only from an enumeration that COMPLETED and did
+ * not contain it. Every path that merely failed to find out is `unknown`, including
+ * a store that could not be opened, a query that threw, a directory that could not
+ * be listed, and a record found but not mappable.
+ *
+ * The asymmetry is deliberate: a consumer retires a row's preview on `absent` and
+ * keeps it on `unknown`, so a wrong `absent` deletes a live session's line while a
+ * wrong `unknown` only leaves a stale one for another cycle.
+ *
+ * There is no fourth state. WHY a lookup was inconclusive is the reader's business,
+ * not its caller's.
+ */
+export type VaultEntryLookup =
+  | { status: "found"; entry: VaultSessionEntry }
+  | { status: "absent" }
+  | { status: "unknown" };
+
 export interface VaultSessionEntry {
   /** "<agent>:<sessionId>", globally unique. */
   id: string;

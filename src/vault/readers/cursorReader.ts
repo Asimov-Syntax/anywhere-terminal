@@ -25,6 +25,7 @@ import type { withSqliteSnapshot } from "../sqlite";
 import {
   formatEntryId,
   type VaultActivityStep,
+  type VaultEntryLookup,
   type VaultSessionDetail,
   type VaultSessionEntry,
   type VaultTimelineItem,
@@ -639,6 +640,20 @@ export async function readCursorEntry(
     return (await resolveCursorProjectSession(sessionId, options))?.entry ?? null;
   }
   return (await resolveCursorCliSession(sessionId, options))?.entry ?? null;
+}
+
+/**
+ * Cursor by-id lookup, as the conclusive answer the adapter contract asks for.
+ * Task 1_1 wraps the existing reader without classifying: a non-null read is
+ * `found`, everything else is `unknown`, which is what the caller already assumed.
+ * Task 1_6 replaces this body with the real classification.
+ */
+export async function lookupCursorEntry(
+  sessionId: string,
+  options: CursorCombinedReaderOptions = {},
+): Promise<VaultEntryLookup> {
+  const entry = await readCursorEntry(sessionId, options);
+  return entry ? { status: "found", entry } : { status: "unknown" };
 }
 
 /** Explicit detail decoding is isolated from metadata-only list refreshes. Any
