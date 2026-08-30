@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved — no fork; worktree-removal.md § 4.1 names a source for every proof and the ladder for the one that needed it
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved (fastlane)
+- [x] Gate 2: plan approved _(re-earned after the round-1 B2 handback amended D3)_ (fastlane)
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-013.2`)_
@@ -38,9 +38,9 @@
 - 3_2: `src/providers/WorktreeHost.ts` added to the Plan paths. It supplies three `unproven` outcomes so the tree compiles; 3_3 replaces the constant with the reader.
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none
+Blueprint: docs/PLAN.md task WT-013.2
 Lane: full (standard) — three read-only proofs feeding the one irreversible action, and a shared registry reader four call sites depend on | flags: security-privacy
-Planned at: dc157a11
+Planned at: f289f31f
 
 Validator warning triaged and rejected: "Task 2_1 Plan names 9 files — split it". Six of the nine are test fixtures following one type rename (`ExternalSessionFact` → `SessionRecord`, gaining `alive`). A rename does not survive being split — the tree does not compile between the halves — so splitting it would trade a sizing heuristic for a broken intermediate commit. The three files carrying actual logic are `worktreeBlockers.ts`, `WorktreeHost.ts` and `extension.ts`.
 
@@ -51,3 +51,8 @@ Carried in from WT-013.1 round 5 and NOT folded into this change: an `lstat` tha
 Blueprint extension to carry at sync: `worktree-removal.md` § 4.1 leaves the `notApplicable` column blank for `branchMerged`, which the code cannot honour — a detached or bare worktree has no branch for the question to be about, and `unproven` would claim a comparison was attempted (design.md D5).
 
 Ordering deviation on 1_2: I staged and committed the task before its tick, in the same shell block as the verify that was still failing. The verify then failed on the suite guard — `runningSessions.test.ts`, which is 1_1's committed addition, since the comparison runs against the change baseline and not the previous task's commit — so nothing unverified reached the tree, but the commit did land ahead of the evidence. The tick and its rationale are recorded now, and the commit is unchanged. Run the verify to completion before staging.
+
+- Round-1 handback resolved, and my parking of it was too wide. W1's own triage already said "Inside 1_1's accepted contract; touches no D#" — it is remediation and never needed a plan cycle; I parked it alongside B2 by association. Only B2 and B3(a) turned on the D3 reading.
+- D3 amended for B2 and Gate 2 re-earned under fastlane. The fork was between two readings of an INTERNAL seam — what the producer derives and what reaches `evaluateRemoval` — with no spec delta and no user-visible behaviour either way, so it is not the product-scope fork fastlane withholds. Chosen: keep `winsDedupe` in its one home and export a pure derivation over records already in hand, so the single scan yields both views. Rejected: widening `SessionRecord` with selection metadata, which would copy the rule into a second module.
+
+- `Blueprint:` was scaffolded `none` while the very next line's template text already named WT-013.2, and the round-1 handback is the first moment anything read the field. Corrected to the PLAN task, so blueprint sync runs against a real owner instead of being ticked away as having none.

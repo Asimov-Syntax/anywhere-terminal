@@ -63,8 +63,31 @@ question that wants it.
 The removal producer then takes the raw records ONCE and derives both the live external evidence and
 the ownership proof from them, so the assessment scans the registry directory exactly as many times
 as it does today. `RemovalInput.externalSessions` becomes `RemovalInput.sessions`, carrying
-`SessionRecord` (an `ExternalSessionFact` plus `alive`), and `evaluateRemoval` filters the live ones
-where it used to be handed them.
+`SessionRecord` (an `ExternalSessionFact` plus `alive`).
+
+**Amended after round 1 (B2), and this sentence is the amendment.** The original text ended
+"…and `evaluateRemoval` filters the live ones where it used to be handed them", which read as though
+moving the live filter downstream were the whole change. It is not: `listRunningClaudeSessions` also
+ran `winsDedupe` — interactive over headless, then newest `startedAt`, then highest pid — across
+every live record USER-WIDE, before any caller looked at containment. Selecting the canonical record
+globally and only then testing containment is a different question from testing containment first
+and keeping whatever survives. A session whose global winner is rooted elsewhere, with a losing
+duplicate rooted inside the target, refuses under the second reading and did not under the first.
+That is a change to what refuses, which 2_1's Boundary forbids outright.
+
+**Chosen, and it is the FIRST reading:** the canonical selection stays exactly where it is and keeps
+its one implementation. `runningSessions.ts` gains a pure exported derivation — the same `winsDedupe`
+applied to the live subset of records already in hand — and the producer calls it on the single raw
+read. `RemovalInput` then carries both views from that one scan: `sessions` (raw, including dead, for
+`ownerGone`) and the canonical live list for refusal. `evaluateRemoval` is handed the canonical list
+as it always was and neither filters nor dedupes.
+
+Rejected — widening `SessionRecord` with `headless`, `startedAt` and `pid` so the blockers module can
+re-derive the winner: it copies a selection rule into a second home, and the rule's own module is
+right there. Reuse-first, and one fact one owner.
+
+Rejected — leaving the new first-record dedupe and accepting the changed refusal: it is a change to
+which removals are blocked, on the one action that cannot be undone, and nobody asked for it.
 
 Rejected — a `keepDead?: boolean` option on the existing function: the return type would then mean
 two different things depending on an argument, and every existing caller reads it as "live sessions"
