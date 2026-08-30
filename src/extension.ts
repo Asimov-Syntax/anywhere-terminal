@@ -70,6 +70,7 @@ import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
 import { readAsimovProvisioning } from "./worktree/provisioning/asimovProvider";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
+import { readRepoRefs } from "./worktree/repoRefs";
 import { checksFor } from "./worktree/removalChecks";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
@@ -718,6 +719,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
     readProvisioning: (mainWorktree) => readAsimovProvisioning(createProvisioningDeps(), mainWorktree),
+    // Same reason as the offer above: without this the create form never
+    // receives a branch list and the combobox is a plain text field in the
+    // shipped extension, with every module test green against its own fake.
+    // The listing arrives from the host, which already holds it — this side
+    // supplies only the git runner (design.md D2).
+    readRefs: (input) => readRepoRefs(worktreeTreeDeps.runner, input),
     // The two evidence sources a removal blocker set needs and the tree does
     // not carry, from the same store and registry the projector reads.
     removalFacts: {

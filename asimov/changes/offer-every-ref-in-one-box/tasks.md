@@ -54,8 +54,19 @@
     4. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts`: the badge names a directory and not a path; submit is refused for a held branch typed by hand rather than clicked; the partial notice appears only when the answer says truncated; a failed enumeration still permits a create.
   - **Boundary**: the disabled rendering is never the guard — a test that only asserts the attribute does not satisfy this task
 
-- [ ] 3_1 The list survives the production boundary
-  - **Deps**: 2_2
+- [x] 2_3 The producer is wired into the extension — verified: bun run vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_2
+  - **Refs**: design.md D2, D3
+  - **Acceptance**:
+    - Outcome: The assembled extension answers a refs request instead of ignoring it
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.ts` supplies `readRefs`, binding `readRepoRefs` from 1_1 to the runner it already constructs — beside `readProvisioning`, which is the same shape of injection.
+    2. Added rather than folded into 3_1: that task's Boundary is coverage-only, and the producer is production code. 1_2 built the seam and named `WorktreeHost` as the answerer; nothing named the entry point that supplies the reader, which is the gap this closes.
+  - **Boundary**: the derivation stays in `repoRefs.ts` — this task injects a reader, it does not compute a ref list
+
+- [x] 3_1 The list survives the production boundary — verified: bun run vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_2, 2_3
   - **Refs**: design.md D1, D2; specs/worktree-panel/spec.md#a-held-branch-names-the-directory-holding-it
   - **Acceptance**:
     - Outcome: The assembled extension lists the repository's branches and marks the one the open worktree holds

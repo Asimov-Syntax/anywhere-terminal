@@ -29,6 +29,7 @@ import { createMessageRouter, type MessageHandlers } from "./webview/messaging/M
 import { WorktreeController } from "./webview/worktree/WorktreeController";
 import { agentRow } from "./webview/worktree/worktreeFixtures";
 import type { WorktreeAgentRow, WorktreePresence } from "./webview/worktree/worktreeViewTypes";
+import { MAX_REFS } from "./worktree/repoRefs";
 
 // A REAL directory: the create-path probe asks the filesystem, and a fake root
 // nothing could ever occupy makes that probe untestable (round-4 B12).
@@ -112,6 +113,12 @@ const SCRIPT: Record<string, { code?: number; stdout?: string; stderr?: string }
   // unforced removal here before it reached git.
   [`${LINKED}|ls-files --others --ignored --exclude-standard -z`]: { stdout: "" },
   [`${REPO}|worktree prune --dry-run --verbose`]: { stderr: "" },
+  // The repository's local branches, for the create dialog's combobox. `feature`
+  // is the one the linked worktree has checked out, so the list the form
+  // receives has to mark it held — derived from the listing, never read here.
+  [`${REPO}|for-each-ref --format=%(refname:short) --count=${MAX_REFS + 1} refs/heads/`]: {
+    stdout: "main\nfeature\nidle\n",
+  },
 };
 
 vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
@@ -437,13 +444,18 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   let controller: WorktreeController | undefined;
   // The routing main.ts performs, on the messages this change added.
   // The terminal handlers are required by the router's type and irrelevant here;
-  // only the four worktree ones carry this walk.
+  // only the worktree ones carry this walk.
   const worktreeHandlers: Pick<
     MessageHandlers,
-    "onWorktreeTreeResponse" | "onWorktreeCreateDefaults" | "onWorktreeMutationResult" | "onVaultLaunchTargets"
+    | "onWorktreeTreeResponse"
+    | "onWorktreeCreateDefaults"
+    | "onWorktreeRefs"
+    | "onWorktreeMutationResult"
+    | "onVaultLaunchTargets"
   > = {
     onWorktreeTreeResponse: (m) => controller?.handleTreeResponse(m),
     onWorktreeCreateDefaults: (m) => controller?.handleCreateDefaults(m),
+    onWorktreeRefs: (m) => controller?.handleRefs(m),
     onWorktreeMutationResult: (m) => controller?.handleMutationResult(m),
     // Routed by the capability it echoes, exactly as main.ts does — the vault
     // panel gets `continue`, the worktree controller gets `start`.
@@ -1093,6 +1105,54 @@ describe("the invariants that span the host and the webview", () => {
     // Same node, not merely equal markup: a replaced element is a re-render.
     expect(after).toBe(before);
     expect(outbound.length).toBe(sentBefore);
+  });
+
+  it("supplies a ref reader, so a refs request reaches git rather than being ignored", async () => {
+    // The host ignores the request outright when no reader is wired, and every
+    // module test supplies its own — which is exactly how the provisioning
+    // offer shipped dark with a green suite (.reviews/round-1.md B1).
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+
+    const reads = argv.filter((c) => c.args[0] === "for-each-ref");
+    expect(reads).toHaveLength(1);
+    // Bounded by the module's own cap, not by whatever the entry point felt
+    // like passing — and run in the repository, not the linked worktree.
+    expect(reads[0]?.args).toContain(`--count=${MAX_REFS + 1}`);
+    expect(reads[0]?.cwd).toBe(REPO);
+  });
+
+  it("offers the repository's branches in the create dialog, marking the one a worktree holds", async () => {
+    // The module tests assert against their own injected fakes, so none of them
+    // can see an entry point that never supplies a reader — which is exactly
+    // how the provisioning offer shipped dark (.reviews/round-1.md B1). This
+    // runs the real `activate()` closure: the rows below exist only if the
+    // request reached the host, the host reached `readRepoRefs`, and the answer
+    // was routed back through the webview to the form.
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.focus();
+    branch.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    await settle();
+
+    const rows = [...document.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']")];
+    expect(rows.map((r) => r.dataset.branch ?? r.dataset.kind)).toEqual(["main", "feature", "idle", "new"]);
+    // Derived from the listing this assembly already holds, not read from git a
+    // second time — and it names the DIRECTORY, never the path (design.md D2).
+    const feature = rows.find((r) => r.dataset.branch === "feature");
+    expect(feature?.dataset.heldBy).toBe("feature");
+    expect(feature?.getAttribute("aria-disabled")).toBe("true");
+    expect(feature?.textContent).not.toContain(TMP);
+    // One git read for the list. A producer that re-listed the worktrees to
+    // answer held-by would show a second call here.
+    expect(argv.filter((c) => c.args[0] === "for-each-ref")).toHaveLength(1);
   });
 
   it("carries the three proofs across the production boundary", async () => {
