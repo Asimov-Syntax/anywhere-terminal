@@ -14,7 +14,7 @@
     3. Add the message to `ExtensionToWebViewMessage`, and to `WORKTREE_MESSAGE_TYPES` if that list covers extension-to-webview types — check which direction it enumerates before adding.
   - **Boundary**: no field on any of these shapes capable of carrying an absolute path or command text back from the webview — the selection stays ids-only
 
-- [ ] 1_2 Read the repository's own provisioning file into the model
+- [x] 1_2 Read the repository's own provisioning file into the model — verified: pnpm exec vitest run 'src/worktree/provisioning/asimovProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: docs/design/worktree-provisioning.md#31-asimov--asimovworktreeyaml; docs/design/worktree-provisioning.md#43-provenance-is-preserved-through-every-transform; docs/design/worktree-provisioning.md#7-security; docs/design/worktree-provisioning.md#9-edge-cases; design.md D1, design.md D2, design.md D3, design.md D4
   - **Acceptance**:
