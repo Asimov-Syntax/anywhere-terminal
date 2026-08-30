@@ -21,7 +21,7 @@ import type {
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-const REPO_ID = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+export const REPO_ID = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
 const MAIN_PATH = "/Users/dev/Projects/ai-oss/anywhere-terminal";
 const WT_ROOT = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt";
 

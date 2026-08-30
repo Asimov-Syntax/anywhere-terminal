@@ -99,7 +99,7 @@
     5. Repair the 1_3 test whose fake resolves synchronously: hold one resolution open and drive a second defaults request into that window, or the assertion cannot observe the property it names.
   - **Boundary**: still no execution path reads this store — WT-012.2 owns redemption
 
-- [ ] 2_3 Keep provisioning out of the destination's channel
+- [x] 2_3 Keep provisioning out of the destination's channel — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: .reviews/round-1.md B4, W2, W3, S1; docs/design/worktree-actions.md#32-create
   - **Acceptance**:
@@ -109,6 +109,7 @@
     1. Give the offer its own binding in `src/webview/worktree/WorktreeController.ts` and `src/webview/worktree/WorktreeCreateDialog.ts`, separate from `bindDefaults`, so nothing on the provisioning path can clear the destination's `outstanding` gate (B4). Send only the repository that changed (S1).
     2. Rebuild the section only when the offer's identity changes, and carry the checked ids across a rebuild so typing does not revert a user's choice (W2).
     3. Name each checkbox by its subject as well as its verb, via `aria-labelledby` over the top line and the subject — five rows from one provider currently announce identically (W3).
+    4. Export the repo id `src/webview/worktree/worktreeFixtures.ts` already defines, so a test wiring the offer channel names the same repository the seed does.
   - **Boundary**: no edit to `docs/ui/create-worktree.html` or `docs/ui/worktree-create-dialog.css`
 
 - [ ] 2_4 Write down the id obligation the merge task inherits

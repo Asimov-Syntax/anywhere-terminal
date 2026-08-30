@@ -107,6 +107,16 @@ export interface WorktreeCreateDialogDeps {
    * for every caller that does not need to update it.
    */
   bindDefaults?: (apply: (next: WorktreeCreateDefaults) => void) => void;
+  /**
+   * Receive the function that applies a fresh provisioning offer.
+   *
+   * Separate from `bindDefaults` on purpose. The destination is answered per
+   * keystroke and the form gates Create on that answer being current;
+   * provisioning is answered once and gates nothing. Routing the offer through
+   * the destination's callback let it clear that gate, so Create went live on
+   * the path resolved for the opening ask (.reviews/round-1.md B4).
+   */
+  bindProvisioning?: (apply: (repoId: string, offer: WorktreeProvisionOffer) => void) => void;
   onSubmit: (draft: WorktreeCreateDraft) => void;
   onCancel?: () => void;
 }
@@ -252,8 +262,16 @@ function bringRow(row: BringRow, index: number): HTMLElement {
   // the webview the authority on what gets materialized (§ 4.0).
   cb.value = row.id;
   cb.checked = row.checked;
+  const topId = `wt-brow-top-${index}`;
+  const metaId = `wt-brow-meta-${index}`;
+  // The subject is what distinguishes one row from another, and it sits outside
+  // the label to keep the mockup's two-line shape — so five rows from one
+  // provider announced as five identical "Copy asimov/worktree.yaml"
+  // (.reviews/round-1.md W3). Both halves are named explicitly instead.
+  cb.setAttribute("aria-labelledby", `${topId} ${metaId}`);
   const top = document.createElement("label");
   top.className = "wt-brow-top";
+  top.id = topId;
   top.htmlFor = cb.id;
   const verb = document.createElement("b");
   verb.textContent = row.verb;
@@ -272,6 +290,7 @@ function bringRow(row: BringRow, index: number): HTMLElement {
   top.appendChild(src);
   const meta = document.createElement("div");
   meta.className = "wt-brow-meta";
+  meta.id = metaId;
   const code = document.createElement("code");
   code.className = "wt-brow-code";
   code.textContent = row.subject;
@@ -472,6 +491,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   bringField.append(bringBox, bringEmpty);
   shell.dialog.appendChild(bringField);
 
+  /** The offer currently drawn, so an unchanged one is not redrawn. */
+  let drawnOfferId: string | null = null;
+  /**
+   * What the user has ticked, per offer.
+   *
+   * Kept outside the DOM because the section is rebuilt when a new offer
+   * supersedes the old one and when the repo picker moves. Nothing reads this
+   * yet — WT-012.2 owns redemption — but losing a choice silently is a defect
+   * whether or not anything acts on it (.reviews/round-1.md W2).
+   */
+  const checkedByOffer = new Map<string, Set<string>>();
+
   /** Redraw the section from the repo's offer. Called on every derive. */
   function syncBringOver(offer: WorktreeProvisionOffer | undefined): void {
     if (offer === undefined) {
@@ -481,11 +512,26 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       bringField.hidden = true;
       bringSum.textContent = "";
       bringBox.replaceChildren();
+      drawnOfferId = null;
       return;
     }
+    // `syncDerived` runs on every keystroke, and rebuilding there reset every
+    // checkbox — so unticking Run setup and typing one more character silently
+    // put it back (W2). The offer is the only thing this section renders, so its
+    // id is the only thing that can require a redraw.
+    if (drawnOfferId === offer.offerId) {
+      return;
+    }
+    drawnOfferId = offer.offerId;
     bringField.hidden = false;
     bringSum.textContent = bringSummary(offer.model);
-    const rows = bringRows(offer.model);
+    let ticked = checkedByOffer.get(offer.offerId);
+    if (ticked === undefined) {
+      ticked = new Set(bringRows(offer.model).filter((r) => r.checked).map((r) => r.id));
+      checkedByOffer.set(offer.offerId, ticked);
+    }
+    const held = ticked;
+    const rows = bringRows(offer.model).map((row) => ({ ...row, checked: held.has(row.id) }));
     // Problems sit inside the box beside the rows, not instead of them: an
     // unknown key does not discard the keys that parsed, and reporting only the
     // problem would understate what the create is about to do.
@@ -493,6 +539,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       ...rows.map((row, i) => bringRow(row, i)),
       ...offer.model.problems.map((problem) => bringProblem(problem)),
     );
+    bringBox.addEventListener("change", (ev) => {
+      const cb = ev.target;
+      if (cb instanceof HTMLInputElement && cb.classList.contains("wt-brow-cb")) {
+        if (cb.checked) {
+          held.add(cb.value);
+        } else {
+          held.delete(cb.value);
+        }
+      }
+    });
     bringBox.hidden = bringBox.childElementCount === 0;
     // The sentence stands in only where there is genuinely nothing to list. A
     // file that failed to parse has a problem row, which is a different answer.
@@ -797,6 +853,20 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     outstanding = false;
     syncDerived();
+  });
+
+  // The offer's own channel. It redraws the section and touches nothing else —
+  // in particular not `outstanding`, which is the destination's gate (B4).
+  deps.bindProvisioning?.((repoId, offer) => {
+    const at = repos.findIndex((r) => r.repoId === repoId);
+    const opened = repos[at];
+    if (at < 0 || opened === undefined) {
+      return;
+    }
+    repos[at] = { ...opened, provisioning: offer };
+    if (repoId === draft.repoId) {
+      syncBringOver(offer);
+    }
   });
 
   syncOpenAfter();

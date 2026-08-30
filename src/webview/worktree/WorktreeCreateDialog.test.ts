@@ -11,6 +11,7 @@ import {
   malformedProvisionModel,
   provisionModel,
   provisionOffer,
+  REPO_ID,
 } from "./worktreeFixtures";
 import type { WorktreeCreateDraft } from "./worktreeViewTypes";
 
@@ -1080,5 +1081,120 @@ describe("Bring over — a repository that declares nothing, and a file that can
     );
     const files = Array.from(host.querySelectorAll(".wt-bring-problem-file")).map((f) => f.textContent);
     expect(files).toEqual(["asimov/worktree.yaml", ".vscode/worktree.json"]);
+  });
+});
+
+describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () => {
+  /** The form wired the way production wires it: destination AND provisioning. */
+  function wired() {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let applyDefaults: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+    let applyOffer: ((repoId: string, offer: ReturnType<typeof provisionOffer>) => void) | undefined;
+    const asked: string[] = [];
+    const dispose = openWorktreeCreateDialog(host, {
+      repos: [createDefaults()],
+      onSubmit: () => {},
+      onBranchChange: (_repoId, branch) => asked.push(branch),
+      bindDefaults: (apply) => {
+        applyDefaults = apply;
+      },
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    const q = <T extends HTMLElement>(sel: string): T => {
+      const el = host.querySelector<T>(sel);
+      if (!el) {
+        throw new Error(`missing ${sel}`);
+      }
+      return el;
+    };
+    return { host, q, dispose, asked, offer: (o = provisionOffer()) => applyOffer?.(REPO_ID, o), applyDefaults };
+  }
+
+  it("[B4] an offer arriving mid-edit does not enable Create on a stale path", () => {
+    // The destination is answered per keystroke; provisioning is answered once.
+    // Routing the offer through the destination's callback cleared its pending
+    // gate, so Create went live on the path resolved for the OPENING ask.
+    const { q, offer } = wired();
+    const create = () => q<HTMLButtonElement>(".wt-btn--primary");
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    expect(create().disabled).toBe(true);
+
+    offer();
+
+    expect(create().disabled).toBe(true);
+  });
+
+  it("[B4] the offer still renders while the destination is pending", () => {
+    // Isolating the channel must not cost the section its answer.
+    const { host, q, offer } = wired();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    offer();
+
+    expect(host.querySelectorAll(".wt-brow")).toHaveLength(5);
+  });
+
+  it("[W2] keeps the boxes the user ticked when the form re-derives", () => {
+    // syncDerived runs on every keystroke and rebuilt every row, so unticking
+    // Run setup and typing one more character silently put it back.
+    const { host, q, offer } = wired();
+    offer();
+    const setup = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).at(-1);
+    const first = host.querySelector<HTMLInputElement>(".wt-brow-cb");
+    if (!setup || !first) {
+      throw new Error("expected rows");
+    }
+    setup.checked = true;
+    setup.dispatchEvent(new Event("change", { bubbles: true }));
+    first.checked = false;
+    first.dispatchEvent(new Event("change", { bubbles: true }));
+
+    type(q<HTMLInputElement>("#wt-branch"), "feat/xy");
+
+    const now = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).map((cb) => cb.checked);
+    expect(now).toEqual([false, true, true, true, true]);
+  });
+
+  it("[W2] does not rebuild the rows when nothing about the offer changed", () => {
+    const { host, q, offer } = wired();
+    offer();
+    const before = host.querySelector(".wt-brow");
+    type(q<HTMLInputElement>("#wt-branch"), "feat/xyz");
+
+    // The same node, not an equal one: a rebuild is what loses user state.
+    expect(host.querySelector(".wt-brow")).toBe(before);
+  });
+
+  it("[W2] does rebuild when a new offer supersedes the old one", () => {
+    const { host, offer } = wired();
+    offer();
+    const before = host.querySelector(".wt-brow");
+    offer(provisionOffer({ offerId: "provision-2", model: provisionModel({ ports: [], setup: [] }) }));
+
+    expect(host.querySelector(".wt-brow")).not.toBe(before);
+    expect(host.querySelectorAll(".wt-brow")).toHaveLength(3);
+  });
+
+  it("[W3] names each checkbox by its subject, not only by its verb", () => {
+    // Five rows from one provider otherwise announce as five identical
+    // "Copy asimov/worktree.yaml".
+    const { host, offer } = wired();
+    offer();
+    const names = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).map((cb) => {
+      const ids = (cb.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
+      return ids
+        // `getElementById` rather than a selector: this jsdom has no CSS.escape.
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+    });
+
+    expect(names).toHaveLength(5);
+    expect(new Set(names).size).toBe(5);
+    expect(names[0]).toContain(".env");
+    expect(names.at(-1)).toContain("pnpm install --frozen-lockfile");
   });
 });

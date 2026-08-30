@@ -27,6 +27,7 @@ import type {
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeCreateDefaults,
+  WorktreeProvisionOffer,
   WorktreeCreateMode,
   WorktreeInfo,
   WorktreeLaunchAgent,
@@ -271,6 +272,15 @@ export class WorktreeController {
   private pendingCreate: { asked: string[]; outstanding: Set<string>; initialRepoId?: string } | null = null;
   /** Push a fresh host answer into the open form. Null when none is open. */
   private applyCreateDefaults: ((next: WorktreeCreateDefaults) => void) | null = null;
+  /**
+   * Push a fresh provisioning offer into the open form.
+   *
+   * Its own channel, not `applyCreateDefaults`. That callback carries the
+   * DESTINATION, and the form clears its pending gate on any answer through it —
+   * so routing provisioning there enabled Create on a stale path
+   * (.reviews/round-1.md B4).
+   */
+  private applyProvisionOffer: ((repoId: string, offer: WorktreeProvisionOffer) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
   private actionResults: WorktreeActionResult[] = [];
   /**
@@ -377,6 +387,9 @@ export class WorktreeController {
         onBranchChange: (repoId, branch) => deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId, branch }),
         bindDefaults: (apply) => {
           this.applyCreateDefaults = apply;
+        },
+        bindProvisioning: (apply) => {
+          this.applyProvisionOffer = apply;
         },
       }),
       onLaunchSubmit: (request) => {
@@ -929,10 +942,11 @@ export class WorktreeController {
    */
   handleProvisionOffer(msg: WorktreeProvisionOfferMessage): void {
     this.provisionOffers.set(msg.repoId, msg);
-    const seed = this.createRepos().find((r) => r.repoId === msg.repoId);
-    if (seed !== undefined) {
-      this.applyCreateDefaults?.(seed);
-    }
+    // Only the repository that changed, and only the offer. Rebuilding every
+    // repository's record to update one was O(repos²) across a workspace's
+    // replies (round-1 S1), and sending it down the destination's channel is
+    // what B4 was.
+    this.applyProvisionOffer?.(msg.repoId, { offerId: msg.offerId, model: msg.model });
   }
 
   /** The host's create destination for one repo, and the form it was asked for. */
