@@ -1,0 +1,19 @@
+{
+  // Extension-host tests run inside VS Code's Node process, loaded by Mocha from
+  // plain `.js`. `package.json` declares no `"type"`, so Node reads that output as
+  // CommonJS — while the base config emits `ESNext` modules for esbuild to bundle.
+  // Compiling the host tests through the base config produces `import` statements
+  // Node rejects outright, so this config overrides the module settings and nothing
+  // else.
+  //
+  // `include` is deliberately narrow: `src/test/` also holds Vitest suites, which
+  // import `vitest` and would fail under Mocha if the runner's glob reached them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "outDir": "out",
+    "types": ["node", "mocha", "vscode"]
+  },
+  "include": ["src/test/host/**/*.ts"]
+}

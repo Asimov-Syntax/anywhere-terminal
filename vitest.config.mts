@@ -8,8 +8,11 @@ export default defineConfig({
   test: {
     // Discover colocated test files under src/
     include: ["src/**/*.test.ts"],
-    // Exclude integration tests and build artifacts
-    exclude: ["node_modules", "dist", "out", "src/test/extension.test.ts"],
+    // Exclude build artifacts and the extension-host lane. The host lane runs under
+    // Mocha inside a real VS Code (see .vscode-test.mjs); its files use Mocha globals
+    // and the real `vscode` module, so Vitest must not collect them. The rule names
+    // the directory rather than a filename so adding a host test cannot break it.
+    exclude: ["node_modules", "dist", "out", "src/test/host/**"],
     // Resolve `vscode` module to our manual mock; `vs/*` to vendored VS Code list widget
     // (see asimov/changes/port-vscode-async-data-tree/design.md D2)
     alias: {

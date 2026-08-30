@@ -663,7 +663,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | None |
 | **Notes** | A **spike**, and it gates WT-012.11's task variant rather than merely informing it. The provider set assumes a `tasks.json` step can be run through the task system with its identity intact. The API documents `fetchTasks` as returning tasks *managed by the editor*, which are the ones contributed by open workspace folders — and a worktree the dialog just created is not one. If the task system cannot reach it, the `task` variant collapses into `shell`, one provider leaves the design, and WT-012.11 shrinks. Discovering that during WT-012.11 means discovering it after its spec is written. `runOn: "worktreeCreated"` is upstream and stable in the task schema, but it is dispatched by a workbench-internal contribution for the editor's own sessions and is not reachable by any extension API, so it stays a convention we read and dispatch ourselves either way |
 | **Acceptance** | The question is answered by a running experiment rather than by reading types: a task declared in a directory outside the workspace is either executed with its identity intact, or shown to be unreachable with the failure recorded; if it is reachable, the mechanism and its constraints are written into the design; if it is not, the `task` variant is removed from the provisioning model, the affected provider row is restated, and every document that names the variant is updated in the same change; either outcome leaves no document claiming the untested behaviour |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-012.14] Prove Entry Reconstruction on Windows
 

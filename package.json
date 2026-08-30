@@ -630,7 +630,7 @@
     "build:check-size": "node scripts/check-bundle-size.mjs",
     "build:check-vendor": "node scripts/check-vendor-headers.mjs",
     "build:check-vsix": "node scripts/check-vsix-contents.mjs",
-    "compile-tests": "tsc -p . --outDir out",
+    "compile-tests": "tsc -p tsconfig.test.json",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
     "check-types": "tsc --noEmit",
