@@ -175,3 +175,17 @@
   - **Plan**:
     1. In `src/vault/storeStamp.ts`, have `stampStoreFiles` delegate to `readOnce` and discard its usability verdict, which is exactly the "omit what is missing" behaviour it already has, and reattach the doc comment that drifted onto the wrong declaration.
 
+## 6. Round-5 review fixes
+
+- [x] 6_1 Give Cursor IDE the shared stamp owner, and stop lying about the wrappers' arity — verified: pnpm exec vitest run 'src/vault/readers/cursorIdeReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_3
+  - **Refs**: .reviews/round-5.md; design.md#d1-reuse-is-gated-on-proven-sameness-never-on-elapsed-time; design.md#d3-retention-is-bounded-by-construction-not-by-enforcement
+  - **Acceptance**:
+    - Outcome: one owner answers the store-freshness question for every reader, and opting out of retention at a primary reader cannot compile
+    - Verify: unit src/vault/readers/cursorIdeReader.test.ts
+  - **Plan**:
+    1. In `src/vault/readers/cursorIdeReader.ts`, replace `sourceStamps` with the shared `storeFilePaths` + `stampStoreFiles` owner, dropping the `isFile()` guard as decided in the round-5 triage.
+    2. In `src/vault/sqlite.ts`, give `readPrimarySqlite` and `withPrimarySqliteSnapshot` explicit three-parameter signatures so a discarded `{ retain: false }` is a compile error, not a silent no-op.
+    3. In `src/vault/snapshotPool.ts`, skip the post-production generation proof when the borrow asked for no retention — it exists only to decide retention (D2).
+    4. Cover the dropped guard in `src/vault/readers/cursorIdeReader.test.ts`, and cover in `src/vault/snapshotPool.test.ts` that a non-retaining borrow reads the store generation once rather than twice.
+

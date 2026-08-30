@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteSnapshot, withSqliteSnapshot } from "../sqlite";
+import { storeFilePaths } from "../storeStamp";
 import {
   cursorIdeDbPath,
   lookupCursorIdeEntry,
@@ -102,6 +103,22 @@ async function writeIdeStore(fixtures: ComposerFixture[]): Promise<void> {
 }
 
 describe("Cursor IDE Composer list", () => {
+  it("stamps the store from the same owner the reuse gate reads", async () => {
+    // The list cache and the snapshot pool must invalidate against ONE source set
+    // (D1). This reader used to build its own `[db, db-wal]` list with its own
+    // `isFile()` policy, so the two could drift apart at a boundary that now retains
+    // (round-5 W4). The guard is deliberately gone: a directory at the wal path is
+    // stamped rather than skipped, which cannot mask a working store — the snapshot
+    // would fail and the read would report a status, never `ok` with zero rows.
+    await writeIdeStore([{ id: "composer-1", workspaceId: "workspace-1", cwd: "/Users/me/project" }]);
+    await fs.mkdir(`${dbPath}-wal`, { recursive: true });
+
+    const result = await readCursorIdeSessions({ ideDbPath: dbPath });
+
+    expect(Object.keys(result.sources)).toEqual(storeFilePaths(dbPath));
+    expect(result.sources[`${dbPath}-wal`]).toMatchObject({ size: expect.any(Number) });
+  });
+
   it("emits source-qualified, previewable, non-resumable entries", async () => {
     await writeIdeStore([{ id: "composer-1", workspaceId: "workspace-1", cwd: "/Users/me/project" }]);
 

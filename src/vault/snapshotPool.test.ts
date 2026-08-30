@@ -402,6 +402,28 @@ describe("SnapshotPool retention", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
+  it("proves the store's generation once when there is no retention to decide", async () => {
+    // The second proof exists only to attribute a snapshot to a store state before
+    // retaining it (D2). The per-chat path retains nothing and is the store class read
+    // by the hundred, so it must not pay for a proof whose result it discards (S2).
+    let reads = 0;
+    const a = await store("a");
+    const pool = new SnapshotPool({
+      ...deps,
+      readGeneration: async () => {
+        reads += 1;
+        return { stamps: { [a]: { mtimeMs: 1, size: 1 } }, usable: true };
+      },
+    });
+
+    await (await pool.borrow(a, produce)).release();
+    expect(reads).toBe(1);
+
+    await (await pool.borrow(a, produce, RETAIN)).release();
+    expect(reads).toBe(3);
+    await pool.dispose();
+  });
+
   it("leaves nothing behind for a store nobody asked to retain", async () => {
     const pool = new SnapshotPool(deps);
     const a = await store("a");

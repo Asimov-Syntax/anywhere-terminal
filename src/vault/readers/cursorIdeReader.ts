@@ -1,9 +1,9 @@
-import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { FileStamp } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { withPrimarySqliteSnapshot as readSnapshot, type SqliteSnapshot } from "../sqlite";
+import { stampStoreFiles, storeFilePaths } from "../storeStamp";
 import {
   formatEntryId,
   type VaultActivityStep,
@@ -257,19 +257,11 @@ async function listFromSnapshot(snapshot: SqliteSnapshot): Promise<Omit<CursorId
   return { entries, unreadable };
 }
 
-async function sourceStamps(dbPath: string): Promise<Record<string, FileStamp>> {
-  const sources: Record<string, FileStamp> = {};
-  for (const sourcePath of [dbPath, `${dbPath}-wal`]) {
-    try {
-      const stamp = await fs.stat(sourcePath);
-      if (stamp.isFile()) {
-        sources[sourcePath] = { mtimeMs: stamp.mtimeMs, size: stamp.size };
-      }
-    } catch {
-      // Missing sidecars are normal; the database snapshot decides readability.
-    }
-  }
-  return sources;
+/** The store's freshness stamp, from the one owner of that question (D1). The list
+ *  cache and the snapshot pool's reuse gate must invalidate against the same source
+ *  set, which a locally-written path list and stat loop cannot guarantee (round-5 W4). */
+function sourceStamps(dbPath: string): Promise<Record<string, FileStamp>> {
+  return stampStoreFiles(storeFilePaths(dbPath));
 }
 
 export async function readCursorIdeSessions(options: CursorIdeReaderOptions = {}): Promise<CursorIdeListResult> {

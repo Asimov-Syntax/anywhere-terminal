@@ -204,17 +204,23 @@ export class SnapshotPool {
     // across a write is still atomic and still correct for THIS caller, but it belongs
     // to neither stamp — retaining it under the earlier one would be a lie the next
     // reader believes.
-    const after = await this.readGeneration(dbPath);
-    // Nothing is retained once the pool is closed: this snapshot is handed to its
-    // caller and deleted at its last release, never left for a sweeper that is gone.
-    const stable = retain && !this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
+    //
+    // Nothing is retained once the pool is closed, and nothing is retained for a caller
+    // that did not ask: this snapshot is handed over and deleted at its last release,
+    // never left for a sweeper that is gone. The second proof is what decides
+    // retention, so it is not paid when there is no retention to decide — and the
+    // per-chat path, the one store class read by the hundred, is exactly that caller
+    // (round-5 S2). Skipping it weakens nothing: a snapshot nobody will be served from
+    // again needs no attribution to a store state.
+    const after = retain && !this.disposed ? await this.readGeneration(dbPath) : undefined;
+    const stable = after !== undefined && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
 
     // The producer's own lease is taken BEFORE publication and nothing suspends in
     // between, so no other caller can observe this entry, supersede it, and delete it
     // in the window before its reader holds it (round-4 B7).
     const lease = this.lease(entry);
     let superseded: Entry | undefined;
-    if (stable) {
+    if (stable && after) {
       superseded = this.retained.get(dbPath);
       entry.stamp = after.stamps;
       entry.lastUsed = this.now();

@@ -474,8 +474,9 @@ export async function readSqlite(
  * retain, which is what keeps the retained set bounded by a fixed key space rather
  * than by an eviction policy (D3). A per-chat store uses plain `readSqlite`.
  */
-export const readPrimarySqlite: typeof readSqlite = (dbPath, sql, deps) =>
-  readSqlite(dbPath, sql, deps, { retain: true });
+export function readPrimarySqlite(dbPath: string, sql: string, deps: SqliteDeps = defaultDeps): Promise<SqliteResult> {
+  return readSqlite(dbPath, sql, deps, { retain: true });
+}
 
 /**
  * Borrow one pooled snapshot, use it, and release it — the lifecycle both entry
@@ -544,9 +545,17 @@ export async function withSqliteSnapshot<T>(
   );
 }
 
-/** `withSqliteSnapshot` for an agent's one primary store — see `readPrimarySqlite`. */
-export const withPrimarySqliteSnapshot: typeof withSqliteSnapshot = (dbPath, callback, deps) =>
-  withSqliteSnapshot(dbPath, callback, deps, { retain: true });
+/** `withSqliteSnapshot` for an agent's one primary store — see `readPrimarySqlite`.
+ *  Deliberately NOT typed as `typeof withSqliteSnapshot`: that would give it a fourth
+ *  parameter it discards, so a caller writing `{ retain: false }` here would type-check
+ *  and retain anyway. Three parameters make opting out a compile error (round-5 S1). */
+export function withPrimarySqliteSnapshot<T>(
+  dbPath: string,
+  callback: (snapshot: SqliteSnapshot) => Promise<T>,
+  deps: SqliteDeps = defaultDeps,
+): Promise<SqliteSnapshotResult<T>> {
+  return withSqliteSnapshot(dbPath, callback, deps, { retain: true });
+}
 
 /**
  * Take one engine snapshot into a temp dir, query it, then delete it. Never reads
