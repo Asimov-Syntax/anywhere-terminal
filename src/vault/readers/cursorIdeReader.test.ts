@@ -389,3 +389,42 @@ describe("lookupCursorIdeEntry: an inner query that did not run is not absence",
     expect(await readCursorIdeEntry(ID, { withSqliteSnapshotFn: failed })).toBeNull();
   });
 });
+
+describe("lookupCursorIdeEntry: a row too large to parse is present, not missing (round-3 B2)", () => {
+  const ID = "ide:d29ya3NwYWNlLTE:composer-1";
+
+  /** Replace the stored header of the fixture composer, against the real store,
+   *  so the SQL itself is what the test exercises. */
+  async function setHeaderValue(value: string | null): Promise<void> {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare("UPDATE composerHeaders SET value = ? WHERE composerId = ?").run(value, "composer-1");
+    } finally {
+      db.close();
+    }
+  }
+
+  it("says unknown when the active header exceeds the parse bound", async () => {
+    await writeIdeStore([{ id: "composer-1" }]);
+    await setHeaderValue("x".repeat(2 * 1024 * 1024 + 64));
+    expect(await lookupCursorIdeEntry(ID, { ideDbPath: dbPath })).toEqual({ status: "unknown" });
+  });
+
+  it("says unknown when the active header value is NULL", async () => {
+    await writeIdeStore([{ id: "composer-1" }]);
+    await setHeaderValue(null);
+    expect(await lookupCursorIdeEntry(ID, { ideDbPath: dbPath })).toEqual({ status: "unknown" });
+  });
+
+  it("still says absent when no active composer carries that id", async () => {
+    await writeIdeStore([{ id: "composer-2" }]);
+    expect(await lookupCursorIdeEntry(ID, { ideDbPath: dbPath })).toEqual({ status: "absent" });
+  });
+
+  it("still resolves a header inside the bound", async () => {
+    await writeIdeStore([{ id: "composer-1" }]);
+    const found = await lookupCursorIdeEntry(ID, { ideDbPath: dbPath });
+    expect(found.status).toBe("found");
+  });
+});

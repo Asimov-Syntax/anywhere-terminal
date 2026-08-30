@@ -96,3 +96,16 @@
     3. In `src/vault/readers/cursorPaths.ts` and `src/vault/readers/cursorTranscript.ts`, require a complete enumeration before returning a unique candidate, since uniqueness is what returning one asserts.
     4. In `src/vault/readers/cursorReader.ts`, thread classification through the existing CLI and project resolvers instead of the duplicated bodies the first pass introduced, and make the nullable resolvers thin adapters.
     5. Cover each in `src/vault/readers/cursorReader.test.ts`, `src/vault/readers/cursorIdeReader.test.ts` and `src/vault/readers/codexReader.test.ts`: an inaccessible bucket holding a would-be duplicate, a failed IDE header query, a codex `db-unreachable` with a readable rollout, and a codex `db-unreachable` in the list path.
+
+## 3. Round-3 review fixes
+
+- [x] 3_1 Stop a filtered or half-copied read from proving absence — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: <!-- .reviews/round-3.md B1-R3, B2-R3; design.md D2, D5, D6 -->
+  - **Acceptance**:
+    - Outcome: a store whose WAL could not be read, and an IDE header present but too large to parse, both answer unknown rather than absent
+    - Verify: unit src/vault/sqlite.test.ts
+  - **Plan**:
+    1. In `src/vault/sqlite.ts`, give both snapshot paths one presence-aware sidecar copier: skip a `-wal`/`-shm` only when its absence is proven, and let an unreachable or uncopyable sidecar reach the existing outer catch as `query-error` instead of falling through to a base-only query.
+    2. In `src/vault/readers/cursorIdeReader.ts`, move the header size bound out of the WHERE clause into a bounded projection so identity is established unfiltered, and answer unknown for a matched row that is oversized, NULL, or unparseable.
+    3. Cover both in `src/vault/sqlite.test.ts` and `src/vault/readers/cursorIdeReader.test.ts`: a WAL that is present but unreadable, a WAL whose copy fails, a sidecar proven absent (still `ok`), an oversized active header, and a NULL header value.

@@ -5,7 +5,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { __resetSqliteProbeCache, presenceFromAccessError, readSqlite, type SqliteDeps } from "./sqlite";
+import {
+  __resetSqliteProbeCache,
+  presenceFromAccessError,
+  readSqlite,
+  type SqliteDeps,
+  withSqliteSnapshot,
+} from "./sqlite";
 
 function makeDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
   return {
@@ -303,5 +309,72 @@ describe("readSqlite: engine selection (node:sqlite preferred)", () => {
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("readSqlite: a sidecar that could not be read is not a smaller database (round-3 B1)", () => {
+  /** Presence that answers per path, so the db and its WAL can differ. */
+  function accessing(bySuffix: Record<string, "present" | "absent" | "unreachable">) {
+    return vi.fn(async (p: string) => {
+      if (p.endsWith("-wal")) {
+        return bySuffix["-wal"] ?? "present";
+      }
+      if (p.endsWith("-shm")) {
+        return bySuffix["-shm"] ?? "present";
+      }
+      return "present" as const;
+    });
+  }
+
+  it("reports query-error rather than an empty ok when the WAL is present but unreachable", async () => {
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      access: accessing({ "-wal": "unreachable" }),
+    });
+    const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
+    expect(result.status).toBe("query-error");
+    expect(result.rows).toEqual([]);
+  });
+
+  it("reports query-error when the WAL exists but cannot be copied", async () => {
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      access: accessing({}),
+      copy: vi.fn(async (src: string) => {
+        if (src.endsWith("-wal")) {
+          throw Object.assign(new Error("EIO"), { code: "EIO" });
+        }
+      }),
+    });
+    const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
+    expect(result.status).toBe("query-error");
+  });
+
+  it("still answers ok when a sidecar is PROVEN absent — a checkpointed db has no WAL", async () => {
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      access: accessing({ "-wal": "absent", "-shm": "absent" }),
+    });
+    const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
+    expect(result.status).toBe("ok");
+    const copied = (deps.copy as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(copied).toEqual(["/x/state.sqlite"]);
+  });
+
+  it("applies the same rule inside withSqliteSnapshot", async () => {
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      access: accessing({ "-wal": "unreachable" }),
+    });
+    const result = await withSqliteSnapshot("/x/state.sqlite", async () => "queried", deps);
+    expect(result.status).toBe("query-error");
+  });
+
+  it("does not run the query at all once a sidecar read has failed", async () => {
+    const exec = execWith(async () => ({ stdout: "[]", stderr: "" }));
+    const deps = makeDeps({ exec, access: accessing({ "-wal": "unreachable" }) });
+    await readSqlite("/x/state.sqlite", "SELECT 1", deps);
+    const queried = exec.mock.calls.filter((c) => !c[1].includes(":memory:"));
+    expect(queried).toEqual([]);
   });
 });

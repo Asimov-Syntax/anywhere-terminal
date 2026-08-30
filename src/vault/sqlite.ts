@@ -282,6 +282,28 @@ async function presence(deps: SqliteDeps, dbPath: string): Promise<SqlitePresenc
   }
 }
 
+/** Copy the `-wal`/`-shm` sidecars beside a snapshot, PRESERVING the reason a
+ *  sidecar could not be read. A WAL holds committed rows the base file does not,
+ *  so querying a base-only copy after a failed sidecar read returns a smaller
+ *  database, not a smaller answer — and its empty result is indistinguishable
+ *  from a genuine miss, which D5 then maps to `absent` (round-3 B1). Only a
+ *  PROVEN absence is safe to skip: an unreachable or uncopyable sidecar throws,
+ *  and the caller's existing catch reports `query-error`, which every reader
+ *  already reads as "could not find out". */
+async function copySidecars(deps: SqliteDeps, dbPath: string, dbCopy: string): Promise<void> {
+  for (const suffix of ["-wal", "-shm"]) {
+    const sidecar = dbPath + suffix;
+    const found = await presence(deps, sidecar);
+    if (found === "absent") {
+      continue; // checkpointed or never in WAL mode — the base copy is whole
+    }
+    if (found === "unreachable") {
+      throw new Error(`sidecar ${suffix} could not be reached`);
+    }
+    await deps.copy(sidecar, dbCopy + suffix);
+  }
+}
+
 export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps = defaultDeps): Promise<SqliteResult> {
   // Pick an engine: PREFER the in-process `node:sqlite` built-in (returns native
   // row values) over the `sqlite3` CLI. The CLI's `-json` output formatter is
@@ -329,16 +351,7 @@ export async function withSqliteSnapshot<T>(
     tempDir = await deps.mkdtemp();
     const dbCopy = path.join(tempDir, "db.sqlite");
     await deps.copy(dbPath, dbCopy);
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = dbPath + suffix;
-      try {
-        if (await deps.exists(sidecar)) {
-          await deps.copy(sidecar, dbCopy + suffix);
-        }
-      } catch {
-        // Query the base copy when a sidecar disappears during the snapshot.
-      }
-    }
+    await copySidecars(deps, dbPath, dbCopy);
     const snapshot: SqliteSnapshot = {
       query: (sql) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
     };
@@ -370,17 +383,7 @@ async function readSqliteViaCopy(
     tempDir = await deps.mkdtemp();
     const dbCopy = path.join(tempDir, "db.sqlite");
     await deps.copy(dbPath, dbCopy);
-    // Copy WAL/SHM sidecars when present so the snapshot is consistent.
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = dbPath + suffix;
-      try {
-        if (await deps.exists(sidecar)) {
-          await deps.copy(sidecar, dbCopy + suffix);
-        }
-      } catch {
-        // A missing/locked sidecar isn't fatal — query the base copy.
-      }
-    }
+    await copySidecars(deps, dbPath, dbCopy);
     return useCli ? await runQuery(deps, dbCopy, sql) : await (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql);
   } catch (err) {
     return { rows: [], status: "query-error", error: errorMessage(err) };

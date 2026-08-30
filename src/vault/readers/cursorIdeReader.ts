@@ -301,11 +301,18 @@ async function composerFromSnapshot(
   snapshot: SqliteSnapshot,
   identity: { workspaceId: string; composerId: string },
 ): Promise<LoadedComposer | ComposerReadFailed | undefined> {
+  // Establish identity UNFILTERED. A size bound in the WHERE clause deletes a
+  // present-but-unreadable row from the result set, and the resulting zero rows
+  // then read as a query that ran and matched nothing — absence asserted from a
+  // filter rather than from the store (round-3 B2). The bound belongs in the
+  // projection, where it still keeps an oversized blob from being materialized
+  // but leaves the row itself visible: a NULL `value` here means "present and
+  // unusable", which `parseHeaderRow` already answers as a failed read.
   const headerResult = await snapshot.query(
-    `SELECT composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent, value
+    `SELECT composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent,
+            CASE WHEN length(CAST(value AS BLOB)) <= ${MAX_JSON_CHARS} THEN value ELSE NULL END AS value
      FROM composerHeaders
      WHERE composerId = ${sqlText(identity.composerId)} AND isArchived = 0 AND isSubagent = 0
-       AND length(CAST(value AS BLOB)) <= ${MAX_JSON_CHARS}
      LIMIT 1`,
   );
   if (headerResult.status !== "ok") {
