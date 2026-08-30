@@ -52,7 +52,7 @@
     5. Cover in `src/worktree/orphanProofs.test.ts`: every outcome of every proof, and specifically that a non-zero, non-one exit is unproven rather than failed, and that no argument list ever contains `fetch`.
   - **Boundary**: no fetch, ever — a stale local default reports unproven, never a wrong answer
 
-- [ ] 3_2 The proofs appear as checks, and change nothing else
+- [x] 3_2 The proofs appear as checks, and change nothing else — verified: pnpm exec vitest run 'src/worktree/removalChecks.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1, 3_1
   - **Refs**: design.md D1, D2; specs/worktree-panel/spec.md#{the-removal-assessment-reports-whether-the-worktree-looks-abandoned, a-proof-never-blocks-the-removal-it-accompanies}
   - **Acceptance**:
@@ -62,6 +62,8 @@
     1. `RemovalEvidence` in `src/worktree/worktreeBlockers.ts` gains the proofs, taken by the caller like the ignored walk is, because `evaluateRemoval` is synchronous and the reads are not.
     2. Three catalogue rows in `src/worktree/removalChecks.ts` with a constant `proof` class, reported from the `confirmable` branch only. Cover in `src/worktree/removalChecks.test.ts` and `src/worktree/worktreeBlockers.test.ts`.
     3. Assert in `src/worktree/worktreeMutationService.test.ts` and `src/worktree/worktreeFingerprint.test.ts` that the three call sites D2 names are unchanged: a proof does not make an unforced removal ask for confirmation, does not enter the digest, and does not re-prompt a granted one.
+    4. `src/webview/worktree/WorktreeRemoveDialog.ts` scopes its "an unproven check withholds Force" guard to the checks a confirmation covers. That guard is about a risk set the dialog could not describe; a proof is not in it, and withholding force over one IS refusing a removal, which the Must-not forbids. Covered in `src/webview/worktree/WorktreeRemoveDialog.test.ts`.
+    5. `src/providers/WorktreeHost.ts` supplies the field so the tree compiles — three `unproven` outcomes, which IS this task's Outcome. 3_3 replaces the constant with the reader.
   - **Boundary**: `atRisk`, `isIdentityPreservingSubset` and `digest` gain nothing — a proof is not a risk (D2)
 
 - [ ] 3_3 Take the proof reads where the assessment already suspends

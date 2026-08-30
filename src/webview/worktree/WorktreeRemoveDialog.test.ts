@@ -386,4 +386,36 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
 
     expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain("Force remove");
   });
+
+  it("still offers force when the only unproven checks are PROOFS", () => {
+    // The three proofs are routinely unproven — a lock nobody can stat, a
+    // default branch that does not resolve — and they describe no risk. Counting
+    // them here would withhold force from every removal, which is a proof
+    // refusing one (worktree-removal.md § 2.2, design.md D2).
+    const { host } = open({
+      ...confirmableBlocker,
+      checks: [
+        ...confirmableBlocker.checks,
+        { id: "lockAged", cls: "proof", outcome: "unproven" },
+        { id: "ownerGone", cls: "proof", outcome: "unproven" },
+        { id: "branchMerged", cls: "proof", outcome: "unproven" },
+      ],
+    });
+
+    expect(danger(host)).not.toBeNull();
+  });
+
+  it("still withholds force when a RISK is unproven beside the proofs", () => {
+    // The negative that gives the case above its meaning: the exclusion is by
+    // class, not a blanket removal of the guard.
+    const { host } = open({
+      ...withChecks(confirmableBlocker, { dirty: unproven }),
+      checks: [
+        ...withChecks(confirmableBlocker, { dirty: unproven }).checks,
+        { id: "lockAged", cls: "proof", outcome: "passed" },
+      ],
+    });
+
+    expect(danger(host)).toBeNull();
+  });
 });

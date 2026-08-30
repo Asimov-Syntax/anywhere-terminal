@@ -12,6 +12,7 @@
 
 import type { RemovalCheck, RemovalCheckClass } from "../types/messages";
 import type { IgnoredMaterial } from "./ignoredMaterial";
+import type { ProofOutcome } from "./orphanProofs";
 import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
 
 /**
@@ -39,7 +40,7 @@ import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
  */
 type ClassOf = RemovalCheckClass | ((assessment: RemovalAssessment) => RemovalCheckClass);
 
-const CATALOGUE: readonly { id: string; cls: ClassOf; source: UnreadableSource }[] = [
+const CATALOGUE: readonly { id: string; cls: ClassOf; source?: UnreadableSource }[] = [
   { id: "isMain", cls: "refusal", source: "listing" },
   { id: "busyAgents", cls: "refusal", source: "sessions" },
   { id: "containsWorktrees", cls: "refusal", source: "listing" },
@@ -55,6 +56,15 @@ const CATALOGUE: readonly { id: string; cls: ClassOf; source: UnreadableSource }
   // is explicit that a slow or unreadable disk must not make a worktree
   // unremovable, and a refusal class here would do exactly that.
   { id: "ignored", cls: "confirmable", source: "ignored" },
+  // The three proofs of worktree-removal.md § 4. No `source`: each reads a place
+  // no other check does — the lock file, the registry records the live filter
+  // discards, and local refs — so no `UnreadableSource` names why one is
+  // unproven, and attaching the nearest one would blame a read it never took.
+  // They carry their own four-way outcome instead of a boolean, which is why
+  // `check` is not what builds them.
+  { id: "lockAged", cls: "proof" },
+  { id: "ownerGone", cls: "proof" },
+  { id: "branchMerged", cls: "proof" },
 ];
 
 /** The whole catalogue, every check unproven. */
@@ -68,7 +78,9 @@ function allUnproven(unreadable: readonly UnreadableSource[], assessment: Remova
     // reported as passed — not only the ones whose own source failed. Naming the
     // sources that did fail is what keeps the report honest about which of them
     // is the reason.
-    ...(named.has(entry.source) ? { detail: `The ${entry.source} could not be read.` } : {}),
+    ...(entry.source !== undefined && named.has(entry.source)
+      ? { detail: `The ${entry.source} could not be read.` }
+      : {}),
   }));
 }
 
@@ -85,7 +97,11 @@ function check(id: string, assessment: RemovalAssessment, failed: boolean, count
   // A source whose question did not arise yields neither a pass nor a failure.
   // No count rides on it either: the panel renders `count` inside its own
   // element as a reading that was taken, and nobody took this one.
-  if (assessment.kind === "confirmable" && assessment.evidence.notApplicable.includes(entry.source)) {
+  if (
+    assessment.kind === "confirmable" &&
+    entry.source !== undefined &&
+    assessment.evidence.notApplicable.includes(entry.source)
+  ) {
     return { id, cls, outcome: "notApplicable" };
   }
   return {
@@ -139,9 +155,26 @@ export function checksFor(assessment: RemovalAssessment): readonly RemovalCheck[
         check("externalAgents", assessment, e.externalSessionIds.length > 0, e.externalSessionIds.length),
         check("locked", assessment, e.locked),
         ignoredCheck(e.ignored),
+        // Only here. A `refused` assessment gathered no evidence about them, and
+        // reporting them there would claim checks that never ran (design.md D1).
+        proofCheck("lockAged", e.proofs.lockAged),
+        proofCheck("ownerGone", e.proofs.ownerGone),
+        proofCheck("branchMerged", e.proofs.branchMerged),
       ];
     }
   }
+}
+
+/**
+ * One proof, as a check.
+ *
+ * A pass-through, deliberately: `ProofOutcome` and `RemovalCheckOutcome` agree
+ * today and are declared apart so a change to one does not silently redefine the
+ * other. The class is constant — a proof withholds only the option it gates, so
+ * it can never be the reason a removal is refused (worktree-removal.md § 2.2).
+ */
+function proofCheck(id: string, outcome: ProofOutcome): RemovalCheck {
+  return { id, cls: "proof", outcome };
 }
 
 /**

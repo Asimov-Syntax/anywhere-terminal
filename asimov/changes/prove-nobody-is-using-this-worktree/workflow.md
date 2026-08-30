@@ -27,6 +27,9 @@
 
 ## Notes
 
+- 3_2: D1 says the proofs are reported from the `confirmable` branch only. They ARE absent from `refused`, which is what D1's reason argues for. They are NOT filtered out of `unavailable`: that branch reports the whole catalogue unproven, an unproven proof claims nothing, and filtering would make the check list differ by outcome — the failure D1's one-row-per-id table exists to prevent.
+- 3_2: `src/webview/worktree/WorktreeRemoveDialog.ts` added to the Plan paths. WT-013.1's guard withholds Force whenever ANY check is unproven, and three routinely-unproven proofs in every confirmable report silently withheld it from every removal — caught by the assembly test, not by removalChecks. Scoped to non-proof checks: the guard is about a risk the dialog could not describe, and withholding force over a proof IS a proof refusing a removal (§ 2.2, D2, and the proposal's Must-not). Remediation inside the accepted contract, not a new decision.
+- 3_2: `src/providers/WorktreeHost.ts` added to the Plan paths. It supplies three `unproven` outcomes so the tree compiles; 3_3 replaces the constant with the reader.
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
 Blueprint: none

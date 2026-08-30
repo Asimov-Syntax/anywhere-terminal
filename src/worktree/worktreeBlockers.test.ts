@@ -27,6 +27,7 @@ function input(over: Partial<RemovalInput> = {}): RemovalInput {
     claimedByPane: new Map(),
     porcelain: { ok: true, value: "" },
     ignored: { kind: "measured", entries: 0, bytes: 0 },
+    proofs: { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven" },
     ...over,
   };
 }

@@ -2109,6 +2109,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // fallback. A failed status is not a clean worktree (round-2 B6).
           sessions,
           claimedByPane,
+          // Three unproven proofs until 3_3 supplies the reader: unproven is
+          // what a proof nobody took says, and a removal reports it exactly as
+          // it did before proofs existed.
+          proofs: { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven" },
           ignored,
           porcelain:
             status === null

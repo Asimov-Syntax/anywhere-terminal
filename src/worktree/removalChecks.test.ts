@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { RemovalCheck } from "../types/messages";
 import type { IgnoredMaterial } from "./ignoredMaterial";
+import type { OrphanProofs } from "./orphanProofs";
 import { checksFor, countOf, failed, isRefusedByChecks } from "./removalChecks";
 import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
+
+/** Every proof unproven — this task's own Outcome, and what a fixture says when it is not about proofs. */
+const UNPROVEN: OrphanProofs = { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven" };
 
 const CATALOGUE_IDS = [
   "isMain",
@@ -13,6 +18,9 @@ const CATALOGUE_IDS = [
   "externalAgents",
   "locked",
   "ignored",
+  "lockAged",
+  "ownerGone",
+  "branchMerged",
 ];
 
 function confirmable(over: {
@@ -23,6 +31,7 @@ function confirmable(over: {
   locked?: boolean;
   notApplicable?: readonly UnreadableSource[];
   ignored?: IgnoredMaterial;
+  proofs?: OrphanProofs;
 }): RemovalAssessment {
   return {
     kind: "confirmable",
@@ -37,6 +46,7 @@ function confirmable(over: {
       // A measured nothing, not an absence: the default worktree these cases
       // describe is one the walk finished on and found no ignored material in.
       ignored: over.ignored ?? { kind: "measured", entries: 0, bytes: 0 },
+      proofs: over.proofs ?? UNPROVEN,
     },
   };
 }
@@ -284,5 +294,72 @@ describe("the ignored material a removal will delete", () => {
     expect(unavailable.find((c) => c.id === "ignored")?.outcome).toBe("unproven");
     // Its own source did not fail, so nothing claims it did.
     expect(unavailable.find((c) => c.id === "ignored")?.detail).toBeUndefined();
+  });
+});
+
+describe("the three proofs (worktree-removal.md § 4)", () => {
+  const proven = { lockAged: "passed", ownerGone: "passed", branchMerged: "failed" } as const;
+
+  it("reports each proof's own outcome, in the proof class", () => {
+    const checks = checksFor(confirmable({ proofs: proven }));
+
+    expect(checks.filter((c) => c.cls === "proof")).toEqual([
+      { id: "lockAged", cls: "proof", outcome: "passed" },
+      { id: "ownerGone", cls: "proof", outcome: "passed" },
+      { id: "branchMerged", cls: "proof", outcome: "failed" },
+    ]);
+  });
+
+  it("carries notApplicable through as itself, not as a pass", () => {
+    // An unlocked worktree's lock age was never in question. Reported as passed
+    // it would say a lock went stale; as failed, that one is being held.
+    const checks = checksFor(confirmable({ proofs: { ...proven, lockAged: "notApplicable" } }));
+
+    expect(checks.find((c) => c.id === "lockAged")).toEqual({
+      id: "lockAged",
+      cls: "proof",
+      outcome: "notApplicable",
+    });
+  });
+
+  it("never refuses, whatever every proof says", () => {
+    // § 2.2: a proof withholds only the option it gates. A failing proof making
+    // `isRefusedByChecks` true would make a fresh lock un-removable.
+    const checks = checksFor(
+      confirmable({ proofs: { lockAged: "failed", ownerGone: "failed", branchMerged: "failed" } }),
+    );
+
+    expect(isRefusedByChecks(checks)).toBe(false);
+  });
+
+  it("is absent from a refused assessment, which gathered no evidence about them", () => {
+    const checks = checksFor({
+      kind: "refused",
+      isMain: true,
+      busyAgents: 0,
+      containsWorktrees: [],
+      liveExternalSessionIds: [],
+    });
+
+    expect(checks.some((c) => c.cls === "proof")).toBe(false);
+  });
+
+  it("changes nothing else about the report, whatever the proofs say", () => {
+    // This task's whole Outcome, stated as the only thing that can be measured
+    // from here: the proofs are ADDITIVE. Swap all three for their opposites and
+    // every check that decided an offer before they existed is untouched.
+    const unproven = checksFor(confirmable({ dirtyPaths: ["a.ts"], locked: true, proofs: UNPROVEN }));
+    const answered = checksFor(
+      confirmable({
+        dirtyPaths: ["a.ts"],
+        locked: true,
+        proofs: { lockAged: "passed", ownerGone: "failed", branchMerged: "notApplicable" },
+      }),
+    );
+
+    const nonProof = (checks: readonly RemovalCheck[]) => checks.filter((c) => c.cls !== "proof");
+    expect(nonProof(answered)).toEqual(nonProof(unproven));
+    expect(isRefusedByChecks(answered)).toBe(isRefusedByChecks(unproven));
+    expect(countOf(answered, "dirty")).toBe(1);
   });
 });

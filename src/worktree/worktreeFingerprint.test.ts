@@ -13,6 +13,7 @@ function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
     externalSessionIds: [],
     notApplicable: [],
     ignored: { kind: "measured", entries: 0, bytes: 0 },
+    proofs: { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven" },
     locked: false,
     lockReason: null,
     ...over,
@@ -243,5 +244,30 @@ describe("ignored material that appeared after the confirmation", () => {
     const large = s.issue(WT, measured(9, 90), 0);
 
     expect(small).not.toBe(large);
+  });
+});
+
+describe("a proof is not a risk (design.md D2)", () => {
+  const withProofs = (over: Partial<RemovalEvidence["proofs"]>) =>
+    evidence({ proofs: { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven", ...over } });
+
+  it("proceeds when a proof changed between the confirmation and the redeem", () => {
+    // The case § 3.1 describes and calls out as NOT riskier: someone merged the
+    // branch. Folding the proofs into the digest would re-prompt an irreversible
+    // action the user already weighed, over a change in its favour.
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, withProofs({ branchMerged: "failed" }), 0);
+
+    expect(store.redeem(WT, fp, withProofs({ branchMerged: "passed" }), 1_000)).toBe("proceed");
+  });
+
+  it("proceeds when a proof DEGRADED, which is the direction that looks like a risk", () => {
+    // Passed → unproven is what § 3.1 says must withdraw the option a proof
+    // gated. Withdrawing the option is the offer's job; re-prompting the removal
+    // is not, and nothing about the removal got riskier.
+    const store = createFingerprintStore();
+    const fp = store.issue(WT, withProofs({ ownerGone: "passed", lockAged: "passed" }), 0);
+
+    expect(store.redeem(WT, fp, withProofs({ ownerGone: "unproven", lockAged: "failed" }), 1_000)).toBe("proceed");
   });
 });

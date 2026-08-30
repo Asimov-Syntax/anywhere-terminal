@@ -13,6 +13,7 @@
 import type { PaneActivity } from "../shared/paneEvidence";
 import { isPathInside } from "../utils/pathBoundary";
 import type { IgnoredMaterial } from "./ignoredMaterial";
+import type { OrphanProofs } from "./orphanProofs";
 import type { WorktreeInfo } from "./types";
 
 /** A worktree registered inside the removal target. */
@@ -50,6 +51,15 @@ export interface RemovalEvidence {
    * them here is how "0 ignored files" gets said about a `node_modules`.
    */
   ignored: IgnoredMaterial;
+  /**
+   * What the three proofs of worktree-removal.md § 4 established.
+   *
+   * Carried here and NOWHERE else. A proof is not a risk: it withholds only the
+   * option it gates, so it must not reach `atRisk`, `isIdentityPreservingSubset`
+   * or `digest`, where it would demand a confirmation or re-prompt a granted one
+   * because a branch got merged (design.md D2).
+   */
+  proofs: OrphanProofs;
 }
 
 /**
@@ -219,6 +229,8 @@ export interface RemovalInput {
    * the walk is neither.
    */
   ignored: IgnoredMaterial;
+  /** The three proofs, already answered — same reason as `ignored`: the reads are not pure. */
+  proofs: OrphanProofs;
   /** The repository listing this input was built from was degraded or stale. */
   listingDegraded?: boolean;
 }
@@ -329,6 +341,7 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
         ...(input.sessions.ok === "notApplicable" ? (["sessions"] as const) : []),
       ],
       ignored: input.ignored,
+      proofs: input.proofs,
     },
   };
 }

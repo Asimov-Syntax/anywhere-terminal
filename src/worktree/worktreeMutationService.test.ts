@@ -30,6 +30,7 @@ function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
     externalSessionIds: [],
     notApplicable: [],
     ignored: { kind: "measured", entries: 0, bytes: 0 },
+    proofs: { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven" },
     locked: false,
     lockReason: null,
     ...over,
@@ -1070,5 +1071,53 @@ describe("a confirmation authorizes only the risks it was shown", () => {
 
     expect(h.runner.run).not.toHaveBeenCalled();
     expect(h.outcomes[1]).toMatchObject({ kind: "blocked", verb: "remove", fingerprint: null });
+  });
+});
+
+describe("a proof never makes an unforced removal ask for confirmation (design.md D2)", () => {
+  const proofs = (over: Partial<RemovalEvidence["proofs"]>): RemovalEvidence =>
+    evidence({ proofs: { lockAged: "unproven", ownerGone: "unproven", branchMerged: "unproven", ...over } });
+
+  it("runs an unforced removal with every proof FAILING", async () => {
+    // A fresh lock, a live owner and an unmerged branch. `atRisk` decides
+    // whether an unforced removal may run at all, and none of that is a risk:
+    // there is nothing here the removal would destroy.
+    const h = harness({
+      assessRemoval: async () => ({
+        kind: "confirmable" as const,
+        evidence: proofs({ lockAged: "failed", ownerGone: "failed", branchMerged: "failed" }),
+      }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).toHaveBeenCalled();
+    expect(h.outcomes[0]).not.toMatchObject({ kind: "blocked" });
+  });
+
+  it("does not re-prompt a granted force because a proof moved", async () => {
+    // A real risk the user confirmed (one dirty file), and between the two
+    // reads the branch got merged. `isIdentityPreservingSubset` must not see
+    // that: re-prompting an irreversible action over a change in its favour is
+    // exactly what folding a proof into the digest would do.
+    let call = 0;
+    const h = harness({
+      assessRemoval: async () => {
+        call += 1;
+        return {
+          kind: "confirmable" as const,
+          evidence: {
+            ...proofs(call === 1 ? { branchMerged: "failed" } : { branchMerged: "passed", ownerGone: "passed" }),
+            dirtyPaths: ["a.ts"],
+          },
+        };
+      },
+    });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(t, false, undefined);
+    const blocked = h.outcomes[0] as { fingerprint: string | null };
+
+    await h.service.removeWorktree(t, true, blocked.fingerprint ?? "");
+
+    expect(h.argv[0]).toEqual(["worktree", "remove", "--force", RAW_PATH]);
   });
 });

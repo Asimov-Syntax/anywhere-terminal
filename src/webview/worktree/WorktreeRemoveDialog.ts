@@ -324,12 +324,15 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   // action must never fail in (round-1 W2).
   //
   // Withholding the button rather than explaining the gap is deliberate. The
-  // copy that makes an unreadable report legible is WT-013.4's, and WT-013.1 is
-  // what first routes an `unproven` check here at all — today `checksFor` emits
-  // one only for an `unavailable` assessment, which the service answers
-  // elsewhere. So this guard changes no reachable rendering; it makes the
-  // unreachable case fail closed instead of fail open when that changes.
-  if (!checks.some((c) => c.outcome === "unproven")) {
+  // copy that makes an unreadable report legible is WT-013.4's.
+  //
+  // Proof-class checks are excluded, and that exclusion is the whole point of
+  // the class. The guard is about a RISK the dialog could not describe; a proof
+  // describes no risk, and every confirmable report now carries three of them
+  // that are routinely unproven — a locked file nobody can stat, a default
+  // branch that does not resolve. Counting those here would withhold force from
+  // every removal, which is a proof refusing one (worktree-removal.md § 2.2).
+  if (!checks.some((c) => c.cls !== "proof" && c.outcome === "unproven")) {
     shell.actions.append(
       textButton("Force remove", "danger", () => {
         // Re-sent with the fingerprint the user was SHOWN: force is authorization for
