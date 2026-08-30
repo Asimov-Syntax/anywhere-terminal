@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -41,4 +41,5 @@ Deviation: 1_2 and 1_3 each needed a re-lease after the suite guard refused the 
 Deviation: one full-suite run failed `extension.worktreeAssembly.test.ts [I14]`; reproduced green twice in isolation and the pool reaches no extension code until 1_4, so recorded as a flake, not a gate pass around a real failure.
 Measured (D-risk 'the win is assumed'): 164MB WAL store, in-process engine — first read 341ms, two reuses 1ms each, and a committed write forces a fresh 253ms snapshot. The reuse path is ~340x cheaper and a write still costs full price, which is the point.
 Handback (cycle 1 round 1, superseded): B2 disproved D3's premise — Cursor CLI keeps one `store.db` per chat (`cursorPaths.ts:132`) and a list walks every candidate (`cursorReader.ts:407`), so "a handful of stores, one per agent" is false and the byte-accounting dismissal built on it collapses. B3 rewrites the same disk-ownership decision. Gate 2 reopened rather than landing either as a fix commit.
+Cycle 2 fixes: check-types clean, 5427 unit tests, I10 ok, `biome check src` at 4/14/3. Mutation-checked every new rule; three dispose tests passed for the wrong reason at first (a 50ms settle replaced a microtask flush) and fixing that exposed a real leak — a caller waiting out another flight could start a production after dispose had captured the in-flight list, now closed by a re-check.
 
