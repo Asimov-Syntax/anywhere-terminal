@@ -10,7 +10,7 @@
 // See: asimov/changes/wire-worktree-navigation-actions/design.md D2, D3, D4.
 
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionToWebViewMessage, WorktreeMutationResultMessage } from "../types/messages";
+import type { ExtensionToWebViewMessage, ProvisionModel, WorktreeMutationResultMessage } from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { createGitCapabilities, type GitCapabilities } from "../worktree/gitCapabilities";
@@ -288,6 +288,7 @@ async function builtHost(
     startAgent?: WorktreeActions["startAgent"];
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
+    readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
   } = {},
 ) {
   const presence: WorktreePresence = { rowsByWorktreeId: { [MAIN_PATH]: rows }, scannedAt: 1, degradedSources: [] };
@@ -357,6 +358,7 @@ async function builtHost(
     },
     ...(over.exists === undefined ? {} : { exists: over.exists }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
+    ...(over.readProvisioning === undefined ? {} : { readProvisioning: over.readProvisioning }),
   });
   const view = surface();
   const attachment = host.attach(view);
@@ -1999,3 +2001,84 @@ describe("an assessment that spans two observations", () => {
     h.dispose();
   });
 });
+
+describe("the provisioning offer the create form is given", () => {
+  function model(path: string): ProvisionModel {
+    return {
+      entries: [{ id: "i1", path, mode: "copy", source: "asimov/worktree.yaml" }],
+      setup: [],
+      ports: [],
+      providers: [{ id: "asimov", file: "asimov/worktree.yaml", active: true }],
+      excluded: [],
+      problems: [],
+    };
+  }
+
+  function offersIn(view: { posts: unknown[] }) {
+    return (view.posts as ExtensionToWebViewMessage[]).filter((p) => p.type === "worktreeProvisionOffer");
+  }
+
+  it("publishes one offer when the form asks for its defaults", async () => {
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => model(".env"),
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+
+    const offers = offersIn(view);
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ repoId: REPO, model: model(".env") });
+    expect(typeof (offers[0] as { offerId: string }).offerId).toBe("string");
+    dispose();
+  });
+
+  it("does not mint a second offer as the user types a branch", async () => {
+    // The defaults request is re-sent on every keystroke. A fresh offer each
+    // time would churn ids under a dialog nobody has stopped looking at, and
+    // issuing evicts the previous one — so a submission mid-type would name
+    // nothing.
+    let reads = 0;
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => {
+        reads += 1;
+        return model(".env");
+      },
+    });
+    for (const branch of ["f", "fe", "fea", "feat"]) {
+      host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, branch });
+      await settle();
+    }
+
+    expect(reads).toBe(1);
+    expect(offersIn(view)).toHaveLength(1);
+    dispose();
+  });
+
+  it("still answers the destination when provisioning cannot be read", async () => {
+    // The section is not the create. A provider layer that throws must not
+    // delay or refuse the destination the form needs.
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => {
+        throw new Error("no");
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+
+    expect(offersIn(view)).toEqual([]);
+    expect((view.posts as ExtensionToWebViewMessage[]).some((p) => p.type === "worktreeCreateDefaults")).toBe(true);
+    dispose();
+  });
+
+  it("offers nothing on a host with no provisioning reader", async () => {
+    // Every surface but the real extension entry point, which behaves exactly
+    // as it did before provisioning existed.
+    const { host, view, dispose } = await builtHost();
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    await settle();
+
+    expect(offersIn(view)).toEqual([]);
+    dispose();
+  });
+});
+

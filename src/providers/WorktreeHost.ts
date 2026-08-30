@@ -10,6 +10,7 @@ import type * as vscode from "vscode";
 import type {
   DestinationDisposition,
   ExtensionToWebViewMessage,
+  ProvisionModel,
   WebViewToExtensionMessage,
   WorktreeActionMessage,
   WorktreeAfterCreate,
@@ -25,6 +26,7 @@ import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { PresenceProjector } from "../worktree/presenceProjector";
+import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
 import type {
   DelegationRoster,
   PresenceDegradation,
@@ -162,6 +164,15 @@ export interface WorktreeHostOptions {
    * host never validated (design.md D2).
    */
   actions?: WorktreeActions;
+  /**
+   * Read a repository's provisioning model. Absent — every surface but the real
+   * extension entry point — and the create form gets no offer, exactly as it
+   * behaved before provisioning existed.
+   *
+   * Takes the repo's main worktree path, because a provider file belongs to the
+   * checkout that declares it, not to the worktree being made from it.
+   */
+  readProvisioning?(mainWorktree: string): Promise<ProvisionModel>;
 }
 
 /**
@@ -446,6 +457,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
 
   /** Monotonic, so a re-published answer supersedes the one in flight. */
   let offerSeq = 0;
+
+  /**
+   * The provisioning models this host has shown, and a stable name per surface
+   * to key them by.
+   *
+   * The store itself is keyed by string rather than by surface so its own suite
+   * needs no surface; the identity mapping lives here, where surfaces do. A
+   * detached surface loses its key with the WeakMap, and its offers become
+   * unreachable — which is the same answer as an expired id.
+   */
+  const offers = createProvisionOfferStore();
+  const surfaceKeys = new WeakMap<WorktreeSurface, string>();
+  let surfaceSeq = 0;
+  const surfaceKey = (s: WorktreeSurface): string => {
+    const held = surfaceKeys.get(s);
+    if (held !== undefined) {
+      return held;
+    }
+    surfaceSeq += 1;
+    const minted = `surface-${surfaceSeq}`;
+    surfaceKeys.set(s, minted);
+    return minted;
+  };
   /**
    * Bumped by every write to the cached tree — never by a delivery attempt.
    *
@@ -1085,6 +1119,28 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         const base = slug.length > 0 ? `${repo.label}-${slug}` : repo.label;
         const bare = suggestFreePath(root, base, () => false);
         const path = suggestFreePath(root, base, taken);
+        // Resolved ONCE per form, not per keystroke. This message is re-sent
+        // as the user types a branch, and a fresh offer each time would churn
+        // ids under a dialog the user has not stopped looking at — and
+        // superseding evicts, so a submission mid-type would name nothing.
+        // § 4.0's rule is that the host keeps the model it displayed.
+        const offerKey = `${surfaceKey(surface)}:${msg.repoId}`;
+        if (options.readProvisioning && offers.current(offerKey) === undefined) {
+          void options
+            .readProvisioning(repo.mainPath)
+            .then((model) => {
+              const offer = offers.issue(offerKey, model);
+              surface.post({
+                type: "worktreeProvisionOffer",
+                repoId: msg.repoId,
+                offerId: offer.offerId,
+                model: offer.model,
+              });
+            })
+            // The section is not the create. A provider layer that cannot
+            // answer must not delay or refuse the destination the form needs.
+            .catch(() => {});
+        }
         surface.post({
           type: "worktreeCreateDefaults",
           repoId: msg.repoId,

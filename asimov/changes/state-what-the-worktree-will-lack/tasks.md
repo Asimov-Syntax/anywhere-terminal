@@ -29,7 +29,7 @@
     6. Bound `ProvisionProblem.detail` and keep it plain text — a parser message can quote arbitrary file content (§ 7).
   - **Boundary**: no containment implementation anywhere in `src/` but `src/utils/pathBoundary.ts` — `rg -n 'function isPathInside' src/` must find that file and no other; and no write of any kind to disk
 
-- [ ] 1_3 Hold the model and publish it under an opaque offer id
+- [x] 1_3 Hold the model and publish it under an opaque offer id — verified: pnpm exec vitest run 'src/worktree/provisioning/offerStore.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: docs/design/worktree-provisioning.md#40-the-model-the-user-saw-is-the-model-that-runs; docs/design/worktree-rpc.md#24-the-provisioning-offer; design.md D5
   - **Acceptance**:
@@ -39,6 +39,7 @@
     1. Add `src/worktree/provisioning/offerStore.ts` holding `offerId → ProvisionModel` per surface, minting item ids within an offer as a counter rather than from a path or a hash of one (design.md D5).
     2. In `src/providers/WorktreeHost.ts`, resolve the model and post `worktreeProvisionOffer` where the create defaults are already published, so one form open produces one offer.
     3. Expose the lookup the redeemer will need — an unknown offer id resolves to nothing rather than throwing — but redeem nothing here: WT-012.2 owns execution.
+    4. Cover the host wiring in `src/providers/WorktreeHost.actions.test.ts`: one form open produces one offer, and the defaults request re-sent as the user types does not mint a second.
   - **Boundary**: no execution path reads this store in this change — it is written and looked up, never applied
 
 - [ ] 1_4 Render the section, one row per offered item
