@@ -32,6 +32,7 @@ import type {
   WebViewToExtensionMessage,
   WorkspaceRootChangedMessage,
 } from "../types/messages";
+import type { TrackedPathResolver } from "../utils/resolvedPathMemo";
 import { ActiveFileRevealer } from "./ActiveFileRevealer";
 import { handleRequestReadDirectory, type RootProvider, readEnabledExcludePatterns } from "./fileTreeRpcHandler";
 import { createDefaultSearchVscodeApi, FileTreeSearchHandler } from "./fileTreeSearchHandler";
@@ -48,6 +49,7 @@ type PathApi = Pick<typeof nodePath, "basename" | "dirname" | "isAbsolute" | "re
 export interface FileTreeInitPayload {
   rootGeneration: number;
   workspaceRoot: string | null;
+  resolvedWorkspaceRoot: string | null;
 }
 
 /**
@@ -112,8 +114,63 @@ export class FileTreeHost implements RootProvider {
   constructor(
     private readonly gitDecorationProvider: GitDecorationProvider | null = null,
     private readonly watcherPool: WatcherPool | null = null,
+    /**
+     * Where the workspace root resolves, for the webview's containment check.
+     * Absent — every comparison stays lexical, exactly as before this existed.
+     */
+    private readonly paths: TrackedPathResolver | null = null,
   ) {
     this.activeFileTreeRoot = this.workspaceRoot;
+    this.resolveWorkspaceRoot();
+  }
+
+  /**
+   * Where `workspaceRoot` resolves, or the root itself until that is known.
+   *
+   * Never substituted for `workspaceRoot`: that one mounts the tree and is shown
+   * to the user, so it keeps the spelling they opened (round-1 B1).
+   */
+  get resolvedWorkspaceRoot(): string | null {
+    const root = this.workspaceRoot;
+    return root === null ? null : (this.paths?.resolvedOr(root) ?? root);
+  }
+
+  /**
+   * Resolve the current root and re-post it once that lands, guarded by a
+   * generation so a slow pass cannot overwrite a newer root. Without the
+   * re-post the webview would hold the lexical answer for the window's life.
+   */
+  private resolveWorkspaceRoot(): void {
+    const root = this.workspaceRoot;
+    if (!this.paths || root === null) {
+      return;
+    }
+    const pass = this.rootGeneration;
+    void this.paths.prepare([], [root]).then(
+      () => {
+        if (pass === this.rootGeneration) {
+          this.postWorkspaceRoot();
+        }
+      },
+      () => {},
+    );
+  }
+
+  /** Push the current root to the attached webview, if one has booted. */
+  private postWorkspaceRoot(): void {
+    if (this.attachReady?.() !== true) {
+      return;
+    }
+    const post = this.attachPost;
+    if (post === null) {
+      return;
+    }
+    post({
+      type: "workspace-root-changed",
+      rootPath: this.workspaceRoot,
+      resolvedRootPath: this.resolvedWorkspaceRoot,
+      rootGeneration: this.rootGeneration,
+    });
   }
 
   /** Absolute path of the first workspace folder, or null when no workspace is open. */
@@ -125,6 +182,7 @@ export class FileTreeHost implements RootProvider {
     return {
       rootGeneration: this.rootGeneration,
       workspaceRoot: this.workspaceRoot,
+      resolvedWorkspaceRoot: this.resolvedWorkspaceRoot,
     };
   }
 
@@ -166,14 +224,8 @@ export class FileTreeHost implements RootProvider {
       // the previous workspace state.
       this.rootGeneration += 1;
       this.activeFileTreeRoot = this.workspaceRoot;
-      if (!deps.isReady()) {
-        return;
-      }
-      deps.post({
-        type: "workspace-root-changed",
-        rootPath: this.workspaceRoot,
-        rootGeneration: this.rootGeneration,
-      });
+      this.resolveWorkspaceRoot();
+      this.postWorkspaceRoot();
     });
 
     // Forward each git decoration delta to the webview, stamped with the

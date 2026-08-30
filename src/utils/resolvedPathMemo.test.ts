@@ -143,6 +143,72 @@ describe("ResolvedPathMemo", () => {
     expect(memo.size).toBe(0);
   });
 
+  it("does not let a flight that started before invalidate write its answer", async () => {
+    // Round-1 B3. The invalidation happens WHILE the realpath is in the air —
+    // the ordering a structural event and a slow syscall actually produce.
+    let release: (real: string) => void = () => {};
+    const memo = new ResolvedPathMemo({
+      realpath: () => new Promise<string>((resolve) => (release = resolve)),
+    });
+
+    const inFlight = memo.resolve("/link/wt");
+    memo.invalidate("/link/wt");
+    release("/private/stale");
+    await inFlight;
+
+    expect(memo.resolvedOr("/link/wt")).toBe(path.resolve("/link/wt"));
+  });
+
+  it("does not let a flight cleared by invalidateAll write its answer", async () => {
+    let release: (real: string) => void = () => {};
+    const memo = new ResolvedPathMemo({
+      realpath: () => new Promise<string>((resolve) => (release = resolve)),
+    });
+
+    const inFlight = memo.resolve("/link/wt");
+    memo.invalidateAll();
+    release("/private/stale");
+    await inFlight;
+
+    expect(memo.resolvedOr("/link/wt")).toBe(path.resolve("/link/wt"));
+    expect(memo.size).toBe(0);
+  });
+
+  it("does not let a superseded flight delete the entry that replaced it", async () => {
+    // The failure path is the dangerous half: it deletes by key, so a stale
+    // rejection used to evict a NEWER in-flight resolution for the same path.
+    // Asserted as a syscall count, because the answer survives either way —
+    // what the bogus delete destroys is the memo entry, so the next caller
+    // pays a realpath the memo exists to prevent.
+    const calls: string[] = [];
+    const releases: Array<(real: string) => void> = [];
+    const rejects: Array<(err: Error) => void> = [];
+    const memo = new ResolvedPathMemo({
+      realpath: (p) => {
+        calls.push(p);
+        return new Promise<string>((resolve, reject) => {
+          releases.push(resolve);
+          rejects.push(reject);
+        });
+      },
+    });
+
+    const first = memo.resolve("/link/wt");
+    memo.invalidate("/link/wt");
+    const second = memo.resolve("/link/wt");
+
+    rejects[0](new Error("ENOENT"));
+    await first;
+    releases[1]("/private/current");
+    await second;
+
+    expect(memo.resolvedOr("/link/wt")).toBe("/private/current");
+    expect(memo.size).toBe(1);
+
+    await memo.resolve("/link/wt");
+    expect(calls).toEqual(["/link/wt", "/link/wt"]);
+  });
+
   it("reads a prepared path synchronously", async () => {
     const fs = counting({ "/link/wt": "/private/real/wt" });
     const memo = new ResolvedPathMemo(fs);

@@ -113,6 +113,7 @@ describe("createMessageRouter", () => {
       config: { fontSize: 14, cursorBlink: true, scrollback: 10000, fontFamily: "" },
       rootGeneration: 0,
       workspaceRoot: null,
+      resolvedWorkspaceRoot: null,
       worktreeHasRepo: false,
       worktreeRowActivation: "focus" as const,
       vaultActionsAvailable: true,

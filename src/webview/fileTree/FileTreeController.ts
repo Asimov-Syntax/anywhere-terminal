@@ -31,6 +31,8 @@ import { FileTreePanel } from "./FileTreePanel";
 /** Init payload pieces the controller needs from the host's `init` message. */
 export interface FileTreeBootstrapInit {
   workspaceRoot: string | null;
+  /** Where `workspaceRoot` resolves; see the init payload's own comment. */
+  resolvedWorkspaceRoot: string | null;
   rootGeneration: number;
 }
 
@@ -132,6 +134,8 @@ export class FileTreeController {
       },
     });
 
+    panel.setResolvedWorkspaceRoot(deps.init.workspaceRoot, deps.init.resolvedWorkspaceRoot);
+
     // Seed default position from location only if NO persisted state. A
     // previously-persisted position must not be overridden by the default.
     panel.setPosition(persisted ? persisted.position : defaultPositionFor(locationKey));
@@ -147,6 +151,9 @@ export class FileTreeController {
 
   handleWorkspaceRootChanged(msg: WorkspaceRootChangedMessage): void {
     this.lastWorkspaceRoot = msg.rootPath;
+    // Recorded BEFORE the panel re-roots, so the mount it performs is compared
+    // against the resolved root rather than picking it up a message later.
+    this.panel.setResolvedWorkspaceRoot(msg.rootPath, msg.resolvedRootPath);
     this.panel.handleRootChanged(msg);
   }
 

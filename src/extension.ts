@@ -704,12 +704,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // are attributed by one set of facts. `prepare` first because this path
       // can run before the first projection has resolved anything.
       panes: async () => {
-        const panes = paneEvidence.panes();
-        await pathMemo.prepare(panes.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
-        return panes.map((pane) => ({
+        // Ids, cwds AND activity are read in one synchronous pass, before the
+        // resolution is awaited. Reading activity on the far side let a pane
+        // that exited during the await be filtered out by `evaluateRemoval`,
+        // so a terminal that was live when the set was taken could go unnamed
+        // in the confirmation for an irreversible removal (round-1 B5).
+        const observed = paneEvidence.panes().map((pane) => ({
           paneId: pane.paneId,
-          cwd: pane.cwd === undefined ? undefined : pathMemo.resolvedOr(pane.cwd),
+          cwd: pane.cwd,
           activity: paneEvidence.activityFor(pane.paneId),
+        }));
+        await pathMemo.prepare(observed.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
+        return observed.map((pane) => ({
+          ...pane,
+          cwd: pane.cwd === undefined ? undefined : pathMemo.resolvedOr(pane.cwd),
         }));
       },
       externalSessions: async () => {

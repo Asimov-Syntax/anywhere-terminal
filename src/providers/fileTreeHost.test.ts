@@ -23,6 +23,7 @@ import type {
   RequestReadDirectoryMessage,
   WebViewToExtensionMessage,
 } from "../types/messages";
+import { createTrackedPathResolver, ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { FileTreeHost } from "./fileTreeHost";
 import type { WatcherPool } from "./fsWatcherPool";
 import type { GitDecorationProvider } from "./gitDecorationProvider";
@@ -978,6 +979,71 @@ describe("FileTreeHost — FS subscribe/unsubscribe/rehydrate dispatch", () => {
     expect(unsubResult).toBe(true);
     expect(posted).toHaveLength(0);
 
+    sub.dispose();
+  });
+});
+
+describe("FileTreeHost — the resolved workspace root (round-1 B1)", () => {
+  function memoOver(links: Record<string, string>) {
+    return new ResolvedPathMemo({
+      realpath: async (p) => {
+        const hit = links[p];
+        if (hit === undefined) {
+          throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+        }
+        return hit;
+      },
+    });
+  }
+
+  it("carries the root's spelling AND where it resolves, as two fields", async () => {
+    // They answer different questions: one mounts the tree and is shown to the
+    // user, the other decides containment. Collapsing them would show the user
+    // a physical path they never typed.
+    vi.spyOn(vscode.workspace, "workspaceFolders", "get").mockReturnValue([{ uri: { fsPath: "/link/repo" } }] as never);
+    const host = new FileTreeHost(null, null, createTrackedPathResolver(memoOver({ "/link/repo": "/private/repo" })));
+    await waitFor(() => host.initPayload().resolvedWorkspaceRoot === "/private/repo");
+
+    expect(host.initPayload()).toMatchObject({
+      workspaceRoot: "/link/repo",
+      resolvedWorkspaceRoot: "/private/repo",
+    });
+  });
+
+  it("answers with the spelling itself before resolution lands, and when it fails", async () => {
+    vi.spyOn(vscode.workspace, "workspaceFolders", "get").mockReturnValue([{ uri: { fsPath: "/link/gone" } }] as never);
+    const host = new FileTreeHost(null, null, createTrackedPathResolver(memoOver({})));
+
+    expect(host.initPayload().resolvedWorkspaceRoot).toBe("/link/gone");
+    await settle();
+    expect(host.initPayload().resolvedWorkspaceRoot).toBe("/link/gone");
+  });
+
+  it("behaves exactly as before when no resolver is supplied", () => {
+    vi.spyOn(vscode.workspace, "workspaceFolders", "get").mockReturnValue([{ uri: { fsPath: "/link/repo" } }] as never);
+    const host = new FileTreeHost();
+
+    expect(host.initPayload()).toMatchObject({
+      workspaceRoot: "/link/repo",
+      resolvedWorkspaceRoot: "/link/repo",
+    });
+  });
+
+  it("re-posts the root once resolution lands, so the webview is not left lexical", async () => {
+    // Without the re-post the webview holds the spelling for the window's life:
+    // `initPayload` is read once, and nothing else would ever correct it.
+    vi.spyOn(vscode.workspace, "workspaceFolders", "get").mockReturnValue([{ uri: { fsPath: "/link/repo" } }] as never);
+    const posted: Array<{ type: string; resolvedRootPath?: string | null }> = [];
+    const host = new FileTreeHost(null, null, createTrackedPathResolver(memoOver({ "/link/repo": "/private/repo" })));
+    // Attached synchronously, before the constructor's realpath can land — so
+    // the post under test is the one that fires when resolution completes.
+    const sub = host.attach({ isReady: () => true, post: (m) => posted.push(m as never) });
+
+    await waitFor(() => posted.some((m) => m.resolvedRootPath === "/private/repo"));
+
+    expect(posted.some((m) => m.type === "workspace-root-changed" && m.resolvedRootPath === "/private/repo")).toBe(
+      true,
+    );
     sub.dispose();
   });
 });

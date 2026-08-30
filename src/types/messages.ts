@@ -1146,6 +1146,19 @@ export interface InitMessage {
   /** Absolute path of the first workspace folder, or null if no workspace open. */
   workspaceRoot: string | null;
   /**
+   * Where `workspaceRoot` RESOLVES, for containment comparisons only.
+   *
+   * Separate from `workspaceRoot` because the two answer different questions:
+   * that one mounts the tree and is echoed back to the user, so it must keep the
+   * spelling they opened; this one decides whether a path the editor reports is
+   * inside the workspace, and a physical path under a symlinked root is inside
+   * it however either is spelled (design.md D1).
+   *
+   * `null` when there is no workspace, and equal to `workspaceRoot` when it has
+   * not been resolved yet or does not resolve — the lexical answer, unchanged.
+   */
+  resolvedWorkspaceRoot: string | null;
+  /**
    * At least one workspace folder is inside a git repository. Decides which body
    * the vault panel opens on when the user has recorded no choice — a decision
    * that has to be made before the first paint, and cannot wait for a tree the
@@ -1489,6 +1502,8 @@ export interface SetFileTreePositionMessage {
 export interface WorkspaceRootChangedMessage {
   type: "workspace-root-changed";
   rootPath: string | null;
+  /** Where `rootPath` resolves; see `resolvedWorkspaceRoot` on the init payload. */
+  resolvedRootPath: string | null;
   rootGeneration: number;
 }
 

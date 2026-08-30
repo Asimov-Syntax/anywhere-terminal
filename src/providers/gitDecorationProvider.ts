@@ -161,16 +161,35 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     return folders.some((rawRoot) => isPathInside(absPath, options.paths?.resolvedOr(rawRoot) ?? rawRoot));
   }
 
+  /** Bumped per folder-resolution pass, so a slow one cannot reset over a newer. */
+  let folderPass = 0;
+
   /**
-   * Resolve the workspace folders, forgetting the ones that have gone.
+   * Resolve the workspace folders, forgetting the ones that have gone, and
+   * rebuild once that lands.
    *
-   * Fire-and-forget on purpose: the comparison above must stay synchronous, and
-   * until this settles it answers lexically — which is exactly the behaviour
-   * that shipped before. Awaiting it at the change event instead would put the
-   * provider's reset behind a syscall.
+   * The rebuild is the point. `isUnderAnyWorkspaceFolder` must stay synchronous,
+   * so until this settles it answers lexically — and nothing else would ever
+   * revisit that answer, leaving a symlink-spelled folder undecorated until
+   * some unrelated Git event happened to fire (round-1 B2).
    */
   function resolveFolders(): void {
-    void options.paths?.prepare([], getWorkspaceFolders());
+    if (!options.paths) {
+      return;
+    }
+    folderPass += 1;
+    const pass = folderPass;
+    void options.paths.prepare([], getWorkspaceFolders()).then(
+      () => {
+        if (!disposed && pass === folderPass) {
+          provider.reset();
+        }
+      },
+      () => {
+        // A folder that will not resolve keeps the lexical answer it has. There
+        // is nothing to rebuild for, and resetting would drop live decorations.
+      },
+    );
   }
 
   // Per-repository status maps keyed by rootUri.fsPath. The merged view is

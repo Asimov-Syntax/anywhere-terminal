@@ -167,6 +167,12 @@ export class FileTreePanel {
   private rootNode: FileNode | null = null;
   /** Absolute workspace root path — pinned at mount, rotated via `handleRootChanged`. */
   private workspaceRootPath: string | null = null;
+  /** The workspace root as the extension spelled it, and where it resolves.
+   *  Held as a PAIR so the resolved form is used only while the mounted root
+   *  still IS the workspace root — a re-root mounts an arbitrary directory
+   *  that nothing has resolved (round-1 B1). */
+  private workspaceRootSpelling: string | null = null;
+  private workspaceRootResolved: string | null = null;
   /**
    * Latest workspace-root generation. Initialized from `deps.rootGeneration`
    * and bumped by `handleRootChanged`. `setRoot` (out-of-root reveal) uses
@@ -306,7 +312,7 @@ export class FileTreePanel {
     // Explicit user actions (e.g. Open Folder / Reveal in File Tree) continue
     // below so they can expand + focus the picked target.
     if (rootCollapsed && opts?.source === "osc7") {
-      const wsRoot = this.workspaceRootPath as string;
+      const wsRoot = this.containmentRootFor(this.workspaceRootPath as string);
       if (!isPathInside(absPath, wsRoot)) {
         this.setRoot(absPath, { mountCollapsed: true });
       }
@@ -332,7 +338,10 @@ export class FileTreePanel {
     // Use `isPathInside` (not raw `startsWith`) so `/work/repo2/x` doesn't
     // get treated as inside `/work/repo`.
     const outOfRoot =
-      !this.tree || !this.rootNode || !this.workspaceRootPath || !isPathInside(absPath, this.workspaceRootPath);
+      !this.tree ||
+      !this.rootNode ||
+      !this.workspaceRootPath ||
+      !isPathInside(absPath, this.containmentRootFor(this.workspaceRootPath));
     if (outOfRoot) {
       this.setRoot(absPath);
       // After re-root, the new rootNode IS the target. Reveal + select +
@@ -409,6 +418,27 @@ export class FileTreePanel {
    * workspace folder reported by VS Code is unchanged — this only affects
    * what the file-tree widget renders.
    */
+  /**
+   * The root to compare containment against.
+   *
+   * `workspaceRootPath` mounts the tree and is shown to the user, so it keeps
+   * the spelling the workspace was opened with. Where a path the EDITOR reports
+   * actually lives is a different question: a physical path under a symlinked
+   * workspace root is inside it however either side is spelled, and comparing
+   * the spellings answered no (design.md D1, round-1 B1).
+   */
+  private containmentRootFor(mounted: string): string {
+    return mounted === this.workspaceRootSpelling && this.workspaceRootResolved !== null
+      ? this.workspaceRootResolved
+      : mounted;
+  }
+
+  /** Record where the extension says the workspace root resolves. */
+  setResolvedWorkspaceRoot(spelling: string | null, resolved: string | null): void {
+    this.workspaceRootSpelling = spelling;
+    this.workspaceRootResolved = resolved;
+  }
+
   setRoot(absPath: string, opts?: { mountCollapsed?: boolean }): void {
     if (this.disposed) {
       return;

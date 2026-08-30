@@ -825,6 +825,69 @@ describe("createGitDecorationProvider — a workspace folder reached through a s
     provider.dispose();
   });
 
+  it("rebuilds once the folder resolution lands, so the first pass is not the final answer", async () => {
+    // Round-1 B2. `prepare` is fire-and-forget so the comparison can stay sync;
+    // without a rebuild behind it the lexical fallback was permanent and a
+    // symlink-spelled folder stayed undecorated until some unrelated Git event.
+    let release: (real: string) => void = () => {};
+    const memo = new ResolvedPathMemo({
+      realpath: () => new Promise<string>((resolve) => (release = resolve)),
+    });
+    const inside = "/private/work/repo/a.ts";
+    const r = makeRepo("/private/work/repo", [{ path: inside, status: Status.MODIFIED }]);
+    const { api } = makeApi({ repos: [r.repo] });
+    const { extObj } = makeExtension({ api });
+    const provider = createGitDecorationProvider({
+      getExtension: () => extObj as never,
+      getWorkspaceFolders: () => ["/link/repo"],
+      paths: createTrackedPathResolver(memo),
+    });
+    const deltas: Array<{ path: string; status: GitStatus | null }[]> = [];
+    provider.onDidChange((d) => deltas.push([...d.changes]));
+    await new Promise((r2) => setTimeout(r2, 0));
+
+    // Nothing is decorated yet: the folder is still only a spelling.
+    expect(deltas.flat().map((c) => c.path)).not.toContain(inside);
+
+    release("/private/work/repo");
+    await new Promise((r2) => setTimeout(r2, 0));
+    await new Promise((r2) => setTimeout(r2, 0));
+
+    expect(deltas.flat().map((c) => c.path)).toContain(inside);
+    provider.dispose();
+  });
+
+  it("treats the decorated path as a spelling even when the memo knows that spelling", async () => {
+    // Round-1 S1: the memo is SHARED, so a decorated path can already be
+    // prepared as some other producer's folder or root. The per-event candidate
+    // must still be compared lexically — D1 draws the line at who produced the
+    // path, not at whether an answer happens to be lying around.
+    const memo = new ResolvedPathMemo({
+      realpath: async (p) => (p === "/link/repo" ? "/private/work/repo" : "/somewhere/else"),
+    });
+    // Prepare the decorated file's own spelling, as another producer would.
+    await memo.prepare(["/private/work/repo/a.ts"]);
+
+    const inside = "/private/work/repo/a.ts";
+    const r = makeRepo("/private/work/repo", [{ path: inside, status: Status.MODIFIED }]);
+    const { api } = makeApi({ repos: [r.repo] });
+    const { extObj } = makeExtension({ api });
+    const provider = createGitDecorationProvider({
+      getExtension: () => extObj as never,
+      getWorkspaceFolders: () => ["/link/repo"],
+      paths: createTrackedPathResolver(memo),
+    });
+    const deltas: Array<{ path: string; status: GitStatus | null }[]> = [];
+    provider.onDidChange((d) => deltas.push([...d.changes]));
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r2) => setTimeout(r2, 0));
+    }
+
+    // Resolving the candidate would send it to /somewhere/else and drop it.
+    expect(deltas.flat().map((c) => c.path)).toContain(inside);
+    provider.dispose();
+  });
+
   it("decorates exactly as before when no resolver is supplied", async () => {
     vi.useFakeTimers();
     try {

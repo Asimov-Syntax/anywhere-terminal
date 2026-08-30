@@ -952,3 +952,85 @@ describe("FileTreePanel — root-collapsed (header-only) mode", () => {
     panel.dispose();
   });
 });
+
+describe("FileTreePanel — containment against the resolved workspace root (round-1 B1)", () => {
+  // Driven through `source: "osc7"`, which is the branch that actually reaches
+  // the containment check on a collapsed root. `autoReveal` returns early there,
+  // so a test using it would pass whatever the comparison said.
+  async function panelAt(workspaceRoot: string) {
+    const host = createHost();
+    const posted: AnyMsg[] = [];
+    const panel = new FileTreePanel({
+      host,
+      workspaceRoot,
+      rootGeneration: 1,
+      getActiveSessionId: () => "sess",
+      postMessage: (m) => posted.push(m),
+    });
+    const dataSource = (panel as unknown as { dataSource: { handleResponse(m: unknown): void } | null }).dataSource;
+    if (!dataSource) {
+      throw new Error("panel.dataSource was null after mount");
+    }
+    const first = posted.find((m) => m.type === "request-read-directory") as { requestId: string } | undefined;
+    if (!first) {
+      throw new Error("panel posted no request-read-directory");
+    }
+    dataSource.handleResponse({
+      type: "read-directory-response",
+      requestId: first.requestId,
+      rootGeneration: 1,
+      entries: [{ name: "a.ts", path: `${workspaceRoot}/a.ts`, kind: "file" }],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const setRoot = vi.spyOn(panel, "setRoot");
+    return { panel, setRoot };
+  }
+
+  it("does not re-root for a physical path under a symlink-spelled root", async () => {
+    // The editor and the shell report physical paths; the workspace was opened
+    // through a link. Comparing spellings said "outside", so a `cd` inside the
+    // user's own workspace tore the tree down and remounted it.
+    const { panel, setRoot } = await panelAt("/link/workspace");
+    panel.setResolvedWorkspaceRoot("/link/workspace", "/private/workspace");
+    setRoot.mockClear();
+
+    await panel.revealPath("/private/workspace/a.ts", { source: "osc7" });
+
+    expect(setRoot).not.toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it("still re-roots for a path that is genuinely outside", async () => {
+    const { panel, setRoot } = await panelAt("/link/workspace");
+    panel.setResolvedWorkspaceRoot("/link/workspace", "/private/workspace");
+    setRoot.mockClear();
+
+    await panel.revealPath("/elsewhere/b.ts", { source: "osc7" });
+
+    expect(setRoot).toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it("re-roots for the symlink spelling too, when nothing resolved it", async () => {
+    // The fallback is the lexical answer, unchanged — not a claim that every
+    // spelling is inside.
+    const { panel, setRoot } = await panelAt("/workspace");
+    setRoot.mockClear();
+
+    await panel.revealPath("/private/workspace/a.ts", { source: "osc7" });
+
+    expect(setRoot).toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it("behaves exactly as before when no resolved root was supplied", async () => {
+    const { panel, setRoot } = await panelAt("/workspace");
+    setRoot.mockClear();
+
+    await panel.revealPath("/workspace/a.ts", { source: "osc7" });
+
+    expect(setRoot).not.toHaveBeenCalled();
+    panel.dispose();
+  });
+});

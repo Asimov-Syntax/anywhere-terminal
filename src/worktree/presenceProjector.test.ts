@@ -2078,6 +2078,38 @@ describe("attribution through a symlink", () => {
     expect(h.realpaths).toEqual([SPELLED, "/link/other", SPELLED]);
   });
 
+  it("releases a cwd when its pane closes, so the memo tracks what the window holds", async () => {
+    // Round-1 B4. `forgetCwd` fired only on a pane that MOVED, so every pane the
+    // window ever closed left its last directory resolved for the host's life.
+    const h = symlinked({ [SPELLED]: PHYSICAL }, [pane({ paneId: "p1", cwd: SPELLED })]);
+
+    await h.projector.project([PHYSICAL]);
+    expect(h.memo.size).toBe(1);
+
+    h.panes.length = 0;
+    await h.projector.project([PHYSICAL]);
+
+    expect(h.memo.size).toBe(0);
+  });
+
+  it("keeps a cwd two panes share until the last of them goes", async () => {
+    // The release is per pane, and the entry is per DIRECTORY — so releasing on
+    // the first close would drop a resolution the surviving pane still compares
+    // against on the very next push.
+    const h = symlinked({ [SPELLED]: PHYSICAL }, [
+      pane({ paneId: "p1", cwd: SPELLED }),
+      pane({ paneId: "p2", cwd: SPELLED }),
+    ]);
+
+    await h.projector.project([PHYSICAL]);
+    h.panes.splice(0, 1);
+    await h.projector.project([PHYSICAL]);
+
+    const projection = await h.projector.project([PHYSICAL]);
+    expect(projection.rowsByWorktreeId[PHYSICAL]?.map((r) => r.paneId)).toEqual(["p2"]);
+    expect(h.realpaths).toEqual([SPELLED]);
+  });
+
   it("attributes a registry session by where its cwd resolves too", async () => {
     // External rows compare the same way, from a set the pane loop never
     // prepared — so they need their own bounded pass, not the pane one.

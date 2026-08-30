@@ -43,13 +43,25 @@ export class ResolvedPathMemo {
     if (known) {
       return known;
     }
-    const pending = this.realpath(key).then(
+    // Both continuations check that this flight is STILL the entry for its key
+    // before touching shared state. Without it an `invalidate` taken while a
+    // realpath is in the air is undone the moment it lands: the success writes
+    // the pre-change location into `settled`, and the failure deletes whatever
+    // newer flight replaced it — leaving every consumer answering from facts
+    // that were already known to be stale (round-1 B3).
+    let pending: Promise<string>;
+    const mine = () => this.memo.get(key) === pending;
+    pending = this.realpath(key).then(
       (real) => {
-        this.settled.set(key, real);
+        if (mine()) {
+          this.settled.set(key, real);
+        }
         return real;
       },
       () => {
-        this.memo.delete(key);
+        if (mine()) {
+          this.memo.delete(key);
+        }
         return key;
       },
     );
