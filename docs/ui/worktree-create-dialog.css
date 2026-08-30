@@ -148,6 +148,16 @@
 .cw-prow--prose{align-items:flex-start}
 .cw-prow--prose .cw-hint-txt{overflow:visible;white-space:normal;text-wrap:pretty;line-height:1.5}
 
+/* Pass 4: adopt states what it cannot bring back — a quiet declaration, not a
+ * warning list, because nothing in it is a risk the user can act on. */
+.cw-disc{display:flex;flex-direction:column;gap:5px;padding:8px 9px;border-left:2px solid var(--vscode-editorWarning-foreground);border-radius:0 4px 4px 0;background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 7%,transparent);font-size:11px;line-height:1.5;color:var(--vscode-descriptionForeground)}
+.cw-disc-lead{color:var(--vscode-foreground);text-wrap:pretty}
+.cw-disc ul{display:flex;flex-direction:column;gap:3px;margin:0;padding-left:14px}
+.cw-disc li{text-wrap:pretty}
+/* Not applicable is the fourth outcome: no weight, and visibly not the ? that blocks. */
+.cw-ck--na{color:var(--vscode-descriptionForeground);opacity:.5}
+.cw-checks li.is-na>span{color:var(--vscode-descriptionForeground);opacity:.8}
+
 /* Pass 3: a base ref that will not be applied must not look live. */
 .cw-base.is-off{color:var(--vscode-disabledForeground)}
 .cw-base.is-off b{color:inherit;font-weight:500}

@@ -57,6 +57,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <symbol id="i-terminal" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1"></rect><path d="M4 6l2.5 2L4 10"></path><line x1="8" y1="10.5" x2="11" y2="10.5"></line></symbol>
 <symbol id="i-lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1"></rect><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7"></path></symbol>
 <symbol id="i-link" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M6.6 9.4L9.4 6.6"></path><path d="M7.6 4.6l1.1-1.1a2.6 2.6 0 0 1 3.8 3.8l-1.1 1.1"></path><path d="M8.4 11.4l-1.1 1.1a2.6 2.6 0 0 1-3.8-3.8l1.1-1.1"></path></symbol>
+<symbol id="i-dash" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="4" y1="8" x2="12" y2="8"></line></symbol>
 </svg>
 <div class="mockup">
 
@@ -90,7 +91,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 </div>
 
 <div>
-<div class="mockup-label">2 · <b>Typed + collision</b> · amber, field-local, one line · destination tail already resolved · dirty repo, so the move row appears</div>
+<div class="mockup-label">2 · <b>Typed + collision</b> · amber, field-local, one line · destination tail already resolved · dirty repo, so the move row appears · <em>Run setup starts unchecked — a provider file is not consent</em></div>
 <div class="cw-dlg">
   <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
   <div class="cw-sec">
@@ -106,7 +107,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
   <div class="cw-sec">
     <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">2 copied · 1 linked</span></div>
     <div class="cw-box">
-      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-setup" /><label class="cw-brow-top" for="c-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" id="c-setup" /><label class="cw-brow-top" for="c-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-copy" /><label class="cw-brow-top" for="c-copy"><b>Copy 2 files</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-link" /><label class="cw-brow-top" for="c-link"><b>Link 1 file</b><span class="cw-warnchip">writes to main</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-port" /><label class="cw-brow-top" for="c-port"><b>Allocate 2 ports</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc cw-num">ASIMOV_PORT_APP=5183 · ASIMOV_PORT_DB=5433</span></div></div>
@@ -266,7 +267,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <div class="mockup-col">
 
 <div>
-<div class="mockup-label">4 · <b>Start an agent</b> · segmented radios reveal the panel a <em>&lt;select&gt;</em> used to hide · Wait for setup enabled because Run setup is checked</div>
+<div class="mockup-label">4 · <b>Start an agent</b> · segmented radios reveal the panel a <em>&lt;select&gt;</em> used to hide · Wait for setup live only because the user ticked Run setup</div>
 <div class="cw-dlg">
   <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
   <div class="cw-sec">
@@ -304,7 +305,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 </div>
 
 <div>
-<div class="mockup-label">4b · <b>Wait for setup — disabled</b> · nothing to wait for once Run setup is off (or unconfigured)</div>
+<div class="mockup-label">4b · <b>Wait for setup — disabled</b> · the <em>default</em> state of a fresh dialog: setup unchecked, so there is nothing to wait for</div>
 <div class="strip">
   <div class="cw-box">
     <div class="cw-brow"><input class="cw-cb" type="checkbox" id="c-setup3" /><label class="cw-brow-top" for="c-setup3"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
@@ -418,6 +419,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
     <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No terminals running in this folder</span></li>
     <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No agent active here</span></li>
     <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>Not locked</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No ignored content — nothing was provisioned here</span></li>
   </ul>
   <label class="cw-cbl"><input class="cw-cb" type="checkbox" /><span>Also delete branch feat/search</span></label>
   <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--danger">Remove worktree</button></div>
@@ -425,19 +427,63 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 </div>
 
 <div>
-<div class="mockup-label">14 · <b>Remove — blocked</b> · two warnings, one unproven check treated as blocking · typed confirmation only because a check failed</div>
+<div class="mockup-label">13b · <b>Ignored content</b> · <code style="font-family:inherit">git status</code> says nothing about it, so the report must · <em>three states, three different sentences</em></div>
+<div class="strip">
+  <div class="strip-cap">Measured — a count and a size</div>
+  <ul class="cw-checks"><li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>1.2 GB of ignored content — node_modules, .next, 2 more</span><span class="cw-ck-sub">Not tracked by git. Removing the worktree removes it.</span></li></ul>
+  <div class="strip-cap">Over budget — unproven, so it blocks like any unproven check</div>
+  <ul class="cw-checks"><li><svg class="cw-ck--unk"><use href="#i-unknown"></use></svg><span>Ignored content could not be sized — stopped after 2s</span><span class="cw-ck-sub">Treated as present until it can be measured.</span></li></ul>
+  <div class="strip-cap">Provisioned — the material is what this dialog put here, and says so</div>
+  <ul class="cw-checks"><li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>The 4 files this worktree was set up with</span><span class="cw-ck-sub">.env, .claude/settings.local.json, .env.local, .cache/turbo — copied or linked at create.</span></li></ul>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">13c · <b>A check has four outcomes</b> · <em>unproven blocks; not-applicable carries no weight — and the two must not look alike</em></div>
+<div class="strip">
+  <ul class="cw-checks">
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No uncommitted changes</span><span class="cw-ck-sub">Passed — shown so the failures stay legible.</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>12 uncommitted changes, 3 untracked files</span><span class="cw-ck-sub">Failed — confirmable: removable once the name is typed.</span></li>
+    <li><svg class="cw-ck--unk"><use href="#i-unknown"></use></svg><span>Merge state unknown — main has not been fetched</span><span class="cw-ck-sub">Unproven — blocks: treated as unmerged until it can be checked.</span></li>
+    <li class="is-na"><svg class="cw-ck--na"><use href="#i-dash"></use></svg><span>Branch merged into main — not applicable</span><span class="cw-ck-sub">No branch — detached HEAD. Nothing to prove, so it carries no weight.</span></li>
+  </ul>
+  <div class="strip-cap">A detached-HEAD worktree is removable without the merge proof — conflating that with unproven would refuse a safe removal</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">14 · <b>Remove — refused</b> · an agent is live in this folder · <em>hard refusal: the report is shown, the action is not offered</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Remove worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-subject"><span class="cw-subject-branch">feat/search</span><span class="cw-subject-path" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/feat-search-2</span></div>
+  <div class="cw-notif cw-notif--err">
+    <svg><use href="#i-warn"></use></svg>
+    <div><b>Cannot remove.</b> Claude Code is running here. Removing the folder underneath it loses whatever it has not written yet.</div>
+    <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Focus agent</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Stop agent</button></div>
+  </div>
+  <ul class="cw-checks">
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>Agent "Claude Code" is active here</span><span class="cw-ck-sub">Stop it, then remove — there is no confirmation that covers this.</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>12 uncommitted changes, 3 untracked files</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-terminal"></use></svg><span>2 terminals still running in this folder</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>Not locked</span></li>
+  </ul>
+  <div class="cw-actions"><span class="cw-lbl-sp"></span><button class="cw-btn">Close</button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">14b · <b>Remove — confirmable risks</b> · dirty, untracked, locked, ignored content · typed confirmation because a check failed · <em>no branch control while the merge proof is unproven</em></div>
 <div class="cw-dlg">
   <h3 class="cw-title">Remove worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
   <div class="cw-subject"><span class="cw-subject-branch">feat/search</span><span class="cw-subject-path" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/feat-search-2</span></div>
   <ul class="cw-checks">
     <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>12 uncommitted changes, 3 untracked files</span></li>
-    <li><svg class="cw-ck--unk"><use href="#i-unknown"></use></svg><span>Merge state unknown — main has not been fetched</span><span class="cw-ck-sub">Treated as unmerged until it can be checked.</span></li>
-    <li><svg class="cw-ck--warn"><use href="#i-terminal"></use></svg><span>2 terminals still running in this folder</span></li>
-    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>Agent "Claude Code" is active here</span></li>
+    <li><svg class="cw-ck--unk"><use href="#i-unknown"></use></svg><span>Merge state unknown — main has not been fetched</span><span class="cw-ck-sub">Treated as unmerged — the branch cannot be deleted from here.</span></li>
     <li><svg class="cw-ck--warn"><use href="#i-lock"></use></svg><span>Worktree is locked — "running overnight bench"</span><span class="cw-ck-sub">Removal will pass <span class="cw-code">--force</span> twice.</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>1.2 GB of ignored content — node_modules, .next, 2 more</span><span class="cw-ck-sub">Not tracked by git. Removing the worktree removes it.</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No agent active here</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No terminals running in this folder</span></li>
   </ul>
-  <label class="cw-cbl is-off"><input class="cw-cb" type="checkbox" disabled /><span>Also delete branch feat/search</span></label>
-  <div class="cw-hint" style="padding-left:21px"><span class="cw-hint-txt">Unavailable while the branch is unmerged.</span></div>
   <div class="cw-rule"></div>
   <div class="cw-sec">
     <div class="cw-lbl">Type <span class="cw-code">feat-search-2</span> to confirm</div>
@@ -458,7 +504,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
     <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Retry</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Reveal</button></div>
   </div>
   <ul class="cw-checks">
-    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>Terminals in this folder were closed</span></li>
+    <li class="is-na"><svg class="cw-ck--na"><use href="#i-terminal"></use></svg><span>2 terminals left running — panes are never killed</span><span class="cw-ck-sub">They are still open in a folder that was going to be deleted.</span></li>
     <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>Worktree still registered in git</span></li>
     <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>Directory still on disk</span></li>
   </ul>
@@ -512,7 +558,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
   <div class="cw-sec">
     <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">3 copied · 1 linked · 2 sources</span></div>
     <div class="cw-box">
-      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="m-setup" /><label class="cw-brow-top" for="m-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" id="m-setup" /><label class="cw-brow-top" for="m-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="m-copy" /><label class="cw-brow-top" for="m-copy"><b>Copy 3 files</b><span class="cw-lbl-sp"></span><button class="cw-srcbtn is-open" aria-expanded="true"><svg><use href="#i-chev"></use></svg>2 sources</button></label>
         <div class="cw-plist">
           <div class="cw-prow"><span class="cw-ppath">.env</span><span class="cw-lbl-sp"></span><span class="cw-psrc">asimov/worktree.yaml</span></div>
@@ -536,7 +582,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
   <div class="cw-sec">
     <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">2 copied · 1 linked</span></div>
     <div class="cw-box">
-      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="s-setup" /><label class="cw-brow-top" for="s-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" id="s-setup" /><label class="cw-brow-top" for="s-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="s-copy" /><label class="cw-brow-top" for="s-copy"><b>Copy 2 files</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="s-link" /><label class="cw-brow-top" for="s-link"><b>Link 1 file</b><span class="cw-warnchip">writes to main</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
       <div class="cw-mquiet" style="padding:0"><svg style="width:12px;height:12px;flex:0 0 auto"><use href="#i-repo"></use></svg><span class="cw-hint-txt">orca.yaml is also present</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Use it instead</button></div>
@@ -567,7 +613,7 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
       <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Open file</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Retry</button></div>
     </div>
     <div class="cw-box">
-      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="x-setup" /><label class="cw-brow-top" for="x-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" id="x-setup" /><label class="cw-brow-top" for="x-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install</span></div></div>
       <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="x-copy" /><label class="cw-brow-top" for="x-copy"><b>Copy 1 file</b><span class="cw-lbl-sp"></span><span class="cw-src">.vscode/worktree.json</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
       <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
     </div>
@@ -625,16 +671,25 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <div class="mockup-col">
 
 <div>
-<div class="mockup-label">20 · <b>Reattach</b> · registration pruned, directory survived · field-local amber, same register as collision · <em>Base refused, and says why</em></div>
+<div class="mockup-label">20 · <b>Adopt</b> · the administrative entry is gone, a populated checkout survives · <em>reconstructed by hand, so it declares what cannot come back</em></div>
 <div class="cw-dlg">
   <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
   <div class="cw-sec">
     <div class="cw-lbl">Branch / source</div>
     <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/checkout-v2" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
-    <div class="cw-hint cw-hint--warn cw-hint--wrap"><svg><use href="#i-link"></use></svg><span class="cw-hint-txt"><span class="cw-mut">Directory exists, not registered — will reattach</span> <span class="cw-code">feat-checkout-v2</span></span></div>
+    <div class="cw-hint cw-hint--warn cw-hint--wrap"><svg><use href="#i-link"></use></svg><span class="cw-hint-txt"><span class="cw-mut">A checkout exists and git has no entry for it — will adopt</span> <span class="cw-code">feat-checkout-v2</span></span></div>
+    <div class="cw-disc">
+      <div class="cw-disc-lead">The files are untouched. What lived in the deleted administrative directory is gone with it:</div>
+      <ul>
+        <li>staged changes become unstaged — the content is intact, the staging decision is not</li>
+        <li>an in-progress rebase, merge or bisect cannot be resumed; files stay as that operation last wrote them</li>
+        <li><span class="cw-code">ORIG_HEAD</span>, per-worktree refs and reflogs start empty</li>
+        <li>the worktree is adopted unlocked</li>
+      </ul>
+    </div>
     <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Create separate instead</button></div>
   </div>
-  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied when reattaching</span></div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied — adopt keeps the checkout it finds</span></div>
   <div class="cw-sec">
     <div class="cw-lbl">Destination<span class="cw-badge cw-badge--exist">Existing</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
     <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-checkout-v2">…/anywhere-terminal/<b>feat-checkout-v2</b></span></div>
@@ -643,30 +698,68 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
     <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">Skipped</span></div>
     <div class="cw-quiet"><svg style="width:12px;height:12px;flex:0 0 auto"><use href="#i-check"></use></svg><span class="cw-quiet-txt">The directory keeps the files it already has — nothing is copied and setup does not re-run.</span></div>
   </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Adopt worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">20b · <b>Adopt refused — the branch is claimed</b> · checked before anything is written · <em>hard refusal: no confirmation path, no Adopt button</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
   <div class="cw-sec">
-    <div class="cw-lbl">After reattaching</div>
-    <div class="cw-seg" role="radiogroup" aria-label="After reattaching"><button role="radio" aria-checked="false">Nothing</button><button role="radio" aria-checked="true">Open folder</button><button role="radio" aria-checked="false">Start an agent</button></div>
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus is-invalid" value="feat/checkout-v2" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-notif cw-notif--err">
+      <svg><use href="#i-warn"></use></svg>
+      <div><b>Cannot adopt.</b> <span class="cw-code">feat-checkout-v2</span> would claim <b>feat/checkout-v2</b>, which the live worktree <b>feat-checkout</b> already holds. Two entries on one branch overwrite each other's commits with no conflict and no warning.</div>
+      <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Reveal feat-checkout</button></div>
+    </div>
+  </div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied — adopt keeps the checkout it finds</span></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge cw-badge--exist">Existing</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-checkout-v2">…/anywhere-terminal/<b>feat-checkout-v2</b></span></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create separate at feat-checkout-v2-2</button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">20c · <b>Reattach</b> · the entry survives with a stale path — git calls it <code style="font-family:inherit">prunable</code> · <em>one command, and nothing is lost</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/vault-privacy" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-hint cw-hint--warn cw-hint--wrap"><svg><use href="#i-link"></use></svg><span class="cw-hint-txt"><span class="cw-mut">Registered at a path that no longer exists — will repoint the entry at</span> <span class="cw-code">feat-vault-privacy</span></span></div>
+    <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Create separate instead</button></div>
+  </div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied when reattaching</span></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge cw-badge--exist">Existing</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-vault-privacy">…/anywhere-terminal/<b>feat-vault-privacy</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">Skipped</span></div>
+    <div class="cw-quiet"><svg style="width:12px;height:12px;flex:0 0 auto"><use href="#i-check"></use></svg><span class="cw-quiet-txt">Runs <code>git worktree repair</code>: the entry is rewritten, the directory is not touched, and the index, reflogs and lock survive. Nothing is copied and setup does not re-run.</span></div>
   </div>
   <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Reattach worktree<span class="cw-kbd">⌘↵</span></button></div>
 </div>
 </div>
 
 <div>
-<div class="mockup-label">21 · <b>Recover</b> · crash debris at the destination, no <code style="font-family:inherit">.git</code> pointer · <em>deletes something, so a bare Create will not do it</em></div>
+<div class="mockup-label">21 · <b>Recover</b> · debris is a property of the <em>destination</em>, so the branch line keeps whatever mode was chosen · here: reuse + debris</div>
 <div class="cw-dlg">
   <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
   <div class="cw-sec">
     <div class="cw-lbl">Branch / source</div>
     <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
-    <div class="cw-hint cw-hint--warn cw-hint--wrap"><svg><use href="#i-warn"></use></svg><span class="cw-hint-txt"><span class="cw-mut">A folder is already at this destination, and git does not know it</span></span></div>
+    <div class="cw-hint"><svg><use href="#i-branch"></use></svg><span class="cw-hint-txt">Existing branch — checked out at its own commit</span></div>
   </div>
-  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied while recovering</span></div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied to an existing branch</span></div>
   <div class="cw-sec">
     <div class="cw-lbl">Destination<span class="cw-badge cw-badge--exist">Occupied</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
     <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search">…/anywhere-terminal/<b>feat-search</b></span></div>
-  </div>
-  <div class="cw-sec">
-    <div class="cw-lbl">Will be removed first</div>
     <div class="cw-box">
       <div class="cw-prow"><span class="cw-ppath">…/.claude/worktrees/feat-search/</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Reveal</button></div>
       <div class="cw-prow"><span class="cw-hint-txt">14 entries · 2.3 MB · no git metadata · last written 3 days ago</span></div>
@@ -674,37 +767,108 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
     </div>
     <label class="cw-cbl"><input class="cw-cb" type="checkbox" /><span>Delete that folder, then create the worktree</span></label>
   </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">2 copied · 1 linked</span></div>
+    <div class="cw-quiet"><svg style="width:12px;height:12px;flex:0 0 auto"><use href="#i-check"></use></svg><span class="cw-quiet-txt">The cleared destination is provisioned like any fresh worktree.</span><button class="cw-lbtn">Configure…</button></div>
+  </div>
   <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--danger" disabled>Delete and create</button></div>
 </div>
 </div>
 
 <div>
-<div class="mockup-label">22 · <b>Base is contractual</b> · <em>four selections, one line each — a base that will not be applied is never left looking live</em></div>
+<div class="mockup-label">21b · <b>Debris composes with every branch mode</b> · <em>clearing the destination says nothing about the branch</em></div>
 <div class="strip">
-  <div class="strip-cap">Fresh — a new branch is cut from Base, so Base is editable</div>
+  <div class="strip-cap">fresh + debris — Base still applies; the ground is cleared first</div>
   <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
-  <div class="strip-cap">Reuse — the branch already exists at its own commit</div>
+  <div class="cw-hint cw-hint--warn cw-hint--wrap"><svg><use href="#i-warn"></use></svg><span class="cw-hint-txt">Destination occupied — 14 entries, no git metadata</span></div>
+  <div class="strip-cap">reuse + debris — the drawing above</div>
   <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied to an existing branch</span></div>
-  <div class="strip-cap">Reattach — the directory's checkout is whatever it was</div>
-  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied when reattaching</span></div>
-  <div class="strip-cap">Recover — debris removed, then the existing branch is checked out</div>
-  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied while recovering</span></div>
+  <div class="strip-cap">adopt + debris — impossible: adopt needs the surviving checkout that debris would replace</div>
+  <div class="cw-hint cw-hint--err cw-hint--wrap"><svg><use href="#i-warn"></use></svg><span class="cw-hint-txt">Adopt is not offered for a directory with no git metadata — there is nothing to adopt</span></div>
 </div>
 </div>
 
 <div>
-<div class="mockup-label">23 · <b>The four selections in the omnibox</b> · <em>resolved in the list, before submit — never a dialog that appears after a failure</em></div>
+<div class="mockup-label">22 · <b>Base is contractual</b> · five branch modes, one line each · <em>refused wherever the starting point comes from something that already exists</em></div>
+<div class="strip">
+  <div class="strip-cap">fresh — a new branch is cut from Base</div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="strip-cap">fresh-detached — Base is the commit to check out; no branch is created</div>
+  <div class="cw-base">Base: <b>v1.4.0</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="strip-cap">reuse — the branch already exists at its own commit</div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied to an existing branch</span></div>
+  <div class="strip-cap">reattach — the entry is repaired; the checkout is whatever it was</div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied when reattaching</span></div>
+  <div class="strip-cap">adopt — the surviving directory keeps its checkout</div>
+  <div class="cw-base is-off">Base: <b>main</b><span class="cw-lbl-sp"></span><span>Not applied — adopt keeps the checkout it finds</span></div>
+  <div class="strip-cap">Recovering debris changes none of these. It clears the destination; the branch mode above decides whether Base applies.</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">23 · <b>Three occupied-branch badges</b> · five modes and a separate destination state · <em>still badges in one list, still not a tab bar</em></div>
 <div class="strip">
   <div class="cw-menu" role="listbox">
     <div class="cw-mgrp">Local</div>
     <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">feat/vault-privacy</span><span class="cw-mbadge">Reuse branch</span></div>
     <div class="cw-mrow is-disabled" role="option" aria-disabled="true" title="Already checked out in feat-search — git allows one worktree per branch"><span class="cw-mglyph"><svg><use href="#i-lock"></use></svg></span><span class="cw-mname">feat/search-ranking</span><span class="cw-mbadge">In feat-search</span></div>
-    <div class="cw-mrow is-active" role="option" aria-selected="true"><span class="cw-mglyph"><svg><use href="#i-link"></use></svg></span><span class="cw-mname">feat/checkout-v2</span><span class="cw-mbadge">Reattach</span><span class="cw-msub">Directory exists, registration was pruned</span></div>
-    <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-warn"></use></svg></span><span class="cw-mname">feat/search</span><span class="cw-mbadge">Recover</span><span class="cw-msub">Folder at destination, no git metadata · 14 entries</span></div>
+    <div class="cw-mrow is-active" role="option" aria-selected="true"><span class="cw-mglyph"><svg><use href="#i-link"></use></svg></span><span class="cw-mname">feat/checkout-v2</span><span class="cw-mbadge">Adopt</span><span class="cw-msub">Checkout survives, git has no entry for it</span></div>
+    <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-refresh"></use></svg></span><span class="cw-mname">feat/vault-privacy-old</span><span class="cw-mbadge">Reattach</span><span class="cw-msub">Entry survives at a stale path · prunable</span></div>
     <div class="cw-msep"></div>
     <div class="cw-mrow cw-mrow--new" role="option"><span class="cw-mglyph"><svg><use href="#i-plus"></use></svg></span><span class="cw-mname">Create new branch <b>"feat/checkout-v3"</b> from main</span></div>
   </div>
-  <div class="strip-cap">Reattach and Recover are states of a branch, so they are badges in the same list — not extra sources and not a fifth tab</div>
+  <div class="strip-cap">Recover is not in this list — debris belongs to the destination and composes with whichever mode is selected here</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">24 · <b>The offer went stale</b> · a provider file changed while the dialog was open · <em>re-read, re-presented, and submitted again — never silently applied</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">3 copied · 1 linked · re-read</span></div>
+    <div class="cw-notif">
+      <svg><use href="#i-refresh"></use></svg>
+      <div><b>Configuration changed on disk.</b> <span class="cw-code">asimov/worktree.yaml</span> was edited after this dialog opened. What is shown below has been re-read — submit again to use it.</div>
+      <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Open file</button></div>
+    </div>
+    <div class="cw-box">
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" id="t-setup" /><label class="cw-brow-top" for="t-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:seed</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="t-copy" /><label class="cw-brow-top" for="t-copy"><b>Copy 3 files</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .env.test, .claude/settings.local.json</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="t-link" /><label class="cw-brow-top" for="t-link"><b>Link 1 file</b><span class="cw-warnchip">writes to main</span><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
+      <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
+    </div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">24b · <b>The removal report went stale too</b> · <em>any change to the assessment re-prompts — including a check that flipped to passed</em></div>
+<div class="strip">
+  <div class="cw-notif">
+    <svg><use href="#i-refresh"></use></svg>
+    <div><b>The assessment changed.</b> The 2 terminals have stopped and 1 more file is uncommitted. The report below has been re-read — confirm again.</div>
+  </div>
+  <div class="strip-cap">The user authorized a specific report, not the action — so a smaller set of blockers re-prompts exactly like a larger one</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">25 · <b>fresh-detached</b> · Base is the commit to check out and no branch is created · <em>one variant line, and the removal row it produces</em></div>
+<div class="strip">
+  <div class="strip-cap">In the dialog — the omnibox resolved a tag, so nothing is branched</div>
+  <div class="cw-cbx"><input class="cw-inp" value="v1.4.0" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  <div class="cw-hint"><svg><use href="#i-branch"></use></svg><span class="cw-hint-txt">Tag — checked out detached at v1.4.0; no branch is created</span></div>
+  <div class="cw-base">Base: <b>v1.4.0</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="strip-cap">Later, in the removal report — the check that has nothing to prove</div>
+  <ul class="cw-checks"><li class="is-na"><svg class="cw-ck--na"><use href="#i-dash"></use></svg><span>Branch merged into main — not applicable</span><span class="cw-ck-sub">No branch — detached HEAD.</span></li></ul>
+</div>
 </div>
 </div>
 
@@ -730,9 +894,22 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <h4>Pass 3 — four selections, and two corrections</h4>
 <ul>
 <li><b>A missing <code>extends</code> target is not an unreadable file.</b> 19 now says the native file extends something that does not exist, and still lists what its own keys contribute, each badged <code>.vscode/worktree.json</code>. 19b is the genuinely unparseable file, where “nothing will be copied, linked or run” is true. 19c keeps malformed and empty side by side.</li>
-<li><b>Reattach and Recover are badges in the omnibox</b> (23), resolved in the list before submit. Reattach names the directory it will adopt; Recover states entry count, size, age and that nothing is tracked, then requires its own checkbox — <em>Delete and create</em> is red and disabled until it is ticked.</li>
-<li><b>Base is refused, not ignored</b> (22). Reuse, reattach and recover each disable the Base line with the reason on the same row, so a ref that will not be applied never sits in the form looking as though it will.</li>
+<li><b>Occupied-branch modes are badges in the omnibox</b> (23), resolved in the list before submit — reuse, reattach and adopt.</li>
+<li><b>Base is refused, not ignored</b> (22). Reuse, reattach and adopt each disable the Base line with the reason on the same row, so a ref that will not be applied never sits in the form looking as though it will.</li>
 <li><b>The port preview is not a promise</b> (7b). Ports are re-probed before <code>.env.worktree</code> is written, so a changed allocation is reported on the worktree row, naming only the variable that moved.</li>
+</ul>
+<h4>Pass 4 — two axes, and the removal contract</h4>
+<ul>
+<li><b>Branch mode and destination disposition are separate values.</b> The omnibox resolves one of five modes (fresh, fresh-detached, reuse, reattach, adopt); debris is a property of the destination and composes with all of them (21, 21b). Recover left the omnibox because spending the branch badge on it made reuse-plus-debris undrawable.</li>
+<li><b>Adopt and reattach are different states, so they are different screens.</b> Reattach (20c) repairs a surviving entry with a stale path — one command, nothing lost. Adopt (20) reconstructs an entry git deleted, so it declares what the administrative directory took with it: staging decisions, sequencer state, <code>ORIG_HEAD</code>, per-worktree reflogs, the lock. Declared, never detected — a check that cannot fail is worse than a stated limitation.</li>
+<li><b>A claimed branch is a hard refusal</b> (20b). Reconstructing an entry by hand bypasses git's one-worktree-per-branch check and git says nothing, so the claim is verified before anything is written and the Adopt button is absent — only <em>Create separate</em> is offered.</li>
+<li><b>Setup starts unchecked.</b> A command a provider file supplied is not consent because a checkbox arrived pre-ticked. 4b's disabled <em>Wait for setup</em> is now the default state of a fresh dialog, not an unusual one.</li>
+<li><b>An active agent is a refusal, not a confirmation</b> (14). The report is still shown; the Remove button is absent. Screen 14b carries the typed confirmation, where every failure is a confirmable risk — dirty, untracked, locked, ignored content.</li>
+<li><b>The branch-delete control is absent, not disabled,</b> when the merge proof is false or unproven. A disabled control invites the trip to the terminal that the gate exists to prevent.</li>
+<li><b>Panes are never killed</b> (15). The line says the terminals were left running.</li>
+<li><b>Ignored content gets its own row</b> (13b), because <code>git status</code> says nothing about it and this dialog put most of it there. Three sentences: a count and a size, a could-not-be-sized under budget, or the provisioned material named.</li>
+<li><b>A check has four outcomes</b> (13c). Not-applicable is not unproven: unproven blocks, not-applicable carries no weight, and a detached-HEAD worktree has no merge to prove.</li>
+<li><b>A stale offer re-prompts</b> (24, 24b). The dialog holds a resolved snapshot; if the provider files or the removal assessment change underneath it, the new model is presented and the user submits again — including when the change made things safer.</li>
 </ul>
 <h4>Decisions to confirm</h4>
 <ul>
@@ -742,9 +919,10 @@ a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
 <li><b>Merged sections summarize as <em>3 copied · 1 linked · 2 sources</em></b> — counts first, provenance last. The excluded path stays out of that count and appears only in the expanded list \u2014 settled in pass 3.</li>
 <li><b>Provenance labels are file paths, not framework names</b> (<code>asimov/worktree.yaml</code>, not “asimov”). Longer, but it is the thing you open. Screen 17 shows <code>.vscode/worktree.json</code> owning Run setup because the native file overrode the inherited command.</li>
 <li><b>Expansion state is per row and not remembered.</b> Every dialog opens collapsed. If mixed provenance turns out to be common in your repos, always-expanded-when-mixed is the cheaper change.</li>
-<li><b>Reattach offers <em>Create separate</em> as the escape hatch</b>, in the collision line's <em>Use name</em> position — it falls back to a fresh worktree at a deduplicated path. The alternative is forcing a Cancel and a rename.</li>
-<li><b>Recover's button is red and reads <em>Delete and create</em></b> rather than a neutral Create, because the destructive half happens first. Bring over is not drawn on that screen — recovery makes a fresh worktree, so provisioning runs normally; say the word if you want it shown for reassurance.</li>
-<li><b>Reattach skips Bring over entirely.</b> The surviving directory keeps its files, and re-running setup over a folder someone was working in is the riskier default. Alternative: offer setup as an opt-in checkbox.</li>
+<li><b>Reattach and adopt both offer <em>Create separate instead</em></b>, in the collision line's <em>Use name</em> position — it falls back to a fresh worktree at a deduplicated path, and it is the only thing 20b offers.</li>
+<li><b>Recover's checkbox and red <em>Delete and create</em> now sit under Destination</b>, since debris is a destination state. Bring over is drawn on that screen: the cleared destination is provisioned like any fresh worktree.</li>
+<li><b>Adopt is not offered for a directory with no git metadata</b> (21b) — there is nothing to adopt, so that combination is refused rather than drawn.</li>
+<li><b>Screen 14 keeps the full report above the refusal.</b> The alternative is showing only the blocker, which hides the dirty state the user also needs to see before stopping the agent.</li>
 <li><b>Occupied vs. Existing</b> are two destination badges (amber, same treatment). If one word should cover both, <em>Existing</em> is the one to keep.</li>
 <li><b>Base is hidden while Advanced is open</b> — it would otherwise appear twice, since Base ref lives there too. Alternative: drop Base ref from Advanced entirely and keep only the compact line.</li>
 <li><b>Not drawn:</b> the "Create more" batch flow, issue-driven creation, remote hosts, and the <code>[Configure…]</code> editor itself — out of scope per the brief. Also not drawn: <code>.vscode/tasks.json</code> as the winning provider, which behaves like any other single source.</li>
