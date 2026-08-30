@@ -51,7 +51,7 @@
     4. Cover in `src/worktree/ignoredMaterial.test.ts`: a small measured tree, an entry-cap trip, a time-cap trip, an unreadable directory, and a throwing enumeration — each asserting `kind`, not a count.
   - **Boundary**: read-only — this measures and never deletes, moves, or writes anything
 
-- [ ] 2_2 Name provisioned material only from the record of provisioning it
+- [x] 2_2 Name provisioned material only from the record of provisioning it — verified: pnpm exec vitest run 'src/worktree/ignoredMaterial.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#{material-this-extension-provisioned-is-named-only-from-a-record-of-provisioning-it}; docs/design/worktree-apply.md#26-the-manifest-what-this-worktree-was-set-up-with; design.md D4
   - **Acceptance**:

@@ -27,6 +27,13 @@ export interface IgnoredMaterialDeps {
   ignoredEntries(): AsyncIterable<string>;
   /** Bytes at one entry. Throws rather than answering 0 for a failed stat. */
   size(relPath: string): Promise<number>;
+  /**
+   * The provisioning manifest's raw text, or a throw when there is none.
+   *
+   * `.git/worktrees/<id>/anywhere-terminal-provision.json`, which git itself
+   * deletes with the worktree (worktree-apply.md § 2.6).
+   */
+  readManifest(): Promise<string>;
   now(): number;
 }
 
@@ -38,8 +45,36 @@ export interface IgnoredMaterialDeps {
  * no total — it reads as a number somebody measured.
  */
 export type IgnoredMaterial =
-  | { kind: "measured"; entries: number; bytes: number }
+  | { kind: "measured"; entries: number; bytes: number; provisioned?: { entries: number } }
   | { kind: "unproven"; reason: "budget" | "unreadable" };
+
+/** The manifest shape this reader recognises. A later writer may mean something else. */
+const MANIFEST_VERSION = 1;
+
+/**
+ * How many entries the manifest says we provisioned, or `undefined`.
+ *
+ * Missing, unreadable, malformed and unrecognised-version are ONE answer: we did
+ * not differentiate. Its absence is how the report says so — a zero would claim
+ * we looked and found none of it was ours.
+ *
+ * Nothing here infers provenance from a path. `.env.worktree` looking like ours
+ * is not evidence it is ours, and a guess produces the sentence "the 4 files
+ * this worktree was set up with" about files the user wrote.
+ */
+function provisionedEntries(text: string): number | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const record = parsed as { version?: unknown; materialized?: unknown } | null;
+  if (record === null || typeof record !== "object" || record.version !== MANIFEST_VERSION) {
+    return undefined;
+  }
+  return Array.isArray(record.materialized) ? record.materialized.length : undefined;
+}
 
 /**
  * Count and size the ignored material, under one entry budget and one time
@@ -68,5 +103,19 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
     // the walk never established.
     return { kind: "unproven", reason: "unreadable" };
   }
-  return { kind: "measured", entries, bytes };
+  // Read only once the walk finished. The manifest says what we provisioned, not
+  // how much is there, so attaching it to a walk that gave up would decorate a
+  // measurement nobody took.
+  let provisioned: number | undefined;
+  try {
+    provisioned = provisionedEntries(await deps.readManifest());
+  } catch {
+    provisioned = undefined;
+  }
+  return {
+    kind: "measured",
+    entries,
+    bytes,
+    ...(provisioned === undefined ? {} : { provisioned: { entries: provisioned } }),
+  };
 }

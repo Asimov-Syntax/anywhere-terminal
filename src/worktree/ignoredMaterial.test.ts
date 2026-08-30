@@ -30,6 +30,21 @@ function fs(spec: {
       return held;
     },
     now: spec.clock ?? (() => 0),
+    // No manifest by default: nothing writes one yet — the apply path that
+    // would is unbuilt Phase 12 work — so the undifferentiated fallback is the
+    // branch that actually runs today, and it is the one these cases exercise.
+    readManifest: async () => {
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    },
+  };
+}
+
+/** A dep set built by hand, with the default no-manifest read filled in. */
+function noManifest(): Pick<IgnoredMaterialDeps, "readManifest"> {
+  return {
+    readManifest: async () => {
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    },
   };
 }
 
@@ -80,6 +95,7 @@ describe("measureIgnoredMaterial", () => {
         return 1;
       },
       now: () => 0,
+      ...noManifest(),
     };
 
     const result = await measureIgnoredMaterial(deps);
@@ -124,6 +140,7 @@ describe("measureIgnoredMaterial", () => {
       },
       size: async () => 1,
       now: () => 0,
+      ...noManifest(),
     };
 
     const result = await measureIgnoredMaterial(deps);
@@ -143,5 +160,82 @@ describe("measureIgnoredMaterial", () => {
       expect(result.kind).toBe("unproven");
       expect(Object.keys(result).sort()).toEqual(["kind", "reason"]);
     }
+  });
+});
+
+describe("naming what this extension provisioned", () => {
+  /** A walk of two entries, with whatever manifest text the case supplies. */
+  function withManifest(text: string | undefined): IgnoredMaterialDeps {
+    return {
+      ...fs({ entries: ["node_modules/", ".env.worktree"], sizes: { "node_modules/": 40, ".env.worktree": 2 } }),
+      readManifest: async () => {
+        if (text === undefined) {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
+        return text;
+      },
+    };
+  }
+
+  const REAL = JSON.stringify({
+    version: 1,
+    createdAt: "2026-08-31T00:00:00.000Z",
+    materialized: [
+      { path: ".env.worktree", mode: "copy" },
+      { path: "third_party", mode: "link" },
+    ],
+    ports: [],
+    setup: [],
+  });
+
+  it("names the provisioned entries when the manifest parses whole", async () => {
+    const result = await measureIgnoredMaterial(withManifest(REAL));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42, provisioned: { entries: 2 } });
+  });
+
+  it("omits the claim when there is no manifest", async () => {
+    // Absence is how "we did not differentiate" is said. A zero would claim we
+    // looked and found none of it was ours.
+    const result = await measureIgnoredMaterial(withManifest(undefined));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42 });
+  });
+
+  it("omits the claim for a manifest that does not parse", async () => {
+    const result = await measureIgnoredMaterial(withManifest("{ not json"));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42 });
+  });
+
+  it("omits the claim for a version it does not recognise", async () => {
+    // A later writer may mean something else by `materialized`. Reading it
+    // anyway is how a count becomes a sentence about files nobody provisioned.
+    const future = JSON.stringify({ version: 2, materialized: [{ path: "x", mode: "copy" }] });
+
+    const result = await measureIgnoredMaterial(withManifest(future));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42 });
+  });
+
+  it("omits the claim when materialized is not a list", async () => {
+    const wrong = JSON.stringify({ version: 1, materialized: { path: "x" } });
+
+    const result = await measureIgnoredMaterial(withManifest(wrong));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42 });
+  });
+
+  it("never claims provenance on an unproven walk", async () => {
+    // The manifest says what we provisioned, not how much is there. Attaching
+    // it to a walk that did not finish would decorate a measurement nobody took.
+    const deps: IgnoredMaterialDeps = {
+      ...fs({ entries: Array.from({ length: MAX_IGNORED_ENTRIES + 1 }, (_, i) => `f${i}`) }),
+      readManifest: async () => REAL,
+    };
+
+    const result = await measureIgnoredMaterial(deps);
+
+    expect(result).toEqual({ kind: "unproven", reason: "budget" });
   });
 });
