@@ -14,8 +14,8 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-010.6`)_
 
 ## Archive
@@ -36,3 +36,4 @@ Planned at: ee68eafc
 - Oracle also caught an implicit OFF default in `WorktreeView.test.ts`'s `mount` (five unrelated cases assert the OFF arm), `WorktreeView.refresh()` existing only for the deleted setter, the message's union membership, and a fifth spec requirement still carrying the WHERE clause.
 - 1_3 merged into 1_2 at build time: `WorktreeController` implements `TabBarScopePanel`, so deleting the controller's `setWorkbench` breaks the coordinator's contract in the same edit — the two cannot type-check apart, in either order. Six tasks, not seven.
 - Verify gate: type check clean, 5257 unit tests, I10 ok, `biome check src` 4 errors / 14 warnings / 3 infos — one below the 5-error baseline, all four pre-existing in files this change does not touch.
+- Review cycle 1 round 1: APPROVE, 0 BLOCK / 0 WARN / 0 SUGGEST. The contracts specialist also reported clean directly; its result matches the round file, nothing dropped.
