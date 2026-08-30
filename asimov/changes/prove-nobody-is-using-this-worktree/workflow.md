@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done — cycle 1, rounds 1-2; round 2 returned WARN with 0 gating blockers
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-013.2`)_
 
@@ -59,3 +59,6 @@ Ordering deviation on 1_2: I staged and committed the task before its tick, in t
 
 - 4_2 verify gate: check-types 0, 5855 tests pass, biome check at the recorded baseline (3 pre-existing format errors in agentHooks/cursor files this change does not touch; the `worktreePanel.css` specificity warning is WT-012.7's, not this change's). One run of the full suite failed once with a single timing assertion (`Received: "resolved"`) and passed on three subsequent runs including both verify-task attempts — not reproduced, not in this change's files, recorded rather than ticked around.
 - B3(a) fix has no behavioural signature and is recorded as an equivalent mutant, not a coverage gap: `ownerProof` asks `here.some((s) => s.alive)`, so a dead record could never make it `failed`. Passing only the live ones is provably the same answer; what changes is that user-wide stale session history is no longer realpathed per assessment.
+
+- Round 2 returned 0 blockers and confirmed B2, B3(a) and W1 fixed. Its one WARN (W3) was accepted and fixed in 4_3 rather than carried; nothing was rebutted, so the cycle ends at Re-Verify with no further round owed.
+- 4_3 gate: check-types 0, 5865 tests pass, biome check at the recorded baseline.

@@ -106,3 +106,15 @@
     5. `src/providers/WorktreeHost.ts` and `src/providers/WorktreeHost.actions.test.ts` carry the widened `removalFacts` signature — the host declares the producer's return type, so the two-view shape surfaces there even though the host reads neither view.
     6. Cover in `src/worktree/worktreeBlockers.test.ts`, `src/vault/readers/runningSessions.test.ts` and `src/worktree/orphanProofs.test.ts`: a duplicate session id whose interactive record is outside the target and whose headless record is inside does NOT refuse; a dead record's cwd is never resolved; a skipped unreadable candidate yields `unproven`; a clean scan still yields `passed`.
   - **Boundary**: `SessionRecord` gains no selection metadata — `headless`, `startedAt` and `pid` stay out of it, because re-deriving the winner downstream would put the rule in a second home (D3)
+
+- [x] 4_3 Round-2 fix: the two-view composition gets an owner — verified: pnpm exec vitest run 'src/worktree/sessionViews.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_2
+  - **Refs**: design.md D3; .reviews/round-2.md W3
+  - **Acceptance**:
+    - Outcome: Swapping the live and canonical views fails a test
+    - Verify: unit src/worktree/sessionViews.test.ts
+  - **Plan**:
+    1. New `src/worktree/sessionViews.ts` holds the composition 4_2 left inline in `src/extension.ts`: raw records plus a path resolver in, `{ live, canonical, partial }` out. Pure, so the resolver is injected rather than constructed.
+    2. `src/extension.ts`'s `sessions` producer calls it, keeping only the read and the resolver's lifecycle.
+    3. Cover in `src/worktree/sessionViews.test.ts`: a canonical interactive record outside the target beside a losing live duplicate inside it lands in `live` but not `canonical`; a dead record reaches neither view AND its cwd is never handed to the resolver; `partial` travels through. Every test around this closure injected an already-correct pair, so it could swap the views, drop `partial`, or resume resolving dead records with the suite green — the same wrapper blind spot 2_3 was added for in the sibling change.
+  - **Boundary**: no behaviour change — this task moves an expression and covers it, and a test that only asserts the module exists does not satisfy it

@@ -52,7 +52,7 @@ import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
-import { canonicalLiveSessions, listClaudeSessionRecords } from "./vault/readers/runningSessions";
+import { listClaudeSessionRecords } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
 import { disposeSnapshotPool } from "./vault/sqlite";
 import { formatEntryId, VAULT_AGENT_IDS } from "./vault/types";
@@ -73,6 +73,7 @@ import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps
 import { checksFor } from "./worktree/removalChecks";
 import { readRepoRefs } from "./worktree/repoRefs";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
+import { composeSessionViews } from "./worktree/sessionViews";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import { readWorktreeGitDir } from "./worktree/worktreeGitDir";
@@ -781,35 +782,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // classify the pane that made it, and this producer holds neither the
         // target nor the pane snapshot to check that against. It carries the
         // claim instead, and `evaluateRemoval` corroborates it (cycle-2 B5).
-        const live = outcome.records.filter((s) => s.alive);
-        const canonicalIds = new Set(canonicalLiveSessions(outcome.records).map((s) => s.pid));
         const paths = createTrackedPathResolver(pathMemo);
         try {
-          // Only the live ones are resolved. A dead crash record is inert in
-          // both views — the proof asks `some(alive)` and the refusal reads
-          // only canonical — so realpathing user-wide stale session history was
-          // unbounded work for an answer nobody reads (round-1 B3a).
-          await paths.prepare(live.map((s) => s.cwd));
-          const asRecord = (s: (typeof live)[number]) => ({
-            sessionId: s.sessionId,
-            entryId: formatEntryId("claude", s.sessionId),
-            cwd: paths.resolvedOr(s.cwd),
-            // The registry records pid, cwd and identity — never activity. So
-            // this is undefined rather than a guess, and undefined refuses:
-            // a session we cannot ask about is not evidence of idleness
-            // (worktree-removal.md § 3). The presence projection's hardcoded
-            // "running" would refuse too, but for a reason nobody measured.
-            activity: undefined,
-            alive: s.alive,
-          });
-          return {
-            ok: true,
-            value: {
-              live: live.map(asRecord),
-              canonical: live.filter((s) => canonicalIds.has(s.pid)).map(asRecord),
-              partial: outcome.partial,
-            },
-          };
+          return { ok: true, value: await composeSessionViews(outcome.records, outcome.partial, paths) };
         } finally {
           paths.dispose();
         }
