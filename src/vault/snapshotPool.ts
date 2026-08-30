@@ -7,7 +7,6 @@
 // equal stamp means no write landed (D1). Proven sameness, never elapsed time — that
 // is what makes reuse safe for reporting a session ABSENT, which a TTL could not be.
 
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { FileStamp } from "./cacheTypes";
 import { readStoreGeneration, type StoreGeneration, sameStamps } from "./storeStamp";
@@ -20,6 +19,12 @@ export interface SnapshotLease {
   release(): Promise<void>;
 }
 
+export interface BorrowOptions {
+  /** Keep the snapshot for the next reader of this store. Opt-in, and only for a
+   *  store an agent has exactly one of — that is what bounds the retained set (D3). */
+  retain?: boolean;
+}
+
 export interface SnapshotPoolDeps {
   mkdtemp(): Promise<string>;
   rmrf(dir: string): Promise<void>;
@@ -30,18 +35,20 @@ export interface SnapshotPoolDeps {
    *  only stops an idle window holding a gigabyte of temp files (D3). */
   idleMs?: number;
   now?(): number;
-  /** Most retained snapshots, and most retained bytes. Both are hard caps: a
-   *  snapshot that cannot be made to fit is leased once and never retained (D3). */
-  maxEntries?: number;
-  maxBytes?: number;
-  /** Size of a produced snapshot. Defaults to a real `stat`. */
-  sizeOf?(file: string): Promise<number>;
 }
 
 /** A production in progress, tagged with the store generation it started from. */
 interface Flight {
   stamp: Stamp;
-  promise: Promise<Entry>;
+  promise: Promise<Produced>;
+}
+
+/** A finished production: the entry, plus the lease its own producer already holds.
+ *  Publication and leasing happen together, so an entry is never visible to the pool
+ *  in a state where nobody holds it (round-4 B7). */
+interface Produced {
+  entry: Entry;
+  lease: SnapshotLease;
 }
 
 interface Entry {
@@ -53,7 +60,6 @@ interface Entry {
   leases: number;
   retained: boolean;
   lastUsed: number;
-  bytes: number;
   deleteAttempts: number;
 }
 
@@ -62,16 +68,15 @@ const DEFAULT_IDLE_MS = 60_000;
 /** How many times a caller will wait out someone else's snapshot before taking its
  *  own. Bounded so a continuously-written store cannot starve a reader. */
 const MAX_JOIN_WAITS = 2;
-/** Cursor CLI keeps one `store.db` per chat and a list walks every candidate, so the
- *  pool is capped by capacity, not only by age (D3). Sized to hold the handful of
- *  stores a window actually reads without letting a burst own the temp volume. */
-const DEFAULT_MAX_ENTRIES = 8;
-const DEFAULT_MAX_BYTES = 1_073_741_824; // 1 GiB of retained snapshots
 /** How many times a stubborn directory is retried before the pool stops trying on
- *  every admission. It stays owned and stays counted either way. */
+ *  every admission. It stays owned either way. */
 const MAX_DELETE_ATTEMPTS = 5;
 
 export class SnapshotPool {
+  /** Keyed by store path, and only stores whose readers opted into retention are ever
+   *  keys. Those are the one-per-agent primary stores — a fixed set computed from
+   *  fixed locations — so the map is bounded by what can be a key rather than by an
+   *  eviction policy that has to stay correct under concurrency (D3). */
   private readonly retained = new Map<string, Entry>();
   /** One production per store. Concurrent readers join it rather than each running
    *  their own backup — vault list, detail and lookup routinely fire together. */
@@ -79,16 +84,9 @@ export class SnapshotPool {
   private readonly readGeneration: (dbPath: string) => Promise<StoreGeneration>;
   private readonly idleMs: number;
   private readonly now: () => number;
-  private readonly maxEntries: number;
-  private readonly maxBytes: number;
-  private readonly sizeOf: (file: string) => Promise<number>;
-  /** Bytes held by RETAINED snapshots. A snapshot still on loan after eviction is
-   *  bounded by the number of concurrent readers, not by this budget. */
-  private retainedBytes = 0;
-  /** Snapshots whose deletion failed: still owned, still on disk, and still counted —
-   *  otherwise repeated failures accumulate gigabytes the budget cannot see (W6). */
+  /** Snapshots whose deletion failed: still owned and still on disk, so the sweeper
+   *  keeps running while any of them is retry-eligible (round-4 W7). */
   private readonly undeleted = new Set<Entry>();
-  private undeletedBytes = 0;
   private sweeper: ReturnType<typeof setInterval> | undefined;
   private disposed = false;
   /** Every entry whose directory still exists, retained or merely on loan. Disposal
@@ -106,9 +104,6 @@ export class SnapshotPool {
     this.readGeneration = deps.readGeneration ?? readStoreGeneration;
     this.idleMs = deps.idleMs ?? DEFAULT_IDLE_MS;
     this.now = deps.now ?? Date.now;
-    this.maxEntries = deps.maxEntries ?? DEFAULT_MAX_ENTRIES;
-    this.maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
-    this.sizeOf = deps.sizeOf ?? (async (file) => (await fsp.stat(file)).size);
   }
 
   /**
@@ -117,20 +112,28 @@ export class SnapshotPool {
    * failure and the throw propagates — a snapshot that could not be taken must never
    * be mistaken for a store that is empty.
    */
-  async borrow(dbPath: string, produce: (dest: string) => Promise<void>): Promise<SnapshotLease> {
+  async borrow(
+    dbPath: string,
+    produce: (dest: string) => Promise<void>,
+    options: BorrowOptions = {},
+  ): Promise<SnapshotLease> {
     if (this.disposed) {
       throw new Error("snapshot pool is disposed");
     }
     this.admitted += 1;
     try {
-      return await this.borrowAdmitted(dbPath, produce);
+      return await this.borrowAdmitted(dbPath, produce, options.retain === true);
     } finally {
       this.admitted -= 1;
       this.wakeIfQuiet();
     }
   }
 
-  private async borrowAdmitted(dbPath: string, produce: (dest: string) => Promise<void>): Promise<SnapshotLease> {
+  private async borrowAdmitted(
+    dbPath: string,
+    produce: (dest: string) => Promise<void>,
+    retain: boolean,
+  ): Promise<SnapshotLease> {
     for (let waits = 0; ; waits++) {
       const before = await this.readGeneration(dbPath);
       const hit = this.retained.get(dbPath);
@@ -144,7 +147,7 @@ export class SnapshotPool {
         // already observed a newer store must not be handed a snapshot taken before
         // that write, which would be a false `absent` by a different door (D4).
         if (before.usable && sameStamps(before.stamps, joined.stamp)) {
-          return this.lease(await joined.promise);
+          return this.lease((await joined.promise).entry);
         }
         if (waits < MAX_JOIN_WAITS) {
           await joined.promise.catch(() => {});
@@ -158,7 +161,7 @@ export class SnapshotPool {
         }
       }
 
-      const flight: Flight = { stamp: before.stamps, promise: this.produce(dbPath, before, produce) };
+      const flight: Flight = { stamp: before.stamps, promise: this.produce(dbPath, before, produce, retain) };
       this.inFlight.set(dbPath, flight);
       // Cleared when it settles either way: a failed snapshot must not linger as a
       // promise later readers await forever.
@@ -169,7 +172,7 @@ export class SnapshotPool {
             this.inFlight.delete(dbPath);
           }
         });
-      return this.lease(await flight.promise);
+      return (await flight.promise).lease;
     }
   }
 
@@ -177,7 +180,8 @@ export class SnapshotPool {
     dbPath: string,
     before: StoreGeneration,
     take: (dest: string) => Promise<void>,
-  ): Promise<Entry> {
+    retain: boolean,
+  ): Promise<Produced> {
     const dir = await this.deps.mkdtemp();
     const entry: Entry = {
       dir,
@@ -186,7 +190,6 @@ export class SnapshotPool {
       leases: 0,
       retained: false,
       lastUsed: this.now(),
-      bytes: 0,
       deleteAttempts: 0,
     };
     this.liveEntries.add(entry);
@@ -204,30 +207,29 @@ export class SnapshotPool {
     const after = await this.readGeneration(dbPath);
     // Nothing is retained once the pool is closed: this snapshot is handed to its
     // caller and deleted at its last release, never left for a sweeper that is gone.
-    const stable = !this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
+    const stable =
+      retain && !this.disposed && before.usable && after.usable && sameStamps(before.stamps, after.stamps);
 
-    // Sized BEFORE the accounting, so the accounting itself can be synchronous.
-    // Sized whether or not it will be retained: an unretained snapshot still occupies
-    // disk, and must be budgetable if its deletion later fails.
-    const bytes = await this.sizeOf(entry.file).catch(() => undefined);
-    entry.bytes = bytes ?? 0;
-
-    // Retried here rather than on a timer: an admission is exactly when the space
-    // matters, and it is outside the accounting block, which must stay synchronous.
-    await this.retryUndeleted();
-
-    const evicted: Entry[] = [];
-    if (stable && bytes !== undefined) {
+    // The producer's own lease is taken BEFORE publication and nothing suspends in
+    // between, so no other caller can observe this entry, supersede it, and delete it
+    // in the window before its reader holds it (round-4 B7).
+    const lease = this.lease(entry);
+    let superseded: Entry | undefined;
+    if (stable) {
+      superseded = this.retained.get(dbPath);
       entry.stamp = after.stamps;
       entry.lastUsed = this.now();
-      this.admitWithinOneTurn(dbPath, entry, evicted);
+      entry.retained = true;
+      this.retained.set(dbPath, entry);
+      this.startSweeping();
     }
-    // Deleting AFTER the accounting keeps that block free of suspension points; an
-    // evicted entry is already out of the pool and is released by its last reader.
-    for (const victim of evicted) {
-      await this.discard(victim);
+    if (superseded) {
+      await this.discard(superseded);
     }
-    return entry;
+    // Retried here rather than only on the timer: an admission is when new disk was
+    // just claimed, so it is the moment stale disk is most worth reclaiming.
+    await this.retryUndeleted();
+    return { entry, lease };
   }
 
   private lease(entry: Entry): SnapshotLease {
@@ -253,48 +255,6 @@ export class SnapshotPool {
     };
   }
 
-  /**
-   * The whole admission decision, in one turn: supersede, check both budgets, choose
-   * victims, insert. It MUST contain no `await` — that is what makes it atomic, and
-   * an await here is exactly how concurrent producers came to pass the same capacity
-   * check and leave the pool over its cap (round-3 B6). Victims are collected for the
-   * caller to delete afterwards rather than deleted here.
-   */
-  private admitWithinOneTurn(dbPath: string, entry: Entry, evicted: Entry[]): void {
-    const superseded = this.retained.get(dbPath);
-    if (superseded) {
-      this.retained.delete(dbPath);
-      this.retainedBytes -= superseded.bytes;
-      evicted.push(superseded);
-    }
-    if (entry.bytes > this.maxBytes) {
-      return; // Can never fit, so it never costs another snapshot its place.
-    }
-    while (this.retained.size + 1 > this.maxEntries || this.liveBytes() + entry.bytes > this.maxBytes) {
-      const victim = this.leastRecentlyUsed();
-      if (!victim) {
-        return;
-      }
-      this.retained.delete(victim[0]);
-      this.retainedBytes -= victim[1].bytes;
-      evicted.push(victim[1]);
-    }
-    entry.retained = true;
-    this.retained.set(dbPath, entry);
-    this.retainedBytes += entry.bytes;
-    this.startSweeping();
-  }
-
-  private leastRecentlyUsed(): [string, Entry] | undefined {
-    let oldest: [string, Entry] | undefined;
-    for (const candidate of this.retained) {
-      if (!oldest || candidate[1].lastUsed < oldest[1].lastUsed) {
-        oldest = candidate;
-      }
-    }
-    return oldest;
-  }
-
   /** How many snapshots the pool is currently holding. */
   get retainedCount(): number {
     return this.retained.size;
@@ -309,11 +269,10 @@ export class SnapshotPool {
       // not be dropped in favour of the entry this loop captured (round-1 W1).
       if (entry.leases === 0 && entry.lastUsed <= cutoff && this.retained.get(dbPath) === entry) {
         this.retained.delete(dbPath);
-        this.retainedBytes -= entry.bytes;
         await this.discard(entry);
       }
     }
-    if (this.retained.size === 0) {
+    if (!this.hasSweepableWork()) {
       this.stopSweeping();
     }
   }
@@ -336,7 +295,6 @@ export class SnapshotPool {
     }
 
     this.retained.clear();
-    this.retainedBytes = 0;
     const undeleted: string[] = [];
     for (const entry of [...this.liveEntries]) {
       entry.retained = false;
@@ -370,22 +328,13 @@ export class SnapshotPool {
       await this.deps.rmrf(entry.dir);
     } catch {
       entry.deleteAttempts += 1;
-      if (!this.undeleted.has(entry)) {
-        this.undeleted.add(entry);
-        this.undeletedBytes += entry.bytes;
-      }
+      this.undeleted.add(entry);
+      this.startSweeping();
       return false;
     }
-    if (this.undeleted.delete(entry)) {
-      this.undeletedBytes -= entry.bytes;
-    }
+    this.undeleted.delete(entry);
     this.liveEntries.delete(entry);
     return true;
-  }
-
-  /** Disk the pool still owns: what it is reusing, plus what it failed to delete. */
-  private liveBytes(): number {
-    return this.retainedBytes + this.undeletedBytes;
   }
 
   private async retryUndeleted(): Promise<void> {
@@ -403,6 +352,21 @@ export class SnapshotPool {
     if (entry.leases === 0) {
       await this.destroy(entry);
     }
+  }
+
+  /** Whether the sweeper still has anything to do: snapshots to age out, or disk it
+   *  failed to release and may yet retry. Stopping on an empty retained map alone
+   *  would abandon an undeleted directory to the next admission that never comes. */
+  private hasSweepableWork(): boolean {
+    if (this.retained.size > 0) {
+      return true;
+    }
+    for (const entry of this.undeleted) {
+      if (entry.deleteAttempts < MAX_DELETE_ATTEMPTS) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private startSweeping(): void {

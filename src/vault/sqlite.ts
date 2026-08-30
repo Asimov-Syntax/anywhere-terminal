@@ -34,7 +34,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { type FsPresence, presenceFromAccessError } from "../utils/fsPresence";
-import { type SnapshotLease, SnapshotPool } from "./snapshotPool";
+import { type BorrowOptions, type SnapshotLease, SnapshotPool } from "./snapshotPool";
 
 const execFileAsync = promisify(execFile);
 
@@ -442,7 +442,12 @@ function isOpenFailure(err: unknown): boolean {
   return (err as SnapshotOpenError | undefined)?.snapshotOpenFailure === true;
 }
 
-export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps = defaultDeps): Promise<SqliteResult> {
+export async function readSqlite(
+  dbPath: string,
+  sql: string,
+  deps: SqliteDeps = defaultDeps,
+  options: BorrowOptions = {},
+): Promise<SqliteResult> {
   // Pick an engine: PREFER the in-process `node:sqlite` built-in (returns native
   // row values) over the `sqlite3` CLI. The CLI's `-json` output formatter is
   // pathologically slow (30s+ of CPU for a session with large message blobs —
@@ -460,8 +465,17 @@ export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps =
     return { rows: [], status: found === "absent" ? "no-db" : "db-unreachable" };
   }
 
-  return readSqliteViaSnapshot(deps, dbPath, sql, useCli);
+  return readSqliteViaSnapshot(deps, dbPath, sql, useCli, options);
 }
+
+/**
+ * `readSqlite` for a store an agent keeps exactly ONE of — Codex's `state_5.sqlite`,
+ * OpenCode's `opencode.db`, Cursor IDE's `state.vscdb`. Only these ask the pool to
+ * retain, which is what keeps the retained set bounded by a fixed key space rather
+ * than by an eviction policy (D3). A per-chat store uses plain `readSqlite`.
+ */
+export const readPrimarySqlite: typeof readSqlite = (dbPath, sql, deps) =>
+  readSqlite(dbPath, sql, deps, { retain: true });
 
 /**
  * Borrow one pooled snapshot, use it, and release it — the lifecycle both entry
@@ -475,10 +489,11 @@ async function withPooledSnapshot<T>(
   useCli: boolean,
   use: (dbCopy: string) => Promise<T>,
   fail: (status: "db-unreachable" | "query-error", error: string) => T,
+  options: BorrowOptions,
 ): Promise<T> {
   let lease: SnapshotLease | undefined;
   try {
-    lease = await poolFor(deps).borrow(dbPath, (dest) => takeSnapshot(deps, dbPath, dest, useCli));
+    lease = await poolFor(deps).borrow(dbPath, (dest) => takeSnapshot(deps, dbPath, dest, useCli), options);
     return await use(lease.file);
   } catch (err) {
     return fail(isOpenFailure(err) ? "db-unreachable" : "query-error", errorMessage(err));
@@ -500,6 +515,7 @@ export async function withSqliteSnapshot<T>(
   dbPath: string,
   callback: (snapshot: SqliteSnapshot) => Promise<T>,
   deps: SqliteDeps = defaultDeps,
+  options: BorrowOptions = {},
 ): Promise<SqliteSnapshotResult<T>> {
   const useNode = await probeNodeSqlite(deps);
   const useCli = useNode ? false : await probeSqlite(deps);
@@ -524,8 +540,13 @@ export async function withSqliteSnapshot<T>(
       return { status: "ok", value: await callback(snapshot) };
     },
     (status, error) => ({ status, error }),
+    options,
   );
 }
+
+/** `withSqliteSnapshot` for an agent's one primary store — see `readPrimarySqlite`. */
+export const withPrimarySqliteSnapshot: typeof withSqliteSnapshot = (dbPath, callback, deps) =>
+  withSqliteSnapshot(dbPath, callback, deps, { retain: true });
 
 /**
  * Take one engine snapshot into a temp dir, query it, then delete it. Never reads
@@ -538,6 +559,7 @@ async function readSqliteViaSnapshot(
   dbPath: string,
   sql: string,
   useCli: boolean,
+  options: BorrowOptions,
 ): Promise<SqliteResult> {
   return withPooledSnapshot<SqliteResult>(
     deps,
@@ -545,6 +567,7 @@ async function readSqliteViaSnapshot(
     useCli,
     (dbCopy) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
     (status, error) => ({ rows: [], status, error }),
+    options,
   );
 }
 

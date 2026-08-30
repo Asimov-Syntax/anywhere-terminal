@@ -8,8 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetSqliteProbeCache,
   presenceFromAccessError,
+  readPrimarySqlite,
   readSqlite,
   type SqliteDeps,
+  withPrimarySqliteSnapshot,
   withSqliteSnapshot,
 } from "./sqlite";
 
@@ -797,8 +799,8 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
     const counter = { n: 0 };
     const deps = countingDeps(counter);
     try {
-      const first = await readSqlite(dbFile, "SELECT id FROM t", deps);
-      const second = await readSqlite(dbFile, "SELECT id FROM t", deps);
+      const first = await readPrimarySqlite(dbFile, "SELECT id FROM t", deps);
+      const second = await readPrimarySqlite(dbFile, "SELECT id FROM t", deps);
 
       expect(first.status).toBe("ok");
       expect(second.status).toBe("ok");
@@ -810,14 +812,34 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
     }
   });
 
+  it("keeps nothing for a caller that did not ask to retain", async () => {
+    // Cursor CLI's per-chat stores go through the plain entry point, and there are as
+    // many of them as there are chats. Reuse is what retention buys, so not asking for
+    // it costs a second snapshot — and leaves the pool holding no key for that store.
+    const { dbFile, dir, live } = await walStore();
+    const counter = { n: 0 };
+    const deps = countingDeps(counter);
+    try {
+      const first = await readSqlite(dbFile, "SELECT id FROM t", deps);
+      const second = await readSqlite(dbFile, "SELECT id FROM t", deps);
+
+      expect(first.status).toBe("ok");
+      expect(second.rows).toEqual([{ id: "base-row" }]);
+      expect(counter.n).toBe(2);
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("never answers from the earlier snapshot once a session has been written", async () => {
     const { dbFile, dir, live } = await walStore();
     const counter = { n: 0 };
     const deps = countingDeps(counter);
     try {
-      await readSqlite(dbFile, "SELECT id FROM t", deps);
+      await readPrimarySqlite(dbFile, "SELECT id FROM t", deps);
       live.exec("INSERT INTO t VALUES ('wal-row')"); // committed, WAL-resident
-      const second = await readSqlite(dbFile, "SELECT id FROM t ORDER BY id", deps);
+      const second = await readPrimarySqlite(dbFile, "SELECT id FROM t ORDER BY id", deps);
 
       expect(second.status).toBe("ok");
       expect(second.rows).toEqual([{ id: "base-row" }, { id: "wal-row" }]);
@@ -833,8 +855,8 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
     const counter = { n: 0 };
     const deps = countingDeps(counter);
     try {
-      await readSqlite(dbFile, "SELECT id FROM t", deps);
-      const viaSnapshot = await withSqliteSnapshot(dbFile, async (s) => s.query("SELECT id FROM t"), deps);
+      await readPrimarySqlite(dbFile, "SELECT id FROM t", deps);
+      const viaSnapshot = await withPrimarySqliteSnapshot(dbFile, async (s) => s.query("SELECT id FROM t"), deps);
 
       expect(viaSnapshot.status).toBe("ok");
       expect(viaSnapshot.status === "ok" ? viaSnapshot.value.rows : undefined).toEqual([{ id: "base-row" }]);
@@ -850,11 +872,11 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
     const counter = { n: 0 };
     const deps = countingDeps(counter);
     try {
-      const first = await readSqlite(dbFile, "SELECT id FROM t", deps);
+      const first = await readPrimarySqlite(dbFile, "SELECT id FROM t", deps);
       expect(first.status).toBe("ok");
 
       await fsp.chmod(dir, 0o000);
-      const second = await readSqlite(dbFile, "SELECT id FROM t", deps);
+      const second = await readPrimarySqlite(dbFile, "SELECT id FROM t", deps);
 
       expect(second.status).not.toBe("ok");
       expect(second.rows).toEqual([]);

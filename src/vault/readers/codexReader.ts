@@ -16,7 +16,7 @@ import { provesAbsence } from "../../utils/fsPresence";
 import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
+import { readPrimarySqlite, readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
 import { sameStamps, stampStoreFiles, storeFilePaths } from "../storeStamp";
 import {
   formatEntryId,
@@ -504,7 +504,7 @@ export async function readCodexSessions(
   prev?: ReaderListCache,
 ): Promise<ReaderResultWithState> {
   const { dbPath, sessionsDir } = codexDirs(options);
-  const readSqliteFn = options.readSqliteFn ?? readSqlite;
+  const readSqliteFn = options.readSqliteFn ?? readPrimarySqlite;
 
   // Cheap freshness check: when the DB (+ -wal) is byte-for-byte unchanged since
   // the cache was written, reuse the cached entries and skip the snapshot clone +
@@ -576,7 +576,7 @@ export async function lookupCodexEntry(sessionId: string, options: CodexReaderOp
     return { status: "absent" };
   }
   const { dbPath, sessionsDir } = codexDirs(options);
-  const readSqliteFn = options.readSqliteFn ?? readSqlite;
+  const readSqliteFn = options.readSqliteFn ?? readPrimarySqlite;
 
   const result = await readSqliteFn(dbPath, codexThreadByIdSql(sessionId));
   if (result.status === "ok") {
@@ -1319,7 +1319,7 @@ export async function readCodexMessageRecord(
 
 async function resolveCodexRolloutPath(sessionId: string, options: CodexReaderOptions): Promise<string | undefined> {
   const { dbPath, sessionsDir } = codexDirs(options);
-  const thread = await queryCodexThread(sessionId, dbPath, options.readSqliteFn ?? readSqlite);
+  const thread = await queryCodexThread(sessionId, dbPath, options.readSqliteFn ?? readPrimarySqlite);
   return pickRolloutPath(thread, sessionId, sessionsDir);
 }
 
@@ -1348,7 +1348,7 @@ export async function readCodexDetail(
     return null;
   }
   const { dbPath, sessionsDir } = codexDirs(options);
-  const readSqliteFn = options.readSqliteFn ?? readSqlite;
+  const readSqliteFn = options.readSqliteFn ?? readPrimarySqlite;
 
   const thread = await queryCodexThread(sessionId, dbPath, readSqliteFn);
   const childStubs = await queryCodexDirectChildStubs(sessionId, dbPath, sessionsDir, readSqliteFn);

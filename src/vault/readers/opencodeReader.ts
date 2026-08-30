@@ -10,7 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { readSqlite, withSqliteSnapshot, writeSqlite } from "../sqlite";
+import { readPrimarySqlite, readSqlite, withPrimarySqliteSnapshot, withSqliteSnapshot, writeSqlite } from "../sqlite";
 import { sameStamps, stampStoreFiles, storeFilePaths } from "../storeStamp";
 import {
   formatEntryId,
@@ -190,7 +190,7 @@ function resolveOpencodePaths(options: OpenCodeReaderOptions): {
   // NOT %APPDATA%). Mirror that here. See docs/research/20260529-cross-platform-store-paths-sqlite.md.
   const xdgData = process.env.XDG_DATA_HOME?.trim() || path.join(home, ".local", "share");
   const dataDir = options.dataDir ?? path.join(xdgData, "opencode");
-  return { dbPath: path.join(dataDir, "opencode.db"), readSqliteFn: options.readSqliteFn ?? readSqlite };
+  return { dbPath: path.join(dataDir, "opencode.db"), readSqliteFn: options.readSqliteFn ?? readPrimarySqlite };
 }
 
 /** Public store paths for FS-watch targets (enhance-vault-sessions D4/D5) — the
@@ -773,7 +773,7 @@ export async function readOpenCodeDetail(
   // One snapshot for every query: `readSqlite` copies the live DB per call, so
   // independent reads could compare a probe against windows from another version
   // of the database and prove nothing about either.
-  const read = await (options.withSqliteSnapshotFn ?? withSqliteSnapshot)(dbPath, async (snapshot) => {
+  const read = await (options.withSqliteSnapshotFn ?? withPrimarySqliteSnapshot)(dbPath, async (snapshot) => {
     const [msgHeadRes, msgTailRes, partHeadRes, partTailRes, childRes, msgProbeRes, partProbeRes, childProbeRes] =
       await Promise.all([
         snapshot.query(msgHeadSql),

@@ -144,7 +144,7 @@
 
 ## 5. Round-4 review fixes
 
-- [ ] 5_1 Retain only what a fixed set of stores asks to retain
+- [x] 5_1 Retain only what a fixed set of stores asks to retain — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: .reviews/round-4.md; design.md#d3-retention-is-bounded-by-construction-not-by-enforcement
   - **Acceptance**:
     - Outcome: a store nobody asked to retain leaves nothing behind after its last reader
@@ -153,7 +153,7 @@
     1. In `src/vault/snapshotPool.ts`, make retention opt-in per borrow and delete the LRU, byte-budget, capacity-eviction and live-byte accounting that existed to referee an unbounded retained set.
     2. Take the producing borrow's lease at publication, so an entry is never visible to the pool before its own reader holds it.
     3. In `src/vault/sqlite.ts`, pass the opt-in through from the entry points so a caller can say whether this store is one worth retaining.
-    4. In `src/vault/readers/cursorStore.ts`, read the per-chat stores without retention; leave the primary-store readers retaining.
+    4. Opt in explicitly at the three primary-store readers (`src/vault/readers/codexReader.ts`, `src/vault/readers/opencodeReader.ts`, `src/vault/readers/cursorIdeReader.ts`) and leave `src/vault/readers/cursorStore.ts` — the per-chat path — retaining nothing, so the retained key space is the fixed set by construction rather than by default.
     5. Cover: an unretained borrow leaves no file after release, a retained store still reuses, concurrent borrows of distinct stores each keep a readable lease until their own release, and the retained set never exceeds the stores that asked for it.
 
 - [ ] 5_2 Keep retrying cleanup while anything is still on disk

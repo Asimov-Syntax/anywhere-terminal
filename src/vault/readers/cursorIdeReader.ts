@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { FileStamp } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { withSqliteSnapshot as readSnapshot, type SqliteSnapshot } from "../sqlite";
+import { withPrimarySqliteSnapshot as readSnapshot, type SqliteSnapshot } from "../sqlite";
 import {
   formatEntryId,
   type VaultActivityStep,

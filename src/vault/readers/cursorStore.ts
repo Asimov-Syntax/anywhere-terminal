@@ -514,6 +514,10 @@ export async function readCursorStoreDetail(
   if (!SAFE_AGENT_ID_RE.test(expectedAgentId) || expectedAgentId.includes("..")) {
     return limited();
   }
+  // Plain `withSqliteSnapshot`, never the retaining form: Cursor CLI gives every chat
+  // its own `store.db` and a list walks all of them, so retaining here is what would
+  // make the pool's key space unbounded. These stores are ~60 KB and snapshot in
+  // milliseconds; there is nothing worth keeping (D3).
   const snapshotResult = await (options.withSqliteSnapshotFn ?? withSqliteSnapshot)(dbPath, (snapshot) =>
     decodeSnapshot(snapshot, expectedAgentId),
   );
