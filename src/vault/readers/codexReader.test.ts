@@ -486,11 +486,7 @@ describe("pickRolloutPath containment", () => {
     const real = path.join(sessionsDir, `rollout-2026-01-01T00-00-00-${SESSION}.jsonl`);
     await fsp.writeFile(real, "{}\n");
 
-    const picked = await pickRolloutPath(
-      { rolloutPath: path.join(sessionsDir, "escape.jsonl") },
-      SESSION,
-      sessionsDir,
-    );
+    const picked = await pickRolloutPath({ rolloutPath: path.join(sessionsDir, "escape.jsonl") }, SESSION, sessionsDir);
     expect(picked).toBe(real);
   });
 

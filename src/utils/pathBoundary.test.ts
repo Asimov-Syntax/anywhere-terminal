@@ -70,11 +70,7 @@ describe("isResolvedPathInside", () => {
    * dangling link is present but unresolvable, and that pair is the case the
    * lexical predicate gets wrong.
    */
-  const fakeFs = (options: {
-    links?: Record<string, string>;
-    present?: string[];
-    errors?: Record<string, string>;
-  }) => {
+  const fakeFs = (options: { links?: Record<string, string>; present?: string[]; errors?: Record<string, string> }) => {
     const links = options.links ?? {};
     const errors = options.errors ?? {};
     const present = new Set([...(options.present ?? []), ...Object.keys(links)]);

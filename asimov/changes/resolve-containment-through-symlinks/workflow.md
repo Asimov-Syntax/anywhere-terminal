@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.1`)_
@@ -36,3 +36,5 @@ Gate 1 `[-]`: no fork — reuse-first discovery settled the module (design.md D1
 Oracle round 1 returned "not ready as written"; 7 findings, all accepted (F5 needed no edit).
 The tolerant walker is NOT reused — it swallows every realpath error, which a dangling link walks through (D3). `realpathTolerant` stays private in normalizePath.ts.
 Five lexical worktree-attribution sites found during triage went back to the blueprint as WT-011.6 rather than being absorbed here.
+Wave 2 soloed rather than fanned out to fillers: four file-disjoint tasks, one decision thread (the same predicate, the same tolerance and equality semantics) — the skill's stated exception.
+1_5 adds one `realpath` per listed file alongside the `stat` already there: same order as the existing per-file cost, and per-file is the granularity the threat lives at.

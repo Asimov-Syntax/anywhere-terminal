@@ -10,11 +10,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  resolveClaudeSessionPath,
-  resolveClaudeSubagentPath,
-  resolveClaudeWorkflowAgentPath,
-} from "./claudePaths";
+import { resolveClaudeSessionPath, resolveClaudeSubagentPath, resolveClaudeWorkflowAgentPath } from "./claudePaths";
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 
@@ -47,9 +43,9 @@ describe("claudePaths resolvers", () => {
     });
 
     it("refuses one that reaches outside the root through a link", async () => {
-      const escape = path.join(outside, "stolen.jsonl");
-      await fs.writeFile(escape, "{}\n");
-      await fs.symlink(escape, path.join(projectsDir, "-repo", `${SESSION}.jsonl`));
+      const escapeTarget = path.join(outside, "stolen.jsonl");
+      await fs.writeFile(escapeTarget, "{}\n");
+      await fs.symlink(escapeTarget, path.join(projectsDir, "-repo", `${SESSION}.jsonl`));
       expect(await resolveClaudeSessionPath(SESSION, options())).toBeNull();
     });
 
@@ -83,9 +79,9 @@ describe("claudePaths resolvers", () => {
     it("refuses one whose link escapes the root", async () => {
       const dir = path.join(projectsDir, "-repo", SESSION, "subagents");
       await fs.mkdir(dir, { recursive: true });
-      const escape = path.join(outside, "stolen.jsonl");
-      await fs.writeFile(escape, "{}\n");
-      await fs.symlink(escape, path.join(dir, `${stem}.jsonl`));
+      const escapeTarget = path.join(outside, "stolen.jsonl");
+      await fs.writeFile(escapeTarget, "{}\n");
+      await fs.symlink(escapeTarget, path.join(dir, `${stem}.jsonl`));
       expect(await resolveClaudeSubagentPath(SESSION, stem, options())).toBeNull();
     });
   });
@@ -107,9 +103,9 @@ describe("claudePaths resolvers", () => {
       await fs.writeFile(path.join(projectsDir, "-repo", `${SESSION}.jsonl`), "{}\n");
       const dir = path.join(projectsDir, "-repo", SESSION, "subagents", "workflows", wfId);
       await fs.mkdir(dir, { recursive: true });
-      const escape = path.join(outside, "stolen.jsonl");
-      await fs.writeFile(escape, "{}\n");
-      await fs.symlink(escape, path.join(dir, `${stem}.jsonl`));
+      const escapeTarget = path.join(outside, "stolen.jsonl");
+      await fs.writeFile(escapeTarget, "{}\n");
+      await fs.symlink(escapeTarget, path.join(dir, `${stem}.jsonl`));
       expect(await resolveClaudeWorkflowAgentPath(SESSION, wfId, stem, options())).toBeNull();
     });
   });

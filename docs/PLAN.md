@@ -79,7 +79,7 @@ flowchart LR
 | P8 — Truthful activity | ~2-3d | Every state is legible by shape, and a row stops spinning once nothing has confirmed it |
 | P9 — Glanceability | ~4-6d | The list surfaces the two worktrees that matter, each row says what just happened, and creating one is a worktree question rather than a git one |
 | P10 — Worktree-first workbench | ~9-13d | Selecting a worktree scopes the surface to it — built behind a setting, which WT-010.6 retired once the composition was whole |
-| P11 — Recorded debts | ~4-6d | One rule per concept: containment, promotion, a bounded look, what a row shows, and who knows an entry is gone |
+| P11 — Recorded debts | ~5-8d | One rule per concept: containment, promotion, a bounded look, what a row shows, and who knows an entry is gone |
 
 | Stage | What the user gets |
 |-------|--------------------|
@@ -319,9 +319,9 @@ nothing to provision.
 | **Stage** | 8 |
 | **Size** | M |
 | **Labels** | security-privacy, cross-boundary, re-review |
-| **Notes** | Deferred as repo-wide work precisely because fixing one resolver leaves it the only site with a different rule. The repo already owns a tolerant realpath helper built for this exact problem — resolving through the nearest existing ancestor — so this is applying one rule everywhere, not writing one. Tolerance is load-bearing: a resolver that hard-fails on a missing file turns "no transcript yet", the normal early state of a session, into an error |
-| **Acceptance** | A candidate reached through a symlink that escapes the root is refused, at every vault resolver; a candidate legitimately inside the root is still accepted when its own tail does not exist yet; a path on which nothing resolves degrades to the previous lexical answer rather than throwing; no resolver keeps a second containment rule |
-| **Status** | todo |
+| **Notes** | Deferred as repo-wide work precisely because fixing one resolver leaves it the only site with a different rule. Tolerance is load-bearing in one direction only: a resolver that hard-fails on a missing file turns "no transcript yet", the normal early state of a session, into an error — but a resolver that treats *any* resolution failure as absence leaves the hole open through a dangling link. The repo's existing tolerant realpath helper is the wrong tool for that reason: it is an availability helper for naming worktrees, not an authority for reading files |
+| **Acceptance** | A candidate reached through a symlink that escapes the root is refused, at every vault resolver — including the one that reaches transcripts by listing a directory rather than by resolving an id; a candidate legitimately inside the root is still accepted when its own tail does not exist yet; a candidate the filesystem declines to resolve for any other reason is refused rather than compared literally; no resolver keeps a second containment rule |
+| **Status** | in_progress |
 
 ### [WT-011.2] One Definition of a Window's First Row-Drawing Surface
 
@@ -377,6 +377,20 @@ nothing to provision.
 | **Labels** | re-review |
 | **Notes** | Deferred because the obvious fix — handing the projector's live entry-id set to the service — moves ownership a shipped decision assigned elsewhere. The chosen owner is the service itself: it already re-resolves on cadence and already separates "not there yet" from "never will be", so a vanished entry is a third outcome named where the syscall already happens, with no cross-layer push and no second definition of "live". Depends on WT-011.3 because both change how a failed look is classified, and classifying deletion before timeouts fail soft would make the two rules contradict |
 | **Acceptance** | A row whose vault entry has been deleted stops presenting its preview; a row whose transcript is temporarily unreadable keeps its last known line and backs off; the two outcomes are distinguishable in the service rather than inferred by the caller; no live-entry set is pushed across the layer boundary |
+| **Status** | todo |
+
+### [WT-011.6] Worktree Attribution That Survives a Symlink
+
+| Field | Value |
+|-------|-------|
+| **Goal** | The comparisons that decide which worktree or repository a path belongs to agree with where that path actually resolves |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.1; [DESIGN.md](DESIGN.md) § 9 D31 |
+| **Depends On** | WT-011.1 |
+| **Stage** | 8 |
+| **Size** | M |
+| **Labels** | cross-boundary |
+| **Notes** | Surfaced while planning WT-011.1, which established the rule and scoped itself to the resolvers that gate a transcript read. Five further sites compare raw workspace-folder, Git API, pane-cwd and webview paths lexically — the same error with a different consequence: a session whose cwd resolves elsewhere is attributed to the wrong worktree, and repository discovery can pick the wrong root. Held back from WT-011.1 deliberately: none of them authorizes a read, several run per push, and "attribution is wrong" is a different acceptance story from "a read escaped the store". Whether the fix is resolution at these sites or resolution once at the boundary that produces the paths is the decision this task owns |
+| **Acceptance** | A pane whose cwd resolves outside a worktree is not attributed to it, and one that resolves inside it still is, whatever either spells; repository discovery picks the root a path resolves into; the per-push paths do not gain an unbounded syscall per comparison; no site keeps a private copy of the containment rule |
 | **Status** | todo |
 
 ---

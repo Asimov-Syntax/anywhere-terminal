@@ -37,13 +37,23 @@ webview-supplied paths refuse symlinked components outright.
 resolvers and no privilege is gained. Fixing it here alone would make this the only path with a
 different rule, which is worse than consistent. Backlogged as repo-wide work."*
 
-**Reuse, not new code.** `realpathTolerant` already exists for exactly this problem — it resolves
-through the nearest existing ancestor so a path whose tail does not exist yet still normalizes.
-The work is applying one rule at every site, not inventing one.
+**One rule, applied everywhere — but not the walker the repo already has.** `realpathTolerant`
+looks like the answer and is not: it swallows *every* `realpath` error and rebuilds the unresolved
+tail lexically. That is right for naming a worktree that may be missing, where refusing would erase
+a row the user needs to see, and wrong for authorizing a read, where a dangling link that fails to
+resolve would be rebuilt into a literal path and pass containment.
 
-The tolerance matters: a resolver that hard-fails on a missing file would turn "no transcript yet"
-into an error, and a transcript that has not been written is the normal early state of a session
-(see [worktree-agent-presence.md](worktree-agent-presence.md) § on the retry ladder).
+So the tolerance has to be narrower than the walker's, and narrow in a specific direction: a
+resolver that hard-fails on a **missing** file would turn "no transcript yet" into an error, and a
+transcript that has not been written is the normal early state of a session (see
+[worktree-agent-presence.md](worktree-agent-presence.md) § on the retry ladder). Absence beneath a
+parent that did resolve inside the root is tolerated; every other resolution failure is refused.
+
+**Two consequences, two slices.** The resolvers that gate a transcript *read* are one problem. The
+comparisons that decide which worktree or repository a path belongs to — raw workspace-folder and
+Git API paths, pane cwds, webview paths — carry the same lexical error with a different
+consequence: misattribution, not an escaped read. They run on per-push paths and have their own
+acceptance story, so they are planned separately.
 
 ### 2.2 A window's "first row-drawing surface" has no single owner
 
