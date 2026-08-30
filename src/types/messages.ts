@@ -705,6 +705,146 @@ export interface WorktreeAgentLaunchFields {
 }
 
 /**
+ * How the new worktree gets its branch. Five shapes, not a flag set: the modes
+ * differ in what they REQUIRE, and a flag set would admit combinations that mean
+ * nothing, such as a base ref on a reuse (worktree-rpc.md § 2.3).
+ *
+ * `baseRef` is structurally absent from `reuse`, `reattach` and `adopt`. The
+ * contractual-base rule is enforced by this type, not by a validator three
+ * layers down that can be forgotten.
+ */
+export type WorktreeCreateMode =
+  | { kind: "fresh"; branch: string; baseRef?: string }
+  | { kind: "fresh-detached"; baseRef: string }
+  | { kind: "reuse"; branch: string }
+  | {
+      kind: "reattach";
+      branch: string;
+      /** The surviving directory whose administrative entry is stale. */
+      repairPath: string;
+      /** The DIRECTORY's HEAD at resolution — guards against a checkout that moved. */
+      expectedOid: string;
+    }
+  | {
+      kind: "adopt";
+      branch: string;
+      /** The surviving directory with no administrative entry at all. */
+      adoptPath: string;
+      /**
+       * The BRANCH TIP at resolution. Adopt has no HEAD to compare against — that
+       * file is exactly what was lost — so the only OID it can promise is the one
+       * it is about to write into a new one (worktree-rpc.md § 2.3).
+       */
+      expectedBranchOid: string;
+    };
+
+/** Authorizes deleting exactly what the user was shown, at exactly the place they were shown it. */
+export interface DebrisAuthorization {
+  readonly path: string;
+  /** Host-issued over the path and what was found there. Absent → the delete is refused. */
+  readonly fingerprint: string;
+}
+
+/**
+ * What the destination already holds. Independent of the branch mode — an
+ * existing branch and a debris-occupied destination can hold at once, which a
+ * sixth mode could not express (worktree-rpc.md § 2.3).
+ */
+export type DestinationDisposition = { kind: "free" } | { kind: "debris"; authorization: DebrisAuthorization };
+
+/**
+ * What happens once the worktree exists.
+ *
+ * The agent fields live ONLY on the `agent` variant, so a draft that chose
+ * "Nothing" is structurally incapable of carrying an agent, a posture, or a
+ * setup gate (worktree-rpc.md § 2.6).
+ *
+ * The variant embeds `WorktreeAgentLaunchFields` rather than redeclaring the
+ * three fields § 2.6 sketches: `offerId` and `generation` are staleness guards
+ * this extension already ships, and a shape that dropped them would refuse
+ * nothing the old one refused.
+ */
+export type WorktreeAfterCreate =
+  | { kind: "none" }
+  | { kind: "terminal" }
+  | { kind: "newWindow" }
+  | { kind: "addToWorkspace" }
+  | ({
+      kind: "agent";
+      /** Sequence the agent's start after the setup runner exits (worktree-create.md § 6). */
+      waitForSetup: boolean;
+    } & WorktreeAgentLaunchFields);
+
+/**
+ * WebView → Extension: which of the host's own offered provisioning items the
+ * user left checked.
+ *
+ * There is deliberately no field capable of carrying a command or a path. A
+ * message carrying command text would make the webview the authority on what
+ * executes, which is the property the untrusted-provider-file model exists to
+ * deny (worktree-provisioning.md § 4.0).
+ */
+export interface ProvisionSelection {
+  /**
+   * From `worktreeProvisionOffer`. Unrelated to `WorktreeAgentLaunchFields.offerId`,
+   * which quotes an agent list rather than a provisioning model.
+   */
+  readonly offerId: string;
+  /**
+   * Host-issued ids of the checked items — entries, ports and setup steps in one
+   * list, because every offered row is a checkbox and a caller should not have to
+   * know which kind a row was. Opaque and per-offer: not paths, not stable across
+   * offers.
+   */
+  readonly itemIds: readonly string[];
+}
+
+/**
+ * `notApplicable` is on the wire because the UI must not render it as `passed`
+ * (worktree-removal.md § 2.2): an unlocked worktree has no lock age, and
+ * claiming a check ran that never applied is a different lie from claiming one
+ * passed.
+ */
+export type RemovalCheckOutcome = "passed" | "failed" | "unproven" | "notApplicable";
+
+/**
+ * What an unproven outcome blocks. Carried per check rather than re-derived in
+ * the webview, because the decision to show a typed confirmation depends on it
+ * and a second copy of that mapping is a second place for the rule to be wrong.
+ */
+export type RemovalCheckClass = "refusal" | "confirmable" | "proof";
+
+export interface RemovalCheck {
+  readonly id: string;
+  readonly cls: RemovalCheckClass;
+  readonly outcome: RemovalCheckOutcome;
+  /** Bounded, already safe to render. */
+  readonly detail?: string;
+}
+
+/** Present only when the merge proof passed. Absence is how "not offered" is expressed. */
+export interface BranchDeleteOffer {
+  readonly branch: string;
+  readonly branchOid: string;
+  readonly defaultBranch: string;
+  readonly defaultOid: string;
+}
+
+/**
+ * Echoes the offer the user acted on, in full. Both ref NAMES travel as well as
+ * both OIDs: an OID pair alone does not prove the default branch the proof used
+ * is the one being verified now (worktree-rpc.md § 2.5).
+ */
+export interface BranchDeleteRequest {
+  readonly branch: string;
+  readonly expectedBranchOid: string;
+  readonly defaultBranch: string;
+  readonly expectedDefaultOid: string;
+  /** The assessment whose `BranchDeleteOffer` carried these values. */
+  readonly fingerprint: string;
+}
+
+/**
  * WebView → Extension: create a worktree at a path the host will re-validate.
  *
  * The launch fields are required exactly when `openAfter` is `"agent"` and

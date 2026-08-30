@@ -2,7 +2,7 @@
 
 ## 1. The contract
 
-- [ ] 1_1 Declare the create, offer and removal shapes on the wire
+- [x] 1_1 Declare the create, offer and removal shapes on the wire — verified: pnpm run check-types && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D1, design.md D6
   - **Acceptance**:

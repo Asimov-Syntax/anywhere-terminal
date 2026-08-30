@@ -272,21 +272,24 @@ export type WorktreeAfterCreate =
   | { kind: "terminal" }
   | { kind: "newWindow" }
   | { kind: "addToWorkspace" }
-  | {
+  | ({
       kind: "agent";
-      agentId: string;
-      /** The posture the user chose. Never defaulted — submission waits for a choice. */
-      permissionChoiceId: string;
-      prompt?: string;
       /** Sequence the agent's start after the setup runner exits (create § 6). */
       waitForSetup: boolean;
-    };
+    } & WorktreeAgentLaunchFields);
 ```
 
 The agent fields live **only** on the `agent` variant, so a draft that chose "Nothing" is
 structurally incapable of carrying an agent, a posture, or a setup gate. That is the wire
 expression of the form rule that the agent block is absent unless the user asked for it
 ([worktree-create.md](worktree-create.md) § 4).
+
+The variant **embeds `WorktreeAgentLaunchFields`** rather than redeclaring the agent, posture and
+prompt. That interface already carries two staleness guards — `offerId`, quoting the agent list the
+choice was made from, and `generation`, quoting the registration the worktree held when the row
+rendered — and both are refused when absent rather than assumed current (§ 2.2). A variant that
+listed only `agentId`, `permissionChoiceId` and `prompt` would refuse nothing the shipped shape
+refuses, so the embedding is the contract and this paragraph is the reason.
 
 ## 3. Action semantics
 

@@ -35,3 +35,4 @@ Direction (fastlane, no fork): the blueprint's own Acceptance settles both candi
 Planned at: 31abec81
 Scope note: `notApplicable` and `BranchDeleteOffer` land on the wire with no producer. The sources that answer "the question does not arise", the merge proof, and the orphan proofs are WT-013.1 / WT-013.2 / WT-013.3.
 Serialization: every task shares `src/types/messages.ts` or `src/worktree/worktreeMutationService.ts`, so the wave plan is fully serial by design rather than by omission.
+Deviation (1_1): rpc § 2.6 sketched the `agent` after-create variant as `{ agentId, permissionChoiceId, prompt?, waitForSetup }`, which drops the `offerId` and `generation` staleness guards `WorktreeAgentLaunchFields` already ships and which are refused when absent. The variant embeds that interface instead, and § 2.6 was corrected in the same task to say so — a contract task must not narrow a shipped refusal.
