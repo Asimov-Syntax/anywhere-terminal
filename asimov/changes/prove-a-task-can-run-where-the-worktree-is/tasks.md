@@ -16,7 +16,7 @@
     5. In `vitest.config.mts`, replace the `src/test/extension.test.ts` entry in `test.exclude` with the host-test directory, so the Vitest lane skips the whole host lane rather than one filename — the existing entry exists for exactly this reason and moving the file breaks it.
     6. Run `pnpm run compile-tests && pnpm exec vscode-test` and confirm the host starts and the suite passes — never `pnpm run test`, whose `pretest` hook runs `biome check --write --unsafe src/`; the compile output and the editor download directory are already covered by `.gitignore`, so neither is added to it.
 
-- [ ] 1_2 Record the directory a task scoped outside the workspace actually runs in
+- [x] 1_2 Record the directory a task scoped outside the workspace actually runs in — verified: sh -c 'pnpm run compile-tests && p="out/${1#src/}"; pnpm exec vscode-test --fail-zero --run "${p%.ts}.js"' _ 'src/test/host/taskScopeOutsideWorkspace.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D1, design.md D3
   - **Acceptance**:
