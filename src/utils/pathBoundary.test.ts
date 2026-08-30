@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isPathInside, isResolvedPathInside, isWindowsAbsPath, normalizePathForCompare } from "./pathBoundary";
+import {
+  isPathInside,
+  isResolvedPathInside,
+  isResolvedPathInsideRoot,
+  isWindowsAbsPath,
+  normalizePathForCompare,
+  prepareResolvedRoot,
+} from "./pathBoundary";
 
 describe("isWindowsAbsPath", () => {
   it("recognizes drive letters in either case and either separator", () => {
@@ -177,5 +184,108 @@ describe("isResolvedPathInside", () => {
       links: { "C:\\store": "C:\\store", "C:\\store\\a\\s.jsonl": "c:/store/a/s.jsonl" },
     });
     expect(await isResolvedPathInside("C:\\store\\a\\s.jsonl", "C:\\store", deps)).toBe(true);
+  });
+});
+
+describe("isResolvedPathInside: case is data once the filesystem has spoken", () => {
+  const win = (links: Record<string, string>) => ({
+    realpath: async (p: string) => {
+      if (p in links) {
+        return links[p];
+      }
+      const error = new Error("ENOENT") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    },
+    lstat: async () => {
+      const error = new Error("ENOENT") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    },
+  });
+
+  it("refuses a case-distinct SIBLING of the root", async () => {
+    // Windows supports case-sensitive directories (WSL, fsutil
+    // setCaseSensitiveInfo), so these are two places. The lexical predicate
+    // folds them together — correctly, for the worktree ids it compares, and
+    // fatally for a read guard.
+    const deps = win({
+      "C:\\vault\\Store": "C:\\vault\\Store",
+      "C:\\vault\\store\\secret.jsonl": "C:\\vault\\store\\secret.jsonl",
+    });
+    expect(isPathInside("C:\\vault\\store\\secret.jsonl", "C:\\vault\\Store")).toBe(true);
+    expect(await isResolvedPathInside("C:\\vault\\store\\secret.jsonl", "C:\\vault\\Store", deps)).toBe(false);
+  });
+
+  it("still accepts the same casing", async () => {
+    const deps = win({
+      "C:\\vault\\Store": "C:\\vault\\Store",
+      "C:\\vault\\Store\\ok.jsonl": "C:\\vault\\Store\\ok.jsonl",
+    });
+    expect(await isResolvedPathInside("C:\\vault\\Store\\ok.jsonl", "C:\\vault\\Store", deps)).toBe(true);
+  });
+
+  it("still folds the drive letter, which no filesystem gives meaning", async () => {
+    const deps = win({ "C:\\vault": "C:\\vault", "C:\\vault\\a.jsonl": "c:\\vault\\a.jsonl" });
+    expect(await isResolvedPathInside("C:\\vault\\a.jsonl", "C:\\vault", deps)).toBe(true);
+  });
+
+  it("keeps POSIX case significant, as it always was", async () => {
+    const deps = win({ "/vault/Store": "/vault/Store", "/vault/store/s.jsonl": "/vault/store/s.jsonl" });
+    expect(await isResolvedPathInside("/vault/store/s.jsonl", "/vault/Store", deps)).toBe(false);
+  });
+});
+
+describe("prepareResolvedRoot", () => {
+  const counting = (links: Record<string, string>) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      deps: {
+        realpath: async (p: string) => {
+          calls.push(p);
+          if (p in links) {
+            return links[p];
+          }
+          const error = new Error("ENOENT") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        },
+        lstat: async () => {
+          const error = new Error("ENOENT") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        },
+      },
+    };
+  };
+
+  it("resolves the root once however many candidates are checked against it", async () => {
+    const { calls, deps } = counting({
+      "/store": "/store",
+      "/store/a.jsonl": "/store/a.jsonl",
+      "/store/b.jsonl": "/store/b.jsonl",
+      "/store/c.jsonl": "/store/c.jsonl",
+    });
+    const root = await prepareResolvedRoot("/store", deps);
+    expect(root).not.toBeNull();
+    for (const name of ["a", "b", "c"]) {
+      expect(await isResolvedPathInsideRoot(`/store/${name}.jsonl`, root!, deps)).toBe(true);
+    }
+    expect(calls.filter((c) => c === "/store")).toHaveLength(1);
+  });
+
+  it("answers null for a root that does not resolve, so the caller stops rather than asking per file", async () => {
+    const { deps } = counting({});
+    expect(await prepareResolvedRoot("/gone", deps)).toBeNull();
+  });
+
+  it("refuses, rather than admits, when the root is replaced mid-pass", async () => {
+    // The prepared root is a snapshot for the length of one listing. If the
+    // store moves underneath it, the candidates that follow resolve somewhere
+    // the snapshot does not contain — the stale direction is the closed one.
+    const { deps } = counting({ "/store": "/store/gen1", "/store/late.jsonl": "/store/gen2/late.jsonl" });
+    const root = await prepareResolvedRoot("/store", deps);
+    expect(await isResolvedPathInsideRoot("/store/late.jsonl", root!, deps)).toBe(false);
   });
 });

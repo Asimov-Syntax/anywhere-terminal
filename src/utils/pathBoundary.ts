@@ -48,16 +48,52 @@ export function normalizePathForCompare(p: string): string {
  *  3. Windows drive-letter casing — `c:` vs `C:`.
  */
 export function isPathInside(candidate: string, root: string): boolean {
-  const normalizedCandidate = normalizePathForCompare(candidate);
-  const normalizedRoot = normalizePathForCompare(root);
+  const { same, beneath } = compareBoundary(candidate, root, normalizePathForCompare);
+  return same || beneath;
+}
+
+/**
+ * Where the boundary sits, for both predicates. Parameterized by its normalizer
+ * because that is the ONLY thing the two disagree about: `isPathInside` folds
+ * Windows case, the resolved form must not (D7). Everything else — the root
+ * separator, a root that already ends in one — is one rule with one home.
+ */
+function compareBoundary(
+  candidate: string,
+  root: string,
+  normalize: (p: string) => string,
+): { same: boolean; beneath: boolean } {
+  const normalizedCandidate = normalize(candidate);
+  const normalizedRoot = normalize(root);
   if (normalizedCandidate === normalizedRoot) {
-    return true;
+    return { same: true, beneath: false };
   }
   const separator = isWindowsAbsPath(root) ? "\\" : "/";
   // A root that already ends in its separator IS the boundary; appending
   // another would produce a prefix no path can start with.
   const boundary = normalizedRoot.endsWith(separator) ? normalizedRoot : normalizedRoot + separator;
-  return normalizedCandidate.startsWith(boundary);
+  return { same: false, beneath: normalizedCandidate.startsWith(boundary) };
+}
+
+/**
+ * Separators folded, drive letter lowercased, **every other component left
+ * alone** — the normalizer for comparisons that authorize a read.
+ *
+ * `normalizePathForCompare` lowercases the whole path, which is right when the
+ * two sides are worktree ids VS Code spelled differently. It is wrong here:
+ * Windows supports case-sensitive directories, so `C:\vault\Store` and
+ * `C:\vault\store` can be two places. Both sides of this comparison have been
+ * through `realpath`, which returns each component in its canonical on-disk
+ * case, so a surviving difference is a REAL difference — folding it could only
+ * erase a distinction, never repair one (D7).
+ */
+function normalizeResolvedForCompare(p: string): string {
+  if (!isWindowsAbsPath(p)) {
+    return p;
+  }
+  const slashed = p.replace(/\//g, "\\");
+  // The drive letter, and only the drive letter: no filesystem gives it meaning.
+  return /^[a-z]:/i.test(slashed) ? slashed[0].toLowerCase() + slashed.slice(1) : slashed;
 }
 
 /**
@@ -74,11 +110,33 @@ function errnoCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | null)?.code;
 }
 
+/** A store root, resolved once and reused for a whole pass over its contents (D8). */
+export interface PreparedRoot {
+  readonly resolved: string;
+}
+
 /**
- * Is `candidate` STRICTLY inside `root` once BOTH are resolved through symlinks?
+ * Resolve a store root once, for a caller about to check many candidates against
+ * it. `null` when it does not resolve — nothing is inside a root that is not
+ * there, and saying so once beats saying it per file.
+ */
+export async function prepareResolvedRoot(
+  root: string,
+  deps: ResolvedPathInsideDeps = {},
+): Promise<PreparedRoot | null> {
+  const realpath = deps.realpath ?? ((p: string) => fs.realpath(p));
+  try {
+    return { resolved: await realpath(root) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is `candidate` STRICTLY inside an already-resolved `root`?
  *
- * Two rules carry the whole point of this predicate, and both are the opposite
- * of what the worktree subsystem's `realpathTolerant` does:
+ * Three rules carry the whole point of this predicate, and the first two are the
+ * opposite of what the worktree subsystem's `realpathTolerant` does:
  *
  *  1. **Absence is tolerated; failure is not.** A tail that does not exist yet,
  *     beneath a parent that resolved inside the root, is contained — a
@@ -90,23 +148,21 @@ function errnoCode(error: unknown): string | undefined {
  *  2. **Equality is not containment.** Unlike `isPathInside`, a candidate equal
  *     to the root is refused, because every caller here is about to READ the
  *     candidate as a file.
+ *  3. **Component case is significant** — see `normalizeResolvedForCompare`.
+ *
+ * The ROOT is resolved once by the caller; the CANDIDATE resolves on every call,
+ * and no answer is cached. A file stamp is not an identity, and a cache keyed on
+ * one would let a path that has since become a symlink keep an authorization it
+ * earned before (D8).
  */
-export async function isResolvedPathInside(
+export async function isResolvedPathInsideRoot(
   candidate: string,
-  root: string,
+  root: PreparedRoot,
   deps: ResolvedPathInsideDeps = {},
 ): Promise<boolean> {
   const realpath = deps.realpath ?? ((p: string) => fs.realpath(p));
   const lstat = deps.lstat ?? ((p: string) => fs.lstat(p));
-  const api = isWindowsAbsPath(candidate) || isWindowsAbsPath(root) ? path.win32 : path.posix;
-
-  let resolvedRoot: string;
-  try {
-    resolvedRoot = await realpath(root);
-  } catch {
-    // A root that cannot be resolved holds nothing.
-    return false;
-  }
+  const api = isWindowsAbsPath(candidate) || isWindowsAbsPath(root.resolved) ? path.win32 : path.posix;
 
   const tail: string[] = [];
   let current = candidate;
@@ -114,7 +170,8 @@ export async function isResolvedPathInside(
     try {
       const resolved = await realpath(current);
       const full = tail.length === 0 ? resolved : api.join(resolved, ...[...tail].reverse());
-      return !isSamePath(full, resolvedRoot) && isPathInside(full, resolvedRoot);
+      const { same, beneath } = compareBoundary(full, root.resolved, normalizeResolvedForCompare);
+      return !same && beneath;
     } catch (error) {
       if (errnoCode(error) !== "ENOENT") {
         // ELOOP, EACCES, ENOTDIR — the filesystem declined to answer, so we do
@@ -143,6 +200,15 @@ export async function isResolvedPathInside(
   }
 }
 
-function isSamePath(a: string, b: string): boolean {
-  return normalizePathForCompare(a) === normalizePathForCompare(b);
+/**
+ * The single-shot form, for a caller with one candidate. A caller with many
+ * should prepare the root instead (D8).
+ */
+export async function isResolvedPathInside(
+  candidate: string,
+  root: string,
+  deps: ResolvedPathInsideDeps = {},
+): Promise<boolean> {
+  const prepared = await prepareResolvedRoot(root, deps);
+  return prepared === null ? false : isResolvedPathInsideRoot(candidate, prepared, deps);
 }

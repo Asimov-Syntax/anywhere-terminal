@@ -6,8 +6,14 @@
 
 `src/utils/pathBoundary.ts` exists for exactly this question and already handles the three things a
 hand-rolled comparison gets wrong (filesystem-root roots, Windows separator drift, drive-letter
-casing). The resolved form is added **beside** `isPathInside` and finishes by calling it, so the
-lexical rules stay defined once and the new predicate adds only the resolution step.
+casing). The resolved form is added **beside** `isPathInside`.
+
+The two predicates share the boundary rules through a **private core parameterized by its
+normalizer** rather than one calling the other. Delegating to `isPathInside` was the original plan
+and round-1 B1 is why it cannot be: the lexical form folds Windows case, and an authorization
+predicate must not (D7). The rules that stay defined once are the ones that are genuinely common —
+where the boundary sits, how a filesystem-root root is handled, how separators are folded. What
+differs is the one thing that has to.
 
 Rejected: a new `src/shared/pathContainment.ts`. It would mean two modules answering "is this
 inside that", which is the shape of the defect being fixed.
@@ -100,6 +106,42 @@ predicate is therefore strict, and that case is a named regression test.
 `path.relative` blocks are open-coded. All go. Leaving one behind would leave a second answer to
 the question this change exists to give one answer to.
 
+### D7: The resolved form preserves component case; only the volume is folded
+
+`normalizePathForCompare` lowercases an entire Windows path, and that is correct for its callers:
+they compare worktree **ids**, where VS Code hands back `c:\Repo` and `C:\repo` for one path and a
+comparison that distinguished them would split one worktree into two.
+
+An authorization predicate cannot inherit it. Windows supports case-sensitive directories (WSL,
+`fsutil file setCaseSensitiveInfo`), where `C:\vault\Store` and `C:\vault\store` are two
+directories; folded, a transcript in the second passes containment against the first. Round-1 B1
+demonstrated exactly that against the shipped predicate.
+
+The rule that replaces it: **after `realpath`, case is data.** Both sides have been through the
+filesystem, which returns each component in its canonical on-disk case, so any surviving difference
+is a real difference. Folding it can only erase a distinction the filesystem makes — it can never
+repair one. So the resolved comparison folds separators and lowercases only the **drive letter**,
+which no filesystem treats as significant. A UNC prefix is left alone: both sides are canonical, so
+they already agree, and preserving it fails closed if they somehow do not.
+
+POSIX is unaffected — nothing was folded there before or after.
+
+### D8: The root resolves once per operation, the candidate on every check
+
+`claudeReader` calls the predicate once per enumerated file, and `claudePaths`'s resolvers call it
+once per project directory. Resolving the **root** inside each of those calls is a syscall per item
+on a path that grows with the user's session history, for an answer that cannot change within one
+pass (round-1 W1).
+
+So the root is prepared once — resolved, and its volume kind decided — and handed to the per-item
+check. The **candidate** still resolves on every check, and containment is never cached: a file
+stamp is not an identity, and a cache keyed on one would let a path that has since become a symlink
+keep an authorization it earned before.
+
+What this trades: the prepared root is a snapshot for the length of one listing. A root swapped
+mid-pass leaves the remaining candidates compared against the old resolution — they refuse, because
+their freshly resolved paths no longer sit under it. The stale direction is the closed one.
+
 ## Failure-surface inventory
 
 | Resource | Answer |
@@ -108,6 +150,7 @@ the question this change exists to give one answer to.
 | A resolved path used after the check (TOCTOU) | A symlink swapped between `realpath` and the subsequent `stat`/read is not closed by this change and is not claimed to be. The window is the same one DESIGN.md § 8.5 already records for `worktreeCreate`; the read is of a transcript the caller is already entitled to, so the residual is a narrower version of today's exposure, not a new one |
 | The tolerant walker on a cyclic symlink | `fs.realpath` rejects on `ELOOP`; the walker catches, ascends to the parent, and terminates at the filesystem root. Bounded by path depth, not by the cycle |
 | Two surfaces resolving the same path concurrently | No shared state — the predicate holds nothing between calls and caches nothing. Two callers may both resolve the same path; the cost is a duplicate syscall, not a race |
+| A prepared root outliving the pass it was prepared for | Owned by the caller that starts the pass and dropped when it ends; nothing stores one. A root replaced mid-pass is not observed, and the remaining candidates refuse against the old resolution rather than being admitted by it (D8) |
 
 ## Interfaces
 
@@ -118,11 +161,27 @@ export interface ResolvedPathInsideDeps {
   realpath?: (p: string) => Promise<string>;
 }
 
+/** A store root, resolved once and reused across one pass over its contents (D8). */
+export interface PreparedRoot {
+  readonly resolved: string;
+}
+
+/** Resolve a store root, or `null` when it does not resolve — nothing is inside it. */
+export function prepareResolvedRoot(root: string, deps?: ResolvedPathInsideDeps): Promise<PreparedRoot | null>;
+
 /**
- * Is `candidate` STRICTLY inside `root` once both are resolved through symlinks?
- * Tolerates one case only: an absent tail beneath a parent that resolved inside
- * the root. Every other resolution failure is refused (D3). Equality is false (D5).
+ * Is `candidate` STRICTLY inside an already-resolved `root`? Tolerates one case
+ * only: an absent tail beneath a parent that resolved inside the root. Every
+ * other resolution failure is refused (D3). Equality is false (D5). Component
+ * case is significant (D7).
  */
+export function isResolvedPathInsideRoot(
+  candidate: string,
+  root: PreparedRoot,
+  deps?: ResolvedPathInsideDeps,
+): Promise<boolean>;
+
+/** The single-shot form: prepare, then check. For callers with one candidate. */
 export function isResolvedPathInside(
   candidate: string,
   root: string,
@@ -150,4 +209,6 @@ function isInside(candidate: string, root: string): boolean
 | Equality quietly disables Codex's filename fallback | D5 — the strict test carries its own regression case naming that consequence |
 | Resolving only one side, refusing legitimate stores | A case per resolver with the **root** behind a symlink and the candidate genuinely inside it, which must still be accepted (D3) |
 | A hot path picks up a syscall it did not have | D2 confines the resolved predicate to the four transcript resolvers; the fourteen worktree-id comparisons keep the lexical one |
+| Case folding authorizes a read into a case-distinct sibling | D7 — the resolved comparison keeps component case, with a regression whose two paths differ only in the case of one component |
+| A prepared root goes stale mid-listing | D8 — the stale direction refuses rather than admits, and that direction is asserted |
 | A local predicate survives the change | D6 — deletion is part of each adopting task, and the shared predicate's arrival is its own task so the adopters cannot land without it |
