@@ -774,7 +774,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       destNote.hidden = false;
       const taken = document.createElement("b");
       taken.textContent = repo.collidedWith;
-      destNote.append(document.createTextNode("…"), taken, document.createTextNode(" already exists"));
+      // No leading `…`. The host sends a directory name, so there is nothing
+      // elided to mark — and when this field still carried a whole path, the
+      // marker shortened none of it (worktree-create.md § 4.2).
+      destNote.append(taken, document.createTextNode(" already exists"));
       if (repo.resolvedPath) {
         const final = document.createElement("b");
         final.textContent = lastSegment(repo.resolvedPath);

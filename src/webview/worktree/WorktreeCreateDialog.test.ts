@@ -269,6 +269,21 @@ describe("create worktree — invalid and collided (§ 10)", () => {
     expect(note).toContain("a free suffix is chosen");
   });
 
+  it("opens the note with the taken name, marking no elision it does not have", () => {
+    // The host sends a directory NAME. A leading `…` announces a truncation
+    // that is not there — and it announced one that WAS there, unshortened,
+    // back when this field carried a whole path. Every case below asserts with
+    // `toContain`, which a stray `…` satisfies, and that is why this survived.
+    const { q } = open({
+      repos: [createDefaults({ collidedWith: "repo-feat-x", resolvedPath: "/Users/dev/trees/repo-feat-x-2" })],
+    });
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    const note = (q<HTMLElement>(".wt-dest-note").textContent ?? "").trim();
+
+    expect(note.startsWith("repo-feat-x already exists")).toBe(true);
+    expect(note).not.toContain("…");
+  });
+
   it("names the destination once the host has resolved one", () => {
     const { q } = open({
       repos: [createDefaults({ collidedWith: "-worktree-ui", resolvedPath: "/Users/dev/Projects/ai-oss/x-2" })],

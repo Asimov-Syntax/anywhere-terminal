@@ -137,7 +137,11 @@ export interface WorktreeCreateDefaults {
   pathParent: string;
   /** Base name the branch is appended to, e.g. `anywhere-terminal`. */
   pathPrefix: string;
-  /** Set when the computed default path collided and gained a `-2` / `-3` suffix. */
+  /**
+   * The taken directory's NAME, set when the computed default path collided and
+   * gained a `-2` / `-3` suffix. Never a path — `pathParent` and the resolved
+   * destination already state where the create lands.
+   */
   collidedWith?: string;
   /**
    * The free path the host resolved after the collision. Only the host can know

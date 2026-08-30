@@ -12,7 +12,7 @@
     3. Update the three `collidedWith` assertions in `src/providers/WorktreeHost.actions.test.ts` and the one in `src/extension.worktreeAssembly.test.ts` that expect a full path, and add a case asserting the value contains no path separator.
   - **Boundary**: no change to which answers carry the field — `path === bare` stays the test for whether a collision happened
 
-- [ ] 1_2 Stop marking an elision the value no longer has
+- [x] 1_2 Stop marking an elision the value no longer has — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-collision-names-the-result-without-a-second-full-path}; docs/design/worktree-create.md#42-collision-states-a-segment-never-a-path
   - **Acceptance**:
