@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -47,3 +47,4 @@ Deviation (1_4): D6's summary says rows render checked "matching the mockups", b
 Deviation (1_4): the Plan said to take class names from `docs/ui/worktree-create-dialog.css`. That file is a mockup asset no shipped module loads — the panel's stylesheet is `src/webview/worktree/worktreePanel.css` and its whole idiom is `wt-`-prefixed. The mockup's structure and proportions were carried over; the `cw-` names were not. Neither `docs/ui` file was touched.
 Deviation (1_4): the offer is held in its own per-repo map rather than folded into `WorktreeCreateDefaultsMessage` — the host issues one offer per form and answers the destination per keystroke, so a folded offer would be dropped by the second answer.
 Deviation (1_5): the Plan said problem rows offer to open the file. No affordance was added — the only open-a-file message this webview has (`openFile`) resolves its path against a terminal session's cwd, and there is no session here. The spec requires the file be NAMED, which it is; an inert button is worse than none. A real open is a new wire message and belongs to whichever task earns it.
+Verify gate: biome reports 3 pre-existing format errors and the baseline 14 warnings. All three — `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts`, `src/cursor/CursorHookInstaller.test.ts` — reproduce on a clean detached worktree at the change base (eae86109) and are untouched by this change's diff. Biome 2.4.5.

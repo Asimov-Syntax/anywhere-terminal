@@ -11,9 +11,9 @@ import type {
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeCreateDefaults,
-  WorktreeProvisionOffer,
   WorktreeInfo,
   WorktreePresence,
+  WorktreeProvisionOffer,
   WorktreeRemoveReport,
   WorktreeTree,
 } from "./worktreeViewTypes";

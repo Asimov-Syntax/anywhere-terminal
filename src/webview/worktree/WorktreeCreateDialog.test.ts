@@ -979,9 +979,7 @@ describe("Bring over — what the new worktree will lack", () => {
       model: provisionModel({
         entries: [],
         ports: [],
-        setup: [
-          { id: "i9", kind: "shell", script: "<img src=x onerror=alert(1)>", source: "asimov/worktree.yaml" },
-        ],
+        setup: [{ id: "i9", kind: "shell", script: "<img src=x onerror=alert(1)>", source: "asimov/worktree.yaml" }],
       }),
     });
     const code = host.querySelector(".wt-brow-code");
@@ -1060,7 +1058,9 @@ describe("Bring over — a repository that declares nothing, and a file that can
     // problem would understate what the create is about to do.
     const { host } = withModel(
       provisionModel({
-        problems: [{ file: "asimov/worktree.yaml", reason: "unknownKey", detail: "`exclude` is not a key this reads." }],
+        problems: [
+          { file: "asimov/worktree.yaml", reason: "unknownKey", detail: "`exclude` is not a key this reads." },
+        ],
       }),
     );
     expect(host.querySelectorAll(".wt-brow")).toHaveLength(5);

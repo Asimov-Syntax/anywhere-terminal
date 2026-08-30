@@ -26,7 +26,6 @@ import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { PresenceProjector } from "../worktree/presenceProjector";
-import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
 import type {
   DelegationRoster,
   PresenceDegradation,
@@ -34,6 +33,7 @@ import type {
   WorktreePresence,
 } from "../worktree/presenceTypes";
 import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
+import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";

@@ -12,8 +12,8 @@ import type {
   VaultLaunchTargetsMessage,
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
-  WorktreeProvisionOfferMessage,
   WorktreeMutationResultMessage,
+  WorktreeProvisionOfferMessage,
   WorktreeSubscriptionLevel,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
