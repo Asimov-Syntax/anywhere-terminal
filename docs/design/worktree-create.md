@@ -295,14 +295,13 @@ When the computed path is taken and a suffix was appended, **one line names the 
 else**: *"feat-search already exists — will use `feat-search-2`."* It replaces a second full path;
 it does not add one.
 
-This is a shipped defect, not a new rule. WT-009.3's accepted acceptance already required "a
-collision states the suffixed result without restating a full path", and the shipped code does not
-meet it: the host sends `collidedWith` as the full absolute path from `suggestFreePath`
-(`src/providers/WorktreeHost.ts:983`) and the dialog renders it verbatim
-(`src/webview/worktree/WorktreeCreateDialog.ts:494`) — after a prepended `…`, which shortens
-nothing — while applying `lastSegment()` to `resolvedPath` four lines later. The asymmetry is the
-bug. Whichever side applies the shortening,
-**one side does**, and the wire field and its rendering agree about which.
+**The host applies the shortening.** `collidedWith` carries the taken directory's name, per
+[worktree-rpc.md](worktree-rpc.md) § 2, and the form renders it as it arrives — so the field and
+its rendering agree about which side shortened, and the note opens with the name rather than with
+an ellipsis marking an elision it does not have.
+
+The host needs no `basename` for this: the unsuffixed candidate is resolved with a predicate that
+never reports a collision, so it is the root joined to the base name the host already holds.
 
 ### 4.3 Bring over
 

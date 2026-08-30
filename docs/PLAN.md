@@ -206,16 +206,15 @@ nothing to provision.
 | **Labels** | user-visible-ui |
 | **Notes** | The path transparency is a safety property, not clutter — the host states the free path it will actually take before a filesystem write is authorized, and that must survive the restructure rather than be traded for tidiness. What changes is that it is stated once instead of twice, in a dialog whose own tree deliberately shows no path on any row. The always-visible agent block currently contradicts an "After creating: Nothing" selection sitting directly above it |
 | **Acceptance** | The branch name is the lead input with nothing above it, and submission stays blocked until it validates; the resolved destination appears exactly once, shortened, with the exact value reachable without leaving the dialog, and a collision states the suffixed result without restating a full path; the agent block is absent unless the user chose to start an agent, and appears when they do, with the dangerous posture labelled and never preselected; base ref, branch source, and the path override live behind a collapsed advanced section; the host still supplies and displays the free path it will take before the action can be authorized; focus order, the focus trap, and dismissal behave as they did |
-| **Status** | in_progress |
+| **Status** | done |
 
-> **Reopened 2026-08-30** for one unmet acceptance clause, not for the whole task. Everything else
-> in the list above shipped and stands. The collision clause — *"a collision states the suffixed
-> result without restating a full path"* — is contradicted by the shipped code: the host sends
-> `collidedWith` as the full absolute path and the dialog renders it verbatim, while applying
-> `lastSegment()` to the resolved path a few lines below. The asymmetry is the defect; whichever
-> side shortens, one side does, and the wire field and its rendering agree on which. Reopening
-> rather than superseding keeps the record that this acceptance was mis-verified rather than
-> re-derived. Audit: `docs/audit/2026-08-30-worktree-lifecycle-gaps.md` § I.
+> **Reopened 2026-08-30, closed 2026-08-31.** One acceptance clause was unmet, not the whole task:
+> *"a collision states the suffixed result without restating a full path"*. The host sent
+> `collidedWith` as a full absolute path and the dialog rendered it verbatim, while applying
+> `lastSegment()` to the resolved path a few lines below. The host now sends the taken directory's
+> name and the note opens with it. Reopening rather than superseding keeps the record that this
+> acceptance was mis-verified rather than re-derived. Rule:
+> [worktree-create.md](design/worktree-create.md) § 4.2.
 
 ### [WT-009.4] Create Is Offered Where the Intent Arrives
 
