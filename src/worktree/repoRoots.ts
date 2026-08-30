@@ -5,6 +5,7 @@
 import * as path from "node:path";
 import type { API } from "../providers/git";
 import { isPathInside } from "../utils/pathBoundary";
+import type { TrackedPathResolver } from "../utils/resolvedPathMemo";
 import { describeGitFailure } from "./describeGitFailure";
 import { type GitCapabilities, hasUnsupportedPathFormatEcho } from "./gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
@@ -19,21 +20,6 @@ export interface ResolvedRepo {
   rootPath: string;
 }
 
-/**
- * The resolved spellings of the folders and repository roots this module
- * compares, prepared once per pass so the match itself stays synchronous.
- *
- * A seam rather than the memo itself: the invalidation this needs is "a
- * repository VS Code held is no longer open", which only this module is in a
- * position to notice, and which must not reach the pane cwds sharing the memo.
- */
-export interface RepoPathResolver {
-  /** Resolve this pass's folders and roots, and forget roots that have gone. */
-  prepare(folders: readonly string[], roots: readonly string[]): Promise<void>;
-  /** Where `p` resolved, or its lexical form when nothing prepared it. */
-  resolvedOr(p: string): string;
-}
-
 export interface RepoRootsDeps {
   runner: GitCommandRunner;
   capabilities: GitCapabilities;
@@ -43,38 +29,12 @@ export interface RepoRootsDeps {
    * Absent — every comparison below is lexical, exactly as before this existed.
    * Supplied in production, so a folder reached through a symlink matches the
    * repository it resolves INTO rather than the one it is spelled under.
+   *
+   * The folders are PINNED and the repository roots TRACKED: a repository VS
+   * Code closed is the structural event that invalidates a resolution, and only
+   * this module is in a position to notice it.
    */
-  paths?: RepoPathResolver;
-}
-
-/**
- * A {@link RepoPathResolver} over one memo.
- *
- * `invalidate` on a root that left the API set is the structural event D4 names:
- * a repository closed and another opened at the same spelling — a worktree
- * removed and recreated — resolves somewhere new, and nothing else in this
- * module would ever notice. Folders are not pruned: they are the workspace,
- * and their set is the bound.
- */
-export function createRepoPathResolver(memo: {
-  prepare(paths: Iterable<string>): Promise<void>;
-  resolvedOr(p: string): string;
-  invalidate(p: string): void;
-}): RepoPathResolver {
-  let lastRoots: readonly string[] = [];
-  return {
-    async prepare(folders, roots) {
-      const held = new Set(roots);
-      for (const gone of lastRoots) {
-        if (!held.has(gone)) {
-          memo.invalidate(gone);
-        }
-      }
-      lastRoots = [...roots];
-      await memo.prepare([...folders, ...roots]);
-    },
-    resolvedOr: (p) => memo.resolvedOr(p),
-  };
+  paths?: TrackedPathResolver;
 }
 
 /**

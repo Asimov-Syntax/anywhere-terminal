@@ -23,6 +23,7 @@
 import * as vscode from "vscode";
 import type { GitStatus } from "../types/messages";
 import { isPathInside, isWindowsAbsPath, normalizePathForCompare } from "../utils/pathBoundary";
+import type { TrackedPathResolver } from "../utils/resolvedPathMemo";
 import type { API, GitExtension, Repository } from "./git";
 import { mapStatus, pickHigherSeverity } from "./gitStatusMapping";
 
@@ -109,6 +110,15 @@ export interface CreateGitDecorationProviderOptions {
    * provider). Tests pass a custom event to drive folder changes.
    */
   readonly onDidChangeWorkspaceFolders?: vscode.Event<unknown>;
+  /**
+   * Where the window's paths resolve. Absent — containment is decided lexically,
+   * exactly as before this existed.
+   *
+   * Only the FOLDERS are resolved. The decorated path arrives per file per git
+   * refresh, so resolving it would be the unbounded syscall per comparison the
+   * acceptance forbids; the root side is the producer-bounded half (design.md D1).
+   */
+  readonly paths?: TrackedPathResolver;
 }
 
 const defaultLogger = {
@@ -145,7 +155,22 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     if (folders.length === 0) {
       return true;
     }
-    return folders.some((rawRoot) => isPathInside(absPath, rawRoot));
+    // The folder side is resolved from the pass `resolveFolders` already ran;
+    // `absPath` is left as it is spelled, per D1. `resolvedOr` is a map read,
+    // so a folder nothing has resolved yet answers exactly as it did before.
+    return folders.some((rawRoot) => isPathInside(absPath, options.paths?.resolvedOr(rawRoot) ?? rawRoot));
+  }
+
+  /**
+   * Resolve the workspace folders, forgetting the ones that have gone.
+   *
+   * Fire-and-forget on purpose: the comparison above must stay synchronous, and
+   * until this settles it answers lexically — which is exactly the behaviour
+   * that shipped before. Awaiting it at the change event instead would put the
+   * provider's reset behind a syscall.
+   */
+  function resolveFolders(): void {
+    void options.paths?.prepare([], getWorkspaceFolders());
   }
 
   // Per-repository status maps keyed by rootUri.fsPath. The merged view is
@@ -680,9 +705,13 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     if (disposed) {
       return;
     }
+    resolveFolders();
     provider.reset();
   });
   persistentSubs.push(wsfSub);
+
+  // The folders open at construction; the event above covers every later set.
+  resolveFolders();
 
   // Kick off acquisition asynchronously so construction never throws.
   tryAcquire();

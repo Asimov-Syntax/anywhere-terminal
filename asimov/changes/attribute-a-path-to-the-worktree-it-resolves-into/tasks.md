@@ -39,7 +39,7 @@
     3. Cover a folder and a repo root spelled differently but resolving together, and a folder spelled under a repo it resolves outside of.
     4. Supply the resolver in production from `src/worktree/worktreeDeps.ts`, over the memo `src/extension.ts` already shares with the projection.
 
-- [ ] 1_4 Scope decorations by a resolved root
+- [x] 1_4 Scope decorations by a resolved root — verified: pnpm exec vitest run 'src/providers/gitDecorationProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d1-the-bounded-side-of-each-comparison-resolves-the-unbounded-side-does-not
   - **Acceptance**:
@@ -48,6 +48,7 @@
   - **Plan**:
     1. In `src/providers/gitDecorationProvider.ts`, resolve the workspace folders once through the memo and invalidate on `onDidChangeWorkspaceFolders`; leave the decorated path lexical, per D1.
     2. Cover that decorating many files issues no additional resolution, which is the cost half of the acceptance and not a type-check.
+    3. This is the second consumer of "resolve a bounded set, forget what left", so move that resolver out of `src/worktree/repoRoots.ts` into `src/utils/resolvedPathMemo.ts` (+ `src/utils/resolvedPathMemo.test.ts`, `src/worktree/repoRoots.test.ts`) rather than duplicating it, and wire the provider from `src/extension.ts`.
 
 - [ ] 1_5 Delete the file tree's private copy of the rule
   - **Deps**: 1_1

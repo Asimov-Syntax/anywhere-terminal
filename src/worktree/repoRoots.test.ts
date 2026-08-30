@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { ResolvedPathMemo } from "../utils/resolvedPathMemo";
+import { createTrackedPathResolver, ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { createGitCapabilities } from "./gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
-import { createRepoPathResolver, type GitApiAccessor, resolveRepoOutcomes, resolveRepoRoots } from "./repoRoots";
+import { type GitApiAccessor, resolveRepoOutcomes, resolveRepoRoots } from "./repoRoots";
 
 type Reply = { code?: number; stdout?: string; stderr?: string; timedOut?: boolean; failedToSpawn?: boolean };
 
@@ -299,7 +299,7 @@ describe("matching a repository through a symlink", () => {
         return hit;
       },
     });
-    return { paths: createRepoPathResolver(memo), realpaths, memo };
+    return { paths: createTrackedPathResolver(memo), realpaths, memo };
   }
 
   it("matches the repository a folder resolves INTO, not the one it is spelled under", async () => {

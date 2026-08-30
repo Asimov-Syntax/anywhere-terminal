@@ -49,7 +49,7 @@ import type {
   WorktreeRemoveBlockerPayload,
 } from "./types/messages";
 import { isPathInside } from "./utils/pathBoundary";
-import { ResolvedPathMemo } from "./utils/resolvedPathMemo";
+import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
@@ -483,7 +483,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Shared GitDecorationProvider — one singleton, threaded through every
   // FileTreeHost so the three webviews (sidebar / panel / editor) see one
   // consistent revision sequence. See: add-file-tree-git-decorations design.md D8, D10.
-  const gitDecorationProvider = createGitDecorationProvider();
+  // One window, one set of resolutions, shared by every site that decides which
+  // worktree, repository or root a path belongs to. Each site wraps it in its
+  // own tracker, because what counts as "this set changed" differs per site —
+  // but they must never disagree about where a directory is (design.md D1, D5).
+  const pathMemo = new ResolvedPathMemo();
+
+  const gitDecorationProvider = createGitDecorationProvider({ paths: createTrackedPathResolver(pathMemo) });
   context.subscriptions.push(gitDecorationProvider);
 
   // Shared FS WatcherPool — singleton, refcounted across every FileTreeHost
@@ -667,13 +673,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Held rather than inlined: the mutation service runs git through the SAME
   // runner discovery uses, so a capability probe or a timeout setting cannot
   // differ between reading the tree and changing it.
-  // One window, one set of resolutions. Both consumers below compare a cwd
-  // against a worktree id that `normalizeWorktreePath` already realpathed, so
-  // both need the candidate side resolved — and they must not disagree about
-  // where the same directory is (design.md D1, D5).
-  const cwdMemo = new ResolvedPathMemo();
-
-  const worktreeTreeDeps = createWorktreeTreeDeps({ pathMemo: cwdMemo });
+  const worktreeTreeDeps = createWorktreeTreeDeps({ pathMemo });
 
   // One owner of every preview the agent rows show — the stamp, the re-check
   // interval, the in-flight de-duplication and the bound all live behind it.
@@ -705,10 +705,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // can run before the first projection has resolved anything.
       panes: async () => {
         const panes = paneEvidence.panes();
-        await cwdMemo.prepare(panes.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
+        await pathMemo.prepare(panes.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
         return panes.map((pane) => ({
           paneId: pane.paneId,
-          cwd: pane.cwd === undefined ? undefined : cwdMemo.resolvedOr(pane.cwd),
+          cwd: pane.cwd === undefined ? undefined : pathMemo.resolvedOr(pane.cwd),
           activity: paneEvidence.activityFor(pane.paneId),
         }));
       },
@@ -720,10 +720,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (outcome.kind !== "ok") {
           return { ok: false };
         }
-        await cwdMemo.prepare(outcome.sessions.map((s) => s.cwd));
+        await pathMemo.prepare(outcome.sessions.map((s) => s.cwd));
         return {
           ok: true,
-          value: outcome.sessions.map((s) => ({ sessionId: s.sessionId, cwd: cwdMemo.resolvedOr(s.cwd) })),
+          value: outcome.sessions.map((s) => ({ sessionId: s.sessionId, cwd: pathMemo.resolvedOr(s.cwd) })),
         };
       },
     },
@@ -743,7 +743,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     projector: createPresenceProjector(
       createPresenceProjectorDeps({
         store: paneEvidence,
-        cwdMemo,
+        cwdMemo: pathMemo,
         // Fallback only — the projector asks about a session the registry left
         // unnamed. A user rename outranks the derived title here for the same
         // reason it does in the vault list (enhance-vault-sessions D1).

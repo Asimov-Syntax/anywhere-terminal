@@ -98,3 +98,45 @@ export class ResolvedPathMemo {
     return this.memo.size;
   }
 }
+
+/**
+ * A bounded set of paths, resolved together and re-read when the set changes.
+ *
+ * Two sites need exactly this and would otherwise each grow their own copy:
+ * repository discovery over the git API's open repositories, and the decoration
+ * provider over the workspace folders. Both are producer-bounded, both compare
+ * synchronously afterwards, and both need the SAME structural invalidation —
+ * a path leaving the set means a directory was closed, and one opened at that
+ * spelling later can resolve somewhere else entirely (D4).
+ */
+export interface TrackedPathResolver {
+  /**
+   * Resolve `pinned` and `tracked`, forgetting every tracked path that was in
+   * the previous call and is not in this one. `pinned` is never forgotten: it
+   * is the caller's own standing set, and pruning it would re-resolve on every
+   * pass — the syscall-per-comparison D1 forbids.
+   */
+  prepare(pinned: readonly string[], tracked: readonly string[]): Promise<void>;
+  /** Where `p` resolved, or its lexical form when nothing prepared it. */
+  resolvedOr(p: string): string;
+}
+
+/** The parts of {@link ResolvedPathMemo} a {@link TrackedPathResolver} needs. */
+export type TrackablePathMemo = Pick<ResolvedPathMemo, "prepare" | "resolvedOr" | "invalidate">;
+
+export function createTrackedPathResolver(memo: TrackablePathMemo): TrackedPathResolver {
+  let last: readonly string[] = [];
+  return {
+    async prepare(pinned, tracked) {
+      const held = new Set(tracked);
+      for (const gone of last) {
+        if (!held.has(gone)) {
+          memo.invalidate(gone);
+        }
+      }
+      last = [...tracked];
+      await memo.prepare([...pinned, ...tracked]);
+    },
+    resolvedOr: (p) => memo.resolvedOr(p),
+  };
+}
