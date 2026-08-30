@@ -494,106 +494,6 @@ describe("readSqlite: a store that cannot be opened is not an empty store", () =
   });
 });
 
-describe("readSqlite: a snapshot interleaved with a checkpoint is whole or it fails (round-1 B1)", () => {
-  /** Real deps, in-process engine, with a snapshot that steps the backup and lets
-   *  the test act between steps — the interleaving that no file-copy ordering
-   *  survived, driven deterministically rather than hoped for. */
-  function steppingDeps(onStep: (step: number) => void): SqliteDeps {
-    return {
-      exec: vi.fn(async () => {
-        throw new Error("command not found: sqlite3");
-      }),
-      exists: async (p) => {
-        try {
-          await fsp.access(p);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
-      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
-      hasNodeSqlite: async () => true,
-      snapshot: async (dbPath, dest) => {
-        const { DatabaseSync: DB, backup } = await import("node:sqlite");
-        const source = new DB(dbPath, { readOnly: true });
-        let step = 0;
-        try {
-          await backup(source, dest, {
-            rate: 1,
-            progress: () => {
-              onStep(++step);
-            },
-          });
-        } finally {
-          source.close();
-        }
-      },
-    };
-  }
-
-  async function bigWalStore(): Promise<{ dbFile: string; dir: string; live: InstanceType<typeof DatabaseSync> }> {
-    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-race-"));
-    const dbFile = path.join(dir, "live.sqlite");
-    const seed = new DatabaseSync(dbFile);
-    seed.exec("PRAGMA journal_mode=WAL");
-    seed.exec("CREATE TABLE t(id INTEGER, pad TEXT)");
-    seed.exec("BEGIN");
-    const ins = seed.prepare("INSERT INTO t VALUES (?, ?)");
-    for (let i = 0; i < 4000; i++) {
-      ins.run(i, "x".repeat(200));
-    }
-    seed.exec("COMMIT");
-    seed.close();
-    const live = new DatabaseSync(dbFile);
-    live.exec("PRAGMA journal_mode=WAL");
-    live.prepare("INSERT INTO t VALUES (?, ?)").run(999999, "wal-resident");
-    return { dbFile, dir, live };
-  }
-
-  it("keeps every row when the store checkpoints and vacuums MID-snapshot", async () => {
-    const { dbFile, dir, live } = await bigWalStore();
-    let raced = false;
-    const deps = steppingDeps((step) => {
-      if (step === 3 && !raced) {
-        raced = true;
-        live.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-        live.exec("VACUUM"); // rewrites pages under the in-flight snapshot
-      }
-    });
-    try {
-      const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
-      expect(raced).toBe(true); // the race really happened
-      if (result.status === "ok") {
-        expect(result.rows).toEqual([{ c: 4001 }]);
-      } else {
-        expect(["query-error", "db-unreachable"]).toContain(result.status);
-      }
-    } finally {
-      live.close();
-      await fsp.rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("aborts rather than starving when the deadline passes mid-snapshot", async () => {
-    const { dbFile, dir, live } = await bigWalStore();
-    const deps: SqliteDeps = {
-      ...steppingDeps(() => {}),
-      snapshot: async () => {
-        throw new Error("snapshot exceeded 30000ms"); // what the progress deadline raises
-      },
-    };
-    try {
-      const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
-      expect(result.status).toBe("query-error");
-      expect(result.rows).toEqual([]);
-    } finally {
-      live.close();
-      await fsp.rm(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("readSqlite: a destination failure is not the store's fault (round-1 W1)", () => {
   it("says query-error, not db-unreachable, when the source reads fine but the destination cannot be written", async () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-dest-"));
@@ -626,6 +526,185 @@ describe("readSqlite: a destination failure is not the store's fault (round-1 W1
       const result = await readSqlite(dbFile, "SELECT id FROM t", deps);
       // The user's store is perfectly readable — blaming it would be a lie, and
       // the kind that makes a live session look unreachable.
+      expect(result.status).toBe("query-error");
+    } finally {
+      await fsp.chmod(destDir, 0o755);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the SHIPPED snapshot, exercised as shipped (round-2 B1/W3)", () => {
+  /** Real deps with NO `snapshot` override — the production implementation runs. */
+  function shippedDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
+    return {
+      exec: async (file, args, options) => {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const { stdout, stderr } = await promisify(execFile)(file, args, { timeout: options.timeout });
+        return { stdout: String(stdout), stderr: String(stderr) };
+      },
+      exists: async (p) => {
+        try {
+          await fsp.access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
+      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
+      ...overrides,
+    };
+  }
+
+  /** A store large enough that a snapshot of it is measurably in flight, with one
+   *  row committed to the WAL by a connection left open. */
+  async function bigLiveStore(rows: number): Promise<{
+    dbFile: string;
+    dir: string;
+    live: InstanceType<typeof DatabaseSync>;
+  }> {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-race-"));
+    const dbFile = path.join(dir, "live.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("PRAGMA journal_mode=WAL");
+    seed.exec("CREATE TABLE t(id INTEGER, pad TEXT)");
+    seed.exec("BEGIN");
+    const ins = seed.prepare("INSERT INTO t VALUES (?, ?)");
+    for (let i = 0; i < rows; i++) {
+      ins.run(i, "x".repeat(400));
+    }
+    seed.exec("COMMIT");
+    seed.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    seed.close();
+    const live = new DatabaseSync(dbFile);
+    live.exec("PRAGMA journal_mode=WAL");
+    live.prepare("INSERT INTO t VALUES (?, ?)").run(999999, "wal-resident");
+    return { dbFile, dir, live };
+  }
+
+  /** Race a checkpoint + VACUUM against an in-flight snapshot, and report whether
+   *  they actually completed while it was running. */
+  async function raceAgainst<T>(
+    live: InstanceType<typeof DatabaseSync>,
+    start: () => Promise<T>,
+  ): Promise<{ result: T; raced: boolean }> {
+    let raced = false;
+    const running = start();
+    const churn = (async () => {
+      await new Promise((r) => setImmediate(r));
+      live.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      live.exec("VACUUM");
+      raced = true; // only once both have COMPLETED
+    })();
+    const [result] = await Promise.all([running, churn]);
+    return { result, raced };
+  }
+
+  it("keeps every row when a checkpoint and vacuum race the in-process snapshot", async () => {
+    const { dbFile, dir, live } = await bigLiveStore(20000);
+    const deps = shippedDeps({ hasNodeSqlite: async () => true });
+    try {
+      const { result, raced } = await raceAgainst(live, () => readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps));
+      expect(raced).toBe(true);
+      if (result.status === "ok") {
+        expect(result.rows).toEqual([{ c: 20001 }]);
+      } else {
+        expect(["query-error", "db-unreachable"]).toContain(result.status);
+      }
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does the same through withSqliteSnapshot", async () => {
+    const { dbFile, dir, live } = await bigLiveStore(20000);
+    const deps = shippedDeps({ hasNodeSqlite: async () => true });
+    try {
+      const { result, raced } = await raceAgainst(live, () =>
+        withSqliteSnapshot(dbFile, (s) => s.query("SELECT count(*) AS c FROM t"), deps),
+      );
+      expect(raced).toBe(true);
+      if (result.status === "ok") {
+        expect(result.value.rows).toEqual([{ c: 20001 }]);
+      } else {
+        expect(["query-error", "db-unreachable"]).toContain(result.status);
+      }
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does the same through the real sqlite3 CLI", async () => {
+    const { dbFile, dir, live } = await bigLiveStore(20000);
+    const deps = shippedDeps({ hasNodeSqlite: async () => false });
+    try {
+      const { result, raced } = await raceAgainst(live, () => readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps));
+      expect(raced).toBe(true);
+      if (result.status === "ok") {
+        expect(result.rows).toEqual([{ c: 20001 }]);
+      } else {
+        expect(["query-error", "db-unreachable"]).toContain(result.status);
+      }
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts on the production deadline, inside the production progress callback", async () => {
+    // Enough pages that the backup takes more than one step, and a budget already
+    // spent — so the deadline must be checked by the shipped callback, not by us.
+    const { dbFile, dir, live } = await bigLiveStore(20000);
+    const deps = shippedDeps({ hasNodeSqlite: async () => true, snapshotTimeoutMs: 0 });
+    try {
+      const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
+      expect(result.status).toBe("query-error");
+      expect(result.error).toMatch(/exceeded 0ms/);
+      expect(result.rows).toEqual([]);
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the CLI blames the right file too (round-2 W1)", () => {
+  it("says query-error when the source reads fine but VACUUM INTO has nowhere to write", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-clidest-"));
+    const dbFile = path.join(dir, "live.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("CREATE TABLE t(id TEXT)");
+    seed.exec("INSERT INTO t VALUES ('readable')");
+    seed.close();
+    const destDir = path.join(dir, "temp");
+    await fsp.mkdir(destDir);
+    await fsp.chmod(destDir, 0o555);
+
+    const deps: SqliteDeps = {
+      exec: async (file, args, options) => {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const { stdout, stderr } = await promisify(execFile)(file, args, { timeout: options.timeout });
+        return { stdout: String(stdout), stderr: String(stderr) };
+      },
+      exists: async (p) => {
+        try {
+          await fsp.access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      mkdtemp: async () => destDir,
+      rmrf: async () => {},
+      hasNodeSqlite: async () => false,
+    };
+    try {
+      const result = await readSqlite(dbFile, "SELECT id FROM t", deps);
       expect(result.status).toBe("query-error");
     } finally {
       await fsp.chmod(destDir, 0o755);

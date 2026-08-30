@@ -105,6 +105,9 @@ export interface SqliteDeps {
    * never be mistaken for a store that is empty (D2).
    */
   snapshot?(dbPath: string, dest: string): Promise<void>;
+  /** Wall clock for the snapshot, in ms. Defaults to `SNAPSHOT_TIMEOUT_MS`; tests
+   *  lower it to drive the real deadline through the real progress callback. */
+  snapshotTimeoutMs?: number;
 }
 
 async function defaultAccess(p: string): Promise<SqlitePresence> {
@@ -282,7 +285,12 @@ async function presence(deps: SqliteDeps, dbPath: string): Promise<SqlitePresenc
  *  a read-only `VACUUM INTO` on the CLI. Both are atomic against a concurrent
  *  writer, checkpoint or vacuum; neither copies files. */
 async function takeSnapshot(deps: SqliteDeps, dbPath: string, dest: string, useCli: boolean): Promise<void> {
-  await (deps.snapshot ?? (useCli ? cliSnapshot(deps) : defaultSnapshot))(dbPath, dest);
+  if (deps.snapshot) {
+    await deps.snapshot(dbPath, dest);
+    return;
+  }
+  const budget = deps.snapshotTimeoutMs ?? SNAPSHOT_TIMEOUT_MS;
+  await (useCli ? cliSnapshot(deps, budget) : defaultSnapshot)(dbPath, dest, budget);
 }
 
 /** The CLI engine's snapshot: `VACUUM INTO` under `-readonly`. VACUUM INTO runs
@@ -291,19 +299,36 @@ async function takeSnapshot(deps: SqliteDeps, dbPath: string, dest: string, useC
  *  opens the source read-WRITE, which D3 forbids for a store a live agent owns.
  *  The destination is quoted as a SQL string literal — it is a path we minted
  *  under `mkdtemp`, never caller input. */
-function cliSnapshot(deps: SqliteDeps): (dbPath: string, dest: string) => Promise<void> {
+function cliSnapshot(deps: SqliteDeps, budget: number): (dbPath: string, dest: string) => Promise<void> {
   return async (dbPath, dest) => {
     try {
       await deps.exec("sqlite3", ["-readonly", dbPath, `VACUUM INTO '${dest.replaceAll("'", "''")}'`], {
-        timeout: SNAPSHOT_TIMEOUT_MS,
+        timeout: budget,
       });
     } catch (err) {
-      throw isOpenClass(err) ? new SnapshotOpenError(errorMessage(err)) : err;
+      if (!isOpenClass(err)) {
+        throw err;
+      }
+      // `VACUUM INTO` raises the same CANTOPEN for a source it cannot read and a
+      // destination it cannot create, so ask the source to prove itself before
+      // blaming it (W1) — the same proof the in-process path makes.
+      throw (await cliSourceReads(deps, dbPath, budget)) ? err : new SnapshotOpenError(errorMessage(err));
     }
   };
 }
 
-async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
+/** Whether the CLI can still read the source at all. Runs only on the failure
+ *  path, so a healthy snapshot pays nothing for it. */
+async function cliSourceReads(deps: SqliteDeps, dbPath: string, budget: number): Promise<boolean> {
+  try {
+    await deps.exec("sqlite3", ["-readonly", dbPath, "SELECT 1"], { timeout: budget });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function defaultSnapshot(dbPath: string, dest: string, budget: number): Promise<void> {
   const { DatabaseSync, backup } = await import("node:sqlite");
   // node:sqlite opens lazily, so a refusal can surface at the constructor OR at
   // the backup. Classify by the error, not by where it was thrown — and only
@@ -311,7 +336,7 @@ async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
   // can come from the destination, and blaming the user's store for our own temp
   // directory is the misattribution D2 exists to prevent.
   let source: InstanceType<typeof DatabaseSync> | undefined;
-  const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
+  const deadline = Date.now() + budget;
   try {
     source = new DatabaseSync(dbPath, { readOnly: true });
     // SQLite RESTARTS an incremental backup whenever the source is written, so a
@@ -322,7 +347,7 @@ async function defaultSnapshot(dbPath: string, dest: string): Promise<void> {
       rate: SNAPSHOT_PAGES_PER_STEP,
       progress: () => {
         if (Date.now() > deadline) {
-          throw new Error(`snapshot exceeded ${SNAPSHOT_TIMEOUT_MS}ms`);
+          throw new Error(`snapshot exceeded ${budget}ms`);
         }
       },
     });

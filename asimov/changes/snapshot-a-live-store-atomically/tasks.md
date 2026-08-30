@@ -55,3 +55,13 @@
     2. In `src/vault/sqlite.ts`, prove the source is readable before attributing an open refusal to it, so a destination failure stays `query-error` instead of becoming `db-unreachable`.
     3. In `src/vault/sqlite.ts`, correct the module comment that still describes the CLI as assembling snapshots from file copies.
     4. Cover in `src/vault/sqlite.test.ts`: a checkpoint and vacuum fired from inside the backup's own progress callback, the same interleaving driven concurrently against the CLI engine, a starved backup hitting its deadline, and a writable source with an unwritable destination.
+
+- [x] 2_2 Point the guards at the production snapshot, not at an injected one — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-2.md; design.md#d2-every-snapshot-failure-is-a-status-never-an-empty-result
+  - **Acceptance**:
+    - Outcome: the race, deadline and destination guards fail when the production snapshot code is removed
+    - Verify: unit src/vault/sqlite.test.ts
+  - **Plan**:
+    1. In `src/vault/sqlite.ts`, let the snapshot budget be injected so the real deadline runs in tests, and give the CLI branch the same source-readability proof the in-process branch has.
+    2. In `src/vault/sqlite.test.ts`, replace the tests that substituted their own snapshot with ones that exercise the shipped implementation across both engines and both entry points, and set the race witness only once the checkpoint and vacuum have completed.
