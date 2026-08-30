@@ -284,4 +284,35 @@ describe("SnapshotPool", () => {
     await expect(fs.access(a.file)).rejects.toThrow();
     await expect(fs.access(b.file)).rejects.toThrow();
   });
+  it("never serves a pre-write snapshot to a reader that has already seen the write", async () => {
+    const pool = new SnapshotPool(deps);
+    const gate = deferred();
+    const started = deferred();
+    // The snapshot's content is the store's WAL, so a stale answer is visible rather
+    // than merely inferred from a call count.
+    const copyWal = async (dest: string): Promise<void> => {
+      produced.push(dest);
+      await fs.copyFile(`${dbPath}-wal`, dest);
+    };
+
+    const first = pool.borrow(dbPath, async (dest) => {
+      started.resolve();
+      await gate.promise;
+      await copyWal(dest);
+    });
+    await started.promise;
+
+    // A session commits while that snapshot is in flight, and only now does the
+    // second reader arrive — it has observed the write, so it must not join.
+    await fs.writeFile(`${dbPath}-wal`, "wal-with-committed-session");
+    const second = pool.borrow(dbPath, copyWal);
+    gate.resolve();
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(b.file).not.toBe(a.file);
+    await expect(fs.readFile(b.file, "utf8")).resolves.toBe("wal-with-committed-session");
+    expect(produced).toHaveLength(2);
+    await a.release();
+    await b.release();
+  });
 });

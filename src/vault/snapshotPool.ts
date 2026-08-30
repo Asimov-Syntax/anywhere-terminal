@@ -31,6 +31,12 @@ export interface SnapshotPoolDeps {
   now?(): number;
 }
 
+/** A production in progress, tagged with the store generation it started from. */
+interface Flight {
+  stamp: Stamp;
+  promise: Promise<Entry>;
+}
+
 interface Entry {
   dir: string;
   file: string;
@@ -44,6 +50,9 @@ interface Entry {
 
 const SNAPSHOT_FILE = "db.sqlite";
 const DEFAULT_IDLE_MS = 60_000;
+/** How many times a caller will wait out someone else's snapshot before taking its
+ *  own. Bounded so a continuously-written store cannot starve a reader. */
+const MAX_JOIN_WAITS = 2;
 
 /** `-shm` is deliberately absent: volatile wal-index state, see `storeStamp.ts`. */
 function storePaths(dbPath: string): string[] {
@@ -60,7 +69,7 @@ export class SnapshotPool {
   private readonly retained = new Map<string, Entry>();
   /** One production per store. Concurrent readers join it rather than each running
    *  their own backup — vault list, detail and lookup routinely fire together. */
-  private readonly inFlight = new Map<string, Promise<Entry>>();
+  private readonly inFlight = new Map<string, Flight>();
   private readonly stamp: (paths: string[]) => Promise<Stamp>;
   private readonly idleMs: number;
   private readonly now: () => number;
@@ -80,29 +89,40 @@ export class SnapshotPool {
    * be mistaken for a store that is empty.
    */
   async borrow(dbPath: string, produce: (dest: string) => Promise<void>): Promise<SnapshotLease> {
-    const before = await this.stamp(storePaths(dbPath));
-    const hit = this.retained.get(dbPath);
-    if (hit && stampable(before, dbPath) && sameStamps(before, hit.stamp)) {
-      return this.lease(hit);
-    }
+    for (let waits = 0; ; waits++) {
+      const before = await this.stamp(storePaths(dbPath));
+      const hit = this.retained.get(dbPath);
+      if (hit && stampable(before, dbPath) && sameStamps(before, hit.stamp)) {
+        return this.lease(hit);
+      }
 
-    const joined = this.inFlight.get(dbPath);
-    if (joined) {
-      return this.lease(await joined);
-    }
-
-    const flight = this.produce(dbPath, before, produce);
-    this.inFlight.set(dbPath, flight);
-    // Cleared when it settles either way: a failed snapshot must not linger as a
-    // promise later readers await forever.
-    void flight
-      .catch(() => {})
-      .finally(() => {
-        if (this.inFlight.get(dbPath) === flight) {
-          this.inFlight.delete(dbPath);
+      const joined = this.inFlight.get(dbPath);
+      if (joined) {
+        // Joining is gated on the same stamp that gates reuse: a caller that has
+        // already observed a newer store must not be handed a snapshot taken before
+        // that write, which would be a false `absent` by a different door (D4).
+        if (stampable(before, dbPath) && sameStamps(before, joined.stamp)) {
+          return this.lease(await joined.promise);
         }
-      });
-    return this.lease(await flight);
+        if (waits < MAX_JOIN_WAITS) {
+          await joined.promise.catch(() => {});
+          continue;
+        }
+      }
+
+      const flight: Flight = { stamp: before, promise: this.produce(dbPath, before, produce) };
+      this.inFlight.set(dbPath, flight);
+      // Cleared when it settles either way: a failed snapshot must not linger as a
+      // promise later readers await forever.
+      void flight.promise
+        .catch(() => {})
+        .finally(() => {
+          if (this.inFlight.get(dbPath) === flight) {
+            this.inFlight.delete(dbPath);
+          }
+        });
+      return this.lease(await flight.promise);
+    }
   }
 
   private async produce(dbPath: string, before: Stamp, take: (dest: string) => Promise<void>): Promise<Entry> {

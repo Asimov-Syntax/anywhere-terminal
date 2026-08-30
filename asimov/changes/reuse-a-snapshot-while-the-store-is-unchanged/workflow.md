@@ -31,7 +31,7 @@
 
 Blueprint: none
 Lane: full
-Planned at: 4e401984
+Planned at: 55110e7a
 Flags: security-privacy (a stale reuse would surface as a false `absent`, deleting a live row's preview)
 Origin: round-1 W2 of `snapshot-a-live-store-atomically`, which is blocked from archiving until this lands. Measured there: 522 MB store, 951 ms engine snapshot vs 5 ms APFS clone (~190x), ~2.5 s projected for the known 1.4 GB OpenCode store.
 Reuse-first: `storeStamp.ts` (`stampStoreFiles`/`sameStamps`) is the shipped invalidation key the list cache already trusts — adopted rather than reinvented, including its documented exclusion of `-shm`.

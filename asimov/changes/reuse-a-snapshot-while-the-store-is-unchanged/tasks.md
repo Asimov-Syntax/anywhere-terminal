@@ -46,7 +46,7 @@
 
 ## 2. Round-1 review fixes
 
-- [ ] 2_1 Join an in-flight snapshot only when it started from the caller's store
+- [x] 2_1 Join an in-flight snapshot only when it started from the caller's store — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: .reviews/round-1.md; design.md#d4-one-in-flight-snapshot-per-store-joined-only-on-a-matching-generation
   - **Acceptance**:
     - Outcome: a reader that has observed a write is never served the snapshot that was already in flight before it
