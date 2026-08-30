@@ -22,6 +22,7 @@ import type {
   WorktreeCreateDefaults,
   WorktreeCreateDraft,
   WorktreeOpenAfter,
+  WorktreeProvisionOffer,
 } from "./worktreeViewTypes";
 
 /**
@@ -115,6 +116,138 @@ export interface WorktreeCreateDialogDeps {
 export { sanitizeBranchForPath };
 
 /** Mount the create form and return its disposer. */
+/**
+ * One offered item, flattened out of the model.
+ *
+ * `verb` and `subject` are separate because only the subject comes from the
+ * provider file: it is untrusted text set with `textContent`, and it is the
+ * half a row is identified by. `checked` is the row's initial state, not a
+ * value anything reads yet — WT-012.2 is where a checkbox first decides
+ * anything.
+ */
+interface BringRow {
+  id: string;
+  verb: string;
+  subject: string;
+  source: string;
+  checked: boolean;
+  /** Linked rows only: writing through the link changes the main checkout. */
+  warn?: string;
+}
+
+/**
+ * The offer as one flat list, in the order the section renders.
+ *
+ * Flat rather than grouped by kind because § 2.4's selection is one flat list of
+ * ids — a UI that sorted rows by kind would have to be undone to submit them —
+ * and one row per ITEM rather than the mockup's one row per kind because the
+ * spec says each row names the file that declared it, which a "Copy 2 files"
+ * row cannot do once two files came from two providers.
+ */
+function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
+  const rows: BringRow[] = [];
+  for (const entry of model.entries) {
+    rows.push({
+      id: entry.id,
+      verb: entry.mode === "link" ? "Link" : "Copy",
+      subject: entry.path,
+      source: entry.source,
+      checked: true,
+      ...(entry.mode === "link" ? { warn: "writes to main" } : {}),
+    });
+  }
+  for (const port of model.ports) {
+    rows.push({
+      id: port.id,
+      // No number: allocation is WT-012.6's, and a placeholder here would read
+      // as an allocation nobody made.
+      verb: "Allocate port",
+      subject: port.name,
+      source: port.source,
+      checked: true,
+    });
+  }
+  for (const step of model.setup) {
+    rows.push({
+      id: step.id,
+      verb: "Run setup",
+      subject: step.script,
+      source: step.source,
+      // OFF. A command a provider file supplied is not consent because a
+      // checkbox arrived pre-ticked (worktree-provisioning.md § 7).
+      checked: false,
+    });
+  }
+  return rows;
+}
+
+/** `2 copied · 1 linked · 1 port · 1 setup step` — what the section will do. */
+function bringSummary(model: WorktreeProvisionOffer["model"]): string {
+  const copied = model.entries.filter((e) => e.mode === "copy").length;
+  const linked = model.entries.length - copied;
+  const parts: string[] = [];
+  if (copied > 0) {
+    parts.push(`${copied} copied`);
+  }
+  if (linked > 0) {
+    parts.push(`${linked} linked`);
+  }
+  if (model.ports.length > 0) {
+    parts.push(`${model.ports.length} port${model.ports.length === 1 ? "" : "s"}`);
+  }
+  if (model.setup.length > 0) {
+    parts.push(`${model.setup.length} setup step${model.setup.length === 1 ? "" : "s"}`);
+  }
+  return parts.join(" \u00b7 ");
+}
+
+/**
+ * One row: a checkbox, the verb and its source on the first line, the subject on
+ * the second.
+ *
+ * Every piece of provider-file text — the subject and the source path — is set
+ * with `textContent`. None of it is interpreted as markup, which is the rule the
+ * whole untrusted-provider-file model rests on.
+ */
+function bringRow(row: BringRow, index: number): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "wt-brow";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "wt-brow-cb";
+  cb.id = `wt-brow-${index}`;
+  // The host's own opaque id. Never the path: a value carrying one would make
+  // the webview the authority on what gets materialized (§ 4.0).
+  cb.value = row.id;
+  cb.checked = row.checked;
+  const top = document.createElement("label");
+  top.className = "wt-brow-top";
+  top.htmlFor = cb.id;
+  const verb = document.createElement("b");
+  verb.textContent = row.verb;
+  top.appendChild(verb);
+  if (row.warn !== undefined) {
+    // Part of the row, not a notice: the spec makes this statement
+    // unsuppressible, and anything dismissible is suppressible.
+    const warn = document.createElement("span");
+    warn.className = "wt-brow-warn";
+    warn.textContent = row.warn;
+    top.appendChild(warn);
+  }
+  const src = document.createElement("span");
+  src.className = "wt-brow-src";
+  src.textContent = row.source;
+  top.appendChild(src);
+  const meta = document.createElement("div");
+  meta.className = "wt-brow-meta";
+  const code = document.createElement("code");
+  code.className = "wt-brow-code";
+  code.textContent = row.subject;
+  meta.appendChild(code);
+  el.append(cb, top, meta);
+  return el;
+}
+
 export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreateDialogDeps): () => void {
   const repos = deps.repos;
   const first = repos[0];
@@ -286,6 +419,37 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   pathInput.type = "text";
   pathField.appendChild(pathInput);
 
+  // ── Bring over — what the new worktree will NOT inherit ─────────────────
+  // Below the destination and above the after-create choice, because it
+  // describes the worktree being made rather than what happens once it exists.
+  // The section is never a gate: a repository that declares nothing, and one
+  // whose provider file cannot be read, both still submit.
+  const bringField = field("Bring over");
+  bringField.classList.add("wt-bring");
+  const bringSum = document.createElement("span");
+  bringSum.className = "wt-bring-sum";
+  bringField.firstChild?.appendChild(bringSum);
+  const bringBox = document.createElement("div");
+  bringBox.className = "wt-bring-box";
+  bringField.appendChild(bringBox);
+  shell.dialog.appendChild(bringField);
+
+  /** Redraw the section from the repo's offer. Called on every derive. */
+  function syncBringOver(offer: WorktreeProvisionOffer | undefined): void {
+    if (offer === undefined) {
+      // No offer has arrived. Saying nothing is right here and only here: the
+      // form has not been told what this repository needs, and an empty section
+      // would claim it needs nothing.
+      bringField.hidden = true;
+      bringSum.textContent = "";
+      bringBox.replaceChildren();
+      return;
+    }
+    bringField.hidden = false;
+    bringSum.textContent = bringSummary(offer.model);
+    bringBox.replaceChildren(...bringRows(offer.model).map((row, i) => bringRow(row, i)));
+  }
+
   // ── After creating ──────────────────────────────────────────────────────
   const afterField = field("After creating", "wt-after");
   const afterSelect = selectControl(
@@ -430,6 +594,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   function syncDerived(): void {
     const repo = currentRepo();
     repoHint.textContent = repo.mainPath;
+    syncBringOver(repo.provisioning);
 
     const detached = draft.branchMode === "detached";
     nameInput.disabled = detached;

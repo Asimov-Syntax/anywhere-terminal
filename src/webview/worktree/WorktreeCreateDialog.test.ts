@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openWorktreeCreateDialog, sanitizeBranchForPath } from "./WorktreeCreateDialog";
-import { createDefaults } from "./worktreeFixtures";
+import { createDefaults, provisionModel, provisionOffer } from "./worktreeFixtures";
 import type { WorktreeCreateDraft } from "./worktreeViewTypes";
 
 afterEach(() => {
@@ -884,5 +884,110 @@ describe("round-2 review fixes", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Bring over — what the new worktree will lack", () => {
+  /** The form opened against a repository whose provisioning offer has arrived. */
+  function withOffer(over: Parameters<typeof provisionOffer>[0] = {}) {
+    return open({ repos: [createDefaults({ provisioning: provisionOffer(over) })] });
+  }
+
+  const rows = (host: HTMLElement): HTMLElement[] => Array.from(host.querySelectorAll<HTMLElement>(".wt-brow"));
+
+  it("gives every offered item its own row", () => {
+    // Five declared items — two copied, one linked, one port, one setup step.
+    // The mockup draws one row per KIND; the spec says one row per ITEM, because
+    // the selection it feeds is a flat list of ids.
+    const { host } = withOffer();
+    expect(rows(host)).toHaveLength(5);
+  });
+
+  it("names the file that declared each row", () => {
+    const { host } = withOffer();
+    const sources = rows(host).map((r) => r.querySelector(".wt-brow-src")?.textContent);
+    expect(sources).toEqual(Array(5).fill("asimov/worktree.yaml"));
+  });
+
+  it("names each row's own subject, not a count", () => {
+    const { host } = withOffer();
+    const subjects = rows(host).map((r) => r.querySelector(".wt-brow-code")?.textContent);
+    expect(subjects).toEqual([
+      ".env",
+      ".claude/settings.local.json",
+      ".env.local",
+      "APP",
+      "pnpm install --frozen-lockfile",
+    ]);
+  });
+
+  it("gives every checkbox the host's own opaque id, never a path", () => {
+    // The submission quotes ids back (§ 2.4). A checkbox valued with a path
+    // would make the webview the authority on what gets materialized.
+    const { host } = withOffer();
+    const values = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).map((cb) => cb.value);
+    expect(values).toEqual(["i1", "i2", "i3", "i4", "i5"]);
+  });
+
+  it("says a linked row writes to the main checkout, and offers no way to hide it", () => {
+    const { host } = withOffer();
+    const linked = rows(host).find((r) => r.querySelector(".wt-brow-code")?.textContent === ".env.local");
+    expect(linked?.querySelector(".wt-brow-warn")?.textContent).toBe("writes to main");
+    // Unsuppressible: nothing in the row dismisses it, and clearing the row's
+    // own checkbox leaves the statement standing.
+    expect(linked?.querySelector("button")).toBeNull();
+    const cb = linked?.querySelector<HTMLInputElement>(".wt-brow-cb");
+    if (cb) {
+      cb.checked = false;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    expect(linked?.querySelector(".wt-brow-warn")?.textContent).toBe("writes to main");
+  });
+
+  it("marks only the linked row", () => {
+    const { host } = withOffer();
+    expect(host.querySelectorAll(".wt-brow-warn")).toHaveLength(1);
+  });
+
+  it("leaves a setup command unchecked — a provider file is not consent", () => {
+    const { host } = withOffer();
+    const checked = rows(host).map((r) => r.querySelector<HTMLInputElement>(".wt-brow-cb")?.checked);
+    expect(checked).toEqual([true, true, true, true, false]);
+  });
+
+  it("renders a port row without inventing a number for it", () => {
+    // Allocation is a later task. A placeholder here reads as an allocation
+    // nobody made.
+    const { host } = withOffer();
+    const port = rows(host).find((r) => r.querySelector(".wt-brow-code")?.textContent === "APP");
+    expect(port?.textContent).not.toMatch(/\d/);
+  });
+
+  it("summarizes the section by what it will do", () => {
+    const { host } = withOffer();
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("2 copied · 1 linked · 1 port · 1 setup step");
+  });
+
+  it("shows a setup command as text, never as markup", () => {
+    const { host } = withOffer({
+      model: provisionModel({
+        entries: [],
+        ports: [],
+        setup: [
+          { id: "i9", kind: "shell", script: "<img src=x onerror=alert(1)>", source: "asimov/worktree.yaml" },
+        ],
+      }),
+    });
+    const code = host.querySelector(".wt-brow-code");
+    expect(code?.textContent).toBe("<img src=x onerror=alert(1)>");
+    expect(code?.querySelector("img")).toBeNull();
+  });
+
+  it("still offers Create when the repository declares nothing to bring over", () => {
+    // The section is not a gate. This asserts the create path is untouched;
+    // what the empty section SAYS is the next task's.
+    const { q } = open({ repos: [createDefaults()] });
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
   });
 });

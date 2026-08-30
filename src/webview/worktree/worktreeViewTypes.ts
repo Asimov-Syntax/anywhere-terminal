@@ -18,10 +18,15 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
-import type { RemovalCheck } from "../../types/messages";
+import type { ProvisionModel, RemovalCheck } from "../../types/messages";
 
 export type {
   DestinationDisposition,
+  ProvisionEntry,
+  ProvisionModel,
+  ProvisionPort,
+  ProvisionProblem,
+  ProvisionSetupStep,
   RemovalCheck,
   RemovalCheckClass,
   RemovalCheckOutcome,
@@ -107,6 +112,19 @@ export interface WorktreeActionResult {
   openFailed?: string;
 }
 
+/**
+ * The provisioning material the host resolved, and the id that names it.
+ *
+ * The model is display material; the id is what a submission quotes back. The
+ * webview never receives a handle it could dereference into something
+ * executable — the host holds the model it displayed and executes from THAT
+ * (worktree-provisioning.md § 4.0).
+ */
+export interface WorktreeProvisionOffer {
+  readonly offerId: string;
+  readonly model: ProvisionModel;
+}
+
 /** Host-computed seed for the create form (`requestWorktreeCreateDefaults`). */
 export interface WorktreeCreateDefaults {
   repoId: string;
@@ -133,6 +151,13 @@ export interface WorktreeCreateDefaults {
    * claude's postures for codex.
    */
   agents: WorktreeLaunchAgent[];
+  /**
+   * Absent until the host's offer arrives — which is a separate message from
+   * this one, so the form opens without it and gains the section on the answer.
+   * Absent is NOT "nothing to bring over": that is an offer carrying an empty
+   * model, and the two say different things.
+   */
+  provisioning?: WorktreeProvisionOffer;
 }
 
 /** One offerable agent, as the host reported it. */

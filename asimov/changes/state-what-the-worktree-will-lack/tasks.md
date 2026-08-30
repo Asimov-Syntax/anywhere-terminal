@@ -42,7 +42,7 @@
     4. Cover the host wiring in `src/providers/WorktreeHost.actions.test.ts`: one form open produces one offer, and the defaults request re-sent as the user types does not mint a second.
   - **Boundary**: no execution path reads this store in this change — it is written and looked up, never applied
 
-- [ ] 1_4 Render the section, one row per offered item
+- [x] 1_4 Render the section, one row per offered item — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: specs/worktree-panel/spec.md#{the-create-form-states-what-the-new-worktree-will-lack, a-linked-row-says-where-its-writes-land}; design.md D6
   - **Acceptance**:
@@ -53,6 +53,8 @@
     2. Take the markup and class names from `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` as they stand on this branch. Read them; change neither — a design pass owns both files and an unmerged pass on `main` touches them too.
     3. Follow the offer through `src/webview/worktree/worktreeViewTypes.ts` and `src/webview/worktree/WorktreeController.ts` the way the create defaults already travel.
     4. State the linked-row consequence as part of the row, not as a dismissible notice — the spec makes it unsuppressible.
+    5. The section's styles go in `src/webview/worktree/worktreePanel.css`, which is the panel's shipped stylesheet — `docs/ui/worktree-create-dialog.css` is a mockup asset that no shipped module loads, so its `cw-` class names are read as the design and re-expressed in the panel's own `wt-` idiom.
+    6. Route the offer to the controller through `src/webview/messaging/MessageRouter.ts` and `src/webview/main.ts`, the way `worktreeCreateDefaults` already routes, and add the offer fixtures to `src/webview/worktree/worktreeFixtures.ts`. Cover the controller's own hold-and-attach in `src/webview/worktree/WorktreeController.test.ts`.
   - **Boundary**: no edit to `docs/ui/create-worktree.html` or `docs/ui/worktree-create-dialog.css`
 
 - [ ] 1_5 Say what a repository that declares nothing will still lack

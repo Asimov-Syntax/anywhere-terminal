@@ -8,7 +8,15 @@ import type {
 } from "../../types/messages";
 import type { PaneAttribution, PaneReport } from "../paneAttribution";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
-import { agentRow, noRepoTree, singleRepoPresence, singleRepoTree, twoRepoTree, worktree } from "./worktreeFixtures";
+import {
+  agentRow,
+  noRepoTree,
+  provisionModel,
+  singleRepoPresence,
+  singleRepoTree,
+  twoRepoTree,
+  worktree,
+} from "./worktreeFixtures";
 import type {
   WorktreeActionResult,
   WorktreeAgentRow,
@@ -1186,6 +1194,60 @@ describe("the create a toolbar with no repository opens", () => {
 
     // Still waiting on the destination for "feat/x" — nothing has answered it.
     expect(create()?.disabled).toBe(true);
+  });
+
+  it("[1_4] holds the offer and hands it to the form beside the destination", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO_A,
+      offerId: "provision-1",
+      model: provisionModel(),
+    });
+
+    expect(document.querySelectorAll(".wt-brow")).toHaveLength(5);
+  });
+
+  it("[1_4] keeps the offer while the destination is re-answered per keystroke", () => {
+    // The host issues ONE offer per form and answers the destination on every
+    // settled edit. An offer folded into that reply would be dropped by the
+    // second answer, taking the section with it.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO_A,
+      offerId: "provision-1",
+      model: provisionModel(),
+    });
+    h.controller.handleCreateDefaults({ ...answer(REPO_A, "/trees/a"), branch: "feat/x" });
+
+    expect(document.querySelectorAll(".wt-brow")).toHaveLength(5);
+  });
+
+  it("[1_4] forgets an offer for a repository that has left the workspace", () => {
+    // The offer names a model the host holds for a repo it no longer answers
+    // for. Kept, it would render a section for a repository that is gone.
+    const h = ready(twoRepoResponse());
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO_B,
+      offerId: "provision-1",
+      model: provisionModel(),
+    });
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: singleRepoTree(),
+      presence: singleRepoPresence(1_000_000),
+    });
+    const held = (h.controller as unknown as { provisionOffers: Map<string, unknown> }).provisionOffers;
+
+    expect(held.has(REPO_B)).toBe(false);
   });
 
   it("[B1] an answer that names the branch it is for still reaches the open form", () => {

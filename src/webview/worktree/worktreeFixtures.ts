@@ -7,9 +7,11 @@
 // `now` — a fixture with a baked-in epoch renders a different age every day.
 
 import type {
+  ProvisionModel,
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeCreateDefaults,
+  WorktreeProvisionOffer,
   WorktreeInfo,
   WorktreePresence,
   WorktreeRemoveReport,
@@ -323,4 +325,32 @@ export function createDefaults(over: Partial<WorktreeCreateDefaults> = {}): Work
     ],
     ...over,
   };
+}
+
+const YAML = "asimov/worktree.yaml";
+
+/**
+ * A repository that declares one of everything — the acceptance case for the
+ * section, and the only fixture that exercises a port row: this repository's own
+ * `asimov/worktree.yaml` declares no `ports:` at all.
+ */
+export function provisionModel(over: Partial<ProvisionModel> = {}): ProvisionModel {
+  return {
+    entries: [
+      { id: "i1", path: ".env", mode: "copy", source: YAML },
+      { id: "i2", path: ".claude/settings.local.json", mode: "copy", source: YAML },
+      { id: "i3", path: ".env.local", mode: "link", source: YAML },
+    ],
+    ports: [{ id: "i4", name: "APP", source: YAML }],
+    setup: [{ id: "i5", kind: "shell", script: "pnpm install --frozen-lockfile", source: YAML }],
+    providers: [{ id: "asimov", file: YAML, active: true }],
+    excluded: [],
+    problems: [],
+    ...over,
+  };
+}
+
+/** The offer as the form receives it — an opaque id beside the model it names. */
+export function provisionOffer(over: Partial<WorktreeProvisionOffer> = {}): WorktreeProvisionOffer {
+  return { offerId: "provision-1", model: provisionModel(), ...over };
 }

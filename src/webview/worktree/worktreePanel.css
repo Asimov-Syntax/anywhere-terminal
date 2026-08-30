@@ -1074,6 +1074,94 @@
   color: var(--vscode-foreground);
   font-weight: 600;
 }
+/* ── Bring over — what the new worktree will NOT inherit ──────────────────
+   Structure and proportions from docs/ui/create-worktree.html's `cw-` mockups,
+   re-expressed here because that stylesheet is a mockup asset no shipped module
+   loads. One row per offered item, two lines each: the verb and its source file,
+   then the subject the provider file supplied. */
+.wt-bring-sum {
+  margin-left: 6px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.9;
+}
+.wt-bring-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+.wt-brow {
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr);
+  gap: 3px 8px;
+  align-items: center;
+  min-width: 0;
+}
+.wt-brow-cb {
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--vscode-checkbox-selectBackground, var(--vscode-focusBorder));
+}
+.wt-brow-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+}
+.wt-brow-top b {
+  flex: 0 0 auto;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+/* The source badge is pushed to the row's end, so the subject below it and the
+   file that declared it read as one column each. */
+.wt-brow-src {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.9;
+}
+/* Part of the row, never a dismissible notice — the spec makes the statement
+   unsuppressible. */
+.wt-brow-warn {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+  color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 14%, transparent);
+}
+.wt-brow-meta {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* Provider-file text. Truncated rather than wrapped: a long script must not push
+   the form's own controls off the measure. */
+.wt-brow-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
 /* Derived and overriding inputs, behind one disclosure. `hidden` on the body is
    what keeps them out of the dialog's focus trap while it is closed. */
 .wt-advanced {

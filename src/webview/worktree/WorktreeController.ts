@@ -12,6 +12,7 @@ import type {
   VaultLaunchTargetsMessage,
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
+  WorktreeProvisionOfferMessage,
   WorktreeMutationResultMessage,
   WorktreeSubscriptionLevel,
   WorktreeTreeResponseMessage,
@@ -252,6 +253,14 @@ export class WorktreeController {
   private lastAttribution: string | null = null;
   /** The host's resolved create destination, per repo. Only it can know one. */
   private readonly createDefaults = new Map<string, WorktreeCreateDefaultsMessage>();
+  /**
+   * The host's provisioning offer, per repo.
+   *
+   * Held apart from `createDefaults` because the host issues ONE offer per form
+   * and answers the defaults per keystroke — folding the offer into that reply
+   * would either re-mint it on every character or drop it on the second answer.
+   */
+  private readonly provisionOffers = new Map<string, WorktreeProvisionOfferMessage>();
   /** The repo a create was invoked for, waiting on its defaults. */
   /**
    * The create waiting on the host, and the repositories it has yet to hear
@@ -886,6 +895,7 @@ export class WorktreeController {
       if (answer === undefined) {
         continue;
       }
+      const offer = this.provisionOffers.get(repo.repoId);
       repos.push({
         repoId: repo.repoId,
         repoLabel: repo.label,
@@ -902,9 +912,27 @@ export class WorktreeController {
         // WT-005.3 owns launches; an option that resolves to nothing is worse
         // than no option at all.
         agents: this.launchAgents,
+        // Absent until the offer arrives, which the form renders as "not told
+        // yet" rather than as "nothing to bring over".
+        ...(offer === undefined ? {} : { provisioning: { offerId: offer.offerId, model: offer.model } }),
       });
     }
     return repos;
+  }
+
+  /**
+   * The host's provisioning offer for one repo.
+   *
+   * Stored and pushed into an open form. Superseding is the HOST's decision —
+   * it issues one offer per form and evicts the previous id when it does — so
+   * this simply takes the latest, and never keeps two.
+   */
+  handleProvisionOffer(msg: WorktreeProvisionOfferMessage): void {
+    this.provisionOffers.set(msg.repoId, msg);
+    const seed = this.createRepos().find((r) => r.repoId === msg.repoId);
+    if (seed !== undefined) {
+      this.applyCreateDefaults?.(seed);
+    }
   }
 
   /** The host's create destination for one repo, and the form it was asked for. */
@@ -1078,6 +1106,11 @@ export class WorktreeController {
     for (const repoId of this.createDefaults.keys()) {
       if (!repos.has(repoId)) {
         this.createDefaults.delete(repoId);
+      }
+    }
+    for (const repoId of this.provisionOffers.keys()) {
+      if (!repos.has(repoId)) {
+        this.provisionOffers.delete(repoId);
       }
     }
 

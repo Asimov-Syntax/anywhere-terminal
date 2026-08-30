@@ -857,6 +857,9 @@ const routeMessage = createMessageRouter({
   onWorktreeCreateDefaults(msg) {
     worktreeController?.handleCreateDefaults(msg);
   },
+  onWorktreeProvisionOffer(msg) {
+    worktreeController?.handleProvisionOffer(msg);
+  },
   onWorktreeMutationResult(msg) {
     worktreeController?.handleMutationResult(msg);
   },
