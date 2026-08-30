@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -37,4 +37,7 @@ Origin: handback from tell-an-absent-session-from-an-unknown-one cycle 2 round 5
 Blueprint note: no PLAN task of its own — it is the invariant owner split out of WT-011.8 under the remediation boundary, so WT-011.8's row stays the blueprint record.
 Validate warnings triaged: both are "requirement is long". WAL-safe read-only SQLite access (502) is one atomicity contract stated as a SHALL plus the three SHALL-NOTs that define it; splitting it would scatter one contract. SQLite engine selection (707) is inherited verbatim in substance from the shipped requirement — rewriting it further would edit contracts this change does not touch.
 Mechanism evidence gathered before planning, not at build: node:sqlite backup() on Node v24.7.0 snapshots a live WAL store whole (1001/1001 rows incl. the WAL-resident one, integrity_check ok, unaffected by a following checkpoint+VACUUM); read-only source open works even with an unwritable store directory; the D13 "silent empty" case throws ERR_SQLITE_ERROR instead; sqlite3 CLI VACUUM INTO under -readonly exits 0 and is queryable.
+Deviation: 1_3's commit was made before its verify-task tick, and that verify then failed on an unrelated flaky test (a 5s timeout in extension.worktreeAssembly.test.ts). Re-run clean twice; the task was re-leased and ticked with real evidence afterwards. The commit ordering was wrong, not the evidence.
+Watch: the new tests do real sqlite and real sqlite3-CLI I/O inside the parallel suite, which is the most likely cause of that timeout flake. If it recurs, serialise them rather than raising the timeout.
+Dead code removed with the mechanism: the `copy` dep, `cloneOrCopy`, and `readSqliteViaCopy`'s name — nothing in this module copies a store any more.
 

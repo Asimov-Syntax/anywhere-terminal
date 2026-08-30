@@ -23,7 +23,7 @@
     1. In `src/vault/sqlite.ts`, have the CLI engine produce its snapshot with a read-only `VACUUM INTO`, not `.backup`, so the source is never opened read-write.
     2. Cover the same WAL-resident-row acceptance as 1_1 with the CLI engine forced, and assert a snapshot failure surfaces as a status.
 
-- [ ] 1_3 Route every snapshot failure to a status, never an empty result
+- [x] 1_3 Route every snapshot failure to a status, never an empty result — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/agent-session-index/spec.md#sqlite-engine-selection-and-result-discrimination; design.md#d2-every-snapshot-failure-is-a-status-never-an-empty-result
   - **Acceptance**:
@@ -33,7 +33,7 @@
     1. In `src/vault/sqlite.ts`, map an open failure to `db-unreachable` and any other snapshot throw to `query-error`, keeping the existing confirmed-missing `no-db` check ahead of both.
     2. Cover a store whose directory denies the access a WAL open needs, asserting the status and that no rows are returned.
 
-- [ ] 1_4 Retire the sidecar-copy mechanism from the documents that mandate it
+- [x] 1_4 Retire the sidecar-copy mechanism from the documents that mandate it — verified: rg -n 'sidecar' asimov/specs/ docs/ src/ && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1, 1_2, 1_3
   - **Refs**: specs/agent-session-index/spec.md#wal-safe-read-only-sqlite-access
   - **Acceptance**:

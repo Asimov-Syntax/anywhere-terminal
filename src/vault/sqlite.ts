@@ -1,5 +1,6 @@
 // src/vault/sqlite.ts — WAL-safe, read-only SQLite access (no new native
-// dependency). See: design.md D3, D13, D14,
+// dependency). See: design.md D3, D13, D14 (superseded on snapshotting by
+// snapshot-a-live-store-atomically design.md D1-D3),
 // specs/agent-session-index/spec.md (WAL-safe read-only SQLite access),
 // docs/research/20260528-cmux-vault-mechanism.md §4,§7.
 //
@@ -11,18 +12,21 @@
 // same rows in ~20ms. The static query is passed as a single argv element to
 // `execFile` (CLI path) — no shell, no interpolation, no injection.
 //
-// SNAPSHOT: we copy the live DB + its `-wal`/`-shm` sidecars into a temp dir and
-// query the copy, so a running agent's writes are never disturbed and a
-// checkpoint mid-read can't corrupt our snapshot. (We do NOT read the live store
-// in place: a read-only open of a live WAL DB can silently return an empty result
-// instead of erroring — indistinguishable from a genuinely-empty session — so it
-// would surface "not found" for real sessions. See D13.)
+// SNAPSHOT: the ENGINE takes the snapshot — SQLite's Online Backup API in process,
+// a read-only `VACUUM INTO` on the CLI — into a temp dir we then query. Both run
+// inside a read transaction, so a concurrent write, checkpoint or vacuum is
+// included or excluded as a unit. We do NOT read the live store in place, and we
+// do NOT assemble a snapshot from separately-timed copies of the base file and its
+// `-wal`/`-shm` sidecars: no ordering of those copies is safe, because the store
+// can checkpoint and vacuum between any two of them, yielding a snapshot that
+// passes `integrity_check` while missing a row that was there the whole time.
+// A snapshot that cannot be taken reports `db-unreachable`/`query-error`; it is
+// never an empty result, which is the failure this mechanism exists to remove.
 //
-// PERF (D13): the copy is a copy-on-write CLONE (APFS `clonefile` / Linux reflink,
-// via `cp -c` / `cp --reflink=auto`) when the filesystem supports it — near-instant
-// regardless of size — falling back to a byte copy otherwise, keeping a multi-GB
-// store (OpenCode's exceeds 1 GB) from dominating list/detail/resume latency while
-// preserving exact snapshot semantics.
+// PERF: a backup copies only the store's LIVE pages and `VACUUM INTO` writes a
+// compacted copy, so neither pays for free space — which matters for a multi-GB
+// store (OpenCode's exceeds 1 GB). The copy-on-write clone that used to make the
+// file copy cheap is gone with it — nothing in this module copies a store now.
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
@@ -37,9 +41,8 @@ const execFileAsync = promisify(execFile);
 const PROBE_TIMEOUT_MS = 2000;
 /** Per-query cap so a hung `sqlite3` can't stall the vault list. */
 const QUERY_TIMEOUT_MS = 5000;
-/** Cap for the clone/copy step (a reflink clone is ms; a byte-copy fallback of a
- *  multi-GB store needs headroom). */
-const COPY_TIMEOUT_MS = 30000;
+/** Cap for the snapshot step — a backup of a multi-GB store needs headroom. */
+const SNAPSHOT_TIMEOUT_MS = 30000;
 /** `sqlite3 -json` output is bounded by the readers' LIMITs; keep headroom. */
 const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
@@ -80,7 +83,6 @@ export interface SqliteDeps {
    * other than "present" reads as absent (D6).
    */
   access?(p: string): Promise<SqlitePresence>;
-  copy(src: string, dest: string): Promise<void>;
   mkdtemp(): Promise<string>;
   rmrf(dir: string): Promise<void>;
   /**
@@ -102,29 +104,6 @@ export interface SqliteDeps {
   snapshot?(dbPath: string, dest: string): Promise<void>;
 }
 
-/**
- * Copy `src`→`dest` as a copy-on-write CLONE when the platform/filesystem
- * supports it (APFS `clonefile` via `cp -c`, Linux reflink via `cp --reflink=auto`
- * — near-instant regardless of size), falling back to a byte copy otherwise. A
- * clone is an independent file view, so it has the same snapshot semantics as a
- * byte copy while avoiding multi-GB I/O for stores like OpenCode's 1.4 GB db (D13).
- */
-async function cloneOrCopy(src: string, dest: string): Promise<void> {
-  try {
-    if (process.platform === "darwin") {
-      await execFileAsync("cp", ["-c", src, dest], { timeout: COPY_TIMEOUT_MS });
-      return;
-    }
-    if (process.platform === "linux") {
-      await execFileAsync("cp", ["--reflink=auto", src, dest], { timeout: COPY_TIMEOUT_MS });
-      return;
-    }
-  } catch {
-    // clone tool missing / clone unsupported (e.g. cross-volume) — byte-copy below.
-  }
-  await fs.copyFile(src, dest);
-}
-
 async function defaultAccess(p: string): Promise<SqlitePresence> {
   try {
     await fs.access(p);
@@ -142,7 +121,6 @@ const defaultDeps: SqliteDeps = {
     })),
   exists: async (p) => (await defaultAccess(p)) === "present",
   access: defaultAccess,
-  copy: (src, dest) => cloneOrCopy(src, dest),
   mkdtemp: () => fs.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
   rmrf: (dir) => fs.rm(dir, { recursive: true, force: true }),
 };
@@ -313,7 +291,7 @@ function cliSnapshot(deps: SqliteDeps): (dbPath: string, dest: string) => Promis
   return async (dbPath, dest) => {
     try {
       await deps.exec("sqlite3", ["-readonly", dbPath, `VACUUM INTO '${dest.replaceAll("'", "''")}'`], {
-        timeout: COPY_TIMEOUT_MS,
+        timeout: SNAPSHOT_TIMEOUT_MS,
       });
     } catch (err) {
       throw isCannotOpen(err) ? new SnapshotOpenError(errorMessage(err)) : err;
@@ -384,7 +362,7 @@ export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps =
     return { rows: [], status: found === "absent" ? "no-db" : "db-unreachable" };
   }
 
-  return readSqliteViaCopy(deps, dbPath, sql, useCli);
+  return readSqliteViaSnapshot(deps, dbPath, sql, useCli);
 }
 
 /**
@@ -430,13 +408,12 @@ export async function withSqliteSnapshot<T>(
 }
 
 /**
- * Snapshot the DB (a copy-on-write clone where supported, else a byte copy; see
- * `cloneOrCopy`) plus its `-wal`/`-shm` sidecars into a temp dir, query the
- * snapshot read-only, then delete it. Never reads the live store in place (a
- * read-only WAL open can silently return empty → false "not found"; D13). Never
- * throws — failures map to `query-error`.
+ * Take one engine snapshot into a temp dir, query it, then delete it. Never reads
+ * the live store in place and never assembles the snapshot from file copies.
+ * Never throws — a failed open maps to `db-unreachable`, anything else to
+ * `query-error`, and neither is ever an empty `ok`.
  */
-async function readSqliteViaCopy(
+async function readSqliteViaSnapshot(
   deps: SqliteDeps,
   dbPath: string,
   sql: string,

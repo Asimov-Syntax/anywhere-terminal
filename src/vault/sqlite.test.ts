@@ -17,7 +17,6 @@ function makeDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
   return {
     exec: vi.fn(async () => ({ stdout: "[]", stderr: "" })),
     exists: vi.fn(async () => true),
-    copy: vi.fn(async () => {}),
     // The in-process engine snapshots rather than copies; stub deps that never
     // touch a real file need it stubbed too.
     snapshot: vi.fn(async () => {}),
@@ -54,8 +53,6 @@ describe("readSqlite: capability probe", () => {
     const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
     expect(result.status).toBe("no-sqlite3");
     expect(result.rows).toEqual([]);
-    // Never reached the db existence check / copy.
-    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("memoizes the probe across calls", async () => {
@@ -99,7 +96,6 @@ describe("readSqlite: store presence", () => {
     });
     const result = await readSqlite("/x/missing.sqlite", "SELECT 1", deps);
     expect(result.status).toBe("no-db");
-    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("says db-unreachable, NOT no-db, when the path could not be checked", async () => {
@@ -111,7 +107,6 @@ describe("readSqlite: store presence", () => {
     });
     const result = await readSqlite("/locked/store.sqlite", "SELECT 1", deps);
     expect(result.status).toBe("db-unreachable");
-    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("still says no-db when the presence check confirms the file is gone", async () => {
@@ -166,8 +161,6 @@ describe("readSqlite: query execution", () => {
     const calls = (deps.exec as ReturnType<typeof vi.fn>).mock.calls;
     const snapshotCall = calls.find((c) => String(c[1][2] ?? "").startsWith("VACUUM INTO"));
     expect(snapshotCall?.[1]).toEqual(["-readonly", "/x/state.sqlite", "VACUUM INTO '/tmp/at-vault-xyz/db.sqlite'"]);
-    // No sidecar assembly: the engine produces the whole snapshot in one operation.
-    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("runs the query read-only over the temp snapshot, never the live db", async () => {
@@ -239,14 +232,12 @@ describe("readSqlite: engine selection (node:sqlite preferred)", () => {
     expect(runNodeQuery).toHaveBeenCalledWith("/tmp/at-vault-xyz/db.sqlite", "SELECT id FROM t");
     // The snapshot is taken by the engine as one operation, not assembled from copies.
     expect(deps.snapshot).toHaveBeenCalledWith("/x/state.sqlite", "/tmp/at-vault-xyz/db.sqlite");
-    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("returns no-sqlite3 when BOTH the CLI and node:sqlite are absent", async () => {
     const deps = makeDeps({ exec: cliAbsent(), hasNodeSqlite: vi.fn(async () => false) });
     const result = await readSqlite("/x/state.sqlite", "SELECT 1", deps);
     expect(result.status).toBe("no-sqlite3");
-    expect(deps.copy).not.toHaveBeenCalled();
   });
 
   it("prefers node:sqlite over the CLI when both are available (avoids the sqlite3 -json slowness; D14)", async () => {
@@ -295,7 +286,6 @@ describe("readSqlite: engine selection (node:sqlite preferred)", () => {
           return false;
         }
       },
-      copy: (src, dest) => fsp.copyFile(src, dest),
       mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
       rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
       hasNodeSqlite: async () => true,
@@ -345,7 +335,6 @@ describe("readSqlite: the snapshot is taken by the engine, atomically", () => {
           return false;
         }
       },
-      copy: (src, dest) => fsp.copyFile(src, dest),
       mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
       rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
       hasNodeSqlite: async () => true,
@@ -359,50 +348,6 @@ describe("readSqlite: the snapshot is taken by the engine, atomically", () => {
       const result = await readSqlite(dbFile, "SELECT id FROM t ORDER BY id", realDeps());
       expect(result.status).toBe("ok");
       expect(result.rows).toEqual([{ id: "base-row" }, { id: "wal-row" }]);
-    } finally {
-      live.close();
-      await fsp.rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("survives the checkpoint-and-vacuum interleaving that defeated both copy orders", async () => {
-    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-live-"));
-    const dbFile = path.join(dir, "live.sqlite");
-    const seed = new DatabaseSync(dbFile);
-    seed.exec("PRAGMA journal_mode=WAL");
-    seed.exec("CREATE TABLE t(id INTEGER)");
-    for (let i = 0; i < 1000; i++) {
-      seed.prepare("INSERT INTO t VALUES (?)").run(i);
-    }
-    seed.close();
-    const live = new DatabaseSync(dbFile);
-    live.exec("PRAGMA journal_mode=WAL");
-    live.prepare("INSERT INTO t VALUES (?)").run(9999); // WAL-resident
-
-    // The exact window review reproduced: the sidecar has been captured, and the
-    // store then checkpoints AND vacuums — rewriting its pages — before the base
-    // is captured. No ordering of independent file copies survives this; only a
-    // snapshot the engine takes as one operation does.
-    let moved = false;
-    const deps = realDeps({
-      copy: async (src, dest) => {
-        await fsp.copyFile(src, dest);
-        if (!moved && src.endsWith("-wal")) {
-          moved = true;
-          live.exec("PRAGMA wal_checkpoint(PASSIVE)");
-          live.exec("VACUUM");
-        }
-      },
-    });
-    try {
-      const result = await readSqlite(dbFile, "SELECT count(*) AS c FROM t", deps);
-      // Either the snapshot is whole, or it failed loudly. What it must never be
-      // is a successful read that silently lost a pre-existing row.
-      if (result.status === "ok") {
-        expect(result.rows).toEqual([{ c: 1001 }]);
-      } else {
-        expect(["query-error", "db-unreachable"]).toContain(result.status);
-      }
     } finally {
       live.close();
       await fsp.rm(dir, { recursive: true, force: true });
@@ -439,7 +384,6 @@ describe("readSqlite: the CLI fallback snapshots atomically too", () => {
           return false;
         }
       },
-      copy: (src, dest) => fsp.copyFile(src, dest),
       mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
       rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
       hasNodeSqlite: async () => false,
@@ -473,7 +417,6 @@ describe("withSqliteSnapshot: the other entry point snapshots the same way", () 
     );
     expect(result.status).toBe("ok");
     expect(deps.snapshot).toHaveBeenCalledTimes(1); // one snapshot, two queries
-    expect(deps.copy).not.toHaveBeenCalled();
     expect(runNodeQuery.mock.calls.map((c) => c[0])).toEqual([
       "/tmp/at-vault-xyz/db.sqlite",
       "/tmp/at-vault-xyz/db.sqlite",
@@ -524,7 +467,6 @@ describe("readSqlite: a store that cannot be opened is not an empty store", () =
           return false;
         }
       },
-      copy: (src, dest) => fsp.copyFile(src, dest),
       mkdtemp: () => fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
       rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
       hasNodeSqlite: async () => true,
