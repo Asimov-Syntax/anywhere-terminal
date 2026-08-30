@@ -157,8 +157,17 @@ the pane that made it. The projector publishes the claim as `entryId → paneId`
 membership set — it already knows the pane, so this is the same fact keyed usefully — and the
 suppression moves out of the producer and into `evaluateRemoval`, which is where the target worktree
 and the pane snapshot are both in hand. A session is dropped from the external evidence only when its
-claiming pane is present in that same snapshot, resolved inside the target, and not exited. Anything
-else keeps the registry record, and an unclassifiable record refuses. Both failure directions now
+claiming pane is present in that same snapshot, resolved inside the target, and PROVABLY IDLE there.
+Anything else keeps the registry record, and an unclassifiable record refuses.
+
+The idle clause is corrected from "not exited" on round-4 B5, which found the weaker one contradicting
+this decision's own principle. `busyAgents` is counted from the debounced projection while the panes
+are the live snapshot, so "the pane exists and has not exited" let a pane that is running RIGHT NOW
+pair with its own stale idle row and erase the registry record that would have refused. Running,
+waiting and unknown all keep the record — the same rule the record itself is held to, where absent
+means live. The pane list the confirmable report NAMES is unchanged and still excludes only `exited`:
+a running pane is still a pane a removal would take out from under the user, and that is a different
+question from whether its claim authorizes erasing other evidence. Both failure directions now
 point the same way: an unknown session refuses, and a claim we cannot corroborate is not a claim.
 
 Rejected — a generation counter on the projection compared against a pane-evidence generation: it

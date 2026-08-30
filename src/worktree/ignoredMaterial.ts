@@ -10,6 +10,8 @@
 //
 // The reads are injected, so the suite needs no disk.
 
+import { afterDelay } from "./deadline";
+
 /** Entries scanned before the walk gives up. */
 export const MAX_IGNORED_ENTRIES = 5000;
 
@@ -95,23 +97,6 @@ function provisionedEntries(text: string): number | undefined {
 }
 
 /**
- * A deadline that can be raced against a read holding no cancellation of its own.
- *
- * `lstat` takes no signal, so the walk cannot stop a stat it already issued —
- * only stop waiting on it. The abandoned read completes unobserved, costing its
- * own I/O and nothing else, and `unref` keeps the timer from holding the
- * process open on the far more common path where the read wins.
- */
-function expiresIn(ms: number): { expiry: Promise<"expired">; cancel: () => void } {
-  let handle: ReturnType<typeof setTimeout> | undefined;
-  const expiry = new Promise<"expired">((resolve) => {
-    handle = setTimeout(() => resolve("expired"), ms);
-    handle.unref?.();
-  });
-  return { expiry, cancel: () => clearTimeout(handle) };
-}
-
-/**
  * Count and size the ignored material, under one entry budget and one time
  * budget spanning both the enumeration and the sizing.
  *
@@ -134,7 +119,7 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
     for await (const relPath of deps.ignoredEntries(remaining)) {
       // Checked before the entry is admitted, so the caps bound what is stat'd
       // and not merely what is reported.
-      if (entries >= MAX_IGNORED_ENTRIES || deps.now() - startedAt > MAX_IGNORED_MS) {
+      if (entries >= MAX_IGNORED_ENTRIES || deps.now() - startedAt >= MAX_IGNORED_MS) {
         return { kind: "unproven", reason: "budget" };
       }
       entries += 1;
@@ -145,23 +130,38 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
       if (left <= 0) {
         return { kind: "unproven", reason: "budget" };
       }
-      const deadline = expiresIn(left);
-      let sized: number | "expired";
+      // `lstat` takes no signal, so the walk cannot stop a stat it already
+      // issued — only stop waiting on it. The abandoned read completes
+      // unobserved, costing its own I/O and nothing else.
+      const deadline = afterDelay(left);
+      let sized: { bytes: number } | undefined;
       try {
-        sized = await Promise.race([deps.size(relPath), deadline.expiry]);
+        sized = await Promise.race([
+          deps.size(relPath).then((bytes) => ({ bytes })),
+          // Boxed, so the loser is told apart from a size of any number —
+          // including zero, which is a perfectly ordinary answer for a stat.
+          deadline.elapsed.then(() => undefined),
+        ]);
       } finally {
         deadline.cancel();
       }
-      if (sized === "expired") {
+      if (sized === undefined) {
         return { kind: "unproven", reason: "budget" };
       }
-      bytes += sized;
+      bytes += sized.bytes;
       // Kept alongside the race, because they catch different reads: the race
       // stops one that never returns, this stops one that returns LATE, whose
       // cost is already spent by the time it resolves (round-1 B4).
-      if (deps.now() - startedAt > MAX_IGNORED_MS) {
+      if (deps.now() - startedAt >= MAX_IGNORED_MS) {
         return { kind: "unproven", reason: "budget" };
       }
+    }
+    // After the loop, not only inside it. An enumeration that runs long while
+    // yielding NOTHING never enters the body, so every check above is
+    // unreached — and `measured, entries: 0` is the strongest claim this walk
+    // can make, from a walk that established nothing (round-4 W2).
+    if (deps.now() - startedAt >= MAX_IGNORED_MS) {
+      return { kind: "unproven", reason: "budget" };
     }
   } catch {
     // A stat that failed and an enumeration that threw are the same answer: we

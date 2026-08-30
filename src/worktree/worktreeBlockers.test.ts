@@ -436,6 +436,40 @@ describe("a registry session a pane in this window already holds", () => {
     expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
   });
 
+  // Round-4 B5. `busyAgents` is counted from the debounced projection while
+  // `panes` is the live snapshot, so "the pane exists and has not exited" let a
+  // stale idle row pair with a pane that is running RIGHT NOW — and the
+  // registry record that would have refused was erased on the strength of it.
+  it.each(["running", "waiting"] as const)("refuses when the claiming pane is %s", (activity) => {
+    const result = withClaim([{ paneId: "p-1", cwd: "/repo/wt-a", activity }], new Map([["claude:s-1", "p-1"]]));
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+  });
+
+  it("refuses when the claiming pane's activity is unknown", () => {
+    // Same rule the registry record itself is held to: absent means live.
+    const result = withClaim(
+      [{ paneId: "p-1", cwd: "/repo/wt-a", activity: undefined }],
+      new Map([["claude:s-1", "p-1"]]),
+    );
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+  });
+
+  it("still names a running claiming pane in the evidence when something else refuses nothing", () => {
+    // `paneIds` answers a different question from suppression: a running pane
+    // is still a pane the report should name. Only the SUPPRESSION tightened.
+    const result = evaluateRemoval(
+      input({
+        panes: [{ paneId: "p-1", cwd: "/repo/wt-a", activity: "running" }],
+        claimedByPane: new Map([["claude:s-1", "p-1"]]),
+      }),
+    );
+    expect(result).toMatchObject({ kind: "confirmable" });
+    if (result.kind !== "confirmable") {
+      return;
+    }
+    expect(result.evidence.paneIds).toEqual(["p-1"]);
+  });
+
   it("refuses when nothing claimed it at all", () => {
     const result = withClaim([{ paneId: "p-1", cwd: "/repo/wt-a", activity: "idle" }], new Map());
     expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });

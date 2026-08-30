@@ -180,3 +180,17 @@
     4. Cover in `src/worktree/worktreeBlockers.test.ts`: a claiming pane inside the target (counted once, as the pane), a claiming pane whose cwd is undefined, one resolved outside the target, one that exited, and a claim naming a pane no longer in the snapshot — each still refusing.
     5. The projector fakes in `src/providers/WorktreeHost.actions.test.ts`, `src/providers/WorktreeHost.delegations.test.ts`, `src/providers/WorktreeHost.presence.test.ts`, `src/providers/WorktreeHost.test.ts` and `src/extension.worktreeAssembly.test.ts` follow the type; `src/providers/WorktreeHost.ts` carries the map into the input.
   - **Boundary**: the projection's own filter is unchanged — this re-keys the fact it already publishes
+
+- [x] 6_1 Suppress only on a pane this assessment sees idle, and give the deadline one owner — verified: pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
+  - **Deps**: 5_2
+  - **Refs**: specs/worktree-panel/spec.md#{a-removal-refuses-when-it-cannot-establish-that-nothing-is-using-the-worktree}; design.md D3, D6
+  - **Acceptance**:
+    - Outcome: A claimed registry session whose pane is running, waiting, or unclassified still refuses the removal
+    - Verify: unit src/worktree/worktreeBlockers.test.ts
+  - **Plan**:
+    1. Round-4 B5. In `evaluateRemoval` (`src/worktree/worktreeBlockers.ts`), split the two questions the one pane filter was answering. Suppression requires `p.activity === "idle"`; `paneIds` keeps `!== "exited"`, because a running pane is still one the confirmable report should name. `busyAgents` comes from the debounced projection while `panes` is the live snapshot, so a claim corroborated only by "not exited" can pair a stale idle row with a pane that is running now.
+    2. Correct D6's enumerated clause in `design.md` to say `idle` rather than `not exited`. The decision is unchanged — a claim we cannot corroborate is not a claim — and the clause contradicted it.
+    3. Round-4 W2. In `src/worktree/ignoredMaterial.ts` the deadline comparisons become `>=`, and a final check runs after the enumeration: an enumeration that runs long while yielding nothing never enters the loop body, so today it reports a measured zero after blowing its budget.
+    4. Round-4 W4. Extract the unref'd deadline primitive to `src/worktree/deadline.ts` with `src/worktree/deadline.test.ts`; `expiresIn` in `src/worktree/ignoredMaterial.ts` and `defaultWait` in `src/worktree/sessionPreviewService.ts` both use it. Two owners of deadline semantics is what W2 is a symptom of.
+    5. Cover in `src/worktree/worktreeBlockers.test.ts` (running, waiting and unclassified claiming panes, each refusing; the idle one still suppressing) and `src/worktree/ignoredMaterial.test.ts` (a stat resolving exactly at the cap, and a late enumeration that yields nothing).
+  - **Boundary**: no new invariant owner — round-4 W3's shared in-flight read registry is out of scope and goes to the user

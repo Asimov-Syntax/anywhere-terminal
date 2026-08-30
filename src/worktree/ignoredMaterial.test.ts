@@ -499,3 +499,56 @@ describe("what the caps can and cannot bound", () => {
     expect(await measureIgnoredMaterial(deps)).toEqual({ kind: "unproven", reason: "budget" });
   });
 });
+
+describe("the edges of the time cap", () => {
+  it("treats a read landing exactly on the deadline as out of budget", () => {
+    // Round-4 W2. `> MAX` admits the read that lands ON the cap, so the walk
+    // reports a total it spent its entire budget and one instant more on.
+    let calls = 0;
+    const deps: IgnoredMaterialDeps = {
+      ignoredEntries: async function* () {
+        yield "a.bin";
+      },
+      size: async () => 1,
+      readManifest: async () => {
+        throw new Error("ENOENT");
+      },
+      // Zero while the budget is computed, a sliver left when the read is
+      // issued, and exactly the cap by the time it has landed.
+      now: () => {
+        calls += 1;
+        if (calls <= 3) {
+          return 0;
+        }
+        return calls === 4 ? MAX_IGNORED_MS - 10 : MAX_IGNORED_MS;
+      },
+    };
+
+    return expect(measureIgnoredMaterial(deps)).resolves.toEqual({ kind: "unproven", reason: "budget" });
+  });
+
+  it("does not report a measured zero for an enumeration that ran long and yielded nothing", () => {
+    // The loop body never runs, so every deadline check inside it is unreached
+    // — and `measured, entries: 0` is the strongest claim this walk can make.
+    let clock = 0;
+    const deps: IgnoredMaterialDeps = {
+      // Not a generator: an empty one still has to name a yield to satisfy the
+      // linter, and yielding is the one thing this case must not do.
+      ignoredEntries: () => ({
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            clock = MAX_IGNORED_MS * 10;
+            return { done: true as const, value: undefined };
+          },
+        }),
+      }),
+      size: async () => 1,
+      readManifest: async () => {
+        throw new Error("ENOENT");
+      },
+      now: () => clock,
+    };
+
+    return expect(measureIgnoredMaterial(deps)).resolves.toEqual({ kind: "unproven", reason: "budget" });
+  });
+});

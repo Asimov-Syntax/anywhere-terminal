@@ -242,19 +242,31 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
   // set to `worktree-removal.md`, whose § 2 refuses on running, waiting, AND
   // undeterminable. The worktree is removable again as soon as that process
   // exits — the registry lists only live pids.
-  // A pane this assessment will itself classify: present in the snapshot it was
-  // handed, resolved inside the target, and not exited. Anything else leaves
-  // the registry record standing, so both failure directions point the same
-  // way — an unknown session refuses, and an uncorroborated claim erases
-  // nothing (cycle-2 B5).
-  const classifiablePanes = new Set(
-    input.panes
-      .filter((p) => p.cwd !== undefined && isPathInside(p.cwd, target.id) && p.activity !== "exited")
-      .map((p) => p.paneId),
-  );
+  // Panes of this window rooted in the target. Two different questions are
+  // asked of them and they take different answers (round-4 B5).
+  const panesHere = input.panes.filter((p) => p.cwd !== undefined && isPathInside(p.cwd, target.id));
+
+  // For the REPORT: every live pane, whatever it is doing. A running pane is
+  // still a pane a removal would take out from under the user.
+  const paneIds = panesHere
+    .filter((p) => p.activity !== "exited")
+    .map((p) => p.paneId)
+    .sort();
+
+  // For SUPPRESSION: only a pane this assessment sees is provably idle. The
+  // registry is user-wide, so a Claude in one of our own panes writes its own
+  // live-pid record; dropping it keeps the session counted once, as the idle
+  // pane it is (D6, round-1 B2). But "the pane exists and has not exited" is
+  // the wrong corroboration for that: `busyAgents` is counted from the
+  // debounced projection while these panes are the live snapshot, so a pane
+  // that is running RIGHT NOW could pair with its own stale idle row and erase
+  // the registry record that would have refused (round-4 B5). Running, waiting
+  // and unknown all keep the record — the same rule the record itself is held
+  // to, where absent means live.
+  const idlePanesHere = new Set(panesHere.filter((p) => p.activity === "idle").map((p) => p.paneId));
   const heldHere = (entryId: string): boolean => {
     const paneId = input.claimedByPane.get(entryId);
-    return paneId !== undefined && classifiablePanes.has(paneId);
+    return paneId !== undefined && idlePanesHere.has(paneId);
   };
 
   const externalHere = (input.externalSessions.ok === true ? input.externalSessions.value : []).filter(
@@ -278,7 +290,6 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
   // `notApplicable` parses as empty and that is the honest answer here: there
   // is no directory, so there are no working files a removal could destroy.
   const status = parsePorcelain(input.porcelain.ok === true ? input.porcelain.value : "");
-  const paneIds = [...classifiablePanes].sort();
   // Only the provably idle ones reach here — anything else already refused.
   const externalSessionIds = externalHere.map((s) => s.sessionId).sort();
 

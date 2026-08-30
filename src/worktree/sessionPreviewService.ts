@@ -13,6 +13,7 @@ import { claudeRoots } from "../vault/readers/claudePaths";
 import { codexStoreDirs, pickRolloutPath } from "../vault/readers/codexReader";
 import { type LastActivityFormat, readLastActivityLine } from "../vault/readers/lastActivity";
 import type { VaultAgentId } from "../vault/types";
+import { afterDelay, type Deadline } from "./deadline";
 
 /** What the service needs to know about a session to find its transcript. */
 export interface PreviewEntry {
@@ -45,16 +46,15 @@ export interface SessionPreviewDeps {
 }
 
 /**
- * A deadline that can be called off. Cancellation is not symmetry with the read it
- * races: `outstanding` releases a look the moment it settles, so nothing else bounds
- * the timer that look outran, and a healthy projection would arm one per row and free
- * none of them for the whole timeout (round-1 B1-R1). The read has no such handle and
+ * Re-exported so this module's callers keep one import.
+ *
+ * Cancellation here is not symmetry with the read it races: `outstanding`
+ * releases a look the moment it settles, so nothing else bounds the timer that
+ * look outran, and a healthy projection would arm one per row and free none of
+ * them for the whole timeout (round-1 B1-R1). The read has no such handle and
  * keeps its slot until it settles instead.
  */
-export interface Deadline {
-  readonly elapsed: Promise<void>;
-  cancel(): void;
-}
+export type { Deadline };
 
 export interface SessionPreviewService {
   preview(entryId: string): Promise<string | undefined>;
@@ -180,7 +180,7 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   const now = deps.now ?? (() => Date.now());
   const recheckMs = deps.recheckMs ?? DEFAULT_RECHECK_MS;
   const lookTimeoutMs = deps.lookTimeoutMs ?? DEFAULT_LOOK_TIMEOUT_MS;
-  const wait = deps.wait ?? defaultWait;
+  const wait = deps.wait ?? afterDelay;
   const cap = Math.max(1, deps.cap ?? DEFAULT_PREVIEW_CACHE_CAP);
   // Insertion-ordered, and re-inserted on every ask, so the front of the map is
   // the least recently asked for. The projector holds no alive set to evict by, so
@@ -422,24 +422,6 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
         if (!held.has(entryId)) {
           touch(entryId, current);
         }
-      }
-    },
-  };
-}
-
-/** Unref'd: a deadline still pending must never hold the extension host open. */
-function defaultWait(ms: number): Deadline {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const elapsed = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-  return {
-    elapsed,
-    cancel: () => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
       }
     },
   };
