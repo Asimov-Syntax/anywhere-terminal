@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PaneActivity } from "../shared/paneEvidence";
 import type { WorktreeInfo } from "./types";
-import { evaluateRemoval, type RemovalInput } from "./worktreeBlockers";
+import { type ExternalSessionFact, evaluateRemoval, type RemovalInput } from "./worktreeBlockers";
 
 function wt(id: string, over: Partial<WorktreeInfo> = {}): WorktreeInfo {
   return {
@@ -24,6 +24,7 @@ function input(over: Partial<RemovalInput> = {}): RemovalInput {
     panes: [],
     rows: [],
     externalSessions: { ok: true, value: [] },
+    claimedByPane: new Map(),
     porcelain: { ok: true, value: "" },
     ignored: { kind: "measured", entries: 0, bytes: 0 },
     ...over,
@@ -70,7 +71,10 @@ describe("evaluateRemoval", () => {
     const result = evaluateRemoval(
       input({
         rows: [{ scope: "external", activity: "running" }],
-        externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-a/pkg", activity: "idle" }] },
+        externalSessions: {
+          ok: true,
+          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity: "idle" }],
+        },
       }),
     );
     expect(result.kind).toBe("confirmable");
@@ -82,7 +86,12 @@ describe("evaluateRemoval", () => {
 
   describe("an external session that is not provably idle (worktree-removal.md § 2, § 3)", () => {
     const rooted = (activity: PaneActivity | undefined) =>
-      input({ externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-a/pkg", activity }] } });
+      input({
+        externalSessions: {
+          ok: true,
+          value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a/pkg", activity }],
+        },
+      });
 
     it.each(["running", "waiting"] as const)("refuses a session reporting %s", (activity) => {
       const result = evaluateRemoval(rooted(activity));
@@ -106,7 +115,10 @@ describe("evaluateRemoval", () => {
     it("ignores a session rooted OUTSIDE the target", () => {
       const result = evaluateRemoval(
         input({
-          externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-b", activity: undefined }] },
+          externalSessions: {
+            ok: true,
+            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-b", activity: undefined }],
+          },
         }),
       );
       expect(result.kind).toBe("confirmable");
@@ -116,7 +128,10 @@ describe("evaluateRemoval", () => {
       const result = evaluateRemoval(
         input({
           rows: [{ scope: "external", activity: "running" }],
-          externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-a", activity: undefined }] },
+          externalSessions: {
+            ok: true,
+            value: [{ sessionId: "s-1", entryId: "claude:s-1", cwd: "/repo/wt-a", activity: undefined }],
+          },
         }),
       );
       expect(result).toMatchObject({ kind: "refused", busyAgents: 0, liveExternalSessionIds: ["s-1"] });
@@ -344,5 +359,85 @@ describe("the ignored material the removal will delete", () => {
       kind: "unproven",
       reason: "budget",
     });
+  });
+});
+
+// Cycle-2 B5. A claim used to be applied at the producer, against the LAST
+// COMPLETED window pass — so a live Claude rooted in the target could vanish
+// from both evidence sources at once: the pane that claimed it had no
+// attributable cwd, or the pane set moved ahead of the debounced projection,
+// and the registry record was dropped anyway. Suppression now happens here,
+// where the target and the pane snapshot are both in hand, and only where this
+// same assessment will classify the claiming pane.
+describe("a registry session a pane in this window already holds", () => {
+  const session = (over: Partial<ExternalSessionFact> = {}): ExternalSessionFact => ({
+    sessionId: "s-1",
+    entryId: "claude:s-1",
+    cwd: "/repo/wt-a",
+    activity: undefined,
+    ...over,
+  });
+
+  const withClaim = (panes: RemovalInput["panes"], claimedByPane: ReadonlyMap<string, string>) =>
+    evaluateRemoval(
+      input({
+        panes,
+        claimedByPane,
+        externalSessions: { ok: true, value: [session()] },
+      }),
+    );
+
+  it("counts it once, as the idle pane it is", () => {
+    const result = withClaim(
+      [{ paneId: "p-1", cwd: "/repo/wt-a", activity: "idle" }],
+      new Map([["claude:s-1", "p-1"]]),
+    );
+    // Confirmable, and reported as the pane — not a second row for an unknown
+    // external session, which would refuse (round-1 B2).
+    expect(result).toMatchObject({ kind: "confirmable" });
+    if (result.kind !== "confirmable") {
+      return;
+    }
+    expect(result.evidence.paneIds).toEqual(["p-1"]);
+    expect(result.evidence.externalSessionIds).toEqual([]);
+  });
+
+  it("refuses when the claiming pane reports no directory", () => {
+    // The pane is in this window, but nothing in this assessment attributes it
+    // to the target — so it classifies nothing, and the registry record stands.
+    const result = withClaim([{ paneId: "p-1", cwd: undefined, activity: "idle" }], new Map([["claude:s-1", "p-1"]]));
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+  });
+
+  it("refuses when the claiming pane resolves outside the target", () => {
+    const result = withClaim(
+      [{ paneId: "p-1", cwd: "/repo/wt-b", activity: "idle" }],
+      new Map([["claude:s-1", "p-1"]]),
+    );
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+  });
+
+  it("refuses when the claiming pane has exited", () => {
+    // The pane is gone; whatever it was holding is not this window's any more.
+    const result = withClaim(
+      [{ paneId: "p-1", cwd: "/repo/wt-a", activity: "exited" }],
+      new Map([["claude:s-1", "p-1"]]),
+    );
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+  });
+
+  it("refuses when the claim names a pane this snapshot no longer has", () => {
+    // The stale-projection case B5 names: the claim outlived the pane it was
+    // made by, and the registry record is the only evidence left.
+    const result = withClaim(
+      [{ paneId: "p-2", cwd: "/repo/wt-a", activity: "idle" }],
+      new Map([["claude:s-1", "p-1"]]),
+    );
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+  });
+
+  it("refuses when nothing claimed it at all", () => {
+    const result = withClaim([{ paneId: "p-1", cwd: "/repo/wt-a", activity: "idle" }], new Map());
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
   });
 });

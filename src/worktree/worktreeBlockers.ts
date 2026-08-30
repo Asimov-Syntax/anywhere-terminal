@@ -149,6 +149,14 @@ export interface PaneFact {
 
 export interface ExternalSessionFact {
   sessionId: string;
+  /**
+   * The registry identity a window pane's claim would be keyed by.
+   *
+   * Carried rather than rebuilt: this module would otherwise have to know how
+   * an agent's id and a session id are spelled together, which belongs to the
+   * vault and not to a removal check.
+   */
+  entryId: string;
   /** Resolved, on the same contract as `PaneFact.cwd`. */
   cwd: string;
   /**
@@ -171,6 +179,20 @@ export interface RemovalInput {
   /** Rows the presence projection attributed to the target. */
   rows: readonly AttributedRow[];
   externalSessions: SourceRead<readonly ExternalSessionFact[]>;
+  /**
+   * Registry identities a pane of THIS window claimed, mapped to that pane.
+   *
+   * The registry is user-wide, so a Claude in one of our own panes writes its
+   * own live-pid record; counted again as an unknown external session it
+   * refuses a removal this window can see is only an idle pane (D6, round-1 B2).
+   *
+   * Keyed by pane rather than published as a bare membership set because the
+   * claim is only worth anything where THIS assessment will classify the pane
+   * that made it. A claim is the last completed window pass — it can name a
+   * pane this snapshot no longer has, or one nothing here attributes to the
+   * target — and a claim we cannot corroborate is not a claim (cycle-2 B5).
+   */
+  claimedByPane: ReadonlyMap<string, string>;
   /** Raw stdout of `git status --porcelain` run in the worktree. */
   porcelain: SourceRead<string>;
   /**
@@ -220,8 +242,23 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
   // set to `worktree-removal.md`, whose § 2 refuses on running, waiting, AND
   // undeterminable. The worktree is removable again as soon as that process
   // exits — the registry lists only live pids.
-  const externalHere = (input.externalSessions.ok === true ? input.externalSessions.value : []).filter((s) =>
-    isPathInside(s.cwd, target.id),
+  // A pane this assessment will itself classify: present in the snapshot it was
+  // handed, resolved inside the target, and not exited. Anything else leaves
+  // the registry record standing, so both failure directions point the same
+  // way — an unknown session refuses, and an uncorroborated claim erases
+  // nothing (cycle-2 B5).
+  const classifiablePanes = new Set(
+    input.panes
+      .filter((p) => p.cwd !== undefined && isPathInside(p.cwd, target.id) && p.activity !== "exited")
+      .map((p) => p.paneId),
+  );
+  const heldHere = (entryId: string): boolean => {
+    const paneId = input.claimedByPane.get(entryId);
+    return paneId !== undefined && classifiablePanes.has(paneId);
+  };
+
+  const externalHere = (input.externalSessions.ok === true ? input.externalSessions.value : []).filter(
+    (s) => isPathInside(s.cwd, target.id) && !heldHere(s.entryId),
   );
   const liveExternalSessionIds = externalHere
     .filter((s) => s.activity !== "idle" && s.activity !== "exited")
@@ -241,10 +278,7 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
   // `notApplicable` parses as empty and that is the honest answer here: there
   // is no directory, so there are no working files a removal could destroy.
   const status = parsePorcelain(input.porcelain.ok === true ? input.porcelain.value : "");
-  const paneIds = input.panes
-    .filter((p) => p.cwd !== undefined && isPathInside(p.cwd, target.id) && p.activity !== "exited")
-    .map((p) => p.paneId)
-    .sort();
+  const paneIds = [...classifiablePanes].sort();
   // Only the provably idle ones reach here — anything else already refused.
   const externalSessionIds = externalHere.map((s) => s.sessionId).sort();
 

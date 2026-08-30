@@ -760,21 +760,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (outcome.kind !== "ok") {
           return { ok: false };
         }
-        // The registry is USER-WIDE, so a Claude running in a pane of THIS
-        // window writes its own record with a live pid. Counted again here it
-        // becomes an unknown external session, and `activity: undefined`
-        // refuses — making a worktree unremovable because of an idle terminal
-        // this window can already see (round-1 B2, design.md D6). Dropped so
-        // the session is counted once, as the pane it is.
-        const claimed = presenceProjector.claimedSessionIds();
-        const unclaimed = outcome.sessions.filter((s) => !claimed.has(formatEntryId("claude", s.sessionId)));
+        // No filtering here. The registry is USER-WIDE, so a Claude in one of
+        // our own panes writes its own live-pid record and must be counted once
+        // — but a claim is only worth applying where the SAME assessment will
+        // classify the pane that made it, and this producer holds neither the
+        // target nor the pane snapshot to check that against. It carries the
+        // claim instead, and `evaluateRemoval` corroborates it (cycle-2 B5).
         const paths = createTrackedPathResolver(pathMemo);
         try {
-          await paths.prepare(unclaimed.map((s) => s.cwd));
+          await paths.prepare(outcome.sessions.map((s) => s.cwd));
           return {
             ok: true,
-            value: unclaimed.map((s) => ({
+            value: outcome.sessions.map((s) => ({
               sessionId: s.sessionId,
+              entryId: formatEntryId("claude", s.sessionId),
               cwd: paths.resolvedOr(s.cwd),
               // The registry records pid, cwd and identity — never activity. So
               // this is undefined rather than a guess, and undefined refuses:
@@ -788,6 +787,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           paths.dispose();
         }
       },
+      // The last completed window pass's claims, keyed by the pane that made
+      // each one. Published rather than recomputed: `identify()` reads the
+      // process table and falls back to heuristics, so a second copy would cost
+      // a real read per assessment and could differ from what the panel shows.
+      claimedByPane: async () => presenceProjector.claimedSessionIds(),
       // What the removal will delete that `git status --porcelain` never names —
       // the `node_modules`, the copied `.env`, the build output this extension
       // provisions into every worktree it creates (worktree-removal.md § 2.3).

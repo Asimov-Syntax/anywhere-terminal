@@ -144,6 +144,14 @@ export interface WorktreeHostOptions {
      * (worktree-removal.md § 2.3).
      */
     ignored(worktreePath: string): Promise<IgnoredMaterial>;
+    /**
+     * Registry identities a pane of this window claimed, mapped to that pane.
+     *
+     * Read alongside the panes rather than before or after them, so the claim
+     * and the snapshot it is corroborated against come from one moment
+     * (design.md D6, cycle-2 B5).
+     */
+    claimedByPane(): Promise<ReadonlyMap<string, string>>;
   };
   /**
    * The window projection. Absent — every surface but the real extension entry
@@ -2072,7 +2080,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // state whose ONLY remedy is the removal that prunes its registration
         // (round-3 B8). A measured zero is the honest answer for the walk: there
         // is no directory, so there is no ignored material to delete.
-        const [status, ignored, sessions, panes] = await Promise.all([
+        const [status, ignored, sessions, panes, claimedByPane] = await Promise.all([
           // Run in the worktree itself, not the repo: `--porcelain` is what
           // names the files a force would destroy, and that is per worktree.
           found.wt.missing
@@ -2083,6 +2091,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             : facts.ignored(found.wt.displayPath),
           facts.externalSessions(),
           facts.panes(),
+          facts.claimedByPane(),
         ]);
         // Round-9 B8: those two reads take real time, and a rebuild landing in
         // between replaces the listing everything below is derived from — the
@@ -2098,6 +2107,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // Every read that can fail is carried as a read, not as its benign
           // fallback. A failed status is not a clean worktree (round-2 B6).
           externalSessions: sessions,
+          claimedByPane,
           ignored,
           porcelain:
             status === null

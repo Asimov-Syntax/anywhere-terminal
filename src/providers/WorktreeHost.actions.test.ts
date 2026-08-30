@@ -21,6 +21,7 @@ import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTree } from "../worktree/types";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
+import type { ExternalSessionFact, PaneFact } from "../worktree/worktreeBlockers";
 import { createWorktreeHost, type WorktreeActions, type WorktreeHost, type WorktreeSurface } from "./WorktreeHost";
 
 const MAIN_PATH = "/repo";
@@ -289,6 +290,14 @@ async function builtHost(
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
+    /** Registry sessions the removal assessment should be given. */
+    externalSessions?: readonly ExternalSessionFact[];
+    /** Panes the removal assessment should be given. */
+    removalPanes?: readonly PaneFact[];
+    /** Identities a pane of this window claimed, keyed entry id → pane id. */
+    claimedByPane?: ReadonlyMap<string, string>;
+    /** Let `git status --porcelain` answer, so an assessment can reach a verdict. */
+    statusReadable?: boolean;
   } = {},
 ) {
   const presence: WorktreePresence = { rowsByWorktreeId: { [MAIN_PATH]: rows }, scannedAt: 1, degradedSources: [] };
@@ -296,7 +305,7 @@ async function builtHost(
     project: async () => presence,
     rank: () => undefined,
     rankRevision: () => 0,
-    claimedSessionIds: () => new Set<string>(),
+    claimedSessionIds: () => new Map<string, string>(),
   };
   const { actions, calls, reconciles } = recordingActions();
   // One runner for the whole host, so a test can observe which git commands the
@@ -315,6 +324,12 @@ async function builtHost(
       argv.push([...args]);
       if (listingFails.now && args[0] === "worktree") {
         return res({ code: 128, stderr: "fatal: could not read the index" });
+      }
+      // A clean worktree, for the cases whose subject is the assessment's
+      // VERDICT rather than one unreadable source. Off by default so every
+      // pre-existing case keeps the status it was written against.
+      if (over.statusReadable === true && args[0] === "status") {
+        return res({ code: 0, stdout: Buffer.from("") });
       }
       return base.run(args, cwd);
     },
@@ -351,12 +366,13 @@ async function builtHost(
     // Without these `assessRemoval` returns null before it reaches git, which
     // would make every assertion about WHICH git commands it issues vacuous.
     removalFacts: {
-      panes: async () => [],
+      panes: async () => over.removalPanes ?? [],
       externalSessions: async () => {
         await duringAssessment.now();
-        return { ok: true, value: [] };
+        return { ok: true, value: over.externalSessions ?? [] };
       },
       ignored: async () => ({ kind: "measured", entries: 0, bytes: 0 }),
+      claimedByPane: async () => over.claimedByPane ?? new Map<string, string>(),
     },
     ...(over.exists === undefined ? {} : { exists: over.exists }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
@@ -685,7 +701,7 @@ describe("the host without capabilities behaves as it did before actions existed
         project: async () => presence,
         rank: () => undefined,
         rankRevision: () => 0,
-        claimedSessionIds: () => new Set<string>(),
+        claimedSessionIds: () => new Map<string, string>(),
       },
       now: () => 1000,
     });
@@ -2216,5 +2232,48 @@ describe("the provisioning offer the create form is given", () => {
 
     expect(offersIn(view)).toEqual([]);
     dispose();
+  });
+});
+
+// Cycle-2 B5 at the host boundary. `evaluateRemoval` owns the corroboration,
+// but only if the host actually carries the claim into it — and a stub that
+// always answered with an empty map would type-check, pass every module test,
+// and quietly restore the round-1 B2 regression it exists to prevent.
+describe("a registry session held by a pane of this window", () => {
+  const SESSION: ExternalSessionFact = {
+    sessionId: "s-1",
+    entryId: "claude:s-1",
+    cwd: FEAT_PATH,
+    activity: undefined,
+  };
+  const PANE: PaneFact = { paneId: "p-1", cwd: FEAT_PATH, activity: "idle" };
+
+  it("is counted once, as the pane, when the host carries the claim", async () => {
+    const h = await builtHost([windowRow()], false, {
+      statusReadable: true,
+      externalSessions: [SESSION],
+      removalPanes: [PANE],
+      claimedByPane: new Map([["claude:s-1", "p-1"]]),
+    });
+
+    const result = await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect(result).toMatchObject({ kind: "confirmable" });
+    h.dispose();
+  });
+
+  it("still refuses when nothing in this window claimed it", async () => {
+    // The negative that gives the case above its meaning: without the claim the
+    // same session refuses, so the test is measuring the claim and not the fake.
+    const h = await builtHost([windowRow()], false, {
+      statusReadable: true,
+      externalSessions: [SESSION],
+      removalPanes: [PANE],
+    });
+
+    const result = await h.host.mutationBindings().assessRemoval({ repoId: REPO, worktreeId: FEAT_PATH });
+
+    expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+    h.dispose();
   });
 });

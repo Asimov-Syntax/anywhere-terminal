@@ -167,7 +167,7 @@
     4. Cover in `src/worktree/ignoredMaterial.test.ts`: a listing that overflows, and a single stat that never settles.
   - **Boundary**: no streaming runner — D3 records why the buffer ceiling is taken instead
 
-- [ ] 5_2 Suppress a claim only where the same assessment will classify the pane that made it
+- [x] 5_2 Suppress a claim only where the same assessment will classify the pane that made it — verified: pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_4
   - **Refs**: specs/worktree-panel/spec.md#{a-removal-refuses-when-it-cannot-establish-that-nothing-is-using-the-worktree}; design.md D6
   - **Acceptance**:

@@ -257,11 +257,17 @@ export interface PresenceProjector {
    * session refuses a removal this window can see is only an idle pane
    * (design.md D6).
    *
+   * Keyed by the PANE that claimed each identity, not published as a bare
+   * membership set. This is the last COMPLETED pass, so a claim can outlive the
+   * pane that made it or name one nothing attributes to a worktree; the removal
+   * assessment corroborates it against its own pane snapshot before letting it
+   * suppress anything (cycle-2 B5). The pass already knows the pane, so this is
+   * the same fact keyed usefully.
+   *
    * Empty before the first window pass, which claims nothing and leaves every
-   * registry session refusing — the safe direction for the one action that
-   * cannot be undone.
+   * registry session refusing.
    */
-  claimedSessionIds(): ReadonlySet<string>;
+  claimedSessionIds(): ReadonlyMap<string, string>;
 }
 
 /** A proven identity, kept so a failed re-read cannot demote the row (D10). */
@@ -474,7 +480,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         rows: ReadonlyArray<{ worktreeId: string; row: WorktreeAgentRow }>;
         ranks: ReadonlyMap<string, number>;
         failures: ReadonlyMap<PresenceDegradation["source"], string>;
-        claimed: ReadonlySet<string>;
+        claimed: ReadonlyMap<string, string>;
       }
     | undefined;
 
@@ -803,7 +809,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   function externalRows(
     sessions: readonly RunningClaudeSession[],
     worktreeIds: readonly string[],
-    claimed: ReadonlySet<string>,
+    claimed: ReadonlyMap<string, string>,
     now: number,
   ): Array<{ worktreeId: string; row: WorktreeAgentRow }> {
     const out: Array<{ worktreeId: string; row: WorktreeAgentRow }> = [];
@@ -863,7 +869,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     failures: Map<PresenceDegradation["source"], string>,
     rowsByWorktreeId: Record<string, WorktreeAgentRow[]>,
     nextRanks: Map<string, number>,
-  ): Promise<ReadonlySet<string>> {
+  ): Promise<ReadonlyMap<string, string>> {
     const panes = deps.panes();
 
     const live = new Set(panes.map((pane) => pane.paneId));
@@ -875,7 +881,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
 
     // The external pass drops these: a session claimed by a pane is that pane's
     // row, never a second one labelled "other window" (D3).
-    const claimed = new Set<string>();
+    const claimed = new Map<string, string>();
     const produced: ProducedRow[] = [];
 
     for (const pane of panes) {
@@ -897,7 +903,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // choose (.reviews/round-1.md W5).
       const identity = await identify(pane, state, snapshot, failures);
       if (identity?.entryId !== undefined) {
-        claimed.add(identity.entryId);
+        claimed.set(identity.entryId, pane.paneId);
       }
 
       // Guessing a worktree for an unknown directory would put a row under a
@@ -996,7 +1002,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       const failures = new Map<PresenceDegradation["source"], string>();
       const rowsByWorktreeId: Record<string, WorktreeAgentRow[]> = {};
       const nextRanks = new Map<string, number>();
-      let claimed: ReadonlySet<string>;
+      let claimed: ReadonlyMap<string, string>;
 
       const replay =
         options?.external === true && lastWindowPass !== undefined && sameTree(lastWindowPass.worktreeIds, worktreeIds)
@@ -1107,7 +1113,7 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
     },
 
     claimedSessionIds() {
-      return lastWindowPass?.claimed ?? new Set();
+      return lastWindowPass?.claimed ?? new Map();
     },
   };
 }

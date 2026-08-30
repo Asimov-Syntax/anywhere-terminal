@@ -2221,7 +2221,10 @@ describe("the sessions this window already holds", () => {
 
     await h.projector.project([WT]);
 
-    expect([...h.projector.claimedSessionIds()]).toContain(formatEntryId("claude", "s1"));
+    // Keyed by the PANE that claimed it, not a bare membership set: the removal
+    // assessment corroborates the claim against its own pane snapshot before
+    // letting it suppress a registry session (cycle-2 B5).
+    expect(h.projector.claimedSessionIds().get(formatEntryId("claude", "s1"))).toBe("a");
   });
 
   it("names it even when the claiming pane is inside no worktree", async () => {
@@ -2233,7 +2236,7 @@ describe("the sessions this window already holds", () => {
 
     await h.projector.project([WT]);
 
-    expect([...h.projector.claimedSessionIds()]).toContain(formatEntryId("claude", "s1"));
+    expect(h.projector.claimedSessionIds().get(formatEntryId("claude", "s1"))).toBe("a");
   });
 
   it("is empty before any projection has run", async () => {
