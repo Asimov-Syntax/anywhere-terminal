@@ -1,6 +1,6 @@
 # Tasks: resolve-containment-through-symlinks
 
-- [ ] 1_1 One predicate that resolves before it compares
+- [x] 1_1 One predicate that resolves before it compares — verified: pnpm exec vitest run 'src/utils/pathBoundary.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D1, D3, D4, D5 -->
   - **Acceptance**:
     - Outcome: containment is decided on resolved paths, and a path the filesystem declines to resolve is refused rather than compared literally
@@ -11,7 +11,7 @@
     3. Make the test strict about equality: `candidate === root` is not contained, unlike `isPathInside` (design.md D5).
     4. In `src/utils/pathBoundary.test.ts` cover the escaping link, the symlinked root, the not-yet-created tail, the **dangling** link whose target does not exist, `ELOOP`, `EACCES`, and the equality case.
 
-- [ ] 1_2 The Claude resolvers ask the shared question
+- [x] 1_2 The Claude resolvers ask the shared question — verified: pnpm exec vitest run 'src/vault/readers/claudePaths.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D2, D6 -->
   - **Acceptance**:

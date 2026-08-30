@@ -8,6 +8,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isResolvedPathInside } from "../../utils/pathBoundary";
 
 /** Separates a parent session id from a subagent file stem in an entry id:
  *  `claude:<parentSessionId>:subagent:<agent-stem>`. */
@@ -55,8 +56,8 @@ export function isSafeSessionId(id: string): boolean {
 /**
  * Locate the unique session file by id with a metadata-only directory scan
  * (each `<projects>/<dir>/<sessionId>.jsonl`) — no transcript content is read.
- * The candidate is containment-checked under the projects dir before being
- * returned, and the host never trusts a webview-supplied path (D3).
+ * The candidate is containment-checked under the projects dir on RESOLVED paths
+ * before being returned, and the host never trusts a webview-supplied path (D3).
  */
 export async function resolveClaudeSessionPath(
   sessionId: string,
@@ -75,9 +76,8 @@ export async function resolveClaudeSessionPath(
   }
   for (const dir of projectDirs) {
     const candidate = path.join(projectsDir, dir, `${sessionId}.jsonl`);
-    const rel = path.relative(projectsDir, candidate);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) {
-      continue; // outside the store root — never read it
+    if (!(await isResolvedPathInside(candidate, projectsDir))) {
+      continue; // resolves outside the store root — never read it
     }
     try {
       const stat = await fs.stat(candidate);
@@ -93,9 +93,9 @@ export async function resolveClaudeSessionPath(
 
 /**
  * Resolve a subagent transcript at `<projects>/<dir>/<parentId>/subagents/<stem>.jsonl`.
- * Both id parts are filename-safe (no traversal) and the resolved path is
- * containment-checked under the projects dir — the host never trusts the
- * webview-supplied composite id (D3).
+ * Both id parts are filename-safe (no traversal) and the candidate is
+ * containment-checked on resolved paths under the projects dir — the host never
+ * trusts the webview-supplied composite id (D3).
  */
 export async function resolveClaudeSubagentPath(
   parentId: string,
@@ -115,8 +115,7 @@ export async function resolveClaudeSubagentPath(
   }
   for (const dir of projectDirs) {
     const candidate = path.join(projectsDir, dir, parentId, "subagents", `${stem}.jsonl`);
-    const rel = path.relative(projectsDir, candidate);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    if (!(await isResolvedPathInside(candidate, projectsDir))) {
       continue;
     }
     try {
@@ -133,9 +132,9 @@ export async function resolveClaudeSubagentPath(
 /**
  * Resolve a workflow agent transcript at
  * `<projects>/<dir>/<parentId>/subagents/workflows/<wfId>/<stem>.jsonl`. All id
- * parts are validated against fixed patterns and the resolved path is
- * containment-checked under the projects root — the host never trusts the
- * webview-supplied composite id (D6).
+ * parts are validated against fixed patterns and the candidate is
+ * containment-checked on resolved paths under the projects root — the host never
+ * trusts the webview-supplied composite id (D6).
  */
 export async function resolveClaudeWorkflowAgentPath(
   parentId: string,
@@ -152,8 +151,7 @@ export async function resolveClaudeWorkflowAgentPath(
   }
   const candidate = path.join(path.dirname(parentPath), parentId, "subagents", "workflows", wfId, `${stem}.jsonl`);
   const { projectsDir } = claudeRoots(options);
-  const rel = path.relative(projectsDir, candidate);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+  if (!(await isResolvedPathInside(candidate, projectsDir))) {
     return null;
   }
   try {
