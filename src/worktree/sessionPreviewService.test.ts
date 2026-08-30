@@ -509,12 +509,12 @@ describe("createSessionPreviewService", () => {
       now: () => clock,
       recheckMs: 2000,
       cap: 1,
-      wait: () => {
-        const gate = new Promise<void>((resolve) => {
+      wait: () => ({
+        elapsed: new Promise<void>((resolve) => {
           expiries.push(resolve);
-        });
-        return gate;
-      },
+        }),
+        cancel: () => {},
+      }),
     });
 
     expect(await svc.preview("codex:s1")).toBe("the first answer");
@@ -538,6 +538,47 @@ describe("createSessionPreviewService", () => {
     expect(reads.filter((file) => file === rollout).length).toBe(before);
 
     park?.("the second answer");
+  });
+
+  it("leaves no deadline armed for a look that answered before it", async () => {
+    // `outstanding` releases a look the moment it settles, so it cannot be what
+    // bounds the deadline that look outran. Unless the deadline is cancelled, a
+    // healthy projection arms one timer per row and frees none of them for five
+    // seconds — a growth axis neither map measures (round-1 B1-R1).
+    let armed = 0;
+    for (let i = 0; i < 6; i++) {
+      await fs.writeFile(path.join(sessionsDir, `rollout-d${i}.jsonl`), `${codexEvent(`d${i}`)}\n`);
+    }
+    const svc = createSessionPreviewService({
+      entry: async (entryId) => ({ agent: "codex", sessionId: entryId.slice("codex:".length) }),
+      read: async (file, format) => {
+        reads.push(file);
+        return readLastActivityLine(file, format);
+      },
+      stat: async (file) => {
+        const st = await fs.stat(file);
+        return { mtimeMs: st.mtimeMs, size: st.size };
+      },
+      roots: { codexSessionsDir: sessionsDir, claudeProjectsDir: projectsDir },
+      now: () => clock,
+      recheckMs: 2000,
+      cap: 2,
+      wait: () => {
+        armed += 1;
+        return {
+          elapsed: new Promise<void>(() => {}), // no deadline fires in this case
+          cancel: () => {
+            armed -= 1;
+          },
+        };
+      },
+    });
+
+    for (let i = 0; i < 6; i++) {
+      expect(await svc.preview(`codex:d${i}`)).toBe(`d${i}`);
+    }
+
+    expect(armed).toBe(0);
   });
 
   it("never has more reads outstanding than the sessions it retains", async () => {
@@ -564,7 +605,7 @@ describe("createSessionPreviewService", () => {
       now: () => clock,
       recheckMs: 2000,
       cap: 2,
-      wait: () => new Promise<void>(() => {}),
+      wait: () => ({ elapsed: new Promise<void>(() => {}), cancel: () => {} }),
     });
 
     for (let i = 0; i < 6; i++) {
@@ -677,7 +718,7 @@ describe("a look that outlives its deadline", () => {
         wait: () => {
           const gate = deferred<void>();
           expiries.push(gate.resolve);
-          return gate.promise;
+          return { elapsed: gate.promise, cancel: () => {} };
         },
       }),
     };

@@ -39,9 +39,21 @@ export interface SessionPreviewDeps {
   /** How long one look may run before the row is answered without it. */
   lookTimeoutMs?: number;
   /** The deadline's clock, overridable so a test resolves it rather than waiting. */
-  wait?(ms: number): Promise<void>;
+  wait?(ms: number): Deadline;
   /** Most sessions held at once; the least recently asked for is dropped past it. */
   cap?: number;
+}
+
+/**
+ * A deadline that can be called off. Cancellation is not symmetry with the read it
+ * races: `outstanding` releases a look the moment it settles, so nothing else bounds
+ * the timer that look outran, and a healthy projection would arm one per row and free
+ * none of them for the whole timeout (round-1 B1-R1). The read has no such handle and
+ * keeps its slot until it settles instead.
+ */
+export interface Deadline {
+  readonly elapsed: Promise<void>;
+  cancel(): void;
 }
 
 export interface SessionPreviewService {
@@ -376,11 +388,13 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
       // Tagged rather than compared against a sentinel: a look that answered
       // `undefined` and a look that never answered are different outcomes, and only
       // a discriminant keeps them apart once both are `string | undefined`.
+      const deadline = wait(lookTimeoutMs);
       const inflight = Promise.race([
         scored.then((line) => ({ expired: false as const, line })),
-        wait(lookTimeoutMs).then(() => ({ expired: true as const })),
+        deadline.elapsed.then(() => ({ expired: true as const })),
       ]).then((outcome) => {
         if (!outcome.expired) {
+          deadline.cancel();
           return outcome.line;
         }
         // A timeout is the absence of evidence, not evidence of absence: score it
@@ -409,10 +423,21 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
 }
 
 /** Unref'd: a deadline still pending must never hold the extension host open. */
-function defaultWait(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms).unref?.();
+function defaultWait(ms: number): Deadline {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const elapsed = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+    timer.unref?.();
   });
+  return {
+    elapsed,
+    cancel: () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    },
+  };
 }
 
 async function defaultStat(transcriptPath: string): Promise<FileStamp | null> {

@@ -108,22 +108,40 @@ work. `cap` permanently hung sessions would starve new ones — accepted deliber
 retrying into a hang, is the unbounded behavior being removed, and a machine with 256 simultaneously
 wedged transcripts has a problem this service cannot answer.
 
-### D5: The clock is a dependency, and the deadline is a floor
+### D5: The clock is a dependency, the deadline is a floor, and a won look cancels it
 
-`SessionPreviewDeps` gains `lookTimeoutMs?: number` (default 5000) and `wait?(ms): Promise<void>`
-(default an unref'd `setTimeout`, so a pending timer never holds the extension host's event loop
-open). Every other input this service touches is already injected — `entry`, `read`, `stat`, `now`,
-`recheckMs`, `cap` — and a test proving "answered after the deadline" must resolve the deadline
-itself rather than wait five real seconds.
+`SessionPreviewDeps` gains `lookTimeoutMs?: number` (default 5000) and
+
+```ts
+interface Deadline {
+  readonly elapsed: Promise<void>;
+  cancel(): void;
+}
+wait?(ms: number): Deadline;
+```
+
+defaulting to an unref'd `setTimeout` whose `cancel` clears it. Every other input this service
+touches is already injected — `entry`, `read`, `stat`, `now`, `recheckMs`, `cap` — and a test proving
+"answered after the deadline" must resolve the deadline itself rather than wait five real seconds.
 
 The spec says the row is answered *at the first opportunity after* the deadline elapses, not *within*
 it: `setTimeout` schedules a minimum delay, and a busy extension-host event loop can only make it
 later. Promising a wall-clock ceiling would be a contract this mechanism cannot keep.
 
-Whichever side loses the race is left pending rather than cancelled — neither `fs.stat` nor the tail
-reader takes an `AbortSignal` on this path. A won look leaves one unref'd timer firing into a settled
-race; an expired look leaves the filesystem operation running, committing nothing under D3. Both are
-bounded: one timer and one operation per attempt, and attempts per session bounded by D4.
+**The two losing sides are not symmetric, and an earlier version of this decision wrongly treated
+them as one** (round-1 B1-R1). An expired look leaves its filesystem operation running because
+nothing on this path takes an `AbortSignal`, and that is genuinely bounded — the attempt keeps its
+`outstanding` slot until the operation settles, so D4's `cap` counts it. A won look's timer is not:
+`outstanding` is released the moment the look settles, while the timer stays armed for the rest of
+its five seconds. The growth axis is looks *started* within one timeout window, which neither map
+measures — a healthy projection over many rows accumulates a timer and a race closure per row.
+
+So the deadline is cancelled when `scored` wins. The filesystem operation still is not.
+
+The alternative needing no interface change — holding the `outstanding` slot until the deadline
+settles too — is rejected: it pins a healthy session's slot for five seconds after its look
+completed, making the effective cadence 5 s and starving every row past `cap`. That trades correct
+behaviour for an unchanged signature.
 
 ### D6: Registry cleanup rides the scored promise, never a bare `finally` on the raw look
 
@@ -147,6 +165,7 @@ when the raw look does, which is the timing cleanup needs.
 | `held` map | Growth axis: distinct session ids asked for. Already bounded by `cap` via `touch` | unchanged — eviction still runs; D4 makes it lose nothing |
 | Raw look rejecting after its deadline | Unhandled rejection in the extension host | D6 — cleanup rides the scored promise, which never rejects |
 | Extension host shutdown | A pending deadline timer keeps the process alive | `unref()` on the default timer (D5) |
+| Deadline timers | Growth axis: looks started within one timeout window — released from `outstanding` on settlement while their timer stays armed (round-1 B1-R1) | D5 cancels the deadline when the look wins; unit test completes more than `cap` healthy sessions inside one window and asserts live deadlines stay bounded |
 | Total looks per projection tick | `previewFromVault` awaits one worktree's rows before starting the next (`presenceProjector.ts:477-487`), so `cap` gates concurrency but not the count per projection | Out of scope — a fan-out decision the projector owns; relocated to blueprint task WT-011.7, which depends on this change |
 | Filesystem | Mutable resource outliving the request | n/a — read-only; no handle held, nothing written, no lock taken |
 | `held` / `outstanding` maps | Two racing writers corrupt state | n/a — single-threaded per extension-host window; the only interleaving is between awaits, which is what D3 and D4 govern |

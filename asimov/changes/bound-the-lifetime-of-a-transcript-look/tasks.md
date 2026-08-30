@@ -24,3 +24,17 @@
     3. Return `current.line` without starting a look when `outstanding.has(entryId)` or `outstanding.size >= cap`, placing both checks after the `current.inflight` share and before the `nextAt` cadence check.
     4. Register the attempt when the look starts and delete it from a `.then` on the scored promise from 1_1 — never from a bare `finally` on the raw look, per design.md D6.
     5. Leave `touch`'s eviction loop unchanged, and update the existing eviction test at `src/worktree/sessionPreviewService.test.ts:515-529`, which asserts a second read runs while the first is held — the behavior this task forbids.
+
+## 2. Round-1 review
+
+- [x] 2_1 Cancel a deadline the look beat, so live deadlines are bounded like attempts — verified: pnpm exec vitest run 'src/worktree/sessionPreviewService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_2
+  - **Refs**: specs/vault-session-preview/spec.md#outstanding-transcript-work-does-not-grow-with-the-rows-that-ask <!-- design.md D5 -->
+  - **Acceptance**:
+    - Outcome: healthy looks leave no deadline armed once they have answered
+    - Verify: unit src/worktree/sessionPreviewService.test.ts
+  - **Plan**:
+    1. In `src/worktree/sessionPreviewService.ts`, change the `wait` dep to return `{ elapsed: Promise<void>; cancel(): void }`, exported as a `Deadline` interface; make the default clear its `setTimeout` in `cancel` and keep the `unref()`.
+    2. In `preview`, hold the `Deadline` the attempt created and call `cancel()` from the race's continuation whenever `outcome.expired` is false.
+    3. Update the two test harnesses in `src/worktree/sessionPreviewService.test.ts` that supply `wait` to return the new shape, counting deadlines created and cancelled.
+    4. Add a test completing more than `cap` healthy distinct sessions without firing any deadline, asserting armed deadlines (created minus cancelled) stay at or below `cap`.
