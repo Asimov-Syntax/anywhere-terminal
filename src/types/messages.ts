@@ -780,6 +780,20 @@ export type WorktreeAfterCreate =
  * offer. The webview submits ids; it never submits paths or command text
  * (worktree-provisioning.md § 4.0). Ids are not stable across offers.
  */
+/**
+ * The handle a selection quotes back for one offered row.
+ *
+ * Unique within ONE offer, and nothing wider. Each adapter mints from its own
+ * counter starting at the same value, so two adapters read for the same create
+ * both produce `i1` — whatever assembles several adapters into a single offer
+ * owns reminting these, and a merge that preserves them unchanged will collide
+ * (.reviews/round-1.md W4, for WT-012.4).
+ *
+ * Deliberately not derived from a path: an id that encoded one would be a path
+ * the webview could read back out, and an id from a superseded offer would
+ * still name something. A counter resolves to nothing once its offer is gone,
+ * which is the answer worktree-provisioning.md § 4.0 wants.
+ */
 export interface ProvisionItemId {
   readonly id: string;
 }
