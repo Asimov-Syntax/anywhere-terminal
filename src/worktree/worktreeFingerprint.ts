@@ -137,22 +137,31 @@ function isIdentityPreservingSubset(current: RemovalEvidence, approved: RemovalE
 }
 
 /**
- * The one risk with no identities to compare, so it is compared by both of its
- * magnitudes.
+ * The one risk with no identities to compare, so it is compared by its OUTCOME
+ * first and then by both of its magnitudes.
  *
- * Bytes as well as entries, because entries alone repeats the failure this
- * module exists to prevent: twelve files are still twelve files after one of
- * them becomes a gigabyte, and the size is what the user weighed.
+ * Outcome first because that is what the spec is written in: a check that was
+ * not failing when the user confirmed and is failing now re-prompts, and
+ * `unproven` is not failing. So an approved unproven reading covers a current
+ * unproven one and a measured nothing, but never a measured failure — the
+ * earlier revision let a token that said only "the ignored content could not be
+ * read" authorize deleting four thousand files nobody had counted (round-1 B1).
  *
- * A reading that BECAME unmeasurable is never within one the user saw — "we can
- * no longer tell" is an unbounded amount the confirmation never named. The
- * reverse proceeds: confirming a removal the report could not put a number on
- * authorizes any number, and re-prompting on strictly better information asks
- * the user to approve the same thing twice.
+ * Magnitudes second, and bytes as well as entries, because entries alone
+ * repeats the failure this module exists to prevent: twelve files are still
+ * twelve files after one of them becomes a gigabyte, and the size is what the
+ * user weighed.
+ *
+ * A reading that BECAME unmeasurable is also outside one the user saw — "we can
+ * no longer tell" is an unbounded amount the confirmation never named.
  */
 function ignoredWithin(current: IgnoredMaterial, approved: IgnoredMaterial): boolean {
-  if (approved.kind === "unproven") {
+  // Not a failure, so there is nothing here the user has not already weighed.
+  if (current.kind === "measured" && current.entries === 0) {
     return true;
+  }
+  if (approved.kind === "unproven") {
+    return current.kind === "unproven";
   }
   return current.kind === "measured" && current.entries <= approved.entries && current.bytes <= approved.bytes;
 }

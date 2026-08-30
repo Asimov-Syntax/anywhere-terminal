@@ -96,6 +96,12 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
       }
       entries += 1;
       bytes += await deps.size(relPath);
+      // Checked AFTER the await as well. One pathologically slow stat can run
+      // past the whole budget on its own, and the check at the top of the next
+      // iteration never runs when that entry is the last (round-1 B4).
+      if (deps.now() - startedAt > MAX_IGNORED_MS) {
+        return { kind: "unproven", reason: "budget" };
+      }
     }
   } catch {
     // A stat that failed and an enumeration that threw are the same answer: we
@@ -130,7 +136,11 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
 export interface DiskIgnoredOptions {
   /** The worktree's own directory. Every relative path is joined onto it. */
   worktreePath: string;
-  run(args: readonly string[], cwd: string): Promise<{ code: number; stdout: Buffer; timedOut: boolean }>;
+  run(
+    args: readonly string[],
+    cwd: string,
+    runOptions?: { timeoutMs?: number },
+  ): Promise<{ code: number; stdout: Buffer; timedOut: boolean }>;
   stat(absPath: string): Promise<{ size: number }>;
   readFile(absPath: string): Promise<string>;
   join(...parts: string[]): string;
@@ -138,30 +148,45 @@ export interface DiskIgnoredOptions {
 }
 
 /**
- * `--ignored=matching`, not the default `--ignored=traditional`.
+ * `git ls-files --others --ignored --exclude-standard -z`, not `git status --ignored`.
  *
- * Traditional collapses an ignored directory to one entry, and a `node_modules/`
- * stat's are the directory inode — a few hundred bytes standing in for a
- * gigabyte. Matching names every ignored FILE, which is both the count worth
- * reporting and the population the entry budget exists to stop.
+ * `git status --ignored` reports an ignored DIRECTORY as one entry — verified
+ * against git 2.50.1, where `--ignored=matching` and `--ignored=traditional`
+ * both emit `!! node_modules/` for a directory the .gitignore names. Stat-ing
+ * that entry sizes the directory inode, so a gigabyte reports as one entry and
+ * a few hundred bytes: a number that looks measured and is wrong by six orders
+ * of magnitude (round-1 B3). `ls-files` enumerates the files themselves, which
+ * is both the count worth reporting and the population the entry budget exists
+ * to stop.
+ *
+ * `-z` for the same reason it is used everywhere else git paths are read: the
+ * line-delimited form c-quotes any path holding a quote, a backslash, a control
+ * character or a non-ASCII byte, and NUL-delimited output is never quoted — so
+ * the quoting grammar this adapter would otherwise have to implement, and get
+ * wrong, does not arise (round-1 W1).
  */
 export function diskIgnoredDeps(options: DiskIgnoredOptions): IgnoredMaterialDeps {
   const { worktreePath, run, stat, readFile, join } = options;
   return {
     ignoredEntries: async function* () {
-      const result = await run(["status", "--porcelain", "--ignored=matching"], worktreePath);
+      // The listing is buffered whole before the first entry is admitted, so
+      // the walk's own deadline has to reach git rather than leaving the
+      // enumeration on the runner's much larger default (round-1 B4). The
+      // whole-walk bound is therefore this budget for the listing plus the same
+      // budget for the sizing, not one budget across both.
+      const result = await run(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], worktreePath, {
+        timeoutMs: MAX_IGNORED_MS,
+      });
       if (result.code !== 0 || result.timedOut) {
         // Not an empty listing: the walk did not establish that there is
         // nothing here, and `measureIgnoredMaterial` reports the throw as
         // `unreadable` rather than as a measured zero.
-        throw new Error(`git status --ignored exited ${result.code}`);
+        throw new Error(`git ls-files --ignored exited ${result.code}`);
       }
-      for (const line of result.stdout.toString("utf8").split("\n")) {
-        if (!line.startsWith("!! ")) {
-          continue;
+      for (const entry of result.stdout.toString("utf8").split("\0")) {
+        if (entry.length > 0) {
+          yield entry;
         }
-        const path = line.slice(3);
-        yield path.startsWith('"') && path.endsWith('"') ? path.slice(1, -1) : path;
       }
     },
     size: async (relPath) => (await stat(join(worktreePath, relPath))).size,

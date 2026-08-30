@@ -208,14 +208,31 @@ describe("ignored material that appeared after the confirmation", () => {
     expect(s.redeem(WT, fp, evidence({ ignored: { kind: "unproven", reason: "budget" } }), 1_000)).toBe("reprompt");
   });
 
-  it("proceeds when an unmeasurable reading became a measured one", () => {
-    // Confirming a removal the report could not put a number on authorizes any
-    // number. Re-prompting because we can suddenly measure it would ask the
-    // user to re-approve strictly better information.
+  it("re-prompts when an unmeasurable reading became a measured failure", () => {
+    // Round-1 B1. I had argued the other way — confirming an amount nobody
+    // could bound authorizes any amount — but the accepted spec is about
+    // OUTCOMES, not magnitudes: a check that was not failing at confirmation
+    // time and is failing now re-prompts, and `unproven` is not failing.
     const s = store();
     const fp = s.issue(WT, evidence({ ignored: { kind: "unproven", reason: "unreadable" } }), 0);
 
-    expect(s.redeem(WT, fp, measured(4_000, 900_000), 1_000)).toBe("proceed");
+    expect(s.redeem(WT, fp, measured(4_000, 900_000), 1_000)).toBe("reprompt");
+  });
+
+  it("proceeds when an unmeasurable reading became a measured nothing", () => {
+    // Not a failure, so there is nothing new for the user to weigh. Strictly
+    // better information about strictly less risk.
+    const s = store();
+    const fp = s.issue(WT, evidence({ ignored: { kind: "unproven", reason: "unreadable" } }), 0);
+
+    expect(s.redeem(WT, fp, measured(0, 0), 1_000)).toBe("proceed");
+  });
+
+  it("proceeds when an unmeasurable reading is still unmeasurable", () => {
+    const s = store();
+    const fp = s.issue(WT, evidence({ ignored: { kind: "unproven", reason: "budget" } }), 0);
+
+    expect(s.redeem(WT, fp, evidence({ ignored: { kind: "unproven", reason: "budget" } }), 1_000)).toBe("proceed");
   });
 
   it("binds the fingerprint to the reading it was issued for", () => {

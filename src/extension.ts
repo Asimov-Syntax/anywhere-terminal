@@ -762,7 +762,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           diskIgnoredDeps({
             worktreePath,
             run: (args, cwd) => worktreeTreeDeps.runner.run(args, cwd),
-            stat: (absPath) => fsp.stat(absPath),
+            // `lstat`, never `stat`: a removal deletes an ignored SYMLINK, not
+            // whatever it points at, and following it sizes bytes that live
+            // outside the worktree entirely (round-1 S1).
+            stat: (absPath) => fsp.lstat(absPath),
             readFile: (absPath) => fsp.readFile(absPath, "utf8"),
             join: (...parts) => path.join(...parts),
           }),

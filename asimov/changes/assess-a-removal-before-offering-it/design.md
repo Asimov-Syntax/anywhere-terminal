@@ -63,9 +63,19 @@ of budgets — an entry cap and a time cap — and the walk stops at whichever i
 be read, or the enumeration throwing. A partial count rendered as a total is worse than no count,
 because § 2.5 renders `count` inside its own element as a reading that was taken.
 
-Not a `du`, and not a `git status --ignored` parse alone: `--ignored` names the entries, which is what
-the count needs, but a size means stat-ing them, and that is the part that has to be bounded. The
-budget spans both phases — an enormous `--ignored` listing exhausts the entry cap before any stat runs.
+Not a `du`. And **not `git status --ignored`** — corrected while fixing round-1 B3, where the original
+sentence here asserted that `--ignored` names the entries. It does not: verified against git 2.50.1,
+both `--ignored=matching` and `--ignored=traditional` report an ignored DIRECTORY as one record
+(`!! node_modules/`), so stat-ing what it names sizes the directory inode and a gigabyte reports as a
+few hundred bytes. The enumeration is `git ls-files --others --ignored --exclude-standard -z`, which
+names every ignored FILE recursively — and NUL-delimited, so git's c-quoting grammar never has to be
+re-implemented here (round-1 W1).
+
+The sizing is what has to be bounded, and so is the enumeration: git buffers its whole listing before
+the first entry is admitted, so the walk's deadline is passed to git as well as applied to the stats
+(round-1 B4). The bound is therefore one budget for the listing plus the same budget for the sizing,
+not one budget across both — stated plainly rather than left as the implication the original wording
+carried.
 
 ### D4 — Provenance is read, never inferred
 

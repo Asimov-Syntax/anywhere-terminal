@@ -95,3 +95,19 @@
     3. Treat a refusal-class check appearing at re-evaluation as a refusal, not a re-prompt: there is no confirmation to ask for.
     4. Cover in `src/worktree/worktreeFingerprint.test.ts` and `src/worktree/worktreeMutationService.test.ts`: a newly failed confirmable check re-prompts, an already-confirmed one proceeds, a newly failed refusal-class check refuses, and a check that stops failing proceeds.
   - **Boundary**: no execution changes beyond the gate — `git worktree remove` itself, and everything after it, belongs to WT-013.4
+
+## 4. Round-1 review fixes
+
+- [x] 4_1 Measure what the removal actually deletes, and confirm it against what the user saw — verified: pnpm exec vitest run src/worktree/ignoredMaterial.test.ts src/worktree/worktreeFingerprint.test.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-confirmation-authorizes-only-the-risks-it-was-shown}; specs/worktree-panel/spec.md#{a-removal-reports-the-ignored-material-it-will-delete}; design.md D3
+  - **Acceptance**:
+    - Outcome: The walk enumerates ignored FILES under its own deadline, and an unproven reading never authorizes a measured failure
+    - Verify: command pnpm exec vitest run src/worktree/ignoredMaterial.test.ts src/worktree/worktreeFingerprint.test.ts
+  - **Plan**:
+    1. Findings B3 and W1: `git status --porcelain --ignored=matching` reports an ignored DIRECTORY as one entry, verified against git 2.50.1; stat-ing it sizes the inode. Swap `src/worktree/ignoredMaterial.ts` to `git ls-files --others --ignored --exclude-standard -z`, which enumerates every ignored file recursively and NUL-delimits them, so the C-quoting W1 names never arises.
+    2. Finding B4: give the enumeration the walk's own budget as the runner's `timeoutMs`, and re-check the deadline after each stat, not only before it.
+    3. Finding B1: in `src/worktree/worktreeFingerprint.ts`, an approved `unproven` reading covers a current `unproven` or a measured zero, never a measured failure. Cover it in `src/worktree/worktreeFingerprint.test.ts`.
+    4. Finding S1: `fsp.lstat` in `src/extension.ts`: the removal deletes the symlink, not its target.
+    5. Correct the false sentence about `--ignored` in `asimov/changes/assess-a-removal-before-offering-it/design.md` D3.
+  - **Boundary**: B2 is NOT fixed here — it is handed back to `asimov-plan`

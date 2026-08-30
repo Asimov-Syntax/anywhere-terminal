@@ -245,12 +245,12 @@ describe("naming what this extension provisioned", () => {
 describe("diskIgnoredDeps", () => {
   /** A git that answers each command from `replies`, keyed by its first arg. */
   function disk(over: Partial<DiskIgnoredOptions> & { replies?: Record<string, string> } = {}) {
-    const calls: string[][] = [];
+    const calls: Array<{ args: string[]; cwd: string; timeoutMs: number | undefined }> = [];
     const replies = over.replies ?? {};
     const deps = diskIgnoredDeps({
       worktreePath: "/repo/wt-a",
-      run: async (args, cwd) => {
-        calls.push([...args, `cwd=${cwd}`]);
+      run: async (args, cwd, runOptions) => {
+        calls.push({ args: [...args], cwd, timeoutMs: runOptions?.timeoutMs });
         return { code: 0, timedOut: false, stdout: Buffer.from(replies[args[0] ?? ""] ?? "", "utf8") };
       },
       stat: async () => ({ size: 7 }),
@@ -269,22 +269,44 @@ describe("diskIgnoredDeps", () => {
     return out;
   }
 
-  it("yields the ignored entries and nothing else git reported", async () => {
+  it("asks for every ignored FILE, not for the directories that contain them", async () => {
+    // Round-1 B3, verified against git 2.50.1: with `node_modules/` in
+    // .gitignore, BOTH `--ignored=matching` and `--ignored=traditional` report
+    // `!! node_modules/` — the directory. Stat-ing that sizes the inode, so a
+    // gigabyte reported as one entry and a few hundred bytes. `ls-files`
+    // enumerates the files themselves.
     const { deps, calls } = disk({
-      replies: { status: " M src/a.ts\n?? scratch.md\n!! node_modules/react/index.js\n!! dist/app.js\n" },
+      replies: { "ls-files": "node_modules/react/index.js\0dist/app.js\0" },
     });
 
     expect(await collect(deps)).toEqual(["node_modules/react/index.js", "dist/app.js"]);
-    // `matching`, not the default `traditional`: traditional collapses an
-    // ignored directory to one entry, and stat-ing that entry sizes the
-    // directory inode — a few hundred bytes standing in for a gigabyte.
-    expect(calls[0]).toEqual(["status", "--porcelain", "--ignored=matching", "cwd=/repo/wt-a"]);
+    expect(calls[0]?.args).toEqual(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+    expect(calls[0]?.cwd).toBe("/repo/wt-a");
   });
 
-  it("unquotes a path git had to quote", async () => {
-    const { deps } = disk({ replies: { status: '!! "dist/a b.js"\n' } });
+  it("gives git the walk's own deadline rather than the runner's default", async () => {
+    // Round-1 B4: the whole listing is buffered before the first budget check
+    // runs, so without this the enumeration is bounded by the runner's 10s and
+    // not by the 1.5s this walk declares.
+    const { deps, calls } = disk({ replies: { "ls-files": "" } });
+    await collect(deps);
 
-    expect(await collect(deps)).toEqual(["dist/a b.js"]);
+    expect(calls[0]?.timeoutMs).toBe(MAX_IGNORED_MS);
+  });
+
+  it("needs no unquoting, because NUL-delimited output is never quoted", async () => {
+    // Round-1 W1: git c-quotes a path with a quote, a backslash or a newline in
+    // the line-delimited form. `-z` emits the raw bytes, so the grammar this
+    // adapter would otherwise have to implement never arises.
+    const { deps } = disk({ replies: { "ls-files": 'we"ird\nname.log\0plain.txt\0' } });
+
+    expect(await collect(deps)).toEqual(['we"ird\nname.log', "plain.txt"]);
+  });
+
+  it("yields nothing for a worktree with no ignored files", async () => {
+    const { deps } = disk({ replies: { "ls-files": "" } });
+
+    expect(await collect(deps)).toEqual([]);
   });
 
   it("throws rather than reporting an empty listing when git failed", async () => {
@@ -329,5 +351,31 @@ describe("diskIgnoredDeps", () => {
 
     expect(await deps.size("dist/app.js")).toBe(42);
     expect(statted).toBe("/repo/wt-a/dist/app.js");
+  });
+});
+
+describe("a stat that takes longer than the whole budget", () => {
+  it("stops the walk instead of returning a total it spent minutes on", async () => {
+    // Round-1 B4: the deadline was checked only BEFORE each entry, so one
+    // pathologically slow stat could run past the budget and the walk still
+    // returned `measured`.
+    let clock = 0;
+    const deps: IgnoredMaterialDeps = {
+      ignoredEntries: async function* () {
+        // ONE entry: with a second, the check at the top of the next iteration
+        // catches it and the after-await check is never exercised.
+        yield "slow.bin";
+      },
+      size: async () => {
+        clock += MAX_IGNORED_MS * 10;
+        return 1;
+      },
+      readManifest: async () => {
+        throw new Error("ENOENT");
+      },
+      now: () => clock,
+    };
+
+    expect(await measureIgnoredMaterial(deps)).toEqual({ kind: "unproven", reason: "budget" });
   });
 });
