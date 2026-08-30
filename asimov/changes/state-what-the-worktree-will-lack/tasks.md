@@ -68,3 +68,56 @@
     2. In the same file, render `problems[]` as named rows offering to open the file, and assert in `src/webview/worktree/WorktreeCreateDialog.test.ts` that the create button stays enabled: a broken provisioning config is not a reason to refuse to make a worktree.
     3. Add the empty-model and malformed-model fixtures to `src/webview/worktree/worktreeFixtures.ts` beside the ones 1_4 added.
     4. Style both states in `src/webview/worktree/worktreePanel.css`, beside the section's own rules.
+
+## 2. Round-1 review fixes
+
+- [x] 2_1 Refuse what the provider file cannot be trusted to say — verified: pnpm exec vitest run 'src/worktree/provisioning/asimovProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_5
+  - **Refs**: .reviews/round-1.md B2, B7, B8, W1; docs/design/worktree-provisioning.md#7-security; docs/design/worktree-provisioning.md#9-edge-cases; design.md D3, design.md D4
+  - **Acceptance**:
+    - Outcome: A denied provider file is named as a problem, a symlinked glob match is refused, and an oversized file never reaches the parser
+    - Verify: unit src/worktree/provisioning/asimovProvider.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/asimovProvider.ts`, prepare the resolved root BEFORE reading the provider file and authorize that path — the file name is a constant but the file itself can be a symlink out of the checkout.
+    2. Run every expanded glob match through the same resolved containment check the literal entries use. A contained parent says nothing about a child symlink, and these entries are what a later task materializes (B2, design.md D4).
+    3. Classify errno rather than swallowing it: only a confirmed absence (`ENOENT`/`ENOTDIR`) is absence; every other failure becomes a bounded `unreadable` problem, for the provider read and for a glob's `readdir` alike (B8).
+    4. Bound expansion: a per-glob and a per-model row budget, with the overflow reported as a bounded problem rather than silently truncated (B7).
+    5. Bound the read itself, not a prior `stat` — an oversized provider file becomes an `unreadable` problem and never reaches `parse` (W1).
+  - **Boundary**: no containment implementation of its own — `src/utils/resolvedPathBoundary.ts` stays the only one; and no write of any kind to disk
+
+- [ ] 2_2 Make the offer belong to one form, and connect it in production
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-1.md B1, B3, B5, B6; docs/design/worktree-provisioning.md#40-the-model-the-user-saw-is-the-model-that-runs; design.md D5
+  - **Acceptance**:
+    - Outcome: The shipped extension offers provisioning, one read per form, and a closed form's offer resolves to nothing
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. Add `src/worktree/provisioning/provisioningDeps.ts` building the adapter's filesystem dependencies over `node:fs/promises`, including the bounded read 2_1 defines, and wire `readAsimovProvisioning` into `createWorktreeHost` in `src/extension.ts` so the shipped dialog actually receives an offer (B1).
+    2. Scope `lookup` in `src/worktree/provisioning/offerStore.ts` to the surface key that issued the offer, admitting only that key's current id — the signature is what a redeemer inherits (B3).
+    3. Track the read in flight per form in `src/providers/WorktreeHost.ts`, marked BEFORE the await, and drop completions from a superseded generation (B5).
+    4. Clear a surface's offers when its form closes and when the surface detaches, and refuse a post to a disposed surface (B6).
+    5. Repair the 1_3 test whose fake resolves synchronously: hold one resolution open and drive a second defaults request into that window, or the assertion cannot observe the property it names.
+  - **Boundary**: still no execution path reads this store — WT-012.2 owns redemption
+
+- [ ] 2_3 Keep provisioning out of the destination's channel
+  - **Deps**: 2_2
+  - **Refs**: .reviews/round-1.md B4, W2, W3, S1; docs/design/worktree-actions.md#32-create
+  - **Acceptance**:
+    - Outcome: An offer arriving mid-edit leaves Create disabled, and a rebuild keeps the boxes the user ticked
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. Give the offer its own binding in `src/webview/worktree/WorktreeController.ts` and `src/webview/worktree/WorktreeCreateDialog.ts`, separate from `bindDefaults`, so nothing on the provisioning path can clear the destination's `outstanding` gate (B4). Send only the repository that changed (S1).
+    2. Rebuild the section only when the offer's identity changes, and carry the checked ids across a rebuild so typing does not revert a user's choice (W2).
+    3. Name each checkbox by its subject as well as its verb, via `aria-labelledby` over the top line and the subject — five rows from one provider currently announce identically (W3).
+  - **Boundary**: no edit to `docs/ui/create-worktree.html` or `docs/ui/worktree-create-dialog.css`
+
+- [ ] 2_4 Write down the id obligation the merge task inherits
+  - **Deps**: 2_3
+  - **Refs**: .reviews/round-1.md W4; design.md D2, design.md D5
+  - **Acceptance**:
+    - Outcome: `ProvisionModel`'s declaration states that ids are per-offer and must be reminted when adapters merge
+    - Verify: command pnpm run check-types
+  - **Plan**:
+    1. State on `ProvisionItemId` in `src/types/messages.ts` that ids are unique within ONE offer only, that each adapter mints from its own counter, and that whatever assembles several adapters into one offer owns reminting them.
+    2. No id scheme changes here: minting in an assembly layer that does not exist, or a per-adapter prefix guessing the merge's shape, is the seam-from-one-example design.md D2 rejects.
+  - **Boundary**: documentation only — no behavior change, no id format change

@@ -48,6 +48,36 @@ function bounded(text: string): string {
 const KNOWN_KEYS = new Set(["copy", "link", "ports", "setup"]);
 
 /**
+ * The most rows one offer may carry.
+ *
+ * A glob's directory is repository-controlled, so `*` against a `node_modules`
+ * sibling would otherwise push unbounded rows through `postMessage` and into the
+ * DOM (round-1 B7). The budget is on the MODEL rather than per glob, because
+ * many small globs cost the same as one large one.
+ */
+export const MAX_MODEL_ROWS = 200;
+
+/**
+ * Absence, told apart from failure.
+ *
+ * Every other errno — EACCES, ELOOP, EIO, EFBIG from the bounded reader — means
+ * the material is THERE and we could not read it, which the spec requires be
+ * named. Swallowing them made the section say "Nothing configured" about a
+ * repository whose provider file exists, which is an affirmative false claim
+ * (round-1 B8).
+ */
+function isAbsence(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/** The errno, for a problem detail. Never the message: it can carry a path. */
+function errnoOf(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : "unknown error";
+}
+
+/**
  * Ids are minted per offer as a counter.
  *
  * Deliberately not derived from the path: an id that encoded one would be a
@@ -171,10 +201,17 @@ async function entriesFor(
     let names: readonly string[];
     try {
       names = await deps.readdir(path.resolve(repoRoot, glob.dir));
-    } catch {
-      // The same answer as a glob matching nothing. A directory that is not
-      // there contributes no entries, and a repo legitimately carries optional
-      // material (§ 3.1).
+    } catch (error) {
+      if (!isAbsence(error)) {
+        // Present and unreadable is not the same as absent. Reported, so the
+        // section does not claim the repository declared nothing (B8).
+        draft.problems.push(
+          problem("unreadable", `\`${glob.dir === "" ? "." : glob.dir}\` could not be read (${errnoOf(error)}).`),
+        );
+        continue;
+      }
+      // A directory that is not there contributes no entries, and a repo
+      // legitimately carries optional material (§ 3.1).
       continue;
     }
     for (const name of [...names].sort()) {
@@ -184,7 +221,29 @@ async function entriesFor(
       if (!name.startsWith(glob.prefix) || !name.endsWith(glob.suffix)) {
         continue;
       }
+      if (draft.entries.length >= MAX_MODEL_ROWS) {
+        // Reported, never silently truncated: a shorter list than the repository
+        // asked for is exactly the "shown list differs from the copied list"
+        // failure this module exists to prevent, so it is stated (B7).
+        draft.problems.push(
+          problem(
+            "malformed",
+            `\`${relPath}\` fills the ${MAX_MODEL_ROWS}-row budget; it and anything after it are not offered.`,
+          ),
+        );
+        // Returns rather than continues: the budget is model-wide, so every
+        // later declaration would be refused too, and one honest message beats
+        // one per remaining path.
+        return;
+      }
       const expanded = glob.dir === "" ? name : `${glob.dir}/${name}`;
+      // Per MATCH, not per parent. A contained directory says nothing about a
+      // child symlink, and an expanded entry is what a later task materializes
+      // (round-1 B2) — which is the same authorization D4 gives literal entries.
+      if (!(await contained(expanded, repoRoot, root, deps))) {
+        draft.problems.push(problem("malformed", `\`${expanded}\` does not resolve inside the repository.`));
+        continue;
+      }
       draft.entries.push({ id: nextId(), path: expanded, mode, source: ASIMOV_PROVIDER_FILE });
     }
   }
@@ -199,17 +258,47 @@ async function entriesFor(
  * and nothing executes from this model in this change anyway.
  */
 export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot: string): Promise<ProvisionModel> {
+  // The root is prepared FIRST, because the provider file has to be authorized
+  // before it is opened. Its relative name is a constant, but the file itself
+  // can be a symlink out of the checkout — and reading it is what follows the
+  // link (round-1 B2). The old order read first and checked later, which is no
+  // check at all.
+  const root = await prepareResolvedRoot(repoRoot, { realpath: deps.realpath, lstat: deps.lstat });
+  if (root === null) {
+    return {
+      ...emptyModel(),
+      problems: [problem("unreadable", "The repository root could not be resolved.")],
+    };
+  }
+
+  const providers = [{ id: "asimov" as const, file: ASIMOV_PROVIDER_FILE, active: true }];
+  if (!(await contained(ASIMOV_PROVIDER_FILE, repoRoot, root, deps))) {
+    return {
+      ...emptyModel(),
+      providers,
+      problems: [problem("malformed", `\`${ASIMOV_PROVIDER_FILE}\` does not resolve inside the repository.`)],
+    };
+  }
+
   const file = path.resolve(repoRoot, ASIMOV_PROVIDER_FILE);
   let text: string;
   try {
     text = await deps.readFile(file);
-  } catch {
+  } catch (error) {
+    if (!isAbsence(error)) {
+      // Present and unreadable — denied, a symlink loop, an I/O error, or the
+      // bounded reader refusing an oversized file (W1). The spec requires the
+      // file be NAMED; returning an empty model would say the opposite (B8).
+      return {
+        ...emptyModel(),
+        providers,
+        problems: [problem("unreadable", `\`${ASIMOV_PROVIDER_FILE}\` could not be read (${errnoOf(error)}).`)],
+      };
+    }
     // No provider file is not a problem — it is the ordinary case for most
     // repositories, and the section says what the worktree will lack anyway.
     return emptyModel();
   }
-
-  const providers = [{ id: "asimov" as const, file: ASIMOV_PROVIDER_FILE, active: true }];
   let parsed: unknown;
   try {
     parsed = parseYaml(text);
@@ -225,15 +314,6 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     return { ...emptyModel(), providers, problems: [problem("malformed", "The file is not a mapping of keys.")] };
-  }
-
-  const root = await prepareResolvedRoot(repoRoot, { realpath: deps.realpath, lstat: deps.lstat });
-  if (root === null) {
-    return {
-      ...emptyModel(),
-      providers,
-      problems: [problem("unreadable", "The repository root could not be resolved.")],
-    };
   }
 
   const nextId = ids();

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ASIMOV_PROVIDER_FILE, type AsimovProviderDeps, readAsimovProvisioning } from "./asimovProvider";
+import {
+  ASIMOV_PROVIDER_FILE,
+  type AsimovProviderDeps,
+  MAX_MODEL_ROWS,
+  readAsimovProvisioning,
+} from "./asimovProvider";
 
 const ROOT = "/repo";
 
@@ -235,5 +240,91 @@ describe("readAsimovProvisioning", () => {
       expect(model.entries).toEqual([]);
       expect(model.providers).toHaveLength(1);
     });
+  });
+});
+
+describe("what it refuses to trust (round-1 B2, B7, B8, W1)", () => {
+  /** An errno-carrying rejection, the way `node:fs` reports one. */
+  function fail(code: string): Promise<never> {
+    return Promise.reject(Object.assign(new Error(code), { code }));
+  }
+
+  it("[B8] names a provider file it was denied, rather than reporting nothing", async () => {
+    // Present-but-unreadable must be NAMED — the spec scenario requires it, and
+    // silently reporting an empty model makes the section say "Nothing
+    // configured", which is an affirmative false claim.
+    const model = await readAsimovProvisioning({ ...fs({}), readFile: () => fail("EACCES") }, ROOT);
+
+    expect(model.problems).toHaveLength(1);
+    expect(model.problems[0]?.reason).toBe("unreadable");
+    expect(model.problems[0]?.file).toBe(ASIMOV_PROVIDER_FILE);
+  });
+
+  it("[B8] still treats a genuinely absent file as absence", async () => {
+    const model = await readAsimovProvisioning({ ...fs({}), readFile: () => fail("ENOENT") }, ROOT);
+
+    expect(model.problems).toEqual([]);
+    expect(model.providers).toEqual([]);
+  });
+
+  it("[B8] reports a glob directory it could not read, unlike one that is absent", async () => {
+    const denied = await readAsimovProvisioning(
+      { ...withYaml("copy:\n  - docs/*.md\n"), readdir: () => fail("EACCES") },
+      ROOT,
+    );
+    const absent = await readAsimovProvisioning(
+      { ...withYaml("copy:\n  - docs/*.md\n"), readdir: () => fail("ENOENT") },
+      ROOT,
+    );
+
+    expect(denied.problems.map((p) => p.reason)).toEqual(["unreadable"]);
+    expect(absent.problems).toEqual([]);
+  });
+
+  it("[B2] refuses a provider file that is itself a symlink out of the checkout", async () => {
+    // The relative name is a constant, so the only way out is the file being a
+    // link — which is exactly what a hostile checkout controls.
+    const deps = withYaml(REAL);
+    const model = await readAsimovProvisioning(
+      { ...deps, realpath: async (p) => (p.endsWith(ASIMOV_PROVIDER_FILE) ? "/elsewhere/worktree.yaml" : p) },
+      ROOT,
+    );
+
+    expect(model.entries).toEqual([]);
+    expect(model.problems.map((p) => p.reason)).toEqual(["malformed"]);
+  });
+
+  it("[B2] refuses a glob match that resolves outside the repository", async () => {
+    // A contained PARENT says nothing about a child symlink, and an expanded
+    // entry is what a later task materializes.
+    const deps = withYaml("copy:\n  - docs/*.md\n", { [`${ROOT}/docs`]: ["safe.md", "escape.md"] });
+    const model = await readAsimovProvisioning(
+      { ...deps, realpath: async (p) => (p.endsWith("escape.md") ? "/elsewhere/escape.md" : p) },
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["docs/safe.md"]);
+    expect(model.problems.map((p) => p.reason)).toEqual(["malformed"]);
+  });
+
+  it("[B7] bounds what one glob may expand to, and says so", async () => {
+    // A repository-controlled directory must not be able to push unbounded rows
+    // through postMessage and into the DOM.
+    const many = Array.from({ length: MAX_MODEL_ROWS + 50 }, (_, i) => `f${String(i).padStart(4, "0")}.md`);
+    const model = await readAsimovProvisioning(withYaml("copy:\n  - docs/*.md\n", { [`${ROOT}/docs`]: many }), ROOT);
+
+    expect(model.entries.length).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(model.problems.some((p) => p.reason === "malformed")).toBe(true);
+    // Reported, not silently truncated.
+    expect(model.problems.map((p) => p.detail).join(" ")).toMatch(/\d/);
+  });
+
+  it("[W1] never parses a provider file past the byte budget", async () => {
+    // Bounded at the READ. The dep signals oversize the way the production
+    // reader does, and it becomes an unreadable problem rather than a parse.
+    const model = await readAsimovProvisioning({ ...fs({}), readFile: () => fail("EFBIG") }, ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["unreadable"]);
+    expect(model.entries).toEqual([]);
   });
 });
