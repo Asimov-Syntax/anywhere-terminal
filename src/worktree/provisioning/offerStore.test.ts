@@ -132,3 +132,69 @@ describe("createProvisionOfferStore", () => {
     expect(store.lookup(odd, offer.offerId)).toBe(offer.model);
   });
 });
+
+describe("ids are scoped to the offer, not to the adapter (round-2 W4)", () => {
+  /** Two adapters' output, each minted from its own counter starting at i1. */
+  function merged(): ProvisionModel {
+    return {
+      entries: [
+        { id: "i1", path: ".env", mode: "copy", source: "asimov/worktree.yaml" },
+        { id: "i2", path: "third_party", mode: "link", source: "asimov/worktree.yaml" },
+        { id: "i1", path: ".vscode/settings.json", mode: "copy", source: ".vscode/worktree.json" },
+      ],
+      ports: [{ id: "i2", name: "APP", source: ".vscode/worktree.json" }],
+      setup: [{ id: "i1", kind: "shell", script: "pnpm install", source: ".vscode/worktree.json" }],
+      providers: [
+        { id: "asimov", file: "asimov/worktree.yaml", active: true },
+        { id: "vscodeTasks", file: ".vscode/worktree.json", active: false },
+      ],
+      excluded: [],
+      problems: [],
+    };
+  }
+
+  it("gives every row a distinct id even when two adapters both minted i1", () => {
+    // `issue` is the assembly point — it already receives the completed model —
+    // so reminting here needs no registry, no detection order and no merge
+    // algorithm, which is what made this look like a later task's job.
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, merged());
+    const ids = [...offer.model.entries, ...offer.model.ports, ...offer.model.setup].map((r) => r.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toHaveLength(5);
+  });
+
+  it("keeps everything about a row except its id", () => {
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, merged());
+
+    expect(offer.model.entries.map((e) => [e.path, e.mode, e.source])).toEqual([
+      [".env", "copy", "asimov/worktree.yaml"],
+      ["third_party", "link", "asimov/worktree.yaml"],
+      [".vscode/settings.json", "copy", ".vscode/worktree.json"],
+    ]);
+    expect(offer.model.setup[0]?.script).toBe("pnpm install");
+    expect(offer.model.problems).toEqual([]);
+    expect(offer.model.providers).toHaveLength(2);
+  });
+
+  it("mints ids that are not paths and not derived from one", () => {
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, merged());
+    const ids = [...offer.model.entries, ...offer.model.ports, ...offer.model.setup].map((r) => r.id);
+
+    expect(ids.every((id) => !id.includes("/") && !id.includes("."))).toBe(true);
+  });
+
+  it("does not reuse ids across two offers to the same form", () => {
+    // A superseded id must resolve to nothing rather than name whatever now
+    // occupies that slot.
+    const store = createProvisionOfferStore();
+    const first = store.issue(A, merged());
+    const second = store.issue(A, merged());
+    const idsOf = (m: ProvisionModel) => [...m.entries, ...m.ports, ...m.setup].map((r) => r.id);
+
+    expect(new Set([...idsOf(first.model), ...idsOf(second.model)]).size).toBe(10);
+  });
+});

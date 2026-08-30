@@ -73,9 +73,37 @@ export interface ProvisionOfferStore {
   forgetSurface(surface: string): void;
 }
 
+/**
+ * Re-mint every selectable id so they are unique within THIS offer.
+ *
+ * Each adapter mints from its own counter starting at the same value, so two
+ * adapters read for one create both produce `i1` and a merged offer would carry
+ * an ambiguous id (.reviews/round-2.md W4). `issue` is where that is fixable
+ * without guessing anything: it receives the completed model, so it needs no
+ * provider registry, no detection order and no merge algorithm — which is what
+ * made this look like a later task's job.
+ *
+ * Ids stay opaque and non-derived. Not a path and not a hash of one: an id that
+ * encoded a path would be a path the webview could read back out, and an id from
+ * a superseded offer must resolve to nothing rather than name whatever now
+ * occupies that slot (worktree-provisioning.md § 4.0).
+ */
+function remint(model: ProvisionModel, seq: () => string): ProvisionModel {
+  return {
+    ...model,
+    entries: model.entries.map((e) => ({ ...e, id: seq() })),
+    ports: model.ports.map((p) => ({ ...p, id: seq() })),
+    setup: model.setup.map((s) => ({ ...s, id: seq() })),
+    // `excluded` rows are shown as deliberate omissions, never selected, so they
+    // are carried through untouched rather than given ids that mean nothing.
+  };
+}
+
 export function createProvisionOfferStore(): ProvisionOfferStore {
   const bySurface = new Map<string, Map<string, ProvisionOffer>>();
   let sequence = 0;
+  /** Never restarts, so no two offers from this store share an item id. */
+  let itemSequence = 0;
 
   return {
     issue(key, model) {
@@ -88,7 +116,13 @@ export function createProvisionOfferStore(): ProvisionOfferStore {
       // Monotonic and never reused, so a resubmission of a superseded id cannot
       // land on a later offer that happens to occupy the same slot. The `set`
       // below evicts the previous offer for this form by construction.
-      const offer: ProvisionOffer = { offerId: `provision-${sequence}`, model };
+      const offer: ProvisionOffer = {
+        offerId: `provision-${sequence}`,
+        model: remint(model, () => {
+          itemSequence += 1;
+          return `item-${itemSequence}`;
+        }),
+      };
       repos.set(key.repoId, offer);
       return offer;
     },

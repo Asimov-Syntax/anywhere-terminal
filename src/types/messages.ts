@@ -783,11 +783,14 @@ export type WorktreeAfterCreate =
 /**
  * The handle a selection quotes back for one offered row.
  *
- * Unique within ONE offer, and nothing wider. Each adapter mints from its own
- * counter starting at the same value, so two adapters read for the same create
- * both produce `i1` — whatever assembles several adapters into a single offer
- * owns reminting these, and a merge that preserves them unchanged will collide
- * (.reviews/round-1.md W4, for WT-012.4).
+ * Unique within ONE offer, and nothing wider.
+ *
+ * Each adapter mints from its own counter starting at the same value, so two
+ * adapters read for the same create both produce `i1`. The offer store remints
+ * every selectable row as it issues an offer, which is the point where the
+ * completed model exists and no provider registry or merge algorithm has to be
+ * guessed at — so uniqueness holds by construction rather than by each adapter
+ * remembering to arrange it (.reviews/round-2.md W4).
  *
  * Deliberately not derived from a path: an id that encoded one would be a path
  * the webview could read back out, and an id from a superseded offer would

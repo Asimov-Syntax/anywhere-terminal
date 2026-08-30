@@ -2018,6 +2018,17 @@ describe("the provisioning offer the create form is given", () => {
     return (view.posts as ExtensionToWebViewMessage[]).filter((p) => p.type === "worktreeProvisionOffer");
   }
 
+  /**
+   * Which model an offer carries, named by its rows rather than by its ids.
+   *
+   * The store remints every selectable id as it issues the offer (round-2 W4),
+   * so an offer never equals the adapter model it was built from. What these
+   * tests actually assert is *which read* was published, and the path says that.
+   */
+  function pathsIn(offer: unknown): string[] {
+    return (offer as { model: ProvisionModel }).model.entries.map((e) => e.path);
+  }
+
   it("publishes one offer when the form asks for its defaults", async () => {
     const { host, view, dispose } = await builtHost(undefined, false, {
       readProvisioning: async () => model(".env"),
@@ -2027,7 +2038,8 @@ describe("the provisioning offer the create form is given", () => {
 
     const offers = offersIn(view);
     expect(offers).toHaveLength(1);
-    expect(offers[0]).toMatchObject({ repoId: REPO, model: model(".env") });
+    expect(offers[0]).toMatchObject({ repoId: REPO });
+    expect(pathsIn(offers[0])).toEqual([".env"]);
     expect(typeof (offers[0] as { offerId: string }).offerId).toBe("string");
     dispose();
   });
@@ -2123,7 +2135,7 @@ describe("the provisioning offer the create form is given", () => {
     // The stale generation published nothing; only the live form was answered.
     const offers = offersIn(view);
     expect(offers).toHaveLength(1);
-    expect(offers[0]).toMatchObject({ model: model(".env.second") });
+    expect(pathsIn(offers[0])).toEqual([".env.second"]);
     dispose();
   });
 

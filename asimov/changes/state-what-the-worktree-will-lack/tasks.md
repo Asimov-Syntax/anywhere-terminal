@@ -149,7 +149,7 @@
     3. Return a discriminated containment result — inside, outside, unresolvable — and report `unreadable` for a resolution that failed, keeping `malformed` for a proven escape (W6). The refusal itself does not change; only the reason it states.
   - **Boundary**: no containment implementation of its own — `src/utils/resolvedPathBoundary.ts` stays the only one
 
-- [ ] 3_3 Make the ids offer-scoped where the offer is assembled
+- [x] 3_3 Make the ids offer-scoped where the offer is assembled — verified: pnpm exec vitest run 'src/worktree/provisioning/offerStore.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: .reviews/round-2.md W4; design.md D2, design.md D5
   - **Acceptance**:
@@ -157,5 +157,6 @@
     - Verify: unit src/worktree/provisioning/offerStore.test.ts
   - **Plan**:
     1. Remint every selectable id in `src/worktree/provisioning/offerStore.ts`'s `issue`, which already receives the completed model — no registry, no detection order and no merge algorithm, which is what made reminting look like WT-012.4's job.
-    2. Keep the `ProvisionItemId` doc comment 2_4 added: it states the property, and `issue` now enforces it.
+    2. Update the `ProvisionItemId` doc comment in `src/types/messages.ts` that 2_4 added: it warned that a merge preserving adapter-local ids would collide, which is now stale — `issue` remints, so the comment states an enforced property rather than an outstanding obligation.
+    3. Cover the property in `src/worktree/provisioning/offerStore.test.ts`, and narrow the two assertions in `src/providers/WorktreeHost.actions.test.ts` that compared a published offer to the adapter model by value: an offer no longer equals the model it was built from, and what those tests assert is which read was published, which the entry path says.
   - **Boundary**: the id format stays opaque and non-derived — never a path, never a hash of one
