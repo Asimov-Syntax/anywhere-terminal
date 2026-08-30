@@ -7,8 +7,8 @@
 ## Plan
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 

@@ -1,0 +1,155 @@
+/* worktree-create-dialog.css — proposed additions to src/webview/worktree/worktreePanel.css
+ * for the Create / Remove worktree dialogs.
+ *
+ * Rules: only var(--vscode-*) tokens; monospace ONLY on editable or copyable values;
+ * a path never wraps; ~8px control gaps, 12px section gaps, 28px control height,
+ * one primary footer button. Amber = "we will resolve this", red = "this blocks".
+ * Geometry of .cw-dlg / .cw-inp / .cw-btn matches the shipped .wt-dialog family;
+ * the mockup drops position:fixed so many states can sit side by side.
+ */
+
+.cw-dlg{box-sizing:border-box;width:480px;display:flex;flex-direction:column;gap:12px;padding:14px;font-size:12px;line-height:1.45;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));color:var(--vscode-foreground);border:1px solid var(--vscode-widget-border);border-radius:6px;box-shadow:0 16px 40px rgba(0,0,0,.55)}
+.cw-title{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;font-weight:600}
+.cw-title-sp{flex:1 1 auto}
+.cw-ib{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:4px;background:none;color:var(--vscode-icon-foreground);cursor:pointer}
+.cw-ib svg{width:13px;height:13px}
+.cw-ib:hover{background:var(--vscode-toolbar-hoverBackground)}
+.cw-ib:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.cw-ib--sm{width:20px;height:20px}
+.cw-ib--sm svg{width:12px;height:12px}
+
+/* ── Sections, labels, controls ─────────────────────────────────────────── */
+.cw-sec{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cw-lbl{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--vscode-descriptionForeground)}
+.cw-lbl-sp{flex:1 1 auto}
+.cw-lbl b{color:var(--vscode-foreground);font-weight:500}
+.cw-inp{box-sizing:border-box;width:100%;height:28px;padding:3px 8px;border:1px solid var(--vscode-input-border,transparent);border-radius:3px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font:inherit;font-size:12px;outline:none}
+.cw-inp:focus,.cw-inp.is-focus{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.cw-inp::placeholder{color:var(--vscode-input-placeholderForeground)}
+.cw-inp--mono{font-family:var(--vscode-editor-font-family,monospace);font-size:11px}
+.cw-inp.is-invalid{border-color:var(--vscode-inputValidation-errorBorder)}
+.cw-inp:disabled{opacity:.55}
+.cw-ta{box-sizing:border-box;width:100%;min-height:44px;resize:vertical;padding:5px 8px;border:1px solid var(--vscode-input-border,transparent);border-radius:3px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font:inherit;font-size:12px;outline:none}
+.cw-ta::placeholder{color:var(--vscode-input-placeholderForeground)}
+.cw-cb{width:13px;height:13px;margin:0;flex:0 0 auto;accent-color:var(--vscode-button-background)}
+.cw-cbl{display:flex;align-items:center;gap:8px;min-width:0;font-size:11px;color:var(--vscode-foreground);cursor:pointer}
+.cw-cbl.is-off{color:var(--vscode-disabledForeground);cursor:default}
+.cw-mut{color:var(--vscode-descriptionForeground)}
+.cw-num{font-variant-numeric:tabular-nums}
+
+/* ── Combobox: one omnibox that searches refs, PRs, and creates ─────────── */
+.cw-cbx{position:relative;display:flex;align-items:center;min-width:0}
+.cw-cbx .cw-inp{padding-right:26px}
+.cw-cbx-end{position:absolute;right:7px;display:inline-flex;align-items:center;color:var(--vscode-descriptionForeground);pointer-events:none}
+.cw-cbx-end svg{width:12px;height:12px}
+.cw-spin{width:11px;height:11px;box-sizing:border-box;border-radius:50%;border:1.5px solid color-mix(in srgb,var(--vscode-charts-blue) 28%,transparent);border-top-color:var(--vscode-charts-blue);animation:cw-spin .9s linear infinite}
+@keyframes cw-spin{to{transform:rotate(360deg)}}
+.cw-menu{margin-top:1px;padding:4px 0;border:1px solid var(--vscode-menu-border);border-radius:4px;background:var(--vscode-menu-background);color:var(--vscode-menu-foreground);box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.cw-mgrp{padding:5px 10px 3px;font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--vscode-descriptionForeground)}
+.cw-mrow{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:3px 10px;cursor:pointer}
+.cw-mrow:hover,.cw-mrow.is-active{background:var(--vscode-menu-selectionBackground);color:var(--vscode-menu-selectionForeground)}
+.cw-mrow.is-disabled{opacity:.5;cursor:default}
+.cw-mrow.is-disabled:hover{background:none;color:inherit}
+.cw-mglyph{display:inline-flex;align-items:center;justify-content:center;width:14px;color:var(--vscode-descriptionForeground)}
+.cw-mglyph svg{width:11px;height:11px}
+.cw-mrow.is-active .cw-mglyph,.cw-mrow:hover .cw-mglyph{color:inherit}
+.cw-mname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.cw-mbadge{justify-self:end;font-size:10px;white-space:nowrap;color:var(--vscode-descriptionForeground)}
+.cw-mrow.is-active .cw-mbadge,.cw-mrow:hover .cw-mbadge{color:inherit;opacity:.85}
+.cw-msub{grid-column:2/4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--vscode-descriptionForeground)}
+.cw-mrow.is-active .cw-msub,.cw-mrow:hover .cw-msub{color:inherit;opacity:.85}
+.cw-msep{height:1px;margin:4px 0;background:var(--vscode-menu-separatorBackground);opacity:.55}
+.cw-mrow--new .cw-mname b{color:var(--vscode-textLink-foreground);font-weight:500}
+.cw-mrow--new.is-active .cw-mname b,.cw-mrow--new:hover .cw-mname b{color:inherit}
+.cw-mquiet{display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:11px;color:var(--vscode-descriptionForeground)}
+
+/* ── Base, inline hints, code chips ─────────────────────────────────────── */
+.cw-base{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--vscode-descriptionForeground)}
+.cw-base b{color:var(--vscode-foreground);font-weight:500}
+.cw-lbtn{padding:1px 6px;border:0;border-radius:3px;background:none;font:inherit;font-size:11px;color:var(--vscode-textLink-foreground);cursor:pointer}
+.cw-lbtn:hover{background:var(--vscode-toolbar-hoverBackground)}
+.cw-lbtn:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.cw-lbtn:disabled{color:var(--vscode-disabledForeground);cursor:default}
+.cw-hint{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--vscode-descriptionForeground)}
+.cw-hint>svg{width:12px;height:12px;flex:0 0 auto}
+.cw-hint-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cw-hint--warn>svg{color:var(--vscode-editorWarning-foreground)}
+.cw-hint--err{color:var(--vscode-editorError-foreground)}
+.cw-hint--err>svg{color:var(--vscode-editorError-foreground)}
+.cw-code{padding:0 4px;border-radius:3px;font-family:var(--vscode-editor-font-family,monospace);font-size:11px;white-space:nowrap;color:var(--vscode-foreground);background:color-mix(in srgb,var(--vscode-foreground) 10%,transparent)}
+.cw-code--trunc{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cw-badge{padding:0 5px;border-radius:3px;font-size:9px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;line-height:15px;white-space:nowrap;color:var(--vscode-descriptionForeground);background:color-mix(in srgb,var(--vscode-foreground) 10%,transparent)}
+.cw-badge--custom{color:var(--vscode-charts-blue);background:color-mix(in srgb,var(--vscode-charts-blue) 15%,transparent)}
+
+/* ── Destination: one line, end-weighted, never wrapping ────────────────── */
+.cw-dest{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--vscode-descriptionForeground)}
+.cw-dest-val{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cw-dest-val b{color:var(--vscode-foreground);font-weight:500}
+.cw-acts{display:flex;align-items:center;gap:1px;flex:0 0 auto}
+.cw-skel{display:inline-block;width:170px;height:10px;border-radius:3px;background:linear-gradient(90deg,color-mix(in srgb,var(--vscode-foreground) 9%,transparent),color-mix(in srgb,var(--vscode-foreground) 18%,transparent),color-mix(in srgb,var(--vscode-foreground) 9%,transparent));background-size:200% 100%;animation:cw-shim 1.4s linear infinite}
+@keyframes cw-shim{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.cw-spin{animation:none;border-right-color:transparent;border-bottom-color:transparent}.cw-skel{animation:none}}
+
+/* ── Bring over ─────────────────────────────────────────────────────────── */
+.cw-box{display:flex;flex-direction:column;gap:8px;padding:9px;border:1px solid color-mix(in srgb,var(--vscode-foreground) 12%,transparent);border-radius:4px;background:color-mix(in srgb,var(--vscode-foreground) 4%,transparent)}
+.cw-brow{display:grid;grid-template-columns:13px minmax(0,1fr);gap:3px 8px;align-items:center;min-width:0}
+.cw-brow-top{display:flex;align-items:center;gap:8px;min-width:0;font-size:11px}
+.cw-brow-top b{font-weight:500}
+.cw-brow-meta{grid-column:2;display:flex;align-items:center;gap:6px;min-width:0}
+.cw-src{font-size:10px;white-space:nowrap;color:var(--vscode-descriptionForeground);opacity:.9}
+.cw-quiet{display:flex;align-items:center;gap:8px;min-width:0;padding:8px 9px;border:1px dashed color-mix(in srgb,var(--vscode-foreground) 20%,transparent);border-radius:4px;font-size:11px;line-height:1.5;color:var(--vscode-descriptionForeground)}
+.cw-quiet-txt{flex:1 1 auto;min-width:0;text-wrap:pretty}
+.cw-quiet code{padding:0 3px;border-radius:2px;font-family:var(--vscode-editor-font-family,monospace);font-size:10px;background:color-mix(in srgb,var(--vscode-foreground) 10%,transparent)}
+
+/* ── After creating ─────────────────────────────────────────────────────── */
+.cw-seg{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;padding:2px;border-radius:5px;background:color-mix(in srgb,var(--vscode-foreground) 8%,transparent)}
+.cw-seg button{padding:5px 6px;border:0;border-radius:4px;background:none;font:inherit;font-size:11px;color:var(--vscode-descriptionForeground);cursor:pointer}
+.cw-seg button[aria-checked="true"]{background:var(--vscode-editorWidget-background);color:var(--vscode-foreground);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.cw-seg button:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
+.cw-fgrid{display:grid;grid-template-columns:74px minmax(0,1fr);gap:7px 8px;align-items:center;min-width:0}
+.cw-fgrid>.cw-lbl{justify-self:start}
+.cw-full{grid-column:1/3;min-width:0}
+.cw-count{font-size:10px;text-align:right;color:var(--vscode-descriptionForeground);font-variant-numeric:tabular-nums}
+
+/* ── Advanced disclosure ────────────────────────────────────────────────── */
+.cw-adv{display:flex;align-items:center;gap:7px;width:100%;padding:3px 0;border:0;background:none;font:inherit;font-size:11px;color:var(--vscode-descriptionForeground);text-align:left;cursor:pointer}
+.cw-adv:hover{color:var(--vscode-foreground)}
+.cw-adv:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}
+.cw-adv svg{width:11px;height:11px;transform:rotate(-90deg);transition:transform 120ms ease-out}
+.cw-adv.is-open svg{transform:none}
+.cw-adv-sum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85}
+.cw-advbody{display:flex;flex-direction:column;gap:10px;padding:2px 0 0 18px}
+.cw-inline-seg{display:flex;gap:4px}
+.cw-inline-seg button{padding:3px 9px;border:0;border-radius:3px;background:color-mix(in srgb,var(--vscode-foreground) 8%,transparent);font:inherit;font-size:11px;color:var(--vscode-descriptionForeground);cursor:pointer}
+.cw-inline-seg button[aria-checked="true"]{background:var(--vscode-button-secondaryBackground);color:var(--vscode-foreground)}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.cw-actions{display:flex;align-items:center;gap:8px;margin-top:2px}
+.cw-btn{padding:5px 12px;border:1px solid transparent;border-radius:3px;font:inherit;font-size:12px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+.cw-btn:hover{background:var(--vscode-button-secondaryHoverBackground)}
+.cw-btn:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.cw-btn:disabled{opacity:.5;cursor:default}
+.cw-btn--primary{margin-left:auto;background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
+.cw-btn--primary:hover:not(:disabled){background:var(--vscode-button-hoverBackground)}
+.cw-btn--danger{margin-left:auto;background:color-mix(in srgb,var(--vscode-editorError-foreground) 78%,#000);color:#fff}
+.cw-btn--danger:hover:not(:disabled){background:var(--vscode-editorError-foreground)}
+.cw-kbd{margin-left:6px;font-family:var(--vscode-editor-font-family,monospace);font-size:10px;opacity:.65}
+
+/* ── Remove worktree: a report, not a form ──────────────────────────────── */
+.cw-subject{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:12px}
+.cw-subject-branch{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vscode-foreground)}
+.cw-subject-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-size:11px;color:var(--vscode-descriptionForeground)}
+.cw-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.cw-checks li{display:grid;grid-template-columns:13px minmax(0,1fr);gap:2px 8px;align-items:start;font-size:11px;line-height:1.45}
+.cw-checks li>svg{width:12px;height:12px;margin-top:2px}
+.cw-ck--ok{color:var(--vscode-charts-green)}
+.cw-ck--warn{color:var(--vscode-editorWarning-foreground)}
+.cw-ck--unk{color:var(--vscode-descriptionForeground);opacity:.75}
+.cw-ck-sub{grid-column:2;font-size:10px;color:var(--vscode-descriptionForeground)}
+.cw-rule{height:1px;background:var(--vscode-widget-border)}
+.cw-notif{display:grid;grid-template-columns:13px minmax(0,1fr);gap:4px 8px;padding:8px 9px;border-left:2px solid var(--vscode-editorWarning-foreground);border-radius:0 4px 4px 0;background:color-mix(in srgb,var(--vscode-editorWarning-foreground) 10%,transparent);font-size:11px;line-height:1.5}
+.cw-notif>svg{width:12px;height:12px;margin-top:2px;color:var(--vscode-editorWarning-foreground)}
+.cw-notif--err{border-left-color:var(--vscode-editorError-foreground);background:color-mix(in srgb,var(--vscode-editorError-foreground) 10%,transparent)}
+.cw-notif--err>svg{color:var(--vscode-editorError-foreground)}
+.cw-notif b{color:var(--vscode-foreground);font-weight:600}
+.cw-notif-acts{grid-column:2;display:flex;align-items:center;gap:4px;margin-top:1px}

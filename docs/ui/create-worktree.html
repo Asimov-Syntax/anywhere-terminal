@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Create / Remove worktree — dialog redesign</title>
+<link rel="stylesheet" href="worktree-create-dialog.css" />
+<style>
+html,body{margin:0;background:#101010;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:auto}
+.mockup{display:flex;gap:26px;padding:26px;width:max-content;align-items:flex-start}
+.mockup-col{display:flex;flex-direction:column;gap:24px;flex:0 0 auto;width:512px}
+.mockup-label{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;color:#7d7d7d;text-transform:uppercase;margin-bottom:8px}
+.mockup-label b{color:#ddd;font-weight:600;text-transform:none;letter-spacing:0}
+.mockup-label em{color:#9a9a9a;font-style:normal;text-transform:none;letter-spacing:0}
+.strip{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid #2a2a2a;border-radius:6px;background:#161616}
+.strip-cap{font:11px/1.5 ui-monospace,Menlo,monospace;color:#7d7d7d}
+.notes{border:1px solid #2a2a2a;border-radius:6px;padding:14px 16px;background:#161616;font-size:12px;line-height:1.65;color:#b4b4b4}
+.notes h4{margin:0 0 8px;font:11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.05em;text-transform:uppercase;color:#8d8d8d}
+.notes h4+ul{margin-top:0}
+.notes ul{margin:0 0 14px;padding-left:16px}
+.notes li{margin:4px 0}
+.notes b{color:#e2e2e2;font-weight:600}
+.notes code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#cfcfcf;background:#222;padding:1px 4px;border-radius:3px}
+:root{
+  --vscode-foreground:#cccccc;--vscode-descriptionForeground:#9d9d9d;--vscode-disabledForeground:#6f6f6f;--vscode-icon-foreground:#cccccc;
+  --vscode-editor-font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --vscode-sideBar-background:#181818;--vscode-editor-background:#1f1f1f;--vscode-editorWidget-background:#252526;
+  --vscode-list-hoverBackground:#2a2a2a;--vscode-toolbar-hoverBackground:#2a2a2a;
+  --vscode-input-background:#313131;--vscode-input-foreground:#cccccc;--vscode-input-border:transparent;--vscode-input-placeholderForeground:#989898;
+  --vscode-button-background:#0078d4;--vscode-button-foreground:#ffffff;--vscode-button-hoverBackground:#1a86d9;
+  --vscode-button-secondaryBackground:#313131;--vscode-button-secondaryForeground:#cccccc;--vscode-button-secondaryHoverBackground:#3d3d3d;
+  --vscode-focusBorder:#0078d4;--vscode-widget-border:#333333;--vscode-panel-border:#2b2b2b;
+  --vscode-menu-background:#1f1f1f;--vscode-menu-foreground:#cccccc;--vscode-menu-border:#454545;
+  --vscode-menu-separatorBackground:#454545;--vscode-menu-selectionBackground:#04395e;--vscode-menu-selectionForeground:#ffffff;
+  --vscode-textLink-foreground:#4daafc;--vscode-charts-blue:#4daafc;--vscode-charts-yellow:#e2b341;--vscode-charts-green:#3fb950;
+  --vscode-editorWarning-foreground:#e2b341;--vscode-editorError-foreground:#f14c4c;--vscode-inputValidation-errorBorder:#be1100;
+}
+a{color:var(--vscode-textLink-foreground)}a:hover{color:#7cc4fd}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"></path></symbol>
+<symbol id="i-search" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"></circle><line x1="10.5" y1="10.5" x2="14" y2="14"></line></symbol>
+<symbol id="i-branch" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="4.5" cy="3.5" r="1.6"></circle><circle cx="4.5" cy="12.5" r="1.6"></circle><circle cx="11.5" cy="6" r="1.6"></circle><path d="M4.5 5.1v5.8"></path><path d="M11.5 7.6c0 2.2-2.3 2.9-4.2 3.2"></path></symbol>
+<symbol id="i-check" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.4 3.4L13 4.8"></path></symbol>
+<symbol id="i-warn" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5l6 11H2z"></path><line x1="8" y1="6.4" x2="8" y2="9.7"></line><line x1="8" y1="11.4" x2="8" y2="11.5"></line></symbol>
+<symbol id="i-unknown" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"></circle><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.3"></path><line x1="8" y1="11.5" x2="8" y2="11.6"></line></symbol>
+<symbol id="i-x" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="4" y1="4" x2="12" y2="12"></line><line x1="12" y1="4" x2="4" y2="12"></line></symbol>
+<symbol id="i-copy" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1"></rect><path d="M11 5V3a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2"></path></symbol>
+<symbol id="i-reveal" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 5h4l1.3-1.3H10V5h4.5l-1 8.5h-12z"></path></symbol>
+<symbol id="i-edit" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M11.4 2.6l2 2L6 12H4v-2z"></path><line x1="3" y1="14" x2="13" y2="14"></line></symbol>
+<symbol id="i-plus" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="8" y1="3.5" x2="8" y2="12.5"></line><line x1="3.5" y1="8" x2="12.5" y2="8"></line></symbol>
+<symbol id="i-pr" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3.6" r="1.6"></circle><circle cx="4" cy="12.4" r="1.6"></circle><circle cx="12" cy="12.4" r="1.6"></circle><path d="M4 5.2v5.6"></path><path d="M12 10.8V6.2A2 2 0 0 0 10 4.2H7.4"></path><path d="M8.9 2.7L7.3 4.2l1.6 1.5"></path></symbol>
+<symbol id="i-repo" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M3 2h9.5v12H4a1 1 0 0 1-1-1z"></path><path d="M3 11.5h9.5"></path></symbol>
+<symbol id="i-refresh" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.3 7a5.3 5.3 0 1 0-.3 3"></path><path d="M13.5 3v3h-3"></path></symbol>
+<symbol id="i-github" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .5a7.5 7.5 0 0 0-2.4 14.6c.4.1.5-.2.5-.4v-1.4c-2 .4-2.5-.5-2.7-1-.1-.3-.6-1-1-1.3-.3-.2-.7-.5 0-.5.6 0 1 .6 1.2.9.7 1.2 1.9.9 2.4.7.1-.5.3-.9.6-1.1-2-.3-3.2-1.4-3.2-3.2 0-.8.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .8-.3 2.5 1a5.9 5.9 0 0 1 3 0c1.7-1.2 2.5-1 2.5-1 .5 1.2.2 2 .1 2.2.5.5.8 1.2.8 2 0 1.9-1.2 2.9-3.2 3.2.4.3.7.9.7 1.7v2c0 .2.1.5.5.4A7.5 7.5 0 0 0 8 .5"></path></symbol>
+<symbol id="i-terminal" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1"></rect><path d="M4 6l2.5 2L4 10"></path><line x1="8" y1="10.5" x2="11" y2="10.5"></line></symbol>
+<symbol id="i-lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1"></rect><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7"></path></symbol>
+<symbol id="i-link" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M6.6 9.4L9.4 6.6"></path><path d="M7.6 4.6l1.1-1.1a2.6 2.6 0 0 1 3.8 3.8l-1.1 1.1"></path><path d="M8.4 11.4l-1.1 1.1a2.6 2.6 0 0 1-3.8-3.8l1.1-1.1"></path></symbol>
+</svg>
+<div class="mockup">
+
+<!-- ══════════ COLUMN 1 — the two states the user meets first ══════════ -->
+<div class="mockup-col">
+
+<div>
+<div class="mockup-label">1 + 8 · <b>Default</b> · empty branch field · nothing configured · clean repo · <em>Create disabled until a branch is named</em></div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" placeholder="Search branches, or type a new branch name" /><span class="cw-cbx-end"><svg><use href="#i-search"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path" disabled><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder" disabled><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val">Derived from the branch name</span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">Nothing configured</span></div>
+    <div class="cw-quiet"><svg style="width:12px;height:12px;flex:0 0 auto;color:var(--vscode-editorWarning-foreground)"><use href="#i-warn"></use></svg><span class="cw-quiet-txt">This worktree will have no <code>.env</code> or <code>node_modules</code>.</span><button class="cw-btn" style="padding:3px 9px;font-size:11px">Set up…</button></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">After creating</div>
+    <div class="cw-seg" role="radiogroup" aria-label="After creating"><button role="radio" aria-checked="true">Nothing</button><button role="radio" aria-checked="false">Open folder</button><button role="radio" aria-checked="false">Start an agent</button></div>
+  </div>
+  <button class="cw-adv" aria-expanded="false"><svg><use href="#i-chev"></use></svg>Advanced<span class="cw-adv-sum">Branch source · Base ref · Path override</span></button>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary" disabled>Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">2 · <b>Typed + collision</b> · amber, field-local, one line · destination tail already resolved · dirty repo, so the move row appears</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-hint cw-hint--warn"><svg><use href="#i-warn"></use></svg><span class="cw-hint-txt"><span class="cw-mut">feat-search already exists — will use</span> <span class="cw-code">feat-search-2</span></span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Use name</button></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/<b>feat-search-2</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">2 copied · 1 linked</span></div>
+    <div class="cw-box">
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-setup" /><label class="cw-brow-top" for="c-setup"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-copy" /><label class="cw-brow-top" for="c-copy"><b>Copy 2 files</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-link" /><label class="cw-brow-top" for="c-link"><b>Link 1 file</b><span class="cw-lbl-sp"></span><span class="cw-src">writes to main</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-port" /><label class="cw-brow-top" for="c-port"><b>Allocate 2 ports</b><span class="cw-lbl-sp"></span><span class="cw-src">ASIMOV_PORT_APP, _DB</span></label></div>
+      <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
+    </div>
+  </div>
+  <label class="cw-cbl"><input class="cw-cb" type="checkbox" /><span>Move my uncommitted changes into the new worktree</span><span class="cw-mut cw-num">(7 files)</span></label>
+  <div class="cw-sec">
+    <div class="cw-lbl">After creating</div>
+    <div class="cw-seg" role="radiogroup" aria-label="After creating"><button role="radio" aria-checked="true">Nothing</button><button role="radio" aria-checked="false">Open folder</button><button role="radio" aria-checked="false">Start an agent</button></div>
+  </div>
+  <button class="cw-adv" aria-expanded="false"><svg><use href="#i-chev"></use></svg>Advanced<span class="cw-adv-sum">Branch source · Base ref · Path override</span></button>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">10 · <b>Pending destination</b> · the host has not answered yet, so the form states nothing and Create is disabled</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/search-ranking" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path" disabled><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder" disabled><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-skel" role="status" aria-label="Resolving destination"></span><span class="cw-mut">Resolving…</span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">After creating</div>
+    <div class="cw-seg" role="radiogroup" aria-label="After creating"><button role="radio" aria-checked="true">Nothing</button><button role="radio" aria-checked="false">Open folder</button><button role="radio" aria-checked="false">Start an agent</button></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary" disabled>Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">5 · <b>Destination — all three states</b> · <em>never more than one line; monospace only once it is editable</em></div>
+<div class="strip">
+  <div class="strip-cap">Automatic — read-only, end-weighted tail, full path on hover and focus</div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/<b>feat-search-2</b></span></div>
+  </div>
+  <div class="strip-cap">Custom — same value as Advanced ▸ Path override; Reset returns to Automatic</div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge cw-badge--custom">Custom</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Reset to automatic</button></div>
+    <input class="cw-inp cw-inp--mono is-focus" value="~/work/wt/anywhere-terminal-search" aria-label="Destination path" />
+  </div>
+  <div class="strip-cap">Custom + invalid — validated on change, not at submit</div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge cw-badge--custom">Custom</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Reset to automatic</button></div>
+    <input class="cw-inp cw-inp--mono is-invalid" value="~/work/wt/anywhere-terminal" aria-label="Destination path" aria-invalid="true" />
+    <div class="cw-hint cw-hint--err"><svg><use href="#i-warn"></use></svg><span class="cw-hint-txt">Directory is not empty — 14 entries</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Reveal</button></div>
+  </div>
+</div>
+</div>
+
+</div>
+
+<!-- ══════════ COLUMN 2 — the combobox does all the searching ══════════ -->
+<div class="mockup-col">
+
+<div>
+<div class="mockup-label">3 · <b>Fully configured</b> · one omnibox, no tab bar · sections + the free-text escape hatch as the last row</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="feat/search" role="combobox" aria-expanded="true" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-menu" role="listbox">
+      <div class="cw-mgrp">Recent</div>
+      <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-check"></use></svg></span><span class="cw-mname">main</span><span class="cw-mbadge">Local · current</span></div>
+      <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">feat/vault-privacy</span><span class="cw-mbadge">Local</span></div>
+      <div class="cw-mgrp">Local</div>
+      <div class="cw-mrow is-disabled" role="option" aria-disabled="true" title="Already checked out in feat-search — git allows one worktree per branch"><span class="cw-mglyph"><svg><use href="#i-lock"></use></svg></span><span class="cw-mname">feat/search-ranking</span><span class="cw-mbadge">In feat-search</span></div>
+      <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">fix/search-debounce</span><span class="cw-mbadge">Local</span></div>
+      <div class="cw-mgrp">Remote</div>
+      <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">origin/release/1.4</span><span class="cw-mbadge">Remote</span></div>
+      <div class="cw-msep"></div>
+      <div class="cw-mrow cw-mrow--new is-active" role="option" aria-selected="true"><span class="cw-mglyph"><svg><use href="#i-plus"></use></svg></span><span class="cw-mname">Create new branch <b>"feat/search"</b> from main</span></div>
+    </div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/<b>feat-search-2</b></span></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">11 · <b>PR search</b> · a PR is a source inside the same box, never a fifth tab · fork remotes announced up front</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="#1234" role="combobox" aria-expanded="true" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-menu" role="listbox">
+      <div class="cw-mgrp">Pull requests</div>
+      <div class="cw-mrow is-active" role="option" aria-selected="true"><span class="cw-mglyph"><svg><use href="#i-pr"></use></svg></span><span class="cw-mname">#1234 &nbsp;Fix vault privacy leak</span><span class="cw-mbadge">octocat · open</span><span class="cw-msub">→ pr/1234, base main</span></div>
+      <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-pr"></use></svg></span><span class="cw-mname">#1231 &nbsp;Retry launcher on ENOENT</span><span class="cw-mbadge">kmaeda · open</span><span class="cw-msub">→ pr/1231, base main · adds remote fork-kmaeda</span></div>
+      <div class="cw-mgrp">Local</div>
+      <div class="cw-mrow" role="option"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">feat/1234-retry</span><span class="cw-mbadge">Local</span></div>
+      <div class="cw-msep"></div>
+      <div class="cw-mrow cw-mrow--new" role="option"><span class="cw-mglyph"><svg><use href="#i-plus"></use></svg></span><span class="cw-mname">Create new branch <b>"#1234"</b> from main</span></div>
+    </div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/pr-1234">…/anywhere-terminal/<b>pr-1234</b></span></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">12 · <b>PR not authenticated</b> · one quiet row · branch search keeps working underneath</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp is-focus" value="#1234" role="combobox" aria-expanded="true" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+    <div class="cw-menu" role="listbox">
+      <div class="cw-mquiet"><svg style="width:12px;height:12px;flex:0 0 auto"><use href="#i-github"></use></svg><span class="cw-hint-txt">Sign in to search pull requests</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Sign in to GitHub</button></div>
+      <div class="cw-msep"></div>
+      <div class="cw-mgrp">Local</div>
+      <div class="cw-mrow is-active" role="option" aria-selected="true"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">feat/1234-retry</span><span class="cw-mbadge">Local</span></div>
+      <div class="cw-msep"></div>
+      <div class="cw-mrow cw-mrow--new" role="option"><span class="cw-mglyph"><svg><use href="#i-plus"></use></svg></span><span class="cw-mname">Create new branch <b>"#1234"</b> from main</span></div>
+    </div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">3b · <b>Combobox async states</b> · <em>refs are local and fast, PRs are a network call</em></div>
+<div class="strip">
+  <div class="strip-cap">Refs loading — still typeable, spinner replaces the chevron</div>
+  <div class="cw-cbx"><input class="cw-inp" value="feat/sea" /><span class="cw-cbx-end"><span class="cw-spin" role="status" aria-label="Loading branches"></span></span></div>
+  <div class="cw-menu"><div class="cw-mquiet"><span class="cw-spin"></span><span>Loading branches…</span></div><div class="cw-msep"></div><div class="cw-mrow cw-mrow--new"><span class="cw-mglyph"><svg><use href="#i-plus"></use></svg></span><span class="cw-mname">Create new branch <b>"feat/sea"</b> from main</span></div></div>
+  <div class="strip-cap">Refs failed — quiet Retry, free-text creation still available</div>
+  <div class="cw-menu"><div class="cw-mquiet"><svg style="width:12px;height:12px;flex:0 0 auto;color:var(--vscode-editorWarning-foreground)"><use href="#i-warn"></use></svg><span class="cw-hint-txt">Could not read branches</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Retry</button></div><div class="cw-msep"></div><div class="cw-mrow cw-mrow--new is-active"><span class="cw-mglyph"><svg><use href="#i-plus"></use></svg></span><span class="cw-mname">Create new branch <b>"feat/sea"</b> from main</span></div></div>
+  <div class="strip-cap">PR lookup pending, branch sections already rendered</div>
+  <div class="cw-menu"><div class="cw-mgrp">Pull requests</div><div class="cw-mquiet"><span class="cw-spin"></span><span>Looking up #1234…</span></div><div class="cw-mgrp">Local</div><div class="cw-mrow"><span class="cw-mglyph"><svg><use href="#i-branch"></use></svg></span><span class="cw-mname">feat/1234-retry</span><span class="cw-mbadge">Local</span></div></div>
+</div>
+</div>
+
+</div>
+
+<!-- ══════════ COLUMN 3 — configuration surfaces ══════════ -->
+<div class="mockup-col">
+
+<div>
+<div class="mockup-label">4 · <b>Start an agent</b> · segmented radios reveal the panel a <em>&lt;select&gt;</em> used to hide · Wait for setup enabled because Run setup is checked</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path"><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder"><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/<b>feat-search-2</b></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Bring over<span class="cw-lbl-sp"></span><span class="cw-mut">2 copied · 1 linked</span></div>
+    <div class="cw-box">
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-setup2" /><label class="cw-brow-top" for="c-setup2"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+      <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-files2" /><label class="cw-brow-top" for="c-files2"><b>Copy 2 files, link 1</b><span class="cw-lbl-sp"></span><span class="cw-src">1 writes to main</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env, .claude/settings.local.json, .env.local</span></div></div>
+      <div style="display:flex"><span class="cw-lbl-sp"></span><button class="cw-lbtn">Configure…</button></div>
+    </div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">After creating</div>
+    <div class="cw-seg" role="radiogroup" aria-label="After creating"><button role="radio" aria-checked="false">Nothing</button><button role="radio" aria-checked="false">Open folder</button><button role="radio" aria-checked="true">Start an agent</button></div>
+    <div class="cw-box">
+      <div class="cw-fgrid">
+        <span class="cw-lbl">Agent</span><select class="cw-inp"><option>Claude Code</option><option>Codex</option><option>Cursor</option></select>
+        <span class="cw-lbl">Permissions</span><select class="cw-inp"><option>Ask before edits</option><option>Auto-accept edits</option></select>
+        <div class="cw-full cw-lbl">First prompt</div>
+        <div class="cw-full"><textarea class="cw-ta" placeholder="Sent once the agent's composer is ready…"></textarea><div class="cw-count">0/2000</div></div>
+      </div>
+      <label class="cw-cbl"><input class="cw-cb" type="checkbox" checked /><span>Wait for setup to finish before starting the agent</span></label>
+    </div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">4b · <b>Wait for setup — disabled</b> · nothing to wait for once Run setup is off (or unconfigured)</div>
+<div class="strip">
+  <div class="cw-box">
+    <div class="cw-brow"><input class="cw-cb" type="checkbox" id="c-setup3" /><label class="cw-brow-top" for="c-setup3"><b>Run setup</b><span class="cw-lbl-sp"></span><span class="cw-src">asimov/worktree.yaml</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">bun install &amp;&amp; bun run db:migrate</span></div></div>
+    <label class="cw-cbl is-off"><input class="cw-cb" type="checkbox" disabled /><span>Wait for setup to finish before starting the agent</span></label>
+    <div class="cw-hint" style="padding-left:21px">Enable <b style="color:var(--vscode-foreground);font-weight:500">Run setup</b> to use this.</div>
+  </div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">6 · <b>Advanced expanded</b> · Path override is the <em>same value</em> as the Destination line — Edit up there opens and focuses this row</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" value="feat/search" /><span class="cw-cbx-end"><svg><use href="#i-chev"></use></svg></span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge cw-badge--custom">Custom</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Reset to automatic</button></div>
+    <div class="cw-dest"><span class="cw-dest-val" tabindex="0" title="/Users/huybuidac/work/wt/anywhere-terminal-search">…/work/wt/<b>anywhere-terminal-search</b></span></div>
+  </div>
+  <button class="cw-adv is-open" aria-expanded="true"><svg><use href="#i-chev"></use></svg>Advanced</button>
+  <div class="cw-advbody">
+    <div class="cw-sec">
+      <div class="cw-lbl">Branch source</div>
+      <div class="cw-inline-seg" role="radiogroup" aria-label="Branch source"><button role="radio" aria-checked="true">New branch</button><button role="radio" aria-checked="false">Existing</button><button role="radio" aria-checked="false">Detached</button></div>
+    </div>
+    <div class="cw-sec">
+      <div class="cw-lbl">Base ref <span style="opacity:.7">(optional)</span></div>
+      <input class="cw-inp cw-inp--mono" value="main" />
+    </div>
+    <div class="cw-sec">
+      <div class="cw-lbl">Path override<span class="cw-badge cw-badge--custom">Custom</span><span class="cw-lbl-sp"></span><button class="cw-lbtn">Reset to automatic</button></div>
+      <input class="cw-inp cw-inp--mono is-focus" value="~/work/wt/anywhere-terminal-search" />
+      <div class="cw-hint">Same value as Destination above.</div>
+    </div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary">Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">9 · <b>Repository row present</b> · only rendered in a multi-repo workspace · switching it re-derives the destination and re-fetches refs</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Create worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-sec">
+    <div class="cw-lbl">Repository</div>
+    <select class="cw-inp"><option>anywhere-terminal</option><option>cyberk-skills</option><option>asimov</option></select>
+    <div class="cw-hint"><span class="cw-hint-txt" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal">…/cyberk-skills-workspace/anywhere-terminal</span></div>
+  </div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Branch / source</div>
+    <div class="cw-cbx"><input class="cw-inp" placeholder="Search branches, or type a new branch name" /><span class="cw-cbx-end"><svg><use href="#i-search"></use></svg></span></div>
+  </div>
+  <div class="cw-base">Base: <b>main</b><span class="cw-lbl-sp"></span><button class="cw-lbtn">Change</button></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Destination<span class="cw-badge">Automatic</span><span class="cw-lbl-sp"></span><span class="cw-acts"><button class="cw-ib cw-ib--sm" aria-label="Edit destination"><svg><use href="#i-edit"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Copy path" disabled><svg><use href="#i-copy"></use></svg></button><button class="cw-ib cw-ib--sm" aria-label="Reveal in Finder" disabled><svg><use href="#i-reveal"></use></svg></button></span></div>
+    <div class="cw-dest"><span class="cw-dest-val">Derived from the branch name</span></div>
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--primary" disabled>Create worktree<span class="cw-kbd">⌘↵</span></button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">8b · <b>Bring over — degraded honestly</b> · Windows cannot symlink without elevation, so the row says <em>copied</em> instead of promising a link</div>
+<div class="strip">
+  <div class="cw-box">
+    <div class="cw-brow"><input class="cw-cb" type="checkbox" checked id="c-win" /><label class="cw-brow-top" for="c-win"><b>Link 1 file</b><span class="cw-lbl-sp"></span><span class="cw-src">copied on Windows</span></label><div class="cw-brow-meta"><span class="cw-code cw-code--trunc">.env.local</span></div></div>
+    <div class="cw-hint" style="padding-left:21px"><span class="cw-hint-txt">Symlinks need Developer Mode; this file is copied instead.</span></div>
+  </div>
+</div>
+</div>
+
+</div>
+
+<!-- ══════════ COLUMN 4 — after create, and removal ══════════ -->
+<div class="mockup-col">
+
+<div>
+<div class="mockup-label">7 · <b>Setup failed</b> · the worktree exists, so this is never a failed create and never a rollback · lives on the created worktree row</div>
+<div class="strip">
+  <div class="cw-notif">
+    <svg><use href="#i-warn"></use></svg>
+    <div><b>Setup failed</b> in feat-search-2 — <span class="cw-code">bun run db:migrate</span> exited 1. The worktree was created and is usable.</div>
+    <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">View output</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Retry setup</button></div>
+  </div>
+  <div class="strip-cap">Rendered in the panel, on the worktree it belongs to — not in a toast that outlives its context</div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">13 · <b>Remove — clean</b> · every check shown, including the ones that passed · nothing failed, so no typed confirmation</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Remove worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-subject"><span class="cw-subject-branch">feat/search</span><span class="cw-subject-path" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/feat-search-2</span></div>
+  <ul class="cw-checks">
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No uncommitted changes</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>Branch merged into main</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No terminals running in this folder</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>No agent active here</span></li>
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>Not locked</span></li>
+  </ul>
+  <label class="cw-cbl"><input class="cw-cb" type="checkbox" /><span>Also delete branch feat/search</span></label>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--danger">Remove worktree</button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">14 · <b>Remove — blocked</b> · two warnings, one unproven check treated as blocking · typed confirmation only because a check failed</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Remove worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-subject"><span class="cw-subject-branch">feat/search</span><span class="cw-subject-path" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/feat-search-2</span></div>
+  <ul class="cw-checks">
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>12 uncommitted changes, 3 untracked files</span></li>
+    <li><svg class="cw-ck--unk"><use href="#i-unknown"></use></svg><span>Merge state unknown — main has not been fetched</span><span class="cw-ck-sub">Treated as unmerged until it can be checked.</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-terminal"></use></svg><span>2 terminals still running in this folder</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>Agent "Claude Code" is active here</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-lock"></use></svg><span>Worktree is locked — "running overnight bench"</span><span class="cw-ck-sub">Removal will pass <span class="cw-code">--force</span> twice.</span></li>
+  </ul>
+  <label class="cw-cbl is-off"><input class="cw-cb" type="checkbox" disabled /><span>Also delete branch feat/search</span></label>
+  <div class="cw-hint" style="padding-left:21px"><span class="cw-hint-txt">Unavailable while the branch is unmerged.</span></div>
+  <div class="cw-rule"></div>
+  <div class="cw-sec">
+    <div class="cw-lbl">Type <span class="cw-code">feat-search-2</span> to confirm</div>
+    <input class="cw-inp cw-inp--mono is-focus" aria-label="Type feat-search-2 to confirm" />
+  </div>
+  <div class="cw-actions"><button class="cw-btn">Cancel</button><button class="cw-btn cw-btn--danger" disabled>Remove worktree</button></div>
+</div>
+</div>
+
+<div>
+<div class="mockup-label">15 · <b>Remove — partial failure</b> · never claims success · says exactly what is left on disk</div>
+<div class="cw-dlg">
+  <h3 class="cw-title">Remove worktree<span class="cw-title-sp"></span><button class="cw-ib" aria-label="Close"><svg><use href="#i-x"></use></svg></button></h3>
+  <div class="cw-subject"><span class="cw-subject-branch">feat/search</span><span class="cw-subject-path" tabindex="0" title="/Users/huybuidac/Projects/cyberk/cyberk-skills-workspace/anywhere-terminal/.claude/worktrees/feat-search-2">…/anywhere-terminal/feat-search-2</span></div>
+  <div class="cw-notif cw-notif--err">
+    <svg><use href="#i-warn"></use></svg>
+    <div><b>Not removed.</b> Git could not unregister the worktree: <span class="cw-code">.git/worktrees/feat-search-2</span> is in use. The directory was left in place and still holds your 12 uncommitted changes.</div>
+    <div class="cw-notif-acts"><button class="cw-btn" style="padding:3px 9px;font-size:11px">Retry</button><button class="cw-btn" style="padding:3px 9px;font-size:11px">Reveal</button></div>
+  </div>
+  <ul class="cw-checks">
+    <li><svg class="cw-ck--ok"><use href="#i-check"></use></svg><span>Terminals in this folder were closed</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>Worktree still registered in git</span></li>
+    <li><svg class="cw-ck--warn"><use href="#i-warn"></use></svg><span>Directory still on disk</span></li>
+  </ul>
+  <div class="cw-actions"><button class="cw-btn">Close</button><button class="cw-btn cw-btn--primary">Retry removal</button></div>
+</div>
+</div>
+
+<div class="notes">
+<h4>What changed, and why</h4>
+<ul>
+<li><b>The path stopped being the subject.</b> Destination is one line of proportional UI text in <code>descriptionForeground</code>, end-weighted to the last two segments, tooltip on hover <em>and</em> focus. Monospace returns only when <code>[Edit]</code> makes it editable.</li>
+<li><b>Collision is amber and field-local.</b> One line, resolved name in an inline chip, <code>[Use name]</code> to accept. The full path is not repeated — the Destination tail below already shows the resolved name. Nothing rewrites the input silently.</li>
+<li><b>One omnibox, no tab bar.</b> Refs, PRs and "create new branch" live in one list; a branch already checked out elsewhere is shown disabled with the owning directory as its badge instead of failing at submit.</li>
+<li><b>Bring over</b> is the point of the redesign: a summary with <code>[Configure…]</code>, never a settings editor. Copy is default, link is the exception and carries <em>writes to main</em>. When nothing is configured the section still appears — silence is what ships a broken worktree.</li>
+<li><b>Setup failure is not create failure.</b> Screen 7 lives on the created worktree; no rollback, no red.</li>
+<li><b>Removal is a report.</b> Passed checks are shown so the warnings are legible; unproven checks render as <code>?</code> and block; the typed confirmation appears only when something failed.</li>
+</ul>
+<h4>Decisions to confirm</h4>
+<ul>
+<li><b>Destination label and value are on two lines</b>, not one as in the brief's sketch. At 480px the label, <em>Automatic</em> badge, three icon buttons and a path tail cannot share a row without truncating the path to uselessness. Label row carries badge + actions; the path owns its own line.</li>
+<li><b>Default destination stays <code>…/.claude/worktrees/&lt;name&gt;</code></b> (what your build does now), shown as <code>…/anywhere-terminal/feat-search-2</code>. Say the word if the sibling <code>&lt;repo&gt;-&lt;branch&gt;</code> default should come back.</li>
+<li><b>Bring over rows are two lines</b> (name + source badge, then the command/paths chip). The brief's three-column row does not survive 480px.</li>
+<li><b>Base is hidden while Advanced is open</b> — it would otherwise appear twice, since Base ref lives there too. Alternative: drop Base ref from Advanced entirely and keep only the compact line.</li>
+<li><b>Not drawn:</b> the "Create more" batch flow, issue-driven creation, remote hosts — out of scope per the brief.</li>
+</ul>
+</div>
+
+</div>
+
+</div>
+</body>
+</html>

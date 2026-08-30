@@ -391,7 +391,7 @@ nothing to provision.
 | **Labels** | cross-boundary |
 | **Notes** | Surfaced while planning WT-011.1, which established the rule and scoped itself to the resolvers that gate a transcript read. Five further sites compare raw workspace-folder, Git API, pane-cwd and webview paths lexically — the same error with a different consequence: a session whose cwd resolves elsewhere is attributed to the wrong worktree, and repository discovery can pick the wrong root. Held back from WT-011.1 deliberately: none of them authorizes a read, several run per push, and "attribution is wrong" is a different acceptance story from "a read escaped the store". Whether the fix is resolution at these sites or resolution once at the boundary that produces the paths is the decision this task owns |
 | **Acceptance** | A pane whose cwd resolves outside a worktree is not attributed to it, and one that resolves inside it still is, whatever either spells; repository discovery picks the root a path resolves into; the per-push paths do not gain an unbounded syscall per comparison; no site keeps a private copy of the containment rule |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-011.7] A Projection Tick Provokes Bounded Work
 
@@ -420,6 +420,21 @@ nothing to provision.
 | **Notes** | Split out of WT-011.5 at planning, when the oracle showed its central claim was untrue of the code: every reader collapses "no such session" and "I could not look" into the same `null`, and `codexReader.ts` says so in a comment. Any caller that treats absence as actionable is therefore acting on a guess, and WT-011.5 would have acted on it by blanking a live row. The readers already hold the distinction internally — an empty result set is absent, a thrown query or an unparseable file is unknown — so the work is surfacing what they know across `VaultService` and its wiring, not adding a probe. Its own invariant owner (the lookup contract) and independently testable, which is why it is a task rather than remediation folded into WT-011.5. Scope discipline: this widens one lookup's answer, it does not revisit how entries are built or cached |
 | **Acceptance** | A lookup for a session the store never had, and for one whose file was deleted, both report absent; a lookup during a reader failure — an unreadable database, an unparseable transcript, a thrown query — reports unknown and is never mistaken for absent; every existing caller keeps its current behaviour, treating anything other than a found entry the way it treats `null` today; the distinction holds for each supported agent source |
 | **Status** | in_progress |
+
+### [WT-011.9] A Reused Snapshot Answers For A Store It Can Still Read
+
+| Field | Value |
+|-------|-------|
+| **Goal** | The reused and freshly-taken read paths give the same status for a store whose readability has changed |
+| **Design Ref** | [DESIGN.md](DESIGN.md) § 9 D31 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | security-privacy |
+| **Notes** | Raised as W4 in `snapshot-a-live-store-atomically` cycle 2 round 4 and parked there as a decision rather than a patch. The presence check proves a store EXISTS (`fs.access` in its default mode) and the reuse gate proves its `(mtimeMs,size)` is unchanged; neither proves it can still be READ. Revoke read permission on the database file and both keep succeeding, so a retained snapshot is served as `ok` while a cold read of the same store returns `db-unreachable`. The bytes were read lawfully when the snapshot was taken, so this is a status-contract divergence rather than a disclosure — but two paths answering one question differently is what the status vocabulary exists to prevent. The decision this task owns is WHERE the proof belongs, and each candidate moves an accepted contract: proving `R_OK` in the presence check changes what separates `no-db` from `db-unreachable`; folding access state into the generation adds a third input to a two-input proof and costs a syscall per reuse; proving it only at the pool boundary splits the contract across two owners. Existing coverage revokes DIRECTORY search permission, which fails earlier and never reaches this boundary |
+| **Acceptance** | A store whose read permission is revoked reports the same status through a reused snapshot as through a fresh one; the reuse path does not gain a syscall per hit unless that is the decision recorded; file-level permission revocation is covered for both entry points, not only directory-level |
+| **Status** | todo |
+
 
 ---
 
