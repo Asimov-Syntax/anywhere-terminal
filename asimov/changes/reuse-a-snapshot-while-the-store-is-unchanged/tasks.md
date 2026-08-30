@@ -92,7 +92,7 @@
     4. Adopt the exported file set in `src/vault/readers/codexReader.ts` and `src/vault/readers/opencodeReader.ts` so the reuse gate and the persisted list cache cannot disagree about which files define freshness.
     5. Cover: a checkpoint-and-delete landing between the two halves of the read, an unreadable `-wal` never reading as a WAL-free store, and a genuinely WAL-free store still reusing.
 
-- [ ] 3_2 Drain admitted work at shutdown, not the states it can see
+- [x] 3_2 Drain admitted work at shutdown, not the states it can see — verified: pnpm exec vitest run 'src/vault/snapshotPool.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: .reviews/round-2.md; design.md#d3a-dispose-is-a-barrier-not-a-sweep
   - **Acceptance**:

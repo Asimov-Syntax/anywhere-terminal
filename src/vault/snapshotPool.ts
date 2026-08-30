@@ -88,6 +88,10 @@ export class SnapshotPool {
    *  shutdown cannot slip past the sweep that was meant to remove it (D3a). */
   private readonly liveEntries = new Set<Entry>();
   private outstandingLeases = 0;
+  /** Borrows admitted but not yet settled. Counted from BEFORE the first await, so a
+   *  borrow parked on its own generation read is work disposal must wait for, even
+   *  though it appears in no map yet (D3a). */
+  private admitted = 0;
   private readonly quiesced: Array<() => void> = [];
 
   constructor(private readonly deps: SnapshotPoolDeps) {
@@ -109,6 +113,16 @@ export class SnapshotPool {
     if (this.disposed) {
       throw new Error("snapshot pool is disposed");
     }
+    this.admitted += 1;
+    try {
+      return await this.borrowAdmitted(dbPath, produce);
+    } finally {
+      this.admitted -= 1;
+      this.wakeIfQuiet();
+    }
+  }
+
+  private async borrowAdmitted(dbPath: string, produce: (dest: string) => Promise<void>): Promise<SnapshotLease> {
     for (let waits = 0; ; waits++) {
       const before = await this.readGeneration(dbPath);
       const hit = this.retained.get(dbPath);
@@ -222,11 +236,7 @@ export class SnapshotPool {
         if (entry.leases === 0 && !entry.retained) {
           await this.destroy(entry);
         }
-        if (this.outstandingLeases === 0) {
-          for (const wake of this.quiesced.splice(0)) {
-            wake();
-          }
-        }
+        this.wakeIfQuiet();
       },
     };
   }
@@ -296,8 +306,10 @@ export class SnapshotPool {
     this.disposed = true;
     this.stopSweeping();
 
-    await Promise.allSettled([...this.inFlight.values()].map((flight) => flight.promise));
-    if (this.outstandingLeases > 0) {
+    // Drain ADMITTED work, not the maps it happens to be visible in: a borrow parked
+    // before it ever reached the in-flight map, and a producer displaced from the
+    // per-store binding, are both live work those maps cannot see.
+    while (this.admitted > 0 || this.outstandingLeases > 0) {
       await new Promise<void>((resolve) => this.quiesced.push(resolve));
     }
 
@@ -306,6 +318,14 @@ export class SnapshotPool {
     for (const entry of [...this.liveEntries]) {
       entry.retained = false;
       await this.destroy(entry);
+    }
+  }
+
+  private wakeIfQuiet(): void {
+    if (this.admitted === 0 && this.outstandingLeases === 0) {
+      for (const wake of this.quiesced.splice(0)) {
+        wake();
+      }
     }
   }
 

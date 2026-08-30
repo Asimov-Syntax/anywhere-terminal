@@ -608,4 +608,56 @@ describe("SnapshotPool disposal", () => {
     await disposing;
     await expect(fs.readdir(root)).resolves.toEqual(["store.db"]);
   });
+  it("waits for a borrow parked before it ever reached a map", async () => {
+    const stalled = deferred();
+    const reached = deferred();
+    const pool = new SnapshotPool({
+      ...deps,
+      readGeneration: async (target) => {
+        reached.resolve();
+        await stalled.promise;
+        return { stamps: { [target]: { mtimeMs: 1, size: 1 } }, usable: true };
+      },
+    });
+
+    // Admitted, then parked on its own generation read: in no flight map, holding no
+    // lease, and invisible to a disposal that drains only what it can see.
+    const borrowing = pool.borrow(dbPath, produce);
+    await reached.promise;
+
+    let disposed = false;
+    const disposing = pool.dispose().then(() => {
+      disposed = true;
+    });
+    await flush();
+    expect(disposed).toBe(false);
+
+    stalled.resolve();
+    const lease = await borrowing;
+    await lease.release();
+    await disposing;
+
+    await expect(fs.access(lease.file)).rejects.toThrow();
+    await expect(fs.readdir(root)).resolves.toEqual(["store.db"]);
+  });
+
+  it("waits for every outstanding borrow, not just the first", async () => {
+    const pool = new SnapshotPool(deps);
+    const first = await pool.borrow(dbPath, produce);
+    const second = await pool.borrow(dbPath, produce);
+
+    let disposed = false;
+    const disposing = pool.dispose().then(() => {
+      disposed = true;
+    });
+
+    await first.release();
+    await flush();
+    expect(disposed).toBe(false);
+
+    await second.release();
+    await disposing;
+    expect(disposed).toBe(true);
+    await expect(fs.readdir(root)).resolves.toEqual(["store.db"]);
+  });
 });
