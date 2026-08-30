@@ -481,7 +481,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | new-api-contract, cross-boundary |
 | **Notes** | Every UI and execution task in both phases reads this contract, so it lands first rather than being discovered three tasks in. Two of its properties are safety rules expressed as types rather than as validators that can be forgotten: `baseRef` is structurally absent from the modes that must refuse it, and a selection carries ids against a host-held offer rather than command text |
 | **Acceptance** | The create request carries a discriminated branch-mode union in which `baseRef` cannot be expressed for reuse, reattach or adopt, and in which reattach and adopt are separate variants naming different paths and different expected-OID guards, and a destination disposition **independent** of it so an existing branch and a debris-occupied destination can both be stated; the after-create value is a union whose agent fields and setup-wait flag exist only on its agent variant; every selectable provisioning item carries an opaque host-issued id and a selection carries ids only, with no field capable of carrying a command or a path; an unknown or invalidated offer performs no create and no provisioning, re-presents, and requires a second submission; the removal assessment carries a per-check class and a four-value outcome including `notApplicable`, and the legacy boolean blocker record is gone rather than kept beside it; a branch-delete request carries both ref names, both OIDs, and the assessment fingerprint; path validation is mode- and disposition-dependent rather than a blanket non-existence rule |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.1] Bring Over States What a Worktree Will Lack
 

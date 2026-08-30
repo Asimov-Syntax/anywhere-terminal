@@ -338,7 +338,17 @@ sees one update, not two.
 
 ## 4. Validation
 
-Applied host-side on every inbound message, before any git or shell work:
+Applied host-side on every inbound message, before any git or shell work.
+
+The unions in § 2.3 and § 2.6 are the enforcement inside our own code; they are
+not enforcement here, because the type erases where the message crosses
+`postMessage`. So a discriminated field is validated **exactly**: the host admits
+a variant only when it carries the fields its shape requires AND no field its
+shape does not declare — a `reuse` bearing a `baseRef`, or a non-launching
+after-create bearing an agent, is refused rather than ignored, whatever the
+forbidden field holds. Ignoring it accepts a message that contradicts itself and
+leaves the next reader to decide which half was meant.
+
 
 | Field | Rule |
 |-------|------|
@@ -349,7 +359,8 @@ Applied host-side on every inbound message, before any git or shell work:
 | `branchName` | Non-empty; passes `git check-ref-format --branch`; rejected if it starts with `-` |
 | `baseRef` | Rejected if it starts with `-`; passed as a single argv token |
 | `path` | Must be absolute after normalization; must not be inside any **linked** worktree of the same repo. A path inside the **main** worktree is allowed — that is where the default root lives ([worktree-create.md](worktree-create.md) § 3) — and must not be the main worktree itself. **Existence is mode-dependent**: it must not exist or be empty for `fresh` / `fresh-detached` / `reuse`; it must be the surviving worktree directory for `reattach` and for `adopt`; and it must hold non-git debris matching the `DebrisAuthorization` fingerprint when the disposition is `debris`. A blanket "must not exist" would make recovery unexpressible |
-| `openAfter` | One of the documented modes. `agent` requires the launch fields; every other mode rejects them |
+| `afterCreate` | One of the five documented variants. `agent` requires a **boolean** `waitForSetup` and a named agent; every other variant rejects the launch fields outright |
+| `disposition` | One of the documented variants, exactly. `debris` is refused entirely until a producer issues its `DebrisAuthorization` and a store can redeem it (WT-012.12): the variant selects the weaker destination rule, so admitting it unredeemed lets an inbound message relax that rule with an authorization the host never granted |
 | `agent` | Must be a known `VaultAgentId` |
 | `permissionChoiceId` | Must be one the registry declares for that agent |
 | `prompt` | Bounded; delivered per the launch design, never concatenated into a shell string |
