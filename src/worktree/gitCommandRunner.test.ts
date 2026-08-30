@@ -76,3 +76,31 @@ describe("createGitCommandRunner — locale", () => {
     expect(result.stdout.toString()).toBe("false");
   });
 });
+
+// One read's ceiling is not the runner's. The ignored walk buffers a listing it
+// must not be allowed to hold unboundedly, and a construction-time constant
+// shared by every caller cannot express that (design.md D3).
+describe("createGitCommandRunner — per-call output ceiling", () => {
+  it("honours a smaller ceiling than the runner was built with", async () => {
+    const runner = createGitCommandRunner({ executable: process.execPath, maxBufferBytes: 1024 * 1024 });
+
+    const result = await runner.run(["-e", "process.stdout.write('x'.repeat(4096))"], cwd, {
+      maxBufferBytes: 64,
+    });
+
+    // Overflow fails the command rather than truncating it: a caller that asked
+    // for a bound wants to hear it was exceeded, not a partial listing.
+    expect(result.code).not.toBe(0);
+    // Not a timeout — the ignored walk tells the two apart when it reports why.
+    expect(result.timedOut).toBe(false);
+  });
+
+  it("leaves the runner's own ceiling in place for calls that ask for nothing", async () => {
+    const runner = createGitCommandRunner({ executable: process.execPath, maxBufferBytes: 1024 * 1024 });
+
+    const result = await runner.run(["-e", "process.stdout.write('x'.repeat(4096))"], cwd);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.length).toBe(4096);
+  });
+});

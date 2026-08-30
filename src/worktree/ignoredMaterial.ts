@@ -16,6 +16,19 @@ export const MAX_IGNORED_ENTRIES = 5000;
 /** Milliseconds spent walking before the walk gives up. */
 export const MAX_IGNORED_MS = 1500;
 
+/**
+ * Bytes of git's listing this process is willing to buffer, per call.
+ *
+ * The entry cap cannot bound git's own traversal — git walks the tree whether
+ * or not we mean to read the result — so the only half of it we can enforce is
+ * what WE hold: 512 bytes per admitted entry, which is generous for a
+ * repository-relative path and still refuses a listing orders of magnitude past
+ * what the cap admits. Overflow kills the child and fails the command, which
+ * the walk already reports as unproven — the same answer as reaching the cap
+ * (D3, cycle-2 B4).
+ */
+export const MAX_IGNORED_LISTING_BYTES = MAX_IGNORED_ENTRIES * 512;
+
 export interface IgnoredMaterialDeps {
   /**
    * The worktree's ignored entries, one at a time, within `budgetMs`.
@@ -82,6 +95,23 @@ function provisionedEntries(text: string): number | undefined {
 }
 
 /**
+ * A deadline that can be raced against a read holding no cancellation of its own.
+ *
+ * `lstat` takes no signal, so the walk cannot stop a stat it already issued —
+ * only stop waiting on it. The abandoned read completes unobserved, costing its
+ * own I/O and nothing else, and `unref` keeps the timer from holding the
+ * process open on the far more common path where the read wins.
+ */
+function expiresIn(ms: number): { expiry: Promise<"expired">; cancel: () => void } {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<"expired">((resolve) => {
+    handle = setTimeout(() => resolve("expired"), ms);
+    handle.unref?.();
+  });
+  return { expiry, cancel: () => clearTimeout(handle) };
+}
+
+/**
  * Count and size the ignored material, under one entry budget and one time
  * budget spanning both the enumeration and the sizing.
  *
@@ -108,10 +138,27 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
         return { kind: "unproven", reason: "budget" };
       }
       entries += 1;
-      bytes += await deps.size(relPath);
-      // Checked AFTER the await as well. One pathologically slow stat can run
-      // past the whole budget on its own, and the check at the top of the next
-      // iteration never runs when that entry is the last (round-1 B4).
+      // Raced, not merely checked afterwards. A stat that never returns leaves
+      // a check placed after the `await` unreached, so the walk would sit at
+      // the disk's pace on the one budget that exists to stop it (cycle-2 B4).
+      const left = MAX_IGNORED_MS - (deps.now() - startedAt);
+      if (left <= 0) {
+        return { kind: "unproven", reason: "budget" };
+      }
+      const deadline = expiresIn(left);
+      let sized: number | "expired";
+      try {
+        sized = await Promise.race([deps.size(relPath), deadline.expiry]);
+      } finally {
+        deadline.cancel();
+      }
+      if (sized === "expired") {
+        return { kind: "unproven", reason: "budget" };
+      }
+      bytes += sized;
+      // Kept alongside the race, because they catch different reads: the race
+      // stops one that never returns, this stops one that returns LATE, whose
+      // cost is already spent by the time it resolves (round-1 B4).
       if (deps.now() - startedAt > MAX_IGNORED_MS) {
         return { kind: "unproven", reason: "budget" };
       }
@@ -152,7 +199,7 @@ export interface DiskIgnoredOptions {
   run(
     args: readonly string[],
     cwd: string,
-    runOptions?: { timeoutMs?: number },
+    runOptions?: { timeoutMs?: number; maxBufferBytes?: number },
   ): Promise<{ code: number; stdout: Buffer; timedOut: boolean }>;
   stat(absPath: string): Promise<{ size: number }>;
   readFile(absPath: string): Promise<string>;
@@ -195,6 +242,7 @@ export function diskIgnoredDeps(options: DiskIgnoredOptions): IgnoredMaterialDep
       // spans both phases (D3, round-2).
       const result = await run(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], worktreePath, {
         timeoutMs: budgetMs,
+        maxBufferBytes: MAX_IGNORED_LISTING_BYTES,
       });
       if (result.code !== 0 || result.timedOut) {
         // Not an empty listing: the walk did not establish that there is

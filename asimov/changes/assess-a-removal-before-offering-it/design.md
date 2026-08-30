@@ -77,6 +77,26 @@ the runner's own default happens to be (round-1 B4). The budget still spans both
 one time cap — so `measureIgnoredMaterial` owns the deadline and hands the enumeration the time still
 left in it. Time spent listing is time the sizing no longer has.
 
+**What the two caps actually bound, stated exactly** (cycle-2 B4, which found the earlier wording
+claiming more than the mechanism delivers):
+
+- The **time cap** bounds this walk's own elapsed time, end to end. It reaches git as the child's
+  timeout, and it stops the loop issuing further stats. It does NOT cancel a stat already in flight —
+  `lstat` takes no signal — so the walk abandons waiting on one at the deadline and returns
+  `unproven`; the read it walked away from may still complete, unobserved, costing nothing but its
+  own I/O.
+- The **entry cap** bounds what this process holds and stats. It cannot bound git's own directory
+  traversal — git walks the tree whether or not we intend to read the result — so it is enforced as a
+  ceiling on the LISTING WE BUFFER, per call, alongside the count of entries admitted to the loop. A
+  listing past that ceiling fails the command and the walk reports `unproven`, which is the same
+  answer as reaching the cap and is the honest one: we did not measure this tree.
+
+Rejected — a streaming, cancellable runner that terminates git mid-listing: `GitCommandRunner`
+resolves one buffered `GitCommandResult`, and every caller in the repository is written against that.
+A second, streaming shape exists to serve one read on one assessment, and it would be the only
+cancellable-mid-output path in the codebase. The buffer ceiling reaches the same outcome — `unproven`
+on a tree too large to measure — for an option-bag field rather than a second runner contract.
+
 ### D4 — Provenance is read, never inferred
 
 Provisioned material is named as such only from the manifest at
@@ -122,8 +142,28 @@ the projection's own filter changes, which is what task 1_1's Boundary reserved 
 the projector computes, it does not repurpose the pass that computes it.
 
 Absent before the first window pass, the set is empty and every registry session refuses, exactly as
-it does today. The degradation is toward refusing, which is the safe direction for the one action
-that cannot be undone.
+it does today.
+
+**Revised on cycle-2 B5.** The paragraph that stood here claimed the degradation is toward refusing.
+That is true only of the empty set. A set that is merely STALE degrades the other way, and the
+sentence read as a guarantee it was not: `claimedSessionIds()` is the last COMPLETED pass, an identity
+is claimed before its pane is attributed to any worktree, and `PaneFact` carries no session identity,
+so a live Claude rooted in the target vanished from BOTH evidence sources whenever its claiming pane
+had no attributable cwd or the pane set moved ahead of the debounced projection. On the one action
+that cannot be undone, that let an unforced removal reach git.
+
+**Chosen instead:** a claim suppresses a registry session only where the SAME assessment will classify
+the pane that made it. The projector publishes the claim as `entryId → paneId` rather than a bare
+membership set — it already knows the pane, so this is the same fact keyed usefully — and the
+suppression moves out of the producer and into `evaluateRemoval`, which is where the target worktree
+and the pane snapshot are both in hand. A session is dropped from the external evidence only when its
+claiming pane is present in that same snapshot, resolved inside the target, and not exited. Anything
+else keeps the registry record, and an unclassifiable record refuses. Both failure directions now
+point the same way: an unknown session refuses, and a claim we cannot corroborate is not a claim.
+
+Rejected — a generation counter on the projection compared against a pane-evidence generation: it
+answers "were these read at the same moment", which is a weaker question than "will this assessment
+account for that pane". Two coherent-but-unattributed reads still lose the session.
 
 Rejected — resolving pane identity a second time inside the removal producer: `identify()` reads the
 process table and falls back to heuristics, so a second copy is both a real cost per assessment and a

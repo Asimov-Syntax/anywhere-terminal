@@ -151,3 +151,32 @@
     2. `execFile` treats a timeout of `0` as no timeout at all, so flooring a spent budget at zero disables the very bound it was meant to express. `measureIgnoredMaterial` in `src/worktree/ignoredMaterial.ts` returns `unproven` before it asks for entries at all, and `diskIgnoredDeps` refuses to start git on a spent budget.
     3. Cover it where it broke: `src/extension.worktreeAssembly.test.ts` fakes the real git boundary, so its recorder gains the per-call options and asserts the ignored listing carries a deadline. A unit test against an injected fake could not have caught this and did not.
   - **Boundary**: no change to D3 — this makes the approved bound reach the process it was always meant to bound
+
+## 5. What the caps bound, and what a claim proves
+
+- [x] 5_1 Bound the listing this process holds, and stop waiting on a stat past the deadline — verified: pnpm exec vitest run 'src/worktree/ignoredMaterial.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_4
+  - **Refs**: design.md D3
+  - **Acceptance**:
+    - Outcome: The walk always returns within its time budget
+    - Verify: unit src/worktree/ignoredMaterial.test.ts
+  - **Plan**:
+    1. `GitRunOptions` in `src/worktree/gitCommandRunner.ts` gains a per-call `maxBufferBytes`, alongside the `timeoutMs` it already carries for the same reason — a per-runner constant cannot express one read's budget. Cover it in `src/worktree/gitCommandRunner.test.ts`.
+    2. `diskIgnoredDeps` in `src/worktree/ignoredMaterial.ts` passes a ceiling derived from `MAX_IGNORED_ENTRIES`. Overflow kills the child and fails the command, which the adapter already turns into `unproven` — the same answer as reaching the cap, and the honest one.
+    3. `measureIgnoredMaterial` stops WAITING on a size past the deadline rather than only stopping issuing them: `lstat` takes no signal, so the walk races each read against the time it has left and reports `unproven` when the read loses. The abandoned read completes unobserved.
+    4. Cover in `src/worktree/ignoredMaterial.test.ts`: a listing that overflows, and a single stat that never settles.
+  - **Boundary**: no streaming runner — D3 records why the buffer ceiling is taken instead
+
+- [ ] 5_2 Suppress a claim only where the same assessment will classify the pane that made it
+  - **Deps**: 4_4
+  - **Refs**: specs/worktree-panel/spec.md#{a-removal-refuses-when-it-cannot-establish-that-nothing-is-using-the-worktree}; design.md D6
+  - **Acceptance**:
+    - Outcome: A registry session whose claiming pane this assessment cannot account for still refuses the removal
+    - Verify: unit src/worktree/worktreeBlockers.test.ts
+  - **Plan**:
+    1. `PresenceProjector.claimedSessionIds` in `src/worktree/presenceProjector.ts` becomes a `ReadonlyMap<string, string>` of entry id to the pane that claimed it. The pass already knows the pane; this is the same fact keyed usefully. Update `src/worktree/presenceProjector.test.ts`.
+    2. Move the suppression out of `src/extension.ts` and into `evaluateRemoval` in `src/worktree/worktreeBlockers.ts`, which is the only place holding both the target and the pane snapshot. `RemovalInput` gains the claim map; `src/extension.ts` supplies it and stops filtering.
+    3. Drop an external session only when its claiming pane is in `input.panes`, resolved inside the target, and not exited. Everything else keeps the registry record, so an uncorroborated claim refuses rather than erasing a live session.
+    4. Cover in `src/worktree/worktreeBlockers.test.ts`: a claiming pane inside the target (counted once, as the pane), a claiming pane whose cwd is undefined, one resolved outside the target, one that exited, and a claim naming a pane no longer in the snapshot — each still refusing.
+    5. The projector fakes in `src/providers/WorktreeHost.actions.test.ts`, `src/providers/WorktreeHost.delegations.test.ts`, `src/providers/WorktreeHost.presence.test.ts`, `src/providers/WorktreeHost.test.ts` and `src/extension.worktreeAssembly.test.ts` follow the type; `src/providers/WorktreeHost.ts` carries the map into the input.
+  - **Boundary**: the projection's own filter is unchanged — this re-keys the fact it already publishes

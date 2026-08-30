@@ -31,6 +31,15 @@ export interface GitRunOptions {
    * states in the first place." A per-runner constant cannot express that.
    */
   timeoutMs?: number;
+  /**
+   * Overrides the runner's construction-time output ceiling for THIS call.
+   *
+   * Same reason as `timeoutMs`, for the other resource: a read whose whole
+   * point is that it must not hold an unbounded listing cannot say so through a
+   * per-runner constant. Overflow kills the child and fails the command, which
+   * is the answer a bounded read wants — it did not get to measure this tree.
+   */
+  maxBufferBytes?: number;
   /** Kills the child when it aborts. The cancellable path the authority asks for. */
   signal?: AbortSignal;
 }
@@ -67,7 +76,7 @@ export function createGitCommandRunner(options: GitCommandRunnerOptions = {}): G
           cwd,
           timeout: runOptions?.timeoutMs ?? timeout,
           signal: runOptions?.signal,
-          maxBuffer,
+          maxBuffer: runOptions?.maxBufferBytes ?? maxBuffer,
           encoding: "buffer" as const,
           // `repoRoots` tells a missing repository from a git that declined to
           // answer by matching git's own stderr, so the language it arrives in

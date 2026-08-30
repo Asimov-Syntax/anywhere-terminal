@@ -245,12 +245,22 @@ describe("naming what this extension provisioned", () => {
 describe("diskIgnoredDeps", () => {
   /** A git that answers each command from `replies`, keyed by its first arg. */
   function disk(over: Partial<DiskIgnoredOptions> & { replies?: Record<string, string> } = {}) {
-    const calls: Array<{ args: string[]; cwd: string; timeoutMs: number | undefined }> = [];
+    const calls: Array<{
+      args: string[];
+      cwd: string;
+      timeoutMs: number | undefined;
+      maxBufferBytes: number | undefined;
+    }> = [];
     const replies = over.replies ?? {};
     const deps = diskIgnoredDeps({
       worktreePath: "/repo/wt-a",
       run: async (args, cwd, runOptions) => {
-        calls.push({ args: [...args], cwd, timeoutMs: runOptions?.timeoutMs });
+        calls.push({
+          args: [...args],
+          cwd,
+          timeoutMs: runOptions?.timeoutMs,
+          maxBufferBytes: runOptions?.maxBufferBytes,
+        });
         return { code: 0, timedOut: false, stdout: Buffer.from(replies[args[0] ?? ""] ?? "", "utf8") };
       },
       stat: async () => ({ size: 7 }),
@@ -435,5 +445,57 @@ describe("one budget across both phases", () => {
 
     expect(await measureIgnoredMaterial(deps)).toEqual({ kind: "unproven", reason: "budget" });
     expect(handed).toBeUndefined();
+  });
+});
+
+describe("what the caps can and cannot bound", () => {
+  it("caps the listing this process is willing to hold", async () => {
+    // Cycle-2 B4. The entry cap cannot stop git walking the tree — git does that
+    // whether or not we intend to read the result — but it can stop us buffering
+    // and splitting a listing thousands of times larger than the cap admits.
+    // Overflow kills the child, which the adapter already reports as unproven:
+    // the same answer as reaching the cap, and the honest one.
+    let seen: number | undefined;
+    const deps = diskIgnoredDeps({
+      worktreePath: "/repo/wt-a",
+      run: async (_args, _cwd, runOptions) => {
+        seen = runOptions?.maxBufferBytes;
+        return { code: 0, timedOut: false, stdout: Buffer.from("") };
+      },
+      stat: async () => ({ size: 1 }),
+      readFile: async () => "{}",
+      join: (...parts) => parts.join("/"),
+    });
+
+    for await (const _ of deps.ignoredEntries(MAX_IGNORED_MS)) {
+      // drain
+    }
+
+    expect(seen).toBeGreaterThan(0);
+    // Enough for the entries the cap admits, and no more.
+    expect(seen).toBeLessThan(MAX_IGNORED_ENTRIES * 4096);
+  });
+
+  it("stops WAITING on a size that outlives the budget, not just issuing them", async () => {
+    // `lstat` takes no signal, so the walk cannot cancel a read in flight. What
+    // it can do is stop waiting: the abandoned read completes unobserved, and
+    // the assessment returns inside its budget rather than at the disk's pace.
+    let clock = 0;
+    const deps: IgnoredMaterialDeps = {
+      ignoredEntries: async function* () {
+        yield "never-settles.bin";
+      },
+      // The read the whole cap exists for: it never resolves.
+      size: () => new Promise<number>(() => {}),
+      readManifest: async () => {
+        throw new Error("ENOENT");
+      },
+      now: () => {
+        clock += 1;
+        return clock;
+      },
+    };
+
+    expect(await measureIgnoredMaterial(deps)).toEqual({ kind: "unproven", reason: "budget" });
   });
 });

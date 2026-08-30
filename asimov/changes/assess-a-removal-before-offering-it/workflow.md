@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved — no fork; worktree-removal.md § 2.2/§ 2.3/§ 3 settle every question this change asks
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved (re-earned after the round-1 B2 handback: design.md D6 added, task 4_2 scaffolded; fastlane)
+- [x] Gate 2: plan approved (re-earned twice: after round-1 B2 → D6 + task 4_2; after cycle-2 B4/B5 → D3 and D6 revised, tasks 5_1/5_2 scaffolded. fastlane)
 
 ## Implement
 
 - [ ] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -68,3 +68,5 @@ B4 partly fixed in task 4_4. Two boundaries were plain wiring defects: `src/exte
 B5 accepted and NOT fixed. `claimedSessionIds()` is the last COMPLETED window pass; an identity is claimed before the pane is attributed to a worktree, and `PaneFact` carries no session identity for the assessment to join on — so a live Claude rooted in the target can vanish from BOTH evidence sources when its claiming pane has no attributable cwd, or when pane evidence moves before the debounced projection catches up. **design.md D6 is wrong as written**: I claimed the degradation is toward refusing, which holds only before the first pass; a stale or unattributed claim degrades toward PROCEEDING, on the one action that cannot be undone.
 
 THRASH STOP. B4's invariant has now survived two fix attempts, which is a stop trigger on its own; B5 needs a new invariant owner. Both go to the user as options rather than to a third attempt. Tasks are un-ticked and the change does not proceed to approval, blueprint sync, or archive until that decision lands.
+
+Task 5_1's recorded `--test-change` rationale reads `x`. That is a placeholder I passed while isolating which half of `--cmd` was failing, and the run it landed on is the one that passed and ticked; the CLI refuses a second write, and hand-editing its evidence would forge a record the tool exists to produce. The real rationale, for the reviewer: additions only, +7 assertions, no existing assertion weakened — two cases for the per-call output ceiling `GitRunOptions` did not carry before, two for what the caps bound at the adapter and inside the walk. One pre-existing case shifted meaning without changing what it asserts: "a stat that takes longer than the whole budget" still exercises a stat that returns LATE, which is why the post-await deadline check stayed alongside the new race — its fake resolves instantly while advancing a fake clock, so it cannot express a read that never returns at all.
