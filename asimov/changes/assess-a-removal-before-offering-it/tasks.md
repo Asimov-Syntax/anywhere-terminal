@@ -26,15 +26,17 @@
     3. Cover in `src/worktree/removalChecks.test.ts` that `isRefusedByChecks` returns true for a not-provably-idle external session and false for an idle one, and that the refused branch still reports no confirmable-class check as passed.
   - **Boundary**: no second check id for the two cases — one row, one id, a class that reads the evidence
 
-- [ ] 1_3 Report a check that never applied as not applying
+- [x] 1_3 Report a check that never applied as not applying — verified: pnpm exec vitest run 'src/worktree/removalChecks.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-check-that-did-not-apply-is-distinguishable-from-one-that-passed}; docs/design/worktree-removal.md#22-three-classes-of-check-and-what-unproven-means-in-each
   - **Acceptance**:
     - Outcome: A check whose question does not arise reports `notApplicable`, never `passed`
     - Verify: unit src/worktree/removalChecks.test.ts
   - **Plan**:
-    1. In `src/worktree/removalChecks.ts`, produce `notApplicable` from the sources that can answer "the question does not arise". `SourceRead<T>` already carries `{ ok: "notApplicable" }`, so the outcome has a source; the projection currently discards it.
-    2. Cover in `src/worktree/removalChecks.test.ts` that `notApplicable` is emitted, and that neither `countOf` nor `failed` treats it as a failure or a reading.
+    1. Carry the sources whose question did not arise on the confirmable evidence in `src/worktree/worktreeBlockers.ts`. `SourceRead<T>` already answers `{ ok: "notApplicable" }` — a worktree whose directory is authoritatively gone has no working tree, so `git status` is a read with no subject — but `evaluateRemoval` parses it as empty and the assessment keeps no trace, so `checksFor` cannot tell it from a clean tree.
+    2. In `src/worktree/removalChecks.ts`, map every check fed by such a source to `notApplicable` instead of `passed`, keyed on the `source` the catalogue already records.
+    3. Cover in `src/worktree/removalChecks.test.ts` that `notApplicable` is emitted, and that neither `countOf` nor `failed` treats it as a failure or a reading. Cover the source in `src/worktree/worktreeBlockers.test.ts`.
+    4. `RemovalEvidence` gains a required field, so the `evidence()` fixture helpers in `src/worktree/worktreeFingerprint.test.ts` and `src/worktree/worktreeMutationService.test.ts` supply it. Both default it empty — those suites assert on other fields and a default of "every source applied" is the shape they already assumed.
   - **Boundary**: `notApplicable` only where a source says so — never as a default for a check this change did not compute
 
 ## 2. What the removal will actually delete

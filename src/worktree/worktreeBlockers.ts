@@ -32,6 +32,15 @@ export interface RemovalEvidence {
   externalSessionIds: readonly string[];
   locked: boolean;
   lockReason: string | null;
+  /**
+   * Sources whose question did not arise, so the checks they feed report
+   * `notApplicable` rather than `passed`.
+   *
+   * Without this the assessment cannot tell a clean working tree from one that
+   * has no working tree: `notApplicable` parses as empty, which is honest, but
+   * the emptiness then looks exactly like a tree with nothing in it.
+   */
+  notApplicable: readonly UnreadableSource[];
 }
 
 /**
@@ -224,6 +233,10 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
       externalSessionIds,
       locked: target.locked,
       lockReason: target.lockReason ?? null,
+      notApplicable: [
+        ...(input.porcelain.ok === "notApplicable" ? (["status"] as const) : []),
+        ...(input.externalSessions.ok === "notApplicable" ? (["sessions"] as const) : []),
+      ],
     },
   };
 }

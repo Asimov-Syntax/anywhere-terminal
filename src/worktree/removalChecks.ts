@@ -77,9 +77,16 @@ function check(id: string, assessment: RemovalAssessment, failed: boolean, count
   if (entry === undefined) {
     throw new Error(`"${id}" is not a removal check.`);
   }
+  const cls = classOf(entry.cls, assessment);
+  // A source whose question did not arise yields neither a pass nor a failure.
+  // No count rides on it either: the panel renders `count` inside its own
+  // element as a reading that was taken, and nobody took this one.
+  if (assessment.kind === "confirmable" && assessment.evidence.notApplicable.includes(entry.source)) {
+    return { id, cls, outcome: "notApplicable" };
+  }
   return {
     id,
-    cls: classOf(entry.cls, assessment),
+    cls,
     outcome: failed ? "failed" : "passed",
     ...(count === undefined ? {} : { count }),
   };

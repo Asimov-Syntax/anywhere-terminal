@@ -28,6 +28,7 @@ function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
     untrackedPaths: [],
     paneIds: [],
     externalSessionIds: [],
+    notApplicable: [],
     locked: false,
     lockReason: null,
     ...over,

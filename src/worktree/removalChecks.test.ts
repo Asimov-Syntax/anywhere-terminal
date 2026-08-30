@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checksFor, countOf, failed, isRefusedByChecks } from "./removalChecks";
-import type { RemovalAssessment } from "./worktreeBlockers";
+import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
 
 const CATALOGUE_IDS = [
   "isMain",
@@ -19,6 +19,7 @@ function confirmable(over: {
   paneIds?: readonly string[];
   externalSessionIds?: readonly string[];
   locked?: boolean;
+  notApplicable?: readonly UnreadableSource[];
 }): RemovalAssessment {
   return {
     kind: "confirmable",
@@ -29,6 +30,7 @@ function confirmable(over: {
       externalSessionIds: over.externalSessionIds ?? [],
       locked: over.locked ?? false,
       lockReason: null,
+      notApplicable: over.notApplicable ?? [],
     },
   };
 }
@@ -180,5 +182,46 @@ describe("a check whose class its evidence decides (round-3 design.md D1)", () =
     });
 
     expect(checks.find((c) => c.id === "externalAgents")).toMatchObject({ outcome: "passed", count: 0 });
+  });
+});
+
+describe("a check whose question never arose (round-3 spec: notApplicable)", () => {
+  it("reports the status-fed checks as notApplicable, not passed", () => {
+    // A worktree whose directory is authoritatively gone has no working tree,
+    // so `git status` is a read with no subject rather than one that failed —
+    // and rendering that as "passed" claims a check ran that never applied.
+    const checks = checksFor(confirmable({ notApplicable: ["status"] }));
+
+    expect(checks.find((c) => c.id === "dirty")?.outcome).toBe("notApplicable");
+    expect(checks.find((c) => c.id === "untracked")?.outcome).toBe("notApplicable");
+  });
+
+  it("leaves checks fed by a source that DID apply alone", () => {
+    const checks = checksFor(confirmable({ notApplicable: ["status"], paneIds: ["p-1"] }));
+
+    expect(checks.find((c) => c.id === "idlePanes")).toMatchObject({ outcome: "failed", count: 1 });
+    expect(checks.find((c) => c.id === "containsWorktrees")?.outcome).toBe("passed");
+  });
+
+  it("is neither a failure nor a reading", () => {
+    // The panel keys its clauses on these two. A notApplicable check that read
+    // as either would put a magnitude nobody measured inside a `<b>`.
+    const checks = checksFor(confirmable({ notApplicable: ["status"] }));
+
+    expect(failed(checks, "dirty")).toBe(false);
+    expect(countOf(checks, "dirty")).toBe(0);
+    expect(isRefusedByChecks(checks)).toBe(false);
+  });
+
+  it("carries no count, so nothing can render one", () => {
+    const dirty = checksFor(confirmable({ notApplicable: ["status"] })).find((c) => c.id === "dirty");
+
+    expect(dirty && "count" in dirty).toBe(false);
+  });
+
+  it("still reports every catalogue id", () => {
+    const checks = checksFor(confirmable({ notApplicable: ["status", "sessions"] }));
+
+    expect(checks.map((c) => c.id)).toEqual(CATALOGUE_IDS);
   });
 });
