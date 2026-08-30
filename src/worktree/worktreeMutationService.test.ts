@@ -390,7 +390,13 @@ describe("a mutation reaches git through the coordinator", () => {
     // A refusal that carried a fingerprint would make a force against it
     // representable, which is the thing the three-type split exists to prevent.
     const h = harness({
-      assessRemoval: async () => ({ kind: "refused" as const, isMain: true, busyAgents: 0, containsWorktrees: [] }),
+      assessRemoval: async () => ({
+        kind: "refused" as const,
+        isMain: true,
+        busyAgents: 0,
+        containsWorktrees: [],
+        liveExternalSessionIds: [],
+      }),
     });
     await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
 

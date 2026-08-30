@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { PaneActivity } from "../shared/paneEvidence";
 import type { WorktreeInfo } from "./types";
 import { evaluateRemoval, type RemovalInput } from "./worktreeBlockers";
 
@@ -60,15 +61,15 @@ describe("evaluateRemoval", () => {
     expect(result).toMatchObject({ kind: "refused", busyAgents: 1 });
   });
 
-  it("leaves a session in ANOTHER window confirmable rather than refusing", () => {
-    // presenceProjector emits every external registry session with a hardcoded
-    // activity of "running". Counting those as busyAgents would turn the
-    // accepted confirmable externalAgents blocker into an unconditional refusal,
-    // and one open session elsewhere would make a worktree unremovable forever.
+  it("leaves a PROVABLY IDLE session in another window confirmable", () => {
+    // Counted once, as externalAgents and never additionally as busyAgents:
+    // presenceProjector emits every external registry session as a row with a
+    // hardcoded activity, and scoring one session twice would refuse on the
+    // strength of the same fact read from two places.
     const result = evaluateRemoval(
       input({
         rows: [{ scope: "external", activity: "running" }],
-        externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-a/pkg" }] },
+        externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-a/pkg", activity: "idle" }] },
       }),
     );
     expect(result.kind).toBe("confirmable");
@@ -76,6 +77,56 @@ describe("evaluateRemoval", () => {
       return;
     }
     expect(result.evidence.externalSessionIds).toEqual(["s-1"]);
+  });
+
+  describe("an external session that is not provably idle (worktree-removal.md § 2, § 3)", () => {
+    const rooted = (activity: PaneActivity | undefined) =>
+      input({ externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-a/pkg", activity }] } });
+
+    it.each(["running", "waiting"] as const)("refuses a session reporting %s", (activity) => {
+      const result = evaluateRemoval(rooted(activity));
+      expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+    });
+
+    it("refuses a session whose activity cannot be determined", () => {
+      // The registry records no activity at all, so this is the case production
+      // actually takes. "We could not ask" is not evidence of idleness (§ 3),
+      // and this is the one action that cannot be undone.
+      const result = evaluateRemoval(rooted(undefined));
+      expect(result).toMatchObject({ kind: "refused", liveExternalSessionIds: ["s-1"] });
+    });
+
+    it("carries no fingerprint, so the refusal cannot be confirmed past", () => {
+      const result = evaluateRemoval(rooted(undefined));
+      expect(result.kind).toBe("refused");
+      expect(Object.hasOwn(result, "evidence")).toBe(false);
+    });
+
+    it("ignores a session rooted OUTSIDE the target", () => {
+      const result = evaluateRemoval(
+        input({
+          externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-b", activity: undefined }] },
+        }),
+      );
+      expect(result.kind).toBe("confirmable");
+    });
+
+    it("counts one session once — refusing, never also as a busy agent", () => {
+      const result = evaluateRemoval(
+        input({
+          rows: [{ scope: "external", activity: "running" }],
+          externalSessions: { ok: true, value: [{ sessionId: "s-1", cwd: "/repo/wt-a", activity: undefined }] },
+        }),
+      );
+      expect(result).toMatchObject({ kind: "refused", busyAgents: 0, liveExternalSessionIds: ["s-1"] });
+    });
+
+    it("stays unavailable, not refused, when the registry could not be read", () => {
+      // Unreadable is the absence of an answer; refused is an answer. Only the
+      // first is worth retrying.
+      const result = evaluateRemoval(input({ externalSessions: { ok: false } }));
+      expect(result).toMatchObject({ kind: "unavailable" });
+    });
   });
 
   it("refuses a worktree containing a registered worktree, and names every child", () => {

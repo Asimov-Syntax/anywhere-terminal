@@ -44,6 +44,15 @@ export interface RemovalRefusal {
   /** Agents mid-turn in THIS window. Never external sessions — see below. */
   busyAgents: number;
   containsWorktrees: readonly ContainedWorktree[];
+  /**
+   * Registry sessions rooted here that are NOT provably idle, counted once.
+   *
+   * Separate from `busyAgents` so one session is never scored twice: the
+   * presence projection emits every external session as a row with a hardcoded
+   * activity, and adding those to the window count would refuse on the strength
+   * of the same fact read from two places.
+   */
+  liveExternalSessionIds: readonly string[];
 }
 
 export interface ConfirmableRemoval {
@@ -116,6 +125,16 @@ export interface ExternalSessionFact {
   sessionId: string;
   /** Resolved, on the same contract as `PaneFact.cwd`. */
   cwd: string;
+  /**
+   * What this session is doing, or `undefined` when nobody could say.
+   *
+   * Absent means LIVE. An external session we cannot ask about is not evidence
+   * of idleness (worktree-removal.md § 3), and this is the one action that
+   * cannot be undone. The Claude registry records no activity today, so
+   * `undefined` is what production supplies — which refuses, honestly, rather
+   * than refusing on a hardcoded value nobody measured.
+   */
+  activity: PaneActivity | undefined;
 }
 
 export interface RemovalInput {
@@ -163,8 +182,27 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
     (r) => r.scope !== "external" && (r.activity === "running" || r.activity === "waiting"),
   ).length;
 
-  if (target.kind === "main" || busyAgents > 0 || containsWorktrees.length > 0) {
-    return { kind: "refused", isMain: target.kind === "main", busyAgents, containsWorktrees };
+  // Rooted here and not provably idle. `worktree-actions.md` once made every
+  // external session confirmable; § 116 of that document now delegates the check
+  // set to `worktree-removal.md`, whose § 2 refuses on running, waiting, AND
+  // undeterminable. The worktree is removable again as soon as that process
+  // exits — the registry lists only live pids.
+  const externalHere = (input.externalSessions.ok === true ? input.externalSessions.value : []).filter((s) =>
+    isPathInside(s.cwd, target.id),
+  );
+  const liveExternalSessionIds = externalHere
+    .filter((s) => s.activity !== "idle" && s.activity !== "exited")
+    .map((s) => s.sessionId)
+    .sort();
+
+  if (target.kind === "main" || busyAgents > 0 || containsWorktrees.length > 0 || liveExternalSessionIds.length > 0) {
+    return {
+      kind: "refused",
+      isMain: target.kind === "main",
+      busyAgents,
+      containsWorktrees,
+      liveExternalSessionIds,
+    };
   }
 
   // `notApplicable` parses as empty and that is the honest answer here: there
@@ -174,10 +212,8 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
     .filter((p) => p.cwd !== undefined && isPathInside(p.cwd, target.id) && p.activity !== "exited")
     .map((p) => p.paneId)
     .sort();
-  const externalSessionIds = (input.externalSessions.ok === true ? input.externalSessions.value : [])
-    .filter((s) => isPathInside(s.cwd, target.id))
-    .map((s) => s.sessionId)
-    .sort();
+  // Only the provably idle ones reach here — anything else already refused.
+  const externalSessionIds = externalHere.map((s) => s.sessionId).sort();
 
   return {
     kind: "confirmable",

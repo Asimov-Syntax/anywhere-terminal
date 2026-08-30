@@ -61,6 +61,7 @@ describe("checksFor", () => {
     const checks = checksFor({
       kind: "refused",
       isMain: false,
+      liveExternalSessionIds: [],
       busyAgents: 2,
       containsWorktrees: [{ worktreeId: "/wt/a", displayPath: "a" }],
     });
@@ -106,7 +107,7 @@ describe("checksFor", () => {
     // `notApplicable` is on the wire; WT-013.1 adds the sources that produce it.
     const kinds: RemovalAssessment[] = [
       { kind: "unavailable", unreadable: ["status"] },
-      { kind: "refused", isMain: true, busyAgents: 0, containsWorktrees: [] },
+      { kind: "refused", isMain: true, busyAgents: 0, containsWorktrees: [], liveExternalSessionIds: [] },
       confirmable({}),
     ];
 

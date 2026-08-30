@@ -739,6 +739,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             value: outcome.sessions.map((s) => ({
               sessionId: s.sessionId,
               cwd: paths.resolvedOr(s.cwd),
+              // The registry records pid, cwd and identity — never activity. So
+              // this is undefined rather than a guess, and undefined refuses:
+              // a session we cannot ask about is not evidence of idleness
+              // (worktree-removal.md § 3). The presence projection's hardcoded
+              // "running" would refuse too, but for a reason nobody measured.
+              activity: undefined,
             })),
           };
         } finally {

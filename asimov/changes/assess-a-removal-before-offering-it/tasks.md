@@ -1,16 +1,17 @@
 ## 1. The evidence the assessment was missing
 
-- [ ] 1_1 Give an external session an activity, and make an unreadable one live
+- [x] 1_1 Give an external session an activity, and make an unreadable one live — verified: pnpm exec vitest run 'src/worktree/worktreeBlockers.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-removal-refuses-when-it-cannot-establish-that-nothing-is-using-the-worktree}; docs/design/worktree-removal.md#22-three-classes-of-check-and-what-unproven-means-in-each; design.md D2
   - **Acceptance**:
     - Outcome: An external session that is not provably idle refuses the removal
     - Verify: unit src/worktree/worktreeBlockers.test.ts
   - **Plan**:
-    1. Add `activity: PaneActivity | undefined` to `ExternalSessionFact` in `src/worktree/worktreeBlockers.ts`. Absent means live — an external session we cannot classify is not evidence of idleness.
+    1. Add `activity: PaneActivity | undefined` to `ExternalSessionFact` in `src/worktree/worktreeBlockers.ts`, and carry the refusing ids on `RemovalRefusal` in `src/worktree/worktreeBlockers.ts`. Absent means live — an external session we cannot classify is not evidence of idleness.
     2. In `evaluateRemoval`, route a session whose activity is `running`, `waiting`, or `undefined` into the refusal branch, and keep a provably idle one in the confirmable evidence. Leave `{ ok: false }` on the whole `SourceRead` meaning unproven, which is a different answer from a record read with no activity.
-    3. Supply the activity at every construction site of `ExternalSessionFact`, reading the registry rather than the presence projection's live-only filter — the filter answers what the panel should show, where a dead record is noise, and this asks whether anything is using the worktree, where an unclassifiable record is the point.
-    4. Cover in `src/worktree/worktreeBlockers.test.ts`: running, waiting, undefined activity, provably idle, and an unreadable registry — five distinct outcomes, not one boolean.
+    3. Supply the activity at the production construction site in `src/extension.ts`. The Claude session registry records no activity, so it supplies `undefined` — which is the honest value and refuses, rather than `presenceProjector.ts`'s hardcoded `"running"`, which refuses for a reason nobody measured.
+    4. Cover in `src/worktree/worktreeBlockers.test.ts`: running, waiting, undefined activity, provably idle, and an unreadable registry — five distinct outcomes, not one boolean. Also cover that one external session is counted once, as `externalAgents` and never additionally as `busyAgents`.
+    5. Add `src/extension.ts` to the edited paths for step 3.
   - **Boundary**: no change to the presence projection's own filter — this reads the registry for a second question, it does not repurpose the first
 
 - [ ] 1_2 Let one check's class follow its evidence
