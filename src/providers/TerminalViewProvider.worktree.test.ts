@@ -395,6 +395,7 @@ type Surface = { send: (msg: unknown) => void; dispose: () => void };
 const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unknown>> = {
   requestWorktreeTree: { type: "requestWorktreeTree" },
   requestWorktreeCreateDefaults: { type: "requestWorktreeCreateDefaults", repoId: "/repo/.git" },
+  requestWorktreeRefs: { type: "requestWorktreeRefs", repoId: "/repo/.git" },
   requestWorktreeSubagents: EXPANSION,
   worktreeViewVisibility: { type: "worktreeViewVisibility", visible: true },
   worktreeOpenFolder: { type: "worktreeOpenFolder", worktreeId: "/repo-wt/feat", mode: "newWindow" },

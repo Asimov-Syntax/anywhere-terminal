@@ -50,6 +50,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
+  WorktreeRefsMessage,
   WorktreeRowActivationMessage,
   WorktreeShowPreviewMessage,
   WorktreeTreeResponseMessage,
@@ -123,6 +124,7 @@ export interface MessageHandlers {
   /** The destination a create will actually take, resolved by the host. */
   onWorktreeCreateDefaults?(msg: WorktreeCreateDefaultsMessage): void;
   onWorktreeProvisionOffer?(msg: WorktreeProvisionOfferMessage): void;
+  onWorktreeRefs?(msg: WorktreeRefsMessage): void;
   /** What a mutation this surface started actually did. */
   onWorktreeMutationResult?(msg: WorktreeMutationResultMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
@@ -279,6 +281,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeProvisionOffer":
         handlers.onWorktreeProvisionOffer?.(msg);
+        break;
+      case "worktreeRefs":
+        handlers.onWorktreeRefs?.(msg);
         break;
       case "worktreeMutationResult":
         handlers.onWorktreeMutationResult?.(msg);

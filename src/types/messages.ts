@@ -5,6 +5,7 @@
 import type { WorktreeRowActivation } from "../settings/SettingsReader";
 import type { VaultLaunchTarget, VaultListResult, VaultSessionDetail } from "../vault/types";
 import type { WorktreePresence } from "../worktree/presenceTypes";
+import type { WorktreeRef } from "../worktree/repoRefs";
 import type { WorktreeTree } from "../worktree/types";
 
 // ─── Shared Types ───────────────────────────────────────────────────
@@ -1033,6 +1034,19 @@ export interface WorktreeCreateDefaultsRequestMessage {
   branch?: string;
 }
 
+/**
+ * WebView → Extension: which local branches does this repository have?
+ *
+ * Its own message rather than a field on `requestWorktreeCreateDefaults`,
+ * which is re-asked on every settled branch edit: the ref list does not change
+ * as the user types, and shipping it per keystroke answers a question nobody
+ * asked again (offer-every-ref-in-one-box/design.md D1).
+ */
+export interface WorktreeRefsRequestMessage {
+  type: "requestWorktreeRefs";
+  repoId: string;
+}
+
 export interface WorktreeRemoveRequestMessage {
   type: "worktreeRemove";
   worktreeId: string;
@@ -1263,6 +1277,7 @@ export type WebViewToExtensionMessage =
   | WorktreeResumeHereMessage
   | WorktreeCreateRequestMessage
   | WorktreeCreateDefaultsRequestMessage
+  | WorktreeRefsRequestMessage
   | WorktreeRemoveRequestMessage
   | WorktreeLockMessage
   | WorktreeUnlockMessage
@@ -1296,6 +1311,7 @@ export type WorktreeInboundMessage = Extract<
  */
 export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
+  "requestWorktreeRefs",
   "requestWorktreeTree",
   "requestWorktreeSubagents",
   "worktreeViewVisibility",
@@ -2107,6 +2123,24 @@ export interface WorktreeCreateDefaultsMessage {
 }
 
 /**
+ * Extension → WebView: the repository's local branches, and which are taken.
+ *
+ * Absent is NOT "there are none": a repository whose branches could not be
+ * enumerated must not render as one with no branches, so the form leaves the
+ * list unavailable until this arrives and the create-new row carries the user
+ * through either way.
+ *
+ * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
+ */
+export interface WorktreeRefsMessage {
+  type: "worktreeRefs";
+  repoId: string;
+  refs: readonly WorktreeRef[];
+  /** The enumeration hit its cap and the list is partial — the form says so. */
+  truncated: boolean;
+}
+
+/**
  * Extension → WebView: the provisioning model this create would apply, under the
  * id the selection quotes back.
  *
@@ -2130,6 +2164,7 @@ export interface WorktreeProvisionOfferMessage {
 export type ExtensionToWebViewMessage =
   | WorktreeMutationResultMessage
   | WorktreeCreateDefaultsMessage
+  | WorktreeRefsMessage
   | WorktreeProvisionOfferMessage
   | InitMessage
   | OutputMessage

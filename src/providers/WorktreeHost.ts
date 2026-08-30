@@ -27,6 +27,7 @@ import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
 import type { OrphanProofs } from "../worktree/orphanProofs";
+import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
   DelegationRoster,
@@ -205,6 +206,16 @@ export interface WorktreeHostOptions {
    * checkout that declares it, not to the worktree being made from it.
    */
   readProvisioning?(mainWorktree: string): Promise<ProvisionModel>;
+  /**
+   * Enumerate a repository's local branches. Absent — every surface but the
+   * real extension entry point — and the create form gets no list, exactly as
+   * it behaved before this existed.
+   *
+   * Takes the listing rather than fetching one: held-by is derived from the
+   * worktrees the host already has, and a second read of the same repository
+   * invites two answers about one instant (offer-every-ref-in-one-box D2).
+   */
+  readRefs?(input: RepoRefsInput): Promise<RepoRefsRead>;
 }
 
 /**
@@ -1245,6 +1256,38 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         });
         return;
       }
+      case "requestWorktreeRefs": {
+        const read = options.readRefs;
+        const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
+        if (read === undefined || repo === undefined) {
+          return;
+        }
+        void read({ cwd: repo.mainPath, worktrees: repo.worktrees })
+          .then((answer) => {
+            // The surface may have detached while git was answering. Posting to
+            // a dead one is at best wasted, and the form it described is gone.
+            if (disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // A failed read posts nothing: the form treats absent as "not told
+            // yet", which is honest, and the create-new row is never gated on
+            // this. Saying `refs: []` would state that the repository has no
+            // branches — a claim git declined to make.
+            if (answer.ok !== true) {
+              return;
+            }
+            surface.post({
+              type: "worktreeRefs",
+              repoId: msg.repoId,
+              refs: answer.refs,
+              truncated: answer.truncated,
+            });
+          })
+          // The list is discovery, never the create. A reader that throws must
+          // not take the destination reply down with it.
+          .catch(() => {});
+        return;
+      }
       case "worktreePrune": {
         // Repo-scoped, so it resolves against the repo id rather than a
         // worktree — there is no single worktree a prune acts on.
@@ -1976,6 +2019,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeUnlock":
       case "worktreePrune":
       case "requestWorktreeCreateDefaults":
+      case "requestWorktreeRefs":
         handleAction(surface, msg);
         return;
       case "requestWorktreeTree":

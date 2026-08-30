@@ -23,6 +23,7 @@ import type {
   WorktreeCreateDraft,
   WorktreeOpenAfter,
   WorktreeProvisionOffer,
+  WorktreeRefOffer,
 } from "./worktreeViewTypes";
 
 /**
@@ -117,6 +118,15 @@ export interface WorktreeCreateDialogDeps {
    * the path resolved for the opening ask (.reviews/round-1.md B4).
    */
   bindProvisioning?: (apply: (repoId: string, offer: WorktreeProvisionOffer) => void) => void;
+  /**
+   * Receive the function that applies the repository's branch list.
+   *
+   * Its own channel for the same reason as `bindProvisioning`: this answers
+   * once per form and gates nothing, while the destination is answered per
+   * settled edit and Create waits on it. Routing one through the other's
+   * callback is what B4 was.
+   */
+  bindRefs?: (apply: (repoId: string, refs: WorktreeRefOffer) => void) => void;
   onSubmit: (draft: WorktreeCreateDraft) => void;
   onCancel?: () => void;
 }
@@ -882,6 +892,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (repoId === draft.repoId) {
       syncBringOver(offer);
     }
+  });
+
+  // The branch list's own channel, on the same terms: it touches `outstanding`
+  // no more than the offer does. Stored here and rendered by the combobox.
+  deps.bindRefs?.((repoId, refs) => {
+    const at = repos.findIndex((r) => r.repoId === repoId);
+    const opened = repos[at];
+    if (at < 0 || opened === undefined) {
+      return;
+    }
+    repos[at] = { ...opened, refs };
   });
 
   syncOpenAfter();

@@ -1246,6 +1246,78 @@ describe("the create a toolbar with no repository opens", () => {
     expect(held.size).toBe(0);
   });
 
+  // ── The branch list ────────────────────────────────────────────────────
+
+  const refsAsks = (h: Harness) => h.posts.filter((m) => m.type === "requestWorktreeRefs").map((m) => m.repoId);
+  const refsHeld = (h: Harness) => (h.controller as unknown as { repoRefs: Map<string, unknown> }).repoRefs;
+
+  it("[1_2] asks every repository for its branches when a create opens", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+
+    expect(refsAsks(h)).toEqual([REPO_A, REPO_B]);
+  });
+
+  it("[1_2] opens the form on the destination alone, before any branch list arrives", () => {
+    // The list is not part of `pendingCreate`: a repository whose enumeration
+    // is slow, or fails outright, must never hold the dialog shut.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+
+    expect(open()).toBe(true);
+    expect(refsHeld(h).size).toBe(0);
+  });
+
+  it("[1_2] gains the list when it lands, without disturbing the destination gate", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const applied: { repoId: string; refs: unknown }[] = [];
+    (h.controller as unknown as { applyRefs?: (r: string, x: unknown) => void }).applyRefs = (repoId, refs) =>
+      applied.push({ repoId, refs });
+
+    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_A, refs: [{ name: "main" }], truncated: false });
+
+    expect(applied).toEqual([{ repoId: REPO_A, refs: { list: [{ name: "main" }], truncated: false } }]);
+    expect(refsHeld(h).get(REPO_A)).toBeDefined();
+  });
+
+  it("[1_2] a list that outlived its dialog is stored, not applied", () => {
+    // `applyRefs` is null when no form is open, which is the drop. Storing it
+    // costs nothing: the next OPEN clears the map before it asks again.
+    const h = ready(twoRepoResponse());
+    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_A, refs: [{ name: "main" }], truncated: false });
+
+    expect(open()).toBe(false);
+    expect(refsHeld(h).get(REPO_A)).toBeDefined();
+  });
+
+  it("[1_2] opening a form drops the previous form's list", () => {
+    // Same rule as r2 B6 for the offer: a list seeded from the last form
+    // describes a repository state that may have moved, and would keep showing
+    // if this form's own enumeration failed.
+    const h = ready(twoRepoResponse());
+    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_A, refs: [{ name: "main" }], truncated: false });
+    h.controller.openCreate();
+
+    expect(refsHeld(h).size).toBe(0);
+  });
+
+  it("[1_2] forgets the list for a repository that has left the workspace", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_B, refs: [{ name: "main" }], truncated: false });
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: singleRepoTree(),
+      presence: singleRepoPresence(1_000_000),
+    });
+
+    expect(refsHeld(h).has(REPO_B)).toBe(false);
+  });
+
   it("[1_4] forgets an offer for a repository that has left the workspace", () => {
     // The offer names a model the host holds for a repo it no longer answers
     // for. Kept, it would render a section for a repository that is gone.
@@ -1413,7 +1485,12 @@ describe("the destination a create opens on", () => {
     const first = firstWorktree();
     menuActions(h).createWorktree?.(first);
 
-    expect(h.posts).toEqual([{ type: "requestWorktreeCreateDefaults", repoId: REPO }]);
+    // Still exhaustive: the destination ask, and the branch list that opened
+    // beside it. Nothing else — no path derived here, no third question.
+    expect(h.posts).toEqual([
+      { type: "requestWorktreeCreateDefaults", repoId: REPO },
+      { type: "requestWorktreeRefs", repoId: REPO },
+    ]);
   });
 
   it("seeds the form with nothing until the host has answered", () => {

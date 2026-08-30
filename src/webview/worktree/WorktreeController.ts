@@ -14,6 +14,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
+  WorktreeRefsMessage,
   WorktreeSubscriptionLevel,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
@@ -33,6 +34,7 @@ import type {
   WorktreeOpenAfter,
   WorktreePresence,
   WorktreeProvisionOffer,
+  WorktreeRefOffer,
   WorktreeRowActivation,
   WorktreeTree,
 } from "./worktreeViewTypes";
@@ -262,6 +264,15 @@ export class WorktreeController {
    * would either re-mint it on every character or drop it on the second answer.
    */
   private readonly provisionOffers = new Map<string, WorktreeProvisionOfferMessage>();
+  /**
+   * The repository's local branches, per repo.
+   *
+   * Held apart from `createDefaults` for the same reason the offer is: the host
+   * answers this once per form and the destination per settled edit, so folding
+   * it in would either re-ship the whole list per keystroke or drop it on the
+   * second answer.
+   */
+  private readonly repoRefs = new Map<string, WorktreeRefsMessage>();
   /** The repo a create was invoked for, waiting on its defaults. */
   /**
    * The create waiting on the host, and the repositories it has yet to hear
@@ -281,6 +292,11 @@ export class WorktreeController {
    * (.reviews/round-1.md B4).
    */
   private applyProvisionOffer: ((repoId: string, offer: WorktreeProvisionOffer) => void) | null = null;
+  /**
+   * Push the repository's branch list into the open form. Null when none is
+   * open — which is what drops an answer that outlived its dialog.
+   */
+  private applyRefs: ((repoId: string, refs: WorktreeRefOffer) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
   private actionResults: WorktreeActionResult[] = [];
   /**
@@ -390,6 +406,9 @@ export class WorktreeController {
         },
         bindProvisioning: (apply) => {
           this.applyProvisionOffer = apply;
+        },
+        bindRefs: (apply) => {
+          this.applyRefs = apply;
         },
       }),
       onLaunchSubmit: (request) => {
@@ -667,6 +686,10 @@ export class WorktreeController {
     // (.reviews/round-2.md B6). Absent renders as "not told yet", which is the
     // honest state until the host answers.
     this.provisionOffers.clear();
+    // Cleared on the same terms as the offer: a list seeded from the previous
+    // form describes a repository state that may have moved, and the honest
+    // opening state is "not told yet".
+    this.repoRefs.clear();
     this.pendingCreate = {
       // Kept so a create that cannot open can name what it was waiting on: the
       // outstanding set is empty by the time that is known.
@@ -676,6 +699,10 @@ export class WorktreeController {
     };
     for (const target of targets) {
       this.deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId: target });
+      // Not awaited by `pendingCreate`: the form opens on the destination alone
+      // and gains the list when it lands, so a repository whose enumeration is
+      // slow or fails never holds the dialog shut.
+      this.deps.postMessage({ type: "requestWorktreeRefs", repoId: target });
     }
   }
 
@@ -915,6 +942,7 @@ export class WorktreeController {
         continue;
       }
       const offer = this.provisionOffers.get(repo.repoId);
+      const refs = this.repoRefs.get(repo.repoId);
       repos.push({
         repoId: repo.repoId,
         repoLabel: repo.label,
@@ -934,6 +962,9 @@ export class WorktreeController {
         // Absent until the offer arrives, which the form renders as "not told
         // yet" rather than as "nothing to bring over".
         ...(offer === undefined ? {} : { provisioning: { offerId: offer.offerId, model: offer.model } }),
+        // Same terms as the offer: absent renders as "not told yet", never as
+        // "this repository has no branches".
+        ...(refs === undefined ? {} : { refs: { list: refs.refs, truncated: refs.truncated } }),
       });
     }
     return repos;
@@ -953,6 +984,18 @@ export class WorktreeController {
     // replies (round-1 S1), and sending it down the destination's channel is
     // what B4 was.
     this.applyProvisionOffer?.(msg.repoId, { offerId: msg.offerId, model: msg.model });
+  }
+
+  /**
+   * The host's branch list for one repo.
+   *
+   * Stored and pushed into an open form. An answer that outlived its dialog is
+   * dropped by `applyRefs` being null — the list is a rendering, and there is
+   * no gate it could clear late.
+   */
+  handleRefs(msg: WorktreeRefsMessage): void {
+    this.repoRefs.set(msg.repoId, msg);
+    this.applyRefs?.(msg.repoId, { list: msg.refs, truncated: msg.truncated });
   }
 
   /** The host's create destination for one repo, and the form it was asked for. */
@@ -1131,6 +1174,11 @@ export class WorktreeController {
     for (const repoId of this.provisionOffers.keys()) {
       if (!repos.has(repoId)) {
         this.provisionOffers.delete(repoId);
+      }
+    }
+    for (const repoId of this.repoRefs.keys()) {
+      if (!repos.has(repoId)) {
+        this.repoRefs.delete(repoId);
       }
     }
 

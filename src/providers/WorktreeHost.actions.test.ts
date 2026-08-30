@@ -16,6 +16,7 @@ import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { createGitCapabilities, type GitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { OrphanProofs } from "../worktree/orphanProofs";
+import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
@@ -291,6 +292,10 @@ async function builtHost(
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
+    /** What the ref reader should answer. */
+    readRefs?: (input: RepoRefsInput) => Promise<RepoRefsRead>;
+    /** Collects every input the ref reader was handed. */
+    refsInputs?: RepoRefsInput[];
     /** Registry sessions the removal assessment should be given. */
     sessions?: readonly SessionRecord[];
     /** What the proof reader should answer. */
@@ -392,6 +397,14 @@ async function builtHost(
     ...(over.exists === undefined ? {} : { exists: over.exists }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
     ...(over.readProvisioning === undefined ? {} : { readProvisioning: over.readProvisioning }),
+    ...(over.readRefs === undefined && over.refsInputs === undefined
+      ? {}
+      : {
+          readRefs: async (input: RepoRefsInput) => {
+            over.refsInputs?.push(input);
+            return (await over.readRefs?.(input)) ?? { ok: true, refs: [], truncated: false };
+          },
+        }),
   });
   const view = surface();
   const attachment = host.attach(view);
@@ -1066,6 +1079,104 @@ describe("the destination a create opens on comes from the host", () => {
     await settle();
 
     expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toEqual([]);
+    dispose();
+  });
+});
+
+// ── The branches a create can pick from ──────────────────────────────────
+
+describe("the list of branches a create can pick from comes from the host", () => {
+  it("answers a refs request with what the reader found", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readRefs: async () => ({ ok: true, refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }], truncated: true }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    await settle();
+
+    expect(view.posts.find((m) => m.type === "worktreeRefs")).toEqual({
+      type: "worktreeRefs",
+      repoId: REPO,
+      refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }],
+      truncated: true,
+    });
+    dispose();
+  });
+
+  it("hands the reader the listing it already holds, so held-by is derived and not re-asked", async () => {
+    // A second `git worktree list` for the same repository invites two answers
+    // about one instant. The listing that says which worktrees exist already
+    // says which branches they hold (design.md D2).
+    const refsInputs: RepoRefsInput[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, { refsInputs });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    await settle();
+
+    expect(refsInputs).toHaveLength(1);
+    expect(refsInputs[0]?.cwd).toBe(MAIN_PATH);
+    expect(refsInputs[0]?.worktrees.map((w) => w.branch)).toContain("feat");
+    dispose();
+  });
+
+  it("posts nothing when the enumeration failed — absent is not an empty repository", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, { readRefs: async () => ({ ok: false }) });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);
+    dispose();
+  });
+
+  it("survives a reader that throws, rather than taking the surface down", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readRefs: async () => {
+        throw new Error("git blew up");
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);
+    dispose();
+  });
+
+  it("answers nothing for a repository it never published", async () => {
+    const refsInputs: RepoRefsInput[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, { refsInputs });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: "/not/a/repo" });
+    await settle();
+
+    expect(refsInputs).toEqual([]);
+    expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);
+    dispose();
+  });
+
+  it("does not post to a surface that detached while git was answering", async () => {
+    // The form this list describes is gone. Posting into a detached surface is
+    // at best wasted, and at worst revives a dialog the detach forgot.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readRefs: async () => {
+        await gate;
+        return { ok: true, refs: [{ name: "main" }], truncated: false };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    dispose();
+    release?.();
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);
+  });
+
+  it("answers nothing when no reader is wired", async () => {
+    const { host, view, dispose } = await builtHost();
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);
     dispose();
   });
 });

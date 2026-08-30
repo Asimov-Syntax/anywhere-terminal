@@ -191,3 +191,33 @@ describe("the worktree panel's inbound messages", () => {
     }
   });
 });
+
+describe("the worktree create dialog's answers reach the controller", () => {
+  // Declared, posted and handled but UNROUTED is how `requestWorktreeSubagents`
+  // shipped inert with every unit test green. This case exists so the branch
+  // list cannot repeat it.
+  it("routes the repository's branch list", () => {
+    const onWorktreeRefs = vi.fn();
+    const dispatch = createMessageRouter({ ...createMockHandlers(), onWorktreeRefs });
+
+    dispatch({
+      type: "worktreeRefs",
+      repoId: "/repo/.git",
+      refs: [{ name: "main", heldBy: "repo" }],
+      truncated: false,
+    });
+
+    expect(onWorktreeRefs).toHaveBeenCalledWith({
+      type: "worktreeRefs",
+      repoId: "/repo/.git",
+      refs: [{ name: "main", heldBy: "repo" }],
+      truncated: false,
+    });
+  });
+
+  it("leaves an unhandled branch list alone rather than throwing", () => {
+    const dispatch = createMessageRouter(createMockHandlers());
+
+    expect(() => dispatch({ type: "worktreeRefs", repoId: "/repo/.git", refs: [], truncated: false })).not.toThrow();
+  });
+});

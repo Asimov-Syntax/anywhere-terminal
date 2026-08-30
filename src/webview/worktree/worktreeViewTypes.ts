@@ -19,6 +19,7 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
 import type { ProvisionModel, RemovalCheck } from "../../types/messages";
+import type { WorktreeRef } from "../../worktree/repoRefs";
 
 export type {
   DestinationDisposition,
@@ -40,6 +41,7 @@ export type {
   WorktreePresence,
   WorktreeSubagentRow,
 } from "../../worktree/presenceTypes";
+export type { WorktreeRef } from "../../worktree/repoRefs";
 export type { WorktreeInfo, WorktreeRepo, WorktreeTree } from "../../worktree/types";
 
 /** Live activity of one agent row. Mirrors the webview terminal tracker, plus `exited`. */
@@ -162,6 +164,22 @@ export interface WorktreeCreateDefaults {
    * model, and the two say different things.
    */
   provisioning?: WorktreeProvisionOffer;
+  /**
+   * The repository's local branches, and whether the list is partial.
+   *
+   * Absent until the host's answer arrives — a separate message, like
+   * `provisioning`, so the form opens without it. Absent is NOT "there are no
+   * branches": a repository whose enumeration failed must not render as one
+   * with none, and the create-new entry is never gated on this either way.
+   */
+  refs?: WorktreeRefOffer;
+}
+
+/** The host's answer to `requestWorktreeRefs`, as the form holds it. */
+export interface WorktreeRefOffer {
+  readonly list: readonly WorktreeRef[];
+  /** The enumeration hit its cap, so the form says the list is partial. */
+  readonly truncated: boolean;
 }
 
 /** One offerable agent, as the host reported it. */
