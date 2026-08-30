@@ -31,6 +31,8 @@ import { FileTreePanel } from "./FileTreePanel";
 /** Init payload pieces the controller needs from the host's `init` message. */
 export interface FileTreeBootstrapInit {
   workspaceRoot: string | null;
+  /** Where `workspaceRoot` resolves; see the init payload's own comment. */
+  resolvedWorkspaceRoot: string | null;
   rootGeneration: number;
 }
 
@@ -132,6 +134,8 @@ export class FileTreeController {
       },
     });
 
+    panel.setResolvedWorkspaceRoot(deps.init.workspaceRoot, deps.init.resolvedWorkspaceRoot);
+
     // Seed default position from location only if NO persisted state. A
     // previously-persisted position must not be overridden by the default.
     panel.setPosition(persisted ? persisted.position : defaultPositionFor(locationKey));
@@ -146,8 +150,20 @@ export class FileTreeController {
   }
 
   handleWorkspaceRootChanged(msg: WorkspaceRootChangedMessage): void {
+    const remounts =
+      msg.rootPath !== this.lastWorkspaceRoot || msg.rootGeneration !== this.panel.getCurrentRootGeneration();
     this.lastWorkspaceRoot = msg.rootPath;
-    this.panel.handleRootChanged(msg);
+    // Recorded BEFORE the panel re-roots, so the mount it performs is compared
+    // against the resolved root rather than picking it up a message later.
+    this.panel.setResolvedWorkspaceRoot(msg.rootPath, msg.resolvedRootPath);
+    // The host posts this a second time when the root's `realpath` lands, and
+    // that message re-roots nothing: same mount, same generation, only the
+    // containment root is new. Re-rooting on it would exit search, dispose the
+    // tree and drop every expanded path — losing the user's place because a
+    // syscall was slow (round-2 W1, D7).
+    if (remounts) {
+      this.panel.handleRootChanged(msg);
+    }
   }
 
   /**

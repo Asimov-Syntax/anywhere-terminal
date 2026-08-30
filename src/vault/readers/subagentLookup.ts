@@ -9,7 +9,7 @@
 // no project-dir encoder), so resolution needs only the parent id + description.
 
 import * as fs from "node:fs/promises";
-import { prepareResolvedRoot } from "../../utils/pathBoundary";
+import { prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { parseEntryId, type VaultSessionDetail } from "../types";
 import { listClaudeSubagentStubs, readClaudeSubagentDetail } from "./claudeChildren";
 import { type ClaudeReaderOptions, claudeRoots, resolveClaudeSubagentPathUnder, SUBAGENT_MARKER } from "./claudePaths";

@@ -136,6 +136,25 @@ export interface PresenceProjectorDeps {
   /** Fold a pane cwd into the same form `WorktreeInfo.id` is in. */
   normalize(p: string): string;
   /**
+   * Resolve the cwds this pass will attribute, once, before it compares any of
+   * them. `normalize` stays synchronous because of this call: attribution runs
+   * per presence push, so resolving inside the comparison would put a syscall on
+   * every row of every push (D1). Optional — a projector under test needs no
+   * filesystem, and without it `normalize` answers exactly as it did before.
+   *
+   * A CLAIM, not a bare resolve: the memo is shared, and holding this pass's set
+   * is what stops one consumer's retirement from deleting a path another is
+   * standing on. Releasing what left the set is the claim's own job, so the
+   * projector keeps no cwd history of its own (D6).
+   */
+  holdPaneCwds?(paths: readonly string[]): Promise<void>;
+  /**
+   * The same, for the registry sessions this pass will attribute. A separate
+   * claim because it is a separate bounded set retiring on a separate trigger:
+   * panes come and go with the window's terminals, sessions with the registry.
+   */
+  holdSessionCwds?(paths: readonly string[]): Promise<void>;
+  /**
    * The vault's name for a resolved session — the FALLBACK title, consulted only
    * for a row the registry did not name.
    *
@@ -422,6 +441,9 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
    * list re-attributes it against the tree the projection is published with (D4).
    */
   let lastSessions: readonly RunningClaudeSession[] = [];
+  /** The cwds the last successful registry read prepared, so the ones that
+   *  leave can be released rather than held for the window's life. */
+  /** The same, for the pane set — released when the last pane there is gone. */
   /**
    * What the last full pass concluded about this window's own panes, kept so an
    * external-only pass can publish a whole envelope without re-running it.
@@ -938,6 +960,23 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       const now = clock();
       const snapshot = await deps.openSnapshot();
 
+      // Before anything is attributed: the cwds this pass will compare, resolved
+      // in one bounded pass. The set is the panes the window holds, so the cost
+      // is distinct directories rather than rows.
+      if (deps.holdPaneCwds) {
+        const cwds = new Set<string>();
+        for (const pane of deps.panes()) {
+          if (pane.cwd !== undefined) {
+            cwds.add(pane.cwd);
+          }
+        }
+        // Claimed by DIRECTORY, not by pane. A memo entry is a fact about a
+        // path, so it belongs to every pane sitting there: retiring it when one
+        // pane moves or closes would drop a resolution its siblings still
+        // compare against on the very next push (round-1 B4).
+        await deps.holdPaneCwds([...cwds]);
+      }
+
       const failures = new Map<PresenceDegradation["source"], string>();
       const rowsByWorktreeId: Record<string, WorktreeAgentRow[]> = {};
       const nextRanks = new Map<string, number>();
@@ -981,6 +1020,15 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
         }
       }
       const sessions = read.kind === "ok" ? read.sessions : lastSessions;
+      // Registry sessions are attributed by cwd too, and their set is not the
+      // pane set, so they get the same one bounded pass.
+      if (deps.holdSessionCwds) {
+        // `sessions` is the last SUCCESSFUL read when this one failed, so the
+        // claimed set is unchanged and nothing is released — a failed read must
+        // not drop resolutions the next pass still needs (round-1 B4). The claim
+        // gets that from the set it is handed, with no read-kind test of its own.
+        await deps.holdSessionCwds([...new Set(sessions.map((session) => session.cwd))]);
+      }
       if (read.kind === "ok") {
         lastSessions = read.sessions;
         // Eviction rides a successful read, and only a successful read: it is

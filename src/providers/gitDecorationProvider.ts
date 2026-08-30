@@ -23,6 +23,7 @@
 import * as vscode from "vscode";
 import type { GitStatus } from "../types/messages";
 import { isPathInside, isWindowsAbsPath, normalizePathForCompare } from "../utils/pathBoundary";
+import type { TrackedPathResolver } from "../utils/resolvedPathMemo";
 import type { API, GitExtension, Repository } from "./git";
 import { mapStatus, pickHigherSeverity } from "./gitStatusMapping";
 
@@ -109,6 +110,15 @@ export interface CreateGitDecorationProviderOptions {
    * provider). Tests pass a custom event to drive folder changes.
    */
   readonly onDidChangeWorkspaceFolders?: vscode.Event<unknown>;
+  /**
+   * Where the window's paths resolve. Absent — containment is decided lexically,
+   * exactly as before this existed.
+   *
+   * Only the FOLDERS are resolved. The decorated path arrives per file per git
+   * refresh, so resolving it would be the unbounded syscall per comparison the
+   * acceptance forbids; the root side is the producer-bounded half (design.md D1).
+   */
+  readonly paths?: TrackedPathResolver;
 }
 
 const defaultLogger = {
@@ -145,7 +155,52 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     if (folders.length === 0) {
       return true;
     }
-    return folders.some((rawRoot) => isPathInside(absPath, rawRoot));
+    // The folder side is resolved from the pass `resolveFolders` already ran;
+    // `absPath` is left as it is spelled, per D1. `resolvedOr` is a map read,
+    // so a folder nothing has resolved yet answers exactly as it did before.
+    return folders.some((rawRoot) => isPathInside(absPath, options.paths?.resolvedOr(rawRoot) ?? rawRoot));
+  }
+
+  /** Bumped per folder-resolution pass, so a slow one cannot reset over a newer. */
+  let folderPass = 0;
+
+  /**
+   * Resolve the workspace folders, forgetting the ones that have gone, and
+   * rebuild once that lands.
+   *
+   * The rebuild is the point. `isUnderAnyWorkspaceFolder` must stay synchronous,
+   * so until this settles it answers lexically — and nothing else would ever
+   * revisit that answer, leaving a symlink-spelled folder undecorated until
+   * some unrelated Git event happened to fire (round-1 B2).
+   */
+  function resolveFolders(owed: boolean): void {
+    const rebuild = () => {
+      if (!disposed) {
+        provider.reset();
+      }
+    };
+    if (!options.paths) {
+      if (owed) {
+        rebuild();
+      }
+      return;
+    }
+    folderPass += 1;
+    const pass = folderPass;
+    const settle = () => {
+      if (pass === folderPass) {
+        rebuild();
+      }
+    };
+    void options.paths.prepare(getWorkspaceFolders()).then(settle, () => {
+      // Defensive, and untested because it is unreachable through a failing
+      // realpath: `ResolvedPathMemo.resolve` answers lexically rather than
+      // rejecting, so an unresolvable folder settles through the branch above
+      // and the rebuild a folder change owes is paid there.
+      if (owed) {
+        settle();
+      }
+    });
   }
 
   // Per-repository status maps keyed by rootUri.fsPath. The merged view is
@@ -680,9 +735,17 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     if (disposed) {
       return;
     }
-    provider.reset();
+    // ONE rebuild, not two. Resetting here and again when the resolution lands
+    // scanned every decorated path and rebuilt every repository twice for one
+    // cold event; the post-resolution pass is the authoritative one and now
+    // owes the rebuild outright (round-2 W2).
+    resolveFolders(true);
   });
   persistentSubs.push(wsfSub);
+
+  // The folders open at construction; the event above covers every later set.
+  // Nothing is decorated yet, so this pass owes no rebuild of its own.
+  resolveFolders(false);
 
   // Kick off acquisition asynchronously so construction never throws.
   tryAcquire();

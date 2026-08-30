@@ -1059,7 +1059,11 @@ function handleInit(msg: InitMessage): void {
       // Same VS-Code-style pixel FLIP the vault uses — collapsing/expanding the
       // file tree resizes the shared region smoothly without bouncing the vault.
       animateCollapse: (apply) => runAuxCollapseAnimation(apply),
-      init: { workspaceRoot: msg.workspaceRoot, rootGeneration: msg.rootGeneration },
+      init: {
+        workspaceRoot: msg.workspaceRoot,
+        resolvedWorkspaceRoot: msg.resolvedWorkspaceRoot,
+        rootGeneration: msg.rootGeneration,
+      },
       store,
       postMessage: (m) => vscode.postMessage(m),
       getActiveSessionId: () => {

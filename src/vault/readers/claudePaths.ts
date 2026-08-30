@@ -9,7 +9,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { provesAbsence } from "../../utils/fsPresence";
-import { isResolvedPathInsideRoot, type PreparedRoot, prepareResolvedRoot } from "../../utils/pathBoundary";
+import { isResolvedPathInsideRoot, type PreparedRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 
 /** Separates a parent session id from a subagent file stem in an entry id:
  *  `claude:<parentSessionId>:subagent:<agent-stem>`. */

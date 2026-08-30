@@ -349,7 +349,7 @@ async function builtHost(
     // Without these `assessRemoval` returns null before it reaches git, which
     // would make every assertion about WHICH git commands it issues vacuous.
     removalFacts: {
-      panes: () => [],
+      panes: async () => [],
       externalSessions: async () => {
         await duringAssessment.now();
         return { ok: true, value: [] };

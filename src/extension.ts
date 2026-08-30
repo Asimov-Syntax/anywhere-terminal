@@ -49,6 +49,7 @@ import type {
   WorktreeRemoveBlockerPayload,
 } from "./types/messages";
 import { isPathInside } from "./utils/pathBoundary";
+import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
@@ -482,7 +483,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Shared GitDecorationProvider — one singleton, threaded through every
   // FileTreeHost so the three webviews (sidebar / panel / editor) see one
   // consistent revision sequence. See: add-file-tree-git-decorations design.md D8, D10.
-  const gitDecorationProvider = createGitDecorationProvider();
+  // One window, one set of resolutions, shared by every site that decides which
+  // worktree, repository or root a path belongs to. Each site wraps it in its
+  // own tracker, because what counts as "this set changed" differs per site —
+  // but they must never disagree about where a directory is (design.md D1, D5).
+  const pathMemo = new ResolvedPathMemo();
+
+  const gitDecorationProvider = createGitDecorationProvider({ paths: createTrackedPathResolver(pathMemo) });
   context.subscriptions.push(gitDecorationProvider);
 
   // Shared FS WatcherPool — singleton, refcounted across every FileTreeHost
@@ -666,7 +673,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Held rather than inlined: the mutation service runs git through the SAME
   // runner discovery uses, so a capability probe or a timeout setting cannot
   // differ between reading the tree and changing it.
-  const worktreeTreeDeps = createWorktreeTreeDeps();
+  const worktreeTreeDeps = createWorktreeTreeDeps({ pathMemo });
 
   // One owner of every preview the agent rows show — the stamp, the re-check
   // interval, the in-flight de-duplication and the bound all live behind it.
@@ -692,23 +699,60 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // The two evidence sources a removal blocker set needs and the tree does
     // not carry, from the same store and registry the projector reads.
     removalFacts: {
-      panes: () =>
-        paneEvidence.panes().map((pane) => ({
+      // Resolved through the SAME memo the projection uses, so the panes a
+      // removal warns about and the rows the tree shows under that worktree
+      // are attributed by one set of facts. `prepare` first because this path
+      // can run before the first projection has resolved anything.
+      panes: async () => {
+        // Ids, cwds AND activity are read in one synchronous pass, before the
+        // resolution is awaited. Reading activity on the far side let a pane
+        // that exited during the await be filtered out by `evaluateRemoval`,
+        // so a terminal that was live when the set was taken could go unnamed
+        // in the confirmation for an irreversible removal (round-1 B5).
+        const observed = paneEvidence.panes().map((pane) => ({
           paneId: pane.paneId,
-          cwd: pane.cwd === undefined ? undefined : path.resolve(pane.cwd),
+          cwd: pane.cwd,
           activity: paneEvidence.activityFor(pane.paneId),
-        })),
+        }));
+        // Its OWN claim, for the length of this assessment. Two assessments
+        // sharing one resolver release each other's paths mid-flight — the
+        // second `prepare` drops the first's set before its realpath lands, the
+        // superseded resolution declines to publish, and the first assessment
+        // reads its panes lexically. That answer is the blocker set for an
+        // irreversible destroy, so the miss is a pane nobody was warned about
+        // (round-3 B8).
+        const paths = createTrackedPathResolver(pathMemo);
+        try {
+          await paths.prepare(observed.flatMap((pane) => (pane.cwd === undefined ? [] : [pane.cwd])));
+          return observed.map((pane) => ({
+            ...pane,
+            cwd: pane.cwd === undefined ? undefined : paths.resolvedOr(pane.cwd),
+          }));
+        } finally {
+          paths.dispose();
+        }
+      },
       externalSessions: async () => {
         const outcome = await listRunningClaudeSessions();
         // The FAILURE is carried, not flattened to an empty list. An unreadable
         // registry is not "no external sessions", and on a forced removal that
         // difference is a session nobody was warned about (round-2 B6).
-        return outcome.kind === "ok"
-          ? {
-              ok: true,
-              value: outcome.sessions.map((s) => ({ sessionId: s.sessionId, cwd: path.resolve(s.cwd) })),
-            }
-          : { ok: false };
+        if (outcome.kind !== "ok") {
+          return { ok: false };
+        }
+        const paths = createTrackedPathResolver(pathMemo);
+        try {
+          await paths.prepare(outcome.sessions.map((s) => s.cwd));
+          return {
+            ok: true,
+            value: outcome.sessions.map((s) => ({
+              sessionId: s.sessionId,
+              cwd: paths.resolvedOr(s.cwd),
+            })),
+          };
+        } finally {
+          paths.dispose();
+        }
       },
     },
     workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
@@ -727,6 +771,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     projector: createPresenceProjector(
       createPresenceProjectorDeps({
         store: paneEvidence,
+        cwdMemo: pathMemo,
         // Fallback only — the projector asks about a session the registry left
         // unnamed. A user rename outranks the derived title here for the same
         // reason it does in the vault list (enhance-vault-sessions D1).
@@ -796,6 +841,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultWatchCoordinator,
     worktreeHost,
     paneEvidence,
+    pathMemo,
   );
 
   context.subscriptions.push(
@@ -816,6 +862,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultWatchCoordinator,
     worktreeHost,
     paneEvidence,
+    pathMemo,
   );
 
   context.subscriptions.push(
@@ -835,6 +882,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         worktreeHost,
         paneEvidence,
         vaultService,
+        pathMemo,
       );
       context.subscriptions.push(panelDisposable);
     }),
@@ -854,6 +902,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         worktreeHost,
         paneEvidence,
         vaultService,
+        pathMemo,
       ),
     ),
   );

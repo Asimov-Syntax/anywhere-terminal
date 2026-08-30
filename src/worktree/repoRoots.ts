@@ -5,6 +5,7 @@
 import * as path from "node:path";
 import type { API } from "../providers/git";
 import { isPathInside } from "../utils/pathBoundary";
+import type { TrackedPathResolver } from "../utils/resolvedPathMemo";
 import { describeGitFailure } from "./describeGitFailure";
 import { type GitCapabilities, hasUnsupportedPathFormatEcho } from "./gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
@@ -24,6 +25,16 @@ export interface RepoRootsDeps {
   capabilities: GitCapabilities;
   normalize(p: string): Promise<string | null>;
   getGitApi?: GitApiAccessor;
+  /**
+   * Absent — every comparison below is lexical, exactly as before this existed.
+   * Supplied in production, so a folder reached through a symlink matches the
+   * repository it resolves INTO rather than the one it is spelled under.
+   *
+   * The folders are PINNED and the repository roots TRACKED: a repository VS
+   * Code closed is the structural event that invalidates a resolution, and only
+   * this module is in a position to notice it.
+   */
+  paths?: TrackedPathResolver;
 }
 
 /**
@@ -76,22 +87,35 @@ function commonDirOutcome(result: GitCommandResult, root: string, command: strin
   return { kind: "resolved", dir: path.isAbsolute(raw) ? raw : path.resolve(root, raw) };
 }
 
+/** Every root VS Code currently has open, as the Git API spells them. */
+function openRepoRoots(deps: RepoRootsDeps): readonly string[] {
+  const api = deps.getGitApi?.();
+  return api?.state === "initialized" ? api.repositories.map((repo) => repo.rootUri.fsPath) : [];
+}
+
 /**
  * The repository whose root is the longest prefix of `folder`, or undefined.
  * A repo VS Code already has open saves a `rev-parse` per folder.
+ *
+ * Compared on where both sides RESOLVE. Both are producer-bounded — the folders
+ * the workspace holds, the repositories the API holds — so both are resolved in
+ * one pass beforehand and the match here costs no syscall (design.md D1).
+ *
+ * The value RETURNED is the API's own spelling, not the resolved one: it is
+ * handed to git as a cwd and then normalized by `deps.normalize`, and
+ * substituting a physical path here would change which directory git runs in.
  */
 function matchRepository(folder: string, deps: RepoRootsDeps): string | undefined {
-  const api = deps.getGitApi?.();
-  if (api?.state !== "initialized") {
-    return undefined;
-  }
+  const resolved = deps.paths?.resolvedOr;
+  const at = (p: string) => resolved?.(p) ?? p;
+  const candidate = at(folder);
   let best: string | undefined;
-  for (const repo of api.repositories) {
-    const root = repo.rootUri.fsPath;
-    if (isPathInside(folder, root)) {
-      if (best === undefined || root.length > best.length) {
-        best = root;
-      }
+  let bestLength = -1;
+  for (const root of openRepoRoots(deps)) {
+    const rootAt = at(root);
+    if (isPathInside(candidate, rootAt) && rootAt.length > bestLength) {
+      best = root;
+      bestLength = rootAt.length;
     }
   }
   return best;
@@ -151,6 +175,11 @@ export async function resolveRepoOutcomes(
   deps: RepoRootsDeps,
 ): Promise<FolderResolution[]> {
   const out: FolderResolution[] = [];
+
+  // One pass over both bounded sets, before any of them is compared. Resolving
+  // inside `matchRepository` instead would be a syscall per folder per repo
+  // per rebuild, which is the cost half of this change's acceptance (D1, D4).
+  await deps.paths?.prepare([...folders, ...openRepoRoots(deps)]);
 
   for (const folder of folders) {
     out.push({ folder, outcome: await resolveOne(folder, deps) });

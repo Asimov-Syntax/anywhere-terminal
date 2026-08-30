@@ -18,6 +18,7 @@ import type {
   WebViewToExtensionMessage,
 } from "../types/messages";
 import { isWorktreeMessage } from "../types/messages";
+import { createTrackedPathResolver, type ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { claudeSessionMtime, readClaudeSessions } from "../vault/readers/claudeReader";
 import { indexRunningSessionsOrEmpty, listRunningClaudeSessions } from "../vault/readers/runningSessions";
 import { resolveSubagentDetail, resolveSubagentDetailByEntryId } from "../vault/readers/subagentLookup";
@@ -195,12 +196,22 @@ export class TerminalEditorProvider {
      * overlay is fed entirely by the two READS below (round-1 B1).
      */
     private readonly vaultService: VaultService | null = null,
+    /**
+     * The window's shared path memo. Each host takes its own claim over it, so
+     * the webview can compare containment against where the root resolves —
+     * absent, every comparison stays lexical (D6, round-2 B1).
+     */
+    pathMemo: ResolvedPathMemo | null = null,
   ) {
     this._panel = panel;
     this._panelId = panelId;
     this._viewId = `editor-${panelId}`;
     this.restoreSnapshots = restoreSnapshots;
-    this.fileTreeHost = new FileTreeHost(gitDecorationProvider, watcherPool);
+    this.fileTreeHost = new FileTreeHost(
+      gitDecorationProvider,
+      watcherPool,
+      pathMemo ? createTrackedPathResolver(pathMemo) : null,
+    );
     this.setupPanel();
   }
 
@@ -218,6 +229,9 @@ export class TerminalEditorProvider {
     worktreeHost: WorktreeHost | null = null,
     paneEvidence: PaneEvidenceStore | null = null,
     vaultService: VaultService | null = null,
+    /** Revival goes through `revive`, so BOTH paths take it — a memo wired only
+     *  here would leave every restored editor comparing lexically (round-2 B1). */
+    pathMemo: ResolvedPathMemo | null = null,
   ): vscode.Disposable {
     const panel = vscode.window.createWebviewPanel(
       TerminalEditorProvider.viewType,
@@ -241,6 +255,7 @@ export class TerminalEditorProvider {
       worktreeHost,
       paneEvidence,
       vaultService,
+      pathMemo,
     );
 
     // Track this panel for config updates + the provider instance for host-side
@@ -275,6 +290,7 @@ export class TerminalEditorProvider {
     worktreeHost: WorktreeHost | null = null,
     paneEvidence: PaneEvidenceStore | null = null,
     vaultService: VaultService | null = null,
+    pathMemo: ResolvedPathMemo | null = null,
   ): TerminalEditorProvider {
     const provider = new TerminalEditorProvider(
       context.extensionUri,
@@ -287,6 +303,7 @@ export class TerminalEditorProvider {
       worktreeHost,
       paneEvidence,
       vaultService,
+      pathMemo,
     );
     TerminalEditorProvider._activePanels.add(panel);
     TerminalEditorProvider._instances.set(panel, provider);
@@ -402,6 +419,11 @@ export class TerminalEditorProvider {
       }
       // Cancel + dispose any in-flight preview tokens (D10).
       this.cancelAllPreviewTokens();
+      // Permanent for this panel — it leaves `_instances` on the next line — so
+      // the root it claimed in the shared path memo is released here. Panels
+      // open and close without bound, and a closed one used to leave a dead
+      // claimant that blocked the root's final release (round-3 B7).
+      this.fileTreeHost.dispose();
       TerminalEditorProvider._activePanels.delete(this._panel);
       TerminalEditorProvider._instances.delete(this._panel);
       this.sessionManager.scheduleDestroyForView(this._viewId, GRACE_PERIOD_MS, () => {
@@ -981,6 +1003,9 @@ export class TerminalEditorProvider {
           vaultActionsAvailable: false,
         });
         this.postRowActivation();
+        if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
+        }
         if (!initDelivered) {
           console.error("[AnyWhere Terminal] init delivery failed during editor reload — skipping scrollback restore.");
           this.sessionManager.resumeOutputForView(this._viewId);
@@ -1024,6 +1049,9 @@ export class TerminalEditorProvider {
           vaultActionsAvailable: false,
         });
         this.postRowActivation();
+        if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
+        }
         if (!initDelivered) {
           console.error(
             "[AnyWhere Terminal] init delivery failed during editor restore — skipping restoreFromSnapshot posts.",
@@ -1077,6 +1105,7 @@ export class TerminalEditorProvider {
         // Same ordering as the reloaded and restored branches — see W2 in
         // TerminalViewProvider.
         if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
           this.postRowActivation();
         }
       }

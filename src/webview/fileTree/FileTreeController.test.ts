@@ -84,3 +84,70 @@ describe("FileTreeController.handleFsChangesInvalidated + handleFsRehydrate", ()
     expect(handleFsRehydrate).toHaveBeenCalledWith(msg);
   });
 });
+
+describe("FileTreeController.handleWorkspaceRootChanged", () => {
+  function makeRootStub(currentGen: number) {
+    const handleRootChanged = vi.fn();
+    const setResolvedWorkspaceRoot = vi.fn();
+    const panel = {
+      getCurrentRootGeneration: () => currentGen,
+      handleRootChanged,
+      setResolvedWorkspaceRoot,
+    } as unknown as FileTreePanel;
+    return { panel, handleRootChanged, setResolvedWorkspaceRoot };
+  }
+
+  function mounted(panel: FileTreePanel, root: string): FileTreeController {
+    const controller = makeController(panel);
+    (controller as unknown as Record<string, unknown>).lastWorkspaceRoot = root;
+    return controller;
+  }
+
+  it("takes the resolved root without remounting when the mount did not change", () => {
+    // Round-2 W1. The host posts this a second time when the root's realpath
+    // lands. Re-rooting on it exits search, disposes the tree and clears every
+    // expanded path — the user loses their place because a syscall was slow.
+    const { panel, handleRootChanged, setResolvedWorkspaceRoot } = makeRootStub(4);
+    const controller = mounted(panel, "/repo");
+
+    controller.handleWorkspaceRootChanged({
+      type: "workspace-root-changed",
+      rootPath: "/repo",
+      resolvedRootPath: "/private/repo",
+      rootGeneration: 4,
+    });
+
+    expect(setResolvedWorkspaceRoot).toHaveBeenCalledWith("/repo", "/private/repo");
+    expect(handleRootChanged).not.toHaveBeenCalled();
+  });
+
+  it("remounts when the root itself changed", () => {
+    const { panel, handleRootChanged } = makeRootStub(4);
+    const controller = mounted(panel, "/repo");
+
+    controller.handleWorkspaceRootChanged({
+      type: "workspace-root-changed",
+      rootPath: "/other",
+      resolvedRootPath: "/private/other",
+      rootGeneration: 5,
+    });
+
+    expect(handleRootChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("remounts when the same path is re-rooted under a new generation", () => {
+    // Re-rooting to the spelling already mounted is a real re-root: the tree is
+    // rebuilt from that directory again, and only the generation says so.
+    const { panel, handleRootChanged } = makeRootStub(4);
+    const controller = mounted(panel, "/repo");
+
+    controller.handleWorkspaceRootChanged({
+      type: "workspace-root-changed",
+      rootPath: "/repo",
+      resolvedRootPath: "/private/repo",
+      rootGeneration: 5,
+    });
+
+    expect(handleRootChanged).toHaveBeenCalledTimes(1);
+  });
+});

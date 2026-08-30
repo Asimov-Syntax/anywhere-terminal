@@ -6,6 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GitStatus } from "../types/messages";
+import { createTrackedPathResolver, ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import type { API, APIState, GitExtension, Repository } from "./git";
 import { Status } from "./git";
 import { createGitDecorationProvider } from "./gitDecorationProvider";
@@ -709,6 +710,235 @@ describe("createGitDecorationProvider — detachRepo redundant emissions (O-L1)"
       const closingEntry = post.flat().find((c) => c.path === sharedPath);
       expect(closingEntry).toBeDefined();
       expect(closingEntry?.status).toBe<GitStatus>("untracked");
+      provider.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("createGitDecorationProvider — a workspace folder reached through a symlink", () => {
+  // Over a real `ResolvedPathMemo` with a counted `realpath`, because half of
+  // this task's acceptance is a COST claim — "no `realpath` per decorated
+  // file" — which no type-check and no attribution assertion can see.
+  function symlinked(links: Record<string, string>) {
+    const realpaths: string[] = [];
+    const memo = new ResolvedPathMemo({
+      realpath: async (p) => {
+        realpaths.push(p);
+        const hit = links[p];
+        if (hit === undefined) {
+          throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+        }
+        return hit;
+      },
+    });
+    return { paths: createTrackedPathResolver(memo), realpaths };
+  }
+
+  it("still scopes decorations when the folder is spelled through a link", async () => {
+    vi.useFakeTimers();
+    try {
+      // The repository reports physical paths; the workspace folder is the
+      // link. Lexically nothing is inside it, so every decoration was dropped.
+      const inside = "/private/work/repo/a.ts";
+      const outside = "/elsewhere/b.ts";
+      const r = makeRepo("/private/work/repo", [
+        { path: inside, status: Status.MODIFIED },
+        { path: outside, status: Status.MODIFIED },
+      ]);
+      const { api } = makeApi({ repos: [r.repo] });
+      const { extObj } = makeExtension({ api });
+      const { paths } = symlinked({ "/link/repo": "/private/work/repo" });
+      const provider = createGitDecorationProvider({
+        getExtension: () => extObj as never,
+        getWorkspaceFolders: () => ["/link/repo"],
+        paths,
+      });
+      const deltas: Array<{ path: string; status: GitStatus | null }[]> = [];
+      provider.onDidChange((d) => deltas.push([...d.changes]));
+      await vi.runAllTimersAsync();
+      vi.advanceTimersByTime(100);
+      const allPaths = deltas.flat().map((c) => c.path);
+      expect(allPaths).toContain(inside);
+      expect(allPaths).not.toContain(outside);
+      provider.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("issues no realpath per decorated file, however many are decorated", async () => {
+    vi.useFakeTimers();
+    try {
+      const changes = Array.from({ length: 40 }, (_, i) => ({
+        path: `/private/work/repo/f${i}.ts`,
+        status: Status.MODIFIED,
+      }));
+      const r = makeRepo("/private/work/repo", changes);
+      const { api } = makeApi({ repos: [r.repo] });
+      const { extObj } = makeExtension({ api });
+      const { paths, realpaths } = symlinked({ "/link/repo": "/private/work/repo" });
+      const provider = createGitDecorationProvider({
+        getExtension: () => extObj as never,
+        getWorkspaceFolders: () => ["/link/repo"],
+        paths,
+      });
+      provider.onDidChange(() => {});
+      await vi.runAllTimersAsync();
+      vi.advanceTimersByTime(100);
+
+      // One folder, one syscall — not one per file, and not one per refresh.
+      expect(realpaths).toEqual(["/link/repo"]);
+      provider.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-resolves after a workspace folder is replaced", async () => {
+    const emitter = createEmitter<void>();
+    const links: Record<string, string> = { "/link/repo": "/private/one" };
+    const { paths, realpaths } = symlinked(links);
+    let folders = ["/link/repo"];
+    const { api } = makeApi({ repos: [] });
+    const { extObj } = makeExtension({ api });
+    const provider = createGitDecorationProvider({
+      getExtension: () => extObj as never,
+      getWorkspaceFolders: () => folders,
+      onDidChangeWorkspaceFolders: emitter.event,
+      paths,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    folders = [];
+    emitter.fire();
+    await Promise.resolve();
+    links["/link/repo"] = "/private/two";
+    folders = ["/link/repo"];
+    emitter.fire();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(realpaths).toEqual(["/link/repo", "/link/repo"]);
+    provider.dispose();
+  });
+
+  it("rebuilds once per workspace-folder change, not twice", async () => {
+    // Round-2 W2. The handler reset immediately AND the resolution reset again
+    // when it landed, so one cold event scanned every decorated path and
+    // rebuilt every repository twice.
+    const emitter = createEmitter<void>();
+    const { paths } = symlinked({ "/link/repo": "/private/work/repo" });
+    const r = makeRepo("/private/work/repo", [{ path: "/private/work/repo/a.ts", status: Status.MODIFIED }]);
+    const { api } = makeApi({ repos: [r.repo] });
+    const { extObj } = makeExtension({ api });
+    const provider = createGitDecorationProvider({
+      getExtension: () => extObj as never,
+      getWorkspaceFolders: () => ["/link/repo"],
+      onDidChangeWorkspaceFolders: emitter.event,
+      paths,
+    });
+    for (let i = 0; i < 6; i++) {
+      await Promise.resolve();
+    }
+    const clears: number[] = [];
+    provider.onDidChange((d) => {
+      const cleared = d.changes.filter((c) => c.status === null).length;
+      if (cleared > 0) {
+        clears.push(cleared);
+      }
+    });
+
+    emitter.fire();
+    for (let i = 0; i < 6; i++) {
+      await Promise.resolve();
+    }
+
+    expect(clears).toHaveLength(1);
+    provider.dispose();
+  });
+
+  it("rebuilds once the folder resolution lands, so the first pass is not the final answer", async () => {
+    // Round-1 B2. `prepare` is fire-and-forget so the comparison can stay sync;
+    // without a rebuild behind it the lexical fallback was permanent and a
+    // symlink-spelled folder stayed undecorated until some unrelated Git event.
+    let release: (real: string) => void = () => {};
+    const memo = new ResolvedPathMemo({
+      realpath: () => new Promise<string>((resolve) => (release = resolve)),
+    });
+    const inside = "/private/work/repo/a.ts";
+    const r = makeRepo("/private/work/repo", [{ path: inside, status: Status.MODIFIED }]);
+    const { api } = makeApi({ repos: [r.repo] });
+    const { extObj } = makeExtension({ api });
+    const provider = createGitDecorationProvider({
+      getExtension: () => extObj as never,
+      getWorkspaceFolders: () => ["/link/repo"],
+      paths: createTrackedPathResolver(memo),
+    });
+    const deltas: Array<{ path: string; status: GitStatus | null }[]> = [];
+    provider.onDidChange((d) => deltas.push([...d.changes]));
+    await new Promise((r2) => setTimeout(r2, 0));
+
+    // Nothing is decorated yet: the folder is still only a spelling.
+    expect(deltas.flat().map((c) => c.path)).not.toContain(inside);
+
+    release("/private/work/repo");
+    await new Promise((r2) => setTimeout(r2, 0));
+    await new Promise((r2) => setTimeout(r2, 0));
+
+    expect(deltas.flat().map((c) => c.path)).toContain(inside);
+    provider.dispose();
+  });
+
+  it("treats the decorated path as a spelling even when the memo knows that spelling", async () => {
+    // Round-1 S1: the memo is SHARED, so a decorated path can already be
+    // prepared as some other producer's folder or root. The per-event candidate
+    // must still be compared lexically — D1 draws the line at who produced the
+    // path, not at whether an answer happens to be lying around.
+    const memo = new ResolvedPathMemo({
+      realpath: async (p) => (p === "/link/repo" ? "/private/work/repo" : "/somewhere/else"),
+    });
+    // Prepare the decorated file's own spelling, as another producer would.
+    await createTrackedPathResolver(memo).prepare(["/private/work/repo/a.ts"]);
+
+    const inside = "/private/work/repo/a.ts";
+    const r = makeRepo("/private/work/repo", [{ path: inside, status: Status.MODIFIED }]);
+    const { api } = makeApi({ repos: [r.repo] });
+    const { extObj } = makeExtension({ api });
+    const provider = createGitDecorationProvider({
+      getExtension: () => extObj as never,
+      getWorkspaceFolders: () => ["/link/repo"],
+      paths: createTrackedPathResolver(memo),
+    });
+    const deltas: Array<{ path: string; status: GitStatus | null }[]> = [];
+    provider.onDidChange((d) => deltas.push([...d.changes]));
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r2) => setTimeout(r2, 0));
+    }
+
+    // Resolving the candidate would send it to /somewhere/else and drop it.
+    expect(deltas.flat().map((c) => c.path)).toContain(inside);
+    provider.dispose();
+  });
+
+  it("decorates exactly as before when no resolver is supplied", async () => {
+    vi.useFakeTimers();
+    try {
+      const inside = "/work/repo/a.ts";
+      const r = makeRepo("/work/repo", [{ path: inside, status: Status.MODIFIED }]);
+      const { api } = makeApi({ repos: [r.repo] });
+      const { extObj } = makeExtension({ api });
+      const provider = createGitDecorationProvider({
+        getExtension: () => extObj as never,
+        getWorkspaceFolders: () => ["/work/repo"],
+      });
+      const deltas: Array<{ path: string; status: GitStatus | null }[]> = [];
+      provider.onDidChange((d) => deltas.push([...d.changes]));
+      await vi.runAllTimersAsync();
+      vi.advanceTimersByTime(100);
+      expect(deltas.flat().map((c) => c.path)).toContain(inside);
       provider.dispose();
     } finally {
       vi.useRealTimers();

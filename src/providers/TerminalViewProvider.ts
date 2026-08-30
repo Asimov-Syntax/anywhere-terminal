@@ -17,6 +17,7 @@ import type {
   WebViewToExtensionMessage,
 } from "../types/messages";
 import { isWorktreeMessage } from "../types/messages";
+import { createTrackedPathResolver, type ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { buildContinuationPrompt } from "../vault/ContinuationPrompt";
 import type { VaultRefreshHint } from "../vault/cacheTypes";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
@@ -158,8 +159,18 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
      * (tests). Reports flow here whatever body this surface is showing.
      */
     private readonly paneEvidence: PaneEvidenceStore | null = null,
+    /**
+     * The window's shared path memo. Each host takes its own claim over it, so
+     * the webview can compare containment against where the root resolves —
+     * absent, every comparison stays lexical (D6, round-2 B1).
+     */
+    pathMemo: ResolvedPathMemo | null = null,
   ) {
-    this.fileTreeHost = new FileTreeHost(gitDecorationProvider, watcherPool);
+    this.fileTreeHost = new FileTreeHost(
+      gitDecorationProvider,
+      watcherPool,
+      pathMemo ? createTrackedPathResolver(pathMemo) : null,
+    );
   }
 
   resolveWebviewView(
@@ -1494,6 +1505,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           vaultActionsAvailable: true,
         });
         this.postRowActivation(webviewView.webview);
+        if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
+        }
         if (!initDelivered) {
           console.error("[AnyWhere Terminal] init delivery failed during reload — skipping restore posts.");
           this.sessionManager.resumeOutputForView(viewId);
@@ -1548,6 +1562,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           vaultActionsAvailable: true,
         });
         this.postRowActivation(webviewView.webview);
+        if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
+        }
         if (!initDelivered) {
           // All retries failed — the webview channel is unhealthy. Posting
           // restoreFromSnapshot now would arrive at a webview that never
@@ -1613,6 +1630,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         // with no controller yet and is dropped, and the retried init then settles
         // the surface on a value read before it (.reviews/round-2.md W2).
         if (initDelivered) {
+          this.fileTreeHost.notifyInitDelivered();
           this.postRowActivation(webviewView.webview);
         }
       }

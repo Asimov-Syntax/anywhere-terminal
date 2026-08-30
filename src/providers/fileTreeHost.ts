@@ -32,6 +32,7 @@ import type {
   WebViewToExtensionMessage,
   WorkspaceRootChangedMessage,
 } from "../types/messages";
+import type { TrackedPathResolver } from "../utils/resolvedPathMemo";
 import { ActiveFileRevealer } from "./ActiveFileRevealer";
 import { handleRequestReadDirectory, type RootProvider, readEnabledExcludePatterns } from "./fileTreeRpcHandler";
 import { createDefaultSearchVscodeApi, FileTreeSearchHandler } from "./fileTreeSearchHandler";
@@ -48,6 +49,7 @@ type PathApi = Pick<typeof nodePath, "basename" | "dirname" | "isAbsolute" | "re
 export interface FileTreeInitPayload {
   rootGeneration: number;
   workspaceRoot: string | null;
+  resolvedWorkspaceRoot: string | null;
 }
 
 /**
@@ -98,6 +100,9 @@ export class FileTreeHost implements RootProvider {
       ) => void)
     | null = null;
   private attachReady: (() => boolean) | null = null;
+  /** Whether the attached webview has processed an `init` — see
+   *  {@link notifyInitDelivered}. */
+  private initDelivered = false;
 
   /**
    * Optional git decoration provider. When provided, the host stamps every
@@ -112,8 +117,101 @@ export class FileTreeHost implements RootProvider {
   constructor(
     private readonly gitDecorationProvider: GitDecorationProvider | null = null,
     private readonly watcherPool: WatcherPool | null = null,
+    /**
+     * Where the workspace root resolves, for the webview's containment check.
+     * Absent — every comparison stays lexical, exactly as before this existed.
+     */
+    private readonly paths: TrackedPathResolver | null = null,
   ) {
     this.activeFileTreeRoot = this.workspaceRoot;
+    this.resolveWorkspaceRoot();
+  }
+
+  /**
+   * Where `workspaceRoot` resolves, or the root itself until that is known.
+   *
+   * Never substituted for `workspaceRoot`: that one mounts the tree and is shown
+   * to the user, so it keeps the spelling they opened (round-1 B1).
+   */
+  get resolvedWorkspaceRoot(): string | null {
+    const root = this.workspaceRoot;
+    return root === null ? null : (this.paths?.resolvedOr(root) ?? root);
+  }
+
+  /**
+   * Resolve the current root and re-post it once that lands, guarded by a
+   * generation so a slow pass cannot overwrite a newer root. Without the
+   * re-post the webview would hold the lexical answer for the window's life.
+   */
+  private resolveWorkspaceRoot(): void {
+    const root = this.workspaceRoot;
+    if (!this.paths) {
+      return;
+    }
+    // "No root" is the EMPTY set, not nothing to do. Returning early here left
+    // the previous root claimed by a host that outlives the workspace — the
+    // sidebar and bottom panel do — so a spelling retargeted and reopened
+    // answered from where it used to point (round-4 B9).
+    const pass = this.rootGeneration;
+    void this.paths.prepare(root === null ? [] : [root]).then(
+      () => {
+        if (pass === this.rootGeneration) {
+          this.postWorkspaceRoot();
+        }
+      },
+      () => {},
+    );
+  }
+
+  /**
+   * Let go of the root this host claims, because the surface holding it is
+   * gone for good.
+   *
+   * Only an EDITOR panel needs this: the sidebar and bottom-panel providers
+   * live as long as the window, and their view disposal is a teardown the next
+   * `resolveWebviewView` undoes — releasing there would leave the re-resolved
+   * view claiming nothing. Editor panels open and close without bound, and each
+   * one left a dead claimant holding its root (round-3 B7).
+   */
+  dispose(): void {
+    this.paths?.dispose();
+  }
+
+  /**
+   * The webview has processed an `init`, so it has a controller that can
+   * receive a root correction.
+   *
+   * D7 says a late resolution updates containment "after mount", and `_ready`
+   * is not mount: it means the webview said hello, and the provider then
+   * captures an init payload and may spend a retry window delivering it. A
+   * resolution settling inside that window used to post a correction into a
+   * webview with no controller, which dropped it — and the retry then delivered
+   * the payload captured BEFORE the resolution, leaving that surface comparing
+   * containment lexically for its lifetime (round-5 B11).
+   *
+   * Posting here rather than only setting the flag is the other half: the
+   * correction that was dropped has to be made again once the receiver exists.
+   */
+  notifyInitDelivered(): void {
+    this.initDelivered = true;
+    this.postWorkspaceRoot();
+  }
+
+  /** Push the current root to the attached webview, if one can receive it. */
+  private postWorkspaceRoot(): void {
+    if (this.attachReady?.() !== true || !this.initDelivered) {
+      return;
+    }
+    const post = this.attachPost;
+    if (post === null) {
+      return;
+    }
+    post({
+      type: "workspace-root-changed",
+      rootPath: this.workspaceRoot,
+      resolvedRootPath: this.resolvedWorkspaceRoot,
+      rootGeneration: this.rootGeneration,
+    });
   }
 
   /** Absolute path of the first workspace folder, or null when no workspace is open. */
@@ -125,6 +223,7 @@ export class FileTreeHost implements RootProvider {
     return {
       rootGeneration: this.rootGeneration,
       workspaceRoot: this.workspaceRoot,
+      resolvedWorkspaceRoot: this.resolvedWorkspaceRoot,
     };
   }
 
@@ -156,6 +255,15 @@ export class FileTreeHost implements RootProvider {
     this.activeFileTreeRoot = this.workspaceRoot;
     this.attachPost = deps.post;
     this.attachReady = deps.isReady;
+    // Cleared on the way in: this attachment's webview has not processed an
+    // init yet, and the provider is about to send it one (round-5 B11).
+    this.initDelivered = false;
+    // Reconciled on the way IN, not only on the next folder event. A view's
+    // teardown disposes the listener below and keeps the host, so a workspace
+    // change taken while it was detached would otherwise stay invisible until
+    // the change after it — and the re-resolved view would initialise on the
+    // lexical root (round-4 B10).
+    this.resolveWorkspaceRoot();
     const workspaceFolderSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
       // The GitDecorationProvider owns its own workspace-folder reset (O-W3
       // — without this, every FileTreeHost would call reset() once on a
@@ -166,14 +274,8 @@ export class FileTreeHost implements RootProvider {
       // the previous workspace state.
       this.rootGeneration += 1;
       this.activeFileTreeRoot = this.workspaceRoot;
-      if (!deps.isReady()) {
-        return;
-      }
-      deps.post({
-        type: "workspace-root-changed",
-        rootPath: this.workspaceRoot,
-        rootGeneration: this.rootGeneration,
-      });
+      this.resolveWorkspaceRoot();
+      this.postWorkspaceRoot();
     });
 
     // Forward each git decoration delta to the webview, stamped with the
@@ -221,6 +323,7 @@ export class FileTreeHost implements RootProvider {
         this.fsSubscriptions.clear();
         this.attachPost = null;
         this.attachReady = null;
+        this.initDelivered = false;
       },
     });
   }
