@@ -79,6 +79,20 @@ A snapshot a caller is currently reading is never deleted underneath them, which
 entries are borrowed and released by refcount, and an entry removed from the pool for any reason is
 deleted at its last release.
 
+**Admission is one synchronous transaction (round-3 B6).** Sizing the snapshot and deleting evicted
+victims both happen OUTSIDE the accounting: the block that reads the budget, chooses victims, removes
+them and inserts the newcomer contains no `await`. A JavaScript turn runs to completion, so a block
+with no suspension point is atomic by construction — concurrent producers cannot interleave between
+the capacity check and the insert, which is exactly how the pool came to hold nine entries under an
+eight-entry cap. This removes the defect class rather than guarding it, so there is no mutex, no
+reservation and no rollback path to get wrong.
+
+**The budget counts disk the pool still owns, not just disk it is reusing (round-3 W6).** An entry
+whose deletion failed keeps its owner (W3) but stops being counted the moment it leaves the retained
+map, so repeated failures accumulate real gigabytes the budget cannot see. Undeleted entries stay in a
+retry set, count against the pool's live byte total, and are retried on later admissions and idle
+sweeps with bounded backoff. Backpressure applies to what is on disk, not to what is useful.
+
 **Ownership ends when the disk does, not when the bookkeeping does (round-2 W3).** An entry is dropped
 from the pool's live registry only after its directory is actually gone. A deletion that fails keeps
 its entry, so it still has an owner and can be retried, and disposal reports what it could not remove

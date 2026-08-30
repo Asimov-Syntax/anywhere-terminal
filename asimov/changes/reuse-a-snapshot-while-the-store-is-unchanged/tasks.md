@@ -121,3 +121,24 @@
     1. In `src/vault/sqlite.ts`, factor the borrow / use / release-in-finally lifecycle into one internal helper both entry points call, leaving each wrapper's distinct result shape and status mapping where they are.
     2. Cover that both entry points still map an open failure to `db-unreachable` and any other snapshot failure to `query-error`.
 
+## 4. Round-3 review fixes
+
+- [ ] 4_1 Make admission a transaction that cannot interleave
+  - **Refs**: .reviews/round-3.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
+  - **Acceptance**:
+    - Outcome: concurrent admissions never exceed the pool's budgets
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, size the snapshot before the accounting and delete evicted victims after it, so the block that checks the budget, evicts and inserts contains no await.
+    2. Cover concurrent admissions of distinct stores against a one-entry and a byte budget, asserting the pool never exceeds either.
+
+- [ ] 4_2 Budget and retry the disk a failed deletion left behind
+  - **Deps**: 4_1
+  - **Refs**: .reviews/round-3.md; design.md#d3-the-pool-owns-disk-and-disk-is-bounded-by-capacity-as-well-as-by-age
+  - **Acceptance**:
+    - Outcome: a snapshot whose deletion failed still counts against the budget and is retried
+    - Verify: unit src/vault/snapshotPool.test.ts
+  - **Plan**:
+    1. In `src/vault/snapshotPool.ts`, keep undeleted entries in a retry set that counts against the pool's live byte total and is retried on admission and on idle sweeps with bounded backoff.
+    2. Cover that repeated deletion failures apply backpressure rather than accumulating unbudgeted, and that a later successful retry releases the budget.
+
