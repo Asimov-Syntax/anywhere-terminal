@@ -63,3 +63,29 @@ The asymmetry is why the destructive half needs the stronger evidence.
 | `.vscode-test/` cache | Machine-local download cache outliving the run | Single writer (the runner); a crash mid-download leaves a partial extraction the runner re-fetches; a failed read fails open by re-downloading, because it is a cache with an authoritative remote |
 | `out/` compiled tests | Build output outliving the run | Single writer (`compile-tests`); gitignored and regenerated wholesale, so a crash mid-write is repaired by re-running rather than by cleanup |
 | Temporary directories the test builds | Foreign directory and any repository fixture outlive a crashed run | Created under the OS temporary directory so the OS reaps them; the test removes them on the happy path and never writes outside that root |
+
+## Outcome
+
+Recorded on VS Code **1.105.0**, the floor `engines.vscode` declares (D1), by
+`src/test/host/taskScopeOutsideWorkspace.test.ts` running a `ShellExecution` that carries no
+`options.cwd` and writes `pwd` to a marker file (D3).
+
+| Scope handed to `vscode.Task` | Directory the task ran in |
+|---|---|
+| A `WorkspaceFolder` object built for a temp directory outside the workspace | the opened workspace folder — **not** the temp directory |
+| `vscode.TaskScope.Workspace` | the opened workspace folder |
+
+**Verdict: a task cannot be run for a directory that is not a workspace folder.** Constructing a
+`WorkspaceFolder` for a foreign path does not make the task system honour it; the scope is
+resolved against the folders the window actually has open, and a worktree the create dialog just
+made is not one of them. This matches the source read that motivated the spike — `TaskSourceDTO.to`
+collapses an unknown folder to the first open folder or to `undefined` — and it now rests on
+observed behaviour at the declared floor rather than on reading a newer editor's source.
+
+The failure mode this rules out is the quiet one: the task does not refuse, it runs — in the wrong
+directory. A setup step that ran `pnpm install` in the main checkout instead of the new worktree
+would report success.
+
+Per D4, the `task` variant of `ProvisionSetupStep` is therefore removed. `.vscode/tasks.json`
+remains a provider; what it contributes is shell steps built from the task entry's command, with
+task identity explicitly not preserved.

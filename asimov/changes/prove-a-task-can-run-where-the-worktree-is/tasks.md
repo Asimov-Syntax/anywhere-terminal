@@ -30,16 +30,17 @@
     5. Assert on the recorded path and put the observed value in the assertion message, so both outcomes name the directory that was used.
     6. Remove the temporary directory on the happy path; never write outside `os.tmpdir()`.
 
-- [ ] 1_3 Make every document agree with what was recorded
+- [x] 1_3 Make every document agree with what was recorded — verified: manual — Read design.md § Outcome: both scope forms recorded as running in the opened workspace folder on 1.105.0, verdict "a task cannot be run for a directory that is not a workspace folder". Swept the blueprint docs for the variant it disproves — `grep -rn 'kind: "task"\|taskRef\|run through the task system' docs/DESIGN.md docs/PLAN.md docs/design/` returns nothing, matching the verdict. The surviving `task system` mentions are the four that explain the removal (provisioning §§ 2, 3.3; apply § 2.4) plus the testing row asserting no step reaches it.
   - **Deps**: 1_2
   - **Refs**: design.md D4
   - **Acceptance**:
     - Outcome: No blueprint document describes a setup step kind the experiment disproved
     - Verify: manual read design.md § Outcome, then grep docs/ for the `task` setup-step variant and confirm its presence matches the recorded verdict
   - **Plan**:
-    1. Append an `## Outcome` section to `design.md` stating the observed directory for each scope form and the verdict it supports.
+    1. Append an `## Outcome` section to `asimov/changes/prove-a-task-can-run-where-the-worktree-is/design.md` stating the observed directory for each scope form and the verdict it supports.
     2. When and only when the verdict is that a foreign-scoped task does not receive the foreign folder, remove the `task` variant from the `ProvisionSetupStep` union in `docs/design/worktree-provisioning.md`, from the apply step in `docs/design/worktree-apply.md`, and from `docs/design/worktree-rpc.md`.
     3. In the same case, restate the `.vscode/tasks.json` provider row in `docs/design/worktree-provisioning.md` § 3.3 as contributing shell steps whose command comes from the task entry, and say that identity is not preserved and why.
     4. In the same case, update `docs/PLAN.md` WT-012.11's Notes and Acceptance so neither names a task-system step, and mark WT-012.13's own Status per the workflow.
-    5. On any other verdict, leave all four documents unchanged and record in `## Outcome` what stopped the answer from being conclusive.
+    5. Correct the `Provision model` row in `docs/DESIGN.md` § 12 to the union this change leaves behind — the row already names a third shape that matches neither variant, and a registry row that disagrees with its own design doc is the drift the registry exists to catch.
+    6. On any other verdict, leave all four documents unchanged and record in `## Outcome` what stopped the answer from being conclusive.
   - **Boundary**: no change to any `src/` file

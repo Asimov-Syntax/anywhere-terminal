@@ -113,9 +113,14 @@ theirs, because a partially ported worktree is more useful than none.
 
 ### 2.4 Setup
 
-Commands run sequentially in the new worktree's directory, through the VS Code task system where
-the step came from `tasks.json` and through a shell otherwise. argv is never assembled by string
-concatenation for the shell case; the command is passed as the shell's single script argument.
+Commands run sequentially in the new worktree's directory, every one of them through a shell —
+including the steps a `tasks.json` entry supplied, which reach here as ordinary shell steps
+([worktree-provisioning.md](worktree-provisioning.md) § 3.3). argv is never assembled by string
+concatenation; the command is passed as the shell's single script argument.
+
+Running them through the VS Code task system instead was designed and then measured out: a task
+scoped to a directory that is not an open workspace folder runs in the window's opened folder
+rather than refusing, which for a setup step means succeeding in the wrong checkout.
 
 **Setup steps are unchecked by default.** A default-on box that the user did not clear is not
 consent to run a command a checked-in file supplied. Persisting a per-repository "always run setup
@@ -133,8 +138,9 @@ Setup may run **concurrently with** `openAfter` or be gated ahead of it, per
 [worktree-create.md](worktree-create.md) § 6. Copy, link and ports never are — they always complete
 first.
 
-Cancellation, timeout, and where output goes are the task system's for a `task` step and the
-existing mutation budget's for a `shell` step ([worktree-actions.md](worktree-actions.md) § 3.6).
+Cancellation, timeout, and where output goes belong to the existing mutation budget, for every
+step ([worktree-actions.md](worktree-actions.md) § 3.6) — there is no second owner now that no
+step reaches the task system.
 Retry state lives with the worktree row and does not survive a host restart — a retry offered
 after a restart would be offering to re-run a model the host no longer holds (§ 4.0).
 
@@ -168,7 +174,8 @@ interface ProvisionManifest {
   /** Successfully materialized paths, worktree-relative, with the mode used. */
   readonly materialized: readonly { path: string; mode: "copy" | "link" }[];
   readonly ports: readonly { name: string; port: number }[];
-  readonly setup: readonly { taskRef?: string; outcome: "ok" | "failed" | "skipped" }[];
+  /** `source` is the provider file the step came from — the only stable name a shell step has. */
+  readonly setup: readonly { source: string; outcome: "ok" | "failed" | "skipped" }[];
 }
 ```
 
@@ -219,7 +226,7 @@ appears in `git status`, and git's own removal takes it with the worktree.
 
 | Area | Cases |
 |---|---|
-| Apply | Ordering copy → link → ports → setup; never overwrite; lockfile refusal; `node_modules` link refusal; symlink degradation reports |
+| Apply | Ordering copy → link → ports → setup; never overwrite; lockfile refusal; `node_modules` link refusal; symlink degradation reports; every setup step runs through a shell in the new worktree's directory, none through the VS Code task system |
 | Ports | Sibling `.env.worktree` values are excluded; re-probe before write; a changed number is reported; existing `.env.worktree` is not overwritten |
 | Failure | Setup failure leaves the worktree and every prior step standing; retry re-runs setup only |
 | Manifest | Written after a successful apply; a missing or unreadable manifest degrades a claim rather than blocking |

@@ -66,32 +66,22 @@ export interface ProvisionEntry extends ProvisionItemId {
 }
 
 /**
- * One step to run in the new worktree after materialization. Two variants, because a shell
- * command and a VS Code task are not the same object: a task carries a type, args, options,
- * presentation and its own identity, and flattening it to a string loses what the task system
- * needs to resolve and run it.
+ * One step to run in the new worktree after materialization.
+ *
+ * There is exactly one variant. A second, carrying a resolved VS Code task so the task system
+ * could run it with its identity intact, was designed and then removed: a task cannot be run
+ * for a directory that is not a workspace folder, and it does not refuse — it runs in the
+ * window's open folder instead. See § 3.3 for what `tasks.json` contributes now.
+ *
+ * `kind` survives the collapse to a single member so a later variant can be added without
+ * reshaping every stored step.
  */
-export type ProvisionSetupStep = ProvisionItemId &
-  ( | {
-      readonly kind: "shell";
-      /** Exact script text, passed as the shell's single script argument. Never concatenated. */
-      readonly script: string;
-      readonly source: string;
-    }
-  | {
-      readonly kind: "task";
-      /**
-       * The resolved task object the host retained, not a lookup key. Scope plus label does not
-       * identify a task when labels collide or the definition changes between offer and run —
-       * and re-resolving by label at execution time is exactly the re-read § 4.0 forbids.
-       */
-      readonly task: unknown;
-      /** Scope and label, for display and for reporting which task failed. */
-      readonly taskRef: { readonly scope: string; readonly label: string };
-      /** Display text only. Never the thing executed. */
-      readonly display: string;
-      readonly source: string;
-    });
+export type ProvisionSetupStep = ProvisionItemId & {
+  readonly kind: "shell";
+  /** Exact script text, passed as the shell's single script argument. Never concatenated. */
+  readonly script: string;
+  readonly source: string;
+};
 
 /** A named port the repo wants allocated per worktree. Selectable, like every other row. */
 export interface ProvisionPort extends ProvisionItemId {
@@ -127,7 +117,7 @@ export interface ProvisionProvider {
 
 export interface ProvisionProblem {
   readonly file: string;
-  readonly reason: "unreadable" | "malformed" | "unknownKey" | "missingExtends";
+  readonly reason: "unreadable" | "malformed" | "unknownKey" | "missingExtends" | "unsubstituted";
   /** Bounded, already safe to render. Parser text is quoted, never interpreted. */
   readonly detail: string;
 }
@@ -179,8 +169,23 @@ provisioning, and reporting them would make every orca repo look misconfigured.
 
 ### 3.3 VS Code tasks — `.vscode/tasks.json`
 
-Tasks whose `runOptions.runOn` is `"worktreeCreated"` map to `setup[] { kind: "task" }`, in file
-order, carrying the scope and label needed to re-resolve the exact task at execution time.
+Tasks whose `runOptions.runOn` is `"worktreeCreated"` map to `setup[] { kind: "shell" }`, in file
+order, carrying the task entry's `command` — plus its `args`, joined with the shell quoting § 2.4
+already applies — as the step's `script`.
+
+**Task identity is not preserved, and cannot be.** The design carried a `task` variant for exactly
+that purpose until it was measured: a `vscode.Task` scoped to a directory that is not an open
+workspace folder does not run there, and does not refuse either — on 1.105.0 it ran in the
+window's opened folder for both a hand-built `WorkspaceFolder` and `TaskScope.Workspace`. A
+worktree the dialog just created is never an open folder, so every such step would have run its
+`pnpm install` in the main checkout and reported success. What a task entry can still supply is a
+command a user already reviewed and checked in; that is what this adapter takes.
+
+What is lost with the identity is the task system's own machinery: `problemMatchers`, presentation
+options, `dependsOn`, and the entry's appearance in the task list while it runs. A repository that
+needs those should declare the step in one of the native providers instead. Task fields the shell
+cannot honour are ignored rather than approximated — a half-honoured `problemMatcher` is worse
+than an absent one, because the user would believe it ran.
 
 **This is a convention, not an API.** `runOn: "worktreeCreated"` exists in VS Code's task schema
 and its dispatcher is core-internal to the Agent Sessions feature; the `TaskRunOn` enum that would
@@ -190,8 +195,11 @@ honours the same key with the same meaning. Nothing here depends on the proposal
 it does ship, the adapter is what gets deleted — not the schema we would otherwise have invented.
 
 `tasks.json` is JSONC: comments and trailing commas are legal and must parse. Variable
-substitution (`${workspaceFolder}` and friends) is **not** performed by the adapter — the command
-is displayed verbatim and executed through the task system, which does its own substitution.
+substitution (`${workspaceFolder}` and friends) is **not** performed by the adapter, and with the
+task system out of the path nothing else performs it either. A step whose command contains a
+`${...}` token is recorded in `problems[]` as `unsubstituted`, naming the task label, and the step is offered unchecked: running it would pass
+the literal token to the shell, and silently substituting our own value for `${workspaceFolder}`
+would guess at which of the two checkouts the author meant.
 
 ### 3.4 Anywhere Terminal — `.vscode/worktree.json`
 
@@ -358,7 +366,7 @@ additive rather than a snapshot that freezes today's framework config.
 
 | Area | Cases |
 |---|---|
-| Adapters | Each provider's mapping; JSONC comments and trailing commas; block scalar splitting; `#` comments in `.worktreeinclude`; unknown keys produce a problem without discarding the file |
+| Adapters | Each provider's mapping; JSONC comments and trailing commas; block scalar splitting; `#` comments in `.worktreeinclude`; unknown keys produce a problem without discarding the file; a `tasks.json` entry becomes a `shell` step carrying its command, and one containing `${...}` is recorded `unsubstituted` and offered unchecked |
 | Merge | Additive append; dedupe keeps the native entry and its mode; `exclude` moves an entry and keeps its original source; `exclude` on an inline path reports; setup steps never dedupe or reorder |
 | Provenance | Every entry in every merged model has a non-empty `source`; a glob's expansions all carry the glob's source |
 | Detection | Order; first-hit-wins; a second provider is recorded inactive rather than merged |
