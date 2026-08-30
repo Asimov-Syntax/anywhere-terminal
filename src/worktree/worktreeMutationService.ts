@@ -559,14 +559,25 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
   };
 }
 
-/** Anything a confirmation would need to name. A clean worktree has none. */
+/**
+ * Anything a confirmation would need to name. A clean worktree has none.
+ *
+ * Ignored material counts, and so does a walk that could not finish: git refuses
+ * a dirty worktree itself and knows nothing about the `node_modules` and copied
+ * `.env` this extension provisions, so "unforced ran straight to git" is exactly
+ * how those get destroyed unannounced. An unmeasured amount is still an amount
+ * the user has to be told about before an irreversible delete — confirmable
+ * throughout, never a refusal (worktree-removal.md § 2.3).
+ */
 function atRisk(e: RemovalEvidence): boolean {
   return (
     e.dirtyPaths.length > 0 ||
     e.untrackedPaths.length > 0 ||
     e.paneIds.length > 0 ||
     e.externalSessionIds.length > 0 ||
-    e.locked
+    e.locked ||
+    e.ignored.kind === "unproven" ||
+    e.ignored.entries > 0
   );
 }
 

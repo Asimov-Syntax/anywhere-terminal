@@ -7,6 +7,7 @@
 // proceed against files and panes nobody confirmed.
 
 import { createHash } from "node:crypto";
+import type { IgnoredMaterial } from "./ignoredMaterial";
 import type { RemovalEvidence } from "./worktreeBlockers";
 
 /** Long enough to read a confirmation, short enough that stale state cannot act. */
@@ -130,8 +131,30 @@ function isIdentityPreservingSubset(current: RemovalEvidence, approved: RemovalE
     isSubset(current.paneIds, approved.paneIds) &&
     isSubset(current.externalSessionIds, approved.externalSessionIds) &&
     // A lock APPEARING is growth; one released is a shrink.
-    (!current.locked || approved.locked)
+    (!current.locked || approved.locked) &&
+    ignoredWithin(current.ignored, approved.ignored)
   );
+}
+
+/**
+ * The one risk with no identities to compare, so it is compared by both of its
+ * magnitudes.
+ *
+ * Bytes as well as entries, because entries alone repeats the failure this
+ * module exists to prevent: twelve files are still twelve files after one of
+ * them becomes a gigabyte, and the size is what the user weighed.
+ *
+ * A reading that BECAME unmeasurable is never within one the user saw — "we can
+ * no longer tell" is an unbounded amount the confirmation never named. The
+ * reverse proceeds: confirming a removal the report could not put a number on
+ * authorizes any number, and re-prompting on strictly better information asks
+ * the user to approve the same thing twice.
+ */
+function ignoredWithin(current: IgnoredMaterial, approved: IgnoredMaterial): boolean {
+  if (approved.kind === "unproven") {
+    return true;
+  }
+  return current.kind === "measured" && current.entries <= approved.entries && current.bytes <= approved.bytes;
 }
 
 function isSubset(current: readonly string[], approved: readonly string[]): boolean {
@@ -152,6 +175,7 @@ function digest(target: FingerprintTarget, e: RemovalEvidence): string {
     panes: [...e.paneIds].sort(),
     external: [...e.externalSessionIds].sort(),
     locked: e.locked,
+    ignored: e.ignored,
   });
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }

@@ -162,3 +162,69 @@ describe("createFingerprintStore", () => {
     expect(store.size()).toBe(1);
   });
 });
+
+describe("ignored material that appeared after the confirmation", () => {
+  const store = () => createFingerprintStore();
+  const measured = (entries: number, bytes: number) => evidence({ ignored: { kind: "measured", entries, bytes } });
+
+  it("re-prompts when there is more to delete than the user was shown", () => {
+    // An `npm install` between reading the confirmation and typing it. The
+    // count the user weighed is not the count the removal will destroy.
+    const s = store();
+    const fp = s.issue(WT, measured(0, 0), 0);
+
+    expect(s.redeem(WT, fp, measured(4_000, 900_000), 1_000)).toBe("reprompt");
+  });
+
+  it("proceeds on exactly what was confirmed", () => {
+    const s = store();
+    const fp = s.issue(WT, measured(12, 5_000), 0);
+
+    expect(s.redeem(WT, fp, measured(12, 5_000), 1_000)).toBe("proceed");
+  });
+
+  it("proceeds when less is there than was confirmed", () => {
+    const s = store();
+    const fp = s.issue(WT, measured(12, 5_000), 0);
+
+    expect(s.redeem(WT, fp, measured(3, 40), 1_000)).toBe("proceed");
+  });
+
+  it("re-prompts when the same entry count grew in bytes", () => {
+    // The substitution the identity lists exist to catch, in the one dimension
+    // that has no identities: 12 files, one of them now a gigabyte.
+    const s = store();
+    const fp = s.issue(WT, measured(12, 5_000), 0);
+
+    expect(s.redeem(WT, fp, measured(12, 5_000_000), 1_000)).toBe("reprompt");
+  });
+
+  it("re-prompts when a reading the user saw became unmeasurable", () => {
+    // The user confirmed "12 entries, 5 KB". "We can no longer tell" is not a
+    // subset of that — it is an unbounded amount the confirmation never named.
+    const s = store();
+    const fp = s.issue(WT, measured(12, 5_000), 0);
+
+    expect(s.redeem(WT, fp, evidence({ ignored: { kind: "unproven", reason: "budget" } }), 1_000)).toBe("reprompt");
+  });
+
+  it("proceeds when an unmeasurable reading became a measured one", () => {
+    // Confirming a removal the report could not put a number on authorizes any
+    // number. Re-prompting because we can suddenly measure it would ask the
+    // user to re-approve strictly better information.
+    const s = store();
+    const fp = s.issue(WT, evidence({ ignored: { kind: "unproven", reason: "unreadable" } }), 0);
+
+    expect(s.redeem(WT, fp, measured(4_000, 900_000), 1_000)).toBe("proceed");
+  });
+
+  it("binds the fingerprint to the reading it was issued for", () => {
+    // One worktree, alike in every tracked way across the two readings and
+    // different only in what the removal will delete.
+    const s = store();
+    const small = s.issue(WT, measured(1, 10), 0);
+    const large = s.issue(WT, measured(9, 90), 0);
+
+    expect(small).not.toBe(large);
+  });
+});

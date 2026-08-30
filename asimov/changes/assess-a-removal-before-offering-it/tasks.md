@@ -82,15 +82,16 @@
 
 ## 3. A confirmation authorizes only what it was shown
 
-- [ ] 3_1 Re-evaluate before executing, and re-prompt only on a failure the user never saw
+- [x] 3_1 Re-evaluate before executing, and re-prompt only on a failure the user never saw — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: specs/worktree-panel/spec.md#{a-confirmation-authorizes-only-the-risks-it-was-shown}; docs/design/worktree-removal.md#3-what-confirmation-actually-authorizes; design.md D5
   - **Acceptance**:
     - Outcome: A failure absent at confirmation time re-prompts; one the user already confirmed does not
-    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+    - Verify: unit src/worktree/worktreeMutationService.test.ts
   - **Plan**:
-    1. In `src/providers/WorktreeHost.ts`, re-evaluate the checks immediately before the destructive command and compare the result against the check set the fingerprint was bound to.
-    2. Return `needsConfirm` when a check not failing at confirmation time is failing now. A check that was already failing, or that stops failing, never re-prompts — "did anything fail" would re-prompt forever on the dirty files the user just confirmed.
+    0. **Verify path corrected while building.** The Plan below located the re-evaluation in `src/providers/WorktreeHost.ts`; it shipped in `src/worktree/worktreeMutationService.ts`, and the host merely delegates through a stub in `WorktreeHost.actions.test.ts`, which therefore cannot observe this Outcome. The Outcome is unchanged — only the suite named to check it, moved to the one that can.
+    1. `removeWorktree` in `src/worktree/worktreeMutationService.ts` already re-assesses on EVERY removal and redeems against the fresh evidence, and a re-evaluated refusal already returns `blocked` with a null fingerprint. What is missing is the newest evidence field: `atRisk` and `isIdentityPreservingSubset` were written before `ignored` existed, so ignored material appearing between confirmation and execution is a newly-failing confirmable check that proceeds unconfirmed.
+    2. The comparison itself lives in `src/worktree/worktreeFingerprint.ts`. Return `needsConfirm` when a check not failing at confirmation time is failing now. A check that was already failing, or that stops failing, never re-prompts — "did anything fail" would re-prompt forever on the dirty files the user just confirmed.
     3. Treat a refusal-class check appearing at re-evaluation as a refusal, not a re-prompt: there is no confirmation to ask for.
-    4. Cover in `src/providers/WorktreeHost.actions.test.ts`: a newly failed confirmable check re-prompts, an already-confirmed one proceeds, a newly failed refusal-class check refuses, and a check that stops failing proceeds.
+    4. Cover in `src/worktree/worktreeFingerprint.test.ts` and `src/worktree/worktreeMutationService.test.ts`: a newly failed confirmable check re-prompts, an already-confirmed one proceeds, a newly failed refusal-class check refuses, and a check that stops failing proceeds.
   - **Boundary**: no execution changes beyond the gate — `git worktree remove` itself, and everything after it, belongs to WT-013.4

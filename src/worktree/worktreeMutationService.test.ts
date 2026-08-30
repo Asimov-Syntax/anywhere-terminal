@@ -964,3 +964,111 @@ describe("a thrown assessment still spends its token (round-4 S1)", () => {
     ]);
   });
 });
+
+describe("a confirmation authorizes only the risks it was shown", () => {
+  /** An assessment whose evidence the test can move between the two calls. */
+  function moving(first: RemovalEvidence, second: RemovalEvidence) {
+    let call = 0;
+    return harness({
+      assessRemoval: async () => {
+        call += 1;
+        return { kind: "confirmable" as const, evidence: call === 1 ? first : second };
+      },
+    });
+  }
+
+  const ignoring = (entries: number, bytes: number) => evidence({ ignored: { kind: "measured", entries, bytes } });
+
+  it("will not run an unforced removal that would delete ignored material", async () => {
+    // git refuses a dirty worktree itself and knows nothing about the ignored
+    // tree — the `node_modules` and the copied `.env` this extension put there.
+    const h = harness({
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: ignoring(4_000, 900_000) }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "blocked", verb: "remove" });
+  });
+
+  it("will not run one whose ignored material could not be measured either", async () => {
+    // Unproven is confirmable, never a refusal — but it is still something the
+    // user has to be told before an irreversible delete.
+    const h = harness({
+      assessRemoval: async () => ({
+        kind: "confirmable" as const,
+        evidence: evidence({ ignored: { kind: "unproven", reason: "budget" } }),
+      }),
+    });
+    await h.service.removeWorktree({ repoId: REPO, worktreeId: RAW_ID }, false, undefined);
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[0]).toMatchObject({ kind: "blocked", verb: "remove" });
+  });
+
+  it("re-prompts a force when ignored material appeared after the confirmation", async () => {
+    // An install between reading the confirmation and typing it. Re-evaluation
+    // is what notices; the token the user holds was issued against the old set.
+    const h = moving(ignoring(1, 10), ignoring(4_000, 900_000));
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(t, false, undefined);
+    const blocked = h.outcomes[0] as { fingerprint: string | null };
+
+    await h.service.removeWorktree(t, true, blocked.fingerprint ?? "");
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[1]).toMatchObject({ kind: "error", verb: "remove" });
+  });
+
+  it("proceeds on the risk the user already confirmed", async () => {
+    // "Did anything fail" would re-prompt forever on the very files the user
+    // just approved. The comparison is against the set the token was bound to.
+    const h = moving(ignoring(12, 5_000), ignoring(12, 5_000));
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(t, false, undefined);
+    const blocked = h.outcomes[0] as { fingerprint: string | null };
+
+    await h.service.removeWorktree(t, true, blocked.fingerprint ?? "");
+
+    expect(h.argv[0]).toEqual(["worktree", "remove", "--force", RAW_PATH]);
+  });
+
+  it("proceeds when a risk the user confirmed stopped applying", async () => {
+    const h = moving(ignoring(12, 5_000), ignoring(0, 0));
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(t, false, undefined);
+    const blocked = h.outcomes[0] as { fingerprint: string | null };
+
+    await h.service.removeWorktree(t, true, blocked.fingerprint ?? "");
+
+    expect(h.argv[0]).toEqual(["worktree", "remove", "--force", RAW_PATH]);
+  });
+
+  it("refuses a force whose re-evaluation turned into a refusal", async () => {
+    // § 3: force never runs against a working agent, and there is no
+    // confirmation for it to ask for — so this is a refusal, not a re-prompt.
+    let call = 0;
+    const h = harness({
+      assessRemoval: async () => {
+        call += 1;
+        return call === 1
+          ? { kind: "confirmable" as const, evidence: evidence({ dirtyPaths: ["a.ts"] }) }
+          : {
+              kind: "refused" as const,
+              isMain: false,
+              busyAgents: 1,
+              containsWorktrees: [],
+              liveExternalSessionIds: [],
+            };
+      },
+    });
+    const t = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(t, false, undefined);
+    const blocked = h.outcomes[0] as { fingerprint: string | null };
+
+    await h.service.removeWorktree(t, true, blocked.fingerprint ?? "");
+
+    expect(h.runner.run).not.toHaveBeenCalled();
+    expect(h.outcomes[1]).toMatchObject({ kind: "blocked", verb: "remove", fingerprint: null });
+  });
+});

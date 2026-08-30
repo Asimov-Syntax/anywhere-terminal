@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  diskIgnoredDeps,
   type DiskIgnoredOptions,
+  diskIgnoredDeps,
   type IgnoredMaterialDeps,
   MAX_IGNORED_ENTRIES,
   MAX_IGNORED_MS,
