@@ -273,6 +273,14 @@ export class WorktreeController {
    * second answer.
    */
   private readonly repoRefs = new Map<string, WorktreeRefsMessage>();
+  /**
+   * Which opening of the create dialog the refs conversation belongs to.
+   *
+   * Bumped per open, echoed by the host, and compared on the way back — the
+   * only thing that tells a reopening's answer from its predecessor's, since
+   * `repoId` is the same on both (round-2 W2).
+   */
+  private refsToken = 0;
   /** The repo a create was invoked for, waiting on its defaults. */
   /**
    * The create waiting on the host, and the repositories it has yet to hear
@@ -690,6 +698,7 @@ export class WorktreeController {
     // form describes a repository state that may have moved, and the honest
     // opening state is "not told yet".
     this.repoRefs.clear();
+    this.refsToken += 1;
     this.pendingCreate = {
       // Kept so a create that cannot open can name what it was waiting on: the
       // outstanding set is empty by the time that is known.
@@ -702,7 +711,7 @@ export class WorktreeController {
       // Not awaited by `pendingCreate`: the form opens on the destination alone
       // and gains the list when it lands, so a repository whose enumeration is
       // slow or fails never holds the dialog shut.
-      this.deps.postMessage({ type: "requestWorktreeRefs", repoId: target });
+      this.deps.postMessage({ type: "requestWorktreeRefs", repoId: target, token: this.refsToken });
     }
   }
 
@@ -989,11 +998,18 @@ export class WorktreeController {
   /**
    * The host's branch list for one repo.
    *
-   * Stored and pushed into an open form. An answer that outlived its dialog is
-   * dropped by `applyRefs` being null — the list is a rendering, and there is
-   * no gate it could clear late.
+   * Stored and pushed into an open form. An answer that outlived its OPENING is
+   * dropped on the token, which `repoId` alone cannot do: a reopening on the
+   * same repository is asking the same question twice (round-2 W2).
    */
   handleRefs(msg: WorktreeRefsMessage): void {
+    if (msg.token !== this.refsToken) {
+      // An answer to a PREVIOUS opening. Dropped rather than applied: the form
+      // it was asked for is gone, and its successor's list would otherwise be
+      // overwritten with a predecessor's — permanently, if the successor's own
+      // read fails (round-2 W2).
+      return;
+    }
     this.repoRefs.set(msg.repoId, msg);
     this.applyRefs?.(msg.repoId, { list: msg.refs, truncated: msg.truncated });
   }

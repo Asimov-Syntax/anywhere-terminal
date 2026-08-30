@@ -1045,6 +1045,15 @@ export interface WorktreeCreateDefaultsRequestMessage {
 export interface WorktreeRefsRequestMessage {
   type: "requestWorktreeRefs";
   repoId: string;
+  /**
+   * Which OPENING of the create dialog is asking.
+   *
+   * `repoId` names a repository, not an opening, so a dialog closed and
+   * reopened on the same repository leaves two conversations on the wire whose
+   * answers are indistinguishable. The answer echoes this, and anything below
+   * the current opening is dropped (design.md D1, round-2 W2).
+   */
+  token: number;
 }
 
 export interface WorktreeRemoveRequestMessage {
@@ -2135,6 +2144,8 @@ export interface WorktreeCreateDefaultsMessage {
 export interface WorktreeRefsMessage {
   type: "worktreeRefs";
   repoId: string;
+  /** Echoed from the request, so an answer can be matched to its opening. */
+  token: number;
   refs: readonly WorktreeRef[];
   /** The enumeration hit its cap and the list is partial — the form says so. */
   truncated: boolean;

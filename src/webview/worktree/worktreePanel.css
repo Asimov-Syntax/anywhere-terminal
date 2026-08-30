@@ -1054,7 +1054,10 @@
   right: 0;
   margin: 2px 0 0;
   padding: 2px;
-  max-height: 220px;
+  /* Bounded by the space actually below the input, so a short editor window
+     clips less of the list than a fixed height does (round-2 S3). The floor
+     keeps a couple of rows visible when there is almost none. */
+  max-height: max(72px, min(220px, calc(100vh - 100% - 48px)));
   overflow-y: auto;
   list-style: none;
   border: 1px solid var(--vscode-widget-border, var(--vscode-contrastBorder, transparent));
@@ -1108,6 +1111,13 @@
 }
 .wt-branch-opt[data-kind="new"] {
   color: var(--vscode-textLink-foreground);
+}
+/* Declared after the create-new colour: both are one class deep, so at equal
+   specificity the later rule wins and the active row keeps its own foreground
+   even when it is the create-new row (round-2 B1). */
+.wt-branch-opt.is-active,
+.wt-branch-opt[aria-disabled="true"].is-active {
+  color: var(--vscode-list-activeSelectionForeground);
 }
 /* A dangerous permission choice is labelled and never preselected. */
 .wt-danger-tag {

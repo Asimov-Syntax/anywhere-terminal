@@ -203,6 +203,7 @@ describe("the worktree create dialog's answers reach the controller", () => {
     dispatch({
       type: "worktreeRefs",
       repoId: "/repo/.git",
+      token: 1,
       refs: [{ name: "main", heldBy: "repo" }],
       truncated: false,
     });
@@ -210,6 +211,7 @@ describe("the worktree create dialog's answers reach the controller", () => {
     expect(onWorktreeRefs).toHaveBeenCalledWith({
       type: "worktreeRefs",
       repoId: "/repo/.git",
+      token: 1,
       refs: [{ name: "main", heldBy: "repo" }],
       truncated: false,
     });
@@ -218,6 +220,8 @@ describe("the worktree create dialog's answers reach the controller", () => {
   it("leaves an unhandled branch list alone rather than throwing", () => {
     const dispatch = createMessageRouter(createMockHandlers());
 
-    expect(() => dispatch({ type: "worktreeRefs", repoId: "/repo/.git", refs: [], truncated: false })).not.toThrow();
+    expect(() =>
+      dispatch({ type: "worktreeRefs", repoId: "/repo/.git", token: 1, refs: [], truncated: false }),
+    ).not.toThrow();
   });
 });

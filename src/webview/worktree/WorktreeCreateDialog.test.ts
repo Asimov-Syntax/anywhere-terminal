@@ -1475,6 +1475,34 @@ describe("Escape closes the branch list before it dismisses the dialog (D7)", ()
   const esc = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   const listOpen = (host: HTMLElement) => host.querySelector<HTMLElement>("#wt-branch-list")?.hidden === false;
 
+  it("[4_2][r2 B1] scrolls the row the keyboard moved to into view", () => {
+    // The popup scrolls, and focus never leaves the input — only
+    // `aria-activedescendant` moves. Without this, arrowing past the visible
+    // rows leaves Enter committing an option the user cannot see.
+    const scrolled: unknown[] = [];
+    const proto = globalThis.HTMLElement.prototype as unknown as { scrollIntoView?: unknown };
+    const had = Object.hasOwn(proto, "scrollIntoView");
+    const prior = proto.scrollIntoView;
+    proto.scrollIntoView = function (opts: unknown) {
+      scrolled.push({ branch: (this as HTMLElement).dataset.branch, opts });
+    };
+    try {
+      const { host } = openWithList();
+      host
+        .querySelector<HTMLInputElement>("#wt-branch")
+        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    } finally {
+      if (had) {
+        proto.scrollIntoView = prior;
+      } else {
+        delete proto.scrollIntoView;
+      }
+    }
+
+    expect(scrolled).toHaveLength(1);
+    expect(scrolled[0]).toMatchObject({ opts: { block: "nearest" } });
+  });
+
   it("the first Escape closes the list and leaves the dialog standing", () => {
     const { host, cancelled } = openWithList();
     expect(listOpen(host)).toBe(true);
@@ -1549,6 +1577,43 @@ describe("a branch another worktree holds is offered but not selectable", () => 
     type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
 
     expect(create(q).disabled).toBe(true);
+    create(q).click();
+    expect(submitted).toEqual([]);
+  });
+
+  it("refuses when create-new is CLICKED after a held name was typed", () => {
+    // The create-new row is always present, so it is always reachable after a
+    // held branch has been typed. Committing it sets the mode to `new` and
+    // leaves the typed name alone, and a guard reading only the selection stops
+    // seeing the holder — which submitted a create for a branch another
+    // worktree holds (round-2 B4).
+    const { host, q, submitted } = held();
+    type(q<HTMLInputElement>("#wt-branch"), "fix/lock");
+    const newRow = host.querySelector<HTMLElement>('#wt-branch-list [data-kind="new"]');
+    expect(newRow).not.toBeNull();
+    // `mousedown`, not `click` — the row commits on mousedown so the input does
+    // not blur first, and a test clicking it would assert nothing at all.
+    newRow?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+
+    expect(q<HTMLInputElement>("#wt-branch").value).toBe("fix/lock");
+    expect(create(q).disabled).toBe(true);
+    create(q).click();
+    expect(submitted).toEqual([]);
+  });
+
+  it("refuses when create-new is committed from the KEYBOARD after a held name", () => {
+    const { host, q, submitted } = held();
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "fix/lock");
+    const rows = Array.from(host.querySelectorAll<HTMLElement>("#wt-branch-list .wt-branch-opt"));
+    const newAt = rows.findIndex((r) => r.dataset.kind === "new");
+    expect(newAt).toBeGreaterThanOrEqual(0);
+    for (let i = 0; i <= newAt; i += 1) {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    }
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+
+    expect(input.value).toBe("fix/lock");
     create(q).click();
     expect(submitted).toEqual([]);
   });

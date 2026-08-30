@@ -89,3 +89,19 @@
     4. `src/worktree/WorktreeCache.test.ts` covers the new single-repository read: same copy discipline as `read()`, and absent rather than a fabricated group for an unknown id.
     5. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: a switch that must drop `existing`; a switch that must drop a stale holder; and a refs answer delivered after a dialog actually opened and closed — the round-1 case asserted that with no dialog ever open, so it could not fail for the reason it named (W2).
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited — the styling lands in `worktreePanel.css`
+
+- [x] 4_2 Round-2 fixes: the create-new submit route, the scrolled active row, and an answer that knows its opening — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: design.md D1, D5, D7; .reviews/round-2.md B4, B1, W2, S3
+  - **Acceptance**:
+    - Outcome: Committing create-new after typing a held branch issues no create request
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts`: `heldBranch()` derives the holder from the CURRENT repository's exact ref match on the typed name, independent of `choice`. Committing the create-new row sets `choice` to `new` while leaving an exact held name in the input, so a guard reading only `choice` stops seeing the holder and submits (B4). The stale cross-repository fallback round-1 W1 deleted is NOT restored — the lookup is against `offeredRefs()`, which is this repository's list.
+    2. Same file: `setActive` scrolls the active option into view with a guarded `scrollIntoView({ block: "nearest" })`, since the popup scrolls and Enter otherwise commits an off-screen row (B1).
+    3. Same file: `closed` is set on the dismissal path, not only in `disposeAll` — Escape and the scrim never reach `disposeAll`, so the round-1 guard was passing on the DOM being gone rather than on the guard firing (W2).
+    4. `src/types/messages.ts`, `src/webview/worktree/WorktreeController.ts` and `src/providers/WorktreeHost.ts` carry the opening token D1 now specifies: the request mints it, the host echoes it, the form drops an answer whose token is not the one it awaits (W2). Scoped to the refs pair; the defaults and provisioning messages are untouched.
+    5. `src/webview/worktree/worktreePanel.css`: the active-selection colours are declared after the create-new colour so they win at equal specificity (B1), and the popup is bounded by the space below the input rather than a fixed height (S3).
+    6. The token widens the wire, so the fixtures that construct these two messages carry it: `src/providers/WorktreeHost.actions.test.ts`, `src/webview/messaging/MessageRouter.test.ts`, `src/providers/TerminalViewProvider.worktree.test.ts` and `src/extension.worktreeAssembly.test.ts`.
+    7. Cover in `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: a held branch typed then committed as create-new by pointer AND by keyboard issues no request; an answer carrying a superseded token is dropped while the awaited one applies; the active row is scrolled when it leaves view.
+  - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited

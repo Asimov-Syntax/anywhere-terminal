@@ -1281,6 +1281,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             }
             surface.post({
               type: "worktreeRefs",
+              token: msg.token,
               repoId: msg.repoId,
               refs: answer.refs,
               truncated: answer.truncated,

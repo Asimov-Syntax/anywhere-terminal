@@ -370,6 +370,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // to be released here too — `disposeAll` is not on that path.
     onDismiss: () => {
       releaseDestTip();
+      // Escape and the scrim never reach `disposeAll`, so setting `closed`
+      // only there left the guard passing on the DOM being gone rather than on
+      // the guard firing (round-2 W2).
+      closed = true;
       deps.onCancel?.();
     },
     // The list owns Escape only while it is open (D7). Asked by the shell
@@ -824,11 +828,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (draft.branchMode === "detached") {
       return undefined;
     }
-    // The CURRENT repository's record, or nothing. Falling back to the standing
-    // selection when the lookup missed could not tell "this repo has the ref and
-    // it is free" from "this repo does not have it", so a switch away from a
-    // held branch kept naming the other repository's directory (round-1 W1).
-    return choice.kind === "existing" ? choice.ref.heldBy : undefined;
+    // Derived from the typed NAME against the current repository's list, not
+    // from `choice`. Committing the create-new row deliberately sets `choice`
+    // to `new` while leaving the typed text alone, so a guard reading `choice`
+    // stops seeing the holder and submits a branch another worktree holds
+    // (round-2 B4).
+    //
+    // Still the current repository's list and nothing else: the round-1 W1
+    // fallback to a standing selection is not restored, because it could not
+    // tell "this repo has the ref and it is free" from "this repo does not
+    // have it".
+    const typed = nameInput.value.trim();
+    return typed.length === 0 ? undefined : offeredRefs().find((ref) => ref.name === typed)?.heldBy;
   }
 
   /**
@@ -870,6 +881,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       nameInput.removeAttribute("aria-activedescendant");
     } else {
       nameInput.setAttribute("aria-activedescendant", active.id);
+      // The popup scrolls, so past its visible rows Enter would otherwise
+      // commit an option the user cannot see (round-2 B1). Guarded because
+      // jsdom does not implement it.
+      active.scrollIntoView?.({ block: "nearest" });
     }
   }
 

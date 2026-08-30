@@ -28,6 +28,19 @@ the reply grows to carry, only the destination is what was asked for").
 
 Rejected — enumerating refs in the webview: it has no git.
 
+**Amended after round 2 (W2).** The pair as first written carries `repoId` and nothing else, which
+names a repository but not an OPENING. A dialog closed and reopened on the same repository has two
+openings alive on the wire, and the answer to the first is indistinguishable from the answer to the
+second — so a reply outliving its dialog is applied to its successor, and if the successor's own read
+fails it stands permanently. The request gains an opening token the answer echoes:
+`requestWorktreeRefs { repoId, token }` → `worktreeRefs { repoId, token, refs, truncated }`, and the
+form drops any answer whose token is not the one it is waiting on.
+
+Scoped to THIS pair deliberately. `worktreeCreateDefaults` and the provisioning offer have the same
+shape of exposure and are NOT changed here: they are outside this change's diff, and giving all three
+one lifecycle owner is a design question about the create wire as a whole rather than a repair to the
+message this change introduced.
+
 ### D2 — Held-by is derived from the listing already in hand, and names a directory, not a path
 
 **Chosen:** for each ref, the host consults the repository's own `WorktreeInfo[]` — which already
@@ -139,6 +152,8 @@ export interface WorktreeRef {
 export interface WorktreeRefsMessage {
   type: "worktreeRefs";
   repoId: string;
+  /** Echoes the request's token, so an answer can be matched to an opening. */
+  token: number;
   refs: readonly WorktreeRef[];
   /** The cap was hit and the list is partial — the form says so (D3). */
   truncated: boolean;

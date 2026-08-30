@@ -1091,12 +1091,13 @@ describe("the list of branches a create can pick from comes from the host", () =
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       readRefs: async () => ({ ok: true, refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }], truncated: true }),
     });
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
     expect(view.posts.find((m) => m.type === "worktreeRefs")).toEqual({
       type: "worktreeRefs",
       repoId: REPO,
+      token: 1,
       refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }],
       truncated: true,
     });
@@ -1109,7 +1110,7 @@ describe("the list of branches a create can pick from comes from the host", () =
     // says which branches they hold (design.md D2).
     const refsInputs: RepoRefsInput[] = [];
     const { host, view, dispose } = await builtHost([windowRow()], false, { refsInputs });
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
     expect(refsInputs).toHaveLength(1);
@@ -1120,7 +1121,7 @@ describe("the list of branches a create can pick from comes from the host", () =
 
   it("posts nothing when the enumeration failed — absent is not an empty repository", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { readRefs: async () => ({ ok: false }) });
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
     expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);
@@ -1133,7 +1134,7 @@ describe("the list of branches a create can pick from comes from the host", () =
         throw new Error("git blew up");
       },
     });
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
     expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);
@@ -1143,7 +1144,7 @@ describe("the list of branches a create can pick from comes from the host", () =
   it("answers nothing for a repository it never published", async () => {
     const refsInputs: RepoRefsInput[] = [];
     const { host, view, dispose } = await builtHost([windowRow()], false, { refsInputs });
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: "/not/a/repo" });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: "/not/a/repo", token: 1 });
     await settle();
 
     expect(refsInputs).toEqual([]);
@@ -1164,7 +1165,7 @@ describe("the list of branches a create can pick from comes from the host", () =
         return { ok: true, refs: [{ name: "main" }], truncated: false };
       },
     });
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     dispose();
     release?.();
     await settle();
@@ -1174,7 +1175,7 @@ describe("the list of branches a create can pick from comes from the host", () =
 
   it("answers nothing when no reader is wired", async () => {
     const { host, view, dispose } = await builtHost();
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
     expect(view.posts.filter((m) => m.type === "worktreeRefs")).toEqual([]);

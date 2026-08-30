@@ -1279,10 +1279,54 @@ describe("the create a toolbar with no repository opens", () => {
     (h.controller as unknown as { applyRefs?: (r: string, x: unknown) => void }).applyRefs = (repoId, refs) =>
       applied.push({ repoId, refs });
 
-    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_A, refs: [{ name: "main" }], truncated: false });
+    h.controller.handleRefs({
+      type: "worktreeRefs",
+      repoId: REPO_A,
+      token: 1,
+      refs: [{ name: "main" }],
+      truncated: false,
+    });
 
     expect(applied).toEqual([{ repoId: REPO_A, refs: { list: [{ name: "main" }], truncated: false } }]);
     expect(refsHeld(h).get(REPO_A)).toBeDefined();
+  });
+
+  it("[4_2][r2 W2] an answer to a PREVIOUS opening is dropped, and the current one still applies", () => {
+    // `repoId` names a repository, not an opening. Reopened on the same
+    // repository, the predecessor's answer is indistinguishable from the
+    // successor's without the token — and it would overwrite the successor's
+    // list, permanently if the successor's own read fails (round-2 W2).
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const applied: string[] = [];
+    (h.controller as unknown as { applyRefs?: (r: string, x: unknown) => void }).applyRefs = (repoId) =>
+      applied.push(repoId);
+
+    h.controller.handleRefs({
+      type: "worktreeRefs",
+      repoId: REPO_A,
+      token: 1,
+      refs: [{ name: "stale" }],
+      truncated: false,
+    });
+
+    expect(applied, "the first opening's answer reached the second opening's form").toEqual([]);
+    expect(refsHeld(h).get(REPO_A), "a superseded answer seeded the cache").toBeUndefined();
+
+    h.controller.handleRefs({
+      type: "worktreeRefs",
+      repoId: REPO_A,
+      token: 2,
+      refs: [{ name: "main" }],
+      truncated: false,
+    });
+
+    expect(applied).toEqual([REPO_A]);
   });
 
   it("[1_2][r1 W2] a list that outlived a dialog that really opened and closed changes nothing", () => {
@@ -1304,7 +1348,13 @@ describe("the create a toolbar with no repository opens", () => {
 
     // Reaches the applier the closed form left behind, and must do nothing —
     // no throw, and no list rendered anywhere.
-    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_A, refs: [{ name: "main" }], truncated: false });
+    h.controller.handleRefs({
+      type: "worktreeRefs",
+      repoId: REPO_A,
+      token: 1,
+      refs: [{ name: "main" }],
+      truncated: false,
+    });
 
     expect(document.querySelector("#wt-branch-list")).toBeNull();
     // Stored, though: the next OPEN clears the map before it asks again.
@@ -1316,7 +1366,13 @@ describe("the create a toolbar with no repository opens", () => {
     // describes a repository state that may have moved, and would keep showing
     // if this form's own enumeration failed.
     const h = ready(twoRepoResponse());
-    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_A, refs: [{ name: "main" }], truncated: false });
+    h.controller.handleRefs({
+      type: "worktreeRefs",
+      repoId: REPO_A,
+      token: 1,
+      refs: [{ name: "main" }],
+      truncated: false,
+    });
     h.controller.openCreate();
 
     expect(refsHeld(h).size).toBe(0);
@@ -1324,7 +1380,13 @@ describe("the create a toolbar with no repository opens", () => {
 
   it("[1_2] forgets the list for a repository that has left the workspace", () => {
     const h = ready(twoRepoResponse());
-    h.controller.handleRefs({ type: "worktreeRefs", repoId: REPO_B, refs: [{ name: "main" }], truncated: false });
+    h.controller.handleRefs({
+      type: "worktreeRefs",
+      repoId: REPO_B,
+      token: 1,
+      refs: [{ name: "main" }],
+      truncated: false,
+    });
     h.controller.handleTreeResponse({
       type: "worktreeTreeResponse",
       tree: singleRepoTree(),
@@ -1505,7 +1567,7 @@ describe("the destination a create opens on", () => {
     // beside it. Nothing else — no path derived here, no third question.
     expect(h.posts).toEqual([
       { type: "requestWorktreeCreateDefaults", repoId: REPO },
-      { type: "requestWorktreeRefs", repoId: REPO },
+      { type: "requestWorktreeRefs", repoId: REPO, token: 1 },
     ]);
   });
 
