@@ -118,3 +118,18 @@ None.
 ## Audit backlog
 
 None.
+
+## Author triage
+
+### B1 — accepted, fixed in 2_3
+Right for the third time on this finding, and the objection was precise: my witness proved the churn COMPLETED, which a serialized implementation that never overlapped would also satisfy. Replaced with three ordered timestamps — snapshot started, churn completed, snapshot settled. The churn now runs inside a real backup step through a narrow optional progress observer that production omits, and for the CLI between process spawn and promise settlement, since a subprocess cannot be stepped. Mutation-checked: removing the production progress report fails the two in-process race tests. The `whole OR failure` assertion was kept, per your ruling that requiring `ok` would exceed the accepted contract.
+
+### S2 — accepted, fixed in 2_3
+Budget is `-1` rather than `0`, so `Date.now() > deadline` cannot be satisfied-by-tie inside one millisecond.
+
+### W2 — accepted, routed, NOT fixed here
+Agreed and unchanged: reuse owns freshness, invalidation, in-flight sharing, lifetime and cleanup, so it is a separate change reviewed on its own. Scaffolded as `reuse-a-snapshot-while-the-store-is-unchanged`, which this change depends on. This change does not archive while it is open — recorded in workflow.md, not just here.
+
+### Cycle cap
+Accepted. No round 4 in cycle 1. The next review of this change is cycle 2, round 1, discovery mode, and it should cover 2_3 plus the integration seam with the reuse change once that lands.
+

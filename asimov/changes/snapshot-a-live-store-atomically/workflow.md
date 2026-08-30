@@ -40,4 +40,6 @@ Mechanism evidence gathered before planning, not at build: node:sqlite backup() 
 Deviation: 1_3's commit was made before its verify-task tick, and that verify then failed on an unrelated flaky test (a 5s timeout in extension.worktreeAssembly.test.ts). Re-run clean twice; the task was re-leased and ticked with real evidence afterwards. The commit ordering was wrong, not the evidence.
 Watch: the new tests do real sqlite and real sqlite3-CLI I/O inside the parallel suite, which is the most likely cause of that timeout flake. If it recurs, serialise them rather than raising the timeout.
 Dead code removed with the mechanism: the `copy` dep, `cloneOrCopy`, and `readSqliteViaCopy`'s name — nothing in this module copies a store any more.
+ARCHIVE BLOCKED: round-1 W2 (a ~190x read regression on large stores: 522 MB measured at 951 ms via backup vs 5 ms via APFS clone) is acknowledged, not risk-accepted. It is owned by `reuse-a-snapshot-while-the-store-is-unchanged`; this change must not archive until that lands and cycle 2 discovery reviews the seam.
+Cycle 1 closed at its 3-round cap with B1 fixed in 2_3 but unreviewed. Next review is cycle 2, round 1, discovery.
 
