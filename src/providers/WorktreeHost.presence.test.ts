@@ -209,9 +209,12 @@ function blockingProjector() {
   const parked: Array<{ release: (presence: WorktreePresence) => void; fail: (err: Error) => void }> = [];
   /** Whether each projection, in order, was the external-only pass. */
   const modes: Array<boolean> = [];
+  /** Whether each projection, in order, was asked to enrich its rows. */
+  const enriched: Array<boolean> = [];
   const projector: PresenceProjector = {
     project: async (_worktreeIds, options) => {
       modes.push(options?.external === true);
+      enriched.push(options?.enrich === true);
       return new Promise<WorktreePresence>((resolve, reject) => {
         parked.push({ release: resolve, fail: reject });
       });
@@ -219,12 +222,14 @@ function blockingProjector() {
     rank: () => undefined,
     rankRevision: () => 0,
   };
-  return { projector, parked, modes };
+  return { projector, parked, modes, enriched };
 }
 
 interface HostOptions {
   runner?: GitCommandRunner;
   projector?: PresenceProjector;
+  /** What the first surface declares it draws. Omitted means rows. */
+  level?: "rows" | "presence";
 }
 
 /** A host already built once, pushing to one surface the window is displaying. */
@@ -253,7 +258,11 @@ async function builtHost(options: HostOptions = {}) {
   const view = surface();
   const attachment = host.attach(view);
   attachment.setDisplayed(true);
-  host.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
+  host.handleMessage(view, {
+    type: "worktreeViewVisibility",
+    visible: true,
+    ...(options.level === undefined ? {} : { level: options.level }),
+  });
   host.handleMessage(view, { type: "requestWorktreeTree" });
   await settle();
   view.posts.length = 0;
@@ -1112,6 +1121,120 @@ describe("the external scan is paced, and only while the view is shown", () => {
     await settle();
 
     expect(blocking.modes[blocking.modes.length - 1]).toBe(true);
+    h.host.dispose();
+  });
+
+  it("follows a bare pass promoted mid-flight with exactly one enriching pass", async () => {
+    // A promotion arriving during a pass joins a run that already decided not to
+    // enrich, and `join` deliberately does not dirty it — so without the run's
+    // own invariant, nothing follows and the window keeps the bare envelope.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector, level: "presence" });
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    const bareAt = blocking.parked.length - 1;
+    expect(blocking.enriched[bareAt]).toBe(false);
+
+    h.host.handleMessage(h.view, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+    blocking.parked[bareAt].release(emptyPresence(2));
+    await settle();
+
+    expect(blocking.parked.length - 1 - bareAt, "the promotion bought no pass, or more than one").toBe(1);
+    expect(blocking.enriched[blocking.enriched.length - 1], "the follow-up pass did not enrich").toBe(true);
+    h.host.dispose();
+  });
+
+  it("follows the very FIRST bare pass too, where the remembered flag still reads true", async () => {
+    // `projectedEnriched` starts life `true`, which suppressed the old inline
+    // check outright during the first pass. The invariant reads the flag only
+    // after a pass has set it, so this case stopped being special.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector, level: "presence" });
+    expect(blocking.enriched[0]).toBe(false);
+
+    h.host.handleMessage(h.view, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+
+    expect(blocking.parked).toHaveLength(2);
+    expect(blocking.enriched[1]).toBe(true);
+    h.host.dispose();
+  });
+
+  it("resolves a promotion without spinning", async () => {
+    // The bound is one promotion-CAUSED follow-up. "It terminates" does not
+    // discriminate — today's code terminates too, by doing nothing.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector, level: "presence" });
+    h.host.handleMessage(h.view, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+
+    for (let i = 0; i < 5 && i < blocking.parked.length; i += 1) {
+      blocking.parked[i].release(emptyPresence(i + 1));
+      await settle();
+    }
+
+    expect(blocking.parked.length, "the enrichment obligation re-armed itself").toBe(2);
+    h.host.dispose();
+  });
+
+  it("still consumes pane evidence when a promotion lands during the full pass", async () => {
+    // The obligation must not look like invalidation: a clean full pass that is
+    // marked dirty for enrichment stops advancing the applied-evidence mark, and
+    // every later scan then runs full for no reason.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector, level: "presence" });
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+
+    h.paneChanged();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    await settle();
+    const fullAt = blocking.parked.length - 1;
+    expect(blocking.modes[fullAt], "expected the full pass the evidence asks for").toBe(false);
+
+    h.host.handleMessage(h.view, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+    blocking.parked[fullAt].release(emptyPresence(2));
+    await settle();
+    blocking.parked[blocking.parked.length - 1].release(emptyPresence(3));
+    await settle();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+
+    expect(blocking.modes[blocking.modes.length - 1], "the scan reverted to a full pass").toBe(true);
+    h.host.dispose();
+  });
+
+  it("keeps a rerun full when a promotion races new pane evidence", async () => {
+    // An already-invalidated pass needs no help from the obligation, and forcing
+    // it external-only would make the rerun skip exactly the panes the evidence
+    // exists to read.
+    const blocking = blockingProjector();
+    const h = await builtHost({ projector: blocking.projector, level: "presence" });
+    blocking.parked[0].release(emptyPresence(1));
+    await settle();
+
+    h.advance(EXTERNAL_SCAN_INTERVAL_MS);
+    await settle();
+    const bareAt = blocking.parked.length - 1;
+    expect(blocking.modes[bareAt], "expected the external-only poll").toBe(true);
+
+    h.paneChanged();
+    h.advance(PRESENCE_MAX_LATENCY_MS);
+    h.host.handleMessage(h.view, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+    await settle();
+    blocking.parked[bareAt].release(emptyPresence(2));
+    await settle();
+
+    expect(blocking.modes[blocking.modes.length - 1], "the rerun was downgraded to skip the panes").toBe(false);
+    expect(blocking.enriched[blocking.enriched.length - 1]).toBe(true);
     h.host.dispose();
   });
 

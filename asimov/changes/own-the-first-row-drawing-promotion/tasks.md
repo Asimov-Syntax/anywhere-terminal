@@ -11,7 +11,7 @@
     2. Call `reconcileRowDrawing()` from `setDisplayed` as well, beside its existing `reconcileShowing`/`reconcileScan` calls.
     3. In `src/providers/WorktreeHost.test.ts`, in the suite that already covers subscribe-without-drawing, cover a retained rows surface becoming displayed against a bare envelope, and assert no extra pass when the envelope is already enriched. Confirm the first case fails before the fix; the second passes today and is a regression guard.
 
-- [ ] 1_2 A rebuild cannot end owing enrichment
+- [x] 1_2 A rebuild cannot end owing enrichment — verified: pnpm exec vitest run 'src/providers/WorktreeHost.presence.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-agent-presence/spec.md#{a-window-that-begins-drawing-rows-gets-enriched-rows-without-waiting-for-a-scan} <!-- design.md D3 -->
   - **Boundary**: `join` must stay non-dirtying — a polled scan may not buy a second projection

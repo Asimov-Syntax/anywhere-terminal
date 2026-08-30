@@ -1285,14 +1285,31 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // redundant full pass; the other choice loses the transition (D11).
           const evidenceAt = paneEvidence;
           await projectOnce(externalOnly);
-          // Dirty means this pass was invalidated — by a tree that moved under
-          // it, or by pane evidence that arrived after it read the panes. Either
-          // way it applied nothing. Defence in depth today: a dirty iteration
-          // always forces a FULL rerun, whose own capture is at least this one,
-          // so no test can reach it. It is what keeps D11 true if that ever
-          // stops holding.
-          if (!externalOnly && !projectionDirty) {
+          // Captured BEFORE the enrichment obligation below can touch it. Dirty
+          // means this pass was INVALIDATED — by a tree that moved under it, or
+          // by pane evidence that arrived after it read the panes — and that is
+          // a different claim from "run again", which is what enrichment wants.
+          const wasInvalidated = projectionDirty;
+          // Dirty means this pass was invalidated. Either way it applied
+          // nothing. Defence in depth today: a dirty iteration always forces a
+          // FULL rerun, whose own capture is at least this one, so no test can
+          // reach it. It is what keeps D11 true if that ever stops holding.
+          if (!externalOnly && !wasInvalidated) {
             applied = Math.max(applied, evidenceAt);
+          }
+          // A promotion that landed mid-pass joined this run without dirtying it
+          // — deliberately, so a polled scan does not buy a second projection —
+          // so the run is what has to notice it is finishing while enrichment is
+          // owed, and schedule exactly one more pass (design.md D3).
+          //
+          // Only when the pass was otherwise CLEAN. An invalidated pass reruns
+          // regardless and re-reads the predicate for itself, and forcing it
+          // external-only here would override the stronger full-rerun that new
+          // pane evidence just asked for — the rerun would skip the very panes
+          // it exists to read.
+          if (!wasInvalidated && enrichmentOwed()) {
+            projectionDirty = true;
+            nextExternalOnly = true;
           }
         } while (projectionDirty && !disposed);
       } catch (err) {
