@@ -156,7 +156,6 @@ function commit(current: Held, draft: LookState): void {
   current.progressed = draft.progressed;
 }
 
-
 /**
  * A session's last activity, read at most once per `recheckMs` and only when the
  * transcript's `(mtimeMs, size)` has moved. `undefined` covers every way there can
