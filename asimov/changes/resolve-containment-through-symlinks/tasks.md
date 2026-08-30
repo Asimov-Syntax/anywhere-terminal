@@ -21,7 +21,7 @@
     1. In `src/vault/readers/claudePaths.ts` replace the three inline `path.relative` containment blocks — session, subagent, and workflow-agent resolution — with the shared predicate, deleting the open-coded checks rather than leaving them beside it (design.md D6).
     2. `claudePaths.ts` has no test file of its own — its resolvers are exercised through `src/vault/readers/claudeReader.detail.test.ts`. Add `src/vault/readers/claudePaths.test.ts` covering each resolver directly: the escaping link, and a genuinely contained transcript under a symlinked projects root that is still found.
 
-- [ ] 1_3 The Codex reader asks the shared question
+- [x] 1_3 The Codex reader asks the shared question — verified: pnpm exec vitest run 'src/vault/readers/codexReader.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/vault-session-preview/spec.md#{a-transcript-is-located-inside-the-store-it-resolves-into-not-the-one-it-spells} <!-- design.md D2, D5, D6 -->
   - **Acceptance**:

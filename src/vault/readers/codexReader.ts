@@ -12,6 +12,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
 import { readSqlite, writeSqlite } from "../sqlite";
@@ -1061,12 +1062,6 @@ async function streamCodexRecords(
   return buffer.result();
 }
 
-/** True iff `p` resolves inside `root`. */
-function isUnder(p: string, root: string): boolean {
-  const rel = path.relative(root, p);
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-}
-
 /** Find the rollout jsonl by the session uuid embedded in its filename. */
 async function findCodexRolloutByFilename(sessionId: string, sessionsDir: string): Promise<string | null> {
   const suffix = `-${sessionId}.jsonl`;
@@ -1159,7 +1154,7 @@ async function readCodexChildJsonlMeta(
   sessionsDir: string,
   rolloutPath?: string,
 ): Promise<CodexJsonlMeta | null> {
-  if (rolloutPath && isUnder(rolloutPath, sessionsDir)) {
+  if (rolloutPath && (await isResolvedPathInside(rolloutPath, sessionsDir))) {
     try {
       return await readCodexJsonlMeta(rolloutPath);
     } catch {
@@ -1290,13 +1285,17 @@ async function resolveCodexRolloutPath(sessionId: string, options: CodexReaderOp
   return pickRolloutPath(thread, sessionId, sessionsDir);
 }
 
-/** The index's rollout_path when it is contained, else a scan by filename. */
+/**
+ * The index's rollout_path when it RESOLVES inside the sessions dir, else a scan
+ * by filename. Strict: a stored path equal to the directory itself is refused,
+ * so the scan still runs rather than the caller being handed a directory.
+ */
 export async function pickRolloutPath(
   thread: { rolloutPath?: string } | null,
   sessionId: string,
   sessionsDir: string,
 ): Promise<string | undefined> {
-  if (thread?.rolloutPath && isUnder(thread.rolloutPath, sessionsDir)) {
+  if (thread?.rolloutPath && (await isResolvedPathInside(thread.rolloutPath, sessionsDir))) {
     return thread.rolloutPath;
   }
   return (await findCodexRolloutByFilename(sessionId, sessionsDir)) ?? undefined;

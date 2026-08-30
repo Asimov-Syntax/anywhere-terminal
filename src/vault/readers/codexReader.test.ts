@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VAULT_CACHE_VERSION } from "../cacheTypes";
 import type { SqliteResult } from "../sqlite";
-import { readCodexEntry, readCodexSessions } from "./codexReader";
+import { pickRolloutPath, readCodexEntry, readCodexSessions } from "./codexReader";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_CODEX_DIR = path.join(here, "..", "__fixtures__", "codex");
@@ -446,5 +446,69 @@ describe("readCodexSessions: incremental store stamp", () => {
     const second = await readCodexSessions({ codexDir: dir, readSqliteFn: fn }, first.cache);
     expect(fn).toHaveBeenCalledTimes(4);
     expect(second.unreadable).toBe(1);
+  });
+});
+
+describe("pickRolloutPath containment", () => {
+  // The index stores a rollout path the reader did not write. Trusting its
+  // spelling is what these cases refuse: the answer is used to OPEN a file, so
+  // it has to be true of the file that would actually be opened.
+  let tmp: string;
+
+  afterEach(async () => {
+    if (tmp) {
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  const setup = async () => {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "codex-rollout-"));
+    const sessionsDir = path.join(tmp, "sessions");
+    await fsp.mkdir(sessionsDir, { recursive: true });
+    return sessionsDir;
+  };
+
+  const SESSION = "0199a000-1111-7222-8333-444444444444";
+
+  it("uses a stored path that genuinely resolves inside the sessions dir", async () => {
+    const sessionsDir = await setup();
+    const real = path.join(sessionsDir, `rollout-2026-01-01T00-00-00-${SESSION}.jsonl`);
+    await fsp.writeFile(real, "{}\n");
+    expect(await pickRolloutPath({ rolloutPath: real }, SESSION, sessionsDir)).toBe(real);
+  });
+
+  it("ignores a stored path that escapes through a link, and scans by filename instead", async () => {
+    const sessionsDir = await setup();
+    const outside = path.join(tmp, "outside");
+    await fsp.mkdir(outside);
+    await fsp.writeFile(path.join(outside, "stolen.jsonl"), "{}\n");
+    await fsp.symlink(path.join(outside, "stolen.jsonl"), path.join(sessionsDir, "escape.jsonl"));
+    const real = path.join(sessionsDir, `rollout-2026-01-01T00-00-00-${SESSION}.jsonl`);
+    await fsp.writeFile(real, "{}\n");
+
+    const picked = await pickRolloutPath(
+      { rolloutPath: path.join(sessionsDir, "escape.jsonl") },
+      SESSION,
+      sessionsDir,
+    );
+    expect(picked).toBe(real);
+  });
+
+  it("keeps working when the sessions dir itself is reached through a link", async () => {
+    const sessionsDir = await setup();
+    const linked = path.join(tmp, "linked-sessions");
+    await fsp.symlink(sessionsDir, linked);
+    const real = path.join(linked, `rollout-2026-01-01T00-00-00-${SESSION}.jsonl`);
+    await fsp.writeFile(real, "{}\n");
+    expect(await pickRolloutPath({ rolloutPath: real }, SESSION, linked)).toBe(real);
+  });
+
+  it("refuses a stored path equal to the sessions dir, so the filename scan still runs", async () => {
+    // A directory passes the loose lexical form; handing it back would replace
+    // the scan that finds the real rollout with a path nothing can read.
+    const sessionsDir = await setup();
+    const real = path.join(sessionsDir, `rollout-2026-01-01T00-00-00-${SESSION}.jsonl`);
+    await fsp.writeFile(real, "{}\n");
+    expect(await pickRolloutPath({ rolloutPath: sessionsDir }, SESSION, sessionsDir)).toBe(real);
   });
 });
