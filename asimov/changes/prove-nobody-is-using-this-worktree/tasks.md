@@ -38,7 +38,7 @@
     4. The fixtures in `src/worktree/removalChecks.test.ts`, `src/worktree/worktreeFingerprint.test.ts`, `src/worktree/worktreeMutationService.test.ts`, `src/providers/WorktreeHost.actions.test.ts` and `src/extension.worktreeAssembly.test.ts` follow the type.
   - **Boundary**: no change to what refuses — the live filter moves, its predicate does not
 
-- [ ] 3_1 Answer the three proofs
+- [x] 3_1 Answer the three proofs — verified: pnpm exec vitest run 'src/worktree/orphanProofs.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1, 1_2
   - **Refs**: design.md D4, D5, D6; specs/worktree-panel/spec.md#{the-merge-proof-reads-local-refs-and-never-fetches, the-ownership-proof-distinguishes-no-record-from-a-dead-record}
   - **Acceptance**:

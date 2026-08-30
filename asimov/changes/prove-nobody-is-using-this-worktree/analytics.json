@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "prove-nobody-is-using-this-worktree"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788123288370,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788123288370,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "build",
+          "from": 1788123288370
+        }
+      ],
+      "firstAt": 1788123288370,
+      "lastAt": 1788123288370,
+      "buckets": []
+    }
+  ]
+}
