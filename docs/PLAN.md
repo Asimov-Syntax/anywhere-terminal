@@ -495,7 +495,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | First slice of the provider layer, deliberately one adapter wide — the normalized model and its provenance rule are the contract every later task in this phase consumes, and they are cheaper to get right against one real file than four. This repo's own `asimov/worktree.yaml` is that file. Globs expand at read time because the list shown must be the list that would be copied |
 | **Acceptance** | A repo declaring copy, link, port and setup material shows each of them as its own row, and each row names the source file; a repo declaring none still shows the section, saying the worktree will have no `.env` or `node_modules`; a linked row states that it writes to the main checkout, and that statement is not suppressible; the source badge answers only which file declared the entry, with mode consequences carried separately; nothing in this task writes to disk |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-012.2] The Files a Worktree Needs Are Put There Safely
 
