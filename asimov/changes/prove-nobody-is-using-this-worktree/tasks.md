@@ -13,7 +13,7 @@
     4. Cover in `src/vault/readers/runningSessions.test.ts`: a dead record appears with `alive: false` and is still absent from the live reader; an unreadable directory fails both the same way; a malformed file is skipped by both.
   - **Boundary**: `listRunningClaudeSessions` behaviour is unchanged — the tests that exist for it must pass untouched
 
-- [ ] 1_2 One reader for the worktree's own git directory
+- [x] 1_2 One reader for the worktree's own git directory — verified: pnpm exec vitest run 'src/worktree/worktreeGitDir.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D6
   - **Acceptance**:
