@@ -12,7 +12,7 @@ import type {
   WorktreeCreateDefaults,
   WorktreeInfo,
   WorktreePresence,
-  WorktreeRemoveBlocker,
+  WorktreeRemoveReport,
   WorktreeTree,
 } from "./worktreeViewTypes";
 
@@ -261,30 +261,31 @@ export const removeIndeterminateResult: WorktreeActionResult = {
   observed: "observed after: git worktree remove — exit 0, list still reports the path",
 };
 
-/** Mockup § 11: every blocker at once, so one confirmation covers the whole risk. */
-export const confirmableBlocker: WorktreeRemoveBlocker = {
+/** Mockup § 11: every confirmable check failing at once, so one confirmation covers the whole risk. */
+export const confirmableBlocker: WorktreeRemoveReport = {
   fingerprint: "sha256:blockers-v1",
-  dirty: true,
-  untracked: 3,
-  idlePanes: 2,
-  busyAgents: 0,
-  externalAgents: 1,
-  locked: true,
-  isMain: false,
-  containsWorktrees: [],
+  checks: [
+    { id: "isMain", cls: "refusal", outcome: "passed" },
+    { id: "busyAgents", cls: "refusal", outcome: "passed", count: 0 },
+    { id: "containsWorktrees", cls: "refusal", outcome: "passed", count: 0 },
+    { id: "dirty", cls: "confirmable", outcome: "failed", count: 4 },
+    { id: "untracked", cls: "confirmable", outcome: "failed", count: 3 },
+    { id: "idlePanes", cls: "confirmable", outcome: "failed", count: 2 },
+    { id: "externalAgents", cls: "confirmable", outcome: "failed", count: 1 },
+    { id: "locked", cls: "confirmable", outcome: "failed" },
+  ],
+  contained: [],
 };
 
 /** Mockup § 12: a mid-turn agent. No confirmation authorizes this one. */
-export const refusedBlocker: WorktreeRemoveBlocker = {
+export const refusedBlocker: WorktreeRemoveReport = {
   fingerprint: "sha256:blockers-v2",
-  dirty: false,
-  untracked: 0,
-  idlePanes: 0,
-  busyAgents: 1,
-  externalAgents: 0,
-  locked: false,
-  isMain: false,
-  containsWorktrees: [],
+  checks: [
+    { id: "isMain", cls: "refusal", outcome: "passed" },
+    { id: "busyAgents", cls: "refusal", outcome: "failed", count: 1 },
+    { id: "containsWorktrees", cls: "refusal", outcome: "passed", count: 0 },
+  ],
+  contained: [],
 };
 
 /** Mockup § 9: the default create seed. § 10 is the same seed plus `collidedWith`. */

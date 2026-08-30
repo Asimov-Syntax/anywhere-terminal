@@ -44,16 +44,17 @@
     4. In `src/worktree/worktreeMutationService.ts`, call `intentFor` at the create site and pass the result to both `validateCreatePath` calls, so the pre-spawn re-check applies the same rule as the first.
   - **Boundary**: no containment implementation anywhere in `src/` but `src/utils/pathBoundary.ts` — `rg -n 'function isPathInside' src/` must find that file and no other
 
-- [ ] 1_4 Report a removal as classed checks, and retire the boolean record
+- [x] 1_4 Report a removal as classed checks, and retire the boolean record — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: design.md D4, design.md D5
   - **Acceptance**:
     - Outcome: A blocked removal travels as classed checks and the panel renders the same lines
     - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
   - **Plan**:
-    1. Add `src/worktree/removalChecks.ts` exporting `checksFor(assessment: RemovalAssessment): readonly RemovalCheck[]`, implementing design.md D4's table and nothing beyond it.
+    1. Add `src/worktree/removalChecks.ts` exporting `checksFor(assessment: RemovalAssessment): readonly RemovalCheck[]`, implementing design.md D4's table and nothing beyond it, with `src/worktree/removalChecks.test.ts` covering all three assessment kinds.
+    1b. Add `count?: number` to `RemovalCheck` in `src/types/messages.ts` and to `docs/design/worktree-rpc.md` § 2.5. The panel renders the magnitude inside its own `<b>` element, so a count reaching it only as prose in `detail` cannot be re-rendered byte-identically, and parsing a number back out of a display string is not a contract.
     2. In `src/types/messages.ts`, replace `WorktreeRemoveBlockerPayload` and the `blocked` member's `blocker` field with `checks: readonly RemovalCheck[]`, and delete the interface.
-    3. In `src/worktree/worktreeMutationService.ts`, call `checksFor` where the boolean record was assembled.
+    3. In `src/extension.ts`, replace `toBlockerPayload` with a projection that calls `checksFor` and carries the contained worktrees beside the checks; `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeController.ts` follow the renamed field through.
     4. In `src/webview/worktree/WorktreeRemoveDialog.ts`, make `isRemoveRefused` read `cls === "refusal"` with a failing outcome, and make `buildBlockerList` and `buildForceWarning` read the check list; every rendered string stays byte-identical.
     5. In `src/webview/worktree/worktreeViewTypes.ts` and `src/webview/worktree/worktreeFixtures.ts`, follow the type through; leave `src/worktree/worktreeBlockers.ts` and `src/worktree/worktreeFingerprint.ts` unchanged.
   - **Boundary**: no new check id beyond design.md D4's table

@@ -1935,7 +1935,7 @@ describe("dialogs", () => {
     if (!info) {
       throw new Error("fixture lost the spike worktree");
     }
-    view.openRemoveDialog({ info, blocker: confirmableBlocker, degradedSources: [] });
+    view.openRemoveDialog({ info, report: confirmableBlocker, degradedSources: [] });
     // dirty, untracked, idle panes, an external session, and the lock — all five.
     expect(host.querySelectorAll(".wt-blockers li").length).toBe(5);
     expect(host.querySelector(".wt-btn--danger")?.textContent).toBe("Force remove");
@@ -1950,7 +1950,7 @@ describe("dialogs", () => {
     }
     view.openRemoveDialog({
       info,
-      blocker: refusedBlocker,
+      report: refusedBlocker,
       agentRows: [agentRow({ rowId: "busy", agent: "claude", activity: "waiting", title: "INTEGRATE-WORKTREE" })],
       degradedSources: [],
     });
@@ -1968,7 +1968,7 @@ describe("dialogs", () => {
     }
     view.openRemoveDialog({
       info,
-      blocker: refusedBlocker,
+      report: refusedBlocker,
       agentRows: [
         agentRow({ rowId: "busy", agent: "claude", activity: "waiting", activitySource: "hook", title: "worker" }),
       ],
@@ -1992,7 +1992,7 @@ describe("dialogs", () => {
     // asserting the hedged string.
     view.openRemoveDialog({
       info,
-      blocker: refusedBlocker,
+      report: refusedBlocker,
       agentRows: [
         agentRow({ rowId: "busy", agent: "claude", activity: "waiting", activitySource: "hook", title: "worker" }),
       ],
@@ -2010,7 +2010,7 @@ describe("dialogs", () => {
     }
     view.openRemoveDialog({
       info,
-      blocker: refusedBlocker,
+      report: refusedBlocker,
       agentRows: [
         agentRow({ rowId: "seen", agent: "claude", activity: "running", activitySource: "hook", title: "a" }),
         agentRow({ rowId: "blind", agent: "claude", activity: "running", activitySource: "output", title: "b" }),
@@ -2034,7 +2034,7 @@ describe("dialogs", () => {
     if (!info) {
       throw new Error("fixture lost the panel worktree");
     }
-    view.openRemoveDialog({ info, blocker: refusedBlocker, agentRows: [], degradedSources: [] });
+    view.openRemoveDialog({ info, report: refusedBlocker, agentRows: [], degradedSources: [] });
     // The whole paragraph, not just the lead: "stop it first" presupposes a row
     // the sentence before it has just said cannot be shown.
     expect(host.querySelector(".wt-refusebox")?.textContent).toBe(

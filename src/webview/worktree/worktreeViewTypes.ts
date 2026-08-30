@@ -17,8 +17,13 @@
 export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
+import type { RemovalCheck } from "../../types/messages";
+
 export type {
   DestinationDisposition,
+  RemovalCheck,
+  RemovalCheckClass,
+  RemovalCheckOutcome,
   WorktreeAfterCreate,
   WorktreeCreateMode,
 } from "../../types/messages";
@@ -40,29 +45,28 @@ export type WorktreeAgentSource = "launch" | "process" | "registry" | "title" | 
 /** Where the row's ACTIVITY came from. `output` / `title` / `none` are fallbacks. */
 export type WorktreeActivitySource = "hook" | "output" | "title" | "registry" | "none";
 
-/** Every non-zero field is named in the remove confirmation. */
-export interface WorktreeRemoveBlocker {
-  /** Identifies THIS blocker set; the confirmation is bound to it. */
+/**
+ * The removal report the panel renders.
+ *
+ * `checks` replaced a record of booleans and counts. That record could not say
+ * that a check did not RUN — an unreadable `git status` and a genuinely clean
+ * worktree both arrived as `dirty: false` — on the one action that cannot be
+ * undone (worktree-rpc.md § 2.5).
+ */
+export interface WorktreeRemoveReport {
+  /** Identifies THIS report; the confirmation is bound to it. */
   fingerprint: string;
-  dirty: boolean;
-  untracked: number;
-  idlePanes: number;
-  /** Rows here whose activity is running or waiting — refused, never confirmable. */
-  busyAgents: number;
-  externalAgents: number;
-  locked: boolean;
-  /** Main worktree — never removable; no confirm can override it. */
-  isMain: boolean;
+  checks: readonly RemovalCheck[];
   /**
    * Worktrees registered INSIDE this one. Refused, never confirmable: git's
    * `remove --force` treats a nested registered worktree as ordinary untracked
    * content, deleting the child's files and leaving a prunable child record,
    * and a confirmation about worktree A cannot honestly describe losing B.
    *
-   * An array because a parent can hold more than one child, and naming only the
-   * first would understate the loss.
+   * Beside the checks because the refusal NAMES them; a check carries an outcome
+   * and a magnitude, not a row set.
    */
-  containsWorktrees: readonly { worktreeId: string; displayPath: string }[];
+  contained: readonly { worktreeId: string; displayPath: string }[];
 }
 
 /**
@@ -88,7 +92,7 @@ export interface WorktreeActionResult {
    * notice says what could not be checked, and "something" is not an answer.
    */
   unreadable?: readonly string[];
-  needsConfirm?: WorktreeRemoveBlocker;
+  needsConfirm?: WorktreeRemoveReport;
   /**
    * The row this notice was about, once that row has left the tree.
    *

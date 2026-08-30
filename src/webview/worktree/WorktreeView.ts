@@ -1474,13 +1474,13 @@ export class WorktreeView {
     // A blocked destructive action reopens the confirmation rather than reporting
     // a dead end — the blocker set is what the user has to answer.
     if (result.needsConfirm && info) {
-      const blocker = result.needsConfirm;
+      const report = result.needsConfirm;
       actions.push({
         label: "Force remove…",
         onClick: () =>
           this.openRemoveDialog({
             info,
-            blocker,
+            report,
             agentRows: this.rowsFor(info.id),
             degradedSources: this.degradedSources(),
           }),

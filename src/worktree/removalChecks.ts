@@ -1,0 +1,114 @@
+// src/worktree/removalChecks.ts — The removal assessment, as the wire carries it.
+//
+// The host has always computed something richer than it sent. `evaluateRemoval`
+// returns a three-member union that knows the difference between "there is no
+// risk" and "the risk could not be read"; the wire flattened it to a record of
+// booleans and counts, on which those two are indistinguishable. This projects
+// the assessment onto the check model instead (worktree-rpc.md § 2.5).
+//
+// It INVENTS nothing. Every check here has a source in the assessment already,
+// and `notApplicable` — the fourth outcome — is never produced, because the
+// sources that can answer "the question does not arise" are the ones WT-013.1
+// adds.
+
+import type { RemovalCheck, RemovalCheckClass } from "../types/messages";
+import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
+
+/**
+ * Every check the model can report, with the class that decides what its failure
+ * costs (worktree-removal.md § 2.2), and the source whose failure leaves it
+ * unproven.
+ *
+ * Declared as one table rather than assembled per assessment kind so that
+ * "which checks exist" has a single answer — a check that appears in one branch
+ * and not another is how a UI ends up rendering a shorter list for a worse
+ * outcome.
+ */
+const CATALOGUE: readonly { id: string; cls: RemovalCheckClass; source: UnreadableSource }[] = [
+  { id: "isMain", cls: "refusal", source: "listing" },
+  { id: "busyAgents", cls: "refusal", source: "sessions" },
+  { id: "containsWorktrees", cls: "refusal", source: "listing" },
+  { id: "dirty", cls: "confirmable", source: "status" },
+  { id: "untracked", cls: "confirmable", source: "status" },
+  { id: "idlePanes", cls: "confirmable", source: "sessions" },
+  { id: "externalAgents", cls: "confirmable", source: "sessions" },
+  { id: "locked", cls: "confirmable", source: "status" },
+];
+
+/** The whole catalogue, every check unproven. */
+function allUnproven(unreadable: readonly UnreadableSource[]): readonly RemovalCheck[] {
+  const named = new Set(unreadable);
+  return CATALOGUE.map((entry) => ({
+    id: entry.id,
+    cls: entry.cls,
+    outcome: "unproven" as const,
+    // An `unavailable` assessment carries no evidence at all, so no check can be
+    // reported as passed — not only the ones whose own source failed. Naming the
+    // sources that did fail is what keeps the report honest about which of them
+    // is the reason.
+    ...(named.has(entry.source) ? { detail: `The ${entry.source} could not be read.` } : {}),
+  }));
+}
+
+function check(id: string, failed: boolean, count?: number): RemovalCheck {
+  const entry = CATALOGUE.find((e) => e.id === id);
+  if (entry === undefined) {
+    throw new Error(`"${id}" is not a removal check.`);
+  }
+  return {
+    id,
+    cls: entry.cls,
+    outcome: failed ? "failed" : "passed",
+    ...(count === undefined ? {} : { count }),
+  };
+}
+
+/**
+ * The assessment, as checks. Total over the three kinds `evaluateRemoval`
+ * returns.
+ *
+ * A `refused` assessment reports only the refusal-class checks: it carries no
+ * evidence, because nothing about the confirmable risk was gathered once the
+ * removal was already refused. Reporting the confirmable ones as `passed` there
+ * would claim a check ran that never did.
+ */
+export function checksFor(assessment: RemovalAssessment): readonly RemovalCheck[] {
+  switch (assessment.kind) {
+    case "unavailable":
+      return allUnproven(assessment.unreadable);
+    case "refused":
+      return [
+        check("isMain", assessment.isMain),
+        check("busyAgents", assessment.busyAgents > 0, assessment.busyAgents),
+        check("containsWorktrees", assessment.containsWorktrees.length > 0, assessment.containsWorktrees.length),
+      ];
+    case "confirmable": {
+      const e = assessment.evidence;
+      return [
+        check("isMain", false),
+        check("busyAgents", false, 0),
+        check("containsWorktrees", false, 0),
+        check("dirty", e.dirtyPaths.length > 0, e.dirtyPaths.length),
+        check("untracked", e.untrackedPaths.length > 0, e.untrackedPaths.length),
+        check("idlePanes", e.paneIds.length > 0, e.paneIds.length),
+        check("externalAgents", e.externalSessionIds.length > 0, e.externalSessionIds.length),
+        check("locked", e.locked),
+      ];
+    }
+  }
+}
+
+/** Does any refusal-class check stand? No confirmation can authorize this removal. */
+export function isRefusedByChecks(checks: readonly RemovalCheck[]): boolean {
+  return checks.some((c) => c.cls === "refusal" && c.outcome === "failed");
+}
+
+/** The count a check reported, or 0 — the shape the panel's clauses are keyed on. */
+export function countOf(checks: readonly RemovalCheck[], id: string): number {
+  return checks.find((c) => c.id === id)?.count ?? 0;
+}
+
+/** Did this check fail? Unproven is not failed, and must not render as passed either. */
+export function failed(checks: readonly RemovalCheck[], id: string): boolean {
+  return checks.find((c) => c.id === id)?.outcome === "failed";
+}

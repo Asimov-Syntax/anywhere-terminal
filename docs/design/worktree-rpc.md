@@ -230,6 +230,8 @@ export interface RemovalCheck {
   readonly id: string;
   readonly cls: RemovalCheckClass;
   readonly outcome: RemovalCheckOutcome;
+  /** How many, where the check counts something. Separate from `detail` — see below. */
+  readonly count?: number;
   /** Bounded, already safe to render. */
   readonly detail?: string;
 }
@@ -255,6 +257,11 @@ export interface BranchDeleteRequest {
   readonly fingerprint: string;
 }
 ```
+
+`count` is a field of its own rather than a number embedded in `detail`. The report renders a
+magnitude inside its own element — "**7 untracked files** in the folder." — so a count that arrived
+only as prose could be re-rendered only by parsing a number back out of a display string, which is
+not a contract. `detail` stays what its name says: bounded text, already safe to render.
 
 `notApplicable` is on the wire because the UI must not render it as `passed`
 ([worktree-removal.md](worktree-removal.md) § 2.2). `cls` travels with each check because the UI's

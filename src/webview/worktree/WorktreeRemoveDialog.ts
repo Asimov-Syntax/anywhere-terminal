@@ -17,11 +17,18 @@ import { dialogTitle, openDialogShell, textButton } from "./worktreeDialogShell"
 import { presentedActivity } from "./worktreeFormat";
 import { ICON_LOCK, ICON_WARNING, ICON_WINDOW } from "./worktreeIcons";
 import { renderAgentRow } from "./worktreeTreeView";
-import type { PresenceDegradation, WorktreeAgentRow, WorktreeInfo, WorktreeRemoveBlocker } from "./worktreeViewTypes";
+import { countOf, failed, isRefusedByChecks } from "../../worktree/removalChecks";
+import type {
+  PresenceDegradation,
+  RemovalCheck,
+  WorktreeAgentRow,
+  WorktreeInfo,
+  WorktreeRemoveReport,
+} from "./worktreeViewTypes";
 
 export interface WorktreeRemoveDialogDeps {
   info: WorktreeInfo;
-  blocker: WorktreeRemoveBlocker;
+  report: WorktreeRemoveReport;
   /** Rows in this worktree; the refusal names the busy ones. */
   agentRows?: WorktreeAgentRow[];
   /**
@@ -38,9 +45,15 @@ export interface WorktreeRemoveDialogDeps {
   now?: number;
 }
 
-/** True when no confirmation can authorize this removal (§ 3.3, design.md D4). */
-export function isRemoveRefused(blocker: WorktreeRemoveBlocker): boolean {
-  return blocker.isMain || blocker.busyAgents > 0 || blocker.containsWorktrees.length > 0;
+/**
+ * True when no confirmation can authorize this removal (§ 3.3, design.md D4).
+ *
+ * Reads the class the host sent rather than re-listing which checks refuse.
+ * The old form named `isMain`, `busyAgents` and `containsWorktrees` here as
+ * well as host-side, so the safety rule lived in two places that could drift.
+ */
+export function isRemoveRefused(checks: readonly RemovalCheck[]): boolean {
+  return isRefusedByChecks(checks);
 }
 
 function blockerItem(icon: string, build: (span: HTMLElement) => void): HTMLLIElement {
@@ -62,42 +75,45 @@ function countLine(span: HTMLElement, count: string, rest: string): void {
 }
 
 /** Every non-zero blocker, in one list, so one confirmation covers the whole risk. */
-export function buildBlockerList(blocker: WorktreeRemoveBlocker, info: WorktreeInfo): HTMLElement {
+export function buildBlockerList(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
+  const untracked = countOf(checks, "untracked");
+  const idlePanes = countOf(checks, "idlePanes");
+  const externalAgents = countOf(checks, "externalAgents");
   const list = document.createElement("ul");
   list.className = "wt-blockers";
-  if (blocker.dirty) {
+  if (failed(checks, "dirty")) {
     list.appendChild(blockerItem(ICON_WARNING, (s) => countLine(s, "Tracked files", "have uncommitted changes.")));
   }
-  if (blocker.untracked > 0) {
+  if (untracked > 0) {
     list.appendChild(
       blockerItem(ICON_WARNING, (s) =>
-        countLine(s, `${blocker.untracked} untracked file${blocker.untracked === 1 ? "" : "s"}`, "in the folder."),
+        countLine(s, `${untracked} untracked file${untracked === 1 ? "" : "s"}`, "in the folder."),
       ),
     );
   }
-  if (blocker.idlePanes > 0) {
+  if (idlePanes > 0) {
     list.appendChild(
       blockerItem(ICON_TERMINAL, (s) =>
         countLine(
           s,
-          `${blocker.idlePanes} idle terminal${blocker.idlePanes === 1 ? "" : "s"}`,
+          `${idlePanes} idle terminal${idlePanes === 1 ? "" : "s"}`,
           "in this window have it as their working directory.",
         ),
       ),
     );
   }
-  if (blocker.externalAgents > 0) {
+  if (externalAgents > 0) {
     list.appendChild(
       blockerItem(ICON_WINDOW, (s) =>
         countLine(
           s,
-          `${blocker.externalAgents} session${blocker.externalAgents === 1 ? "" : "s"} in another window`,
-          blocker.externalAgents === 1 ? "is rooted here." : "are rooted here.",
+          `${externalAgents} session${externalAgents === 1 ? "" : "s"} in another window`,
+          externalAgents === 1 ? "is rooted here." : "are rooted here.",
         ),
       ),
     );
   }
-  if (blocker.locked) {
+  if (failed(checks, "locked")) {
     list.appendChild(
       blockerItem(ICON_LOCK, (s) => {
         const b = document.createElement("b");
@@ -119,19 +135,20 @@ export function buildBlockerList(blocker: WorktreeRemoveBlocker, info: WorktreeI
  * only appears when it is true — a warning that names two terminals that do not
  * exist is the same class of lie as a state dot that is not live.
  */
-function buildForceWarning(blocker: WorktreeRemoveBlocker, info: WorktreeInfo): HTMLElement {
+function buildForceWarning(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
+  const idlePanes = countOf(checks, "idlePanes");
   const box = document.createElement("div");
   box.className = "wt-warnbox";
   const lead = document.createElement("b");
   lead.textContent = "Force remove deletes everything under that path, irreversibly";
   box.append(lead, document.createTextNode(" — including files written after you confirm."));
-  if (blocker.locked) {
+  if (failed(checks, "locked")) {
     box.append(document.createTextNode(" The lock is overridden."));
   }
-  if (blocker.idlePanes > 0) {
+  if (idlePanes > 0) {
     box.append(
       document.createTextNode(
-        ` The ${blocker.idlePanes === 1 ? "terminal keeps" : `${blocker.idlePanes} terminals keep`} running in a deleted directory.`,
+        ` The ${idlePanes === 1 ? "terminal keeps" : `${idlePanes} terminals keep`} running in a deleted directory.`,
       ),
     );
   }
@@ -147,8 +164,9 @@ function buildForceWarning(blocker: WorktreeRemoveBlocker, info: WorktreeInfo): 
 
 /** Mount the remove dialog — confirmation or refusal — and return its disposer. */
 export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemoveDialogDeps): () => void {
-  const { info, blocker } = deps;
-  const refused = isRemoveRefused(blocker);
+  const { info } = deps;
+  const { checks, contained } = deps.report;
+  const refused = isRemoveRefused(checks);
   const branch = info.branch ?? info.displayPath;
 
   const shell = openDialogShell(root, {
@@ -192,11 +210,11 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     // Three refusal reasons, three explanations. An if/else over two of them
     // would render the agent copy for a containment refusal — telling the user
     // to stop an agent that is not running (round-1 P1 / oracle O3).
-    if (blocker.isMain) {
+    if (failed(checks, "isMain")) {
       lead.textContent = "This is the repository's main worktree.";
       box.append(lead, document.createTextNode(" It cannot be removed — no confirmation overrides it."));
-    } else if (blocker.containsWorktrees.length > 0) {
-      const n = blocker.containsWorktrees.length;
+    } else if (failed(checks, "containsWorktrees")) {
+      const n = countOf(checks, "containsWorktrees");
       lead.textContent =
         n === 1 ? "Another worktree lives inside this one." : `${n} other worktrees live inside this one.`;
       box.append(
@@ -207,7 +225,7 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       );
       const nested = document.createElement("ul");
       nested.className = "wt-blockers";
-      for (const child of blocker.containsWorktrees) {
+      for (const child of contained) {
         const li = document.createElement("li");
         li.textContent = child.displayPath;
         nested.appendChild(li);
@@ -296,14 +314,14 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     return shell.dispose;
   }
 
-  shell.dialog.append(buildBlockerList(blocker, info), buildForceWarning(blocker, info));
+  shell.dialog.append(buildBlockerList(checks, info), buildForceWarning(checks, info));
   const cancelBtn = textButton("Cancel", "plain", cancel);
   shell.actions.append(
     cancelBtn,
     textButton("Force remove", "danger", () => {
       // Re-sent with the fingerprint the user was SHOWN: force is authorization for
       // this blocker set, not a blanket one.
-      deps.onConfirm(blocker.fingerprint);
+      deps.onConfirm(deps.report.fingerprint);
       shell.dispose();
     }),
   );

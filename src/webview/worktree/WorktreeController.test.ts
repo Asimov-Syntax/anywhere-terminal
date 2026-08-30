@@ -1463,20 +1463,30 @@ describe("what a mutation did comes back to the panel", () => {
         kind: "blocked",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
         fingerprint: "fp-1",
-        blocker: {
-          dirty: true,
-          untracked: 2,
-          idlePanes: 1,
-          busyAgents: 0,
-          externalAgents: 0,
-          locked: false,
-          isMain: false,
-          containsWorktrees: [],
+        assessment: {
+          checks: [
+            { id: "isMain", cls: "refusal", outcome: "passed" },
+            { id: "busyAgents", cls: "refusal", outcome: "passed", count: 0 },
+            { id: "containsWorktrees", cls: "refusal", outcome: "passed", count: 0 },
+            { id: "dirty", cls: "confirmable", outcome: "failed", count: 1 },
+            { id: "untracked", cls: "confirmable", outcome: "failed", count: 2 },
+            { id: "idlePanes", cls: "confirmable", outcome: "failed", count: 1 },
+            { id: "externalAgents", cls: "confirmable", outcome: "passed", count: 0 },
+            { id: "locked", cls: "confirmable", outcome: "passed" },
+          ],
+          contained: [],
         },
       },
     });
 
-    expect(results(h)[0]?.needsConfirm).toMatchObject({ fingerprint: "fp-1", dirty: true, untracked: 2 });
+    const confirmed = results(h)[0]?.needsConfirm;
+    expect(confirmed?.fingerprint).toBe("fp-1");
+    expect(confirmed?.checks).toEqual(
+      expect.arrayContaining([
+        { id: "dirty", cls: "confirmable", outcome: "failed", count: 1 },
+        { id: "untracked", cls: "confirmable", outcome: "failed", count: 2 },
+      ]),
+    );
   });
 
   it("gives a refusal an empty fingerprint, because nothing can authorize it", () => {
@@ -1490,20 +1500,22 @@ describe("what a mutation did comes back to the panel", () => {
         kind: "blocked",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
         fingerprint: null,
-        blocker: {
-          dirty: false,
-          untracked: 0,
-          idlePanes: 0,
-          busyAgents: 1,
-          externalAgents: 0,
-          locked: false,
-          isMain: false,
-          containsWorktrees: [],
+        assessment: {
+          checks: [
+            { id: "isMain", cls: "refusal", outcome: "passed" },
+            { id: "busyAgents", cls: "refusal", outcome: "failed", count: 1 },
+            { id: "containsWorktrees", cls: "refusal", outcome: "passed", count: 0 },
+          ],
+          contained: [],
         },
       },
     });
 
-    expect(results(h)[0]?.needsConfirm).toMatchObject({ fingerprint: "", busyAgents: 1 });
+    const refused = results(h)[0]?.needsConfirm;
+    expect(refused?.fingerprint).toBe("");
+    expect(refused?.checks).toEqual(
+      expect.arrayContaining([{ id: "busyAgents", cls: "refusal", outcome: "failed", count: 1 }]),
+    );
   });
 
   it("replaces the previous result for the same verb and scope rather than stacking", () => {
@@ -1543,15 +1555,18 @@ describe("what a mutation did comes back to the panel", () => {
         kind: "blocked",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
         fingerprint: "fp-1",
-        blocker: {
-          dirty: true,
-          untracked: 0,
-          idlePanes: 0,
-          busyAgents: 0,
-          externalAgents: 0,
-          locked: false,
-          isMain: false,
-          containsWorktrees: [],
+        assessment: {
+          checks: [
+            { id: "isMain", cls: "refusal", outcome: "passed" },
+            { id: "busyAgents", cls: "refusal", outcome: "passed", count: 0 },
+            { id: "containsWorktrees", cls: "refusal", outcome: "passed", count: 0 },
+            { id: "dirty", cls: "confirmable", outcome: "failed", count: 1 },
+            { id: "untracked", cls: "confirmable", outcome: "passed", count: 0 },
+            { id: "idlePanes", cls: "confirmable", outcome: "passed", count: 0 },
+            { id: "externalAgents", cls: "confirmable", outcome: "passed", count: 0 },
+            { id: "locked", cls: "confirmable", outcome: "passed" },
+          ],
+          contained: [],
         },
       },
     });

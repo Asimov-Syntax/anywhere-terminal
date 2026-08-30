@@ -7,7 +7,36 @@ import { afterEach, describe, expect, it } from "vitest";
 import { isRemoveRefused, openWorktreeRemoveDialog } from "./WorktreeRemoveDialog";
 import { agentRow, confirmableBlocker, refusedBlocker, worktree } from "./worktreeFixtures";
 import { CONFIRMATION_CEILING_MS } from "./worktreeFormat";
-import type { PresenceDegradation, WorktreeAgentRow, WorktreeInfo, WorktreeRemoveBlocker } from "./worktreeViewTypes";
+import type {
+  PresenceDegradation,
+  RemovalCheck,
+  WorktreeAgentRow,
+  WorktreeInfo,
+  WorktreeRemoveReport,
+} from "./worktreeViewTypes";
+
+/**
+ * A report with named checks overridden. Keeps each case reading as the one
+ * thing it varies — `busy(0)`, `main(true)` — rather than as a whole check list
+ * respelled per test.
+ */
+function withChecks(
+  base: WorktreeRemoveReport,
+  over: Partial<Record<string, { outcome: RemovalCheck["outcome"]; count?: number }>>,
+  contained: WorktreeRemoveReport["contained"] = base.contained,
+): WorktreeRemoveReport {
+  return {
+    ...base,
+    contained,
+    checks: base.checks.map((c) => {
+      const patch = over[c.id];
+      return patch === undefined ? c : { ...c, outcome: patch.outcome, ...(patch.count === undefined ? {} : { count: patch.count }) };
+    }),
+  };
+}
+
+const passed = { outcome: "passed" as const, count: 0 };
+const failedWith = (count?: number) => ({ outcome: "failed" as const, ...(count === undefined ? {} : { count }) });
 
 const SPIKE: WorktreeInfo = worktree({
   id: "/Volumes/ext/anywhere-terminal-wt/spike-hooks",
@@ -22,7 +51,7 @@ afterEach(() => {
 });
 
 function open(
-  blocker: WorktreeRemoveBlocker,
+  report: WorktreeRemoveReport,
   over: {
     info?: WorktreeInfo;
     agentRows?: WorktreeAgentRow[];
@@ -36,7 +65,7 @@ function open(
   const shown: string[] = [];
   openWorktreeRemoveDialog(host, {
     info: over.info ?? SPIKE,
-    blocker,
+    report,
     agentRows: over.agentRows,
     degradedSources: over.degradedSources ?? [],
     now: over.now,
@@ -50,19 +79,19 @@ const NESTED = [{ worktreeId: "/repo-wt/spike/inner", displayPath: "/repo-wt/spi
 
 describe("isRemoveRefused", () => {
   it("refuses on a busy agent, the main worktree, or a nested worktree, and nothing else", () => {
-    expect(isRemoveRefused(refusedBlocker)).toBe(true);
-    expect(isRemoveRefused({ ...refusedBlocker, busyAgents: 0, isMain: true })).toBe(true);
+    expect(isRemoveRefused(refusedBlocker.checks)).toBe(true);
+    expect(isRemoveRefused(withChecks(refusedBlocker, { busyAgents: passed, isMain: failedWith() }).checks)).toBe(true);
     // D4: git's `remove --force` would delete the child's files and leave a
     // prunable child record behind, and no confirmation about THIS worktree can
     // honestly describe losing that one.
-    expect(isRemoveRefused({ ...refusedBlocker, busyAgents: 0, containsWorktrees: NESTED })).toBe(true);
-    expect(isRemoveRefused(confirmableBlocker)).toBe(false);
+    expect(isRemoveRefused(withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: failedWith(NESTED.length) }, NESTED).checks)).toBe(true);
+    expect(isRemoveRefused(confirmableBlocker.checks)).toBe(false);
   });
 });
 
 describe("remove worktree — refused for containment (design.md D4)", () => {
   function openNested(children = NESTED) {
-    return open({ ...refusedBlocker, busyAgents: 0, containsWorktrees: children });
+    return open(withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: failedWith(children.length) }, children));
   }
 
   it("offers no confirm button", () => {
@@ -96,7 +125,7 @@ describe("remove worktree — refused for containment (design.md D4)", () => {
 
   it("still explains the main worktree as the main worktree when both apply", () => {
     // isMain is the more fundamental refusal and stays the headline.
-    const { host } = open({ ...refusedBlocker, busyAgents: 0, isMain: true, containsWorktrees: NESTED });
+    const { host } = open(withChecks(refusedBlocker, { busyAgents: passed, isMain: failedWith(), containsWorktrees: failedWith(NESTED.length) }, NESTED));
     expect(host.querySelector(".wt-refusebox")?.textContent).toContain("main worktree");
   });
 });
@@ -130,7 +159,7 @@ describe("remove worktree — confirmation (§ 11)", () => {
   });
 
   it("omits a clause for a blocker that is not present", () => {
-    const { host } = open({ ...confirmableBlocker, locked: false, idlePanes: 0 });
+    const { host } = open(withChecks(confirmableBlocker, { locked: passed, idlePanes: passed }));
     const warn = host.querySelector(".wt-warnbox")?.textContent ?? "";
     expect(warn).not.toContain("The lock is overridden");
     expect(warn).not.toContain("deleted directory");
@@ -276,7 +305,7 @@ describe("remove worktree — refused (§ 12)", () => {
 
   it("explains the main worktree separately, since no confirmation overrides it", () => {
     const main = worktree({ id: "/repo", kind: "main", branch: "main" });
-    const { host } = open({ ...refusedBlocker, busyAgents: 0, isMain: true }, { info: main });
+    const { host } = open(withChecks(refusedBlocker, { busyAgents: passed, isMain: failedWith() }), { info: main });
     expect(host.querySelector(".wt-refusebox")?.textContent).toContain("main worktree");
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
   });
@@ -287,7 +316,7 @@ describe("the confirmation states what it destroys and what it spares", () => {
     // An invariant-level check: each clause is asserted elsewhere, but a user
     // reads the box once. Losing any one of them turns the confirmation into a
     // partial account of what force does.
-    const { host } = open({ ...confirmableBlocker, idlePanes: 2 });
+    const { host } = open(withChecks(confirmableBlocker, { idlePanes: failedWith(2) }));
     const text = host.querySelector(".wt-warnbox")?.textContent ?? "";
     expect(text).toMatch(/irreversibl/i);
     expect(text).toMatch(/branch/i);

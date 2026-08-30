@@ -1229,7 +1229,7 @@ function toActionResult(msg: WorktreeMutationResultMessage): WorktreeActionResul
         repoId: msg.repoId,
         worktreeId: msg.result.worktreeId,
         outcome: "error",
-        needsConfirm: { ...msg.result.blocker, fingerprint: msg.result.fingerprint ?? "" },
+        needsConfirm: { ...msg.result.assessment, fingerprint: msg.result.fingerprint ?? "" },
       };
     default:
       return { action: msg.verb, ...scope, outcome: "error", error: msg.result.message };

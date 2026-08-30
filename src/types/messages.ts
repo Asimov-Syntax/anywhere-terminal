@@ -818,6 +818,12 @@ export interface RemovalCheck {
   readonly id: string;
   readonly cls: RemovalCheckClass;
   readonly outcome: RemovalCheckOutcome;
+  /**
+   * How many, where the check counts something. Separate from `detail` because
+   * the panel renders the magnitude inside its own element, and a number that
+   * arrived as prose can only be re-rendered by parsing it back out.
+   */
+  readonly count?: number;
   /** Bounded, already safe to render. */
   readonly detail?: string;
 }
@@ -1935,21 +1941,22 @@ export interface WorktreeRowActivationMessage {
  * is why only it offers a retry (design.md D16).
  */
 /**
- * The blocker set a removal was stopped by, as the panel renders it.
+ * The assessment a removal was stopped by, as the panel renders it.
  *
  * Carried on the message because the confirmation the panel reopens must name
  * exactly what the host assessed — a webview that recomputed this from the tree
  * would be authorizing a different set than the one the fingerprint binds.
+ *
+ * This replaced a record of booleans and counts. That record could not express
+ * ignored content, a proof-gated option, `notApplicable`, or a per-check class,
+ * and above all it could not say a check had not RUN: an unreadable `git status`
+ * and a clean worktree both arrived as `dirty: false`, on the one action that
+ * cannot be undone (worktree-rpc.md § 3.1).
  */
-export interface WorktreeRemoveBlockerPayload {
-  dirty: boolean;
-  untracked: number;
-  idlePanes: number;
-  busyAgents: number;
-  externalAgents: number;
-  locked: boolean;
-  isMain: boolean;
-  containsWorktrees: readonly { worktreeId: string; displayPath: string }[];
+export interface WorktreeRemoveAssessmentPayload {
+  readonly checks: readonly RemovalCheck[];
+  /** Named, not just counted — the refusal tells the user what to remove first. */
+  readonly contained: readonly { worktreeId: string; displayPath: string }[];
 }
 
 export interface WorktreeMutationResultMessage {
@@ -1963,7 +1970,12 @@ export interface WorktreeMutationResultMessage {
     | { kind: "error"; message: string }
     | { kind: "indeterminate"; observed: string }
     | { kind: "unavailable"; unreadable: readonly string[] }
-    | { kind: "blocked"; worktreeId: string; fingerprint: string | null; blocker: WorktreeRemoveBlockerPayload };
+    | {
+        kind: "blocked";
+        worktreeId: string;
+        fingerprint: string | null;
+        assessment: WorktreeRemoveAssessmentPayload;
+      };
 }
 
 /**

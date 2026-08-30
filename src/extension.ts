@@ -46,7 +46,7 @@ import { PtyLoadError } from "./types/errors";
 import type {
   ExtensionToWebViewMessage,
   WorktreeMutationResultMessage,
-  WorktreeRemoveBlockerPayload,
+  WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
 import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
@@ -67,6 +67,7 @@ import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
+import { checksFor } from "./worktree/removalChecks";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import type { MutationOutcome } from "./worktree/worktreeMutationService";
@@ -193,31 +194,12 @@ export function createDelegationReader(
  * the same shape here on purpose: the panel decides what to offer from the
  * fields, and a refusal is exactly a set whose refusing fields are non-zero.
  */
-function toBlockerPayload(
+function toAssessmentPayload(
   assessment: Exclude<RemovalAssessment, { kind: "unavailable" }>,
-): WorktreeRemoveBlockerPayload {
-  if (assessment.kind === "refused") {
-    return {
-      dirty: false,
-      untracked: 0,
-      idlePanes: 0,
-      busyAgents: assessment.busyAgents,
-      externalAgents: 0,
-      locked: false,
-      isMain: assessment.isMain,
-      containsWorktrees: assessment.containsWorktrees,
-    };
-  }
-  const e = assessment.evidence;
+): WorktreeRemoveAssessmentPayload {
   return {
-    dirty: e.dirtyPaths.length > 0,
-    untracked: e.untrackedPaths.length,
-    idlePanes: e.paneIds.length,
-    busyAgents: 0,
-    externalAgents: e.externalSessionIds.length,
-    locked: e.locked,
-    isMain: false,
-    containsWorktrees: [],
+    checks: checksFor(assessment),
+    contained: assessment.kind === "refused" ? assessment.containsWorktrees : [],
   };
 }
 
@@ -246,7 +228,7 @@ function toResultMessage(outcome: MutationOutcome): WorktreeMutationResultMessag
           kind: "blocked",
           worktreeId: outcome.worktreeId,
           fingerprint: outcome.fingerprint,
-          blocker: toBlockerPayload(outcome.assessment),
+          assessment: toAssessmentPayload(outcome.assessment),
         },
       };
     default:
