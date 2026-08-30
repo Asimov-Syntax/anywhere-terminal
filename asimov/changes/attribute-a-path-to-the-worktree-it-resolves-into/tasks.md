@@ -90,7 +90,7 @@
     3. In `src/worktree/presenceProjector.ts` (+ `src/worktree/presenceProjector.test.ts`) and `src/worktree/presenceDeps.ts`, replace `prepareCwds`/`forgetCwd` and the two hand-written set differences with two resolver handles — panes and sessions — keeping the session handle's release gated on a successful registry read.
     4. In `src/extension.ts`, `src/worktree/repoRoots.ts`, `src/worktree/worktreeDeps.ts` and `src/providers/gitDecorationProvider.ts` (+ `src/providers/gitDecorationProvider.test.ts`), give each standing consumer its own handle over the one shared memo.
 
-- [ ] 3_2 Wire the resolved root into every surface that shows a file tree
+- [x] 3_2 Wire the resolved root into every surface that shows a file tree — verified: pnpm exec vitest run 'src/providers/fileTreeHost.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: .reviews/round-2.md; design.md#d7-a-resolution-that-lands-after-mount-updates-containment-never-the-mount
   - **Acceptance**:
@@ -98,6 +98,6 @@
     - Verify: unit src/providers/fileTreeHost.test.ts
   - **Plan**:
     1. In `src/providers/TerminalViewProvider.ts` and `src/providers/TerminalEditorProvider.ts`, pass a resolver handle into `FileTreeHost` on every construction, including editor revival through `src/providers/TerminalPanelSerializer.ts`, threading it from the shared memo in `src/extension.ts`.
-    2. Cover it where the gap was: a provider-level test that constructs each provider the way production does and asserts the root it posts. An injected-host test cannot see missing wiring.
+    2. Cover it where the gap was: `src/providers/resolvedRootWiring.test.ts`, a provider-level test that constructs each surface the way production does — sidebar, bottom panel, editor panel, revived editor panel — and asserts the root it posts. An injected-host test cannot see missing wiring.
     3. W1 — in `src/webview/fileTree/FileTreeController.ts` (+ `src/webview/fileTree/FileTreeController.test.ts`), apply a `workspace-root-changed` whose `rootPath` and generation are unchanged to the resolved pair alone, leaving search, the mounted tree and expanded paths intact.
     4. W2 — in `src/providers/gitDecorationProvider.ts` (+ `src/providers/gitDecorationProvider.test.ts`), let the workspace-folder handler clear stale state without a second full rebuild, so the post-resolution reset is the only authoritative one.

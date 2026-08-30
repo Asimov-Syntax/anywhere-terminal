@@ -825,6 +825,41 @@ describe("createGitDecorationProvider — a workspace folder reached through a s
     provider.dispose();
   });
 
+  it("rebuilds once per workspace-folder change, not twice", async () => {
+    // Round-2 W2. The handler reset immediately AND the resolution reset again
+    // when it landed, so one cold event scanned every decorated path and
+    // rebuilt every repository twice.
+    const emitter = createEmitter<void>();
+    const { paths } = symlinked({ "/link/repo": "/private/work/repo" });
+    const r = makeRepo("/private/work/repo", [{ path: "/private/work/repo/a.ts", status: Status.MODIFIED }]);
+    const { api } = makeApi({ repos: [r.repo] });
+    const { extObj } = makeExtension({ api });
+    const provider = createGitDecorationProvider({
+      getExtension: () => extObj as never,
+      getWorkspaceFolders: () => ["/link/repo"],
+      onDidChangeWorkspaceFolders: emitter.event,
+      paths,
+    });
+    for (let i = 0; i < 6; i++) {
+      await Promise.resolve();
+    }
+    const clears: number[] = [];
+    provider.onDidChange((d) => {
+      const cleared = d.changes.filter((c) => c.status === null).length;
+      if (cleared > 0) {
+        clears.push(cleared);
+      }
+    });
+
+    emitter.fire();
+    for (let i = 0; i < 6; i++) {
+      await Promise.resolve();
+    }
+
+    expect(clears).toHaveLength(1);
+    provider.dispose();
+  });
+
   it("rebuilds once the folder resolution lands, so the first pass is not the final answer", async () => {
     // Round-1 B2. `prepare` is fire-and-forget so the comparison can stay sync;
     // without a rebuild behind it the lexical fallback was permanent and a

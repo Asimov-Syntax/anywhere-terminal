@@ -835,6 +835,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultWatchCoordinator,
     worktreeHost,
     paneEvidence,
+    pathMemo,
   );
 
   context.subscriptions.push(
@@ -855,6 +856,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vaultWatchCoordinator,
     worktreeHost,
     paneEvidence,
+    pathMemo,
   );
 
   context.subscriptions.push(
@@ -874,6 +876,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         worktreeHost,
         paneEvidence,
         vaultService,
+        pathMemo,
       );
       context.subscriptions.push(panelDisposable);
     }),
@@ -893,6 +896,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         worktreeHost,
         paneEvidence,
         vaultService,
+        pathMemo,
       ),
     ),
   );

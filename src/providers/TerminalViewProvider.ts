@@ -17,6 +17,7 @@ import type {
   WebViewToExtensionMessage,
 } from "../types/messages";
 import { isWorktreeMessage } from "../types/messages";
+import { createTrackedPathResolver, type ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { buildContinuationPrompt } from "../vault/ContinuationPrompt";
 import type { VaultRefreshHint } from "../vault/cacheTypes";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
@@ -158,8 +159,18 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
      * (tests). Reports flow here whatever body this surface is showing.
      */
     private readonly paneEvidence: PaneEvidenceStore | null = null,
+    /**
+     * The window's shared path memo. Each host takes its own claim over it, so
+     * the webview can compare containment against where the root resolves —
+     * absent, every comparison stays lexical (D6, round-2 B1).
+     */
+    pathMemo: ResolvedPathMemo | null = null,
   ) {
-    this.fileTreeHost = new FileTreeHost(gitDecorationProvider, watcherPool);
+    this.fileTreeHost = new FileTreeHost(
+      gitDecorationProvider,
+      watcherPool,
+      pathMemo ? createTrackedPathResolver(pathMemo) : null,
+    );
   }
 
   resolveWebviewView(

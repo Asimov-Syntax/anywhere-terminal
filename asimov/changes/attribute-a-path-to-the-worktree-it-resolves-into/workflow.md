@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -49,3 +49,4 @@ Build notes:
 - Also seen once and never reproduced across ~12 later full runs: two failures in `src/extension.worktreeAssembly.test.ts` under three concurrent suites. No assertion was captured. Recorded as observed, not diagnosed.
 - Round-2 handback: B4 accepted and NOT fixed as remediation. Closing it needs an owner for "who still needs this path" over the shared memo, which either mints a lifecycle owner or restates D4 — a pane closing is not a structural filesystem change, so presence's retirement release is memory-bounding claiming D4's cover, and round-1 B4 (leak) and round-2 B4 (over-release) are irreconcilable until that owner exists. B1 rides along: its fix is "register a standing consumer with the shared memo", the same seam. W1/W2 sit inside B1's cone.
 - Round-2 plan (fastlane): D4 restated — it governs freshness, D6 governs release. D6 folds into ResolvedPathMemo, the owner 1_2 already minted, so this stays one change rather than spawning a child. 3_1's 10 files are one seam by construction: the memo's release signature changes, so every consumer handle moves with it; splitting would land a half-claimed memo. Rejected alternatives are in D6.
+- Round-2 build: `ResolvedPathMemo.prepare` deleted — every production consumer claims, and an unclaimed entry can never be released, so the API could only make leaks. Presence's `prepareCwds`/`forgetCwd` and both hand-written set differences went with it. Mutation testing: 9 mutations across 3_1 and 3_2, all killed; M4 (the session claim emptying on a failed read) survived the first pass and is the reason `keeps a session cwd resolved through a registry read that failed` exists. `gitDecorationProvider`'s resolve-failure branch is defensive and untested: `resolve` answers lexically rather than rejecting, so a failing realpath settles through the success branch.

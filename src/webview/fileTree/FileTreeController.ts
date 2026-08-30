@@ -150,11 +150,20 @@ export class FileTreeController {
   }
 
   handleWorkspaceRootChanged(msg: WorkspaceRootChangedMessage): void {
+    const remounts =
+      msg.rootPath !== this.lastWorkspaceRoot || msg.rootGeneration !== this.panel.getCurrentRootGeneration();
     this.lastWorkspaceRoot = msg.rootPath;
     // Recorded BEFORE the panel re-roots, so the mount it performs is compared
     // against the resolved root rather than picking it up a message later.
     this.panel.setResolvedWorkspaceRoot(msg.rootPath, msg.resolvedRootPath);
-    this.panel.handleRootChanged(msg);
+    // The host posts this a second time when the root's `realpath` lands, and
+    // that message re-roots nothing: same mount, same generation, only the
+    // containment root is new. Re-rooting on it would exit search, dispose the
+    // tree and drop every expanded path — losing the user's place because a
+    // syscall was slow (round-2 W1, D7).
+    if (remounts) {
+      this.panel.handleRootChanged(msg);
+    }
   }
 
   /**

@@ -173,23 +173,34 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
    * revisit that answer, leaving a symlink-spelled folder undecorated until
    * some unrelated Git event happened to fire (round-1 B2).
    */
-  function resolveFolders(): void {
+  function resolveFolders(owed: boolean): void {
+    const rebuild = () => {
+      if (!disposed) {
+        provider.reset();
+      }
+    };
     if (!options.paths) {
+      if (owed) {
+        rebuild();
+      }
       return;
     }
     folderPass += 1;
     const pass = folderPass;
-    void options.paths.prepare([], getWorkspaceFolders()).then(
-      () => {
-        if (!disposed && pass === folderPass) {
-          provider.reset();
-        }
-      },
-      () => {
-        // A folder that will not resolve keeps the lexical answer it has. There
-        // is nothing to rebuild for, and resetting would drop live decorations.
-      },
-    );
+    const settle = () => {
+      if (pass === folderPass) {
+        rebuild();
+      }
+    };
+    void options.paths.prepare([], getWorkspaceFolders()).then(settle, () => {
+      // Defensive, and untested because it is unreachable through a failing
+      // realpath: `ResolvedPathMemo.resolve` answers lexically rather than
+      // rejecting, so an unresolvable folder settles through the branch above
+      // and the rebuild a folder change owes is paid there.
+      if (owed) {
+        settle();
+      }
+    });
   }
 
   // Per-repository status maps keyed by rootUri.fsPath. The merged view is
@@ -724,13 +735,17 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
     if (disposed) {
       return;
     }
-    resolveFolders();
-    provider.reset();
+    // ONE rebuild, not two. Resetting here and again when the resolution lands
+    // scanned every decorated path and rebuilt every repository twice for one
+    // cold event; the post-resolution pass is the authoritative one and now
+    // owes the rebuild outright (round-2 W2).
+    resolveFolders(true);
   });
   persistentSubs.push(wsfSub);
 
   // The folders open at construction; the event above covers every later set.
-  resolveFolders();
+  // Nothing is decorated yet, so this pass owes no rebuild of its own.
+  resolveFolders(false);
 
   // Kick off acquisition asynchronously so construction never throws.
   tryAcquire();
