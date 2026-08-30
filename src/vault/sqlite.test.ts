@@ -752,3 +752,116 @@ describe("the CLI blames the right file too (round-2 W1)", () => {
     }
   });
 });
+
+describe("readSqlite: a snapshot is reused only while the store is unchanged", () => {
+  /** `mkdtemp` runs exactly once per snapshot production, so counting it counts
+   *  productions without substituting a fake snapshot for the real engine's. */
+  function countingDeps(counter: { n: number }, overrides: Partial<SqliteDeps> = {}): SqliteDeps {
+    return {
+      exec: vi.fn(async () => {
+        throw new Error("command not found: sqlite3"); // force the in-process engine
+      }),
+      exists: async (p) => {
+        try {
+          await fsp.access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      mkdtemp: async () => {
+        counter.n += 1;
+        return fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-"));
+      },
+      rmrf: (d) => fsp.rm(d, { recursive: true, force: true }),
+      hasNodeSqlite: async () => true,
+      ...overrides,
+    };
+  }
+
+  async function walStore(): Promise<{ dbFile: string; dir: string; live: InstanceType<typeof DatabaseSync> }> {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-vault-reuse-"));
+    const dbFile = path.join(dir, "live.sqlite");
+    const seed = new DatabaseSync(dbFile);
+    seed.exec("PRAGMA journal_mode=WAL");
+    seed.exec("CREATE TABLE t(id TEXT)");
+    seed.exec("INSERT INTO t VALUES ('base-row')");
+    seed.close();
+    const live = new DatabaseSync(dbFile);
+    live.exec("PRAGMA journal_mode=WAL");
+    return { dbFile, dir, live };
+  }
+
+  it("does not re-snapshot a store nobody has written to", async () => {
+    const { dbFile, dir, live } = await walStore();
+    const counter = { n: 0 };
+    const deps = countingDeps(counter);
+    try {
+      const first = await readSqlite(dbFile, "SELECT id FROM t", deps);
+      const second = await readSqlite(dbFile, "SELECT id FROM t", deps);
+
+      expect(first.status).toBe("ok");
+      expect(second.status).toBe("ok");
+      expect(second.rows).toEqual([{ id: "base-row" }]);
+      expect(counter.n).toBe(1);
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("never answers from the earlier snapshot once a session has been written", async () => {
+    const { dbFile, dir, live } = await walStore();
+    const counter = { n: 0 };
+    const deps = countingDeps(counter);
+    try {
+      await readSqlite(dbFile, "SELECT id FROM t", deps);
+      live.exec("INSERT INTO t VALUES ('wal-row')"); // committed, WAL-resident
+      const second = await readSqlite(dbFile, "SELECT id FROM t ORDER BY id", deps);
+
+      expect(second.status).toBe("ok");
+      expect(second.rows).toEqual([{ id: "base-row" }, { id: "wal-row" }]);
+      expect(counter.n).toBe(2);
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("shares one snapshot between the two entry points", async () => {
+    const { dbFile, dir, live } = await walStore();
+    const counter = { n: 0 };
+    const deps = countingDeps(counter);
+    try {
+      await readSqlite(dbFile, "SELECT id FROM t", deps);
+      const viaSnapshot = await withSqliteSnapshot(dbFile, async (s) => s.query("SELECT id FROM t"), deps);
+
+      expect(viaSnapshot.status).toBe("ok");
+      expect(viaSnapshot.status === "ok" ? viaSnapshot.value.rows : undefined).toEqual([{ id: "base-row" }]);
+      expect(counter.n).toBe(1);
+    } finally {
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a failure rather than serving the retained snapshot when the store goes unreadable", async () => {
+    const { dbFile, dir, live } = await walStore();
+    const counter = { n: 0 };
+    const deps = countingDeps(counter);
+    try {
+      const first = await readSqlite(dbFile, "SELECT id FROM t", deps);
+      expect(first.status).toBe("ok");
+
+      await fsp.chmod(dir, 0o000);
+      const second = await readSqlite(dbFile, "SELECT id FROM t", deps);
+
+      expect(second.status).not.toBe("ok");
+      expect(second.rows).toEqual([]);
+    } finally {
+      await fsp.chmod(dir, 0o700).catch(() => {});
+      live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});

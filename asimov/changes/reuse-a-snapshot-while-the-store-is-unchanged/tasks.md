@@ -33,7 +33,7 @@
     1. In `src/vault/snapshotPool.ts`, borrow and release entries by refcount, deleting a superseded entry after its last release, and add an idle interval and a `dispose` that deletes everything retained.
     2. Cover each release path, plus the case where a superseded entry is still borrowed when it is replaced.
 
-- [ ] 1_4 Read through the pool at both entry points
+- [x] 1_4 Read through the pool at both entry points — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 1_2, 1_3
   - **Refs**: design.md#d5-the-pool-sits-behind-the-existing-entry-points-not-beside-them
   - **Acceptance**:

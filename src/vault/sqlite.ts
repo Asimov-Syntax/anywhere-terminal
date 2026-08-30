@@ -34,6 +34,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { type FsPresence, presenceFromAccessError } from "../utils/fsPresence";
+import { type SnapshotLease, SnapshotPool } from "./snapshotPool";
 
 const execFileAsync = promisify(execFile);
 
@@ -112,6 +113,33 @@ export interface SqliteDeps {
    *  it exists so a test can act while a snapshot is genuinely in flight, which
    *  is the only way to prove the atomicity claim rather than assume it. */
   onSnapshotProgress?(step: number): void;
+  /**
+   * Where snapshots are borrowed from. Defaults to one pool per dep set, which in
+   * production means one process-wide pool: the same store is snapshotted once and
+   * reused while its stamp holds (reuse-a-snapshot-while-the-store-is-unchanged D5).
+   */
+  pool?: SnapshotPool;
+}
+
+/** One pool per dep set. Production always passes `defaultDeps`, so it gets exactly
+ *  one; a test that brings its own `mkdtemp`/`rmrf` gets a pool that honours them. */
+const poolsByDeps = new WeakMap<SqliteDeps, SnapshotPool>();
+
+function poolFor(deps: SqliteDeps): SnapshotPool {
+  if (deps.pool) {
+    return deps.pool;
+  }
+  let pool = poolsByDeps.get(deps);
+  if (!pool) {
+    pool = new SnapshotPool({ mkdtemp: () => deps.mkdtemp(), rmrf: (dir) => deps.rmrf(dir) });
+    poolsByDeps.set(deps, pool);
+  }
+  return pool;
+}
+
+/** Extension shutdown: no retained snapshot outlives the host that made it. */
+export async function disposeSnapshotPool(): Promise<void> {
+  await poolFor(defaultDeps).dispose();
 }
 
 async function defaultAccess(p: string): Promise<SqlitePresence> {
@@ -456,11 +484,10 @@ export async function withSqliteSnapshot<T>(
     return { status: found === "absent" ? "no-db" : "db-unreachable" };
   }
 
-  let tempDir: string | undefined;
+  let lease: SnapshotLease | undefined;
   try {
-    tempDir = await deps.mkdtemp();
-    const dbCopy = path.join(tempDir, "db.sqlite");
-    await takeSnapshot(deps, dbPath, dbCopy, useCli);
+    lease = await poolFor(deps).borrow(dbPath, (dest) => takeSnapshot(deps, dbPath, dest, useCli));
+    const dbCopy = lease.file;
     const snapshot: SqliteSnapshot = {
       query: (sql) => (useCli ? runQuery(deps, dbCopy, sql) : (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql)),
     };
@@ -471,9 +498,7 @@ export async function withSqliteSnapshot<T>(
     }
     return { status: "query-error", error: errorMessage(err) };
   } finally {
-    if (tempDir) {
-      await deps.rmrf(tempDir).catch(() => {});
-    }
+    await lease?.release();
   }
 }
 
@@ -489,11 +514,10 @@ async function readSqliteViaSnapshot(
   sql: string,
   useCli: boolean,
 ): Promise<SqliteResult> {
-  let tempDir: string | undefined;
+  let lease: SnapshotLease | undefined;
   try {
-    tempDir = await deps.mkdtemp();
-    const dbCopy = path.join(tempDir, "db.sqlite");
-    await takeSnapshot(deps, dbPath, dbCopy, useCli);
+    lease = await poolFor(deps).borrow(dbPath, (dest) => takeSnapshot(deps, dbPath, dest, useCli));
+    const dbCopy = lease.file;
     return useCli ? await runQuery(deps, dbCopy, sql) : await (deps.runNodeQuery ?? defaultRunNodeQuery)(dbCopy, sql);
   } catch (err) {
     if (isOpenFailure(err)) {
@@ -501,9 +525,7 @@ async function readSqliteViaSnapshot(
     }
     return { rows: [], status: "query-error", error: errorMessage(err) };
   } finally {
-    if (tempDir) {
-      await deps.rmrf(tempDir).catch(() => {});
-    }
+    await lease?.release();
   }
 }
 

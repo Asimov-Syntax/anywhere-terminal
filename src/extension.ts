@@ -53,6 +53,7 @@ import { escapePathForShell } from "./utils/shellEscape";
 import { MAX_DETAIL_LIMIT } from "./vault/readers/detail";
 import { listRunningClaudeSessions } from "./vault/readers/runningSessions";
 import { detectLaunchTargets } from "./vault/registry";
+import { disposeSnapshotPool } from "./vault/sqlite";
 import { formatEntryId, VAULT_AGENT_IDS } from "./vault/types";
 import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
@@ -1453,6 +1454,13 @@ export async function deactivate(): Promise<void> {
     } catch (err) {
       console.error("[AnyWhere Terminal] AgentHookController.dispose failed during deactivate:", err);
     }
+  }
+
+  // Retained store snapshots are real temp files; they must not outlive the host.
+  try {
+    await disposeSnapshotPool();
+  } catch (err) {
+    console.error("[AnyWhere Terminal] snapshot pool dispose failed during deactivate:", err);
   }
 
   if (!sm) {

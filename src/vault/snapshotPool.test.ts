@@ -4,6 +4,14 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SnapshotPool, type SnapshotPoolDeps } from "./snapshotPool";
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 describe("SnapshotPool", () => {
   let root: string;
   let dbPath: string;
@@ -121,9 +129,11 @@ describe("SnapshotPool", () => {
   it("propagates a production failure and leaves nothing retained", async () => {
     const pool = new SnapshotPool(deps);
 
-    await expect(pool.borrow(dbPath, async () => {
-      throw new Error("backup refused");
-    })).rejects.toThrow("backup refused");
+    await expect(
+      pool.borrow(dbPath, async () => {
+        throw new Error("backup refused");
+      }),
+    ).rejects.toThrow("backup refused");
 
     const after = await pool.borrow(dbPath, produce);
     await after.release();
@@ -132,18 +142,19 @@ describe("SnapshotPool", () => {
   });
   it("gives concurrent readers of one store a single snapshot", async () => {
     const pool = new SnapshotPool(deps);
-    let unblock!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      unblock = resolve;
-    });
+    const gate = deferred();
+    const started = deferred();
 
     const first = pool.borrow(dbPath, async (dest) => {
-      await blocked;
+      started.resolve();
+      await gate.promise;
       await produce(dest);
     });
-    await Promise.resolve();
+    // Wait for production to actually be in flight — a microtask tick is not enough,
+    // since `borrow` stats the store first.
+    await started.promise;
     const second = pool.borrow(dbPath, produce);
-    unblock();
+    gate.resolve();
 
     const [a, b] = await Promise.all([first, second]);
     expect(produced).toHaveLength(1);
@@ -154,20 +165,19 @@ describe("SnapshotPool", () => {
 
   it("keeps a shared unretained snapshot alive until its last reader is done", async () => {
     const pool = new SnapshotPool(deps);
-    let unblock!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      unblock = resolve;
-    });
+    const gate = deferred();
+    const started = deferred();
 
     // A write lands during production, so this snapshot is used once and never retained.
     const first = pool.borrow(dbPath, async (dest) => {
-      await blocked;
+      started.resolve();
+      await gate.promise;
       await produce(dest);
       await writeToWal();
     });
-    await Promise.resolve();
+    await started.promise;
     const second = pool.borrow(dbPath, produce);
-    unblock();
+    gate.resolve();
 
     const [a, b] = await Promise.all([first, second]);
     expect(b.file).toBe(a.file);
