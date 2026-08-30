@@ -15,7 +15,7 @@ import * as readline from "node:readline";
 import { isResolvedPathInside } from "../../utils/pathBoundary";
 import type { ReaderListCache, ReaderResultWithState } from "../cacheTypes";
 import { boundedPreview } from "../preview";
-import { readSqlite, writeSqlite } from "../sqlite";
+import { readSqlite, type SqliteStatus, writeSqlite } from "../sqlite";
 import { sameStamps, stampStoreFiles } from "../storeStamp";
 import {
   formatEntryId,
@@ -184,7 +184,7 @@ interface CodexJsonlMeta {
 }
 
 interface CodexThreadRowsRead {
-  status: "ok" | "no-db" | "no-sqlite3" | "query-error";
+  status: SqliteStatus;
   rows: Record<string, unknown>[];
   hasSource: boolean;
 }

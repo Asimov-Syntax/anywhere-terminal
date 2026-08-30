@@ -250,9 +250,10 @@ export async function readOpenCodeSessions(
 
   const result = await readSqliteFn(dbPath, OPENCODE_SESSION_SQL);
 
-  if (result.status === "query-error") {
+  if (result.status === "query-error" || result.status === "db-unreachable") {
     // Cache EMPTY sources so a query-error is retried next refresh, not reused as
-    // an empty success (oracle review).
+    // an empty success (oracle review). A store this process could not reach is the
+    // same case: unreadable, never an empty store (D6).
     return { entries: [], unreadable: 1, cache: { kind: "store", sources: {}, entries: [], unreadable: 1 } };
   }
   if (result.status !== "ok") {

@@ -42,7 +42,14 @@ const COPY_TIMEOUT_MS = 30000;
 /** `sqlite3 -json` output is bounded by the readers' LIMITs; keep headroom. */
 const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
-export type SqliteStatus = "ok" | "no-db" | "no-sqlite3" | "query-error";
+/** `no-db` means the database file is CONFIRMED not there. A path that could not
+ *  be reached at all — a directory denying access, an I/O error, a dead mount —
+ *  is `db-unreachable`, because "I could not look" is not "it is not there"
+ *  (tell-an-absent-session-from-an-unknown-one D6). */
+export type SqliteStatus = "ok" | "no-db" | "db-unreachable" | "no-sqlite3" | "query-error";
+
+/** What a presence check could establish about the database file. */
+export type SqlitePresence = "present" | "absent" | "unreachable";
 
 export interface SqliteResult {
   rows: Record<string, unknown>[];
@@ -64,6 +71,12 @@ export type SqliteSnapshotResult<T> =
 export interface SqliteDeps {
   exec(file: string, args: string[], options: { timeout: number }): Promise<{ stdout: string; stderr: string }>;
   exists(p: string): Promise<boolean>;
+  /**
+   * Presence WITH the reason a check failed, which `exists` collapses. Optional:
+   * a dep set that supplies only `exists` keeps today's behaviour, where anything
+   * other than "present" reads as absent (D6).
+   */
+  access?(p: string): Promise<SqlitePresence>;
   copy(src: string, dest: string): Promise<void>;
   mkdtemp(): Promise<string>;
   rmrf(dir: string): Promise<void>;
@@ -103,20 +116,34 @@ async function cloneOrCopy(src: string, dest: string): Promise<void> {
   await fs.copyFile(src, dest);
 }
 
+/**
+ * Which `fs.access` rejections prove the file is not there. ENOENT and ENOTDIR do
+ * — a missing entry, and a path whose parent is not a directory. Everything else
+ * (EACCES, EPERM, EIO, ELOOP, a dead mount) says only that this process could not
+ * find out, and MUST NOT be reported as absence (D6).
+ */
+export function presenceFromAccessError(err: unknown): SqlitePresence {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unreachable";
+}
+
+async function defaultAccess(p: string): Promise<SqlitePresence> {
+  try {
+    await fs.access(p);
+    return "present";
+  } catch (err) {
+    return presenceFromAccessError(err);
+  }
+}
+
 const defaultDeps: SqliteDeps = {
   exec: (file, args, options) =>
     execFileAsync(file, args, { timeout: options.timeout, maxBuffer: MAX_BUFFER_BYTES }).then(({ stdout, stderr }) => ({
       stdout: stdout.toString(),
       stderr: stderr.toString(),
     })),
-  exists: async (p) => {
-    try {
-      await fs.access(p);
-      return true;
-    } catch {
-      return false;
-    }
-  },
+  exists: async (p) => (await defaultAccess(p)) === "present",
+  access: defaultAccess,
   copy: (src, dest) => cloneOrCopy(src, dest),
   mkdtemp: () => fs.mkdtemp(path.join(os.tmpdir(), "at-vault-")),
   rmrf: (dir) => fs.rm(dir, { recursive: true, force: true }),
@@ -253,6 +280,16 @@ async function runQuery(deps: SqliteDeps, dbCopy: string, sql: string): Promise<
  * - `query-error`— copy/exec/parse failed (the `error` field carries detail)
  * - `ok`         — `rows` holds the parsed result (possibly empty)
  */
+/** One presence answer for both entry points, honouring `access` when the dep set
+ *  supplies it and degrading to `exists` when it does not. */
+async function presence(deps: SqliteDeps, dbPath: string): Promise<SqlitePresence> {
+  try {
+    return deps.access ? await deps.access(dbPath) : (await deps.exists(dbPath)) ? "present" : "absent";
+  } catch {
+    return "unreachable";
+  }
+}
+
 export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps = defaultDeps): Promise<SqliteResult> {
   // Pick an engine: PREFER the in-process `node:sqlite` built-in (returns native
   // row values) over the `sqlite3` CLI. The CLI's `-json` output formatter is
@@ -266,14 +303,9 @@ export async function readSqlite(dbPath: string, sql: string, deps: SqliteDeps =
     return { rows: [], status: "no-sqlite3" };
   }
 
-  let exists = false;
-  try {
-    exists = await deps.exists(dbPath);
-  } catch {
-    exists = false;
-  }
-  if (!exists) {
-    return { rows: [], status: "no-db" };
+  const found = await presence(deps, dbPath);
+  if (found !== "present") {
+    return { rows: [], status: found === "absent" ? "no-db" : "db-unreachable" };
   }
 
   return readSqliteViaCopy(deps, dbPath, sql, useCli);
@@ -295,14 +327,9 @@ export async function withSqliteSnapshot<T>(
     return { status: "no-sqlite3" };
   }
 
-  let exists = false;
-  try {
-    exists = await deps.exists(dbPath);
-  } catch {
-    exists = false;
-  }
-  if (!exists) {
-    return { status: "no-db" };
+  const found = await presence(deps, dbPath);
+  if (found !== "present") {
+    return { status: found === "absent" ? "no-db" : "db-unreachable" };
   }
 
   let tempDir: string | undefined;

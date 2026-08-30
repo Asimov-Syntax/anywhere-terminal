@@ -16,7 +16,7 @@
     6. Also in `src/vault/VaultService.ts`, report unknown for a `CURSOR_CHILD_PREFIX` id absent from `cursorChildLocators` — the map is capacity-evicted and per-process, so a miss is undecodable, not proof of absence (design.md D5).
     7. Cover both seams in `src/vault/VaultService.wiring.test.ts` and `src/vault/VaultService.test.ts`: a synthetic nesting id and an unknown agent still give null from `getEntry`, a found entry still arrives enriched, and production entry registration still resolves.
 
-- [ ] 1_2 Make a missing database distinguishable from an unreachable one
+- [x] 1_2 Make a missing database distinguishable from an unreachable one — verified: pnpm exec vitest run 'src/vault/sqlite.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: <!-- design.md D6 -->
   - **Boundary**: `no-db` keeps its current meaning — the file is not there; only the access-failure case moves out of it
@@ -26,7 +26,8 @@
   - **Plan**:
     1. In `src/vault/sqlite.ts`, have the presence check separate an absence-class `fs.access` rejection from any other, using the error it already receives, and report the two as distinct statuses from `readSqlite`.
     2. In `src/vault/readers/opencodeReader.ts`, count the new access-failure status as unreadable in the list path rather than as an empty store, leaving the `no-db` branch as it is.
-    3. Re-pin the existing `no-db` list expectation in `src/vault/readers/opencodeReader.test.ts` and add the access-failure case beside it.
+    3. In `src/vault/readers/codexReader.ts`, have its local status alias reference `SqliteStatus` rather than re-listing its members, so the new status cannot be missed there.
+    4. Re-pin the existing `no-db` list expectation in `src/vault/readers/opencodeReader.test.ts` and add the access-failure case beside it.
 
 - [ ] 1_3 Let the Claude reader say which of the three it means
   - **Deps**: 1_1

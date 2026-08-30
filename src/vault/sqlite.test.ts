@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { __resetSqliteProbeCache, readSqlite, type SqliteDeps } from "./sqlite";
+import { __resetSqliteProbeCache, presenceFromAccessError, readSqlite, type SqliteDeps } from "./sqlite";
 
 function makeDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
   return {
@@ -65,6 +65,23 @@ describe("readSqlite: capability probe", () => {
   });
 });
 
+describe("presenceFromAccessError: which failures prove absence", () => {
+  const err = (code: string) => Object.assign(new Error(code), { code });
+
+  it.each(["ENOENT", "ENOTDIR"])("%s proves the file is not there", (code) => {
+    expect(presenceFromAccessError(err(code))).toBe("absent");
+  });
+
+  it.each(["EACCES", "EPERM", "EIO", "ELOOP", "EMFILE"])("%s proves nothing", (code) => {
+    expect(presenceFromAccessError(err(code))).toBe("unreachable");
+  });
+
+  it("treats an error carrying no code as unreachable", () => {
+    expect(presenceFromAccessError(new Error("mystery"))).toBe("unreachable");
+    expect(presenceFromAccessError(undefined)).toBe("unreachable");
+  });
+});
+
 describe("readSqlite: store presence", () => {
   it("returns no-db when the store file is absent", async () => {
     const deps = makeDeps({
@@ -74,6 +91,45 @@ describe("readSqlite: store presence", () => {
     const result = await readSqlite("/x/missing.sqlite", "SELECT 1", deps);
     expect(result.status).toBe("no-db");
     expect(deps.copy).not.toHaveBeenCalled();
+  });
+
+  it("says db-unreachable, NOT no-db, when the path could not be checked", async () => {
+    // The difference a consumer acts on: `no-db` is proof the store is gone,
+    // this is proof of nothing (D6).
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      access: vi.fn(async () => "unreachable" as const),
+    });
+    const result = await readSqlite("/locked/store.sqlite", "SELECT 1", deps);
+    expect(result.status).toBe("db-unreachable");
+    expect(deps.copy).not.toHaveBeenCalled();
+  });
+
+  it("still says no-db when the presence check confirms the file is gone", async () => {
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      access: vi.fn(async () => "absent" as const),
+    });
+    expect((await readSqlite("/x/gone.sqlite", "SELECT 1", deps)).status).toBe("no-db");
+  });
+
+  it("degrades to the boolean seam for a dep set that supplies no access check", async () => {
+    // Every injected dep set in the repo predates `access`; none of them changes.
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      exists: vi.fn(async () => false),
+    });
+    expect((await readSqlite("/x/missing.sqlite", "SELECT 1", deps)).status).toBe("no-db");
+  });
+
+  it("treats a presence check that throws as unreachable rather than absent", async () => {
+    const deps = makeDeps({
+      exec: execWith(async () => ({ stdout: "[]", stderr: "" })),
+      access: vi.fn(async () => {
+        throw new Error("EIO");
+      }),
+    });
+    expect((await readSqlite("/x/dead-mount.sqlite", "SELECT 1", deps)).status).toBe("db-unreachable");
   });
 });
 

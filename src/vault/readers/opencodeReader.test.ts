@@ -110,6 +110,15 @@ describe("readOpenCodeSessions", () => {
     expect(unreadable).toBe(0);
   });
 
+  it("counts a store it could not reach as unreadable, not as an empty store", async () => {
+    // `no-db` above is a conclusive empty store; this is the case that used to
+    // masquerade as one (D6).
+    const fn = stubSqlite({ status: "db-unreachable", rows: [] });
+    const { entries, unreadable } = await readOpenCodeSessions({ dataDir: "/x/oc", readSqliteFn: fn });
+    expect(entries).toEqual([]);
+    expect(unreadable).toBe(1);
+  });
+
   it("counts a query-error as one unreadable", async () => {
     const fn = stubSqlite({ status: "query-error", rows: [], error: "boom" });
     const { entries, unreadable } = await readOpenCodeSessions({ dataDir: "/x/oc", readSqliteFn: fn });
