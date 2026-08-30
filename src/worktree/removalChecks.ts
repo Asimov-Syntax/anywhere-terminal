@@ -7,11 +7,11 @@
 // the assessment onto the check model instead (worktree-rpc.md § 2.5).
 //
 // It INVENTS nothing. Every check here has a source in the assessment already,
-// and `notApplicable` — the fourth outcome — is never produced, because the
-// sources that can answer "the question does not arise" are the ones WT-013.1
-// adds.
+// and `notApplicable` is produced only where a source said its question did not
+// arise — never as a default for a check this module did not compute.
 
 import type { RemovalCheck, RemovalCheckClass } from "../types/messages";
+import type { IgnoredMaterial } from "./ignoredMaterial";
 import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
 
 /**
@@ -51,6 +51,10 @@ const CATALOGUE: readonly { id: string; cls: ClassOf; source: UnreadableSource }
   // all — which is why every check in that branch carries the refusal class.
   { id: "externalAgents", cls: (a) => (a.kind === "refused" ? "refusal" : "confirmable"), source: "sessions" },
   { id: "locked", cls: "confirmable", source: "status" },
+  // Confirmable in EVERY reading, including the one that could not finish: § 2.3
+  // is explicit that a slow or unreadable disk must not make a worktree
+  // unremovable, and a refusal class here would do exactly that.
+  { id: "ignored", cls: "confirmable", source: "ignored" },
 ];
 
 /** The whole catalogue, every check unproven. */
@@ -134,9 +138,64 @@ export function checksFor(assessment: RemovalAssessment): readonly RemovalCheck[
         check("idlePanes", assessment, e.paneIds.length > 0, e.paneIds.length),
         check("externalAgents", assessment, e.externalSessionIds.length > 0, e.externalSessionIds.length),
         check("locked", assessment, e.locked),
+        ignoredCheck(e.ignored),
       ];
     }
   }
+}
+
+/**
+ * The ignored walk, as a check.
+ *
+ * Its own builder because it is the one check with a three-way source: `check`
+ * takes a boolean, and a walk that gave up is neither a pass nor a failure. The
+ * size rides in `detail` rather than as a second magnitude — `count` is the
+ * entries, which is what the panel's clause is keyed on — and NOTHING rides on
+ * an unproven walk at all.
+ */
+function ignoredCheck(material: IgnoredMaterial): RemovalCheck {
+  const cls = "confirmable" as const;
+  if (material.kind === "unproven") {
+    return {
+      id: "ignored",
+      cls,
+      outcome: "unproven",
+      detail:
+        material.reason === "budget"
+          ? "Too much ignored content to measure in time."
+          : "The ignored content could not be read.",
+    };
+  }
+  if (material.entries === 0) {
+    // A walk that finished and found none. No count: `countOf` refuses to read
+    // one off a passed check, and attaching it anyway leaves the number there
+    // for the next producer to render.
+    return { id: "ignored", cls, outcome: "passed" };
+  }
+  const provisioned = material.provisioned;
+  return {
+    id: "ignored",
+    cls,
+    outcome: "failed",
+    count: material.entries,
+    detail:
+      formatBytes(material.bytes) +
+      // Said only from the manifest. Its absence is how "we did not
+      // differentiate" is expressed, and a zero would claim we looked.
+      (provisioned === undefined ? "" : `, ${provisioned.entries} of it provisioned by this extension`),
+  };
+}
+
+/** One decimal, binary units — the size a person reads before confirming a delete. */
+function formatBytes(bytes: number): string {
+  const units = ["bytes", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${value} ${units[unit]}` : `${value.toFixed(1)} ${units[unit]}`;
 }
 
 /** Does any refusal-class check stand? No confirmation can authorize this removal. */

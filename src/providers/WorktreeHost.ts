@@ -25,6 +25,7 @@ import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { hasGitRepo } from "../worktree/hasGitRepo";
+import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
   DelegationRoster,
@@ -134,6 +135,15 @@ export interface WorktreeHostOptions {
     /** Async because the cwds carry the resolution `PaneFact.cwd` promises. */
     panes(): Promise<readonly PaneFact[]>;
     externalSessions(): Promise<SourceRead<readonly ExternalSessionFact[]>>;
+    /**
+     * One bounded walk of what the removal will delete that git does not track.
+     *
+     * Takes the worktree's own path because the walk is per worktree, and
+     * answers its own unproven rather than throwing: a slow or unreadable disk
+     * leaves one confirmable check unproven, never a refusal
+     * (worktree-removal.md § 2.3).
+     */
+    ignored(worktreePath: string): Promise<IgnoredMaterial>;
   };
   /**
    * The window projection. Absent — every surface but the real extension entry
@@ -2053,6 +2063,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         const status = found.wt.missing
           ? null
           : await options.deps.runner.run(["status", "--porcelain"], found.wt.displayPath);
+        // Skipped for the same reason as the status: there is no directory to
+        // walk. A measured zero is the honest answer — the removal will delete
+        // no ignored material because there is nothing there to delete.
+        const ignored: IgnoredMaterial = found.wt.missing
+          ? { kind: "measured", entries: 0, bytes: 0 }
+          : await facts.ignored(found.wt.displayPath);
         const sessions = await facts.externalSessions();
         // Taken with the other reads, ahead of `stillObserved`, so the whole
         // assessment is checked against ONE observation. Awaiting it below
@@ -2072,6 +2088,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // Every read that can fail is carried as a read, not as its benign
           // fallback. A failed status is not a clean worktree (round-2 B6).
           externalSessions: sessions,
+          ignored,
           porcelain:
             status === null
               ? { ok: "notApplicable" }

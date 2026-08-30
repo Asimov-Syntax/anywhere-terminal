@@ -66,7 +66,7 @@
     3. Cover in `src/worktree/ignoredMaterial.test.ts`: a readable manifest, an absent one, a malformed one, and one at an unrecognized version, asserting `provisioned` is absent for the last three. Note in the test file that nothing writes a manifest yet — the apply path that would is unbuilt Phase 12 work — so the fallback is the branch that actually runs today.
   - **Boundary**: no provenance inferred from a path or a name — `.env.worktree` looking like ours is not evidence it is ours
 
-- [ ] 2_3 Put ignored material on the assessment as a confirmable risk
+- [x] 2_3 Put ignored material on the assessment as a confirmable risk — verified: pnpm exec vitest run 'src/worktree/removalChecks.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3, 2_2
   - **Refs**: specs/worktree-panel/spec.md#{a-removal-reports-the-ignored-material-it-will-delete}; docs/design/worktree-rpc.md#25-removal-assessment-and-branch-deletion
   - **Acceptance**:
@@ -75,7 +75,9 @@
   - **Plan**:
     1. Add `ignored` to `CATALOGUE` in `src/worktree/removalChecks.ts` as a confirmable-class check, and carry the measurement into the evidence in `src/worktree/worktreeBlockers.ts`.
     2. Map `{ kind: "unproven" }` to outcome `unproven` and `{ kind: "measured" }` to `failed` or `passed` by whether anything was found, attaching `count` only to a failed check — a count on an unproven check is a number nobody measured.
-    3. Cover in `src/worktree/removalChecks.test.ts` that an unproven ignored check does not refuse the removal, and that `countOf` yields nothing for it.
+    3. Cover in `src/worktree/removalChecks.test.ts` that an unproven ignored check does not refuse the removal, and that `countOf` yields nothing for it. Cover the new evidence field in `src/worktree/worktreeBlockers.test.ts`.
+    4. Give the measurement a producer. `removalFacts` in `src/providers/WorktreeHost.ts` is the seam the other two unheld evidence sources already come through; it gains an `ignored` reader, supplied in `src/extension.ts` from a disk adapter exported by `src/worktree/ignoredMaterial.ts` and covered in `src/worktree/ignoredMaterial.test.ts`. An assessment whose one production producer supplies nothing carries a check that is permanently unproven — the benign-fallback failure this design forbids.
+    5. Fixtures in `src/providers/WorktreeHost.actions.test.ts` supply the reader where they supply the other two, and the `evidence()` helpers in `src/worktree/worktreeFingerprint.test.ts` and `src/worktree/worktreeMutationService.test.ts` gain the new required field.
   - **Boundary**: unproven here is confirmable, never refusing — a slow disk must not make a worktree unremovable
 
 ## 3. A confirmation authorizes only what it was shown

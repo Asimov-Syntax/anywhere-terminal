@@ -12,6 +12,7 @@
 
 import type { PaneActivity } from "../shared/paneEvidence";
 import { isPathInside } from "../utils/pathBoundary";
+import type { IgnoredMaterial } from "./ignoredMaterial";
 import type { WorktreeInfo } from "./types";
 
 /** A worktree registered inside the removal target. */
@@ -41,6 +42,14 @@ export interface RemovalEvidence {
    * the emptiness then looks exactly like a tree with nothing in it.
    */
   notApplicable: readonly UnreadableSource[];
+  /**
+   * What the removal will delete that `git status --porcelain` never names.
+   *
+   * Carried as the walk's own three-way answer rather than a count: a walk that
+   * gave up and a walk that found nothing are different reports, and flattening
+   * them here is how "0 ignored files" gets said about a `node_modules`.
+   */
+  ignored: IgnoredMaterial;
 }
 
 /**
@@ -87,7 +96,15 @@ export interface UnavailableRemoval {
   unreadable: readonly UnreadableSource[];
 }
 
-export type UnreadableSource = "status" | "sessions" | "listing";
+/**
+ * A source a check is fed from.
+ *
+ * `ignored` never appears in `UnavailableRemoval.unreadable`: worktree-removal.md
+ * § 2.3 is explicit that a slow or unreadable disk must not make a worktree
+ * unremovable, so a walk that could not finish leaves ONE confirmable check
+ * unproven rather than the whole assessment unanswerable.
+ */
+export type UnreadableSource = "status" | "sessions" | "listing" | "ignored";
 
 export type RemovalAssessment = RemovalRefusal | ConfirmableRemoval | UnavailableRemoval;
 
@@ -156,6 +173,13 @@ export interface RemovalInput {
   externalSessions: SourceRead<readonly ExternalSessionFact[]>;
   /** Raw stdout of `git status --porcelain` run in the worktree. */
   porcelain: SourceRead<string>;
+  /**
+   * One bounded walk of the worktree's ignored material, already taken.
+   *
+   * Taken by the caller because `evaluateRemoval` is synchronous and pure and
+   * the walk is neither.
+   */
+  ignored: IgnoredMaterial;
   /** The repository listing this input was built from was degraded or stale. */
   listingDegraded?: boolean;
 }
@@ -237,6 +261,7 @@ export function evaluateRemoval(input: RemovalInput): RemovalAssessment {
         ...(input.porcelain.ok === "notApplicable" ? (["status"] as const) : []),
         ...(input.externalSessions.ok === "notApplicable" ? (["sessions"] as const) : []),
       ],
+      ignored: input.ignored,
     },
   };
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  diskIgnoredDeps,
+  type DiskIgnoredOptions,
   type IgnoredMaterialDeps,
   MAX_IGNORED_ENTRIES,
   MAX_IGNORED_MS,
@@ -237,5 +239,95 @@ describe("naming what this extension provisioned", () => {
     const result = await measureIgnoredMaterial(deps);
 
     expect(result).toEqual({ kind: "unproven", reason: "budget" });
+  });
+});
+
+describe("diskIgnoredDeps", () => {
+  /** A git that answers each command from `replies`, keyed by its first arg. */
+  function disk(over: Partial<DiskIgnoredOptions> & { replies?: Record<string, string> } = {}) {
+    const calls: string[][] = [];
+    const replies = over.replies ?? {};
+    const deps = diskIgnoredDeps({
+      worktreePath: "/repo/wt-a",
+      run: async (args, cwd) => {
+        calls.push([...args, `cwd=${cwd}`]);
+        return { code: 0, timedOut: false, stdout: Buffer.from(replies[args[0] ?? ""] ?? "", "utf8") };
+      },
+      stat: async () => ({ size: 7 }),
+      readFile: async () => "{}",
+      join: (...parts) => parts.join("/"),
+      ...over,
+    });
+    return { deps, calls };
+  }
+
+  async function collect(deps: IgnoredMaterialDeps): Promise<string[]> {
+    const out: string[] = [];
+    for await (const entry of deps.ignoredEntries()) {
+      out.push(entry);
+    }
+    return out;
+  }
+
+  it("yields the ignored entries and nothing else git reported", async () => {
+    const { deps, calls } = disk({
+      replies: { status: " M src/a.ts\n?? scratch.md\n!! node_modules/react/index.js\n!! dist/app.js\n" },
+    });
+
+    expect(await collect(deps)).toEqual(["node_modules/react/index.js", "dist/app.js"]);
+    // `matching`, not the default `traditional`: traditional collapses an
+    // ignored directory to one entry, and stat-ing that entry sizes the
+    // directory inode — a few hundred bytes standing in for a gigabyte.
+    expect(calls[0]).toEqual(["status", "--porcelain", "--ignored=matching", "cwd=/repo/wt-a"]);
+  });
+
+  it("unquotes a path git had to quote", async () => {
+    const { deps } = disk({ replies: { status: '!! "dist/a b.js"\n' } });
+
+    expect(await collect(deps)).toEqual(["dist/a b.js"]);
+  });
+
+  it("throws rather than reporting an empty listing when git failed", async () => {
+    // The difference the whole module exists for: an empty listing says there
+    // is nothing to delete, and a failed command says we do not know.
+    const { deps } = disk({ run: async () => ({ code: 128, timedOut: false, stdout: Buffer.alloc(0) }) });
+
+    await expect(collect(deps)).rejects.toThrow();
+  });
+
+  it("treats a timeout as a failure even when git exited 0", async () => {
+    const { deps } = disk({ run: async () => ({ code: 0, timedOut: true, stdout: Buffer.alloc(0) }) });
+
+    await expect(collect(deps)).rejects.toThrow();
+  });
+
+  it("reads the manifest from the worktree's own git dir", async () => {
+    let read = "";
+    const { deps } = disk({
+      replies: { "rev-parse": "/repo/.git/worktrees/wt-a\n" },
+      readFile: async (absPath) => {
+        read = absPath;
+        return "{}";
+      },
+    });
+
+    await deps.readManifest();
+
+    // git deletes this directory along with the worktree, which is why the
+    // manifest lives there and not in the working tree it describes.
+    expect(read).toBe("/repo/.git/worktrees/wt-a/anywhere-terminal-provision.json");
+  });
+
+  it("sizes an entry against the worktree it is relative to", async () => {
+    let statted = "";
+    const { deps } = disk({
+      stat: async (absPath) => {
+        statted = absPath;
+        return { size: 42 };
+      },
+    });
+
+    expect(await deps.size("dist/app.js")).toBe(42);
+    expect(statted).toBe("/repo/wt-a/dist/app.js");
   });
 });

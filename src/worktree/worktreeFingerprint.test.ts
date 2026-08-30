@@ -12,6 +12,7 @@ function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
     paneIds: [],
     externalSessionIds: [],
     notApplicable: [],
+    ignored: { kind: "measured", entries: 0, bytes: 0 },
     locked: false,
     lockReason: null,
     ...over,

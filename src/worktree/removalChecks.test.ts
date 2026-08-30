@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { IgnoredMaterial } from "./ignoredMaterial";
 import { checksFor, countOf, failed, isRefusedByChecks } from "./removalChecks";
 import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
 
@@ -11,6 +12,7 @@ const CATALOGUE_IDS = [
   "idlePanes",
   "externalAgents",
   "locked",
+  "ignored",
 ];
 
 function confirmable(over: {
@@ -20,6 +22,7 @@ function confirmable(over: {
   externalSessionIds?: readonly string[];
   locked?: boolean;
   notApplicable?: readonly UnreadableSource[];
+  ignored?: IgnoredMaterial;
 }): RemovalAssessment {
   return {
     kind: "confirmable",
@@ -31,6 +34,9 @@ function confirmable(over: {
       locked: over.locked ?? false,
       lockReason: null,
       notApplicable: over.notApplicable ?? [],
+      // A measured nothing, not an absence: the default worktree these cases
+      // describe is one the walk finished on and found no ignored material in.
+      ignored: over.ignored ?? { kind: "measured", entries: 0, bytes: 0 },
     },
   };
 }
@@ -223,5 +229,60 @@ describe("a check whose question never arose (round-3 spec: notApplicable)", () 
     const checks = checksFor(confirmable({ notApplicable: ["status", "sessions"] }));
 
     expect(checks.map((c) => c.id)).toEqual(CATALOGUE_IDS);
+  });
+});
+
+describe("the ignored material a removal will delete", () => {
+  it("reports a measured tree as a confirmable failure carrying its count", () => {
+    const checks = checksFor(confirmable({ ignored: { kind: "measured", entries: 12, bytes: 5_242_880 } }));
+    const ignored = checks.find((c) => c.id === "ignored");
+
+    expect(ignored?.cls).toBe("confirmable");
+    expect(ignored?.outcome).toBe("failed");
+    expect(countOf(checks, "ignored")).toBe(12);
+    // The size rides as prose because the magnitude element is the COUNT's.
+    // Without it the panel says "12 ignored entries" about 5 MB or about 5 KB,
+    // and those are different decisions.
+    expect(ignored?.detail).toContain("5.0 MB");
+  });
+
+  it("passes on a tree the walk finished and found nothing in", () => {
+    const checks = checksFor(confirmable({ ignored: { kind: "measured", entries: 0, bytes: 0 } }));
+    const ignored = checks.find((c) => c.id === "ignored");
+
+    expect(ignored?.outcome).toBe("passed");
+    expect(failed(checks, "ignored")).toBe(false);
+    // A passed check counted nothing worth naming. `countOf` already refuses to
+    // read one, and attaching it anyway leaves a number for the next producer.
+    expect(ignored?.count).toBeUndefined();
+  });
+
+  it("does not refuse the removal when the walk could not finish", () => {
+    // worktree-removal.md § 2.3: a slow or unreadable disk must not make a
+    // worktree unremovable. Unproven here is confirmable, and stays so.
+    for (const reason of ["budget", "unreadable"] as const) {
+      const checks = checksFor(confirmable({ ignored: { kind: "unproven", reason } }));
+      const ignored = checks.find((c) => c.id === "ignored");
+
+      expect(ignored?.outcome).toBe("unproven");
+      expect(ignored?.cls).toBe("confirmable");
+      expect(isRefusedByChecks(checks)).toBe(false);
+      // A count on an unproven check is a number nobody measured, and the panel
+      // renders it inside a `<b>` as a reading that was taken.
+      expect(ignored?.count).toBeUndefined();
+      expect(countOf(checks, "ignored")).toBe(0);
+      expect(failed(checks, "ignored")).toBe(false);
+    }
+  });
+
+  it("is reported in every branch the catalogue is reported in", () => {
+    // The check list must not get shorter for a worse outcome. An unproven
+    // ignored walk is still a check that exists.
+    const unavailable = checksFor({ kind: "unavailable", unreadable: ["status"] });
+
+    expect(unavailable.map((c) => c.id)).toEqual(CATALOGUE_IDS);
+    expect(unavailable.find((c) => c.id === "ignored")?.outcome).toBe("unproven");
+    // Its own source did not fail, so nothing claims it did.
+    expect(unavailable.find((c) => c.id === "ignored")?.detail).toBeUndefined();
   });
 });

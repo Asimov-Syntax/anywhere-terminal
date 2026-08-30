@@ -25,6 +25,7 @@ function input(over: Partial<RemovalInput> = {}): RemovalInput {
     rows: [],
     externalSessions: { ok: true, value: [] },
     porcelain: { ok: true, value: "" },
+    ignored: { kind: "measured", entries: 0, bytes: 0 },
     ...over,
   };
 }
@@ -316,5 +317,32 @@ describe("a registration whose directory is gone is still removable", () => {
     // The negative that keeps D16 intact: only an ABSENT directory is exempt.
     const result = evaluateRemoval(input({ porcelain: { ok: false } }));
     expect(result).toEqual({ kind: "unavailable", unreadable: ["status"] });
+  });
+});
+
+describe("the ignored material the removal will delete", () => {
+  it("carries the measurement onto the evidence, whole", () => {
+    const result = evaluateRemoval(
+      input({ ignored: { kind: "measured", entries: 3, bytes: 900, provisioned: { entries: 2 } } }),
+    );
+
+    expect(result.kind === "confirmable" && result.evidence.ignored).toEqual({
+      kind: "measured",
+      entries: 3,
+      bytes: 900,
+      provisioned: { entries: 2 },
+    });
+  });
+
+  it("stays confirmable when the walk could not finish", () => {
+    // § 2.3: a slow or unreadable disk must not make a worktree unremovable, so
+    // this read never joins the sources that make an assessment `unavailable`.
+    const result = evaluateRemoval(input({ ignored: { kind: "unproven", reason: "budget" } }));
+
+    expect(result.kind).toBe("confirmable");
+    expect(result.kind === "confirmable" && result.evidence.ignored).toEqual({
+      kind: "unproven",
+      reason: "budget",
+    });
   });
 });

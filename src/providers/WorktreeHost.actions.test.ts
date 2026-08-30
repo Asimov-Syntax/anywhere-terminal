@@ -355,6 +355,7 @@ async function builtHost(
         await duringAssessment.now();
         return { ok: true, value: [] };
       },
+      ignored: async () => ({ kind: "measured", entries: 0, bytes: 0 }),
     },
     ...(over.exists === undefined ? {} : { exists: over.exists }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),

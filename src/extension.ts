@@ -62,6 +62,7 @@ import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
 import { rosterFromDetail } from "./worktree/delegations";
 import { addToGitExclude } from "./worktree/gitExclude";
+import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
 import { normalizeWorktreePath } from "./worktree/normalizePath";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
@@ -751,6 +752,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           paths.dispose();
         }
       },
+      // What the removal will delete that `git status --porcelain` never names —
+      // the `node_modules`, the copied `.env`, the build output this extension
+      // provisions into every worktree it creates (worktree-removal.md § 2.3).
+      // Bounded inside `measureIgnoredMaterial`; a walk that cannot finish
+      // leaves one confirmable check unproven and refuses nothing.
+      ignored: (worktreePath) =>
+        measureIgnoredMaterial(
+          diskIgnoredDeps({
+            worktreePath,
+            run: (args, cwd) => worktreeTreeDeps.runner.run(args, cwd),
+            stat: (absPath) => fsp.stat(absPath),
+            readFile: (absPath) => fsp.readFile(absPath, "utf8"),
+            join: (...parts) => path.join(...parts),
+          }),
+        ),
     },
     workspaceFolders: () => (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
     // Read at each request rather than captured: the setting is live, and D7

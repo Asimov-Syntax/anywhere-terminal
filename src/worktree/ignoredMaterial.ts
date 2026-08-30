@@ -119,3 +119,62 @@ export async function measureIgnoredMaterial(deps: IgnoredMaterialDeps): Promise
     ...(provisioned === undefined ? {} : { provisioned: { entries: provisioned } }),
   };
 }
+
+/**
+ * The one production read behind {@link measureIgnoredMaterial}.
+ *
+ * Split from the measurement so the budget logic stays testable without a disk,
+ * and so this half — which is all seam and no decision — has exactly one place
+ * to be wrong.
+ */
+export interface DiskIgnoredOptions {
+  /** The worktree's own directory. Every relative path is joined onto it. */
+  worktreePath: string;
+  run(args: readonly string[], cwd: string): Promise<{ code: number; stdout: Buffer; timedOut: boolean }>;
+  stat(absPath: string): Promise<{ size: number }>;
+  readFile(absPath: string): Promise<string>;
+  join(...parts: string[]): string;
+  now?(): number;
+}
+
+/**
+ * `--ignored=matching`, not the default `--ignored=traditional`.
+ *
+ * Traditional collapses an ignored directory to one entry, and a `node_modules/`
+ * stat's are the directory inode — a few hundred bytes standing in for a
+ * gigabyte. Matching names every ignored FILE, which is both the count worth
+ * reporting and the population the entry budget exists to stop.
+ */
+export function diskIgnoredDeps(options: DiskIgnoredOptions): IgnoredMaterialDeps {
+  const { worktreePath, run, stat, readFile, join } = options;
+  return {
+    ignoredEntries: async function* () {
+      const result = await run(["status", "--porcelain", "--ignored=matching"], worktreePath);
+      if (result.code !== 0 || result.timedOut) {
+        // Not an empty listing: the walk did not establish that there is
+        // nothing here, and `measureIgnoredMaterial` reports the throw as
+        // `unreadable` rather than as a measured zero.
+        throw new Error(`git status --ignored exited ${result.code}`);
+      }
+      for (const line of result.stdout.toString("utf8").split("\n")) {
+        if (!line.startsWith("!! ")) {
+          continue;
+        }
+        const path = line.slice(3);
+        yield path.startsWith('"') && path.endsWith('"') ? path.slice(1, -1) : path;
+      }
+    },
+    size: async (relPath) => (await stat(join(worktreePath, relPath))).size,
+    readManifest: async () => {
+      // The worktree's OWN git dir — `.git/worktrees/<name>` — which is where
+      // the apply path writes the manifest and which git deletes along with the
+      // worktree (worktree-apply.md § 2.6).
+      const dir = await run(["rev-parse", "--absolute-git-dir"], worktreePath);
+      if (dir.code !== 0 || dir.timedOut) {
+        throw new Error(`git rev-parse --absolute-git-dir exited ${dir.code}`);
+      }
+      return await readFile(join(dir.stdout.toString("utf8").trim(), "anywhere-terminal-provision.json"));
+    },
+    now: options.now ?? Date.now,
+  };
+}
