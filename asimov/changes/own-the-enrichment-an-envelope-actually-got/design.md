@@ -19,11 +19,44 @@ flight, that projection is exactly the one whose preview half the projector's fe
 host records that enrichment is still owed. `enrichmentOwed()` becomes
 `anyDrawingRows() && (!projectedEnriched || enrichmentPending)`.
 
-The flag clears where a run STARTS, not where it publishes. Clearing at publish is the obvious
-placement and it is wrong: the projection this flag exists for is the one cut short mid-flight, so it
-publishes AFTER the edge and would wipe the obligation the edge had just recorded. A run that begins
-after the edge is the one entitled to clear it, and no await separates that assignment from the run's
-own synchronous prefix, so no edge can land in between.
+### D1a: The obligation is discharged by the PASS that satisfies it, not by the run that contains it
+
+Two placements were tried and both are wrong. Clearing where the envelope's enrichment is RECORDED is
+wrong because the projection this flag exists for is the one cut short mid-flight: it publishes AFTER
+the edge and wipes the obligation the edge had just recorded. Clearing where a RUN starts is what
+shipped and it hangs. `requestProjection` is single-flight, so a surface reopening mid-run joins the
+run in flight (`WorktreeHost.ts:1259`) and never reaches the run-start clear; the joined run's pass
+then completes clean, `enrichmentOwed()` is still true, and the pass loop dirties itself. Nothing
+inside that loop clears the flag, so every following pass enriches, finds the flag still set, and
+dirties itself again — the loop never exits and the envelope is never published. A run is the wrong
+unit because a run can contain any number of passes and a joiner can enter it after it started.
+
+The pass is the right unit. Each iteration of the pass loop clears the obligation at its own start,
+and only when it is going to enrich (`anyDrawingRows()`); an iteration that is not enriching cannot
+satisfy an enrichment obligation and must leave it standing for the next rise — defence in depth,
+since a non-enriching pass that completes records `projectedEnriched = false` and the owed predicate's
+other disjunct already catches it; the guard is what holds for a pass that clears and never records.
+This is exactly the
+"began after the recorded edge and was not crossed by a newer one" rule, without a counter: an edge
+landing before the iteration starts is what that iteration's enrichment answers, and an edge landing
+during it re-sets the flag, which the loop then reads as owed and spends on one more pass.
+
+Load-bearing and easy to break silently: the clear and `projectOnce`'s own `anyDrawingRows()` read are
+in ONE synchronous span — the iteration clears, calls `projectOnce`, and `projectOnce` runs to its
+`await projector.project(...)` without yielding. Insert an await between them and the two can disagree,
+clearing an obligation the pass then declines to satisfy. `enrich` stays read inside `projectOnce`
+(`:1233`) rather than threaded in, because the NEXT pass is what should react to a rail that opened or
+collapsed mid-flight; the coupling is the tick, not a parameter.
+
+A pass that does not deliver restores what it cleared. A projection that REJECTS leaves
+`projectedEnriched` holding `true` from the cut-short pass, so an un-restored obligation reads as
+satisfied and no retry follows until some unrelated caller dirties a run — the missing second line
+waits for the next external scan. The run therefore remembers whether any of its passes cleared the
+obligation and re-records it in the `catch`. Over-restoring is the safe direction and is already
+bounded at one redundant enriched pass by the inventory below. An INVALIDATED pass needs nothing:
+it sets `projectionDirty` itself, so the loop runs another pass that re-clears and completes. That
+distinction is not folded into this rule — invalidated means "this pass was overtaken", which the
+existing forced full rerun already answers (`:1310-1318`).
 
 ### D2: In-flight is the condition, because reconcile is not an edge check
 
@@ -45,13 +78,15 @@ obligation through the path that already exists, so there is one place that asks
 
 | Resource | Answer |
 |---|---|
-| `enrichmentPending` | A single boolean on the host's closure, single-owner, single-threaded in the extension host. Set on the falling edge while a projection is in flight; cleared when an enriched projection lands. A stuck-true costs one redundant enriched projection on the next rise; a stuck-false costs the five-second wait this change removes. Neither authorises anything, and nothing is persisted. n/a for crash and for two hosts |
+| `enrichmentPending` | A single boolean on the host's closure, single-owner, single-threaded in the extension host. Set on the falling edge while a projection is in flight, and re-set by a run whose projection rejected after one of its passes cleared it; cleared at the start of each pass that is going to enrich. A stuck-true costs one redundant enriched projection on the next rise; a stuck-false costs the five-second wait this change removes. Neither authorises anything, and nothing is persisted. Reads never fail — it is a field, not a resource. n/a for crash and for two hosts |
 
 ## Risk Map
 
 | Component | Risk | Mitigation |
 |---|---|---|
 | `reconcileRowDrawing` | The obligation is recorded on mutations that changed nothing, so every rise pays for a pass | D2 — gated on a projection being in flight; unit test drives repeated no-op mutations while not drawing and asserts no extra enriched projection follows the rise |
-| `enrichmentOwed` | The flag never clears, so every rise re-enriches forever | Cleared where `projectedEnriched` is set; unit test asserts a second rise after a completed enriched pass asks for nothing |
+| `enrichmentOwed` | The flag never clears, so every rise re-enriches forever | Cleared at the start of every enriching pass (D1a); unit test asserts a second rise after a completed enriched pass asks for nothing |
+| Pass loop | A joined reopening leaves the flag set, so each pass dirties itself and the run never publishes | D1a — the unit of discharge is the pass, not the run; unit test reopens a surface BEFORE releasing the parked projection and asserts exactly one replacement pass publishes |
+| Rejected projection | A pass that cleared the obligation and then threw leaves it reading as satisfied | D1a — the run re-records in the `catch`; unit test rejects `project()` and asserts the next rise is still owed a pass |
 | Falling edge | Recording turns into requesting, so a hiding window starts work | The edge only assigns; unit test asserts no projection is requested by the falling edge itself |
 | Interaction with WT-011.7 | The obligation is recorded for a projection the fence did NOT skip, costing a redundant pass | Accepted and bounded at one pass: the host cannot see the projector's fence without the field D1 rejects, and an edge landing mid-projection is the same condition the fence tests. Unit test pins that the redundant case is at most one pass |

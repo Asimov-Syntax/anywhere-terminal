@@ -673,6 +673,8 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
     const options: ({ external?: boolean; enrich?: boolean } | undefined)[] = [];
     let forgotten = 0;
     let hold: Promise<void> | undefined;
+    let cap = Number.POSITIVE_INFINITY;
+    let failNext = false;
     const presence: WorktreePresence = { rowsByWorktreeId: {}, scannedAt: 1, degradedSources: [] };
     const timers = new Map<number, () => void>();
     let nextHandle = 1;
@@ -696,6 +698,17 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
       projector: {
         project: async (_ids, opts) => {
           options.push(opts);
+          if (options.length > cap) {
+            // A runaway pass loop never yields control back, so a test that only
+            // awaited `settle()` would hang instead of failing. Throwing turns
+            // "did not terminate" into an assertion the run's own catch lets us
+            // reach.
+            throw new Error(`projection pass loop did not terminate: ${options.length} passes`);
+          }
+          if (failNext) {
+            failNext = false;
+            throw new Error("projection failed");
+          }
           if (hold) {
             await hold;
           }
@@ -723,6 +736,14 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
           hold = undefined;
           release();
         };
+      },
+      /** Stop the projector after `n` passes, so a runaway loop fails rather than hangs. */
+      capProjections(n: number): void {
+        cap = n;
+      },
+      /** Make the next projection reject. */
+      failNextProjection(): void {
+        failNext = true;
       },
       /** How many timers are currently armed. */
       armed: () => timers.size,
@@ -774,6 +795,67 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
       await settle();
 
       expect(h.options.some((o) => o?.enrich === true)).toBe(true);
+    });
+
+    it("publishes exactly one replacement pass when a surface reopens mid-projection", async () => {
+      // The obligation used to clear where the RUN starts. `requestProjection` is
+      // single-flight, so a surface reopening mid-run JOINS that run and never
+      // reaches the clear; the joined pass then finished clean, found the
+      // obligation still standing, and dirtied itself — forever, publishing
+      // nothing (round-1 B1, design.md D1a).
+      const h = await drawingRows();
+      h.capProjections(8);
+      const release = h.holdProjections();
+      h.worktrees.handleMessage(h.s, { type: "requestWorktreeTree" });
+      await settle();
+
+      // The falling edge records the obligation against the parked projection.
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+      await settle();
+      // ...and the surface comes back BEFORE that projection is released, so its
+      // request joins the run in flight rather than starting one.
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+      await settle();
+      h.options.length = 0;
+
+      release();
+      await settle();
+
+      expect(h.options.length, "the joined run kept re-projecting without publishing").toBeLessThanOrEqual(1);
+      expect(
+        h.options.some((o) => o?.enrich === true),
+        "the reopening surface was never served an enriched pass",
+      ).toBe(true);
+    });
+
+    it("still owes the pass when the replacement projection fails", async () => {
+      // A pass that cleared the obligation and then threw left `projectedEnriched`
+      // holding `true` from the cut-short pass, so the owed predicate read as
+      // satisfied and the missing second line waited for the next external scan
+      // (round-1 W1, design.md D1a).
+      const h = await drawingRows();
+      const release = h.holdProjections();
+      h.worktrees.handleMessage(h.s, { type: "requestWorktreeTree" });
+      await settle();
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "presence" });
+      release();
+      await settle();
+
+      h.failNextProjection();
+      h.worktrees.handleMessage(h.s, { type: "worktreeViewVisibility", visible: true, level: "rows" });
+      await settle();
+      h.options.length = 0;
+
+      // Any later settle of the drawing state re-reads the obligation.
+      h.attachment.setDisplayed(false);
+      await settle();
+      h.attachment.setDisplayed(true);
+      await settle();
+
+      expect(
+        h.options.some((o) => o?.enrich === true),
+        "a replacement pass that failed was treated as delivered",
+      ).toBe(true);
     });
 
     it("owes nothing after a falling edge with no projection running", async () => {

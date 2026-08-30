@@ -1284,11 +1284,37 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     const run = (async () => {
       let clean = true;
       let applied = paneEvidenceApplied;
+      // Remembered so a run whose projection REJECTS can put back what its passes
+      // took. A pass that threw left `projectedEnriched` holding what the
+      // cut-short pass requested, so an un-restored obligation reads as satisfied
+      // and the missing line waits for the next external scan (D1a).
+      let discharged = false;
       try {
         do {
           projectionDirty = false;
           const externalOnly = nextExternalOnly;
           nextExternalOnly = false;
+          // The PASS discharges the obligation, not the run. A run is the wrong
+          // unit: it can hold any number of passes, and a surface reopening
+          // mid-run joins it above without ever reaching a run-level clear — the
+          // joined pass then finds the obligation still standing and dirties
+          // itself forever, publishing nothing (D1a).
+          //
+          // Only a pass that is going to ENRICH may clear it; one that is not
+          // cannot satisfy an enrichment obligation and has to leave it for the
+          // next rise. This and `projectOnce`'s own `anyDrawingRows()` read are
+          // one synchronous span — an await inserted between them lets the two
+          // disagree, clearing an obligation the pass then declines to satisfy.
+          //
+          // Defence in depth today: a non-enriching pass that COMPLETES records
+          // `projectedEnriched = false`, and the owed predicate's other disjunct
+          // catches it, so no test reaches this guard. It is what keeps the rule
+          // true for a pass that clears and then never records — invalidated, or
+          // disposed — if the self-healing rerun that covers those stops holding.
+          if (anyDrawingRows()) {
+            enrichmentPending = false;
+            discharged = true;
+          }
           // Captured BEFORE the pass reads the panes, so an event arriving
           // during it stays outstanding. The failure this chooses is one
           // redundant full pass; the other choice loses the transition (D11).
@@ -1323,6 +1349,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         } while (projectionDirty && !disposed);
       } catch (err) {
         clean = false;
+        if (discharged) {
+          enrichmentPending = true;
+        }
         console.warn(`${LOG_PREFIX} presence projection threw — nothing published`, err);
       }
       // Cleared and published with no await between, so a caller arriving now
@@ -1344,13 +1373,6 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         void requestProjection();
       }
     })();
-    // Cleared where a run STARTS, not where it publishes: the projection this
-    // flag exists for is cut short mid-flight, so clearing at publish would let
-    // that very projection wipe the obligation the edge had just recorded. A run
-    // that begins after the edge is the one entitled to clear it. No await
-    // separates this from the run's own synchronous prefix, so no edge can land
-    // in between.
-    enrichmentPending = false;
     projectionRun = run;
     return run;
   }

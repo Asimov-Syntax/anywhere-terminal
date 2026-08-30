@@ -7,13 +7,13 @@
 ## Plan
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved  <!-- re-earned after cycle 1 round 1 -->
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.10`)_
@@ -31,16 +31,21 @@
 
 Blueprint: docs/PLAN.md task WT-011.10
 Lane: full
-Planned at: 0ed037f0
+Planned at: a3c68513
 
 Lane: full — the projector/host seam WT-011.7 left un-owned
-Planned at: 0ed037f0
+Planned at: a3c68513
 
 Build notes:
-- D1's clear had to move during build, and the design now says so. Clearing the obligation where the
-  envelope's enrichment is RECORDED does not work: the cut-short projection publishes after the edge,
-  so it wipes the obligation the edge had just set. A run that STARTS after the edge is the one
-  entitled to clear it, and no await separates that assignment from the run's synchronous prefix.
+- D1's clear moved twice. Recording-point and run-start are both wrong and both are now written up as
+  rejected in D1a; the third placement is the pass. Do not try either again.
 - 3 mutations, all killed: the obligation never recorded, recorded unconditionally, and never cleared.
   The unconditional one reproduces the 19-case blast radius that made this a separate change, plus the
   new guard case — 20 failures.
+- Post-handback: 2 more mutations killed — moving the clear back to the run start fails the joined
+  reopening case, dropping the catch restore fails the rejecting-projection case. A third SURVIVES and
+  is left in deliberately: dropping the `anyDrawingRows()` gate on the clear changes nothing any test
+  can see, because a non-enriching pass that completes records `projectedEnriched = false` and the
+  owed predicate's other disjunct catches it. The guard covers a pass that clears and never records
+  (invalidated, disposed), which the self-healing forced rerun already handles — defence in depth, and
+  labelled as such in the code rather than claimed as covered.
