@@ -407,6 +407,37 @@ describe("remove worktree — refused (§ 12)", () => {
     expect(refusebox(host), "a confirmable risk was presented as the refusal reason").not.toMatch(/uncommitted/i);
   });
 
+  it("[1_7] explains the FIRST refusing check when two of them failed at once", () => {
+    // Round-3 W3. 1_6 picked the refusing check correctly but left the failed
+    // branches dispatching on `failed(...)`, so a busy agent plus a nested
+    // worktree fell past the agent copy into the containment one — naming a
+    // reason that is true but is not the one the user must act on first.
+    const { host } = open(
+      withChecks(refusedBlocker, { busyAgents: failedWith(1), containsWorktrees: failedWith(NESTED.length) }, NESTED),
+      { agentRows: [busy] },
+    );
+
+    expect(refusebox(host), "the containment copy displaced the agent that refused first").toMatch(/mid-turn/i);
+    expect(refusebox(host)).not.toMatch(/live inside this one/i);
+  });
+
+  it("[1_7] takes the host's order as the priority, even ahead of isMain", () => {
+    // The host's order IS the priority — "the first refusal-class check in host
+    // order" is the rule, not "isMain wins". Today isMain happens to be listed
+    // first, so without a report that says otherwise this branch could go back to
+    // testing `failed(isMain)` and no test would notice.
+    const { host } = open({
+      ...refusedBlocker,
+      checks: [
+        { id: "busyAgents", cls: "refusal", outcome: "failed", count: 1 },
+        { id: "isMain", cls: "refusal", outcome: "failed" },
+      ],
+    });
+
+    expect(refusebox(host), "a later check displaced the one the host listed first").toMatch(/mid-turn/i);
+    expect(refusebox(host)).not.toMatch(/main worktree/i);
+  });
+
   it("[1_6] does not explain an unproven containment check as a busy agent", () => {
     const { host } = open(withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: unprovenOutcome }));
 

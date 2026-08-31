@@ -70,3 +70,14 @@
     3. Same file: keep the local-agent chain — the vouched / unconfirmed / unread composition — for a `busyAgents` refusal that actually failed.
     4. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: assert the sentence a user reads for each refusing check and outcome, not only that a control is absent.
   - **Boundary**: the refusal still mounts no confirmation control in any case — this task changes only what the refusal says
+
+- [x] 1_7 Dispatch every refusal branch from the check that refused — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
+  - **Deps**: 1_6
+  - **Refs**: specs/worktree-panel/spec.md#the-removal-report-shows-every-check-it-ran-with-its-own-outcome; design.md D1; .reviews/round-3.md W3
+  - **Acceptance**:
+    - Outcome: Two failing refusal checks name the one the host listed first
+    - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeRemoveDialog.ts`: the `isMain` and `containsWorktrees` branches test the refusing check's id rather than `failed(checks, ...)`, so a second failing check cannot displace the first.
+    2. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: cover two simultaneous failures, and a report whose host order puts another refusal check ahead of `isMain`.
+  - **Boundary**: the lock-override clause in the consequence box keeps its own `failed` test — it states a fact about the lock, not which check refused

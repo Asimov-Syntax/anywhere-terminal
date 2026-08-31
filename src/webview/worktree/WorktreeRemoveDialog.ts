@@ -399,11 +399,15 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     const box = document.createElement("div");
     box.className = "wt-refusebox";
     const lead = document.createElement("b");
-    // Keyed on the check that actually refused, in the host's own order, rather
-    // than a chain of `failed(...)` tests: 1_5 routed unproven refusals here too,
-    // and a chain testing only `failed` sent every one of them to the local-agent
-    // copy — asserting an agent "was mid-turn" from a check that read nothing
-    // (round-2 W3, worktree-panel § A refusal names the reason it actually has).
+    // EVERY branch dispatches on `refuser`, never on `failed(...)`: the check the
+    // host listed first is the one the user must act on, and a second failing
+    // check must not displace it. Mixing the two was round-3 W3 — a busy agent
+    // plus a nested worktree rendered the containment copy, because the agent
+    // case fell through to a `failed(containsWorktrees)` test below it.
+    // The unproven cases come through here too, from 1_5 (round-2 W3):
+    // a chain testing only `failed` sent them to the local-agent copy, asserting
+    // an agent "was mid-turn" from a check that had read nothing.
+    // worktree-panel § A refusal names the reason it actually has.
     const refuser = checks.find((c) => c.cls === "refusal" && (c.outcome === "failed" || c.outcome === "unproven"));
     if (refuser?.outcome === "unproven") {
       lead.textContent = UNPROVEN_REFUSAL[refuser.id] ?? "A check that can refuse this removal could not be read.";
@@ -417,10 +421,10 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
           ? "A session in another window is rooted in this worktree."
           : `${n} sessions in another window are rooted in this worktree.`;
       box.append(lead, document.createTextNode(" Close it there first — this window cannot stop it for you."));
-    } else if (failed(checks, "isMain")) {
+    } else if (refuser?.id === "isMain") {
       lead.textContent = "This is the repository's main worktree.";
       box.append(lead, document.createTextNode(" It cannot be removed — no confirmation overrides it."));
-    } else if (failed(checks, "containsWorktrees")) {
+    } else if (refuser?.id === "containsWorktrees") {
       const n = countOf(checks, "containsWorktrees");
       lead.textContent =
         n === 1 ? "Another worktree lives inside this one." : `${n} other worktrees live inside this one.`;
