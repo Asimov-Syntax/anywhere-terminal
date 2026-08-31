@@ -1183,6 +1183,9 @@ describe("the list of branches a create can pick from comes from the host", () =
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       readRefs: async () => ({ ok: true, refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }], truncated: true }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -1211,6 +1214,9 @@ describe("the list of branches a create can pick from comes from the host", () =
         return { ok: true, pullRequests: [], truncated: false };
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -1243,6 +1249,9 @@ describe("the list of branches a create can pick from comes from the host", () =
         truncated: true,
       }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -1272,6 +1281,9 @@ describe("the list of branches a create can pick from comes from the host", () =
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       readPullRequests: async () => ({ ok: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -1298,6 +1310,9 @@ describe("the list of branches a create can pick from comes from the host", () =
         throw new Error("gh exploded");
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     // Asked, so the claim above about the destination is one this test can
     // actually make. It could not before (.reviews/round-2.md S1).
@@ -1320,6 +1335,9 @@ describe("the list of branches a create can pick from comes from the host", () =
     // says which branches they hold (design.md D2).
     const refsInputs: RepoRefsInput[] = [];
     const { host, view, dispose } = await builtHost([windowRow()], false, { refsInputs });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -1331,6 +1349,9 @@ describe("the list of branches a create can pick from comes from the host", () =
 
   it("posts nothing when the enumeration failed — absent is not an empty repository", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { readRefs: async () => ({ ok: false }) });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -1344,6 +1365,9 @@ describe("the list of branches a create can pick from comes from the host", () =
         throw new Error("git blew up");
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -1354,6 +1378,9 @@ describe("the list of branches a create can pick from comes from the host", () =
   it("answers nothing for a repository it never published", async () => {
     const refsInputs: RepoRefsInput[] = [];
     const { host, view, dispose } = await builtHost([windowRow()], false, { refsInputs });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: "/not/a/repo", opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: "/not/a/repo", token: 1 });
     await settle();
 
@@ -1375,6 +1402,9 @@ describe("the list of branches a create can pick from comes from the host", () =
         return { ok: true, refs: [{ name: "main" }], truncated: false };
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     dispose();
     release?.();
@@ -1385,6 +1415,9 @@ describe("the list of branches a create can pick from comes from the host", () =
 
   it("answers nothing when no reader is wired", async () => {
     const { host, view, dispose } = await builtHost();
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     await settle();
 
@@ -3022,6 +3055,9 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 7, seq: 0, query: "idle" });
     await settle();
@@ -3040,6 +3076,9 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 4 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 4 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 4, seq: 1, query: "idle" });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 4, seq: 2, query: "other" });
@@ -3065,6 +3104,9 @@ describe("the host resolves a selection before the create runs", () => {
           release = resolve;
         }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 9 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 9 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 9, seq: 1, query: "first" });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 9, seq: 2, query: "second" });
@@ -3084,6 +3126,9 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 4 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 4 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 4, seq: 5, query: "newer" });
     await settle();
@@ -3118,6 +3163,9 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
       resolveBase: async () => undefined,
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3145,6 +3193,9 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
       resolveBase,
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     await settle();
     view.posts.length = 0;
@@ -3206,6 +3257,9 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
       resolveBase: async () => "deadbeef",
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3231,6 +3285,9 @@ describe("the host resolves a selection before the create runs", () => {
       probeReattach: async ({ repairPath }) => ({ kind: "adopt", adoptPath: repairPath }),
       resolveBase: async () => undefined,
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3255,6 +3312,9 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
       resolveBase,
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 3 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 3 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3279,6 +3339,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 7 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 7 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 7, seq: 0, query: "idle" });
     await settle();
@@ -3300,6 +3363,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3315,6 +3381,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "brand-new" });
     await settle();
@@ -3333,6 +3402,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3351,6 +3423,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3370,6 +3445,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3388,6 +3466,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3406,6 +3487,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3422,6 +3506,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3443,6 +3530,9 @@ describe("the host resolves a selection before the create runs", () => {
       exists: (p: string) => p === "/trees/repo-feat",
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3450,6 +3540,108 @@ describe("the host resolves a selection before the create runs", () => {
     const answer = resolutionIn(view);
     expect(answer?.occupiedCandidate?.disposition).toEqual({ kind: "debris" });
     expect(JSON.stringify(answer)).not.toContain("fingerprint");
+    dispose();
+  });
+
+  it("[r3 B2] a replayed refs ask cannot bring a retired opening's authority back", async () => {
+    // The gap [4_1] could not see. Retirement sweeps the `openings` records, but
+    // `requestWorktreeRefs` is the writer that CREATES them and it was
+    // unguarded — so replaying it with the retired token rebuilt the record and
+    // the probe-then-authorize pair reached the issuer again, exactly as before
+    // the close. Closing the sweep without closing the writer left D5's own
+    // sentence false (.reviews/round-3.md B2).
+    let issued = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      issueDebrisAuthorization: async (p: string) => {
+        issued += 1;
+        return { ok: true as const, fingerprint: `fp-for-${p}`, entries: ["stale.log"] };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    expect(view.posts.some((m) => m.type === "worktreeCreateResolution")).toBe(true);
+
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 1 });
+    // The replay: the same refs ask that seeded the record the close just swept.
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 1, query: "feat" });
+    await settle();
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
+    await settle();
+
+    expect(issued, "a replayed refs ask reopened the deletion channel").toBe(0);
+    expect(view.posts.filter((m) => m.type === "worktreeDebrisAuthorized")).toHaveLength(0);
+    dispose();
+  });
+
+  it("[r3 B2] a refs ask naming an opening the host does not hold seeds nothing", async () => {
+    // Token 0 is the sharp case: `namedOpening` rejects it on the defaults
+    // channel, but this writer accepted it and the probe's own ordinal check is
+    // non-negative, so it passed there too. What rejects all three here is the
+    // live-opening equality, not the shape check — an unopened surface holds no
+    // opening, so nothing can equal it. Dropping `namedOpening` alone therefore
+    // survives mutation by construction, which the guard's comment records.
+    let reads = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => {
+        reads += 1;
+        return { ok: true, refs: [{ name: "main" }], truncated: false };
+      },
+    });
+
+    for (const token of [0, 1, 99]) {
+      host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token });
+      host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token, seq: 0, query: "feat" });
+    }
+    await settle();
+
+    expect(reads, "an unheld opening reached the ref reader").toBe(0);
+    expect(view.posts.filter((m) => m.type === "worktreeRefs")).toHaveLength(0);
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(0);
+    dispose();
+  });
+
+  it("[r3 B2] a refs read resolving after the close publishes nothing", async () => {
+    // The read was legitimate when it started. Retirement outranks it: a list
+    // arriving for a form the user closed is a reply to a conversation that
+    // ended, and the panel's own guard is not the host's excuse for sending it.
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => {
+        await held;
+        return { ok: true, refs: [{ name: "main" }], truncated: false };
+      },
+      readPullRequests: async () => {
+        await held;
+        return { ok: true, pullRequests: [], truncated: false };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 1 });
+    release?.();
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeRefs")).toHaveLength(0);
+    expect(view.posts.filter((m) => m.type === "worktreePullRequests")).toHaveLength(0);
     dispose();
   });
 
@@ -3471,6 +3663,8 @@ describe("the host resolves a selection before the create runs", () => {
       },
     });
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3500,6 +3694,8 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
     });
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3525,6 +3721,9 @@ describe("the host resolves a selection before the create runs", () => {
         entries: ["stale.log", "sub"],
       }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     // The probe first: it is what PUBLISHES the debris candidate, and only a
     // published candidate can be authorized (round-1 B1).
@@ -3556,6 +3755,9 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
       issueDebrisAuthorization: async () => ({ ok: false as const, because: "notDebris" as const }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3589,6 +3791,9 @@ describe("the host resolves a selection before the create runs", () => {
         return { ok: true as const, fingerprint: "fp", entries: [] };
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3630,6 +3835,9 @@ describe("the host resolves a selection before the create runs", () => {
         return { ok: true as const, fingerprint: "fp", entries: [] };
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3670,6 +3878,9 @@ describe("the host resolves a selection before the create runs", () => {
         return { ok: true as const, fingerprint: "fp", entries: [] };
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3718,6 +3929,9 @@ describe("the host resolves a selection before the create runs", () => {
         return { ok: true as const, fingerprint: "fp", entries: [] };
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3793,6 +4007,9 @@ describe("the host resolves a selection before the create runs", () => {
       },
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3811,6 +4028,9 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3828,6 +4048,9 @@ describe("the host resolves a selection before the create runs", () => {
       exists: (p: string) => p === "/etc/secrets",
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3854,6 +4077,9 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -3861,6 +4087,9 @@ describe("the host resolves a selection before the create runs", () => {
     view.posts.length = 0;
 
     // A second opening. Nothing can reach the first one from here.
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     await settle();
     view.posts.length = 0;
@@ -3899,6 +4128,9 @@ describe("the host resolves a selection before the create runs", () => {
           release = resolve;
         }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     // `feat` is held by a worktree git reports prunable, so it classifies as a
     // reattach CANDIDATE — the one mode that corroborates.
@@ -3937,6 +4169,9 @@ describe("the host resolves a selection before the create runs", () => {
       },
     });
     depart = () => setFolders([OTHER_ROOT]);
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3971,6 +4206,9 @@ describe("the host resolves a selection before the create runs", () => {
       },
     });
     depart = () => setFolders([OTHER_ROOT]);
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -3996,6 +4234,9 @@ describe("the host resolves a selection before the create runs", () => {
       sibling: true,
       readRefs: async () => ({ ok: true, refs: [{ name: "feat" }], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: OTHER_REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: OTHER_REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: OTHER_REPO, token: 1, seq: 0, query: "feat" });
     await settle();
@@ -4031,6 +4272,9 @@ describe("the host resolves a selection before the create runs", () => {
       },
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -4056,6 +4300,9 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -4081,6 +4328,9 @@ describe("the host resolves a selection before the create runs", () => {
       refsInputs,
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
@@ -4106,6 +4356,9 @@ describe("the host resolves a selection before the create runs", () => {
         return { ok: true, refs: [{ name: "idle" }], truncated: false };
       },
     });
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
     await settle();
@@ -4138,6 +4391,9 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { createRoot: "/trees" });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",

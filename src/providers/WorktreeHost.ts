@@ -1975,6 +1975,34 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // One group, not a snapshot of the workspace. This runs once per
         // repository when the dialog opens, so `cache.read()` here made the
         // open cost R × O(R + W) in copying alone (round-1 B3).
+        // This is the message that SEEDS the record probe and debris
+        // authorization are gated on, so it is an authority door and has to be
+        // guarded like one. Retirement swept the records and this writer put one
+        // straight back: replaying a retired token here recreated the entry, and
+        // the probe-then-authorize pair then reached `issueDebrisAuthorization`
+        // exactly as it would have before the close (.reviews/round-3.md B2).
+        // Closing the sweep without closing the writer left D5's own sentence —
+        // retirement withdraws every channel the opening carries — false.
+        //
+        // Equality, not the defaults ask's repeat-or-advance rule: refs never
+        // ESTABLISHES an opening. The branch-less defaults ask is the only door
+        // that does, and the panel always sends it first, so a legitimate refs
+        // ask is always riding an opening this surface already holds. Letting
+        // refs advance the mark too would give a second message the power to
+        // mint a form's identity.
+        //
+        // `namedOpening` here is defence in depth and no test can kill it on its
+        // own: `liveOpening` only ever holds values that already passed it on the
+        // defaults channel, so the equality alone rejects `0`, a fraction and a
+        // string too. Kept because the shape check is what makes the equality's
+        // guarantee legible at this door rather than three hundred lines away —
+        // the same call the close-side guard makes.
+        const refsKey = surfaceKey(surface);
+        if (!namedOpening(msg.token) || liveOpening.get(refsKey) !== msg.token) {
+          return;
+        }
+        /** Still the opening this read belongs to, checked after every await. */
+        const refsLive = (): boolean => liveOpening.get(refsKey) === msg.token;
         const repo = cache.readRepo(msg.repoId);
         if (repo === undefined) {
           return;
@@ -1994,6 +2022,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           } as const;
           const postForge = (answer: PullRequestsRead | undefined): void => {
             if (disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // The form may have closed while the forge was answering. A reply
+            // for a retired opening is a reply for a conversation that ended.
+            if (!refsLive()) {
               return;
             }
             // Unavailable is POSTED rather than withheld: the form has a row
@@ -2053,6 +2086,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             // this. Saying `refs: []` would state that the repository has no
             // branches — a claim git declined to make.
             if (answer.ok !== true) {
+              return;
+            }
+            // Same rule as the forge continuation above: retirement outranks a
+            // read that was already running when it happened.
+            if (!refsLive()) {
               return;
             }
             surface.post({

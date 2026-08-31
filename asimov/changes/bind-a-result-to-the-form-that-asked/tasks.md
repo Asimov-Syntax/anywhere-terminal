@@ -112,3 +112,14 @@
     1. `src/webview/worktree/WorktreeController.ts`: advance `refsToken` after posting the retirement, so every existing guard rejects the retired number.
     2. `src/webview/worktree/WorktreeController.test.ts`: a defaults, offer and refs reply each delivered after a close change nothing. The existing `[1_2][r1 W2]` case asserts a refs reply IS still stored after close — that assertion encodes the behaviour D5 now corrects and moves with it.
   - **Boundary**: the retirement still names the opening the dialog captured; advancing the counter must not change what was posted
+
+- [x] 4_4 The refs door honours the live opening — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_3
+  - **Refs**: specs/worktree-panel/spec.md#closing-a-create-form-retires-its-opening; design.md D5
+  - **Acceptance**:
+    - Outcome: A refs request naming a retired, never-held or malformed opening seeds no record and publishes nothing
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: `requestWorktreeRefs` requires `namedOpening(msg.token)` and `msg.token === liveOpening.get(key)` before either reader starts or `openings.set` runs; both continuations recheck liveness before posting.
+    2. `src/providers/WorktreeHost.actions.test.ts`: replayed refs after close mints no debris authorization; token 0 seeds nothing; refs and forge reads resolving after a close publish nothing.
+  - **Boundary**: refs never ESTABLISHES an opening — the branch-less defaults ask is the only opening door, and refs rides one it already holds
