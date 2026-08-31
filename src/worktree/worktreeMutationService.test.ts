@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
+import type { ReattachVerdict } from "./reattachProbe";
 import type { RemovalEvidence } from "./worktreeBlockers";
 import {
   createWorktreeMutationService,
@@ -75,6 +76,10 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     observation: () => 1,
     observeAfter: async () => ({ isRegistered: false, existsOnDisk: false }),
     createContext: () => ({ mainWorktree: "/repo", linkedWorktrees: [] }),
+    // A repository whose stale registration still corroborates, unless a test
+    // moves one of these. Both are what D3 re-establishes at the mutation.
+    corroborateRepair: async ({ repairPath }) => ({ kind: "offer", repairPath, expectedOid: "oid-1" }),
+    listWorktrees: async () => [{ displayPath: "/repo-wt/stale", branch: "feat", prunable: true }],
     pathDeps: {
       platform: "darwin",
       lstat: async () => null,
@@ -1143,8 +1148,36 @@ describe("reattach repairs in place, and re-checks the pause", () => {
    * A runner that answers each git question separately, so a test can move one
    * of them without moving the others.
    */
-  function reattachHarness(over: { head?: string; stillPrunable?: readonly string[]; repairOk?: boolean } = {}) {
+  function reattachHarness(
+    over: {
+      head?: string;
+      stillPrunable?: readonly string[];
+      repairOk?: boolean;
+      registeredBefore?: boolean;
+      branchBefore?: string;
+      verdict?: ReattachVerdict;
+      listing?: null;
+    } = {},
+  ) {
+    // The listing is read TWICE — once to prove the stale registration is still
+    // there to repair, once to prove the repair took. A test moves one without
+    // moving the other.
+    let reads = 0;
     const h = harness({
+      listWorktrees: async () => {
+        reads += 1;
+        if (over.listing === null) {
+          return null;
+        }
+        if (reads === 1) {
+          return over.registeredBefore === false
+            ? []
+            : [{ displayPath: STALE, branch: over.branchBefore ?? "feat", prunable: true }];
+        }
+        return (over.stillPrunable ?? []).map((p) => ({ displayPath: p, branch: "feat", prunable: true }));
+      },
+      corroborateRepair: async ({ repairPath }) =>
+        over.verdict ?? { kind: "offer", repairPath, expectedOid: over.head ?? "oid-1" },
       pathDeps: {
         platform: "darwin",
         lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
@@ -1207,34 +1240,76 @@ describe("reattach repairs in place, and re-checks the pause", () => {
     expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("moved") });
   });
 
-  it("refuses when the directory's commit cannot be read at all", async () => {
-    // Unreadable is not "matches". Treating it as one would repair against a
-    // checkout nobody established the state of.
-    const h = harness({
-      pathDeps: {
-        platform: "darwin",
-        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
-        readdir: async () => ["src"],
-        normalize: async (raw) => raw,
-      },
-      runner: {
-        run: vi.fn(async (args: readonly string[]) =>
-          args[0] === "rev-parse"
-            ? { code: 128, stdout: Buffer.alloc(0), stderr: "fatal: not a git repository", ...FAILED }
-            : ok(),
-        ),
-      },
-    });
+  it("refuses a checkout whose commit could not be read, and issues no mutation", async () => {
+    // The mutation delegates D3 conditions 2 and 3 to the same probe that made
+    // the offer, so an unreadable HEAD arrives here as the verdict the probe
+    // already folds it into: we cannot say this checkout is where the branch
+    // is, which is not a state to repair against.
+    const h = reattachHarness({ verdict: { kind: "declined", because: "headMoved" } });
     await reattach(h);
 
-    // Asked, and answered nothing usable — not "never asked", which would pass
-    // just as well if the whole branch were missing.
-    expect(argvOf(h).some((a) => a[0] === "rev-parse")).toBe(true);
     expect(argvOf(h).some((a) => a[1] === "repair")).toBe(false);
-    // The unreadable REASON, not just "some error": dropping this guard leaves
-    // `undefined` to fail the equality check below it and report a checkout
-    // that moved, which is a different and untrue thing to tell the user.
-    expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("could not be read") });
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", verb: "create" });
+  });
+
+  it("refuses when the git link itself could not be read", async () => {
+    const h = reattachHarness({ verdict: { kind: "declined", because: "unreadable" } });
+    await reattach(h);
+
+    expect(argvOf(h).some((a) => a[1] === "repair")).toBe(false);
+    expect(h.outcomes[0]).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("could not be read"),
+    });
+  });
+
+  it("refuses once the administrative entry is gone, rather than repairing nothing", async () => {
+    // The hole this closes: with the entry pruned, `git worktree repair` has
+    // nothing to reconnect and exits 0, and the condition-4 check then asks
+    // whether a path nobody registered is still prunable. It is not — so
+    // without this guard a repair that did nothing reports success.
+    const h = reattachHarness({ verdict: { kind: "adopt", adoptPath: STALE } });
+    await reattach(h);
+
+    expect(argvOf(h).some((a) => a[1] === "repair")).toBe(false);
+    expect(h.outcomes[0]).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("administrative entry is gone"),
+    });
+  });
+
+  it("refuses when the listing no longer carries the stale registration", async () => {
+    const h = reattachHarness({ registeredBefore: false });
+    await reattach(h);
+
+    expect(argvOf(h).some((a) => a[1] === "repair")).toBe(false);
+    expect(h.outcomes[0]).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("no longer reports"),
+    });
+  });
+
+  it("refuses when the stale registration is on a different branch", async () => {
+    // `mode.branch` was accepted and never consulted before round 1: a stale
+    // registration of ANOTHER branch would have been repaired on this one's say-so.
+    const h = reattachHarness({ branchBefore: "some-other-branch" });
+    await reattach(h);
+
+    expect(argvOf(h).some((a) => a[1] === "repair")).toBe(false);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error", verb: "create" });
+  });
+
+  it("corroborates BEFORE it repairs, never after", async () => {
+    const seen: string[] = [];
+    const h = reattachHarness();
+    await reattach(h);
+
+    for (const call of argvOf(h)) {
+      seen.push(call.join(" "));
+    }
+    // Nothing but the repair itself reaches git on this path now: the listing
+    // and the corroboration are injected, and both ran before it.
+    expect(seen.filter((c) => c.includes("repair"))).toHaveLength(1);
   });
 
   it("reports a repair that did not take, rather than claiming it", async () => {
@@ -1248,25 +1323,7 @@ describe("reattach repairs in place, and re-checks the pause", () => {
   });
 
   it("does not read a listing it could not obtain as a successful repair", async () => {
-    const h = harness({
-      pathDeps: {
-        platform: "darwin",
-        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
-        readdir: async () => ["src"],
-        normalize: async (raw) => raw,
-      },
-      runner: {
-        run: vi.fn(async (args: readonly string[]) => {
-          if (args[0] === "rev-parse") {
-            return ok({ stdout: Buffer.from("oid-1\n") });
-          }
-          if (args[1] === "list") {
-            return { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: cannot list", ...FAILED };
-          }
-          return ok();
-        }),
-      },
-    });
+    const h = reattachHarness({ listing: null });
     await reattach(h);
 
     expect(h.outcomes[0]).toMatchObject({ kind: "unavailable", verb: "create", unreadable: ["prunable"] });

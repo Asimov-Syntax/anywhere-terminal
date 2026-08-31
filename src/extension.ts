@@ -80,6 +80,8 @@ import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import { readWorktreeGitDir } from "./worktree/worktreeGitDir";
 import type { MutationOutcome } from "./worktree/worktreeMutationService";
 import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
+import { listRepoWorktrees } from "./worktree/WorktreeDiscovery";
+import type { ReattachVerdict } from "./worktree/reattachProbe";
 import { worktreeHeadOid } from "./worktree/worktreeMutations";
 
 /**
@@ -556,6 +558,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         resolve: bindings.resolve,
         repoPath: bindings.repoPath,
         assessRemoval: bindings.assessRemoval,
+        corroborateRepair,
+        // The SAME listing the tree is built from — it negotiates `-z` through
+        // the capability probe, so the listing that offers a repair and the one
+        // that confirms it cannot parse the same path differently (round-1 W5).
+        listWorktrees: async (repoPath) => {
+          const listing = await listRepoWorktrees(repoPath, worktreeTreeDeps);
+          return listing.degraded === undefined ? listing.worktrees : null;
+        },
         observation: bindings.observation,
         observeAfter: async (target, journalledPath) => {
           // Two INDEPENDENT readings. The previous version inferred "directory
@@ -716,22 +726,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  const worktreeHost = createWorktreeHost({
-    deps: worktreeTreeDeps,
-    // Without this the create form never receives an offer and the whole
-    // provisioning section is dark in the shipped extension — every test passed
-    // because they all supplied their own (.reviews/round-1.md B1).
-    readProvisioning: (mainWorktree) => readAsimovProvisioning(createProvisioningDeps(), mainWorktree),
-    // Same reason as the offer above: without this the create form never
-    // receives a branch list and the combobox is a plain text field in the
-    // shipped extension, with every module test green against its own fake.
-    // The listing arrives from the host, which already holds it — this side
-    // supplies only the git runner (design.md D2).
-    readRefs: (input) => readRepoRefs(worktreeTreeDeps.runner, input),
-    // § 2.3's conditions 2 and 3, which are a filesystem read and a ref read.
-    // Assembled here rather than in the host for the same reason `readRefs` is:
-    // the host holds a listing, and neither `.git` nor `refs/heads` is one.
-    probeReattach: async ({ repoPath, branch, repairPath }) => {
+
+  /**
+   * D3's conditions 2 and 3, in one place.
+   *
+   * The host's offer and the mutation's re-check both call this, so the two
+   * cannot drift apart about what a repairable worktree is — a second
+   * hand-rolled copy of the link and HEAD reads is exactly how they would
+   * (round-1 B1). Declared rather than assigned so `mutations()`, defined
+   * above and called lazily, can reach it.
+   */
+  async function corroborateRepair({
+    repoPath,
+    branch,
+    repairPath,
+  }: { repoPath: string; branch: string; repairPath: string }): Promise<ReattachVerdict> {
       const tip = await worktreeTreeDeps.runner.run(["rev-parse", `refs/heads/${branch}`], repoPath);
       if (tip.code !== 0 || tip.timedOut || tip.failedToSpawn) {
         // A branch whose tip we could not read is one we cannot prove this
@@ -750,7 +759,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           headOid: (worktreePath) => worktreeHeadOid(worktreeTreeDeps.runner, worktreePath),
         },
       );
-    },
+  }
+
+
+  const worktreeHost = createWorktreeHost({
+    deps: worktreeTreeDeps,
+    // Without this the create form never receives an offer and the whole
+    // provisioning section is dark in the shipped extension — every test passed
+    // because they all supplied their own (.reviews/round-1.md B1).
+    readProvisioning: (mainWorktree) => readAsimovProvisioning(createProvisioningDeps(), mainWorktree),
+    // Same reason as the offer above: without this the create form never
+    // receives a branch list and the combobox is a plain text field in the
+    // shipped extension, with every module test green against its own fake.
+    // The listing arrives from the host, which already holds it — this side
+    // supplies only the git runner (design.md D2).
+    readRefs: (input) => readRepoRefs(worktreeTreeDeps.runner, input),
+    // § 2.3's conditions 2 and 3, which are a filesystem read and a ref read.
+    // Assembled here rather than in the host for the same reason `readRefs` is:
+    // the host holds a listing, and neither `.git` nor `refs/heads` is one.
+    probeReattach: corroborateRepair,
     // The two evidence sources a removal blocker set needs and the tree does
     // not carry, from the same store and registry the projector reads.
     removalFacts: {

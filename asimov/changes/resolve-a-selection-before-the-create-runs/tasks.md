@@ -78,7 +78,7 @@
     2. Assert against the assembly's own real repository that a `prunable` worktree resolves to reattach and that the repair clears the flag.
   - **Boundary**: no new production code — this task adds coverage, and a defect it finds is fixed in the task that owns the file
 
-- [ ] 5_1 A repair re-establishes every condition it was offered under
+- [x] 5_1 A repair re-establishes every condition it was offered under — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D3, D6; specs/worktree-panel/spec.md#a-stale-registration-is-repaired-in-place-and-only-while-git-can-repair-it
   - **Acceptance**:
@@ -90,6 +90,7 @@
     3. `src/worktree/reattachProbe.ts`: `readGitLink` treats every non-directory `lstat` as a file, so a symlinked `.git` satisfies the FILE check and `readFile` follows it. Require a true regular file.
     4. `src/worktree/worktreeMutations.ts`: `prunablePaths` parses the line format while `WorktreeDiscovery` negotiates `-z` through the `worktree-list-z` capability probe. The listing that OFFERS a reattach and the one that CONFIRMS it can disagree about the same path — the exact comparison condition 4 rests on. Reuse the authoritative reader.
     5. Cover: an admin directory removed between resolution and submit refuses; a branch that moved while the checkout stayed put refuses; a symlinked `.git` is not offered; the post-repair listing uses the same reader the offer did.
+    6. The reader and the corroboration reach the mutation as injected deps, so the assembly in `src/extension.ts` supplies the SAME `probeReattach` it already gives the host and the same `listRepoWorktrees` the tree uses — offer and mutation cannot then diverge on what they checked. Construction sites `src/extension.ts` and `src/extension.worktreeMutations.test.ts` take the new deps; the symlink case is covered in `src/worktree/reattachProbe.test.ts`, and `src/worktree/worktreeMutations.test.ts` loses the `prunablePaths` block along with the function it covered.
   - **Boundary**: still no `--force` and no fallback to `add`
 
 - [ ] 5_2 The host answers one probe per settled selection, for one owner

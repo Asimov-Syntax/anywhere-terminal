@@ -9,7 +9,6 @@
 import { readsAsFlag } from "../utils/readsAsFlag";
 import { describeGitFailure } from "./describeGitFailure";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
-import { parseWorktreeList } from "./porcelainParser";
 
 export type MutationResult = { ok: true; stdout: string } | { ok: false; message: string };
 
@@ -346,24 +345,3 @@ export async function worktreeHeadOid(runner: GitCommandRunner, worktreePath: st
 }
 
 /** Every registration git STILL reports prunable, spelled as git spells them. */
-export type PrunablePaths = { ok: true; paths: string[] } | { ok: false };
-
-/**
- * Which registrations git currently calls stale.
- *
- * A listing that failed answers `{ ok: false }` rather than an empty list: the
- * caller uses this to confirm a repair took, and reading "we could not ask" as
- * "nothing is stale" would claim a success nobody observed (§ 2.3 condition 4).
- *
- * Not `-z`: this runs once, after a repair, on a listing already known to be
- * small, and the fallback machinery `WorktreeDiscovery` needs for the general
- * case would buy nothing here.
- */
-export async function prunablePaths(runner: GitCommandRunner, repoPath: string): Promise<PrunablePaths> {
-  const result = await runner.run(["worktree", "list", "--porcelain"], repoPath);
-  if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
-    return { ok: false };
-  }
-  const parsed = parseWorktreeList(result.stdout);
-  return { ok: true, paths: parsed.worktrees.filter((worktree) => worktree.prunable).map((worktree) => worktree.path) };
-}

@@ -14,6 +14,8 @@ import { isAbsolute, join, resolve } from "node:path";
 export type GitLink =
   | { kind: "file"; gitdir: string }
   | { kind: "directory" }
+  /** Present, but neither a directory nor a regular file — a symlink, a socket. */
+  | { kind: "notAFile" }
   | { kind: "absent" }
   | { kind: "unreadable" };
 
@@ -64,8 +66,9 @@ export async function probeReattach(subject: ReattachSubject, deps: ReattachProb
     return { kind: "declined", because: "unreadable" };
   }
   if (link.kind !== "file") {
-    // A `.git` directory is a repository and an absent one is not a checkout
-    // git ever registered. Neither is repairable, and neither is adopt.
+    // A `.git` directory is a repository, an absent one is not a checkout git
+    // ever registered, and a symlink is not the link file git writes. None is
+    // repairable, and none is adopt.
     return { kind: "declined", because: "notALinkedWorktree" };
   }
 
@@ -86,8 +89,8 @@ export async function probeReattach(subject: ReattachSubject, deps: ReattachProb
 
 /** The two filesystem reads a `.git` entry needs, injected so this is testable. */
 export interface GitLinkFs {
-  /** `null` when the path is not there. Never throws. */
-  lstat(p: string): Promise<{ isDirectory(): boolean } | null>;
+  /** `null` when the path is not there. Never throws. Does NOT follow symlinks. */
+  lstat(p: string): Promise<{ isDirectory(): boolean; isFile(): boolean } | null>;
   /** `null` when the file could not be read. Never throws. */
   readFile(p: string): Promise<string | null>;
 }
@@ -113,6 +116,13 @@ export async function readGitLink(worktreePath: string, fs: GitLinkFs): Promise<
   }
   if (info.isDirectory()) {
     return { kind: "directory" };
+  }
+  if (!info.isFile()) {
+    // `lstat` does not follow a symlink but `readFile` does, so treating every
+    // non-directory as the link file would let a `.git` symlink pointing
+    // anywhere answer for this worktree. Git writes a regular file here
+    // (round-1 B1).
+    return { kind: "notAFile" };
   }
   const text = await fs.readFile(dotGit);
   if (text === null) {

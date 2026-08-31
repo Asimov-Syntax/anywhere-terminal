@@ -14,6 +14,7 @@ import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages"
 import { normalizePathForCompare } from "../utils/pathBoundary";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
 import type { GitCommandRunner } from "./gitCommandRunner";
+import type { ReattachVerdict } from "./reattachProbe";
 import { excludePatternFor } from "./gitExclude";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
 import { createMutationQueue } from "./mutationQueue";
@@ -26,13 +27,11 @@ import {
   createWorktree,
   lockWorktree,
   type MutationResult,
-  prunablePaths,
   pruneRepo,
   type RemovalOutcome,
   removeWorktree,
   repairWorktree,
   unlockWorktree,
-  worktreeHeadOid,
 } from "./worktreeMutations";
 
 /**
@@ -105,6 +104,47 @@ export function existenceFromStatError(error: NodeJS.ErrnoException): false | nu
   return error.code === "ENOENT" || error.code === "ENOTDIR" ? false : null;
 }
 
+/** The fields of a worktree record that answer D3's conditions 1 and 4. */
+export interface RepairListingRecord {
+  displayPath: string;
+  branch?: string;
+  prunable: boolean;
+}
+
+/** Whether the listing still carries the stale registration a repair was offered for. */
+async function holdsStaleRegistration(
+  records: readonly RepairListingRecord[],
+  repairPath: string,
+  branch: string,
+  normalize: (raw: string) => Promise<string | null>,
+): Promise<boolean> {
+  const target = normalizePathForCompare(repairPath);
+  for (const record of records) {
+    if (!record.prunable || record.branch !== branch) {
+      continue;
+    }
+    const resolved = await normalize(record.displayPath);
+    if (resolved !== null && normalizePathForCompare(resolved) === target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Why a re-corroborated repair was refused, in the user's terms. */
+function declineReason(verdict: ReattachVerdict): string {
+  if (verdict.kind === "adopt") {
+    return "That worktree's administrative entry is gone, so it can no longer be repaired in place.";
+  }
+  if (verdict.kind === "declined" && verdict.because === "unreadable") {
+    return "That directory's git link could not be read, so nothing was repaired.";
+  }
+  if (verdict.kind === "declined" && verdict.because === "notALinkedWorktree") {
+    return "That directory is no longer a linked worktree, so nothing was repaired.";
+  }
+  return "That checkout has moved since it was inspected. Nothing was changed; please try again.";
+}
+
 export interface MutationServiceDeps {
   runner: GitCommandRunner;
   /**
@@ -148,6 +188,23 @@ export interface MutationServiceDeps {
   /** Where a create may go, and what already occupies this repo. */
   createContext(repoId: string): CreatePathContext | null;
   pathDeps: CreatePathDeps;
+  /**
+   * Re-establish D3's conditions 2 and 3 at the mutation, through the SAME
+   * probe that offered the repair.
+   *
+   * Injected rather than reimplemented so the offer and the mutation cannot
+   * disagree about what was checked — a second hand-rolled copy of the link and
+   * HEAD reads is how they would drift (round-1 B1).
+   */
+  corroborateRepair(input: { repoPath: string; branch: string; repairPath: string }): Promise<ReattachVerdict>;
+  /**
+   * The repository's worktrees, from the listing that negotiates `-z`.
+   *
+   * `null` when no listing could be obtained, which is indeterminate rather
+   * than "nothing is registered". D3's conditions 1 and 4 both read this, and
+   * they must read it the same way the offer did (round-1 W5).
+   */
+  listWorktrees(repoPath: string): Promise<readonly RepairListingRecord[] | null>;
   /** Report an outcome to the surface that started it (D17). */
   report(outcome: MutationOutcome, origin?: WorktreeSurface): void;
   /**
@@ -485,16 +542,35 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               if (repairPath === null || stat === null || stat.isSymbolicLink() || !stat.isDirectory()) {
                 return fail("That directory is gone, so there is nothing to re-register.");
               }
-              // D3 condition 3, re-established HERE rather than carried from
-              // the resolution: the user's decision sits between the read and
-              // this mutation, and a checkout that moved in that window is a
-              // different checkout. Unreadable is not "matches" — it means
-              // nobody established the state this would repair against.
-              const head = await worktreeHeadOid(deps.runner, repairPath);
-              if (head === undefined) {
-                return fail("That directory's current commit could not be read, so nothing was repaired.");
+              // D3 condition 1, re-established HERE and not carried from the
+              // resolution. If the administrative entry was pruned during the
+              // user's pause, `git worktree repair` has nothing to reconnect,
+              // exits 0, and the condition-4 check below then asks whether a
+              // path nobody registered is still prunable — it is not, so the
+              // check passes and a repair that did nothing would be reported as
+              // a success. Requiring the stale record BEFORE the command is
+              // what makes condition 4 mean what it says (round-1 B1).
+              const before = await deps.listWorktrees(repoPath);
+              if (before === null) {
+                return { kind: "unavailable", verb: "create", repoId: request.repoId, unreadable: ["prunable"] };
               }
-              if (head !== mode.expectedOid) {
+              if (!(await holdsStaleRegistration(before, repairPath, mode.branch, deps.pathDeps.normalize))) {
+                return fail(
+                  "Git no longer reports that directory as a stale registration of this branch, so there is nothing to repair.",
+                );
+              }
+              // D3 conditions 2 and 3, through the same probe that offered the
+              // repair: the `.git` link, the administrative directory it names,
+              // and the branch tip against the directory's HEAD. The user's
+              // decision sits between the read and this mutation, and every one
+              // of them can have changed inside that window.
+              const verdict = await deps.corroborateRepair({ repoPath, branch: mode.branch, repairPath });
+              if (verdict.kind !== "offer") {
+                return fail(declineReason(verdict));
+              }
+              // The probe proves the checkout still matches the branch NOW;
+              // this proves it is still the same checkout the user was shown.
+              if (verdict.expectedOid !== mode.expectedOid) {
                 return fail("That checkout has moved since it was inspected. Nothing was changed; please try again.");
               }
               const result = await repairWorktree(deps.runner, { repoPath, worktreePath: repairPath });
@@ -504,16 +580,11 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               // § 2.3 condition 4. Git exiting 0 is not the claim; the listing
               // losing `prunable` is, and a repair that did not take is
               // reported rather than announced as a success.
-              const stale = await prunablePaths(deps.runner, repoPath);
-              if (!stale.ok) {
+              const after = await deps.listWorktrees(repoPath);
+              if (after === null) {
                 return { kind: "unavailable", verb: "create", repoId: request.repoId, unreadable: ["prunable"] };
               }
-              // Git spells these paths its own way; both sides go through the
-              // same resolver before they are compared, exactly as the listing
-              // that produced `repairPath` did.
-              const resolved = await Promise.all(stale.paths.map((path) => deps.pathDeps.normalize(path)));
-              const target = normalizePathForCompare(repairPath);
-              if (resolved.some((path) => path !== null && normalizePathForCompare(path) === target)) {
+              if (await holdsStaleRegistration(after, repairPath, mode.branch, deps.pathDeps.normalize)) {
                 return fail("Git still reports that worktree as stale, so the repair did not take.");
               }
               await deps.afterCreate(repairPath, request.afterCreate, request.origin).catch((error: unknown) => {

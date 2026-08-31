@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type GitLink, type GitLinkFs, probeReattach, type ReattachProbeDeps, readGitLink } from "./reattachProbe";
 
 const SUBJECT = { repairPath: "/wt/stale", branchOid: "abc123" };
@@ -94,7 +94,7 @@ describe("readGitLink", () => {
       await readGitLink(
         "/repo/wt/stale",
         fs({
-          lstat: async () => ({ isDirectory: () => false }),
+          lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
           readFile: async () => "gitdir: ../../.git/worktrees/stale\n",
         }),
       ),
@@ -108,7 +108,7 @@ describe("readGitLink", () => {
       await readGitLink(
         "/wt/stale",
         fs({
-          lstat: async () => ({ isDirectory: () => false }),
+          lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
           readFile: async () => "gitdir: /repo/.git/worktrees/stale",
         }),
       ),
@@ -116,9 +116,32 @@ describe("readGitLink", () => {
   });
 
   it("calls a `.git` DIRECTORY a directory — a repository is not a linked worktree", async () => {
-    expect(await readGitLink("/repo", fs({ lstat: async () => ({ isDirectory: () => true }) }))).toEqual({
+    expect(await readGitLink("/repo", fs({ lstat: async () => ({ isDirectory: () => true, isFile: () => false }) }))).toEqual({
       kind: "directory",
     });
+  });
+
+  it("refuses a symlinked `.git`, which `readFile` would have followed", async () => {
+    // `lstat` does not follow the link, so the old "not a directory means it is
+    // the link file" reading let a symlink pointing anywhere satisfy the check
+    // and then had `readFile` follow it (round-1 B1).
+    const readFile = vi.fn(async () => "gitdir: /elsewhere/.git/worktrees/x");
+    expect(
+      await readGitLink("/wt/stale", fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => false }), readFile })),
+    ).toEqual({ kind: "notAFile" });
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("declines to offer a repair against a symlinked `.git`", async () => {
+    const verdict = await probeReattach(
+      { repairPath: "/wt/stale", branchOid: "aaa" },
+      {
+        readGitLink: async () => ({ kind: "notAFile" }),
+        adminDirExists: async () => true,
+        headOid: async () => "aaa",
+      },
+    );
+    expect(verdict).toEqual({ kind: "declined", because: "notALinkedWorktree" });
   });
 
   it("calls a missing `.git` absent, which is not the same as unreadable", async () => {
@@ -126,7 +149,7 @@ describe("readGitLink", () => {
   });
 
   it("answers unreadable when the file is there but cannot be read", async () => {
-    expect(await readGitLink("/wt/stale", fs({ lstat: async () => ({ isDirectory: () => false }) }))).toEqual({
+    expect(await readGitLink("/wt/stale", fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => true }) }))).toEqual({
       kind: "unreadable",
     });
   });
@@ -137,7 +160,7 @@ describe("readGitLink", () => {
     expect(
       await readGitLink(
         "/wt/stale",
-        fs({ lstat: async () => ({ isDirectory: () => false }), readFile: async () => "something else\n" }),
+        fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => true }), readFile: async () => "something else\n" }),
       ),
     ).toEqual({ kind: "unreadable" });
   });
@@ -146,7 +169,7 @@ describe("readGitLink", () => {
     expect(
       await readGitLink(
         "/wt/stale",
-        fs({ lstat: async () => ({ isDirectory: () => false }), readFile: async () => "gitdir:   \n" }),
+        fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => true }), readFile: async () => "gitdir:   \n" }),
       ),
     ).toEqual({ kind: "unreadable" });
   });

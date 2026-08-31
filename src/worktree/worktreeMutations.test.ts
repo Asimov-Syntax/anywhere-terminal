@@ -5,7 +5,6 @@ import {
   classifyRemoval,
   createWorktree,
   lockWorktree,
-  prunablePaths,
   pruneRepo,
   REMOVE_TIMEOUT_MS,
   type RemovalJournal,
@@ -373,29 +372,3 @@ describe("worktreeHeadOid", () => {
   });
 });
 
-describe("prunablePaths", () => {
-  it("names only the registrations git still reports as prunable", async () => {
-    const { run, runner: r } = runner(
-      ok(
-        [
-          "worktree /repo",
-          "HEAD aaa",
-          "branch refs/heads/main",
-          "",
-          "worktree /repo/wt-stale",
-          "HEAD bbb",
-          "branch refs/heads/feat",
-          "prunable gitdir file points to non-existent location",
-          "",
-        ].join("\n"),
-      ),
-    );
-    expect(await prunablePaths(r, "/repo")).toEqual({ ok: true, paths: ["/repo/wt-stale"] });
-    expect(run).toHaveBeenCalledWith(["worktree", "list", "--porcelain"], "/repo");
-  });
-
-  it("answers not-ok when the listing failed, which is not the same as none", async () => {
-    const { runner: r } = runner(fail("fatal: no repo"));
-    expect(await prunablePaths(r, "/repo")).toEqual({ ok: false });
-  });
-});
