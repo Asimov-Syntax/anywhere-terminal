@@ -100,7 +100,10 @@
         },
         "anywhereTerminal.worktree.rowActivation": {
           "type": "string",
-          "enum": ["focus", "preview"],
+          "enum": [
+            "focus",
+            "preview"
+          ],
           "enumDescriptions": [
             "Reveal the agent's terminal pane and make it active.",
             "Open the agent's session preview overlay."
@@ -644,7 +647,7 @@
     "test:unit:coverage": "vitest run --coverage",
     "vsix": "rm -f anywhere-terminal-*.vsix && vsce package --no-dependencies",
     "release": "bash scripts/release.sh",
-    "asm": "bun run .agents/skills/asimov/scripts/asm.ts"
+    "asm": "bun run \"$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/../.agents/skills/asimov/scripts/asm.ts\""
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.5",
