@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -72,3 +72,4 @@ Planned at: c7fc268d (re-planned after the cycle-2 handback)
 - What a re-plan should carry: one decision covering what a resolution owns in every mode (destination authority over an override, and detached consuming a destination without a mode), plus B7's async ownership rule — an opening captured before an await must be re-identified after every await, which is a different property from the map release `openingsHeld()` witnesses. W7's acceptance should require an assembly walk where the candidate and the resolved target genuinely differ; two rounds of green gates over B3 came from walks where they could not.
 - 7_2: D9's re-identification is four checks, and mutation shows only three have an observable consequence — the windows after the enumeration, the corroboration and the base resolution each have work the next gate cannot undo, and each has its own case. The check before the enumeration has nothing but a synchronous derivation after it, so its mutant is caught by the next gate; it is kept because the read cannot be awaited off an opening that may be gone, and it is witnessed by the enumeration case rather than by one of its own.
 - 7_3: the two walks W7 asked for are non-vacuous against different mechanisms. The occupied-override walk fails on its own the moment the override wins at `stated`. The withdrawn-override walk needs BOTH the override winning and the refusal no longer withdrawing it — under either alone the repair target is still what the form states, because the resolution now owns the destination whether or not the withdrawal fires. Recorded rather than strengthened: the pair is what the decision changed, and a walk that failed on one mutation alone would be asserting a mechanism rather than the invariant.
+- Verify gate (cycle-3 build): check-types clean; `pnpm exec biome check src` at the recorded baseline — 3 errors / 14 warnings / 1 info, every one in `src/agentHooks`, `src/cursor`, `src/vault` and CSS files this change does not touch; `pnpm run test:unit` 5992/5992; `pnpm run gate:fs-deletion` I10 ok.
