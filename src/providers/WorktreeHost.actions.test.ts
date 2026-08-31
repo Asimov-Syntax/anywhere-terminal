@@ -21,6 +21,7 @@ import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
+import type { PullRequestsRead } from "../worktree/repoPullRequests";
 import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTree } from "../worktree/types";
@@ -300,6 +301,8 @@ async function builtHost(
     readRefs?: (input: RepoRefsInput) => Promise<RepoRefsRead>;
     /** Collects every input the ref reader was handed. */
     refsInputs?: RepoRefsInput[];
+    /** What the pull-request reader should answer. */
+    readPullRequests?: (input: { cwd: string }) => Promise<PullRequestsRead>;
     /** Registry sessions the removal assessment should be given. */
     sessions?: readonly SessionRecord[];
     /** What the proof reader should answer. */
@@ -426,6 +429,7 @@ async function builtHost(
             return (await over.readRefs?.(input)) ?? { ok: true, refs: [], truncated: false };
           },
         }),
+    ...(over.readPullRequests === undefined ? {} : { readPullRequests: over.readPullRequests }),
     ...(over.resolveBase === undefined ? {} : { resolveBase: over.resolveBase }),
     // The host resolves the candidate against the filesystem before it lets the
     // candidate reach `exists`. These tests name paths that are not on disk, so
@@ -1182,6 +1186,111 @@ describe("the list of branches a create can pick from comes from the host", () =
       refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }],
       truncated: true,
     });
+    dispose();
+  });
+
+  it("posts the refs without waiting for the pull-request read", async () => {
+    // worktree-create.md § 4.1: "a slow or unauthenticated forge never blocks
+    // branch search underneath it". The forge read is held open for the whole
+    // assertion, so awaiting it anywhere on the refs path fails this.
+    let releaseForge: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      releaseForge = resolve;
+    });
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readRefs: async () => ({ ok: true, refs: [{ name: "main" }], truncated: false }),
+      readPullRequests: async () => {
+        await held;
+        return { ok: true, pullRequests: [], truncated: false };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(
+      view.posts.find((m) => m.type === "worktreeRefs"),
+      "the refs waited for the forge",
+    ).toBeDefined();
+    expect(view.posts.find((m) => m.type === "worktreePullRequests")).toBeUndefined();
+
+    releaseForge?.();
+    await settle();
+    expect(view.posts.find((m) => m.type === "worktreePullRequests")).toBeDefined();
+    dispose();
+  });
+
+  it("answers a pull-request read with what the forge found", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readPullRequests: async () => ({
+        ok: true,
+        pullRequests: [
+          {
+            number: 7,
+            title: "Add search",
+            headRefName: "feat",
+            baseRefName: "main",
+            fromFork: false,
+            headOwner: "acme",
+          },
+        ],
+        truncated: true,
+      }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(view.posts.find((m) => m.type === "worktreePullRequests")).toEqual({
+      type: "worktreePullRequests",
+      repoId: REPO,
+      token: 1,
+      pullRequests: [
+        {
+          number: 7,
+          title: "Add search",
+          headRefName: "feat",
+          baseRefName: "main",
+          fromFork: false,
+          headOwner: "acme",
+        },
+      ],
+      truncated: true,
+      available: true,
+    });
+    dispose();
+  });
+
+  it("posts the unavailable state rather than staying silent about it", async () => {
+    // Silence would leave "not asked yet" and "asked, and there are none to be
+    // had" indistinguishable, and § 5 requires a row for the second one.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readPullRequests: async () => ({ ok: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(view.posts.find((m) => m.type === "worktreePullRequests")).toEqual({
+      type: "worktreePullRequests",
+      repoId: REPO,
+      token: 1,
+      available: false,
+    });
+    dispose();
+  });
+
+  it("says nothing about pull requests where a reader that throws took its own answer down", async () => {
+    // The refs answer and the destination reply must survive it — this read is
+    // discovery, and discovery never takes the create with it.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readRefs: async () => ({ ok: true, refs: [{ name: "main" }], truncated: false }),
+      readPullRequests: async () => {
+        throw new Error("gh exploded");
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(view.posts.find((m) => m.type === "worktreeRefs")).toBeDefined();
+    expect(view.posts.find((m) => m.type === "worktreePullRequests")).toBeUndefined();
     dispose();
   });
 

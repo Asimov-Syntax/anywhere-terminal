@@ -12,7 +12,7 @@
     3. `src/worktree/repoPullRequests.test.ts`: a normal list, a truncated list, and one case per failure mode proving they collapse to the same answer.
   - **Boundary**: no new process seam — the runner is `createGitCommandRunner({ executable: "gh" })` per D2, and `src/worktree/gitCommandRunner.ts` is not modified
 
-- [ ] 1_2 Carry pull requests on their own message, fired beside the refs read
+- [x] 1_2 Carry pull requests on their own message, fired beside the refs read — verified: bun test 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#an-unavailable-forge-costs-discovery-never-the-ability-to-create; design.md D3; docs/design/worktree-create.md#41-one-combobox-not-a-tab-bar
   - **Acceptance**:

@@ -47,6 +47,7 @@ import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
 import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
+import type { PullRequestsInput, PullRequestsRead } from "../worktree/repoPullRequests";
 import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
@@ -245,6 +246,15 @@ export interface WorktreeHostOptions {
    * invites two answers about one instant (offer-every-ref-in-one-box D2).
    */
   readRefs?(input: RepoRefsInput): Promise<RepoRefsRead>;
+  /**
+   * The repository's open pull requests (offer-a-pull-request-as-a-source D3).
+   *
+   * Absent — every surface but the real extension entry point — and the form is
+   * simply never told, which renders as the same unavailable row a forge that
+   * could not answer produces. Deliberately NOT folded into `readRefs`: this one
+   * is a network call, and § 4.1 requires the local list not to wait for it.
+   */
+  readPullRequests?(input: PullRequestsInput): Promise<PullRequestsRead>;
   /**
    * Corroborate a stale registration before a repair is offered (design.md D3).
    *
@@ -1793,12 +1803,47 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         return;
       }
       case "requestWorktreeRefs": {
-        const read = options.readRefs;
         // One group, not a snapshot of the workspace. This runs once per
         // repository when the dialog opens, so `cache.read()` here made the
         // open cost R × O(R + W) in copying alone (round-1 B3).
         const repo = cache.readRepo(msg.repoId);
-        if (read === undefined || repo === undefined) {
+        if (repo === undefined) {
+          return;
+        }
+        // Started here because one gesture opens the form, and resolved on its
+        // own promise posting its own message: a forge that is slow, absent or
+        // unauthenticated must not delay the local list underneath it
+        // (worktree-create.md § 4.1, design.md D3). There is deliberately no
+        // code path on which the refs answer awaits this one.
+        const forge = options.readPullRequests;
+        if (forge !== undefined) {
+          void forge({ cwd: repo.mainPath })
+            .then((answer) => {
+              if (disposed || !surfaces.has(surface)) {
+                return;
+              }
+              // Unavailable is POSTED rather than withheld: the form has a row
+              // to render for it, and silence would leave "not asked yet" and
+              // "asked and there are none to be had" indistinguishable.
+              surface.post(
+                answer.ok
+                  ? {
+                      type: "worktreePullRequests",
+                      token: msg.token,
+                      repoId: msg.repoId,
+                      pullRequests: answer.pullRequests,
+                      truncated: answer.truncated,
+                      available: true,
+                    }
+                  : { type: "worktreePullRequests", token: msg.token, repoId: msg.repoId, available: false },
+              );
+            })
+            // Discovery, never the create. A reader that throws must not take
+            // the destination reply — or the refs answer — down with it.
+            .catch(() => {});
+        }
+        const read = options.readRefs;
+        if (read === undefined) {
           return;
         }
         // Kept so the probe can classify against it instead of asking git a

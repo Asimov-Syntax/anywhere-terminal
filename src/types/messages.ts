@@ -2330,10 +2330,59 @@ export interface WorktreeProvisionOfferMessage {
   model: ProvisionModel;
 }
 
+/**
+ * Extension → WebView: the repository's open pull requests, or the one state
+ * that says there are none to be had.
+ *
+ * Its own message rather than a field on `worktreeRefs`: the refs read is local
+ * and the forge read is a network call, and worktree-create.md § 4.1 requires
+ * that "a slow or unauthenticated forge never blocks branch search underneath
+ * it". Folding them together is exactly the wait that rule forbids.
+ *
+ * `available: false` carries no reason. A missing client, an unauthenticated
+ * forge, a timeout and unparseable output are one row to the user (§ 5), and
+ * four variants here would be four the form has to collapse again.
+ *
+ * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
+ */
+export interface WorktreePullRequestsMessage {
+  type: "worktreePullRequests";
+  repoId: string;
+  /** Echoed from the refs request, so an answer can be matched to its opening. */
+  token: number;
+  /** The rows, when the forge answered. Absent means it did not. */
+  pullRequests?: readonly PullRequestOffer[];
+  /** The enumeration hit its cap and the list is partial — the form says so. */
+  truncated?: boolean;
+  /** False is the single unavailable state; the form renders one quiet row. */
+  available: boolean;
+}
+
+/**
+ * One pull request as the form receives it.
+ *
+ * A structural copy of `PullRequest` rather than an import: this module is the
+ * wire vocabulary and the webview builds against it, so a host-side read's
+ * shape must not become the contract by accident.
+ */
+export interface PullRequestOffer {
+  number: number;
+  title: string;
+  /** The branch the pull request is FROM. Never the branch a create mints. */
+  headRefName: string;
+  /** What a create from this pull request branches off. */
+  baseRefName: string;
+  /** The head is on a fork, so a remote would have to be configured (§ 5). */
+  fromFork: boolean;
+  /** Whose fork, when it is one — what the form names before authorizing. */
+  headOwner: string;
+}
+
 export type ExtensionToWebViewMessage =
   | WorktreeMutationResultMessage
   | WorktreeCreateDefaultsMessage
   | WorktreeRefsMessage
+  | WorktreePullRequestsMessage
   | WorktreeCreateResolutionMessage
   | WorktreeDebrisAuthorizedMessage
   | WorktreeProvisionOfferMessage

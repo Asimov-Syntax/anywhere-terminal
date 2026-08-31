@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "offer-a-pull-request-as-a-source"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788166479076,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788166479076,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788166479076
+        }
+      ],
+      "firstAt": 1788166479076,
+      "lastAt": 1788166479076,
+      "buckets": []
+    }
+  ]
+}
