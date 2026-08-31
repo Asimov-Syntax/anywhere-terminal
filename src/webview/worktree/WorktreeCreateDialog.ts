@@ -16,6 +16,7 @@
 import type {
   DebrisAuthorization,
   ProbeBase,
+  PullRequestOffer,
   ResolvedMode,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
@@ -30,6 +31,7 @@ import type {
   WorktreeCreateDraft,
   WorktreeOpenAfter,
   WorktreeProvisionOffer,
+  WorktreePullRequestOffer,
   WorktreeRef,
   WorktreeRefOffer,
 } from "./worktreeViewTypes";
@@ -65,7 +67,11 @@ function lastSegment(path: string): string {
  * it is what makes a repository whose enumeration failed still usable, so it
  * cannot be something the list's presence gates.
  */
-type BranchChoice = { kind: "existing"; ref: WorktreeRef } | { kind: "new" };
+type BranchChoice =
+  | { kind: "existing"; ref: WorktreeRef }
+  | { kind: "pr"; pr: PullRequestOffer }
+  | { kind: "prsUnavailable" }
+  | { kind: "new" };
 
 /** How many characters of a typed name the create-new row echoes back. */
 const CREATE_ROW_LABEL = "Create branch";
@@ -77,7 +83,11 @@ const CREATE_ROW_LABEL = "Create branch";
  * Refs that neither match exactly nor by prefix are dropped — the list is a
  * filter over one dataset, which is the whole reason § 4.1 rejected tabs.
  */
-function orderChoices(refs: readonly WorktreeRef[], typed: string): BranchChoice[] {
+function orderChoices(
+  refs: readonly WorktreeRef[],
+  typed: string,
+  pullRequests?: WorktreePullRequestOffer,
+): BranchChoice[] {
   const query = typed.trim();
   const exact: BranchChoice[] = [];
   const prefixed: BranchChoice[] = [];
@@ -88,7 +98,40 @@ function orderChoices(refs: readonly WorktreeRef[], typed: string): BranchChoice
       prefixed.push({ kind: "existing", ref });
     }
   }
-  return [...exact, ...prefixed, { kind: "new" }];
+  return [...exact, ...prefixed, ...pullRequestChoices(pullRequests, query), { kind: "new" }];
+}
+
+/**
+ * The pull-request part of the one list, between the prefix matches and
+ * create-new (§ 4.1).
+ *
+ * `undefined` is "not asked yet" and contributes nothing — the form must not
+ * claim a forge state it has not been told. `available: false` contributes the
+ * single quiet row § 5 asks for, whatever the reason was.
+ *
+ * Matching is on the number and on the title, because those are what a user
+ * has in hand. Never on `headRefName`: the branch a create mints is
+ * `pr/<number>` and offering to match the fork's own branch name would suggest
+ * that is what gets checked out.
+ *
+ * The title matches ANYWHERE, where a ref matches only by prefix. That
+ * asymmetry is deliberate: a branch name is hierarchical and a prefix is what
+ * someone is completing, while a title is prose and a prefix rule would make
+ * titles effectively unsearchable.
+ */
+function pullRequestChoices(offer: WorktreePullRequestOffer | undefined, query: string): BranchChoice[] {
+  if (offer === undefined) {
+    return [];
+  }
+  if (!offer.available) {
+    return [{ kind: "prsUnavailable" }];
+  }
+  const needle = query.toLowerCase();
+  return offer.list
+    .filter(
+      (pr) => needle.length === 0 || String(pr.number).startsWith(needle) || pr.title.toLowerCase().includes(needle),
+    )
+    .map((pr) => ({ kind: "pr", pr }) as const);
 }
 
 /**
@@ -176,6 +219,8 @@ export interface WorktreeCreateDialogDeps {
    * callback is what B4 was.
    */
   bindRefs?: (apply: (repoId: string, refs: WorktreeRefOffer) => void) => void;
+  /** The forge's answer, on its own channel — it must never gate `bindRefs`. */
+  bindPullRequests?: (apply: (repoId: string, offer: WorktreePullRequestOffer) => void) => void;
   /**
    * What a create against the settled selection would actually do.
    *
@@ -1252,7 +1297,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
 
   /** Redraw the rows for the text currently typed. Does not open or close. */
   function renderList(): void {
-    choices = orderChoices(offeredRefs(), nameInput.value);
+    choices = orderChoices(offeredRefs(), nameInput.value, currentRepo().pullRequests);
     listBox.replaceChildren();
     choices.forEach((c, at) => {
       const row = document.createElement("li");
@@ -1264,6 +1309,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
         row.dataset.kind = "new";
         const typed = nameInput.value.trim();
         row.textContent = typed.length > 0 ? `${CREATE_ROW_LABEL} “${typed}”` : CREATE_ROW_LABEL;
+      } else if (c.kind === "prsUnavailable") {
+        // A statement, not an offer: announced and reachable, never selectable.
+        // Same reason the held-by row stays — saying nothing would leave the
+        // user thinking the repository has no pull requests (§ 5).
+        row.dataset.kind = "prs-unavailable";
+        row.setAttribute("aria-disabled", "true");
+        row.textContent = "Pull requests unavailable";
+      } else if (c.kind === "pr") {
+        row.dataset.kind = "pr";
+        row.dataset.branch = `pr-${c.pr.number}`;
+        row.dataset.pr = String(c.pr.number);
+        row.textContent = `#${c.pr.number} ${c.pr.title}`;
       } else {
         row.dataset.kind = "existing";
         row.dataset.branch = c.ref.name;
@@ -1332,7 +1389,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   /** Take row `at` as the selection, close the list, and re-derive. */
   function commit(at: number): void {
     const picked = choices[at];
-    if (picked === undefined) {
+    if (picked === undefined || picked.kind === "prsUnavailable") {
       return;
     }
     if (picked.kind === "existing" && picked.ref.heldBy !== undefined) {
@@ -1721,6 +1778,26 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // Indexed once. A linear scan per reply is O(repos²) across a workspace's
   // answers — the shape round-1 S1 named on the destination channel (W3).
   const repoAt = new Map(repos.map((r, at) => [r.repoId, at]));
+  // Its own channel, and deliberately not folded into `bindRefs`: the whole
+  // point of the separate message is that the local list never waits for the
+  // forge (§ 4.1), and one binding would put them back on one arrival.
+  deps.bindPullRequests?.((repoId, offer) => {
+    if (closed) {
+      return;
+    }
+    const at = repoAt.get(repoId);
+    const opened = at === undefined ? undefined : repos[at];
+    if (at === undefined || opened === undefined) {
+      return;
+    }
+    repos[at] = { ...opened, pullRequests: offer };
+    if (repoId !== draft.repoId) {
+      return;
+    }
+    if (listOpen) {
+      renderList();
+    }
+  });
   deps.bindRefs?.((repoId, refs) => {
     if (closed) {
       return;

@@ -1369,6 +1369,157 @@ describe("the create dialog offers branches and a create-new entry in one list",
   const labels = (host: HTMLElement) => rows(host).map((r) => r.dataset.branch ?? r.dataset.kind);
   const listOpen = (host: HTMLElement) => host.querySelector<HTMLElement>("#wt-branch-list")?.hidden === false;
 
+  const PRS = [
+    {
+      number: 42,
+      title: "Add search",
+      headRefName: "feat-search",
+      baseRefName: "main",
+      fromFork: false,
+      headOwner: "acme",
+    },
+    {
+      number: 7,
+      title: "Fix the lock",
+      headRefName: "fix-lock",
+      baseRefName: "release",
+      fromFork: true,
+      headOwner: "contributor",
+    },
+  ] as const;
+
+  function withPrs(over: { prs?: readonly (typeof PRS)[number][]; available?: boolean } = {}) {
+    return open({
+      repos: [
+        createDefaults({
+          refs: { list: [...REFS], truncated: false },
+          pullRequests: { list: [...(over.prs ?? PRS)], truncated: false, available: over.available ?? true },
+        }),
+      ],
+    });
+  }
+
+  // ── Pull requests, in the SAME list (§ 4.1, § 5) ──
+
+  it("lists pull requests below the ref matches and above create-new", () => {
+    // § 4.1 fixes the order: exact ref, then prefixes, then PRs, then the
+    // always-available create-new row. The ordering IS the feature — a tab bar
+    // is what this rejected, so a PR that sorts anywhere else is the defect.
+    const { host, q } = withPrs();
+    q<HTMLInputElement>("#wt-branch").focus();
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+
+    expect(labels(host)).toEqual(["main", "feat/search", "feat/search-ui", "fix/lock", "pr-42", "pr-7", "new"]);
+  });
+
+  it("still carries no tab bar once pull requests are in the list", () => {
+    const { host } = withPrs();
+    expect(host.querySelector("[role='tablist']")).toBeNull();
+  });
+
+  it("matches a pull request on its number", () => {
+    const { host, q } = withPrs();
+    type(q<HTMLInputElement>("#wt-branch"), "42");
+
+    expect(labels(host)).toEqual(["pr-42", "new"]);
+  });
+
+  it("matches a pull request anywhere in its title, where a ref matches only by prefix", () => {
+    // Deliberately asymmetric. Branch names are hierarchical, so a prefix is
+    // what a user is completing; a pull-request title is prose, and requiring
+    // it to start with the typed word would make titles unsearchable. So
+    // "lock" finds PR #7 "Fix the lock" and does NOT find the ref `fix/lock`.
+    const { host, q } = withPrs();
+    type(q<HTMLInputElement>("#wt-branch"), "lock");
+
+    expect(labels(host)).toEqual(["pr-7", "new"]);
+
+    // The pair: the same word as a prefix does find the ref.
+    type(q<HTMLInputElement>("#wt-branch"), "fix/");
+    expect(labels(host)).toContain("fix/lock");
+  });
+
+  it("keeps create-new last even when pull requests match", () => {
+    const { host, q } = withPrs();
+    type(q<HTMLInputElement>("#wt-branch"), "42");
+
+    expect(labels(host).at(-1)).toBe("new");
+    expect(rows(host).at(-1)?.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("renders one quiet row where the forge could not answer, and keeps the rest usable", () => {
+    // § 5: an unauthenticated or unreachable forge is one row, and branch
+    // search keeps working underneath it. The row is announced but not
+    // selectable — it is a statement, not an offer.
+    const { host, q } = withPrs({ available: false });
+    q<HTMLInputElement>("#wt-branch").focus();
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+
+    const unavailable = rows(host).filter((r) => r.dataset.kind === "prs-unavailable");
+    expect(unavailable).toHaveLength(1);
+    expect(unavailable[0]?.getAttribute("aria-disabled")).toBe("true");
+    expect(labels(host)).toEqual(["main", "feat/search", "feat/search-ui", "fix/lock", "prs-unavailable", "new"]);
+  });
+
+  it("commits nothing when the unavailable row is clicked", () => {
+    const { host, q } = withPrs({ available: false });
+    q<HTMLInputElement>("#wt-branch").focus();
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    const before = q<HTMLInputElement>("#wt-branch").value;
+
+    rows(host)
+      .find((r) => r.dataset.kind === "prs-unavailable")
+      ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+
+    expect(q<HTMLInputElement>("#wt-branch").value).toBe(before);
+  });
+
+  it("says nothing about pull requests before the forge has answered", () => {
+    // Absent is "not asked yet", which is not the unavailable row: the form
+    // must not claim a forge state it has not been told.
+    const { host, q } = withRefs();
+    q<HTMLInputElement>("#wt-branch").focus();
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+
+    expect(rows(host).some((r) => r.dataset.kind === "prs-unavailable")).toBe(false);
+    expect(labels(host)).toEqual(["main", "feat/search", "feat/search-ui", "fix/lock", "new"]);
+  });
+
+  it("gains the pull requests when the host's answer lands after the form opened", () => {
+    let apply:
+      | ((repoId: string, offer: { list: typeof PRS; truncated: boolean; available: boolean }) => void)
+      | undefined;
+    const { host, q } = open({
+      repos: [createDefaults({ refs: { list: [...REFS], truncated: false } })],
+      bindPullRequests: (fn) => {
+        apply = fn as typeof apply;
+      },
+    });
+    type(q<HTMLInputElement>("#wt-branch"), "42");
+    expect(labels(host)).toEqual(["new"]);
+
+    apply?.(REPO_ID, { list: PRS, truncated: false, available: true });
+
+    q<HTMLInputElement>("#wt-branch").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    expect(labels(host)).toEqual(["pr-42", "new"]);
+  });
+
+  it("renders nothing from an answer addressed to another repository", () => {
+    let apply:
+      | ((repoId: string, offer: { list: typeof PRS; truncated: boolean; available: boolean }) => void)
+      | undefined;
+    const { host, q } = open({
+      repos: [createDefaults({ refs: { list: [...REFS], truncated: false } })],
+      bindPullRequests: (fn) => {
+        apply = fn as typeof apply;
+      },
+    });
+    apply?.("some-other-repo", { list: PRS, truncated: false, available: true });
+    type(q<HTMLInputElement>("#wt-branch"), "42");
+
+    expect(labels(host)).toEqual(["new"]);
+  });
+
   it("carries no tab bar — one list, not a mode chosen before typing", () => {
     const { host } = withRefs();
     expect(host.querySelector("[role='tablist']")).toBeNull();

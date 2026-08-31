@@ -26,7 +26,7 @@
 
 ## 2. Offering them in the one list
 
-- [ ] 2_1 Render pull requests as rows between the prefix matches and create-new
+- [x] 2_1 Render pull requests as rows between the prefix matches and create-new — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#pull-requests-are-offered-in-the-branch-list-never-in-a-second-tab; docs/design/worktree-create.md#41-one-combobox-not-a-tab-bar
   - **Acceptance**:
@@ -35,6 +35,7 @@
   - **Plan**:
     1. `src/webview/worktree/WorktreeCreateDialog.ts`: extend `BranchChoice` with a `pr` variant and place it in `orderChoices` after `prefixed` and before `{ kind: "new" }`; match on number and on title.
     2. Same file: a `bindPullRequests` dep in the shape of `bindRefs`, and per-repo state beside `refs` so an answer for another repository cannot render here.
+    2b. `src/webview/worktree/worktreeViewTypes.ts`: `WorktreePullRequestOffer` beside `WorktreeRefOffer`, and the optional field on the per-repo record — the form's own holder for the answer, added here because the state in step 2 has to live somewhere the view types own.
     3. Same file: the unavailable state renders one non-selectable row; create-new stays last and stays selectable.
     4. `src/webview/worktree/WorktreeCreateDialog.test.ts`: ordering, the unavailable row, create-new still last, and a repo-id mismatch rendering nothing.
   - **Boundary**: no tab, no mode switch, no second input — the ordering is the whole UI change

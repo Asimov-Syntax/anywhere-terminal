@@ -18,7 +18,13 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
-import type { DestinationDisposition, ProvisionModel, RemovalCheck, ResolvedMode } from "../../types/messages";
+import type {
+  DestinationDisposition,
+  ProvisionModel,
+  PullRequestOffer,
+  RemovalCheck,
+  ResolvedMode,
+} from "../../types/messages";
 import type { WorktreeRef } from "../../worktree/repoRefs";
 
 export type {
@@ -173,6 +179,24 @@ export interface WorktreeCreateDefaults {
    * with none, and the create-new entry is never gated on this either way.
    */
   refs?: WorktreeRefOffer;
+  /**
+   * The repository's open pull requests, on the same terms as `refs` and for
+   * the same reason: a separate message, absent until it lands.
+   *
+   * Absent is "not asked yet" and is NOT the unavailable state — the form must
+   * not claim a forge state it has not been told. `available: false` is what
+   * says the forge could not answer, and § 5 renders one quiet row for it.
+   */
+  pullRequests?: WorktreePullRequestOffer;
+}
+
+/** The host's answer about pull requests, as the form holds it. */
+export interface WorktreePullRequestOffer {
+  readonly list: readonly PullRequestOffer[];
+  /** The enumeration hit its cap, so the form says the list is partial. */
+  readonly truncated: boolean;
+  /** False is the ONE unavailable state: missing client, no auth, timeout. */
+  readonly available: boolean;
 }
 
 /** The host's answer to `requestWorktreeRefs`, as the form holds it. */
