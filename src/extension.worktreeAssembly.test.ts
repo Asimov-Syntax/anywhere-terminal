@@ -1147,6 +1147,86 @@ describe("the invariants that span the host and the webview", () => {
     expect(outbound.length).toBe(sentBefore);
   });
 
+  it("[3_2] drops a predecessor's provisioning offer and honours the live opening's", async () => {
+    // The whole point of the opening, walked end to end: a read that resolves
+    // after the form it belonged to was replaced must not publish into the form
+    // the user is looking at now. Every module test asserts one half of this
+    // against its own fake — this one runs the real host, the real router and
+    // the real dialog, which is the arrangement the provisioning offer shipped
+    // dark under (.reviews/round-1.md B1).
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
+    const { surface } = await assemble();
+
+    // The first form's offer is intercepted on the wire rather than delayed by
+    // slowing the read: what this asserts is what the panel does with an answer
+    // that arrives late, and racing a real filesystem read for that would make
+    // the test's meaning depend on how fast the disk is.
+    const late: ExtensionToWebViewMessage[] = [];
+    const deliver = surface.post;
+    surface.post = (msg: ExtensionToWebViewMessage) => {
+      if (msg.type === "worktreeProvisionOffer" && late.length === 0) {
+        late.push(msg);
+        return;
+      }
+      return deliver(msg);
+    };
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    expect(late, "the first opening's read never produced an offer to hold").toHaveLength(1);
+
+    // The provider file moves between the two forms, so the two reads are
+    // telling the user different things. Without that, a section redrawn from
+    // the predecessor's model would be indistinguishable from the right one.
+    fs.writeFileSync(path.join(REPO, ".env.second"), "TOKEN=2\n");
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env.second\n");
+
+    // A second form. Superseding is the host's job and 2_1 owns it; what this
+    // walk adds is that the panel refuses the first one even so.
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    expect(
+      [...document.querySelectorAll(".wt-bring-box .wt-brow-code")].map((e) => e.textContent),
+      "the live opening was never answered, so the replay below proves nothing",
+    ).toEqual([".env.second"]);
+
+    surface.post = deliver;
+    const held = late[0];
+    if (held === undefined) {
+      throw new Error("nothing was held");
+    }
+    surface.post(held);
+    await settle();
+
+    // Still the live opening's own model. The predecessor's arrived, was routed
+    // by the shipped table, and the panel declined to draw it.
+    expect([...document.querySelectorAll(".wt-bring-box .wt-brow-code")].map((e) => e.textContent)).toEqual([
+      ".env.second",
+    ]);
+  });
+
+  it("[3_2] carries the retirement from the dialog's Cancel to the shipped host", async () => {
+    // The signal only exists if it travels. A retirement the panel posts and no
+    // route delivers is the same defect as one never posted — and it is the
+    // cancel exit, the one nothing ever reopens to supersede (D3).
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    const opening = outbound
+      .filter((m) => m.type === "requestWorktreeCreateDefaults")
+      .map((m) => (m as { opening: number }).opening)
+      .at(-1);
+
+    [...document.querySelectorAll("button")].find((b) => b.textContent === "Cancel")?.click();
+    await settle();
+
+    expect(outbound.filter((m) => m.type === "worktreeCreateClosed")).toEqual([
+      { type: "worktreeCreateClosed", opening },
+    ]);
+  });
+
   it("supplies a ref reader, so a refs request reaches git rather than being ignored", async () => {
     // The host ignores the request outright when no reader is wired, and every
     // module test supplies its own — which is exactly how the provisioning

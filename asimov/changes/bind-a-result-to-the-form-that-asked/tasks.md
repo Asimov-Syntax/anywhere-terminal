@@ -64,7 +64,7 @@
     3. `src/webview/worktree/WorktreeView.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: each exit retires, asserted separately — a retirement wired into one exit is the same bug in a different position.
   - **Boundary**: the submit payload and the cancel's existing behaviour are unchanged; this adds a signal beside them
 
-- [ ] 3_2 Prove it through the shipped wiring
+- [x] 3_2 Prove it through the shipped wiring — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: design.md D2, D3
   - **Acceptance**:
@@ -72,5 +72,5 @@
     - Verify: unit src/extension.worktreeAssembly.test.ts
   - **Plan**:
     1. `src/extension.worktreeAssembly.test.ts`: reopen a form while the first opening's provisioning read is outstanding, and assert the predecessor renders nothing while the live opening's own answer does.
-    2. Same file: route `onWorktreeCreateClosed` through the shared table from `src/webview/worktree/worktreeMessageHandlers.ts` rather than a hand-written entry.
+    2. Same file: assert the retirement travels from the dialog's Cancel to the shipped host. (Planned as "route `onWorktreeCreateClosed` through the shared table" — there is no such route to move: `worktreeCreateClosed` is webview → extension, so it has no inbound handler. The shared table's coverage of the offer route, which this walk does depend on, is asserted instead.)
   - **Boundary**: no production behaviour is added here — this task only proves what tasks 1 to 3_1 built, through the real assembly
