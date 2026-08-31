@@ -640,14 +640,14 @@
     "lint": "biome check --write --unsafe src/",
     "format": "biome format --write src/",
     "test": "vscode-test",
-    "test:unit": "vitest run --reporter=default --reporter=./src/test/invariants/coverageReporter.ts",
+    "test:unit": "UV_THREADPOOL_SIZE=16 vitest run --reporter=default --reporter=./src/test/invariants/coverageReporter.ts",
     "bench:scale": "bun src/test/bench/scale.bench.ts",
     "gate:fs-deletion": "bun src/test/invariants/fsDeletionGate.ts",
     "test:unit:watch": "vitest watch",
     "test:unit:coverage": "vitest run --coverage",
     "vsix": "rm -f anywhere-terminal-*.vsix && vsce package --no-dependencies",
     "release": "bash scripts/release.sh",
-    "asm": "bun run .agents/skills/asimov/scripts/asm.ts"
+    "asm": "bun run \"$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/../.agents/skills/asimov/scripts/asm.ts\""
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.5",

@@ -103,6 +103,7 @@ function controlledProjector() {
     rank: () => undefined,
     rankRevision: () => 0,
     claimedSessionIds: () => new Map<string, string>(),
+    forgetDrawOrder: () => {},
   };
 
   return {

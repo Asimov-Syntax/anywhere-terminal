@@ -398,7 +398,7 @@ nothing to provision.
 | **Labels** | re-review |
 | **Notes** | **Re-scoped at planning, after oracle review**: the mechanism this task assumed does not exist. `getEntry` returns `null` for a deleted entry and for a failed reader alike, so "the service treats a failed re-resolve as a deletion" would retire a live row's line on a transient SQLite error. The conclusive `found | absent | unknown` signal is a change to the vault readers' contract and its own invariant owner, split out as WT-011.8. Also corrected: the clause promising an *unreadable* transcript keeps its line over-read its own citation — § 2.3 grants that to a look that times out, while a read that fails outright already retires the line, as `worktree-agent-presence` requires and two shipped tests assert. This task no longer touches that behaviour. Original deferral reason follows. Deferred because the obvious fix — handing the projector's live entry-id set to the service — moves ownership a shipped decision assigned elsewhere. The chosen owner is the service itself: it already re-resolves on cadence and already separates "not there yet" from "never will be", so a vanished entry is a third outcome named where the syscall already happens, with no cross-layer push and no second definition of "live". Depends on WT-011.3 because both change how a failed look is classified, and classifying deletion before timeouts fail soft would make the two rules contradict |
 | **Acceptance** | A row whose vault entry is conclusively absent stops presenting its preview and stops provoking filesystem work, recovering if the entry reappears; a row whose lookup is merely inconclusive keeps its last known line and re-checks on a later tick; the retirement happens on the first eligible look after the confirmation interval, not on a wall-clock deadline the service cannot honour while a look is outstanding; the outcomes are distinguishable in the service rather than inferred by the caller; no live-entry set is pushed across the layer boundary |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-011.6] Worktree Attribution That Survives a Symlink
 
@@ -426,7 +426,7 @@ nothing to provision.
 | **Labels** | none |
 | **Notes** | Split out of WT-011.3 once the code was visible. WT-011.3 bounds how long one look may take and how many may be outstanding at once, both of which the preview service owns. It cannot bound how many a projection starts in total: the projector enriches one worktree's rows and awaits them before starting the next, so a service-side concurrency limit is never reached and every row still costs a look. The decision this task owns is whether the projector fans its preview requests out in one wave so the service's own limit gates the whole projection, or carries an explicit per-projection budget — a fan-out shape the projector owns, not the preview service |
 | **Acceptance** | A projection over many worktrees provokes a bounded number of transcript reads rather than one per row; rows the bound excludes keep their last known line and are re-checked on a later tick rather than dropped; the bound holds whether the rows are spread across many worktrees or concentrated in one |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-011.8] A Vault Lookup That Knows Absent From Unknown
 
@@ -454,8 +454,22 @@ nothing to provision.
 | **Labels** | security-privacy |
 | **Notes** | Raised as W4 in `snapshot-a-live-store-atomically` cycle 2 round 4 and parked there as a decision rather than a patch. The presence check proves a store EXISTS (`fs.access` in its default mode) and the reuse gate proves its `(mtimeMs,size)` is unchanged; neither proves it can still be READ. Revoke read permission on the database file and both keep succeeding, so a retained snapshot is served as `ok` while a cold read of the same store returns `db-unreachable`. The bytes were read lawfully when the snapshot was taken, so this is a status-contract divergence rather than a disclosure — but two paths answering one question differently is what the status vocabulary exists to prevent. The decision this task owns is WHERE the proof belongs, and each candidate moves an accepted contract: proving `R_OK` in the presence check changes what separates `no-db` from `db-unreachable`; folding access state into the generation adds a third input to a two-input proof and costs a syscall per reuse; proving it only at the pool boundary splits the contract across two owners. Existing coverage revokes DIRECTORY search permission, which fails earlier and never reaches this boundary |
 | **Acceptance** | A store whose read permission is revoked reports the same status through a reused snapshot as through a fresh one; the reuse path does not gain a syscall per hit unless that is the decision recorded; file-level permission revocation is covered for both entry points, not only directory-level |
-| **Status** | todo |
+| **Status** | done |
 
+
+### [WT-011.10] An Envelope Is Enriched Only If Its Enrichment Finished
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A surface that reopens after enrichment was cut short asks for a replacement pass instead of drawing the envelope it was left with |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.3 |
+| **Depends On** | WT-011.7 |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | none |
+| **Notes** | Raised as W1 in `bound-the-looks-one-projection-starts` rounds 6 and 7, adjudicated non-blocking both times and left for its own change. The host records `projectedEnriched` from what it REQUESTED, not from whether preview enrichment completed, so a projection whose preview half was skipped by WT-011.7's falling-edge fence still marks the envelope enriched and `enrichmentOwed()` suppresses the replacement pass on reopen. The obvious cheap fix does not work and the attempt is worth not repeating: clearing the flag on the falling edge broke 19 cases, because the host's reconcile is deliberately a state settle rather than an edge check and so runs on every mutation while nothing is drawing. Both routes the reviewer named — propagating whether enrichment completed out of the projection, or holding an explicit outstanding-enrichment obligation — add information to the projector/host seam, which is why this is a decision and not a patch |
+| **Acceptance** | A projection whose preview enrichment was skipped does not leave the envelope recorded as enriched; a surface reopening after such a pass is served a replacement pass rather than waiting for the next external scan; the fix does not fire on mutations that changed nothing |
+| **Status** | done |
 
 ---
 

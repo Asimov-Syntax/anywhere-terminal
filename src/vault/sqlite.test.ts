@@ -13,6 +13,7 @@ import {
   type SqliteDeps,
   withPrimarySqliteSnapshot,
   withSqliteSnapshot,
+  writeSqlite,
 } from "./sqlite";
 
 function makeDeps(overrides: Partial<SqliteDeps> = {}): SqliteDeps {
@@ -883,6 +884,94 @@ describe("readSqlite: a snapshot is reused only while the store is unchanged", (
     } finally {
       await fsp.chmod(dir, 0o700).catch(() => {});
       live.close();
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  async function walStorePair() {
+    return { a: await walStore(), b: await walStore() };
+  }
+
+  it("agrees between a reused snapshot and a genuinely fresh store", async (ctx) => {
+    // Two DISTINCT stores. Round-1 W2: re-reading the same path after warming the
+    // pool is not a cold read — `snapshotPool` reuses a matching retained entry
+    // whether or not this borrower asked to retain, so the variable named `cold`
+    // was served from the very cache under test.
+    const { a, b } = await walStorePair();
+    try {
+      const warm = await withPrimarySqliteSnapshot(a.dbFile, async (s) => s.query("SELECT id FROM t"));
+      expect(warm.status).toBe("ok");
+
+      // The sidecar alone — the database itself stays readable, which is what makes
+      // a stat-based or base-file-only proof pass while SQLite cannot open the store.
+      await fsp.chmod(`${a.dbFile}-wal`, 0o000);
+      await fsp.chmod(`${b.dbFile}-wal`, 0o000);
+      let denied = true;
+      try {
+        const probe = await fsp.open(`${a.dbFile}-wal`, "r");
+        await probe.close();
+        denied = false;
+      } catch {
+        denied = true;
+      }
+      if (!denied) {
+        // Root, or a filesystem that ignores mode bits. A warning plus an early
+        // return would be recorded as a PASS, which is the vacuous green this case
+        // exists to avoid (round-1 W2).
+        ctx.skip();
+      }
+
+      const reused = await withPrimarySqliteSnapshot(a.dbFile, async (s) => s.query("SELECT id FROM t"));
+      const fresh = await withPrimarySqliteSnapshot(b.dbFile, async (s) => s.query("SELECT id FROM t"));
+
+      // The discriminated status itself, not merely "not ok": both could regress
+      // to `query-error` together and stay equal (round-2 W2).
+      expect(reused.status).toBe("db-unreachable");
+      expect(fresh.status).toBe("db-unreachable");
+    } finally {
+      for (const store of [a, b]) {
+        await fsp.chmod(`${store.dbFile}-wal`, 0o600).catch(() => {});
+        store.live.close();
+        await fsp.rm(store.dir, { recursive: true, force: true });
+      }
+    }
+  });
+});
+
+describe("the write path tells absence from unreadability", () => {
+  it("reports a write failure, not absence, for an existing unreadable store", async (ctx) => {
+    // `defaultWriteDeps` is `{ exists: defaultDeps.exists }`, so it aliases the
+    // read side's presence predicate. Strengthening that predicate to prove
+    // readability made an existing but unreadable store answer `no-db` —
+    // documented as ABSENT — instead of reaching SQLite (cycle-1 W1). The proof
+    // moved to the generation read precisely so this stays true.
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "at-write-perm-"));
+    const dbFile = path.join(dir, "store.db");
+    try {
+      const live = new DatabaseSync(dbFile);
+      live.exec("CREATE TABLE t (id TEXT)");
+      live.exec("INSERT INTO t (id) VALUES ('base-row')");
+      live.close();
+
+      await fsp.chmod(dbFile, 0o000);
+      let denied = true;
+      try {
+        const probe = await fsp.open(dbFile, "r");
+        await probe.close();
+        denied = false;
+      } catch {
+        denied = true;
+      }
+      if (!denied) {
+        ctx.skip();
+      }
+
+      const result = await writeSqlite(dbFile, "UPDATE t SET id = ? WHERE id = ?", ["next", "base-row"]);
+
+      expect(result.status).not.toBe("no-db");
+      expect(result.status).toBe("write-error");
+    } finally {
+      await fsp.chmod(dbFile, 0o600).catch(() => {});
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });

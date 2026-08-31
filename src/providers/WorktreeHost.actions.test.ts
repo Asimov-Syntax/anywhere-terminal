@@ -339,6 +339,7 @@ async function builtHost(
     rank: () => undefined,
     rankRevision: () => 0,
     claimedSessionIds: () => new Map<string, string>(),
+    forgetDrawOrder: () => {},
   };
   const { actions, calls, reconciles } = recordingActions();
   // One runner for the whole host, so a test can observe which git commands the
@@ -797,6 +798,7 @@ describe("the host without capabilities behaves as it did before actions existed
         rank: () => undefined,
         rankRevision: () => 0,
         claimedSessionIds: () => new Map<string, string>(),
+        forgetDrawOrder: () => {},
       },
       now: () => 1000,
     });

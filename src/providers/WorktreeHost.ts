@@ -799,6 +799,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * rows with no title and no preview until the next scan (round-2 W1).
    */
   let projectedEnriched = true;
+  /** Enrichment a projection was asked for but did not deliver.
+   *
+   *  `projectedEnriched` records what was REQUESTED. A projection that loses the
+   *  last row-drawing surface before it reaches preview enrichment skips that half
+   *  (the projector's fence, WT-011.7 D10), and the envelope was still marked
+   *  enriched — so `enrichmentOwed()` told the reopening surface nothing was owed
+   *  and it drew stale second lines until the next external scan (round-6 W1). */
+  let enrichmentPending = false;
   /**
    * Rosters read, and the reads still in flight, both under `(rowId, entryId)`.
    *
@@ -2408,11 +2416,37 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     const run = (async () => {
       let clean = true;
       let applied = paneEvidenceApplied;
+      // Remembered so a run whose projection REJECTS can put back what its passes
+      // took. A pass that threw left `projectedEnriched` holding what the
+      // cut-short pass requested, so an un-restored obligation reads as satisfied
+      // and the missing line waits for the next external scan (D1a).
+      let discharged = false;
       try {
         do {
           projectionDirty = false;
           const externalOnly = nextExternalOnly;
           nextExternalOnly = false;
+          // The PASS discharges the obligation, not the run. A run is the wrong
+          // unit: it can hold any number of passes, and a surface reopening
+          // mid-run joins it above without ever reaching a run-level clear — the
+          // joined pass then finds the obligation still standing and dirties
+          // itself forever, publishing nothing (D1a).
+          //
+          // Only a pass that is going to ENRICH may clear it; one that is not
+          // cannot satisfy an enrichment obligation and has to leave it for the
+          // next rise. This and `projectOnce`'s own `anyDrawingRows()` read are
+          // one synchronous span — an await inserted between them lets the two
+          // disagree, clearing an obligation the pass then declines to satisfy.
+          //
+          // Defence in depth today: a non-enriching pass that COMPLETES records
+          // `projectedEnriched = false`, and the owed predicate's other disjunct
+          // catches it, so no test reaches this guard. It is what keeps the rule
+          // true for a pass that clears and then never records — invalidated, or
+          // disposed — if the self-healing rerun that covers those stops holding.
+          if (anyDrawingRows()) {
+            enrichmentPending = false;
+            discharged = true;
+          }
           // Captured BEFORE the pass reads the panes, so an event arriving
           // during it stays outstanding. The failure this chooses is one
           // redundant full pass; the other choice loses the transition (D11).
@@ -2447,6 +2481,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         } while (projectionDirty && !disposed);
       } catch (err) {
         clean = false;
+        if (discharged) {
+          enrichmentPending = true;
+        }
         console.warn(`${LOG_PREFIX} presence projection threw — nothing published`, err);
       }
       // Cleared and published with no await between, so a caller arriving now
@@ -2556,7 +2593,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * be checked at one boundary and missed at two (design.md D1).
    */
   function enrichmentOwed(): boolean {
-    return anyDrawingRows() && !projectedEnriched;
+    return anyDrawingRows() && (!projectedEnriched || enrichmentPending);
   }
 
   /**
@@ -2565,15 +2602,34 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * `reconcileScan` settles the scan.
    *
    * Deliberately NOT an edge check. "Did this call change it" is a different
-   * question from "is enrichment owed", and only the second one matters: a call
+   * question from "what is owed now", and only the second one matters: a call
    * that changed nothing while the window sits on a bare envelope should still
-   * ask for the pass. It also removes the `wasDrawing` snapshot that every
-   * mutation site would otherwise have to remember to take.
+   * ask for the pass, and one that changed nothing while nothing is drawing
+   * should still leave no turn order standing. It also removes the `wasDrawing`
+   * snapshot that every mutation site would otherwise have to remember to take.
    *
    * `join: true` because this re-runs the projection and re-reads no git; a poll
    * already in flight is the right thing to join (design.md D2).
    */
   function reconcileRowDrawing(): void {
+    // The falling direction, which had no owner anywhere: the projector's turn
+    // order holds exactly the ids being drawn, and the only thing that
+    // reconciles it is an enriched projection — which is exactly what stops
+    // arriving once nothing is drawing rows. Left unsaid, the order survives
+    // hide, detach and the drop to presence-only, and a reopened window grants
+    // by pre-hide position (round-4 B1, design.md D10).
+    if (!anyDrawingRows()) {
+      projector?.forgetDrawOrder();
+      // Only while a projection is in flight: that is the pass whose preview half
+      // the projector's fence skips. A falling edge with none running skips
+      // nothing, and recording here unconditionally is what moved 19 cases — this
+      // reconcile is deliberately a state settle, so it runs on EVERY mutation
+      // while nothing draws (D2). The edge records; the rise spends it.
+      if (projectionRun !== undefined) {
+        enrichmentPending = true;
+      }
+      return;
+    }
     if (enrichmentOwed()) {
       void requestProjection({ external: true, join: true });
     }
@@ -2807,8 +2863,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // retirement cannot reach close and miss detach.
         forgetSurfaceOpenings(surfaceKey(surface));
         // Detaching is a falling edge too: the last showing surface going away
-        // this way would otherwise leave the scan armed for the window's life.
+        // this way would otherwise leave the scan armed for the window's life,
+        // and the last ROW-DRAWING surface would leave a turn order standing
+        // over identities nothing is drawing (design.md D10).
         reconcileScan();
+        reconcileRowDrawing();
       },
       setDisplayed: (displayed: boolean) => {
         const state = surfaces.get(surface);

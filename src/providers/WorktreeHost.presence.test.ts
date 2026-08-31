@@ -182,6 +182,7 @@ function fakeProjector() {
     },
     rankRevision: () => revision,
     claimedSessionIds: () => new Map<string, string>(),
+    forgetDrawOrder: () => {},
   };
 
   return {
@@ -223,6 +224,7 @@ function blockingProjector() {
     rank: () => undefined,
     rankRevision: () => 0,
     claimedSessionIds: () => new Map<string, string>(),
+    forgetDrawOrder: () => {},
   };
   return { projector, parked, modes, enriched };
 }

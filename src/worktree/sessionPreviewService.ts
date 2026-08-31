@@ -25,9 +25,19 @@ export interface PreviewEntry {
   sessionPath?: string;
 }
 
+/**
+ * What a by-id lookup established, mirroring `VaultEntryLookup`
+ * (`src/vault/types.ts`) with the preview's narrower entry shape. The asymmetry
+ * is the whole point: `absent` is a PROOF the session is not there and retires
+ * the row's line, while every path that merely failed to find out is `unknown`
+ * and changes nothing. Collapsing the two — which is what a `null` return did —
+ * retires a live session's line whenever a store hiccups.
+ */
+export type PreviewLookup = { status: "found"; entry: PreviewEntry } | { status: "absent" } | { status: "unknown" };
+
 export interface SessionPreviewDeps {
-  /** The vault entry by id — the same lookup `sessionTitle` already does. */
-  entry(entryId: string): Promise<PreviewEntry | null>;
+  /** The vault entry by id, answered conclusively — see {@link PreviewLookup}. */
+  entry(entryId: string): Promise<PreviewLookup>;
   /** Overridable so a test can count real opens; defaults to the tail reader. */
   read?(transcriptPath: string, format: LastActivityFormat): Promise<string | null>;
   /** Overridable for the same reason; defaults to a real `stat`. */
@@ -43,6 +53,8 @@ export interface SessionPreviewDeps {
   wait?(ms: number): Deadline;
   /** Most sessions held at once; the least recently asked for is dropped past it. */
   cap?: number;
+  /** Minimum gap between two lookups of one session in its agent's store. */
+  entryRecheckMs?: number;
 }
 
 /**
@@ -58,6 +70,18 @@ export type { Deadline };
 
 export interface SessionPreviewService {
   preview(entryId: string): Promise<string | undefined>;
+  /**
+   * The line this session already has, or nothing. Never creates state, never
+   * starts work, and never stands in for a confirmation — but it DOES touch what
+   * it returns, which is what keeps an excluded row's line: every drawn row is
+   * either asked or read on every projection, so the least recently touched
+   * entries are the ones the window has stopped drawing (D8).
+   *
+   * A caller that bounds how many sessions it asks about needs the rest of them
+   * to keep drawing what they last said. Skipping them would cost each one its
+   * line, and asking them would defeat the bound — so they are read.
+   */
+  line(entryId: string): string | undefined;
 }
 
 interface FileStamp {
@@ -81,6 +105,21 @@ export const DEFAULT_RECHECK_MS = 2000;
 export const DEFAULT_LOOK_TIMEOUT_MS = 5000;
 
 export const DEFAULT_PREVIEW_CACHE_CAP = 256;
+
+/**
+ * How long a session's store answer stands before it is worth asking again.
+ *
+ * An order of magnitude slower than the freshness check beside it, and
+ * deliberately: the lookup is resolve-by-id with no cache, and for a Codex row
+ * without SQLite it reaches the same history-sized tree walk the retry ladder
+ * exists to bound. Chosen against what the staleness costs rather than what the
+ * check costs — the line is historical text either way.
+ *
+ * This is the gap between two lookups, NOT a wall-clock bound on a stale line.
+ * The service is pull-based: nothing asks, nothing is re-confirmed. What it
+ * promises is that the first eligible look after the interval consults the store.
+ */
+export const DEFAULT_ENTRY_RECHECK_MS = 30_000;
 
 /**
  * Resolving and re-checking are different questions and must not share one
@@ -109,6 +148,11 @@ type Target =
    *  moves project dir when its cwd changes, so "not there" is a moment, not a
    *  verdict (round-1 B2). */
   | { kind: "unresolved" }
+  /** The session was PROVEN gone from its agent's store. No syscall is worth
+   *  making for it — not a resolve, not a `stat`, not a read — but unlike
+   *  `uncovered` it is not final: the store is re-consulted on
+   *  `entryRecheckMs`, so a session that comes back previews again. */
+  | { kind: "gone" }
   | { kind: "resolved"; path: string; format: LastActivityFormat };
 
 /**
@@ -130,6 +174,13 @@ interface LookState {
    * ran at the freshness cadence forever (round-3 B1-R3).
    */
   entry?: PreviewEntry;
+  /**
+   * When the store last answered CONCLUSIVELY about this session — `found` or
+   * `absent`. An `unknown` establishes nothing, so leaving the stamp where it
+   * was makes the next eligible look ask again rather than wait out another
+   * interval on a store that has already failed once.
+   */
+  confirmedAt?: number;
   /** Whether the look in progress achieved anything: an unchanged stamp confirmed,
    *  or a read completed. The retry ladder keys off this rather than off what the
    *  target happens to say, so a lookup that returns nothing over a stale resolved
@@ -154,6 +205,7 @@ function snapshot(current: Held): LookState {
   return {
     target: current.target,
     entry: current.entry,
+    confirmedAt: current.confirmedAt,
     stamp: current.stamp,
     line: current.line,
     progressed: false,
@@ -163,6 +215,7 @@ function snapshot(current: Held): LookState {
 function commit(current: Held, draft: LookState): void {
   current.target = draft.target;
   current.entry = draft.entry;
+  current.confirmedAt = draft.confirmedAt;
   current.stamp = draft.stamp;
   current.line = draft.line;
   current.progressed = draft.progressed;
@@ -182,9 +235,10 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   const lookTimeoutMs = deps.lookTimeoutMs ?? DEFAULT_LOOK_TIMEOUT_MS;
   const wait = deps.wait ?? afterDelay;
   const cap = Math.max(1, deps.cap ?? DEFAULT_PREVIEW_CACHE_CAP);
-  // Insertion-ordered, and re-inserted on every ask, so the front of the map is
-  // the least recently asked for. The projector holds no alive set to evict by, so
-  // the bound has to be the service's own.
+  const entryRecheckMs = deps.entryRecheckMs ?? DEFAULT_ENTRY_RECHECK_MS;
+  // Insertion-ordered, and re-inserted on every ask OR read, so the front of the
+  // map is whatever the caller has gone longest without mentioning. A caller that
+  // touches every row it draws therefore evicts only rows it has stopped drawing.
   const held = new Map<string, Held>();
   // Every look that has not settled, abandoned ones included, keyed by entry id and
   // holding the entry that owns it. Deliberately NOT keyed off `held`: eviction
@@ -244,16 +298,53 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
     if (current.target.kind === "uncovered") {
       return undefined;
     }
-    // Only when there is no target to re-check. A resolved one already has the
-    // entry that produced it, and re-checking is a `stat` (B1-R3).
-    if (current.target.kind !== "resolved" || current.entry === undefined) {
+    const due = current.confirmedAt === undefined || now() - current.confirmedAt >= entryRecheckMs;
+    if (current.target.kind === "gone" && !due) {
+      // A retired row is not a failed resolution — it is a row correctly showing
+      // nothing — so it scores as progress and keeps the ordinary spacing rather
+      // than decaying up a ladder that bounds work this look never performs.
+      current.progressed = true;
+      return undefined;
+    }
+    // Only when there is no target to re-check, or the store's answer has stood
+    // long enough. A resolved target already has the entry that produced it, and
+    // re-checking is a `stat` (B1-R3).
+    if (current.target.kind !== "resolved" || current.entry === undefined || due) {
       const fresh = await deps.entry(entryId);
-      if (!fresh) {
+      if (fresh.status === "absent") {
+        current.target = { kind: "gone" };
+        current.entry = undefined;
+        current.confirmedAt = now();
+        current.progressed = true;
         return forget(current);
       }
-      current.entry = fresh;
+      if (fresh.status === "unknown") {
+        // Established nothing, so it changes nothing — the same shape a timeout
+        // takes, and for the same reason (D33). The row keeps whatever it holds
+        // and the look scores no progress, so the ladder backs the next attempt
+        // off.
+        //
+        // Returning here rather than carrying on with the held entry is what
+        // bounds the store: an `unknown` deliberately does not stamp
+        // `confirmedAt`, so the row stays permanently due, and a fall-through
+        // that reached an unchanged `stat` would set `progressed`, reset the
+        // ladder, and re-ask the store on the ORDINARY cadence — the
+        // history-sized Codex walk at 0.5 Hz that D2 exists to prevent
+        // (round-1 B1). The cost is one skipped freshness check per inconclusive
+        // lookup, on a row that is already showing its last known line.
+        return current.line;
+      }
+      current.entry = fresh.entry;
+      current.confirmedAt = now();
+      if (current.target.kind === "gone") {
+        // gone → unresolved → resolved: the ordinary resolve path recovers it.
+        current.target = { kind: "unresolved" };
+      }
     }
     const entry = current.entry;
+    if (entry === undefined) {
+      return current.line;
+    }
     if (current.target.kind === "unresolved") {
       current.target = await resolve(entry, true);
     }
@@ -326,6 +417,18 @@ export function createSessionPreviewService(deps: SessionPreviewDeps): SessionPr
   }
 
   return {
+    line(entryId: string): string | undefined {
+      // `held` only. An abandoned look keeps its entry in `outstanding` with the
+      // line it had before it stalled, and reading through to it would present
+      // text whose source the service has since failed to reach.
+      const current = held.get(entryId);
+      if (current === undefined) {
+        return undefined;
+      }
+      touch(entryId, current);
+      return current.line;
+    },
+
     async preview(entryId: string): Promise<string | undefined> {
       const current = held.get(entryId) ??
         outstanding.get(entryId) ?? {

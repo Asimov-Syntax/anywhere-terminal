@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SnapshotPool, type SnapshotPoolDeps } from "./snapshotPool";
+import { readStoreGeneration } from "./storeStamp";
 
 /** Long enough for a disposal with real `fs.rm` calls in it to have finished if it
  *  were not waiting, so "has not settled yet" is a claim about the barrier rather
@@ -671,9 +672,24 @@ describe("SnapshotPool disposal", () => {
     await expect(pool.borrow(dbPath, produce, RETAIN)).rejects.toThrow(/disposed/);
   });
   it("refuses a snapshot to a caller that was waiting out another production", async () => {
-    const pool = new SnapshotPool(deps);
     const gate = deferred();
     const started = deferred();
+    // The second caller only waits out the flight if it observes it, and its generation
+    // read is a real `fs.stat`: under load the flight settled and cleared itself first,
+    // so the caller took its own snapshot and the test saw a lease, not the refusal.
+    const atSecondRead = deferred();
+    const releaseSecondRead = deferred();
+    let reads = 0;
+    const pool = new SnapshotPool({
+      ...deps,
+      readGeneration: async (target) => {
+        if ((reads += 1) === 2) {
+          atSecondRead.resolve();
+          await releaseSecondRead.promise;
+        }
+        return readStoreGeneration(target);
+      },
+    });
 
     const first = pool.borrow(
       dbPath,
@@ -694,6 +710,12 @@ describe("SnapshotPool disposal", () => {
       () => "resolved",
       (err: unknown) => (err as Error).message,
     );
+
+    // Let the second read finish while the flight is still gated, so the borrow parks on
+    // it, then give the continuation room before opening the gate.
+    await atSecondRead.promise;
+    releaseSecondRead.resolve();
+    await flush();
 
     const disposing = pool.dispose();
     gate.resolve();

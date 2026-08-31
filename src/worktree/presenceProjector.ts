@@ -173,7 +173,30 @@ export interface PresenceProjectorDeps {
    * can see the file (source-the-agent-row-preview D2). Absence is not
    * degradation — a row with no answer simply carries no preview (D3).
    */
-  sessionPreview?(entryId: string): Promise<string | undefined>;
+  /**
+   * One capability, not two operations: the budget is only meaningful if the
+   * rows outside it can still be answered, so a caller supplying the look
+   * without the read turns bounded enrichment on and silently leaves every
+   * excluded row with no line (round-4 S1, D11). One object makes half of it a
+   * compile error.
+   */
+  sessionPreviews?: {
+    /** Look at a session's transcript, subject to the service's own bounds. */
+    preview(entryId: string): Promise<string | undefined>;
+    /** The line a session already has, read without starting work. What a row
+     *  outside the budget draws — see {@link PresenceProjectorDeps.previewBudget}. */
+    line(entryId: string): string | undefined;
+  };
+  /**
+   * How many rows one projection may permit to LOOK at their transcripts. The
+   * rest are still asked, and answer from what the service holds.
+   *
+   * This half of the § 2.3 bound is the projector's and not the service's: the
+   * service owns how many looks may be outstanding at once, and its own limit is
+   * the entry cache's size — memory, not work. Borrowing that as the work bound
+   * is the conflation § 2.3 names as the debt.
+   */
+  previewBudget?: number;
   /**
    * Point-resolve a session id an agent reported, against the store that
    * already holds it (§ 4.6).
@@ -268,6 +291,17 @@ export interface PresenceProjector {
    * registry session refusing.
    */
   claimedSessionIds(): ReadonlyMap<string, string>;
+  /**
+   * Tell the projector nothing is drawing its rows any more.
+   *
+   * The turn order holds exactly the ids drawn NOW (D9), and the only thing that
+   * reconciles it is an enriched projection — which is precisely what stops
+   * arriving when the last row-drawing surface goes away. Without this the order
+   * survives hide, detach and the drop to presence-only, and a reopened window
+   * grants by pre-hide position instead of taking every returned identity as an
+   * arrival (round-4 B1, D10).
+   */
+  forgetDrawOrder(): void;
 }
 
 /** A proven identity, kept so a failed re-read cannot demote the row (D10). */
@@ -382,6 +416,16 @@ function settleContestedSessions(produced: readonly ProducedRow[]): readonly Pro
 
 const TITLE_REFRESH_MS = 60_000;
 
+/**
+ * How many rows one projection permits to look at their transcripts.
+ *
+ * Small on purpose: a projection is a UI refresh, and 16 concurrent transcript
+ * reads is already more than a healthy one needs. Under this, an ordinary window
+ * behaves exactly as it did — the bound only bites on a window drawing more agent
+ * rows than this, which is where the unbounded I/O actually was.
+ */
+const DEFAULT_PROJECTION_LOOK_BUDGET = 16;
+
 /** The one owner of an external row's identity: row creation and eviction share it. */
 function externalRowId(sessionId: string): string {
   return `external:${REGISTRY_AGENT}:${sessionId}`;
@@ -487,6 +531,14 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   /** One vault title read per session, per refresh window. */
   const vaultTitles = new Map<string, { at: number; title: Promise<string | undefined> }>();
 
+  const previewBudget = Math.max(1, deps.previewBudget ?? DEFAULT_PROJECTION_LOOK_BUDGET);
+  /** Whose turn it is, in order. Insertion-ordered, so the front is whoever has
+   *  waited longest and a served row goes to the back. */
+  const previewOrder = new Set<string>();
+  /** Bumped whenever the order is forgotten, so an enrichment pass that started
+   *  before the edge cannot rebuild it from rows nobody is drawing (D10). */
+  let drawGeneration = 0;
+
   function clock(): number {
     return deps.now?.() ?? Date.now();
   }
@@ -514,21 +566,84 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
    * exactly what a row that cannot prove something must not show.
    */
   async function previewFromVault(rowsByWorktreeId: Record<string, WorktreeAgentRow[]>): Promise<void> {
-    const read = deps.sessionPreview;
+    const read = deps.sessionPreviews?.preview;
     if (!read) {
       return;
     }
+    // Flattened, and one wave. Awaiting each worktree in turn made the fan-out a
+    // property of how the rows happen to be distributed: ten rows in one
+    // worktree and ten spread across ten cost the same I/O but arrived as one
+    // wave or as ten, so no projection-wide bound could hold for both.
+    const asked: { worktreeId: string; index: number; entryId: string }[] = [];
     for (const [worktreeId, rows] of Object.entries(rowsByWorktreeId)) {
-      rowsByWorktreeId[worktreeId] = await Promise.all(
-        rows.map(async (row) => {
-          if (row.entryId === undefined) {
-            return row;
-          }
-          const preview = await read(row.entryId).catch(() => undefined);
-          return preview ? { ...row, preview } : row;
-        }),
-      );
+      rows.forEach((row, index) => {
+        if (row.entryId !== undefined) {
+          asked.push({ worktreeId, index, entryId: row.entryId });
+        }
+      });
     }
+    if (asked.length === 0) {
+      previewOrder.clear();
+      return;
+    }
+    // The turn is a queue over row IDENTITY, holding exactly what is drawn now.
+    //
+    // An index into a list whose membership changes is not a position in any
+    // stable order (round-1 B1). Neither is a queue that remembers absent ids: it
+    // must be bounded, a bounded queue must eventually forget one, and a
+    // forgotten id cannot be told from an arrival when it returns — so fairness
+    // across absence is not decidable with bounded state, and both attempts at it
+    // starved one population to feed the other (round-3 B1).
+    //
+    // What this queue does keep is structural: nothing is ever inserted AHEAD of
+    // an id already in it — arrivals append, grants move to the back — so for a
+    // row drawn on every projection the count ahead never grows and falls by up
+    // to `previewBudget` each time. It reaches the front within
+    // ceil(position / previewBudget) projections.
+    const drawn = new Set(asked.map((a) => a.entryId));
+    for (const entryId of [...previewOrder]) {
+      if (!drawn.has(entryId)) {
+        previewOrder.delete(entryId);
+      }
+    }
+    for (const { entryId } of asked) {
+      previewOrder.add(entryId);
+    }
+    const mayLook = new Set<string>();
+    for (const entryId of previewOrder) {
+      if (mayLook.size >= previewBudget) {
+        break;
+      }
+      mayLook.add(entryId);
+    }
+    // Served rows go to the back, so a row that merely stays drawn rises to the
+    // front as the others take their turns.
+    for (const entryId of mayLook) {
+      previewOrder.delete(entryId);
+      previewOrder.add(entryId);
+    }
+    // Only the permitted rows are awaited. Fanning every row out allocated an
+    // async invocation per row to permit `previewBudget` of them, so a
+    // thousand-row projection started a thousand promises for sixteen looks
+    // (round-1 W1). The rest are a map read.
+    const write = (worktreeId: string, index: number, preview: string | undefined): void => {
+      if (preview) {
+        const rows = rowsByWorktreeId[worktreeId];
+        rows[index] = { ...rows[index], preview };
+      }
+    };
+    for (const { worktreeId, index, entryId } of asked) {
+      if (!mayLook.has(entryId)) {
+        write(worktreeId, index, deps.sessionPreviews?.line(entryId));
+      }
+    }
+    await Promise.all(
+      asked
+        .filter((a) => mayLook.has(a.entryId))
+        .map(async ({ worktreeId, index, entryId }) => {
+          write(worktreeId, index, await read(entryId).catch(() => undefined));
+        }),
+    );
   }
 
   /** Prefer the vault's session title; registry and pane titles are fallbacks. */
@@ -978,7 +1093,20 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
   }
 
   return {
+    forgetDrawOrder(): void {
+      previewOrder.clear();
+      drawGeneration += 1;
+    },
+
     async project(worktreeIds, options) {
+      // Sampled HERE, before the first await, because `project` suspends five
+      // times before enrichment — the snapshot, the pane cwds, the pane
+      // projection, the session read and the session cwds. An edge landing in
+      // any of them advances the generation before a later sample could read
+      // it, so the equality check passes and the order is rebuilt with nothing
+      // drawing rows: fencing from the enrichment block covered the smallest
+      // window and left the largest open (round-6 B1, D10).
+      const generation = drawGeneration;
       const now = clock();
       const snapshot = await deps.openSnapshot();
 
@@ -1074,8 +1202,12 @@ export function createPresenceProjector(deps: PresenceProjectorDeps): PresencePr
       // and so is unaffected — deliberately: a ranking left stale while nobody
       // drew rows would reorder every group the moment the rail reopened.
       if (options?.enrich !== false) {
+        // Skipping the preview pass is the right answer when the generation has
+        // moved: no surface is left to draw what it would fetch.
         await titleFromVault(rowsByWorktreeId, now);
-        await previewFromVault(rowsByWorktreeId);
+        if (generation === drawGeneration) {
+          await previewFromVault(rowsByWorktreeId);
+        }
       }
 
       // A source that answered this rebuild clears its entry; one still failing

@@ -151,6 +151,60 @@ The projector owns how many looks a single projection starts, because it enriche
 and awaits them before the next, so no service-side concurrency limit is ever reached. WT-011.3 takes
 the first; WT-011.7 takes the second.
 
+**What shipped for the second half (WT-011.7).** The projector carries an explicit per-projection
+budget — 16 — spent across every drawn row at once rather than per worktree, so ten rows in one
+worktree and ten spread across ten cost the same. Rows outside the budget are answered synchronously
+from what the preview service already holds rather than skipped, so they keep drawing their last
+line, and only the permitted rows are awaited.
+
+Whose turn it is, is a queue over row IDENTITY holding exactly the ids being drawn now. Two earlier
+mechanisms failed and the reason is worth keeping: an index into a list whose membership changes is
+not a position in any stable order, and a queue that REMEMBERS absent identities cannot be made fair
+either — it must be bounded, a bounded queue must eventually forget one, and a forgotten id is
+indistinguishable from an arrival when it returns. Both attempts at fairness across absence starved
+one population to feed the other. So the promise is narrower than first written and now says so:
+fairness is guaranteed for a row drawn on EVERY projection, structurally — nothing is ever inserted
+ahead of an id already queued, so the count ahead of it never grows — and a row that stops being drawn
+re-enters as an arrival.
+
+Retention is narrower too. An exact declared set could not survive the look timeout, because an
+abandoned look keeps its entry in `outstanding` carrying its pre-stall line and the ordinary ask path
+seats it back. So the cache cap is the retention rule again, and what keeps an excluded row's line is
+that the synchronous read TOUCHES what it returns: every drawn row is touched every projection, so the
+LRU's victims are rows the window has stopped drawing. Past `cap` drawn rows a line can be lost, and
+the row re-looks.
+
+The queue needs an owner for the FALLING edge, which nothing had: it is reconciled only by an enriched
+projection, and that is exactly what stops arriving when the last row-drawing surface goes away. The
+host now settles both directions where it already settled the rising one, and the projector samples a
+generation before the first await of a projection so a pass that started before the edge cannot
+rebuild the queue from rows nobody is drawing.
+
+**What shipped for the reopen half (WT-011.10).** The host records an envelope as enriched from what
+was REQUESTED, not from whether preview enrichment completed, so a pass whose preview half the fence
+skipped used to suppress the replacement pass on reopen. Rather than widen `WorktreePresence` with a
+"how complete is this" field every consumer would see and one would use, the host keeps an explicit
+obligation beside it: when the row-drawing falling edge fires *while a projection is in flight*, that
+projection is exactly the one the fence will cut short, and the obligation is recorded. The owed
+predicate reads it alongside the envelope's own enrichment.
+
+Where that obligation is discharged took three attempts and only the third is correct. Clearing it
+where the envelope's enrichment is RECORDED fails because the cut-short projection publishes *after*
+the edge and wipes what the edge just recorded. Clearing it where a RUN starts fails worse: projection
+is single-flight, so a surface reopening mid-run joins the run in flight and never reaches a run-level
+clear — the joined pass then completes clean, finds the obligation still standing, dirties itself, and
+does so again on every following pass, so the loop never exits and nothing is ever published. The unit
+is the **pass**: each iteration clears at its own start and only when it is going to enrich. An edge
+landing before an iteration is what that iteration's enrichment answers; an edge landing during it
+re-records, and the loop spends that on exactly one more pass. A run whose projection *rejects* puts
+back what its passes cleared, because a thrown pass leaves the envelope still marked enriched and an
+un-restored obligation would read as satisfied.
+
+The falling edge only ever records; it never requests. The rise spends the obligation through the one
+path that already asks for projections — which is what keeps the reconcile a state settle rather than
+an edge check (clearing the envelope's enrichment there instead fires on every mutation while nothing
+draws, and moved 19 existing cases).
+
 **Why it was deferred**: *"Performance-only, on a path already gated by the recheck interval, and a
 timeout on `stat`/`read` is a new failure-surface decision rather than remediation."*
 
@@ -186,7 +240,7 @@ something the title did not, and a heuristic that hides it would be a second, wo
 a redundancy. Owned by [worktree-panel-ui.md](worktree-panel-ui.md) § 3.3, which specifies the row's
 preview line; this doc records only that the suppression rule exists and where it lives.
 
-### 2.5 A preview outlives the entry it described
+### 2.5 A preview outlives the entry it described — SHIPPED (WT-011.5)
 
 When a vault entry disappears, the preview service clears the cached line but keeps the entry's
 resolved target. A row can therefore keep presenting a line sourced from a transcript whose vault
@@ -211,13 +265,28 @@ preview line says what its session last did" requires exactly that. This debt ad
 either side of that pair — the entry itself is gone — and retires the line permanently rather than
 on the retry ladder.
 
-**What planning found, and what it costs**: the service cannot ask that question yet. `getEntry`
-returns `null` for a deleted entry *and* for a reader that failed — `codexReader.ts` says so in its
+**What planning found, and what it cost**: the service could not ask that question at all. `getEntry`
+returned `null` for a deleted entry *and* for a reader that failed — `codexReader.ts` said so in its
 own comment, `// query-error → unresolved (caller treats null as unknown-entry)` — so a mechanism
-built on `null` would retire a live session's line on a transient SQLite error, which is the exact
-confusion this debt exists to end. A conclusive `found | absent | unknown` answer is a change to the
-vault readers' contract and a separate invariant owner, so it was split out as WT-011.8; WT-011.5
-depends on it and settles nothing until it lands.
+built on `null` would have retired a live session's line on a transient SQLite error, which is the
+exact confusion this debt exists to end. A conclusive `found | absent | unknown` answer was a change
+to the vault readers' contract and a separate invariant owner, so it shipped first as WT-011.8.
+
+**What shipped.** The service consumes `VaultEntryLookup` directly: `absent` — reachable only from an
+enumeration that completed without the session — retires the line into a third `gone` target that
+makes no syscall of any kind, and every inconclusive answer is `unknown`. `gone` is not final:
+the store is re-consulted on its own interval, an order of magnitude slower than the freshness check
+beside it, so a session that comes back previews again. That interval is the gap between two
+lookups and not a wall-clock bound on the stale line — the service is pull-based, and a row nothing
+asks about is a row nothing re-confirms.
+
+The half that took a review round is the one that looks like a detail: an `unknown` must change
+**nothing**. Blanking the line on an inconclusive answer is the same thing the user sees as retiring
+it, and letting the look carry on into its ordinary freshness work is worse than it appears —
+an inconclusive answer deliberately does not stamp the confirmation time, so the row stays
+permanently due, and one unchanged `stat` there resets the retry ladder and puts the next store
+lookup back on the freshness cadence. The bound is only a bound while the inconclusive path stays
+inert.
 
 ## 3. Deferred again, with reasons
 

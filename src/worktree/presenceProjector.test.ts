@@ -29,15 +29,17 @@ function pane(over: Partial<Pane> & { paneId: string }): Pane {
   return { exited: false, cwd: WT, ...over };
 }
 
-function makeProjector(initial: Pane[] = []) {
+function makeProjector(initial: Pane[] = [], over: { previewBudget?: number } = {}) {
   const panes = [...initial];
   const activity = new Map<string, { activity: PaneActivity; rule: ActivityRule }>();
   let lookup: (paneId: string) => SessionLookup = () => ({ kind: "absent" });
   let registry: RunningSessionsOutcome = { kind: "ok", sessions: [] };
   let vaultTitle: ((entryId: string) => Promise<string | undefined>) | undefined;
   let vaultPreview: ((entryId: string) => Promise<string | undefined>) | undefined;
+  let previewLines: Map<string, string> | undefined;
   let vaultUnderCwd: ((agent: VaultAgentId, cwd: string) => Promise<string | undefined>) | undefined;
   let standingReport: ((paneId: string) => { agent: VaultAgentId; entryId: string } | undefined) | undefined;
+  let beforeSnapshot: (() => Promise<void>) | undefined;
   let snapshots = 0;
   let resolves = 0;
   let underCwdCalls = 0;
@@ -48,6 +50,7 @@ function makeProjector(initial: Pane[] = []) {
     panes: () => panes,
     activityFor: (paneId) => activity.get(paneId) ?? { activity: "idle", rule: "quiet" },
     openSnapshot: async () => {
+      await beforeSnapshot?.();
       snapshots += 1;
       return {
         resolve: async (p) => {
@@ -63,13 +66,17 @@ function makeProjector(initial: Pane[] = []) {
     },
     normalize: (p) => p,
     sessionTitle: (entryId) => (vaultTitle ? vaultTitle(entryId) : Promise.resolve(undefined)),
-    sessionPreview: (entryId) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
+    sessionPreviews: {
+      preview: (entryId: string) => (vaultPreview ? vaultPreview(entryId) : Promise.resolve(undefined)),
+      line: (entryId: string) => previewLines?.get(entryId),
+    },
     resolveReportedSession: async (sessionId) => {
       reportedAsked.push(sessionId);
       return reportedSessions[sessionId] ?? null;
     },
     reportedSession: (paneId) => standingReport?.(paneId),
     now: () => clock,
+    ...(over.previewBudget === undefined ? {} : { previewBudget: over.previewBudget }),
   };
 
   return {
@@ -88,6 +95,14 @@ function makeProjector(initial: Pane[] = []) {
     },
     setVaultTitle(next: (entryId: string) => Promise<string | undefined>) {
       vaultTitle = next;
+    },
+    /** Run inside the FIRST await `project` performs, so a test can land an edge
+     *  in the window before enrichment is reached. */
+    setBeforeSnapshot(next: () => Promise<void>) {
+      beforeSnapshot = next;
+    },
+    setPreviewLines(next: Map<string, string>) {
+      previewLines = next;
     },
     setVaultPreview(next: (entryId: string) => Promise<string | undefined>) {
       vaultPreview = next;
@@ -2255,5 +2270,243 @@ describe("the sessions this window already holds", () => {
     await h.projector.project([WT]);
 
     expect([...h.projector.claimedSessionIds()]).not.toContain(formatEntryId("claude", "s1"));
+  });
+});
+
+describe("how much one projection looks at", () => {
+  const sessions = (ids: number[], cwd: string | ((i: number) => string) = WT): RunningClaudeSession[] =>
+    ids.map((i) => ({
+      sessionId: `s${i}`,
+      cwd: typeof cwd === "function" ? cwd(i) : cwd,
+      pid: 4000 + i,
+      startedAt: 1_600_000_000_000,
+      name: `session-${i}`,
+    }));
+
+  const upTo = (count: number): number[] => Array.from({ length: count }, (_, i) => i);
+
+  /**
+   * Records which ids were permitted to look. The lines map stands in for what
+   * the service holds, so an excluded row is answered rather than skipped.
+   */
+  function watchPreview(h: ReturnType<typeof makeProjector>, ids: number[]) {
+    const lines = new Map(ids.map((i) => [`claude:s${i}`, `line for s${i}`]));
+    h.setPreviewLines(lines);
+    const looked: string[][] = [];
+    let round: string[] = [];
+    h.setVaultPreview(async (entryId) => {
+      round.push(entryId);
+      return lines.get(entryId);
+    });
+    return {
+      looked,
+      endRound() {
+        looked.push(round);
+        round = [];
+      },
+    };
+  }
+
+  it("permits no more looks than its budget, however many rows there are", async () => {
+    const h = makeProjector([], { previewBudget: 3 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(9)) });
+    const watch = watchPreview(h, upTo(9));
+
+    const presence = await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(presence.rowsByWorktreeId[WT]).toHaveLength(9);
+    expect(watch.looked[0]).toHaveLength(3);
+  });
+
+  it("holds that budget when the same rows are spread across worktrees", async () => {
+    // Nine rows one per worktree cost the same I/O as nine in one; only the
+    // arrival shape differs, which is why the old per-worktree loop could not
+    // bound either.
+    const roots = Array.from({ length: 9 }, (_, i) => `${WT}-${i}`);
+    const h = makeProjector([], { previewBudget: 3 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(9), (i) => roots[i]) });
+    const watch = watchPreview(h, upTo(9));
+
+    await h.projector.project(roots);
+    watch.endRound();
+
+    expect(watch.looked[0]).toHaveLength(3);
+  });
+
+  it("still draws a line on a row the budget excluded", async () => {
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    watchPreview(h, upTo(3));
+
+    const rows = (await h.projector.project([WT])).rowsByWorktreeId[WT];
+
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.preview).toBe(`line for ${row.entryId?.slice("claude:".length)}`);
+    }
+  });
+
+  it("gives every row its turn rather than looking at the same ones forever", async () => {
+    const h = makeProjector([], { previewBudget: 2 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(6)) });
+    const watch = watchPreview(h, upTo(6));
+
+    for (let i = 0; i < 3; i++) {
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    expect(new Set(watch.looked.flat()).size).toBe(6);
+    for (const round of watch.looked) {
+      expect(round).toHaveLength(2);
+    }
+  });
+
+  it("gives a row its turn even while other rows come and go", async () => {
+    // An index into a list whose membership changes is not a position in any
+    // stable order: budget 1 over [A,B,C] then [A,C] repeatedly re-granted A and
+    // B and never reached C (round-1 B1).
+    const h = makeProjector([], { previewBudget: 1 });
+    const watch = watchPreview(h, upTo(3));
+
+    for (let i = 0; i < 6; i++) {
+      h.setRegistry({ kind: "ok", sessions: sessions(i % 2 === 0 ? [0, 1, 2] : [0, 2]) });
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    // s0 and s2 are drawn on every projection, so neither may be starved.
+    const served = watch.looked.flat();
+    expect(served).toContain("claude:s0");
+    expect(served).toContain("claude:s2");
+  });
+
+  it("takes a returning row as an arrival rather than dropping it", async () => {
+    // The queue holds exactly what is drawn now, so a row that leaves loses its
+    // place — remembering one is not implementable against unbounded identity
+    // churn with bounded state (round-3 B1, D9). What IS promised is that it
+    // re-enters and is reached once it stays drawn.
+    const h = makeProjector([], { previewBudget: 1 });
+    const watch = watchPreview(h, upTo(3));
+
+    for (const ids of [[0, 1, 2], [0], [0, 1, 2], [0, 1, 2], [0, 1, 2]]) {
+      h.setRegistry({ kind: "ok", sessions: sessions(ids) });
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    const served = watch.looked.flat();
+    expect(served).toContain("claude:s1");
+    expect(served).toContain("claude:s2");
+  });
+
+  it("reaches a row that stays drawn as the window shrinks around it", async () => {
+    // The queue drops what is no longer drawn, so the survivors close up rather
+    // than waiting behind departed ids. s4 sat behind three rows that left, and
+    // is reached on the projection after they do.
+    const h = makeProjector([], { previewBudget: 1 });
+    const watch = watchPreview(h, upTo(5));
+
+    h.setRegistry({ kind: "ok", sessions: sessions([0, 1, 2, 3, 4]) });
+    await h.projector.project([WT]);
+    watch.endRound();
+    clock += 60_000;
+
+    for (let i = 0; i < 3; i++) {
+      h.setRegistry({ kind: "ok", sessions: sessions([1, 4]) });
+      await h.projector.project([WT]);
+      watch.endRound();
+      clock += 60_000;
+    }
+
+    expect(watch.looked.flat()).toContain("claude:s4");
+  });
+
+  it("takes every returned row as an arrival once the order is forgotten", async () => {
+    // The turn order holds exactly the ids drawn NOW, and nothing reconciles it
+    // while nothing is drawing: an enriched projection is the only reconciler and
+    // it is precisely what stops arriving (round-4 B1, D10). Without the reset the
+    // second round grants s1, by a position earned before the window went away.
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    const watch = watchPreview(h, upTo(3));
+
+    await h.projector.project([WT]);
+    watch.endRound();
+    clock += 60_000;
+
+    h.projector.forgetDrawOrder();
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[1]).toEqual(watch.looked[0]);
+  });
+
+  it("does not rebuild the order from a pass that started before the edge", async () => {
+    // The title pass is awaited before the preview pass, so an edge landing in it
+    // would otherwise let the preview pass repopulate the order from rows nobody
+    // is drawing. Every write the preview pass makes is before its own await, so
+    // this is the only window that needs the fence (D10).
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    const watch = watchPreview(h, upTo(3));
+    h.setVaultTitle(async (entryId) => {
+      h.projector.forgetDrawOrder();
+      return `title for ${entryId}`;
+    });
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toEqual([]);
+  });
+
+  it("does not rebuild the order after an edge in the pass's earliest await", async () => {
+    // `project` suspends five times before enrichment. An edge in any of them
+    // advances the generation before a sample taken at the enrichment block could
+    // read it, so the equality check passed and the order was rebuilt with nothing
+    // drawing rows — the smallest window fenced, the largest left open (round-6 B1).
+    const h = makeProjector([], { previewBudget: 1 });
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(3)) });
+    const watch = watchPreview(h, upTo(3));
+    let landed = false;
+    h.setBeforeSnapshot(async () => {
+      if (!landed) {
+        landed = true;
+        h.projector.forgetDrawOrder();
+      }
+    });
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toEqual([]);
+  });
+
+  it("permits the shipped default when nothing overrides it", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(20)) });
+    const watch = watchPreview(h, upTo(20));
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toHaveLength(16);
+  });
+
+  it("permits every row when there are fewer than the default budget", async () => {
+    const h = makeProjector();
+    h.setRegistry({ kind: "ok", sessions: sessions(upTo(5)) });
+    const watch = watchPreview(h, upTo(5));
+
+    await h.projector.project([WT]);
+    watch.endRound();
+
+    expect(watch.looked[0]).toHaveLength(5);
   });
 });

@@ -89,6 +89,7 @@ function harness() {
     project,
     rank: (id: string) => inner.rank(id),
     rankRevision: () => inner.rankRevision(),
+    forgetDrawOrder: () => inner.forgetDrawOrder(),
   } as unknown as PresenceProjector;
 
   // Every timer the host arms, so "and no new polling timer" is counted rather than assumed.

@@ -276,6 +276,7 @@ vi.mock("./worktree/presenceProjector", async (importOriginal) => {
         // a pane's own session twice, and a stub returning nothing would make
         // this test agree with a production bug rather than catch it.
         claimedSessionIds: () => inner.claimedSessionIds(),
+        forgetDrawOrder: () => inner.forgetDrawOrder(),
         project: async (ids: readonly string[], options?: never) => {
           const base = await inner.project(ids, options);
           // Captured here because the host→webview contract drops the fields I6 and I7
