@@ -30,6 +30,7 @@ import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { resolveSelection } from "../worktree/createResolution";
+import { type GitEntryProbe, classifyDestination } from "../worktree/debrisClassification";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
 import type { OrphanProofs } from "../worktree/orphanProofs";
@@ -185,6 +186,12 @@ export interface WorktreeHostOptions {
   now?(): number;
   /** Path-existence probe behind `initPayload`, injected in tests. */
   exists?(p: string): boolean;
+  /**
+   * Whether a `.git` ENTRY is there, without resolving it — what separates
+   * debris from a checkout (design.md D1). Production leaves it absent and
+   * takes `node:fs`; `exists` is not reused because it follows symlinks.
+   */
+  probeGitEntry?: GitEntryProbe;
   /**
    * The filesystem the RESOLVED containment check reads. Must answer for the
    * same tree `exists` does — that check is what authorizes `exists`, so a
@@ -1214,7 +1221,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       // and nothing here mints an authorization to delete either (D4).
       ...(freePath === bare
         ? {}
-        : { occupiedCandidate: { path: bare, disposition: dispositionOf(registered.has(bare)) } }),
+        : { occupiedCandidate: { path: bare, disposition: dispositionOf(bare, registered.has(bare)) } }),
     };
   }
 
@@ -1397,9 +1404,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return false;
   }
 
-  /** A registered worktree is not debris; a directory nobody registered is. */
-  function dispositionOf(isRegistered: boolean): ResolvedDisposition {
-    return isRegistered ? { kind: "free" } : { kind: "debris" };
+  /**
+   * A registered worktree is not debris, and neither is an unregistered
+   * directory holding a `.git` — `classifyDestination` reads for one rather than
+   * inferring from the listing (design.md D1). Runs only for a candidate the
+   * suffixing already skipped, so the common path still adds no I/O.
+   */
+  function dispositionOf(candidatePath: string, isRegistered: boolean): ResolvedDisposition {
+    return classifyDestination(candidatePath, isRegistered, options.probeGitEntry);
   }
 
   /** § 2.3 conditions 2 and 3, or `undefined` when nobody can ask them. */

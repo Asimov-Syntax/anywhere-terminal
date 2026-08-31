@@ -285,6 +285,7 @@ async function builtHost(
     extra?: string[][];
     createRoot?: string;
     exists?: (p: string) => boolean;
+    probeGitEntry?: (p: string) => "present" | "absent" | "unknown";
     /** Add a second, unrelated repository to the workspace. */
     sibling?: boolean;
     /** No watcher can be established, as on a host without file watching. */
@@ -411,6 +412,7 @@ async function builtHost(
       claimedByPane: async () => over.claimedByPane ?? new Map<string, string>(),
     },
     ...(over.exists === undefined ? {} : { exists: over.exists }),
+    ...(over.probeGitEntry === undefined ? {} : { probeGitEntry: over.probeGitEntry }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
     ...(over.readProvisioning === undefined ? {} : { readProvisioning: over.readProvisioning }),
     ...(over.readRefs === undefined && over.refsInputs === undefined
@@ -2952,6 +2954,31 @@ describe("the host resolves a selection before the create runs", () => {
     // The whole point of the narrower type: a probe the form sends on every
     // settled edit must not hand out a delete authorization (D4).
     expect(Object.keys(answer?.occupiedCandidate?.disposition ?? {})).toEqual(["kind"]);
+    dispose();
+  });
+
+  it("does not call a skipped candidate debris when a .git survives in it", async () => {
+    // The registration proxy this replaced would answer `debris` here — the path
+    // is occupied and unregistered — and offer to delete a checkout whose entry
+    // was pruned, which is WT-012.15's to re-register (design.md D1).
+    const asked: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      probeGitEntry: (p: string) => {
+        asked.push(p);
+        return "present";
+      },
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+
+    const answer = resolutionIn(view);
+    expect(answer?.occupiedCandidate).toEqual({ path: "/trees/repo-feat", disposition: { kind: "free" } });
+    // The reading came from the candidate's own `.git`, not from the listing.
+    expect(asked).toEqual(["/trees/repo-feat/.git"]);
     dispose();
   });
 

@@ -648,7 +648,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | security-privacy |
 | **Notes** | Its own task because it is the one create path that deletes, and because it is a **named carve-out of the shared "never delete files directly" invariant** — git cannot remove a directory that is deliberately not a worktree. Every bound is load-bearing and each is separately testable, which is what makes it a task rather than a clause in WT-012.8 |
 | **Acceptance** | A destination holding a directory with no `.git` is reported as debris rather than silently skipped by suffixing, and offers recover stating exactly what will be removed; recovery composes with any branch mode, so clearing debris and reusing an existing branch is expressible; a directory holding a `.git` file or directory is never treated as debris; the delete is refused unless the authorization fingerprint matches what the user was shown at that path; the path is re-resolved and its device and inode re-checked immediately before the delete; a path with a symlinked component is refused; the carve-out from the never-delete-directly invariant is recorded in the design rather than left implicit; a partial deletion reports what remains and never reports the create as successful; a bare create never deletes anything |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-012.13] Prove a Task Can Run Where the Worktree Is
 
