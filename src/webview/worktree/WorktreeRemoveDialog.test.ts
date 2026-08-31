@@ -445,6 +445,53 @@ describe("the confirmation states what it destroys and what it spares", () => {
     const text = host.querySelector(".wt-warnbox")?.textContent ?? "";
     expect(text).toMatch(/files written after you confirm/i);
   });
+
+  it("[1_3] states the same consequences for an ordinary confirmation", () => {
+    // The requirement is about a REMOVAL confirmation, not a forced one
+    // (worktree-panel § A removal states what it destroys and what it spares).
+    // A user removing a clean worktree is owed the same account of what goes and
+    // what stays.
+    const { host } = open(FULL_REPORT, { info: CLEAN });
+    const text = host.querySelector(".wt-warnbox")?.textContent ?? "";
+    expect(text).toMatch(/irreversibl/i);
+    expect(text).toContain("The branch quiet is kept.");
+  });
+
+  it("[1_3] does not name a force the user was never offered", () => {
+    // The box led with "Force remove deletes everything" whatever control was
+    // mounted, so an ordinary confirmation described an action whose button is
+    // not on screen (design.md D5).
+    const { host } = open(FULL_REPORT, { info: CLEAN });
+    const text = host.querySelector(".wt-warnbox")?.textContent ?? "";
+
+    expect(
+      host.querySelector("button.wt-btn--danger")?.textContent,
+      "this case is meant to be the ordinary control",
+    ).toBe("Remove");
+    expect(text, "the ordinary confirmation described a force").not.toMatch(/force/i);
+  });
+
+  it("[1_3] still names the force where one is actually offered", () => {
+    const { host } = open(confirmableBlocker);
+
+    expect(host.querySelector("button.wt-btn--danger")?.textContent).toBe("Force remove");
+    expect(host.querySelector(".wt-warnbox")?.textContent ?? "").toMatch(/force remove/i);
+  });
+
+  it("[1_3] claims nothing about a branch a detached worktree does not have", () => {
+    // Each clause keeps its own truth condition: no branch, no promise to spare
+    // one (design.md D5).
+    const detached = worktree({
+      id: "/Volumes/ext/anywhere-terminal-wt/detached",
+      head: "a".repeat(40),
+      detached: true,
+    });
+    const { host } = open(FULL_REPORT, { info: detached });
+    const text = host.querySelector(".wt-warnbox")?.textContent ?? "";
+
+    expect(text).toMatch(/irreversibl/i);
+    expect(text, "a worktree with no branch was told its branch is kept").not.toMatch(/is kept/i);
+  });
 });
 
 describe("a check nobody could evaluate (round-1 W2)", () => {

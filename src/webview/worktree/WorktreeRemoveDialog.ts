@@ -4,10 +4,12 @@
 // They are one dialog because they are one question with two answers, and keeping
 // them together is what stops the refusal from drifting into a disabled button:
 //
-//  - CONFIRMABLE: every blocker is named in one list, and the warning says what
-//    force actually authorizes — irrevocable deletion of everything under the path,
-//    INCLUDING files written after the confirmation — plus what it leaves behind
-//    (panes still running in a deleted directory, the branch kept).
+//  - CONFIRMABLE: every check is named in one list with its own outcome, and the
+//    warning says what the confirmation authorizes — irrevocable deletion of
+//    everything under the path, INCLUDING files written after the confirmation —
+//    plus what it leaves behind (panes still running in a deleted directory, the
+//    branch kept). Said for an ordinary confirmation as much as a forced one; a
+//    confirmable risk that failed or could not be read is what earns the force.
 //  - REFUSED: `busyAgents > 0` or `isMain`. No confirm button EXISTS to click; the
 //    dialog names the agent instead and offers to show it. A disabled confirm would
 //    imply some other input could enable it.
@@ -295,12 +297,24 @@ export function buildProofList(checks: readonly RemovalCheck[], info: WorktreeIn
  * only appears when it is true — a warning that names two terminals that do not
  * exist is the same class of lie as a state dot that is not live.
  */
-function buildForceWarning(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
+/**
+ * What the removal destroys and what it spares — stated for the ordinary
+ * confirmation as well as the forced one (worktree-panel § A removal states what
+ * it destroys and what it spares, design.md D5).
+ *
+ * Each clause keeps its own truth condition: a lock is overridden only where one
+ * failed, panes keep running only where panes were counted, a branch is spared
+ * only where there is one. The lead names the control actually mounted — a box
+ * that opens "Force remove…" beside a button reading "Remove" describes an
+ * action the user was never offered.
+ */
+function buildRemovalWarning(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
   const idlePanes = countOf(checks, "idlePanes");
   const box = document.createElement("div");
   box.className = "wt-warnbox";
   const lead = document.createElement("b");
-  lead.textContent = "Force remove deletes everything under that path, irreversibly";
+  const action = confirmationFor(checks) === "typed" ? "Force remove" : "Remove";
+  lead.textContent = `${action} deletes everything under that path, irreversibly`;
   box.append(lead, document.createTextNode(" — including files written after you confirm."));
   if (failed(checks, "locked")) {
     box.append(document.createTextNode(" The lock is overridden."));
@@ -479,7 +493,7 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   if (proofs !== null) {
     shell.dialog.append(proofs);
   }
-  shell.dialog.append(buildForceWarning(checks, info));
+  shell.dialog.append(buildRemovalWarning(checks, info));
   const cancelBtn = textButton("Cancel", "plain", cancel);
   shell.actions.append(cancelBtn);
   const typed = confirmationFor(checks) === "typed";

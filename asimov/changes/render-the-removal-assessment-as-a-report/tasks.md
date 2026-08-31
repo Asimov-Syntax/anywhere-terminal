@@ -25,7 +25,7 @@
     4. `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/extension.worktreeAssembly.test.ts`: the inherited tests answer the confirmation by clicking it, which the typed case no longer accepts — enter the name first where the report earns one.
   - **Boundary**: the fingerprint the confirmation re-sends is unchanged — a typed confirmation authorizes the same set, not a wider one
 
-- [ ] 1_3 State what the removal leaves behind, per clause
+- [x] 1_3 State what the removal leaves behind, per clause — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#a-removal-states-what-it-destroys-and-what-it-spares; design.md D5
   - **Acceptance**:
