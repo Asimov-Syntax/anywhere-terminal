@@ -71,3 +71,13 @@ Round 1 closed: all six BLOCKs fixed (B1/B3/B5/B6a in ec53cc98; B2 in 8b06a240; 
 B6b in 9442228d), plus the cross-repository late publish asm-review-logic reported directly and the
 chair's report does not carry. Verify gate re-run green: 269 files / 6167 tests, check-types clean,
 biome 3/14/1 baseline.
+
+Thrash-stop option 3 elected (bounded extension), fastlane. The guard fired on trajectory
+"r1 REJECT 6 -> r2 superseded REJECT 6", but r2 adjudicated nothing: it was superseded because I
+dispatched it as a VERIFICATION round when the range carried rewritten D4/D5 and tasks 4_1-4_3. The
+6->6 is that accounting, not a fix that failed — every round-1 blocker is fixed, mutation-verified,
+and the gate is green. Options 1 and 2 are the two fastlane excludes and both misdescribe the state:
+nothing needs designing and no blocker is unresolved.
+Bounded: ONE round, no scope growth. Hypothesis to test — the six accepted blockers plus the
+cross-repository late publish are closed by ec53cc98 / 8b06a240 / 7ed9cd15 / 9442228d, and the
+wire-contract lens that never returned in round 1 has still not seen this change.
