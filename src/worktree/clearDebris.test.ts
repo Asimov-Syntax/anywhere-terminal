@@ -194,6 +194,21 @@ describe("clearDebris", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("[round-2 W3] names the survivors of a removal that threw partway", async () => {
+    // A recursive removal can delete half a tree and then reject. The error
+    // alone tells the user a delete failed and not what it left behind.
+    const result = await clearDebris(PATH, CTX, APPROVED, {
+      ...deps(),
+      readdir: () => ["node_modules"],
+      remove: async () => {
+        throw new Error("EPERM");
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toContain("EPERM");
+    expect(result.ok === false && result.reason).toContain("node_modules");
+  });
+
   it("reports a removal that threw, rather than claiming the path is clear", async () => {
     const result = await clearDebris(
       PATH,

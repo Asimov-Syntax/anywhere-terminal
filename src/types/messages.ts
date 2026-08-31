@@ -751,6 +751,16 @@ export interface WorktreeAuthorizeDebrisMessage {
   repoId: string;
   /** Echoed, so an answer below the current opening is dropped. */
   token: number;
+  /**
+   * WHICH request this is, within one opening.
+   *
+   * `token` separates two openings and `path` separates two directories, but a
+   * user who accepts, withdraws and accepts again asks about the same path
+   * twice inside one opening — and the first answer, arriving late, would
+   * satisfy the second request with a reading that request never made. The same
+   * thing `seq` does for the probe (round-2 W2).
+   */
+  ask: number;
   /** The destination the user asked to clear. */
   path: string;
 }
@@ -765,6 +775,8 @@ export type WorktreeDebrisAuthorizedMessage = {
   type: "worktreeDebrisAuthorized";
   repoId: string;
   token: number;
+  /** Echoed, so an answer can be told from one the form has already withdrawn. */
+  ask: number;
   path: string;
 } & (
   | { granted: true; authorization: DebrisAuthorization; entries: readonly string[] }

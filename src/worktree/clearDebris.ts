@@ -165,7 +165,12 @@ export async function clearDebris(
   try {
     await deps.remove(resolvedPath);
   } catch (error) {
-    return { ok: false, reason: `That directory could not be cleared: ${messageOf(error)}` };
+    // A recursive removal can delete half a tree and then reject, so the error
+    // alone leaves the user knowing a delete failed and not what survived it —
+    // the same gap the post-removal path closes (round-2 W3).
+    const survivors = deps.readdir(resolvedPath);
+    const left = survivors === null || survivors.length === 0 ? "" : ` Still there: ${listShort(survivors)}`;
+    return { ok: false, reason: `That directory could not be cleared: ${messageOf(error)}.${left}` };
   }
 
   // ABSENCE, proven. A read that merely failed is not a cleared directory, and
@@ -181,8 +186,18 @@ export async function clearDebris(
     reason:
       remaining === null || remaining.length === 0
         ? "That directory could not be fully cleared."
-        : `That directory could not be fully cleared. Still there: ${remaining.join(", ")}.`,
+        : `That directory could not be fully cleared. Still there: ${listShort(remaining)}`,
   };
+}
+
+/** How many survivors a message names before it counts the rest. */
+const SURVIVOR_CAP = 8;
+
+/** Bounded: the point is to say what is there, and a directory can hold thousands. */
+function listShort(entries: readonly string[]): string {
+  const shown = entries.slice(0, SURVIVOR_CAP).join(", ");
+  const rest = entries.length - SURVIVOR_CAP;
+  return rest > 0 ? `${shown} and ${rest} more.` : `${shown}.`;
 }
 
 /** Why the component walk refuses, or null where it found nothing to refuse. */

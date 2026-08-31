@@ -1358,8 +1358,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // Recorded as it is PUBLISHED, so the only path an authorization can be
     // issued for is the one this opening's latest answer put on screen. A newer
     // answer replaces it; an answer naming no debris clears it (round-1 B1).
+    //
+    // And only where the FORM would offer it. A `reattach` create acts on the
+    // registration's own path, so the dialog never offers the skipped candidate
+    // for one — recording it anyway left a path authorizable that no form could
+    // put on screen (round-2 B1). The one exception is a detached probe: the
+    // toggle discards the classification (D5), so the form takes the free path
+    // and does offer. `base.kind` is how the probe says so.
+    const offerable = mode.kind !== "reattach" || msg.base?.kind === "detached";
     publishing.debrisCandidate =
-      occupiedCandidate !== undefined && occupiedCandidate.disposition.kind === "debris"
+      offerable && occupiedCandidate !== undefined && occupiedCandidate.disposition.kind === "debris"
         ? occupiedCandidate.path
         : null;
     surface.post({
@@ -1478,6 +1486,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         type: "worktreeDebrisAuthorized",
         repoId: msg.repoId,
         token: msg.token,
+        // Echoed, never re-derived: it is what tells this answer from one the
+        // form has already withdrawn (round-2 W2).
+        ask: msg.ask,
         path: msg.path,
         ...rest,
       });
@@ -1659,11 +1670,21 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           return;
         }
         opening.latestSeq = msg.seq;
+        // WITHDRAWN here, not when the new answer lands. Between admitting a
+        // newer probe and posting its answer the previous candidate stayed
+        // authorizable, which is the whole window a user's edit was supposed to
+        // close (round-2 B1).
+        opening.debrisCandidate = null;
         void answerCreateProbe(surface, msg, repo);
         return;
       }
       case "worktreeAuthorizeDebris": {
-        if (typeof msg.path !== "string" || msg.path.length === 0 || typeof msg.token !== "number") {
+        if (
+          typeof msg.path !== "string" ||
+          msg.path.length === 0 ||
+          typeof msg.token !== "number" ||
+          typeof msg.ask !== "number"
+        ) {
           return;
         }
         const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);

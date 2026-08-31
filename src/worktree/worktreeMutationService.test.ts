@@ -1450,6 +1450,12 @@ describe("clearing crash debris", () => {
       git?: "present" | "absent" | "unknown";
       /** What the destination probe says AFTER the removal. Absent = it went. */
       after?: "present" | "absent" | "unknown";
+      /**
+       * What the CLEARANCE's own read sees, when it differs from the
+       * redemption's. Two readings of one directory taken at different moments
+       * is the whole subject of round-2 W4.
+       */
+      atBoundary?: readonly string[];
     } = {},
   ) {
     const removed = over.removed ?? [];
@@ -1461,7 +1467,7 @@ describe("clearing crash debris", () => {
         // The boundary's own read of the CONTENTS, and after the removal the
         // question of what remains — both synchronous, because the window
         // between the last reading and the delete is what they guard.
-        readdir: () => over.remaining ?? over.entries ?? [],
+        readdir: () => over.remaining ?? over.atBoundary ?? over.entries ?? [],
         probeEntry: (p) => (p.endsWith(".git") ? (over.git ?? "absent") : (over.after ?? "absent")),
         remove: async (p: string) => {
           removed.push(p);
@@ -1583,6 +1589,52 @@ describe("clearing crash debris", () => {
     await service.createWorktree(request);
 
     expect(store.size()).toBe(0);
+    expect(removed).toEqual([]);
+  });
+
+  it("[round-2 W4] clears against what was APPROVED, not the reading the redemption happened to take", async () => {
+    // `cache` was approved, was briefly gone when the redemption read the
+    // directory, and is back by the time the boundary reads it. Comparing
+    // against the redemption's intermediate reading called it new and refused a
+    // clearance the user had authorized.
+    const removed: string[] = [];
+    const { service, store } = debrisHarness({
+      removed,
+      entries: ["stale.log"],
+      atBoundary: ["stale.log", "cache"],
+    });
+    const token = store.issue(DEBRIS, { entries: ["stale.log", "cache"], identity: "1:7" }, 0);
+
+    await service.createWorktree({
+      repoId: REPO,
+      path: DEBRIS,
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "debris", authorization: { path: DEBRIS, fingerprint: token } },
+    });
+
+    expect(removed).toEqual([DEBRIS]);
+  });
+
+  it("[round-2 W4] still refuses an entry that was never approved at all", async () => {
+    // The pair to the above: widening the comparison to the approved set must
+    // not stop it refusing something genuinely new.
+    const removed: string[] = [];
+    const { service, store } = debrisHarness({
+      removed,
+      entries: ["stale.log"],
+      atBoundary: ["stale.log", "UNSAVED-WORK.md"],
+    });
+    const token = store.issue(DEBRIS, { entries: ["stale.log", "cache"], identity: "1:7" }, 0);
+
+    await service.createWorktree({
+      repoId: REPO,
+      path: DEBRIS,
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "debris", authorization: { path: DEBRIS, fingerprint: token } },
+    });
+
     expect(removed).toEqual([]);
   });
 

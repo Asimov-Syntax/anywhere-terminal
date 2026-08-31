@@ -13,7 +13,16 @@
 import { createHash } from "node:crypto";
 import { FINGERPRINT_TTL_MS } from "./worktreeFingerprint";
 
-export type DebrisVerdict = "proceed" | "reprompt";
+/**
+ * What a redemption returns.
+ *
+ * `proceed` carries the APPROVED evidence, not the reading it was redeemed
+ * against: the clearance re-compares at its own boundary, and comparing there
+ * against the redemption's intermediate reading refused an approved entry that
+ * had vanished and come back (round-2 W4). The removal is bound to what the
+ * user approved, which is the only reading this store ever promised.
+ */
+export type DebrisVerdict = { kind: "reprompt" } | { kind: "proceed"; approved: DebrisEvidence };
 
 /** What was found at the path, as the user was shown it. */
 /**
@@ -92,9 +101,9 @@ export function createDebrisAuthorizationStore(): DebrisAuthorizationStore {
       // could be replayed against the next reading that happens to satisfy it.
       issued.delete(resolvedPath);
       if (record === undefined || record.token !== token) {
-        return "reprompt";
+        return { kind: "reprompt" };
       }
-      return covers(current, record.evidence) ? "proceed" : "reprompt";
+      return covers(current, record.evidence) ? { kind: "proceed", approved: record.evidence } : { kind: "reprompt" };
     },
 
     forget(resolvedPath) {

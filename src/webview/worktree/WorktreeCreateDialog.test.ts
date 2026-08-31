@@ -2395,12 +2395,16 @@ describe("create worktree — recover a debris destination", () => {
     let applyResolution: ((resolution: WorktreeCreateResolutionMessage) => void) | undefined;
     let applyAuth: ((answer: WorktreeDebrisAuthorizedMessage) => void) | undefined;
     const asked: string[] = [];
+    const asks: number[] = [];
     const h = open({
       onSelectionChange: () => {},
       bindResolution: (fn) => {
         applyResolution = fn;
       },
-      onAuthorizeDebris: ({ path }) => asked.push(path),
+      onAuthorizeDebris: ({ ask, path }) => {
+        asked.push(path);
+        asks.push(ask);
+      },
       bindDebrisAuthorization: (fn) => {
         applyAuth = fn;
       },
@@ -2415,6 +2419,7 @@ describe("create worktree — recover a debris destination", () => {
     return {
       ...h,
       asked,
+      asks,
       commit,
       offer: () => h.q<HTMLElement>("#wt-recover"),
       accept: () => h.q<HTMLInputElement>("#wt-recover-accept"),
@@ -2445,6 +2450,8 @@ describe("create worktree — recover a debris destination", () => {
           type: "worktreeDebrisAuthorized",
           repoId: REPO_ID,
           token: 1,
+          // The id of the request now outstanding, unless a test names another.
+          ask: asks[asks.length - 1] ?? 1,
           path: SKIPPED,
           granted: true,
           authorization: { path: SKIPPED, fingerprint: "fp-1" },
@@ -2661,6 +2668,30 @@ describe("create worktree — recover a debris destination", () => {
     check(h.accept());
     expect(h.asked).toEqual([SKIPPED, SKIPPED]);
     expect(h.create().disabled, "the form submitted on a grant it had thrown away").toBe(true);
+  });
+
+  it("[round-2 W2] does not let a late answer to one request satisfy the next", () => {
+    // Accept → withdraw → accept asks twice for the SAME path inside one
+    // opening. Only the id separates them, so without it the first answer
+    // satisfies the second request with a reading that request never made.
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.accept().checked = false;
+    h.accept().dispatchEvent(new Event("change", { bubbles: true }));
+    check(h.accept());
+    expect(h.asks).toEqual([1, 2]);
+
+    // Request A's answer, arriving after request B went out.
+    h.authorize({ ask: 1 });
+
+    expect(h.create().disabled, "an answer to a withdrawn request cleared the gate").toBe(true);
+
+    // B's own answer still lands, so this is an id check and not a form that
+    // stopped applying answers.
+    h.authorize({ ask: 2 });
+    expect(h.create().disabled).toBe(false);
   });
 
   it("makes no offer where nothing can answer the request", () => {

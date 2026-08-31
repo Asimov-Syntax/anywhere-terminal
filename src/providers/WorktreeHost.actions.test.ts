@@ -3020,7 +3020,13 @@ describe("the host resolves a selection before the create runs", () => {
     // published candidate can be authorized (round-1 B1).
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
-    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
     await settle();
 
     const posted = view.posts.find((m) => m.type === "worktreeDebrisAuthorized");
@@ -3043,7 +3049,13 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
-    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
     await settle();
 
     const posted = view.posts.find((m) => m.type === "worktreeDebrisAuthorized");
@@ -3071,7 +3083,13 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
-    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/Users/dev/Documents" });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/Users/dev/Documents",
+    });
     await settle();
 
     expect(asked, "the issuer read a directory the panel never showed").toEqual([]);
@@ -3079,7 +3097,13 @@ describe("the host resolves a selection before the create runs", () => {
 
     // The published candidate still works, so this is a binding and not a
     // handler that stopped answering.
-    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
     await settle();
     expect(asked).toEqual(["/trees/repo-feat"]);
     dispose();
@@ -3104,10 +3128,119 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 1, query: "other" });
     await settle();
 
-    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
     await settle();
 
     expect(asked).toEqual([]);
+    dispose();
+  });
+
+  it("[round-2 B1] does not authorize a candidate the form would never offer", async () => {
+    // A repair acts on the registration's own path, so the dialog never offers
+    // the skipped candidate for one. Recording it anyway left a path
+    // authorizable that no form could have put on screen.
+    const asked: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], true, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      probeReattach: async ({ repairPath }: { repairPath: string }) => ({
+        kind: "offer" as const,
+        repairPath,
+        expectedOid: "def",
+      }),
+      issueDebrisAuthorization: async (p: string) => {
+        asked.push(p);
+        return { ok: true as const, fingerprint: "fp", entries: [] };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    const answer = resolutionIn(view);
+    // The setup is only meaningful if the resolution really did classify a
+    // repair AND report debris — otherwise this passes for the wrong reason.
+    expect(answer?.mode.kind, "the setup did not produce a reattach resolution").toBe("reattach");
+    expect(answer?.occupiedCandidate?.disposition).toEqual({ kind: "debris" });
+
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: answer?.occupiedCandidate?.path ?? "",
+    });
+    await settle();
+
+    expect(asked, "the host authorized a candidate no form offers").toEqual([]);
+    dispose();
+  });
+
+  it("[round-2 B1] stops authorizing the previous candidate the moment a newer probe is admitted", async () => {
+    // Not when the newer ANSWER lands: between admitting the probe and posting
+    // its answer the withdrawn path stayed authorizable, which is the whole
+    // window the user's edit was supposed to close.
+    const asked: string[] = [];
+    let releaseSecond: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let reads = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase: async () => {
+        reads += 1;
+        if (reads > 1) {
+          await gate;
+        }
+        return "oid-1";
+      },
+      issueDebrisAuthorization: async (p: string) => {
+        asked.push(p);
+        return { ok: true as const, fingerprint: "fp", entries: [] };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "feat",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+    expect(resolutionIn(view)?.occupiedCandidate?.path, "the setup published no debris").toBe("/trees/repo-feat");
+
+    // A newer probe is ADMITTED but its answer is still in flight.
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 1,
+      query: "other",
+      base: { kind: "ref", ref: "main" },
+    });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
+    await settle();
+
+    expect(asked, "a withdrawn candidate was still authorizable while the newer answer was in flight").toEqual([]);
+    releaseSecond?.();
+    await settle();
     dispose();
   });
 
@@ -3122,7 +3255,13 @@ describe("the host resolves a selection before the create runs", () => {
       },
     });
     // No opening was minted for token 9.
-    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 9, path: "/trees/repo-feat" });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 9,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
     await settle();
 
     expect(asked).toBe(0);

@@ -473,8 +473,8 @@ export class WorktreeController {
         // Its own request, sent only when the user accepts the recover offer —
         // the probe is answered per settled edit, so a token riding it would be
         // one nobody asked for (design.md D6).
-        onAuthorizeDebris: ({ repoId, path }) => {
-          deps.postMessage({ type: "worktreeAuthorizeDebris", repoId, token: this.refsToken, path });
+        onAuthorizeDebris: ({ repoId, ask, path }) => {
+          deps.postMessage({ type: "worktreeAuthorizeDebris", repoId, token: this.refsToken, ask, path });
         },
         bindDebrisAuthorization: (apply) => {
           this.applyDebrisAuthorization = apply;

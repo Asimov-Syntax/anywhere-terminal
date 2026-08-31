@@ -1557,6 +1557,7 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.handleDebrisAuthorized({
       type: "worktreeDebrisAuthorized",
       repoId: REPO_A,
+      ask: 1,
       token: 1,
       path: "/trees/debris",
       granted: true,
@@ -1568,6 +1569,7 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.handleDebrisAuthorized({
       type: "worktreeDebrisAuthorized",
       repoId: REPO_A,
+      ask: 1,
       token: 2,
       path: "/trees/debris",
       granted: true,

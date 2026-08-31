@@ -794,16 +794,18 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 { entries, identity },
                 deps.now(),
               );
-              if (verdict !== "proceed") {
+              if (verdict.kind !== "proceed") {
                 return fail("That directory changed since it was shown to you. Please try again.");
               }
-              // The whole approval travels, not just the identity: the entry set
-              // is re-compared at the boundary, because this redemption's read is
-              // several `await`s from the delete (round-1 B4).
+              // The APPROVED evidence travels, not this redemption's reading of
+              // the moment: the boundary re-compares, and comparing against an
+              // intermediate reading refused an approved entry that had vanished
+              // and come back (round-1 B4, round-2 W4).
+              const approvedIdentity = verdict.approved.identity;
               const cleared = await clearDebris(
                 check.path,
                 ctx,
-                identity === null ? null : { identity, entries },
+                approvedIdentity === null ? null : { identity: approvedIdentity, entries: verdict.approved.entries },
                 clearDebrisDeps,
               );
               if (!cleared.ok) {

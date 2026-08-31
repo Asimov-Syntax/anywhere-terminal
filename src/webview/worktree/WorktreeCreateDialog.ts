@@ -191,7 +191,7 @@ export interface WorktreeCreateDialogDeps {
    * carries no authorization because it is answered on every settled edit, and
    * a token minted per keystroke is one nobody asked for (design.md D6).
    */
-  onAuthorizeDebris?: (request: { repoId: string; path: string }) => void;
+  onAuthorizeDebris?: (request: { repoId: string; ask: number; path: string }) => void;
   /**
    * Receive the function that applies the host's answer to that request.
    *
@@ -1045,7 +1045,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       recoverGrant = null;
       recoverAsks += 1;
       recoverAsked = recoverAsks;
-      deps.onAuthorizeDebris?.({ repoId: draft.repoId, path: offer });
+      deps.onAuthorizeDebris?.({ repoId: draft.repoId, ask: recoverAsked, path: offer });
     }
     syncDerived();
   });
@@ -1812,10 +1812,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       return;
     }
     const offer = debrisOffer();
-    // Nothing outstanding means nothing asked for this: the acceptance was
-    // withdrawn while the host was reading, and keeping the answer would let a
-    // later acceptance spend a reading it never asked for (round-1 W2).
-    if (offer === null || recoverAsked === null || answer.path !== offer) {
+    // THIS request, not merely some request for this path. Accept, withdraw and
+    // accept again asks twice inside one opening, and the first answer arriving
+    // late would otherwise satisfy the second with a reading that request never
+    // made (round-1 W2, round-2 W2).
+    if (offer === null || recoverAsked === null || answer.ask !== recoverAsked || answer.path !== offer) {
       return;
     }
     recoverAsked = null;

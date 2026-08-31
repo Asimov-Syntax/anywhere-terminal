@@ -106,3 +106,17 @@
     6. `src/webview/worktree/WorktreeCreateDialog.ts`: suppress the offer on the MODE, not on a path comparison that coincides with it (B7); discard an authorization that answers a request no longer outstanding (W2).
     7. `src/worktree/clearDebris.test.ts`, `src/worktree/worktreeMutationService.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/worktree/createPath.test.ts`: one witness per accepted finding, each written so that reverting its fix fails it.
   - **Boundary**: no new decision — every bound here is one worktree-create.md § 2.2 already states, and containment stays `isPathInside` / the `createPath` walk rather than a predicate this change writes
+- [x] 1_9 Close round 2 — the authorization names an offer the form could make, and the answer names its request — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
+  - **Deps**: 1_8
+  - **Refs**: .reviews/round-2.md B1, W2, W3, W4; specs/worktree-panel/spec.md#an-authorization-to-clear-is-issued-only-when-it-is-asked-for; specs/worktree-panel/spec.md#clearing-debris-happens-only-under-an-authorization-bound-to-what-was-found; design.md D6
+  - **Acceptance**:
+    - Outcome: A candidate the form would never offer is not authorizable, a candidate a newer edit withdrew stops being authorizable the moment that edit is admitted, and an answer only satisfies the request it was asked for
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: clear the opening's debris candidate synchronously when a newer probe is admitted, and record one only where the form's executable mode would take the free path — a `reattach` resolution is recorded only under a detached probe, which is the one case the form discards the classification (B1).
+    2. `src/types/messages.ts`: the authorization request carries a correlation id and the answer echoes it, in the manner `worktreeCreateProbe` already uses `seq` (W2).
+    3. `src/webview/worktree/WorktreeCreateDialog.ts` and `src/webview/worktree/WorktreeController.ts`: the form only applies an answer whose id is the one outstanding (W2).
+    4. `src/worktree/clearDebris.ts`: a removal that threw reports the survivors it can still read alongside the error (W3).
+    5. `src/worktree/debrisAuthorization.ts` and `src/worktree/worktreeMutationService.ts`: a successful redemption returns the approved evidence, and the boundary compares against that rather than the redemption's own intermediate reading (W4).
+    6. `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/worktree/clearDebris.test.ts`, `src/worktree/debrisAuthorization.test.ts`, `src/worktree/worktreeMutationService.test.ts`, `src/types/messages.contract.test.ts`: one witness per accepted finding, including the delayed-A-after-B answer W2 names.
+  - **Boundary**: no new decision — the correlation id is the mechanism `worktreeCreateProbe` already uses, and no bound of worktree-create.md § 2.2 is added or relaxed
