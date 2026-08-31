@@ -56,6 +56,20 @@ const FIXTURES = "src/test/invariants/fixtures/fsDeletion/";
  * called `gap-*` inflate the total (round-10 W12) — the same shape of defect as the "reachable from
  * the removal path" overclaim, which survived five rounds because nothing checked it.
  */
+/**
+ * The named carve-outs — modules allowed to delete, because git cannot.
+ *
+ * worktree-actions.md § 3.1 rule 3 states the invariant as "never delete files directly, with
+ * exactly one named exception", so the exception is named HERE too rather than being kept out of
+ * scope. A delete that moved somewhere unscoped would pass this gate by hiding from it, which is
+ * the opposite of what a declared carve-out means.
+ *
+ * Asserted in BOTH directions below, like EXPECTED_GAPS: an entry whose module has stopped
+ * deleting is a carve-out nobody needs any more, and it goes stale silently unless that is a
+ * failure. A second entry appearing here is the review signal.
+ */
+const ALLOWED_DELETERS = new Set(["src/worktree/clearDebris.ts"]);
+
 const EXPECTED_GAPS = new Set([
   "gap-any-cast.ts",
   "gap-call-produced.ts",
@@ -173,12 +187,22 @@ function main(): void {
   const falsePositives: Finding[] = [];
   const closed: string[] = [];
   const seenGaps = new Set<string>();
+  const seenDeleters = new Set<string>();
+  const staleDeleters: string[] = [];
   let proven = 0;
 
   for (const file of sources) {
     const rel = relativeTo(file.fileName);
     if (isRemovalPath(rel)) {
-      offenders.push(...scan(file, checker));
+      const hits = scan(file, checker);
+      if (ALLOWED_DELETERS.has(rel)) {
+        seenDeleters.add(rel);
+        if (hits.length === 0) {
+          staleDeleters.push(rel);
+        }
+        continue;
+      }
+      offenders.push(...hits);
       continue;
     }
     if (!rel.startsWith(FIXTURES)) {
@@ -235,6 +259,16 @@ function main(): void {
       lines.push(`  ${FIXTURES}${name} is a gap- fixture D10 does not state — declare it in D10 and EXPECTED_GAPS`);
     }
   }
+  // Both directions, for the same reason the gap inventory needs both: a carve-out that stopped
+  // being used, or one whose module was renamed, must not sit here quietly widening the exception.
+  for (const rel of staleDeleters) {
+    lines.push(`  ${rel} is an allowed deleter that no longer deletes — remove it from ALLOWED_DELETERS`);
+  }
+  for (const rel of ALLOWED_DELETERS) {
+    if (!seenDeleters.has(rel)) {
+      lines.push(`  ${rel} is an allowed deleter that is not in scope — it was renamed, moved, or deleted`);
+    }
+  }
 
   if (lines.length > 0) {
     console.error("[I10] fs-deletion tripwire failed:");
@@ -250,7 +284,8 @@ function main(): void {
   // integration tests prove; all this command found is the absence of a reference it can recognize,
   // and the gap count is the standing reminder that those are not the same claim (round-10 B19).
   console.log(
-    `[I10] ok — ${scoped} scoped modules scanned, no recognised destructive node:fs reference; ` +
+    `[I10] ok — ${scoped} scoped modules scanned, no recognised destructive node:fs reference ` +
+      `outside ${seenDeleters.size} declared carve-out(s); ` +
       `${proven} flag fixtures caught, ${seenGaps.size} declared gaps still undetected`,
   );
 }

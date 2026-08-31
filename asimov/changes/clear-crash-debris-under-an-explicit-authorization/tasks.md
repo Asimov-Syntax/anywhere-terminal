@@ -37,14 +37,16 @@
     3. `src/worktree/clearDebris.test.ts`: cover the identity change, the appeared `.git`, the vanished directory, a clean removal, and a removal that leaves entries.
   - **Boundary**: containment is `isPathInside` / `isResolvedPathInside` from `src/utils/pathBoundary.ts` — this module defines no containment predicate of its own
 
-- [ ] 1_4 Declare the delete site to the I10 gate
+- [x] 1_4 Declare the delete site to the I10 gate — verified: pnpm run gate:fs-deletion && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: design.md D4; docs/design/worktree-actions.md#31-shared-rules
   - **Acceptance**:
     - Outcome: `pnpm run gate:fs-deletion` exits 0 with the delete present, and fails if a second module in scope deletes
     - Verify: command pnpm run gate:fs-deletion
   - **Plan**:
-    1. `src/test/invariants/fsDeletionGate.ts`: add a stated single-entry allowlist naming the clearance module, asserted to be exactly that set in the manner of `EXPECTED_GAPS`, so an unexpected allowlisted file fails rather than inflating a count.
+    1. `src/worktree/clearDebris.ts`: default the `remove` dep to `node:fs`'s recursive removal, so the destructive call sits inside the gate's scope rather than in unscoped wiring — D4's point is that the carve-out is declared, not hidden.
+    2. `src/test/invariants/fsDeletionGate.ts`: add a stated single-entry allowlist naming the clearance module, asserted to be exactly that set in the manner of `EXPECTED_GAPS`, so an unexpected allowlisted file fails rather than inflating a count.
+    3. Same file: assert the allowlist in BOTH directions as `EXPECTED_GAPS` is — an entry whose module no longer deletes is a stale carve-out and fails, and an allowlisted path that no longer exists fails. A separate test file cannot host this: the gate is a script whose `main()` runs on import.
   - **Boundary**: `isRemovalPath`'s scope is not narrowed — the gate keeps covering `src/worktree/**` and `src/providers/WorktreeHost.ts`
 
 - [ ] 1_5 Run the clearance inside the create, before git and after the rechecks

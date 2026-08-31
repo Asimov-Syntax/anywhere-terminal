@@ -11,6 +11,7 @@
 // on the reading taken HERE — an authorization redeemed upstream says the user
 // approved this clearance, not that the directory is still the one they saw.
 
+import { rm } from "node:fs/promises";
 import * as path from "node:path";
 import { isPathInside, normalizePathForCompare } from "../utils/pathBoundary";
 import { type LstatLike, identityOf } from "./createPath";
@@ -24,6 +25,16 @@ export interface ClearDebrisDeps {
   probeGitEntry: GitEntryProbe;
   remove(p: string): Promise<void>;
 }
+
+/**
+ * THE carve-out. The only destructive `node:fs` call in the worktree paths, and
+ * the reason `src/worktree/clearDebris.ts` is named in the I10 gate's allowlist
+ * (design.md D4) — declared where the gate can see it, rather than pushed into
+ * unscoped wiring where it would pass by hiding.
+ */
+export const removeRecursively = async (p: string): Promise<void> => {
+  await rm(p, { recursive: true, force: true });
+};
 
 export type ClearDebrisResult = { ok: true } | { ok: false; reason: string };
 
