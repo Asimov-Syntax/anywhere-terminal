@@ -646,13 +646,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   const openingHighWater = new Map<string, number>();
   const retireOpening = (key: string): void => {
     liveOpening.delete(key);
-    const gone = `${key} `;
-    for (const reading of [...provisionReading.keys()]) {
-      if (reading.startsWith(gone)) {
-        provisionReading.delete(reading);
+    const reading = `${key} `;
+    for (const slot of [...provisionReading.keys()]) {
+      if (slot.startsWith(reading)) {
+        provisionReading.delete(slot);
       }
     }
     offers.forgetSurface(key);
+    // And the per-repository enumeration records, which are what
+    // `worktreeCreateProbe` and `worktreeAuthorizeDebris` read to decide whether
+    // a request belongs to a live form. Retiring only the provisioning half left
+    // a cancelled form still able to publish discovery replies and — the part
+    // that matters — still able to mint a DEBRIS AUTHORIZATION, which is
+    // deletion authority (.reviews/round-1.md B2, design.md D5).
+    //
+    // The carve-out's own rule is untouched: a deletion still requires an
+    // explicit authorization naming a fingerprint. What changes is that a form
+    // the user cancelled can no longer be the thing that names one.
+    const enumerated = `${key}\u0000`;
+    for (const slot of [...openings.keys()]) {
+      if (slot.startsWith(enumerated)) {
+        openings.delete(slot);
+      }
+    }
   };
   /** Drop a surface's opening history too. Only detach may do this. */
   const forgetSurfaceOpenings = (key: string): void => {
@@ -2723,15 +2739,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // this the store grows with every window ever opened, a stale id stays
         // resolvable (.reviews/round-1.md B6), and the opening record outlives
         // the window that held it (round-1 W1).
-        forgetSurfaceOpenings(surfaceKey(surface));
         // A detached surface's openings can never be answered, and their
         // enumerations would otherwise be retained for the life of the host.
-        const gone = `${surfaceKey(surface)}\u0000`;
-        for (const key of [...openings.keys()]) {
-          if (key.startsWith(gone)) {
-            openings.delete(key);
-          }
-        }
+        // One routine for all three lifecycles now, so a channel added to
+        // retirement cannot reach close and miss detach.
+        forgetSurfaceOpenings(surfaceKey(surface));
         // Detaching is a falling edge too: the last showing surface going away
         // this way would otherwise leave the scan armed for the window's life.
         reconcileScan();

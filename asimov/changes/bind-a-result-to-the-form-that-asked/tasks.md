@@ -74,3 +74,41 @@
     1. `src/extension.worktreeAssembly.test.ts`: reopen a form while the first opening's provisioning read is outstanding, and assert the predecessor renders nothing while the live opening's own answer does.
     2. Same file: assert the retirement travels from the dialog's Cancel to the shipped host. (Planned as "route `onWorktreeCreateClosed` through the shared table" — there is no such route to move: `worktreeCreateClosed` is webview → extension, so it has no inbound handler. The shared table's coverage of the offer route, which this walk does depend on, is asserted instead.)
   - **Boundary**: no production behaviour is added here — this task only proves what tasks 1 to 3_1 built, through the real assembly
+
+## 4. Retirement covers every channel the token carries
+
+> Added after round 1. B2, B4 and B6's liveness half: D5 under-scoped retirement to the
+> provisioning offer, and D4 never said what a repeat means once the read has settled.
+
+- [x] 4_1 A retired opening mints no probe or debris authority — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_2
+  - **Refs**: specs/worktree-panel/spec.md#closing-a-create-form-retires-its-opening; design.md D5
+  - **Acceptance**:
+    - Outcome: After a form closes, a probe and a debris authorization riding its opening are both refused
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: `retireOpening` also drops every `openings` record the surface holds — the same prefix sweep the read markers get.
+    2. `src/providers/WorktreeHost.actions.test.ts`: after a close, `worktreeCreateProbe` publishes nothing and `worktreeAuthorizeDebris` issues no authorization; each asserted with a setup-landed check first.
+  - **Boundary**: the debris carve-out's own rule is unchanged — a deletion still needs an explicit authorization naming a fingerprint. What changes is that a cancelled form can no longer be the thing that names one.
+
+- [ ] 4_2 A duplicate after the read settles still runs no second read
+  - **Deps**: 4_1
+  - **Refs**: specs/worktree-panel/spec.md#a-repeated-request-for-one-opening-never-starts-a-second-read; design.md D4
+  - **Acceptance**:
+    - Outcome: A repeat delivered after the first read completed starts no read, and the form is still answered
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: the read marker is cleared by retirement rather than by the read settling; a FAILED read clears it so the opening may retry.
+    2. `src/providers/WorktreeHost.actions.test.ts`: settle the first read, repeat the same opening, assert one read and a second destination reply; and a failed read followed by a repeat does read again.
+  - **Boundary**: the destination reply stays unconditional — joining the read must not cost a repeat its answer
+
+- [ ] 4_3 The panel stops honouring an opening it retired
+  - **Deps**: 4_2
+  - **Refs**: design.md D5
+  - **Acceptance**:
+    - Outcome: A reply of any kind naming a retired opening changes nothing in the panel
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeController.ts`: advance `refsToken` after posting the retirement, so every existing guard rejects the retired number.
+    2. `src/webview/worktree/WorktreeController.test.ts`: a defaults, offer and refs reply each delivered after a close change nothing. The existing `[1_2][r1 W2]` case asserts a refs reply IS still stored after close — that assertion encodes the behaviour D5 now corrects and moves with it.
+  - **Boundary**: the retirement still names the opening the dialog captured; advancing the counter must not change what was posted

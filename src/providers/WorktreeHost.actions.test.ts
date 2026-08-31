@@ -3395,6 +3395,67 @@ describe("the host resolves a selection before the create runs", () => {
     dispose();
   });
 
+  it("[4_1] a cancelled form can no longer mint a debris authorization", async () => {
+    // The most serious thing one opening token buys: a debris authorization is
+    // DELETION authority, and closing the form used to leave the per-repository
+    // `openings` record that grants it entirely intact (.reviews/round-1.md B2).
+    // The carve-out's own rule is unchanged — a deletion still needs an explicit
+    // authorization naming a fingerprint. What changes is that a form the user
+    // cancelled can no longer be the thing that names one.
+    let issued = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      issueDebrisAuthorization: async (p: string) => {
+        issued += 1;
+        return { ok: true as const, fingerprint: `fp-for-${p}`, entries: ["stale.log"] };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    // The setup landed: this opening COULD have authorized before the close.
+    expect(view.posts.some((m) => m.type === "worktreeCreateResolution")).toBe(true);
+
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 1 });
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-feat",
+    });
+    await settle();
+
+    expect(issued, "the cancelled form reached the issuer").toBe(0);
+    expect(view.posts.filter((m) => m.type === "worktreeDebrisAuthorized")).toHaveLength(0);
+    dispose();
+  });
+
+  it("[4_1] a cancelled form's probe publishes nothing", async () => {
+    // Same record, the other reader. A retired opening publishes no discovery
+    // reply either — one token, one retirement, every channel it carries (D5).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    const before = view.posts.filter((m) => m.type === "worktreeCreateResolution").length;
+    expect(before, "no probe ever answered, so refusing one proves nothing").toBeGreaterThan(0);
+
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 1, query: "other" });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(before);
+    dispose();
+  });
+
   it("issues an authorization over the entries it reports, when one is asked for", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",

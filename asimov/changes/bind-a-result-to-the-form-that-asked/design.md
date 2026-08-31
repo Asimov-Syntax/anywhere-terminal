@@ -59,13 +59,51 @@ With the panel's opening as the key, a repeat is recognisable — it names the o
 and the host joins the read in flight rather than starting another. Only a *different* opening
 supersedes. This is what bounds the reads: one per opening, not one per message.
 
-## D5 — Retiring an opening evicts its offer, and § 2.4's existing rule covers the rest
+The marker that recognises a repeat outlives the read. Keying it on the read *in flight* bounded
+concurrent duplicates only: the slot was cleared when the read settled, so a duplicate delivered
+afterwards found nothing and started a second read against the same live opening
+(.reviews/round-1.md B4). The requirement is one read per opening, not one concurrent read per
+opening, so the marker is cleared by retirement — close, supersede or detach — and not by the read
+finishing.
+
+A read that FAILS is the exception and may be retried within its opening. The marker records that a
+read succeeded, not that one was attempted: a transient filesystem error would otherwise cost the
+user the provisioning section for the life of the form, with no way back except closing and
+reopening it. Duplicate *delivery* still runs one read, which is what the requirement bounds.
+
+## D5 — Retirement withdraws every channel the opening carries, not only its offer
 
 The provisioning offer is issued against the opening that asked for it, so retirement evicts it.
 A create citing an evicted offer id is already handled: § 2.4 requires the host to perform no create
 and no provisioning, resolve a fresh model, present it, and require a second submission. This change
-adds no new refusal path — it makes an existing one reachable for a case that previously kept
+adds no new refusal path there — it makes an existing one reachable for a case that previously kept
 authority it should not have had.
+
+**Corrected after round 1.** This decision originally stopped at the offer and said "§ 2.4's
+existing rule covers the rest". It does not. One opening token is what the create form spends on
+*every* channel it uses — the per-repository `openings` records that `worktreeCreateProbe` and
+`worktreeAuthorizeDebris` read, the refs and pull-request enumerations, and the provisioning offer.
+Retiring only the last of those left a cancelled form able to publish discovery replies and, more
+seriously, still able to mint a DEBRIS AUTHORIZATION — a deletion authority (round-1 B2). The
+accepted spec was never ambiguous about this: a retired opening mints no authority and leaves no
+state. So retirement is one operation over every channel the token carries:
+
+- the surface's live opening and its provisioning read markers,
+- the offers it issued,
+- every per-repository `openings` record the surface holds,
+- and, in the panel, the token stops being honoured for replies of any kind.
+
+This widens what the existing retirement owner covers. It mints no new owner: the `openings` map
+already belongs to WT-012.12's debris carve-out, and that carve-out's rule is unchanged — a deletion
+still requires an explicit authorization naming a fingerprint. What changes is that a form the user
+cancelled can no longer be the thing that names one.
+
+The panel half matters as much as the host half. `refsToken` is the panel's own guard for refs,
+resolutions, probes and debris; leaving it honoured after a close let a reply already in transit
+when the close was posted land in a cache for a form that no longer exists. Retirement advances it.
+An existing test asserted the opposite — that a refs reply is still stored after a dialog closes —
+and that assertion encoded the behaviour this decision corrects, so it moves with the decision
+rather than constraining it.
 
 ## Failure-surface inventory
 

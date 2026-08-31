@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -54,3 +54,15 @@ question, and B2 hands retirement the debris authorization boundary, which is th
 carve-out of "never delete files directly". Fastlane does not auto-choose an artifact handback, so
 the cycle stops here for the user. Triage for all six: .reviews/round-1.md.
 Review chair master id for resume: aac873a6ab140b708.
+
+Handback (round 1, B2/B4/B6b): Gate 2 reopened. NOT a new change — B2 does not mint a new invariant
+owner, it corrects D5's scope to match a spec requirement that was already accepted ("The extension
+SHALL treat a retired opening as holding nothing: a result arriving for one SHALL mint no authority,
+publish nothing, and leave no state behind"). D5 under-scoped that to the provisioning offer. D4 is
+likewise corrected on a question it simply never answered. Both are mechanism decisions inside
+accepted external behaviour, so fastlane takes them; neither is a product-scope fork.
+
+Auto-decision (fastlane, D4): a FAILED provisioning read may be retried within its opening. The
+alternative — one attempt per opening, ever — makes a transient filesystem error cost the user the
+whole provisioning section until they close and reopen the form, and the spec bounds reads to one
+per opening for duplicate DELIVERY, not one attempt per opening.
