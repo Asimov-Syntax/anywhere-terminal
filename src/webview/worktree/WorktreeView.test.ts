@@ -1936,8 +1936,9 @@ describe("dialogs", () => {
       throw new Error("fixture lost the spike worktree");
     }
     view.openRemoveDialog({ info, report: confirmableBlocker, degradedSources: [] });
-    // dirty, untracked, idle panes, an external session, and the lock — all five.
-    expect(host.querySelectorAll(".wt-blockers li").length).toBe(5);
+    // dirty, untracked, idle panes, an external session, and the lock — all five
+    // FAILING, in a report that now also lists what passed (worktree-removal.md § 2.1).
+    expect(host.querySelectorAll('.wt-blockers li[data-outcome="failed"]').length).toBe(5);
     expect(host.querySelector(".wt-btn--danger")?.textContent).toBe("Force remove");
   });
 

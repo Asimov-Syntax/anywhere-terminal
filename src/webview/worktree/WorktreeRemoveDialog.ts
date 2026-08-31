@@ -56,17 +56,6 @@ export function isRemoveRefused(checks: readonly RemovalCheck[]): boolean {
   return isRefusedByChecks(checks);
 }
 
-function blockerItem(icon: string, build: (span: HTMLElement) => void): HTMLLIElement {
-  const li = document.createElement("li");
-  const iconEl = document.createElement("span");
-  iconEl.innerHTML = icon;
-  iconEl.setAttribute("aria-hidden", "true");
-  const text = document.createElement("span");
-  build(text);
-  li.append(iconEl, text);
-  return li;
-}
-
 /** `<b>7 tracked files</b> have uncommitted changes.` */
 function countLine(span: HTMLElement, count: string, rest: string): void {
   const b = document.createElement("b");
@@ -74,60 +63,214 @@ function countLine(span: HTMLElement, count: string, rest: string): void {
   span.append(b, document.createTextNode(` ${rest}`));
 }
 
-/** Every non-zero blocker, in one list, so one confirmation covers the whole risk. */
+/**
+ * How one check is worded, per outcome.
+ *
+ * A table rather than a chain of `if (failed(...))`, because worktree-removal.md
+ * § 2.1 asks for every check including the ones that passed, and a chain can only
+ * express the failing half. It also silently owned the check inventory, which is
+ * how `notApplicable` stayed invisible despite being put on the wire precisely so
+ * the UI could tell it apart (design.md D1).
+ */
+interface Presenter {
+  readonly icon: string;
+  /** The failing sentence, which is where a count or a reason is named. */
+  readonly failed: (check: RemovalCheck, info: WorktreeInfo, span: HTMLElement) => void;
+  readonly passed: string;
+  readonly unproven: string;
+  readonly notApplicable: string;
+}
+
+const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
+
+const REPORT: Record<string, Presenter> = {
+  isMain: {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => s.append(document.createTextNode("This is the repository's main worktree.")),
+    passed: "Not the repository's main worktree.",
+    unproven: "Could not tell whether this is the main worktree.",
+    notApplicable: "Does not apply to this worktree.",
+  },
+  busyAgents: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(s, `${c.count ?? 0} ${plural(c.count ?? 0, "agent", "agents")}`, "mid-turn in this worktree."),
+    passed: "No agent is mid-turn in this worktree.",
+    unproven: "Could not tell whether an agent is mid-turn here.",
+    notApplicable: "No agent has ever run here.",
+  },
+  containsWorktrees: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(s, `${c.count ?? 0} other ${plural(c.count ?? 0, "worktree", "worktrees")}`, "live inside this one."),
+    passed: "No other worktree lives inside this one.",
+    unproven: "Could not tell what lives inside this one.",
+    notApplicable: "Nothing can live inside this one.",
+  },
+  dirty: {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => countLine(s, "Tracked files", "have uncommitted changes."),
+    passed: "No tracked file has uncommitted changes.",
+    unproven: "Could not read the working tree's status.",
+    notApplicable: "There is no working tree to read.",
+  },
+  untracked: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(s, `${c.count ?? 0} untracked ${plural(c.count ?? 0, "file", "files")}`, "in the folder."),
+    passed: "No untracked files in the folder.",
+    unproven: "Could not count the untracked files.",
+    notApplicable: "There is no folder to count.",
+  },
+  idlePanes: {
+    icon: ICON_TERMINAL,
+    failed: (c, _i, s) =>
+      countLine(
+        s,
+        `${c.count ?? 0} idle ${plural(c.count ?? 0, "terminal", "terminals")}`,
+        `in this window ${plural(c.count ?? 0, "has", "have")} it as their working directory.`,
+      ),
+    passed: "No terminal in this window is working in it.",
+    unproven: "Could not tell which terminals are working in it.",
+    notApplicable: "This window has no terminals.",
+  },
+  externalAgents: {
+    icon: ICON_WINDOW,
+    failed: (c, _i, s) =>
+      countLine(
+        s,
+        `${c.count ?? 0} ${plural(c.count ?? 0, "session", "sessions")} in another window`,
+        `${plural(c.count ?? 0, "is", "are")} rooted here.`,
+      ),
+    passed: "No session in another window is rooted here.",
+    unproven: "Could not read the session registry.",
+    notApplicable: "No session registry applies here.",
+  },
+  locked: {
+    icon: ICON_LOCK,
+    failed: (_c, info, s) => {
+      const b = document.createElement("b");
+      b.textContent = "locked";
+      s.append(document.createTextNode("The worktree is "), b);
+      s.append(document.createTextNode(info.lockReason ? ` — “${info.lockReason}”.` : "."));
+    },
+    passed: "The worktree is not locked.",
+    unproven: "Could not tell whether the worktree is locked.",
+    notApplicable: "There is no lock to override.",
+  },
+  ignored: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(
+        s,
+        `${c.count ?? 0} ignored ${plural(c.count ?? 0, "entry", "entries")}`,
+        c.detail ?? "will be deleted with the folder.",
+      ),
+    passed: "No ignored content to delete.",
+    unproven: "Could not measure the ignored content.",
+    notApplicable: "No ignored content applies here.",
+  },
+  lockAged: {
+    icon: ICON_LOCK,
+    failed: (_c, _i, s) => s.append(document.createTextNode("The lock is recent.")),
+    passed: "The lock is older than the abandonment threshold.",
+    unproven: "Could not read the lock's age.",
+    notApplicable: "The worktree is not locked, so it has no lock age.",
+  },
+  ownerGone: {
+    icon: ICON_WINDOW,
+    failed: (_c, _i, s) => s.append(document.createTextNode("A recorded process still owns this worktree.")),
+    passed: "No recorded process owns this worktree.",
+    unproven: "Could not tell whether a process owns this worktree.",
+    notApplicable: "No owning process was ever recorded.",
+  },
+  branchMerged: {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => s.append(document.createTextNode("The branch is not merged into the default branch.")),
+    passed: "The branch is merged into the default branch.",
+    unproven: "Could not tell whether the branch is merged.",
+    notApplicable: "There is no branch to compare.",
+  },
+};
+
+/**
+ * A check the table does not know. Rendered rather than dropped: the host owns
+ * the inventory, and a check that renders nowhere until someone edits the webview
+ * is the failure D1 exists to stop.
+ */
+function unknownPresenter(id: string): Presenter {
+  return {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => s.append(document.createTextNode(`${id}: failed.`)),
+    passed: `${id}: passed.`,
+    unproven: `${id}: could not be evaluated.`,
+    notApplicable: `${id}: does not apply.`,
+  };
+}
+
+/** One line, carrying its own outcome so a reader can tell the four apart. */
+function checkItem(check: RemovalCheck, info: WorktreeInfo): HTMLLIElement {
+  const presenter = REPORT[check.id] ?? unknownPresenter(check.id);
+  const li = document.createElement("li");
+  li.dataset.check = check.id;
+  li.dataset.outcome = check.outcome;
+  const iconEl = document.createElement("span");
+  iconEl.innerHTML = presenter.icon;
+  iconEl.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  if (check.outcome === "failed") {
+    presenter.failed(check, info, text);
+  } else if (check.outcome === "passed") {
+    text.textContent = presenter.passed;
+  } else if (check.outcome === "unproven") {
+    text.textContent = presenter.unproven;
+  } else {
+    text.textContent = presenter.notApplicable;
+  }
+  li.append(iconEl, text);
+  return li;
+}
+
+/**
+ * Every check that describes a risk, in the order the host evaluated them.
+ *
+ * The order is the assessment's own: it evaluates them together and in a stable
+ * order, and a second ordering here is a second thing to disagree (design.md D1).
+ */
 export function buildBlockerList(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
-  const untracked = countOf(checks, "untracked");
-  const idlePanes = countOf(checks, "idlePanes");
-  const externalAgents = countOf(checks, "externalAgents");
   const list = document.createElement("ul");
   list.className = "wt-blockers";
-  if (failed(checks, "dirty")) {
-    list.appendChild(blockerItem(ICON_WARNING, (s) => countLine(s, "Tracked files", "have uncommitted changes.")));
-  }
-  if (untracked > 0) {
-    list.appendChild(
-      blockerItem(ICON_WARNING, (s) =>
-        countLine(s, `${untracked} untracked file${untracked === 1 ? "" : "s"}`, "in the folder."),
-      ),
-    );
-  }
-  if (idlePanes > 0) {
-    list.appendChild(
-      blockerItem(ICON_TERMINAL, (s) =>
-        countLine(
-          s,
-          `${idlePanes} idle terminal${idlePanes === 1 ? "" : "s"}`,
-          "in this window have it as their working directory.",
-        ),
-      ),
-    );
-  }
-  if (externalAgents > 0) {
-    list.appendChild(
-      blockerItem(ICON_WINDOW, (s) =>
-        countLine(
-          s,
-          `${externalAgents} session${externalAgents === 1 ? "" : "s"} in another window`,
-          externalAgents === 1 ? "is rooted here." : "are rooted here.",
-        ),
-      ),
-    );
-  }
-  if (failed(checks, "locked")) {
-    list.appendChild(
-      blockerItem(ICON_LOCK, (s) => {
-        const b = document.createElement("b");
-        b.textContent = "locked";
-        s.append(document.createTextNode("The worktree is "), b);
-        if (info.lockReason) {
-          s.append(document.createTextNode(` — “${info.lockReason}”.`));
-        } else {
-          s.append(document.createTextNode("."));
-        }
-      }),
-    );
+  for (const check of checks) {
+    if (check.cls !== "proof") {
+      list.appendChild(checkItem(check, info));
+    }
   }
   return list;
+}
+
+/**
+ * The proofs, apart from the risks and worded as what they would unlock.
+ *
+ * Rendered beside the confirmable checks a proof reads as a reason the removal is
+ * dangerous, which is the misreading that would make an unfetched default branch
+ * look like a hazard (design.md D4).
+ */
+export function buildProofList(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement | null {
+  const proofs = checks.filter((c) => c.cls === "proof");
+  if (proofs.length === 0) {
+    return null;
+  }
+  const box = document.createElement("div");
+  const heading = document.createElement("p");
+  heading.className = "wt-report-heading";
+  heading.textContent = "Whether this worktree looks abandoned. These unlock options; they never block the removal.";
+  const list = document.createElement("ul");
+  list.className = "wt-blockers wt-proofs";
+  for (const proof of proofs) {
+    list.appendChild(checkItem(proof, info));
+  }
+  box.append(heading, list);
+  return box;
 }
 
 /**
@@ -314,7 +457,12 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     return shell.dispose;
   }
 
-  shell.dialog.append(buildBlockerList(checks, info), buildForceWarning(checks, info));
+  shell.dialog.append(buildBlockerList(checks, info));
+  const proofs = buildProofList(checks, info);
+  if (proofs !== null) {
+    shell.dialog.append(proofs);
+  }
+  shell.dialog.append(buildForceWarning(checks, info));
   const cancelBtn = textButton("Cancel", "plain", cancel);
   shell.actions.append(cancelBtn);
   // A check nobody could evaluate renders nothing — `buildBlockerList` keys every

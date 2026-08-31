@@ -79,6 +79,98 @@ function open(
 
 const NESTED = [{ worktreeId: "/repo-wt/spike/inner", displayPath: "/repo-wt/spike/inner" }];
 
+/** A worktree nothing is wrong with, so the report has only passing checks to show. */
+const CLEAN: WorktreeInfo = worktree({
+  id: "/Volumes/ext/anywhere-terminal-wt/quiet",
+  branch: "quiet",
+  head: "f".repeat(40),
+});
+
+/**
+ * Every check the host evaluates, including the three proofs — the fixtures
+ * predate them and carry only the checks their own case needed.
+ */
+const FULL_REPORT: WorktreeRemoveReport = {
+  fingerprint: "sha256:full-v1",
+  checks: [
+    { id: "isMain", cls: "refusal", outcome: "passed" },
+    { id: "busyAgents", cls: "refusal", outcome: "passed", count: 0 },
+    { id: "containsWorktrees", cls: "refusal", outcome: "passed", count: 0 },
+    { id: "dirty", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "untracked", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "idlePanes", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "externalAgents", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "locked", cls: "confirmable", outcome: "notApplicable" },
+    { id: "ignored", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "lockAged", cls: "proof", outcome: "notApplicable" },
+    { id: "ownerGone", cls: "proof", outcome: "unproven" },
+    { id: "branchMerged", cls: "proof", outcome: "passed" },
+  ],
+  contained: [],
+};
+
+const reported = (host: HTMLElement): string[] =>
+  [...host.querySelectorAll("[data-check]")].map((e) => e.getAttribute("data-check") ?? "");
+
+const outcomeOf = (host: HTMLElement, id: string): string | null =>
+  host.querySelector(`[data-check="${id}"]`)?.getAttribute("data-outcome") ?? null;
+
+/** What the user actually reads. The attribute is for styling; this is the claim. */
+const saidOf = (host: HTMLElement, id: string): string => host.querySelector(`[data-check="${id}"]`)?.textContent ?? "";
+
+describe("the removal report", () => {
+  it("[1_1] lists every check the assessment ran, in the order the host sent them", () => {
+    // A report that lists only problems gives the user no way to judge how much
+    // was actually looked at (worktree-removal.md § 2.1).
+    const { host } = open(FULL_REPORT, { info: CLEAN });
+
+    expect(reported(host)).toEqual(FULL_REPORT.checks.map((c) => c.id));
+  });
+
+  it("[1_1] renders a check that could not be evaluated as neither passed nor failed", () => {
+    const { host } = open(FULL_REPORT, { info: CLEAN });
+
+    expect(outcomeOf(host, "ownerGone")).toBe("unproven");
+    expect(outcomeOf(host, "dirty")).toBe("passed");
+    // The SENTENCE, not only the attribute: the attribute styles the line, and a
+    // user who reads "no process owns this" where nothing could be read has been
+    // told a check ran that did not.
+    expect(saidOf(host, "ownerGone")).toContain("Could not tell");
+    expect(saidOf(host, "ownerGone")).not.toBe(saidOf(host, "branchMerged"));
+  });
+
+  it("[1_1] renders a check that did not apply as neither passed nor failed", () => {
+    // `notApplicable` is on the wire for exactly this: an unlocked worktree has
+    // no lock age, and rendering that as passed claims a check ran that never
+    // applied (worktree-removal.md § 2.2).
+    const { host } = open(FULL_REPORT, { info: CLEAN });
+
+    expect(outcomeOf(host, "locked")).toBe("notApplicable");
+    expect(outcomeOf(host, "lockAged")).toBe("notApplicable");
+    // Distinct from the passing sentence, and saying why the question did not
+    // arise rather than answering it.
+    expect(saidOf(host, "lockAged")).toContain("not locked, so it has no lock age");
+    expect(saidOf(host, "locked")).toContain("no lock to override");
+    expect(saidOf(host, "locked")).not.toContain("The worktree is not locked.");
+  });
+
+  it("[1_1] keeps the proofs in their own group, apart from the risks", () => {
+    // A proof describes no risk. Rendered beside the confirmable checks it reads
+    // as a reason the removal is dangerous (worktree-removal.md § 2.2, § 4).
+    const { host } = open(FULL_REPORT, { info: CLEAN });
+
+    const proofs = host.querySelector(".wt-proofs");
+    expect(proofs, "the proofs have no group of their own").not.toBeNull();
+    expect([...(proofs?.querySelectorAll("[data-check]") ?? [])].map((e) => e.getAttribute("data-check"))).toEqual([
+      "lockAged",
+      "ownerGone",
+      "branchMerged",
+    ]);
+    const risks = host.querySelector(".wt-blockers");
+    expect(risks?.querySelector('[data-check="branchMerged"]'), "a proof rendered among the risks").toBeNull();
+  });
+});
+
 describe("isRemoveRefused", () => {
   it("refuses on a busy agent, the main worktree, or a nested worktree, and nothing else", () => {
     expect(isRemoveRefused(refusedBlocker.checks)).toBe(true);
@@ -177,7 +269,10 @@ describe("remove worktree — confirmation (§ 11)", () => {
     const warn = host.querySelector(".wt-warnbox")?.textContent ?? "";
     expect(warn).not.toContain("The lock is overridden");
     expect(warn).not.toContain("deleted directory");
-    expect(host.querySelectorAll(".wt-blockers li")).toHaveLength(3);
+    // The list now carries every check, so what "not present" means here is the
+    // OUTCOME, not the absence of a line (§ 2.1).
+    expect(host.querySelectorAll('.wt-blockers li[data-outcome="failed"]')).toHaveLength(3);
+    expect(outcomeOf(host, "locked")).toBe("passed");
   });
 
   it("opens with focus on Cancel, never on the destructive button", () => {
@@ -356,9 +451,9 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
   }
 
   it("withholds force when a confirmable check could not be read", () => {
-    // `buildBlockerList` keys every line on `failed` or a positive count, so an
-    // unproven check renders nothing. Force underneath an empty list would ask
-    // the user to authorize destroying a risk the dialog failed to describe.
+    // The report now NAMES the checks it could not evaluate, which is what the
+    // withholding was standing in for. The control this earns is 1_2's; what is
+    // asserted here is that the gap is described rather than silent.
     const { host } = open(
       withChecks(confirmableBlocker, {
         dirty: unproven,
@@ -369,7 +464,7 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
       }),
     );
 
-    expect(host.querySelectorAll(".wt-blockers li").length).toBe(0);
+    expect(host.querySelectorAll('.wt-blockers li[data-outcome="unproven"]').length).toBe(5);
     expect(danger(host)).toBeNull();
     expect([...host.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Force remove");
   });

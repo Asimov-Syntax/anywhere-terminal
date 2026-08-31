@@ -1,6 +1,6 @@
 ## 1. The report
 
-- [ ] 1_1 Present every check from the assessment's own list
+- [x] 1_1 Present every check from the assessment's own list — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#the-removal-report-shows-every-check-it-ran-with-its-own-outcome; design.md D1, D4
   - **Acceptance**:
