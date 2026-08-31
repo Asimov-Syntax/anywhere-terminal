@@ -188,7 +188,7 @@
     1. `src/providers/WorktreeHost.ts`: `answerCreateProbe` re-resolves its opening by surface, repository and token after every await, and drops on a mismatch exactly as it drops on a superseded sequence.
     2. `src/providers/WorktreeHost.actions.test.ts`: a deferred refs read, with the repository removed from the workspace while the probe is suspended.
 
-- [ ] 7_3 The assembly walk makes the candidate and the resolved target differ
+- [x] 7_3 The assembly walk makes the candidate and the resolved target differ — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 7_1
   - **Refs**: design.md D8; `.reviews/round-5.md` W7
   - **Acceptance**:
