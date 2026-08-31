@@ -6,9 +6,9 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -29,6 +29,12 @@
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none
-Lane: full
-Planned at: 5dcf88c4
+Blueprint: docs/PLAN.md task WT-012.16
+Lane: full (M) — new-api-contract, cross-boundary | flags: new-api-contract, cross-boundary
+
+Auto-decision (fastlane): no real fork. The panel already mints a per-opening token and three
+messages already echo it, so extending that identity is reuse rather than a choice between designs
+(D1). The alternative — a second id owned by the create form — was rejected without asking, because
+two staleness rules on one form is the defect this change removes.
+
+Planned at: 9f261154
