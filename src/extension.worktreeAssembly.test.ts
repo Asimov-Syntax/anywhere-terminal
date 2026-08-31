@@ -1333,6 +1333,76 @@ describe("the invariants that span the host and the webview", () => {
     expect(added).toContain(shown);
   });
 
+  it("[6_2] refuses the destination override for a repair, rather than showing two paths", async () => {
+    // The override moved the displayed and posted path while the submitted mode
+    // still carried `repairPath`, so the form stated one directory and the
+    // mutation repaired another (round-4 B3).
+    prunableRow = true;
+    linkTheWorktree();
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    await settleBranch("feature");
+
+    const path = document.querySelector<HTMLInputElement>("#wt-path");
+    if (path === null) {
+      throw new Error("no destination override input");
+    }
+    expect(path.disabled).toBe(true);
+    expect(document.querySelector<HTMLElement>("#wt-path-note")?.textContent).toContain("already on disk");
+
+    const shown = displayedDestination();
+    clickCreate();
+    await settle();
+
+    expect(shown).toBe(LINKED);
+    expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({
+      path: LINKED,
+      mode: { kind: "reattach", repairPath: LINKED },
+    });
+    expect(argv.map((c) => c.args).some((a) => a[0] === "worktree" && a[1] === "repair" && a[2] === LINKED)).toBe(true);
+  });
+
+  it("[6_2] resolves a fresh destination override before it can be submitted", async () => {
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    await settleBranch("brand-new");
+
+    const advanced = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      b.classList.contains("wt-advanced-toggle"),
+    );
+    advanced?.click();
+    const path = document.querySelector<HTMLInputElement>("#wt-path");
+    if (path === null) {
+      throw new Error("no destination override input");
+    }
+    const mine = `${path.value || REPO}-override`;
+    path.focus();
+    path.value = mine;
+    path.dispatchEvent(new Event("input", { bubbles: true }));
+    // Not yet settled: the host has not been told, so the form must not offer a
+    // create against a path nobody resolved.
+    expect(clickCreate.button().disabled).toBe(true);
+
+    path.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () => outbound.some((m) => m.type === "worktreeCreateProbe" && m.candidatePath === mine),
+      "the probe carrying the override",
+    );
+    await settle();
+
+    const shown = displayedDestination();
+    expect(shown).toBe(mine);
+    clickCreate();
+    await settle();
+
+    expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({ path: mine });
+    const added = argv.map((c) => c.args).find((a) => a[0] === "worktree" && a[1] === "add");
+    expect(added, "no `worktree add` was issued").toBeDefined();
+    expect(added).toContain(mine);
+  });
+
   it("[5_4] refuses a base that names no commit, before any create is issued", async () => {
     // The base and its verdict travel the production sender, not a value a test
     // injected into the dialog — which is how D7 was satisfied on paper while

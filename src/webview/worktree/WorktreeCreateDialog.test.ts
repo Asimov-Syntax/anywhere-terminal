@@ -390,7 +390,27 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
     // The answer REPLACES the seed for its repo, so a collision has to arrive on
     // the answer — setting it on the opening `repos` is overwritten right here.
     apply?.(createDefaults({ resolvedPath: FULL, answersBranch: "feat/x", ...answer }));
-    return h;
+    return { ...h, answer: (next: ReturnType<typeof createDefaults>) => apply?.(next) };
+  }
+
+  /**
+   * Type a destination override and let it SETTLE, then answer it.
+   *
+   * An override is a selection change like any other now, so it asks the host
+   * and Create waits for the reply — displaying one path while submitting
+   * another is what that gate exists to stop (round-4 B3).
+   */
+  function override(
+    h: { q: <T extends HTMLElement>(sel: string) => T; answer(next: ReturnType<typeof createDefaults>): void },
+    value: string,
+    answered: Partial<ReturnType<typeof createDefaults>> = {},
+  ): void {
+    const input = h.q<HTMLInputElement>("#wt-path");
+    input.focus();
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    h.answer(createDefaults({ resolvedPath: FULL, answersBranch: "feat/x", ...answered }));
   }
 
   it("leads with the branch name — no control sits above it", () => {
@@ -444,10 +464,11 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
   });
 
   it("follows the override, and withdraws the collision note with it", () => {
-    const { host, q, submitted } = resolved({ collidedWith: "-feat-x" });
+    const h = resolved({ collidedWith: "-feat-x" });
+    const { host, q, submitted } = h;
     expect(q<HTMLElement>(".wt-dest-note").hidden).toBe(false);
     q<HTMLButtonElement>(".wt-advanced-toggle").click();
-    type(q<HTMLInputElement>("#wt-path"), "/custom/place");
+    override(h, "/custom/place", { collidedWith: "-feat-x" });
     // The statement is of the path the create will take, so an override moves it.
     // Showing the host's default while submitting the override is the failure
     // this asserts against.
@@ -850,6 +871,26 @@ describe("round-2 review fixes", () => {
     expect([...h.q<HTMLSelectElement>("#wt-after").options].map((o) => o.value)).toContain("agent");
   });
 
+  it("[6_2] holds Create on an override the host has not answered, with no resolver bound", () => {
+    // The destination gate, on its own: this harness binds no resolution
+    // channel, so `outstanding` is the only thing that can hold the button —
+    // and an override that never armed it was submittable against a path the
+    // host had never been told about (round-4 B3).
+    const h = wired();
+    commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-x", answersBranch: "feat/x" }));
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled, "the setup never got Create open").toBe(false);
+
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    const path = h.q<HTMLInputElement>("#wt-path");
+    type(path, "/custom/place");
+    path.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
+    h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-x", answersBranch: "feat/x" }));
+    expect(h.q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+
   it("[R2] clearing the override leaves the field empty for what the user types next", () => {
     const h = wired();
     commit(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
@@ -865,6 +906,10 @@ describe("round-2 review fixes", () => {
     expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/repo-feat-x");
     type(path, "/elsewhere");
     expect(path.value).toBe("/elsewhere");
+    // The override is a selection change, so it settles and is answered before
+    // Create opens (round-4 B3).
+    path.dispatchEvent(new Event("change", { bubbles: true }));
+    h.answer(createDefaults({ resolvedPath: "/trees/repo-feat-x", answersBranch: "feat/x" }));
     h.q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(h.submitted[0]?.path).toBe("/elsewhere");
   });
@@ -887,6 +932,8 @@ describe("round-2 review fixes", () => {
     h.answer(createDefaults({ resolvedPath: "/trees/xy", answersBranch: "feat/xy" }));
     expect(path.value).toBe("");
     type(path, "mine");
+    path.dispatchEvent(new Event("change", { bubbles: true }));
+    h.answer(createDefaults({ resolvedPath: "/trees/xy", answersBranch: "feat/xy" }));
     h.q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(h.submitted[0]?.path).toBe("mine");
   });
@@ -2052,6 +2099,59 @@ describe("the base ref states when it cannot apply", () => {
       baseValid: { ok: true, oid: "def" },
     });
     expect(primary(h.host).disabled).toBe(false);
+  });
+
+  it("[6_2] holds Create until the host has answered about the destination override", () => {
+    // An override is a selection change like any other: exempting it left the
+    // form submitting a path the host had never resolved, and under a repair
+    // displaying one directory while the request carried another (round-4 B3).
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "brand-new");
+    h.resolve({ query: "brand-new", mode: { kind: "fresh" } });
+    expect(primary(h.host).disabled, "the setup never got Create open").toBe(false);
+
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    settle(h.q<HTMLInputElement>("#wt-path"), "/trees/mine");
+
+    expect(primary(h.host).disabled).toBe(true);
+    h.resolve({ query: "brand-new", seq: 1, mode: { kind: "fresh" }, freePath: "/trees/mine" });
+    expect(primary(h.host).disabled).toBe(false);
+  });
+
+  it("[6_2] withdraws an override the resolved mode refuses, rather than submitting it", () => {
+    const submitted: WorktreeCreateDraft[] = [];
+    const h = withResolution({ onSubmit: (d) => submitted.push(d), onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    settle(h.q<HTMLInputElement>("#wt-path"), "/trees/mine");
+    h.resolve({ seq: 1, mode: { kind: "fresh" }, freePath: "/trees/mine" });
+    expect(h.q<HTMLInputElement>("#wt-path").value, "the setup never took the override").toBe("/trees/mine");
+
+    // The repair lands. Its target is not the user's to choose, so the override
+    // is withdrawn rather than left in the draft to be submitted.
+    h.resolve({
+      seq: 2,
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" },
+      freePath: "/trees/repo-feat-search",
+    });
+
+    expect(h.q<HTMLInputElement>("#wt-path").disabled).toBe(true);
+    // The user's override is gone and the field shows the directory actually
+    // being repaired, so the disabled control is not a stale claim.
+    expect(h.q<HTMLInputElement>("#wt-path").value).toBe("/trees/stale");
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/stale");
+    // Withdrawing the override CHANGED the selection, so the form asks about
+    // the one it now holds and waits — it does not submit against an answer
+    // that was about the withdrawn path.
+    expect(primary(h.host).disabled).toBe(true);
+    h.resolve({
+      seq: 3,
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" },
+      freePath: "/trees/repo-feat-search",
+    });
+
+    primary(h.host).click();
+    expect(submitted[0]?.path).toBe("/trees/stale");
   });
 
   it("[B6] asks once per settled edit, not once per keystroke", () => {

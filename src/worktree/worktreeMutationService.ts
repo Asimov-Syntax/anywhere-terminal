@@ -119,20 +119,26 @@ async function recordFor(
   normalize: (raw: string) => Promise<string | null>,
 ): Promise<RepairListingRecord | undefined> {
   const target = normalizePathForCompare(repairPath);
-  const matches: RepairListingRecord[] = [];
+  let found: RepairListingRecord | undefined;
   for (const record of records) {
     if (record.branch !== branch) {
       continue;
     }
     const resolved = await normalize(record.displayPath);
-    if (resolved !== null && normalizePathForCompare(resolved) === target) {
-      matches.push(record);
+    if (resolved === null || normalizePathForCompare(resolved) !== target) {
+      continue;
     }
+    // Two records for one path and branch is a listing nobody can reason about,
+    // and picking one would be a guess. Answered as "no record" so the caller
+    // fails closed rather than repairing against an ambiguous identity — and
+    // answered on the SECOND, rather than by collecting every match first
+    // (round-4 S1).
+    if (found !== undefined) {
+      return undefined;
+    }
+    found = record;
   }
-  // Two records for one path and branch is a listing nobody can reason about,
-  // and picking one would be a guess. Answered as "no record" so the caller
-  // fails closed rather than repairing against an ambiguous identity.
-  return matches.length === 1 ? matches[0] : undefined;
+  return found;
 }
 
 /** Whether the listing still carries the stale registration a repair was offered for. */

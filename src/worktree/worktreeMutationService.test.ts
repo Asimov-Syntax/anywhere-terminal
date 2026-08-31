@@ -1154,6 +1154,8 @@ describe("reattach repairs in place, and re-checks the pause", () => {
       stillPrunable?: readonly string[];
       /** The administrative entry disappeared between the pre-check and now. */
       goneAfter?: boolean;
+      /** The post-repair listing carries the same path and branch twice. */
+      doubledAfter?: boolean;
       repairOk?: boolean;
       registeredBefore?: boolean;
       branchBefore?: string;
@@ -1184,7 +1186,8 @@ describe("reattach repairs in place, and re-checks the pause", () => {
         if (over.goneAfter === true) {
           return [];
         }
-        return [{ displayPath: STALE, branch: "feat", prunable: (over.stillPrunable ?? []).includes(STALE) }];
+        const record = { displayPath: STALE, branch: "feat", prunable: (over.stillPrunable ?? []).includes(STALE) };
+        return over.doubledAfter === true ? [record, { ...record }] : [record];
       },
       corroborateRepair: async ({ repairPath }) =>
         over.verdict ?? { kind: "offer", repairPath, expectedOid: over.head ?? "oid-1" },
@@ -1337,6 +1340,16 @@ describe("reattach repairs in place, and re-checks the pause", () => {
     // no-ops at exit 0 against that, so reading its ABSENCE from the listing as
     // success announced a repair that never happened (round-3 B1).
     const h = reattachHarness({ goneAfter: true });
+    await reattach(h);
+
+    expect(argvOf(h)).toContainEqual(["worktree", "repair", STALE]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable", verb: "create", unreadable: ["prunable"] });
+  });
+
+  it("refuses a listing that carries the repaired path twice", async () => {
+    // Two records for one path and branch is a listing nobody can reason about,
+    // and picking one would be a guess about which registration was proved.
+    const h = reattachHarness({ doubledAfter: true });
     await reattach(h);
 
     expect(argvOf(h)).toContainEqual(["worktree", "repair", STALE]);

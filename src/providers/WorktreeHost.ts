@@ -438,6 +438,15 @@ export interface WorktreeHost extends vscode.Disposable {
   /** The narrow read surface a mutation service is built on (round-1 B1). */
   mutationBindings(): WorktreeMutationBindings;
   /**
+   * How many create-dialog openings this host is holding state for.
+   *
+   * The witness for a growth bound that has no other signature: a retained
+   * opening answers nothing once its repository is gone, so nothing observable
+   * distinguishes retaining one from releasing it, and an assertion written
+   * against messages alone could not fail (round-4 B7).
+   */
+  openingsHeld(): number;
+  /**
    * Deliver a mutation outcome to the surface that started it, and open a
    * terminal there when the create asked for one.
    *
@@ -569,16 +578,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * replaced rather than accumulated: a repository has one open create dialog
    * at a time, and its latest ask is the only one anything reads.
    */
-  const refsReads = new Map<string, Promise<RepoRefsRead>>();
   /**
-   * The highest `seq` each opening has been asked for.
+   * THE opening a surface currently has on a repository, and nothing older.
    *
-   * Two probes for one query inside one opening are identical in `token` and
-   * `query`, so nothing but this separates them. A continuation that resumes to
-   * find a newer probe was asked drops rather than posting an answer the form
-   * would have to un-apply (round-1 B5, B6).
+   * One record replaced in place rather than one entry per opening: keying per
+   * opening is what stopped a new one overwriting the last, so the maps grew by
+   * one settled read and one sequence per dialog open and were retired only by
+   * a later open of the SAME repository — never by a repository leaving the
+   * workspace (round-3 B7, round-4 B7/W8).
    */
-  const latestProbe = new Map<string, number>();
+  interface Opening {
+    readonly token: number;
+    readonly read: Promise<RepoRefsRead>;
+    /**
+     * The highest `seq` this opening has been asked for.
+     *
+     * Two probes for one query inside one opening are identical in `token` and
+     * `query`, so nothing but this separates them. A continuation that resumes
+     * to find a newer probe was asked drops rather than posting an answer the
+     * form would have to un-apply (round-1 B5, B6).
+     */
+    latestSeq: number;
+  }
+  const openings = new Map<string, Opening>();
   const surfaceKeys = new WeakMap<WorktreeSurface, string>();
   let surfaceSeq = 0;
   /**
@@ -588,28 +610,21 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * replaced the promise the first surface's probe was about to consume, so a
    * dialog could classify against an enumeration it was never shown (round-1 W2).
    */
-  const openingKey = (s: WorktreeSurface, repoId: string, token: number): string =>
-    `${surfaceKey(s)}\u0000${repoId}\u0000${token}`;
+  const openingKey = (s: WorktreeSurface, repoId: string): string => `${surfaceKey(s)}\u0000${repoId}`;
 
-  /**
-   * Drop every opening for this surface and repository but `keep`.
-   *
-   * The maps are keyed per opening so one dialog's answers cannot be borrowed
-   * by the next, and that keying is exactly what stops the old entries from
-   * being overwritten: without this they accumulate one settled read and one
-   * sequence per opening for the life of the extension host (round-3 B7).
-   */
-  const retireOpenings = (s: WorktreeSurface, repoId: string, keep: number): void => {
-    const prefix = `${surfaceKey(s)}\u0000${repoId}\u0000`;
-    const kept = `${prefix}${keep}`;
-    for (const key of [...refsReads.keys()]) {
-      if (key.startsWith(prefix) && key !== kept) {
-        refsReads.delete(key);
-      }
-    }
-    for (const key of [...latestProbe.keys()]) {
-      if (key.startsWith(prefix) && key !== kept) {
-        latestProbe.delete(key);
+  /** The opening this message belongs to, or nothing if a newer one replaced it. */
+  const openingFor = (s: WorktreeSurface, repoId: string, token: number): Opening | undefined => {
+    const held = openings.get(openingKey(s, repoId));
+    return held?.token === token ? held : undefined;
+  };
+
+  /** Drop every opening for repositories the tree no longer carries (round-4 B7). */
+  const forgetDepartedRepos = (): void => {
+    const live = new Set(cache.read().repos.map((r) => r.repoId));
+    for (const key of [...openings.keys()]) {
+      const repoId = key.slice(key.indexOf("\u0000") + 1);
+      if (!live.has(repoId)) {
+        openings.delete(key);
       }
     }
   };
@@ -1232,13 +1247,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // resolves every query to `fresh`. That is the documented fail-OPEN: a
     // branch we cannot confirm exists is treated as one to create, and git's
     // own refusal at `add` is the backstop, surfaced verbatim (§ 6).
-    const opening = openingKey(surface, msg.repoId, msg.token);
-    const read = await refsReads.get(opening)?.catch(() => undefined);
+    const opening = openingFor(surface, msg.repoId, msg.token);
+    const read = await opening?.read.catch(() => undefined);
     // A newer probe was asked for this opening while this one was suspended on
     // the enumeration. Answering now would post a classification the form has
     // already moved past, and under a slow read every keystroke's continuation
     // would resume and re-classify (round-1 B5, B6).
-    if ((latestProbe.get(opening) ?? msg.seq) > msg.seq) {
+    if ((opening?.latestSeq ?? msg.seq) > msg.seq) {
       return;
     }
     const refs = read !== undefined && read.ok === true ? read.refs : [];
@@ -1271,7 +1286,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
 
     // The surface may have detached while git was answering. Posting to a dead
     // one is at best wasted, and the form it described is gone.
-    if (disposed || !surfaces.has(surface) || (latestProbe.get(opening) ?? msg.seq) > msg.seq) {
+    if (disposed || !surfaces.has(surface) || (opening?.latestSeq ?? msg.seq) > msg.seq) {
       return;
     }
     // Only where a base can actually apply. `reuse` and `reattach` take their
@@ -1283,7 +1298,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // the one path that still uses it (round-3 B4).
     const takesBase = mode.kind === "fresh" || mode.kind === "adopt";
     const baseValid = takesBase ? await resolveBaseVerdict(repo, msg.base) : undefined;
-    if (disposed || !surfaces.has(surface) || (latestProbe.get(opening) ?? msg.seq) > msg.seq) {
+    if (disposed || !surfaces.has(surface) || (opening?.latestSeq ?? msg.seq) > msg.seq) {
       return;
     }
     surface.post({
@@ -1512,11 +1527,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         }
         // Marked BEFORE the await, which is the whole point: recording it after
         // would leave the window every superseded continuation resumes inside.
-        const opening = openingKey(surface, msg.repoId, msg.token);
-        if ((latestProbe.get(opening) ?? Number.NEGATIVE_INFINITY) >= msg.seq) {
+        // A probe whose token is not the opening's is unowned — a superseded
+        // opening, or a token nobody minted — and must not create sequence
+        // state for one (round-4 B7).
+        const opening = openingFor(surface, msg.repoId, msg.token);
+        if (opening === undefined || opening.latestSeq >= msg.seq) {
           return;
         }
-        latestProbe.set(opening, msg.seq);
+        opening.latestSeq = msg.seq;
         void answerCreateProbe(surface, msg, repo);
         return;
       }
@@ -1625,10 +1643,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // lands before the read resolves joins this one rather than starting
         // another. One entry per repository, replaced on every ask.
         const inFlight = read({ cwd: repo.mainPath, worktrees: repo.worktrees });
-        refsReads.set(openingKey(surface, msg.repoId, msg.token), inFlight);
-        // This ask IS the new opening, so every earlier one for this repository
-        // is unreachable from here on (round-3 B7).
-        retireOpenings(surface, msg.repoId, msg.token);
+        // This ask IS the new opening: the record is REPLACED, so the previous
+        // one is gone without anything having to go looking for it (B7, W8).
+        openings.set(openingKey(surface, msg.repoId), {
+          token: msg.token,
+          read: inFlight,
+          latestSeq: Number.NEGATIVE_INFINITY,
+        });
         void inFlight
           .then((answer) => {
             // The surface may have detached while git was answering. Posting to
@@ -2252,6 +2273,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       built = true;
       treeVersion += 1;
       reconcileWatches();
+      // A repository that left the workspace is never the subject of another
+      // refs request, so nothing else would ever replace its opening record
+      // (round-4 B7).
+      forgetDepartedRepos();
     } else {
       const root = cache.rootFor(scope);
       if (root) {
@@ -2338,14 +2363,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // A detached surface's openings can never be answered, and their
         // enumerations would otherwise be retained for the life of the host.
         const gone = `${surfaceKey(surface)}\u0000`;
-        for (const key of [...refsReads.keys()]) {
+        for (const key of [...openings.keys()]) {
           if (key.startsWith(gone)) {
-            refsReads.delete(key);
-          }
-        }
-        for (const key of [...latestProbe.keys()]) {
-          if (key.startsWith(gone)) {
-            latestProbe.delete(key);
+            openings.delete(key);
           }
         }
         // Detaching is a falling edge too: the last showing surface going away
@@ -2441,6 +2461,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     attach,
     handleMessage,
     publishLaunchTargets,
+    openingsHeld: () => openings.size,
 
     reportMutation: (report) => {
       if (disposed) {
@@ -2606,8 +2627,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       rosterReads.clear();
       // Same reason, for the per-opening state: a probe suspended on one of
       // these reads resolves into a disposed host and must find nothing.
-      refsReads.clear();
-      latestProbe.clear();
+      openings.clear();
     },
   };
 }

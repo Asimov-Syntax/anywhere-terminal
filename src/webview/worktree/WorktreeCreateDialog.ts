@@ -626,6 +626,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   pathInput.id = "wt-path";
   pathInput.type = "text";
   pathField.appendChild(pathInput);
+  // The same rule the base ref carries, for the same reason: a mode whose
+  // target is not the user's to choose says so rather than accepting a value it
+  // will not use. A repair acts on the registration's own directory, and an
+  // override here displayed one path while the request carried another
+  // (round-4 B3).
+  const pathNote = document.createElement("p");
+  pathNote.className = "wt-fhint";
+  pathNote.id = "wt-path-note";
+  pathNote.hidden = true;
+  pathInput.setAttribute("aria-describedby", "wt-path-note");
+  pathField.appendChild(pathNote);
 
   // ── Bring over — what the new worktree will NOT inherit ─────────────────
   // Below the destination and above the after-create choice, because it
@@ -858,17 +869,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    */
   const askKey = (s: CreateSelection): string =>
     JSON.stringify([s.repoId, s.branch, s.base ?? null, s.candidatePath ?? null]);
-  /**
-   * The part of the selection the CLASSIFICATION depends on.
-   *
-   * A destination override changes which path the host reports on, not whether
-   * the branch is fresh, reused or reattachable — so it is asked about, but
-   * Create is not held behind the answer the way it is for a branch or base
-   * edit, whose answer decides what the button would do.
-   */
-  const classifyKey = (s: CreateSelection): string => JSON.stringify([s.repoId, s.branch, s.base ?? null]);
-  /** The classification key of the last request, for the gate above. */
-  let classifyAskedFor: string | null = null;
+
   /** True while a destination request has no answer yet. Submit waits for it. */
   let outstanding = false;
   /**
@@ -937,19 +938,21 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     askedFor = key;
     defaultsAskedFor = `${now.repoId}\u0000${now.branch}`;
-    const reclassifying = classifyKey(now) !== classifyAskedFor;
-    classifyAskedFor = classifyKey(now);
     if (deps.onSelectionChange !== undefined) {
-      if (reclassifying) {
-        outstanding = true;
-        // A new question invalidates the old answer immediately, rather than
-        // leaving the previous classification readable until the reply lands.
-        effective = null;
-        // Only where an answer is actually coming. With no resolver bound none
-        // ever arrives, and gating on it would leave Create permanently disabled
-        // rather than waiting for something.
-        resolutionOutstanding = deps.bindResolution !== undefined;
-      }
+      // EVERY changed selection, the destination override included. Exempting
+      // it — on the reasoning that an override changes which path is reported
+      // on rather than what the create does — left the override submittable
+      // against an answer that was never about it, and under `reattach` left
+      // the form showing the override while the request carried the repair
+      // target (round-4 B3).
+      outstanding = true;
+      // A new question invalidates the old answer immediately, rather than
+      // leaving the previous classification readable until the reply lands.
+      effective = null;
+      // Only where an answer is actually coming. With no resolver bound none
+      // ever arrives, and gating on it would leave Create permanently disabled
+      // rather than waiting for something.
+      resolutionOutstanding = deps.bindResolution !== undefined;
       deps.onSelectionChange(now);
     }
   }
@@ -1027,6 +1030,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     reuse: "Checks out the branch that already exists.",
     reattach: "Repairs the stale registration of the checkout already on disk.",
     adopt: "That checkout's administrative entry is gone, so a new worktree is created instead.",
+  };
+
+  /**
+   * Why the destination override is unavailable, per mode. Absent means it
+   * applies. Total, for the same reason `BASE_REFUSED_BY` is.
+   */
+  const DEST_REFUSED_BY: Record<WorktreeBranchMode, string | undefined> = {
+    new: undefined,
+    detached: undefined,
+    existing: undefined,
+    reattach: "This repairs a checkout that is already on disk, so it keeps the directory it is in.",
   };
 
   const BASE_REFUSED_BY: Record<WorktreeBranchMode, string | undefined> = {
@@ -1193,6 +1207,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     baseInput.disabled = baseRefused !== undefined;
     baseNote.hidden = baseRefused === undefined;
     baseNote.textContent = baseRefused ?? "";
+    const destRefused = DEST_REFUSED_BY[draft.branchMode];
+    pathInput.disabled = destRefused !== undefined;
+    pathNote.hidden = destRefused === undefined;
+    pathNote.textContent = destRefused ?? "";
+    if (destRefused !== undefined) {
+      // WITHDRAWN, not merely ignored. Leaving the override standing would keep
+      // it in `draft.path` and in the ask key, which is the split itself: the
+      // form would submit the override while the mode carried the repair
+      // target. The derivation below then refills the field with that target,
+      // so the disabled control shows the directory actually being used.
+      pathIsDerived = true;
+    }
     // The host's verdict on the base, which only applies where a base applies.
     // Reported BEFORE submit rather than as a git failure after it (D7).
     const verdict = baseRefused === undefined ? effective?.baseValid : undefined;
@@ -1320,7 +1346,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // The selection on screen is not the one the host answered about. Between a
     // keystroke and the edit settling that is the normal state, and submitting
     // in it would submit against a classification for different text.
-    const unasked = deps.onSelectionChange !== undefined && classifyKey(selection()) !== classifyAskedFor;
+    const unasked = deps.onSelectionChange !== undefined && askKey(selection()) !== askedFor;
 
     // A create with no target is not offered — the button is disabled, not a
     // dialog that fails after the click.
@@ -1520,7 +1546,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
         draft.branchMode = "new";
         break;
     }
-    syncDerived();
+    // Settled, because applying a resolution can CHANGE the selection: a mode
+    // that refuses the destination withdraws the override, and the form must
+    // ask about the selection it now holds rather than sit behind a gate for a
+    // question nobody will ask. It converges — the second answer withdraws
+    // nothing further, so the key is stable (round-4 B3).
+    syncDerived(true);
   });
 
   syncOpenAfter();

@@ -314,6 +314,7 @@ function recordingHost(): { host: WorktreeHost; routed: ReturnType<typeof vi.fn>
     attach: () => ({ setDisplayed: () => {}, dispose: () => {} }),
     handleMessage: routed,
     publishLaunchTargets: async () => {},
+    openingsHeld: () => 0,
     mutationBindings: () => {
       throw new Error("this stand-in host performs no mutations");
     },
@@ -611,6 +612,7 @@ describe("a terminal request creates a pane in the surface that asked", () => {
       initPayload: () => host.initPayload(),
       handleMessage: (surface, msg) => host.handleMessage(surface, msg),
       publishLaunchTargets: (surface) => host.publishLaunchTargets(surface),
+      openingsHeld: () => host.openingsHeld(),
       mutationBindings: () => host.mutationBindings(),
       reportMutation: (report) => host.reportMutation(report),
       dispose: () => host.dispose(),
@@ -632,6 +634,7 @@ describe("a terminal request creates a pane in the surface that asked", () => {
       initPayload: () => host.initPayload(),
       handleMessage: (surface, msg) => host.handleMessage(surface, msg),
       publishLaunchTargets: (surface) => host.publishLaunchTargets(surface),
+      openingsHeld: () => host.openingsHeld(),
       mutationBindings: () => host.mutationBindings(),
       reportMutation: (report) => host.reportMutation(report),
       dispose: () => host.dispose(),

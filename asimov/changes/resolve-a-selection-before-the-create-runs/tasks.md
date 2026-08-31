@@ -150,3 +150,19 @@
     5. `askForDestination` is debounced to a settled edit so the probe is not re-sent per keystroke, which is D2's stated cadence.
     6. `src/extension.worktreeAssembly.test.ts` asserts the displayed destination, the posted create path and the issued git argv name ONE path, and drives a base through the production sender rather than injecting `baseValid`.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched; no new `D#`
+
+- [x] 6_2 One selection owns the destination, and one opening owns its state — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 6_1
+  - **Refs**: design.md D1, D2, D7, D8; `.reviews/round-4.md`
+  - **Acceptance**:
+    - Outcome: A destination override is submitted only after the host has resolved it, and a mode that fixes its own target refuses the override rather than displaying one path and acting on another
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts`: delete the `classifyKey` split. One `askKey` arms `outstanding`, clears `effective` and arms `resolutionOutstanding`, so an override is gated like any other selection change (B3).
+    2. Same file: a mode whose target is not the user's to choose — `reattach` — disables the destination control with its reason, the way `BASE_REFUSED_BY` already does for the base, and `targetOf(effective)` is then authoritative for the displayed and submitted path in every mode (B3).
+    3. `src/webview/worktree/WorktreeController.ts`: a resolution is applied only when its `seq` is the LATEST requested, not merely newer than the last applied — an answer for one base must not validate another (B9).
+    4. `src/providers/WorktreeHost.ts`: one active opening per surface and repository, replaced in O(1) rather than found by scanning both maps, and dropped when the repository leaves the tree (B7, W8).
+    5. `src/worktree/worktreeMutationService.ts`: `recordFor` returns on the second match instead of accumulating every one (S1).
+    6. `src/extension.worktreeAssembly.test.ts`: override walks for reattach and for an occupied fresh candidate, asserting displayed path, posted path and issued argv name one path (W7).
+  - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched; no new `D#`
+

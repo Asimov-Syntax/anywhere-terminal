@@ -797,6 +797,19 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     // late one carried a repair the newest classification had withdrawn
     // (round-1 B5).
     const h = mount();
+    const ask = (branch: string): void => {
+      (
+        h.controller as unknown as {
+          view: { deps: { createDialogDeps(): { onSelectionChange(s: { repoId: string; branch: string }): void } } };
+        }
+      ).view.deps
+        .createDialogDeps()
+        .onSelectionChange({ repoId: "/repo/.git", branch });
+    };
+    // Two questions, so the second is the one an answer has to match. Injecting
+    // a resolution nobody asked for cannot see this rule at all.
+    ask("feat");
+    ask("feat");
     h.controller.handleCreateResolution({
       type: "worktreeCreateResolution",
       repoId: "/repo/.git",
@@ -820,6 +833,58 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
 
     expect(h.controller.resolutionFor("/repo/.git")?.seq).toBe(2);
     expect(h.controller.resolutionFor("/repo/.git")?.mode).toEqual({ kind: "fresh" });
+  });
+
+  it("[B9] never applies an answer older than the question now on the wire", () => {
+    // `appliedSeq` compared against the newest ANSWER, so an answer for base A
+    // landing after base B was asked was newer than anything applied and older
+    // than the question on screen — and cleared the gate with A's verdict on B.
+    // The form cannot detect it: the branch, and so `query`, is identical
+    // (round-4 B9).
+    const h = mount();
+    const deps = (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            createDialogDeps(): {
+              onSelectionChange(s: { repoId: string; branch: string; base?: { kind: "ref"; ref: string } }): void;
+            };
+          };
+        };
+      }
+    ).view.deps.createDialogDeps();
+    deps.onSelectionChange({ repoId: "/repo/.git", branch: "feat", base: { kind: "ref", ref: "a" } });
+    deps.onSelectionChange({ repoId: "/repo/.git", branch: "feat", base: { kind: "ref", ref: "b" } });
+
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: "/repo/.git",
+      token: 0,
+      seq: 1,
+      query: "feat",
+      mode: { kind: "fresh" },
+      freePath: "/trees/repo-feat",
+      baseValid: { ok: true, oid: "aaa" },
+    });
+
+    expect(h.controller.resolutionFor("/repo/.git"), "base A's verdict was applied to base B").toBeUndefined();
+
+    // The answer for the question actually on the wire still lands, so this is
+    // a gate on staleness and not a controller that stopped applying answers.
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: "/repo/.git",
+      token: 0,
+      seq: 2,
+      query: "feat",
+      mode: { kind: "fresh" },
+      freePath: "/trees/repo-feat",
+      baseValid: { ok: false, reason: '"b" does not name a commit in this repository.' },
+    });
+    expect(h.controller.resolutionFor("/repo/.git")?.baseValid).toEqual({
+      ok: false,
+      reason: '"b" does not name a commit in this repository.',
+    });
   });
 
   it("[2_2] submits a repair the resolution corroborated, not a second worktree", () => {

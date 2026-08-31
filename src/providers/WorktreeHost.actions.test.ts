@@ -324,6 +324,9 @@ async function builtHost(
     symlinks?: Record<string, string>;
   } = {},
 ) {
+  // Mutable, so a test can make a repository LEAVE the workspace — the one
+  // event after which nothing ever asks about it again (round-4 B7).
+  const folders = { now: over.sibling === true ? ["/repo", OTHER_ROOT] : ["/repo"] };
   const presence: WorktreePresence = { rowsByWorktreeId: { [MAIN_PATH]: rows }, scannedAt: 1, degradedSources: [] };
   const projector: PresenceProjector = {
     project: async () => presence,
@@ -371,7 +374,7 @@ async function builtHost(
   };
   const host = createWorktreeHost({
     deps: deps(isGone, over.extra ?? [], shared, over.sibling === true, capabilities),
-    workspaceFolders: () => (over.sibling === true ? ["/repo", OTHER_ROOT] : ["/repo"]),
+    workspaceFolders: () => [...folders.now],
     pool: {
       subscribePattern: () =>
         over.watchFails === true
@@ -471,6 +474,13 @@ async function builtHost(
      * commit produces, which no value git returns can distinguish (round-4 B6).
      */
     relist: async () => {
+      host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+      await settle();
+      noteTree(view);
+    },
+    /** The sibling repository leaves the workspace, and the tree is rebuilt. */
+    dropSibling: async () => {
+      folders.now = ["/repo"];
       host.handleMessage(view, { type: "requestWorktreeTree", force: true });
       await settle();
       noteTree(view);
@@ -2515,20 +2525,26 @@ describe("the host resolves a selection before the create runs", () => {
     return view.posts.find((m) => m.type === "worktreeCreateResolution") as Resolution | undefined;
   }
 
-  it("rides only its OWN opening's enumeration, and fails open when there is none", async () => {
+  it("answers nothing for a probe whose opening the host does not hold", async () => {
     // Keyed by repository alone, a probe borrowed whichever read arrived last —
     // including one another surface or another opening started (round-1 W2).
+    // It is not answered by a fail-open either: an unowned token belongs to no
+    // live question, and minting sequence state for one is what let a
+    // superseded or invented opening accumulate it (round-4 B7).
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
     });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    // A DIFFERENT opening. Nothing enumerated for it, so the documented
-    // fail-open applies rather than another opening's answer.
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 7, seq: 0, query: "idle" });
     await settle();
 
-    expect(resolutionIn(view)).toMatchObject({ token: 7, mode: { kind: "fresh" } });
+    expect(resolutionIn(view)).toBeUndefined();
+    // The opening it does hold still answers, so this is a refusal and not a
+    // host that has stopped resolving.
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
+    await settle();
+    expect(resolutionIn(view)).toMatchObject({ token: 1, mode: { kind: "reuse" } });
     dispose();
   });
 
@@ -2974,10 +2990,10 @@ describe("the host resolves a selection before the create runs", () => {
   });
 
   it("retires a superseded opening rather than retaining it for the host's life", async () => {
-    // Both per-opening maps are keyed by surface + repository + token, which is
-    // what stops a new opening from overwriting the old entries — so without an
-    // explicit retirement they accumulate one settled read and one sequence per
-    // opening, forever (round-3 B7).
+    // One record per surface and repository, REPLACED by the next opening: the
+    // per-opening keying that stopped a new opening overwriting the old is
+    // exactly what made them accumulate, one settled read and one sequence per
+    // dialog open, for the life of the extension host (round-3 B7, round-4 W8).
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
@@ -2995,12 +3011,43 @@ describe("the host resolves a selection before the create runs", () => {
 
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
+    expect(resolutionIn(view), "the retired opening still answered").toBeUndefined();
 
-    // Answered at all — so the retired opening's `seq` is gone, and the
-    // dispatch gate no longer drops this probe as a repeat of one it saw.
-    // Answered `fresh` — so the retired opening's enumeration is gone too, and
-    // the classification failed open rather than borrowing it.
-    expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" } });
+    // And the replacement is live, so the retirement did not take the current
+    // opening with it.
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 2, seq: 0, query: "feat" });
+    await settle();
+    expect(resolutionIn(view)).toMatchObject({ token: 2, mode: { kind: "reuse" } });
+    dispose();
+  });
+
+  it("forgets the openings of a repository that left the workspace", async () => {
+    // Retirement rode a LATER refs request for the same repository, and a
+    // repository that has left is never the subject of one again — so its
+    // opening survived to surface detach or host disposal (round-4 B7).
+    const { host, view, dropSibling, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      sibling: true,
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat" }], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: OTHER_REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: OTHER_REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    expect(resolutionIn(view), "the setup never opened on the sibling at all").toBeDefined();
+    view.posts.length = 0;
+
+    expect(host.openingsHeld()).toBe(1);
+
+    await dropSibling();
+
+    // Released, not merely unreachable. A departed repository's opening answers
+    // nothing either way — the repo lookup refuses first — so the count is the
+    // only thing that can tell retaining it from releasing it.
+    expect(host.openingsHeld()).toBe(0);
+    view.posts.length = 0;
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: OTHER_REPO, token: 1, seq: 1, query: "feat" });
+    await settle();
+    expect(resolutionIn(view)).toBeUndefined();
     dispose();
   });
 
@@ -3105,9 +3152,11 @@ describe("the host resolves a selection before the create runs", () => {
     dispose();
   });
 
-  it("resolves fresh when no opening has asked for a list yet", async () => {
-    // Nothing to join is the same fail-OPEN as a read that failed: a branch we
-    // cannot confirm exists is one to create, and git refuses at `add` if not.
+  it("answers nothing when no opening has asked for a list yet", async () => {
+    // The fail-OPEN is for an enumeration that FAILED — the case below — and
+    // not for a probe with no opening behind it at all. The form's own gate
+    // holds Create until an answer lands, so silence here is honest where a
+    // `fresh` on no evidence would not be (round-4 B7).
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
@@ -3115,7 +3164,7 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
     await settle();
 
-    expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" } });
+    expect(resolutionIn(view)).toBeUndefined();
     dispose();
   });
 
