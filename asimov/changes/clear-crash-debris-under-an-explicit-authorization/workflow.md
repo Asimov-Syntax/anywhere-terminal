@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -53,3 +53,15 @@ Gate 2 re-earned at f28549b9 after the 1_6 handback: D6 adds the carrier, the de
 Auto-decision: a separate request rather than widening the probe answer — the probe fires on every
 settled edit, so a token on it would mint deletes for paths nobody asked to delete (D6).
 
+Auto-decision (1_7): recover is offered only where the create would actually take the skipped
+candidate — under `reattach` the create acts on the registration's own path, so that candidate is a
+directory this create never touches and offering to delete it would be round-3 B3 with a delete
+attached. `worktree-create.md` § 2.0's "composes with any branch mode" holds for every mode whose
+destination is the derived one.
+Auto-decision (1_7): accepting the offer is what asks for the authorization, so what will be removed
+is stated from the entries the token was digested over — one read, so the list shown and the list
+bound cannot differ. The offer names the directory before acceptance; the contents after.
+Verify gate: `pnpm exec biome check src` is at the inherited baseline (3 errors / 14 warnings /
+1 info — `src/agentHooks`, `src/cursor`, `src/vault`, `src/webview/*.css`, `worktreeFormat.ts`), none
+in files this change touches. The first `test:unit` run failed one test and a re-run on the same tree
+passed 6061/6061 — the known `src/vault/snapshotPool.test.ts` flake, untouched by this change.
