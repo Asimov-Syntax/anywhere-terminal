@@ -47,3 +47,10 @@ rests on `offerStore.test.ts`'s own `forgetSurface` coverage until a redeemer ex
 Verify gate: `src/vault/snapshotPool.test.ts` and `src/extension.worktreeAssembly.test.ts` each
 flake intermittently under the full suite and pass on re-run — pre-existing, in files this change
 does not touch. Observed pass is a clean 269/269.
+
+Round 1 (REJECT, 6 BLOCK): B1, B3, B5 and B6's identity half fixed and mutation-verified in
+ec53cc98. B2, B4 and B6's liveness half PARKED — each needs a changed D5 or an unanswered D4
+question, and B2 hands retirement the debris authorization boundary, which is this project's named
+carve-out of "never delete files directly". Fastlane does not auto-choose an artifact handback, so
+the cycle stops here for the user. Triage for all six: .reviews/round-1.md.
+Review chair master id for resume: aac873a6ab140b708.
