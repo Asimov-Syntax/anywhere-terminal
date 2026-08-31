@@ -77,3 +77,59 @@
     1. Cover in `src/extension.worktreeAssembly.test.ts` that a probe reaches the host through the real wiring and its answer reaches the dialog — a module test asserting against its own injected fake cannot see a wrapper that drops an argument, which is how the refs answer nearly shipped unrouted.
     2. Assert against the assembly's own real repository that a `prunable` worktree resolves to reattach and that the repair clears the flag.
   - **Boundary**: no new production code — this task adds coverage, and a defect it finds is fixed in the task that owns the file
+
+- [ ] 5_1 A repair re-establishes every condition it was offered under
+  - **Deps**: none
+  - **Refs**: design.md D3, D6; specs/worktree-panel/spec.md#a-stale-registration-is-repaired-in-place-and-only-while-git-can-repair-it
+  - **Acceptance**:
+    - Outcome: A repair whose administrative directory vanished during the user's pause is refused, not reported as done
+    - Verify: unit src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts` re-establishes D3 condition 2 inside the coordinator, beside the condition-3 check already there: re-read the `.git` link and require its administrative directory, and require the authoritative listing to still carry a prunable record for the normalized path ON `mode.branch`. Today only condition 3 survives the pause, and `mode.branch` is never consulted.
+    2. The vacuous-success hole is why this blocks: with the administrative entry pruned, `git worktree repair` has nothing to reconnect and exits 0, and the condition-4 check asks only whether the path is STILL prunable — an unregistered path is not, so a repair that did nothing reports success. Requiring the prunable record BEFORE the command is what makes condition 4 mean what it says.
+    3. `src/worktree/reattachProbe.ts`: `readGitLink` treats every non-directory `lstat` as a file, so a symlinked `.git` satisfies the FILE check and `readFile` follows it. Require a true regular file.
+    4. `src/worktree/worktreeMutations.ts`: `prunablePaths` parses the line format while `WorktreeDiscovery` negotiates `-z` through the `worktree-list-z` capability probe. The listing that OFFERS a reattach and the one that CONFIRMS it can disagree about the same path — the exact comparison condition 4 rests on. Reuse the authoritative reader.
+    5. Cover: an admin directory removed between resolution and submit refuses; a branch that moved while the checkout stayed put refuses; a symlinked `.git` is not offered; the post-repair listing uses the same reader the offer did.
+  - **Boundary**: still no `--force` and no fallback to `add`
+
+- [ ] 5_2 The host answers one probe per settled selection, for one owner
+  - **Deps**: none
+  - **Refs**: design.md D1, D2, D7
+  - **Acceptance**:
+    - Outcome: A base ref that resolves to no commit is reported unresolvable in the resolution, before any create is attempted
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/types/messages.ts` takes D1's amended pair: `seq` on both messages, `base` on the probe, `baseValid` on the resolution.
+    2. `src/providers/WorktreeHost.ts` resolves the base against the refs it already holds and answers `baseValid`, omitted for `reuse` and `reattach` per D7.
+    3. Retention is keyed by surface, repository and opening rather than repository alone, evicted on supersession and detach — today a second surface's `requestWorktreeRefs` replaces the promise the first surface's probe consumes. Keep only the latest pending probe per key.
+    4. Validate the inbound payload's fields, not just its discriminant, before they enter async logic.
+    5. Extract the one destination resolver both the probe and the defaults handler use — they derive root, taken paths, slug and free suffix separately today, so `freePath` and the submitted destination can drift.
+    6. `src/extension.ts` wires the base resolution beside the existing `probeReattach` assembly.
+    7. Cover: an unresolvable base answers `ok: false`; `baseValid` is absent for reuse and reattach; two surfaces on one repository each classify against their own enumeration; a malformed probe is refused rather than throwing.
+  - **Boundary**: no change to `worktreeCreateDefaults`' own lifecycle — D1's scope note still holds
+
+- [ ] 5_3 One effective resolution drives the form, and submit waits for it
+  - **Deps**: 5_2
+  - **Refs**: design.md D5, D7, D8; specs/worktree-panel/spec.md#the-resolution-names-both-the-path-the-create-will-take-and-the-one-it-skipped
+  - **Acceptance**:
+    - Outcome: Create stays disabled until the resolution for the typed selection has arrived
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts` holds ONE effective resolution per D8, driving mode, displayed destination, stated action and guards. Today the applier changes `branchMode` only for `reattach` and drops `fresh`, `reuse` and `adopt`, so a declined corroboration leaves the mode the local text derivation guessed.
+    2. Render what the spec already requires the resolution to name: the free path the create will take, and the occupied candidate the suffixing skipped with what was found there. Both arrive on the wire today and neither reaches the user.
+    3. Submit gates on a matching resolution as well as the destination per D7. The current comment declines this deliberately, which is what lets a selection be submitted as fresh while its own classification is in flight.
+    4. `src/webview/worktree/WorktreeController.ts` mints `seq` per probe, applies an answer only at or above the highest `seq` applied, and sends the current `candidatePath` and `base`.
+    5. The base-ref reason moves out of the collapsed Advanced body into an always-visible accessible summary — the rule D5 exists to make legible is undiscoverable behind a disclosure.
+    6. Cover: an A to B to A edit sequence never applies the older answer; a declined repair returns the form to fresh rather than leaving reattach armed; the rendered destination is the path the submitted request carries; create is disabled while a classification is outstanding.
+  - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited
+
+- [ ] 5_4 The assembly walks a typed selection to the argv it issues
+  - **Deps**: 5_1, 5_3
+  - **Refs**: design.md D1, D7, D8
+  - **Acceptance**:
+    - Outcome: The assembled extension carries one typed selection from probe to issued git argv through the real dialog
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. In `src/extension.worktreeAssembly.test.ts` the current repair test handcrafts a `worktreeCreate` and calls `host.handleMessage` directly, so the resolution-to-submit seam is never crossed and three blockers survived a green gate.
+    2. Drive one assembled dialog from typed selection through the real matching resolution and the real submit, then assert the visible action, the displayed path, the posted create payload and the issued git argv all agree. Add a delayed answer and a declined corroboration.
+  - **Boundary**: no new production code — a defect this finds is fixed in the task that owns the file

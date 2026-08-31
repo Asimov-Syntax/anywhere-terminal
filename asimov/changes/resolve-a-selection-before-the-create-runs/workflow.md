@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved — no fork; worktree-create.md § 2, § 2.1, § 2.3 and § 6 name a command and a condition set for every mode, and worktree-rpc.md § 2.2 already specifies the message pair _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved (fastlane)
+- [x] Gate 2: plan approved (fastlane) — re-earned after the round-1 handback: D1 amended, D7 and D8 added, tasks 5_1..5_4
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.8
 Lane: full (standard) — a new wire pair and a git mutation on the administrative directory, on the create path | flags: new-api-contract
-Planned at: 16f3a192
+Planned at: 6d55dc07 (re-planned after round 1)
 
 - Admission screen: reattach's `git worktree repair` is arguably a second new invariant owner beside the resolver. NOT split — the blueprint packaged them, and splitting would ship a resolution that names a mode nothing can act on, which changes delivery semantics and is never auto-chosen under fastlane.
 - D1 departs from worktree-rpc.md § 2.2 by adding the per-opening `token` to a pair the blueprint records without one. `query` echoes for staleness within an opening and cannot separate two openings of the same dialog on the same repository. Shipping a NEW message with a gap in order to match two pre-existing messages that have it would be choosing the defect; retrofitting those two stays out of scope.
@@ -48,3 +48,8 @@ Planned at: 16f3a192
 - Knowledge candidate: `src/extension.worktreeAssembly.test.ts` hand-mirrors `src/webview/main.ts`'s router handler map instead of using it | Surprise: the test written to catch "declared, posted, handled, never routed" reproduced that exact gap in its own harness — the resolution was posted and dropped, and the failure looked like a classification bug for three debug cycles | Evidence: src/extension.worktreeAssembly.test.ts#worktreeHandlers vs src/webview/main.ts | Consumer: plan | Action: a task adding an Extension→WebView message must add the handler in BOTH places, or the assembly test proves less than it claims; a future change could have the harness import main.ts's map instead.
 
 - Verify gate: biome ran in check mode and reported the branch's recorded baseline unchanged — 3 errors / 14 warnings, every one of them in `src/agentHooks`, `src/cursor`, `src/vault` and CSS files this change does not touch. `pnpm run gate:fs-deletion` also ran: I10 ok.
+
+- Review cycle 1 round 1 (discovery) returned REJECT: 6 blockers / 7 warnings, split 6 feature / 0 machinery, so no premise audit is owed. All 13 findings accepted, none rebutted; triage rationale is in `.reviews/round-1.md`. Two specialists (`asm-review-performance`, `asm-review-logic`) also reported directly to the build session ahead of the chair — diffed against the round file, nothing was dropped and B1 was escalated WARN to BLOCK by the chair.
+- Handback: B3, B4, B5 and W3 fail the obligation test and are NOT fixable as review commits. B4 is accepted scope never implemented — the spec requires the base ref be validated before submission and D5 puts that validation host-side "riding the resolution", but D1's Interfaces give the probe no base field and the resolution no base-validity field, so the wire cannot carry the answer D5 already promises. B5 and W3 need a per-probe generation and a decision about `candidatePath`, both changes to the same Interfaces block. B3 is a task-coverage gap: the spec requirement that the resolution name the free path and the skipped occupied candidate is landed on the wire and never rendered, and 2_2's Acceptance was written to base-ref refusal alone, so no task ever owned it. Parked and returned to asimov-plan rather than landed as fixes.
+- The remaining nine findings (B1, B2, B6, W1, W2, W4, W5, W6, W7) are remediation inside the accepted contract and stay in the fix loop.
+
