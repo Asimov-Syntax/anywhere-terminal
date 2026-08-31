@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -59,3 +59,25 @@ change rather than a fix commit here: docs/PLAN.md task **WT-012.16**, which WT-
 on. This change stays parked at review with B5/B6 open until WT-012.16 lands; B7 was fixed as task
 3_4 and needs nothing further. The user authorised the PLAN.md task addition explicitly, which is
 the one edit outside the Status row this workflow was permitted.
+
+Round 4 (cycle 2, verification) — APPROVE, 0 blocking, 0 warnings. B5 and B6 both fixed, and NOT by
+a fix commit in this change: they were handed back, became WT-012.16, and that change is now merged.
+Verified independently of the chair before ticking, because all three specialists reported to the
+coordinator rather than to the chair and one said outright it could not reach it: `retireOpening`
+(WorktreeHost.ts:647) deletes the live opening, sweeps the surface's `provisionReading` slots and
+calls `offers.forgetSurface`, and the mint path (WorktreeHost.ts:1937) rechecks BOTH the read marker
+and the live opening after its await, immediately before `offers.issue`.
+
+Not fixed, deliberately: `WorktreeController.onCreateClosed` advances `refsToken` without clearing
+`provisionOffers`, so a closed opening's entry survives until the next open clears it at line 823.
+The contracts specialist raised it at SUGGEST; the chair adjudicated it to no finding, on the ground
+that the entry is neither renderable nor redeemable — the only read (line 1083) is reached solely
+behind that clear or behind the opening gate at 1234, and both gates read `refsToken` synchronously
+at handler entry with no await before them. Left alone rather than tidied: a new task inside an
+already-reviewed range supersedes the round, which cost WT-012.16 two rounds, and this buys no
+behaviour change. Worth doing when something else opens this file — it would make the inertness
+structural rather than a property of today's consumer list.
+
+Blueprint sync: `worktree-provisioning.md` § 2 `ProvisionPort.port` went from required `number` to
+optional, matching what shipped and what design.md D7 decided. A row is named and selectable before
+any number exists, because allocation is WT-012.6.

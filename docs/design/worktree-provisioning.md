@@ -88,11 +88,18 @@ export interface ProvisionPort extends ProvisionItemId {
   readonly name: string;
   readonly source: string;
   /**
-   * The free port this create will take. Resolved when the dialog builds the model, and
-   * re-resolved immediately before it is written (§ 5.3) — the dialog's number is a preview
-   * and the second resolution is the one that binds.
+   * The free port this create will take.
+   *
+   * OPTIONAL, because a row is offered before a number exists for it. Reading a provider
+   * file learns only the NAME the repo wants; allocating a free port is WT-012.6, which
+   * lands after the task that materializes files. So a port row is named, attributed and
+   * selectable with no number, and the dialog renders the name alone rather than a
+   * placeholder that reads as an allocation nobody made.
+   *
+   * Once set it is still a preview: it is re-resolved immediately before it is written
+   * (§ 5.3), and the second resolution is the one that binds.
    */
-  readonly port: number;
+  readonly port?: number;
 }
 
 export interface ProvisionModel {
