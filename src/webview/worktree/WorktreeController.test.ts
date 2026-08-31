@@ -18,6 +18,7 @@ import {
   worktree,
 } from "./worktreeFixtures";
 import type {
+  RemovalCheck,
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeCreateDefaults,
@@ -647,12 +648,15 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     expect(posted).toEqual([{ type: "worktreeUnlock", worktreeId: "/wt" }]);
   });
 
-  it("asks for a removal UNFORCED, so the host answers with blockers rather than acting", () => {
-    // The webview never decides a removal is safe. Posting force:true here would
-    // skip the blocker set and the fingerprint bound to it entirely.
+  it("ASKS what a removal would cost, and posts no removal at all", () => {
+    // The webview never decides a removal is safe, and it no longer starts one to
+    // find out: the unforced `worktreeRemove` this used to post is answered by
+    // deleting a clean worktree, because the host reports only from the path that
+    // already attempted it (round-3 B1, design.md D6).
     const { actions, posted } = controllerActions();
     actions.removeWorktree?.(worktree({ id: "/wt" }));
-    expect(posted).toEqual([{ type: "worktreeRemove", worktreeId: "/wt", force: false }]);
+    expect(posted).toEqual([{ type: "worktreeRemoveAssess", worktreeId: "/wt" }]);
+    expect(posted.some((m) => m.type === "worktreeRemove"), "the menu click posted a removal").toBe(false);
   });
 
   it("offers neither launch item to a caller that supplied no launch", () => {
@@ -2312,7 +2316,7 @@ describe("what a mutation did comes back to the panel", () => {
     );
   });
 
-  it("gives a refusal an empty fingerprint, because nothing can authorize it", () => {
+  it("gives a refusal NO fingerprint, because nothing can authorize it", () => {
     const h = ready();
     h.controller.handleMutationResult({
       type: "worktreeMutationResult",
@@ -2335,7 +2339,11 @@ describe("what a mutation did comes back to the panel", () => {
     });
 
     const refused = results(h)[0]?.needsConfirm;
-    expect(refused?.fingerprint).toBe("");
+    // `null`, not `""`: presence is the force authority (design.md D7), and an
+    // empty string is present. Nothing can forward it — a refusal mounts no
+    // confirm button — but a value that only fails to authorize by accident is
+    // one edit away from authorizing.
+    expect(refused?.fingerprint).toBeNull();
     expect(refused?.checks).toEqual(
       expect.arrayContaining([{ id: "busyAgents", cls: "refusal", outcome: "failed", count: 1 }]),
     );
@@ -2431,9 +2439,11 @@ describe("what a mutation did comes back to the panel", () => {
     ]);
   });
 
-  it("retries only the removal an unreadable assessment names, unforced", () => {
-    // Unforced: what could not be read may still be a blocker, so a retry asks
-    // the same question again rather than answering it.
+  it("retries only the removal an unreadable assessment names, by ASKING again", () => {
+    // What could not be read may still be a blocker, so a retry re-asks the same
+    // question rather than answering it. Posting a removal here would be a second
+    // door onto the deletion D6 closed, reached from the one outcome where
+    // nothing about this worktree's risk is known.
     const h = ready();
     const view = (h.controller as unknown as { view: { deps: { onRetryAction(r: WorktreeActionResult): void } } }).view;
     view.deps.onRetryAction({
@@ -2444,7 +2454,7 @@ describe("what a mutation did comes back to the panel", () => {
     });
 
     expect(h.posts).toEqual([
-      { type: "worktreeRemove", worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator", force: false },
+      { type: "worktreeRemoveAssess", worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" },
     ]);
   });
 
@@ -2897,5 +2907,120 @@ describe("a notice outlives the row it was about", () => {
     const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
     expect(results).toEqual([expect.objectContaining({ worktreeId: GONE })]);
     expect(results[0]?.orphanedLabel).toBeUndefined();
+  });
+});
+
+describe("[2_4] Remove Worktree opens the report before anything is deleted", () => {
+  const VALIDATOR = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator";
+
+  function ready() {
+    const h = mount();
+    h.controller.setVisible(true);
+    h.controller.handleTreeResponse(response());
+    h.posts.length = 0;
+    return h;
+  }
+
+  const PASSING: RemovalCheck[] = [
+    { id: "isMain", cls: "refusal", outcome: "passed" },
+    { id: "busyAgents", cls: "refusal", outcome: "passed", count: 0 },
+    { id: "containsWorktrees", cls: "refusal", outcome: "passed", count: 0 },
+    { id: "dirty", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "untracked", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "idlePanes", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "externalAgents", cls: "confirmable", outcome: "passed", count: 0 },
+    { id: "locked", cls: "confirmable", outcome: "passed" },
+  ];
+
+  const danger = (): HTMLButtonElement | null =>
+    document.querySelector<HTMLButtonElement>('[role="dialog"] button.wt-btn--danger');
+
+  it("posts an assessment request and no removal when the menu item is chosen", () => {
+    const h = ready();
+    menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
+
+    expect(h.posts).toEqual([{ type: "worktreeRemoveAssess", worktreeId: VALIDATOR }]);
+  });
+
+  it("answers a clean report with an ordinary removal, carrying no fingerprint", () => {
+    const h = ready();
+    menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
+    h.posts.length = 0;
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+
+    const button = danger();
+    expect(button, "a clean assessment mounted no confirmation at all").not.toBeNull();
+    expect(button?.textContent).toBe("Remove");
+    button?.click();
+
+    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, force: false }]);
+  });
+
+  it("answers a report with a failed risk using the fingerprint that report carried", () => {
+    const h = ready();
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      result: {
+        kind: "assessed",
+        assessment: {
+          checks: PASSING.map((c) => (c.id === "dirty" ? { ...c, outcome: "failed" as const, count: 3 } : c)),
+          contained: [],
+        },
+        fingerprint: "fp-assess-1",
+      },
+    });
+
+    const field = document.querySelector<HTMLInputElement>("#wt-confirm-name");
+    expect(field, "a failed risk asked for no typed confirmation").not.toBeNull();
+    if (field !== null) {
+      field.value = "asimov-validator-autofix";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    danger()?.click();
+
+    expect(h.posts).toEqual([
+      { type: "worktreeRemove", worktreeId: VALIDATOR, force: true, fingerprint: "fp-assess-1" },
+    ]);
+  });
+
+  it("routes an assessment the host could not make to the retry surface, not to a refusal", () => {
+    // `checksFor` marks the WHOLE catalogue unproven for an unavailable read,
+    // refusal-class checks included, so rendering it as a report would show a
+    // worktree the host merely could not read as a hard refusal (design.md D8).
+    const h = ready();
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      result: { kind: "unavailable", unreadable: ["status", "sessions"] },
+    });
+
+    expect(document.querySelector('[role="dialog"]'), "an unreadable assessment opened a confirmation").toBeNull();
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(results).toEqual([
+      expect.objectContaining({
+        action: "remove",
+        worktreeId: VALIDATOR,
+        outcome: "unavailable",
+        unreadable: ["status", "sessions"],
+      }),
+    ]);
+    expect(h.posts).toEqual([]);
+  });
+
+  it("opens no report for a worktree that left the tree while the host was reading it", () => {
+    const h = ready();
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/never-existed",
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-ghost" },
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(h.posts).toEqual([]);
   });
 });

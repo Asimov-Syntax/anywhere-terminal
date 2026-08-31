@@ -51,6 +51,7 @@ import type {
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
+  WorktreeRemoveAssessmentMessage,
   WorktreeProvisionOfferMessage,
   WorktreePullRequestsMessage,
   WorktreeRefsMessage,
@@ -134,6 +135,8 @@ export interface MessageHandlers {
   onWorktreeDebrisAuthorized?(msg: WorktreeDebrisAuthorizedMessage): void;
   /** What a mutation this surface started actually did. */
   onWorktreeMutationResult?(msg: WorktreeMutationResultMessage): void;
+  /** What a removal WOULD cost, answered without removing anything. */
+  onWorktreeRemoveAssessment?(msg: WorktreeRemoveAssessmentMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
   // Optional: a webview with no terminal factory mounted safely ignores it.
   onSubagentPreviewResponse?(msg: SubagentPreviewResponseMessage): void;
@@ -303,6 +306,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeMutationResult":
         handlers.onWorktreeMutationResult?.(msg);
+        break;
+      case "worktreeRemoveAssessment":
+        handlers.onWorktreeRemoveAssessment?.(msg);
         break;
       case "subagentPreviewResponse":
         handlers.onSubagentPreviewResponse?.(msg);

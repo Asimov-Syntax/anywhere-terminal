@@ -612,6 +612,28 @@ function clickItem(items: HTMLElement[], label: RegExp): void {
   item.click();
 }
 
+/**
+ * Answer the removal report the menu now opens (design.md D6).
+ *
+ * The menu item ASKS what the removal would cost; nothing is deleted until this
+ * confirms. Types the branch name first where the report earned a typed
+ * confirmation, so one helper covers both controls.
+ */
+function confirmRemoval(branch: string): void {
+  const field = document.querySelector<HTMLInputElement>('[role="dialog"] #wt-confirm-name');
+  if (field !== null) {
+    field.value = branch;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  const confirm = document.querySelector<HTMLButtonElement>('[role="dialog"] button.wt-btn--danger');
+  if (confirm === null) {
+    throw new Error(
+      `the removal report offered no confirmation — dialog: ${document.querySelector('[role="dialog"]')?.textContent ?? "none"}`,
+    );
+  }
+  confirm.click();
+}
+
 function gitCalls(verb: string): string[][] {
   return argv.filter((c) => c.args[0] === "worktree" && c.args[1] === verb).map((c) => c.args);
 }
@@ -641,7 +663,12 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await assemble();
     clickItem(openMenu("feature"), /remove/i);
     await settle();
-    // The unforced removal the webview posts, carried all the way down. A
+    // The menu click removes nothing: it asks, and the report is what the user
+    // answers (design.md D6). A removal here would be round-3 B1 back.
+    expect(gitCalls("remove")).toEqual([]);
+    confirmRemoval("feature");
+    await settle();
+    // The unforced removal the confirmation posts, carried all the way down. A
     // `--force` here would mean the assessment was skipped.
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
@@ -672,6 +699,8 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // (round-4 B1) — here the order is production's, not the test's.
     await assemble();
     clickItem(openMenu("feature"), /remove/i);
+    await settle();
+    confirmRemoval("feature");
     await settle();
     expect(document.body.textContent).toContain("Remove done.");
     expect(document.body.textContent).toContain("feature");
@@ -1849,6 +1878,8 @@ describe("the invariants that span the host and the webview", () => {
 
     clickItem(openMenu("feature"), /remove/i);
     await settle();
+    confirmRemoval("feature");
+    await settle();
 
     // Not "Couldn't remove": git never reported an outcome, so a clean failure
     // would be a claim nobody made. Asserted on the reason the TIMEOUT leg
@@ -1870,6 +1901,8 @@ describe("the invariants that span the host and the webview", () => {
     await assemble();
 
     clickItem(openMenu("feature"), /remove/i);
+    await settle();
+    confirmRemoval("feature");
     await settle();
 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);

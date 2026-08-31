@@ -52,6 +52,7 @@ import type {
   WorktreeInfo,
   WorktreeLaunchAgent,
   WorktreePresence,
+  WorktreeRemoveReport,
   WorktreeRepo,
   WorktreeRowActivation,
   WorktreeSubagentRow,
@@ -668,6 +669,22 @@ export class WorktreeView {
       onCancel: () => {
         this.closeDialog = null;
       },
+    });
+  }
+
+  /**
+   * Open the report for one worktree, filled from this view's own presence.
+   *
+   * The controller holds the same presence and could look both up, but the two
+   * lookups that turn it into dialog arguments belong beside the dialog: a
+   * second copy is a second thing to miss when a row's rendering changes.
+   */
+  openRemoveReport(info: WorktreeInfo, report: WorktreeRemoveReport): void {
+    this.openRemoveDialog({
+      info,
+      report,
+      agentRows: this.rowsFor(info.id),
+      degradedSources: this.degradedSources(),
     });
   }
 
@@ -1526,13 +1543,7 @@ export class WorktreeView {
       const report = result.needsConfirm;
       actions.push({
         label: "Force remove…",
-        onClick: () =>
-          this.openRemoveDialog({
-            info,
-            report,
-            agentRows: this.rowsFor(info.id),
-            degradedSources: this.degradedSources(),
-          }),
+        onClick: () => this.openRemoveReport(info, report),
       });
     }
     return renderNotice({

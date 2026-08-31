@@ -16,6 +16,7 @@ import type {
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
+  WorktreeRemoveAssessmentMessage,
   WorktreeProvisionOfferMessage,
   WorktreePullRequestsMessage,
   WorktreeRefsMessage,
@@ -178,7 +179,11 @@ export function worktreeMenuActions(
     // Unforced, deliberately: the host answers with the blocker set rather than
     // acting, and the confirmation the user then sees is bound to that set's
     // fingerprint. The webview never decides a removal is safe.
-    removeWorktree: (info) => post({ type: "worktreeRemove", worktreeId: info.id, force: false }),
+    // ASKS what the removal would cost; it removes nothing. The unforced
+    // `worktreeRemove` this used to post deleted a clean worktree outright,
+    // because the host reports only from the path that already attempted the
+    // deletion — the whole of round-3 B1 (design.md D6).
+    removeWorktree: (info) => post({ type: "worktreeRemoveAssess", worktreeId: info.id }),
     // Repo-scoped: a prune drops stale REGISTRATIONS, which belong to the
     // repository rather than to the worktree the menu was opened on. The count
     // is the one the confirmation named, and the host abandons the prune if it
@@ -537,10 +542,12 @@ export class WorktreeController {
       },
       onPrune: (repoId) => this.confirmPrune(repoId),
       // Only `unavailable` reaches here — the read failed, so asking again is
-      // the whole remedy. Unforced: what was unreadable may still be a blocker.
+      // the whole remedy. It re-ASKS: retrying with a removal would be a second
+      // door onto the very deletion D6 closed, reached from the one outcome
+      // where nothing about the worktree's risk is known at all.
       onRetryAction: (result) => {
         if (result.worktreeId !== undefined) {
-          deps.postMessage({ type: "worktreeRemove", worktreeId: result.worktreeId, force: false });
+          deps.postMessage({ type: "worktreeRemoveAssess", worktreeId: result.worktreeId });
         }
       },
       /** The opening the form being opened right now will ride (D1). */
@@ -1307,7 +1314,12 @@ export class WorktreeController {
    * older result no longer describes the tree.
    */
   handleMutationResult(msg: WorktreeMutationResultMessage): void {
-    const result = this.rescope(toActionResult(msg));
+    this.showActionResult(toActionResult(msg));
+  }
+
+  /** One notice per scope and verb, wherever the outcome came from. */
+  private showActionResult(raw: WorktreeActionResult): void {
+    const result = this.rescope(raw);
     this.actionResults = [
       ...this.actionResults.filter(
         (r) => !(r.action === result.action && r.worktreeId === result.worktreeId && r.repoId === result.repoId),
@@ -1315,6 +1327,38 @@ export class WorktreeController {
       result,
     ];
     this.push();
+  }
+
+  /**
+   * What the removal WOULD cost, answered before anything is deleted (D6).
+   *
+   * The two arms are different questions and the discriminant is what keeps them
+   * apart. `checksFor` marks the whole catalogue `unproven` for an assessment it
+   * could not make, refusal-class checks included, so rendering that as a report
+   * would show a worktree the host merely could not READ as a hard refusal with
+   * no control at all (D8). It goes to the retry surface instead, which is where
+   * the host's own `unavailable` already goes.
+   */
+  handleRemoveAssessment(msg: WorktreeRemoveAssessmentMessage): void {
+    const info = this.infoOf(msg.worktreeId);
+    if (msg.result.kind === "unavailable") {
+      const repoId = info === undefined ? undefined : this.repoFor(info)?.repoId;
+      this.showActionResult({
+        action: "remove",
+        worktreeId: msg.worktreeId,
+        ...(repoId === undefined ? {} : { repoId }),
+        outcome: "unavailable",
+        unreadable: msg.result.unreadable,
+      });
+      return;
+    }
+    if (info === undefined) {
+      // The row left the tree while the host was reading it. Opening a report
+      // about a worktree the panel no longer shows would ask the user to
+      // authorize a deletion they cannot see the target of.
+      return;
+    }
+    this.view.openRemoveReport(info, { ...msg.result.assessment, fingerprint: msg.result.fingerprint });
   }
 
   /** A reply and an unsolicited push are the same message, handled the same way. */
@@ -1572,7 +1616,7 @@ function toActionResult(msg: WorktreeMutationResultMessage): WorktreeActionResul
         repoId: msg.repoId,
         worktreeId: msg.result.worktreeId,
         outcome: "error",
-        needsConfirm: { ...msg.result.assessment, fingerprint: msg.result.fingerprint ?? "" },
+        needsConfirm: { ...msg.result.assessment, fingerprint: msg.result.fingerprint },
       };
     default:
       return { action: msg.verb, ...scope, outcome: "error", error: msg.result.message };

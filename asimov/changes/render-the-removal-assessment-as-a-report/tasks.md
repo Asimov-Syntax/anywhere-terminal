@@ -123,17 +123,19 @@
     4. `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: a null-fingerprint report confirms and hands back null; a fingerprint-carrying one hands back that fingerprint; the control chosen for a `notApplicable` report is the ordinary one; the confirm posts `force: false` with no fingerprint key for a null report.
   - **Boundary**: `confirmationFor` is not touched — D9 is that `notApplicable` already lands on ordinary, and a test pins it rather than a new branch
 
-- [ ] 2_4 Remove Worktree opens the report
+- [x] 2_4 Remove Worktree opens the report — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 2_2, 2_3
   - **Refs**: design.md D6, D7, D8; specs/worktree-panel/spec.md#{a-report-that-could-not-be-produced-is-not-a-refusal, a-confirmation-carries-only-the-authority-its-report-was-granted}
   - **Acceptance**:
     - Outcome: Choosing Remove Worktree deletes nothing until the report is answered
     - Verify: unit src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
-    1. `src/webview/worktree/WorktreeController.ts`: the `removeWorktree` action posts `worktreeRemoveAssess` rather than an unforced `worktreeRemove`; handle the reply by opening the report, and route the `unavailable` arm to the retry surface the host's own `unavailable` already uses.
+    1. `src/webview/worktree/WorktreeController.ts`: the `removeWorktree` action posts `worktreeRemoveAssess` rather than an unforced `worktreeRemove`; handle the reply by opening the report, and route the `unavailable` arm to the retry surface the host's own `unavailable` already uses. The retry that surface offers re-asks rather than removing — otherwise an unreadable assessment is a second door onto the deletion B1 closed.
+    1a. `src/webview/worktree/WorktreeView.ts`: `openRemoveReport(info, report)` — the view already fills `agentRows` and `degradedSources` from its own presence for the blocked-result path, and the controller must not copy those two lookups to open the same dialog.
     2. Same file: the confirm posts `force: true` with the fingerprint where the report carried one, and `force: false` with no fingerprint key where it did not.
-    3. `src/webview/worktree/worktreeMessageHandlers.ts`: route the new inbound message.
+    3. `src/webview/messaging/MessageRouter.ts` and `src/webview/worktree/worktreeMessageHandlers.ts`: route the new inbound message. Both: the router's switch is what turns a wire message into a handler call, and the delegation table is what production and the assembly test share.
     4. `src/webview/worktree/WorktreeController.test.ts`: choosing remove posts an assess and no removal; an all-passed report confirms to `force: false`; a failed-check report confirms to `force: true` with its fingerprint; an `unavailable` reply mounts no confirmation control.
+    5. `src/extension.worktreeAssembly.test.ts`: carry the four existing menu-to-git walks onto the new entry point — the menu click is now an assess, so a walk that asserts git argv has to answer the report first. Only the EXISTING walks; 2_5 owns the new proofs, and this step exists because a task that leaves the suite red is not done.
   - **Boundary**: the existing blocked-result path stays — a removal blocked at execution time still reports and re-offers, and D7 depends on it
 
 - [ ] 2_5 Prove it through the shipped wiring
