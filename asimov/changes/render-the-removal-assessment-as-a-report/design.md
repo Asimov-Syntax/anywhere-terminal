@@ -56,6 +56,16 @@ predicate changes rather than the rule. Fail-closed within each class is what D4
 meaning of `unproven`: it withholds whatever its own class gates — the removal for a refusal, an
 ordinary confirm for a risk, only the option it gated for a proof.
 
+**The ordinary branch is not reachable through today's producer.** The host gates on `atRisk`
+(`worktreeMutationService.ts`) and removes a clean worktree without sending a report at all, so
+every assessment that does reach this dialog carries a confirmable check that is failing or
+unproven. That gate is the host's pre-existing policy and is not in WT-013.4's acceptance, which
+governs what the dialog renders and which control it selects for an assessment it is given. The
+branch stays because `confirmationFor` is total over the assessments the wire permits, and a
+function that omits a wire-legal case is one the next producer breaks silently. Whether a clean
+removal should confirm at all is a real question — round-2 B1 — and it belongs to a task over the
+removal flow, not to this one.
+
 `isRefusedByChecks` is the single definition and has no host caller, so the correction changes what
 this dialog offers and no host behavior. The host reaches its own refusal through
 `assessment.kind`, and routes a wholly `unavailable` assessment — the one case that reports every
