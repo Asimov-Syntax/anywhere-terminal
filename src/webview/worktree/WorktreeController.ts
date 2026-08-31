@@ -600,6 +600,10 @@ export class WorktreeController {
         deps.postMessage({
           type: "worktreeCreate",
           repoId: draft.repoId,
+          // The opening this form was composed in. Posted BEFORE the retirement
+          // that `onCreateClosed` sends, on the same ordered channel, so the one
+          // legitimate submit still passes the host's equality check.
+          opening: this.refsToken,
           path: draft.path,
           mode,
           // The disposition the FORM settled on, carried on the draft for the

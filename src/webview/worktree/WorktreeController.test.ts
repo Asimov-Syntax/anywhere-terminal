@@ -700,6 +700,14 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
   it("maps a new-branch draft onto the create request", () => {
     const posted: WebViewToExtensionMessage[] = [];
     const h = mount();
+    // Opened for real rather than driving `onCreateSubmit` on a bare mount: the
+    // submit now carries the opening it was composed in, and `refsToken` starts
+    // at 0 while `openCreateForRepo` advances it BEFORE it asks — so a form that
+    // was never opened posts `opening: 0`, a value production can never produce
+    // and the host refuses outright. Asserting it would pin a fiction (W1).
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
     const view = (
       h.controller as unknown as {
         view: { deps: { onCreateSubmit(d: unknown): void } };
@@ -715,10 +723,11 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       openAfter: "none",
     });
 
-    expect(h.posts.filter((m) => m.type === "worktreeCreate")).toEqual([
+    expect(h.posts).toEqual([
       {
         type: "worktreeCreate",
         repoId: "/repo/.git",
+        opening: 1,
         path: "/repo/.claude/worktrees/feat",
         mode: { kind: "fresh", branch: "feat", baseRef: "main" },
         disposition: { kind: "free" },
@@ -732,6 +741,14 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     // empty ref as a ref — `fatal: invalid reference:`. The DEFAULT new-branch
     // create is the one this broke, so it is the one asserted here.
     const h = mount();
+    // Opened for real rather than driving `onCreateSubmit` on a bare mount: the
+    // submit now carries the opening it was composed in, and `refsToken` starts
+    // at 0 while `openCreateForRepo` advances it BEFORE it asks — so a form that
+    // was never opened posts `opening: 0`, a value production can never produce
+    // and the host refuses outright. Asserting it would pin a fiction (W1).
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
     const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
     view.deps.onCreateSubmit({
       repoId: "/repo/.git",
@@ -746,6 +763,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       {
         type: "worktreeCreate",
         repoId: "/repo/.git",
+        opening: 1,
         path: "/wt",
         // No `baseRef` key at all, and `fresh` rather than `reuse` — the two
         // halves of the defect this pair of properties exists to stop.
@@ -758,6 +776,14 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
 
   it("omits a base ref that is only whitespace", () => {
     const h = mount();
+    // Opened for real rather than driving `onCreateSubmit` on a bare mount: the
+    // submit now carries the opening it was composed in, and `refsToken` starts
+    // at 0 while `openCreateForRepo` advances it BEFORE it asks — so a form that
+    // was never opened posts `opening: 0`, a value production can never produce
+    // and the host refuses outright. Asserting it would pin a fiction (W1).
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
     const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
     view.deps.onCreateSubmit({
       repoId: "/repo/.git",
@@ -772,6 +798,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       {
         type: "worktreeCreate",
         repoId: "/repo/.git",
+        opening: 1,
         path: "/wt",
         // Whitespace is not a ref, so the mode's required field takes the
         // default the host used to substitute.
@@ -978,6 +1005,14 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
 
   it("carries the launch details with the agent mode and with no other", () => {
     const h = mount();
+    // Opened for real rather than driving `onCreateSubmit` on a bare mount: the
+    // submit now carries the opening it was composed in, and `refsToken` starts
+    // at 0 while `openCreateForRepo` advances it BEFORE it asks — so a form that
+    // was never opened posts `opening: 0`, a value production can never produce
+    // and the host refuses outright. Asserting it would pin a fiction (W1).
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
     const view = (
       h.controller as unknown as {
         view: { deps: { onCreateSubmit(d: unknown): void } };
@@ -995,10 +1030,11 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       prompt: "read the failing test",
     });
 
-    expect(h.posts.filter((m) => m.type === "worktreeCreate")).toEqual([
+    expect(h.posts).toEqual([
       {
         type: "worktreeCreate",
         repoId: "/repo/.git",
+        opening: 1,
         path: "/wt",
         // `existing` is `reuse`, not `fresh` — the distinction the wire could
         // not carry before.

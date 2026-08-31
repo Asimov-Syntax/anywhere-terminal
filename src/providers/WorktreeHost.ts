@@ -1653,6 +1653,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
       case "worktreeCreate": {
         const create = actions.createWorktree;
+        // The last door outside the one-opening contract (round-5 W1): a form
+        // the user closed cannot still be asking for a worktree.
+        //
+        // Equality, not consumption. The panel posts the submit before the
+        // retirement on one ordered channel, so the legitimate one is still
+        // live when it lands; spending the opening here would be a new rule
+        // about how many submits an opening is worth. `namedOpening` is the
+        // same defence in depth as at the refs door, unkillable alone.
+        if (!namedOpening(msg.opening) || liveOpening.get(surfaceKey(surface)) !== msg.opening) {
+          return;
+        }
         // Validated at RUNTIME, not merely typed. The unions make a bad request
         // unrepresentable in our own code, which is what stops us writing one —
         // but this message arrives from the webview, and a type erases at the

@@ -1008,6 +1008,13 @@ export interface BranchDeleteRequest {
 export interface WorktreeCreateRequestMessage {
   type: "worktreeCreate";
   repoId: string;
+  /**
+   * WHICH create form composed this. Required, like the field is on every other
+   * request belonging to an opening — the spec says the identity travels on all
+   * of them, and this was the one door left outside that contract, so a submit
+   * naming no opening is unrepresentable rather than validated (round-5 W1).
+   */
+  opening: number;
   /** Untrusted: the one action with no host-issued id to re-resolve from. */
   path: string;
   /**

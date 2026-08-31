@@ -1664,9 +1664,16 @@ describe("the invariants that span the host and the webview", () => {
     linkTheWorktree();
     const { host, surface } = await assemble();
 
+    // The form has to exist before it can submit: a create now names the opening
+    // it was composed in, and the host refuses one naming an opening the surface
+    // does not hold (round-5 W1). Hand-sending the submit alone would refuse
+    // here and the repair below would go unreached for the wrong reason.
+    await host.handleMessage(surface, { type: "requestWorktreeCreateDefaults", repoId: REPO_ID, opening: 1 });
+    await settle();
     await host.handleMessage(surface, {
       type: "worktreeCreate",
       repoId: REPO_ID,
+      opening: 1,
       path: LINKED,
       mode: { kind: "reattach", branch: "feature", repairPath: LINKED, expectedOid: "2".repeat(40) },
       disposition: { kind: "free" },

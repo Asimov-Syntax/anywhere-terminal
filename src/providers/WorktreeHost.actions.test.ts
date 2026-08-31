@@ -957,13 +957,32 @@ describe("create validates the shape before it delegates", () => {
   const REQ = {
     type: "worktreeCreate",
     repoId: "/repo",
+    // The form that composed this submit. `liveOpening` is keyed by SURFACE, not
+    // by repository, so opening on REPO and submitting for "/repo" is the same
+    // opening — which is what these cases have always meant.
+    opening: 1,
     path: "/trees/feat",
     disposition: { kind: "free" },
     afterCreate: { kind: "none" },
   } as const;
 
+  /**
+   * A host with a create form actually open — the only state a submit is legal
+   * in now. Every case in this block needs it, refusals included: the host
+   * refuses a create naming an opening the surface does not hold, so without
+   * this setup each `calls` assertion below would pass for the WRONG reason,
+   * rejected by the opening guard rather than by the shape check it exists to
+   * exercise (round-5 W1).
+   */
+  async function hostWithForm(): Promise<Awaited<ReturnType<typeof builtHost>>> {
+    const built = await builtHost();
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    return built;
+  }
+
   it("hands the request to the capability", async () => {
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat", baseRef: "origin/main" } });
     await settle();
 
@@ -983,10 +1002,51 @@ describe("create validates the shape before it delegates", () => {
     dispose();
   });
 
+  it("[5_1] refuses a create submitted after its own form closed", async () => {
+    // The paired half of "hands the request to the capability" above, and the
+    // last door this change left open (round-5 W1). The submit is a request
+    // belonging to a form; a form the user cancelled is not still asking for a
+    // worktree. Without this, a delayed or replayed create reached
+    // `createWorktree` and built a directory nobody wanted any more.
+    const { host, view, calls, dispose } = await hostWithForm();
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 1 });
+    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat", baseRef: "origin/main" } });
+    await settle();
+
+    expect(
+      calls.filter(([name]) => name === "createWorktree"),
+      "a retired form still created a worktree",
+    ).toEqual([]);
+    dispose();
+  });
+
+  it("[5_1] refuses a create naming an opening the surface never held", async () => {
+    // `0` is the value the panel's counter holds before any form opens, so it
+    // is the one an uninitialised or forged sender is most likely to send.
+    // Rejected here by the live-opening equality, the same way the refs door
+    // rejects it — `namedOpening` is defence in depth behind that, not the
+    // thing doing the work.
+    const { host, view, calls, dispose } = await hostWithForm();
+    for (const opening of [0, 2, 99]) {
+      host.handleMessage(view, {
+        ...REQ,
+        opening,
+        mode: { kind: "fresh", branch: "feat", baseRef: "origin/main" },
+      } as never);
+    }
+    await settle();
+
+    expect(
+      calls.filter(([name]) => name === "createWorktree"),
+      "an unheld opening created a worktree",
+    ).toEqual([]);
+    dispose();
+  });
+
   it("rejects the agent mode until WT-005.3 supplies the launch", async () => {
     // The form does not offer it; this is the defence behind that, so a hand-sent
     // message cannot reach a launch that does not exist.
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, {
       ...REQ,
       mode: { kind: "fresh", branch: "feat" },
@@ -999,7 +1059,7 @@ describe("create validates the shape before it delegates", () => {
   });
 
   it("rejects a mode that is not one of the documented ones", async () => {
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, {
       ...REQ,
       mode: { kind: "fresh", branch: "feat" },
@@ -1012,7 +1072,7 @@ describe("create validates the shape before it delegates", () => {
   });
 
   it("acts on nothing when the path is empty", async () => {
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, path: "" });
     await settle();
 
@@ -1025,7 +1085,7 @@ describe("create validates the shape before it delegates", () => {
   // again HERE, where the value arrives as `unknown` and the type is gone.
 
   async function refuses(over: Record<string, unknown>): Promise<void> {
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, ...over } as never);
     await settle();
 
@@ -1057,7 +1117,7 @@ describe("create validates the shape before it delegates", () => {
     // `isKnownDisposition` accepted only `free`, so every debris create was
     // dropped at this boundary and the whole recover path was unreachable in
     // production while the service's own tests passed.
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     const disposition = { kind: "debris", authorization: { path: "/trees/feat", fingerprint: "fp-1" } };
     host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, disposition } as never);
     await settle();
@@ -2272,14 +2332,30 @@ describe("create with a launch", () => {
   const REQ = {
     type: "worktreeCreate",
     repoId: REPO,
+    opening: 1,
     path: "/trees/feat",
     mode: { kind: "fresh", branch: "feat" },
     disposition: { kind: "free" },
   } as const;
+
+  /**
+   * A host with a create form actually open — the only state a submit is legal
+   * in now. Every case in this block needs it, refusals included: the host
+   * refuses a create naming an opening the surface does not hold, so without
+   * this setup each `calls` assertion below would pass for the WRONG reason,
+   * rejected by the opening guard rather than by the shape check it exists to
+   * exercise (round-5 W1).
+   */
+  async function hostWithForm(): Promise<Awaited<ReturnType<typeof builtHost>>> {
+    const built = await builtHost();
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    return built;
+  }
   const creates = (calls: Array<[string, ...unknown[]]>) => calls.filter(([name]) => name === "createWorktree");
 
   it("accepts the agent mode now that a launch exists behind it", async () => {
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, {
       ...REQ,
       afterCreate: { kind: "agent", waitForSetup: false, offerId: offer(), agent: "claude" },
@@ -2295,7 +2371,7 @@ describe("create with a launch", () => {
   it("creates NOTHING for a launch the host would not admit", async () => {
     // Order is the whole point: refusing after git ran would leave the user a
     // worktree they only asked for as a place to put an agent.
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     for (const launch of [
       { offerId: offer(), agent: "codex" },
       { offerId: offer(), agent: "claude", permissionChoiceId: "bypassPermissions" },
@@ -2312,7 +2388,7 @@ describe("create with a launch", () => {
     // Unrepresentable in our own code now — the agent fields are members of the
     // variant — but the message crosses a boundary where the type is erased, so
     // the host still has to answer for one that arrives anyway.
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, { ...REQ, afterCreate: { kind: "agent", waitForSetup: false } } as never);
     await settle();
     expect(creates(calls)).toHaveLength(0);
@@ -2320,7 +2396,7 @@ describe("create with a launch", () => {
   });
 
   it("refuses an oversized prompt before any create runs", async () => {
-    const { host, view, calls, dispose } = await builtHost();
+    const { host, view, calls, dispose } = await hostWithForm();
     host.handleMessage(view, {
       ...REQ,
       afterCreate: {

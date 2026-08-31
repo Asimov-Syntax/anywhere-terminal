@@ -124,7 +124,7 @@
     2. `src/providers/WorktreeHost.actions.test.ts`: replayed refs after close mints no debris authorization; token 0 seeds nothing; refs and forge reads resolving after a close publish nothing.
   - **Boundary**: refs never ESTABLISHES an opening — the branch-less defaults ask is the only opening door, and refs rides one it already holds
 
-- [ ] 5_1 The submit carries the opening it was composed in
+- [x] 5_1 The submit carries the opening it was composed in — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_4
   - **Refs**: specs/worktree-panel/spec.md#a-create-forms-opening-identity-travels-on-every-request-and-every-reply; design.md D1; .reviews/round-5.md#w1
   - **Acceptance**:
@@ -135,4 +135,5 @@
     2. `src/webview/worktree/WorktreeController.ts`: post the dialog-captured opening on submit.
     3. `src/providers/WorktreeHost.ts`: `worktreeCreate` requires `namedOpening(msg.opening)` and equality with the surface's live opening before it admits the create or starts any read.
     4. `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeController.test.ts`: paired witnesses — the live submit still runs, the same create after close is refused.
+    5. `src/extension.worktreeAssembly.test.ts`: the `[4_1]` reattach walk hand-sends a create with no form open, which the new guard refuses — it opens one first, so the repair it asserts is reached for the reason it means.
   - **Boundary**: equality only, no consumption rule — `WorktreeView` posts the submit before it retires, so the legitimate one passes; a spend-on-submit rule would be a new decision needing its own `D#`
