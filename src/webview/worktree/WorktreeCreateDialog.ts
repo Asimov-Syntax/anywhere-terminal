@@ -1043,6 +1043,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * The spec requires the form to state which of create / check out / repair the
    * create would perform, before submit rather than as a failure after it.
    */
+  const DETACHED_ACTION = "Creates a detached worktree at the commit this ref names.";
+
   const ACTION_BY_MODE: Record<ResolvedMode["kind"], string> = {
     fresh: "Creates a new branch here.",
     reuse: "Checks out the branch that already exists.",
@@ -1245,9 +1247,15 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // Advanced body the base field lives in (round-1 W6).
     const actionText = baseUnresolvable
       ? (verdict as { ok: false; reason: string }).reason
-      : effective === null
-        ? undefined
-        : ACTION_BY_MODE[effective.mode.kind];
+      : detached
+        ? // The mode the form will EXECUTE, not the one the answer carried. The
+          // toggle discards the classification (D5), and the action note is a
+          // statement of mode — leaving it on the answer's said a repair would
+          // run while a detached create was submitted (round-6 B11).
+          DETACHED_ACTION
+        : effective === null
+          ? undefined
+          : ACTION_BY_MODE[effective.mode.kind];
     actionNote.hidden = actionText === undefined;
     actionNote.textContent = actionText ?? "";
     actionNote.classList.toggle("wt-dest-note--error", baseUnresolvable);

@@ -2208,6 +2208,11 @@ describe("the base ref states when it cannot apply", () => {
     // The mode is discarded: the field is not a branch name under detached, so
     // no classification of it can turn this into a repair.
     expect(h.q<HTMLInputElement>("#wt-path").disabled, "a discarded mode still refused the destination").toBe(false);
+    // Discarded in what the form SAYS as well as in what it sends: the action
+    // note is a statement of mode, so leaving it on the answer's mode told the
+    // user a repair would run while a detached create was submitted (round-6 B11).
+    expect(h.action().textContent).not.toContain("Repairs");
+    expect(h.action().textContent).toContain("detached");
     expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/repo-9f2c1ab");
     primary(h.host).click();
     expect(submitted[0]).toMatchObject({ branchMode: "detached", path: "/trees/repo-9f2c1ab" });

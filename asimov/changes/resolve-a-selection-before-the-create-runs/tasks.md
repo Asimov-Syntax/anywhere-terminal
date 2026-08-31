@@ -198,3 +198,14 @@
     1. `src/extension.worktreeAssembly.test.ts`: an occupied fresh override, and a standing override withdrawn by a reattach resolution. Both assert the stated path, the posted path and the issued argv are one path — and both must fail if the override wins, which the existing free-override walk cannot.
   - **Boundary**: assertions only; production behaviour is 7_1's
 
+- [x] 7_4 The stated action is the one the form will run — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
+  - **Deps**: 7_1
+  - **Refs**: design.md D5, D8; `.reviews/round-6.md` B11
+  - **Acceptance**:
+    - Outcome: A detached create states a detached create, never the discarded classification's action
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts`: the action note derives from the mode the form will execute, not from the mode the answer carried — the same rule the submitted `resolved` already follows.
+    2. `src/webview/worktree/WorktreeCreateDialog.test.ts`: the detached walk asserts `#wt-action-note`.
+  - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched; no new `D#`
+
