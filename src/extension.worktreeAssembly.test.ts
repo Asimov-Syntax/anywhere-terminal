@@ -1216,6 +1216,49 @@ describe("the invariants that span the host and the webview", () => {
     expect(argv.some((c) => c.args.join(" ") === "rev-parse HEAD" && c.cwd === LINKED)).toBe(true);
   });
 
+  it("[5_4] carries one typed selection from probe to issued argv, through the real form", async () => {
+    // The repair test below reaches the host directly. That is what let three
+    // blockers survive a green gate: the resolution-to-submit seam — mode
+    // translation, the displayed path, the submit gating — was never crossed
+    // (round-1 W7).
+    prunableRow = true;
+    linkTheWorktree();
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("no branch input");
+    }
+    branch.focus();
+    branch.value = "feature";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () => posted.some((m) => m.type === "worktreeCreateResolution" && m.query === "feature"),
+      "the resolution for the typed branch",
+    );
+
+    // What the user is told, before anything is submitted.
+    expect(document.querySelector<HTMLElement>("#wt-action-note")?.textContent).toContain("Repairs the stale");
+
+    const create = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      b.textContent?.startsWith("Create worktree"),
+    );
+    if (create === undefined) {
+      throw new Error("no Create button");
+    }
+    expect(create.disabled, "the form would not have submitted, so the argv below would prove nothing").toBe(false);
+    create.click();
+    await settle();
+
+    const issued = argv.map((c) => c.args);
+    expect(issued.some((a) => a[0] === "worktree" && a[1] === "repair" && a[2] === LINKED)).toBe(true);
+    expect(issued.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(false);
+    expect(prunableRow).toBe(false);
+  });
+
   it("[4_1] repairs the stale registration it really has, and never adds beside it", async () => {
     prunableRow = true;
     linkTheWorktree();
