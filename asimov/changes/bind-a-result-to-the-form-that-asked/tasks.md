@@ -12,7 +12,7 @@
     3. The field is REQUIRED, so the tree does not compile until every existing site names an opening. Those sites are carried here, mechanically and with no behaviour change, because a task whose Verify is `check-types` cannot pass while it has broken the build for the tasks after it: `src/webview/worktree/WorktreeController.ts` (both posters, sending the token it already holds), `src/providers/WorktreeHost.ts` (echo it on both replies), and the four suites that construct these messages — `src/providers/TerminalViewProvider.worktree.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeController.state.test.ts`.
   - **Boundary**: no guard, no drop, no retirement handling — 1_2 and 2_1 own those. This task makes the field exist and every caller name it, and nothing may start BEHAVING differently here
 
-- [ ] 1_2 Send and honour the opening in the panel
+- [x] 1_2 Send and honour the opening in the panel — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-create-form-s-opening-identity-travels-on-every-request-and-every-reply; design.md D1, D2
   - **Acceptance**:

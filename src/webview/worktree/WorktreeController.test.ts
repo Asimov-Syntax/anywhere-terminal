@@ -1819,7 +1819,9 @@ describe("the create a toolbar with no repository opens", () => {
     const applied: unknown[] = [];
     (h.controller as unknown as { applyCreateDefaults?: (s: unknown) => void }).applyCreateDefaults = (seed) =>
       applied.push(seed);
-    h.controller.handleCreateDefaults({ ...answer(REPO_A, "/trees/a"), branch: "feat/x" });
+    // Answering the controller's own live opening: this fixture opens no
+    // door, so it is still the initial one (1_2's guard drops any other).
+    h.controller.handleCreateDefaults({ ...answer(REPO_A, "/trees/a"), opening: 0, branch: "feat/x" });
 
     expect(applied).toHaveLength(1);
   });
@@ -1929,6 +1931,24 @@ describe("the create a toolbar with no repository opens", () => {
   });
 });
 
+/**
+ * The opening the controller is currently on, read where production reads it —
+ * off the request the controller itself posted.
+ *
+ * A literal here would be a guess about how many doors a fixture opened, and
+ * 1_2's guard drops a reply that guesses wrong. Reading it back is what keeps
+ * these tests about what they are about.
+ */
+function liveOpening(posts: readonly { type: string }[]): number {
+  for (let at = posts.length - 1; at >= 0; at -= 1) {
+    const post = posts[at];
+    if (post?.type === "requestWorktreeCreateDefaults") {
+      return (post as unknown as { opening: number }).opening;
+    }
+  }
+  return 0;
+}
+
 describe("the destination a create opens on", () => {
   /** The repo the fixture tree carries, and the host's answer for it. */
   const REPO = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
@@ -1937,7 +1957,11 @@ describe("the destination a create opens on", () => {
     return {
       type: "worktreeCreateDefaults",
       repoId: REPO,
-      opening: 1,
+      // The opening these tests are answering. They exercise the seed without
+      // going through a door, so the controller is still on its initial
+      // opening — a reply naming any other one is now dropped, which is the
+      // whole point of 1_2 and is asserted on its own below.
+      opening: 0,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal",
@@ -2012,9 +2036,71 @@ describe("the destination a create opens on", () => {
   it("opens the form when the answer for the repo the user asked about arrives", () => {
     const h = ready();
     menuActions(h).createWorktree?.(firstWorktree());
-    h.controller.handleCreateDefaults(defaults());
+    h.controller.handleCreateDefaults(defaults({ opening: liveOpening(h.posts) }));
 
     expect(document.querySelector(".wt-create-dialog, dialog, .wt-dialog")).not.toBeNull();
+  });
+
+  it("[1_2] drops a destination answer naming an opening that is no longer live", () => {
+    // Both openings ask branch-less first, so a predecessor's answer is shaped
+    // exactly like the live one's — the branch-versus-branch-less rule below
+    // cannot tell them apart, and before this guard the predecessor seeded the
+    // form (design.md D2).
+    const h = ready();
+    menuActions(h).createWorktree?.(firstWorktree());
+    const live = liveOpening(h.posts);
+
+    h.controller.handleCreateDefaults(defaults({ opening: live - 1 }));
+
+    expect(seed(h).repos, "a superseded opening's answer seeded the form").toEqual([]);
+  });
+
+  it("[1_2] still seeds from the live opening's own answer", () => {
+    // The pair. A guard that dropped everything would pass the test above and
+    // leave the form permanently empty, which is the failure mode the proposal
+    // names as this change's risk.
+    const h = ready();
+    menuActions(h).createWorktree?.(firstWorktree());
+
+    h.controller.handleCreateDefaults(defaults({ opening: liveOpening(h.posts) }));
+
+    expect(seed(h).repos).toHaveLength(1);
+  });
+
+  it("[1_2] drops a provisioning offer naming an opening that is no longer live", () => {
+    // This site had no staleness rule at all: it cached whatever arrived, so a
+    // predecessor's read landing after a reopening published its model into a
+    // form that never asked for it.
+    const h = ready();
+    menuActions(h).createWorktree?.(firstWorktree());
+    const live = liveOpening(h.posts);
+    const held = (h.controller as unknown as { provisionOffers: Map<string, unknown> }).provisionOffers;
+
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO,
+      opening: live - 1,
+      offerId: "offer-stale",
+      model: provisionModel(),
+    });
+
+    expect(held.size, "a superseded opening's offer was cached").toBe(0);
+  });
+
+  it("[1_2] still holds the live opening's own offer", () => {
+    const h = ready();
+    menuActions(h).createWorktree?.(firstWorktree());
+    const held = (h.controller as unknown as { provisionOffers: Map<string, unknown> }).provisionOffers;
+
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO,
+      opening: liveOpening(h.posts),
+      offerId: "offer-live",
+      model: provisionModel(),
+    });
+
+    expect(held.size).toBe(1);
   });
 
   it("does not open the form for an answer nobody asked for", () => {
@@ -2340,7 +2426,9 @@ describe("the destination follows the branch the user typed", () => {
     h.controller.handleCreateDefaults({
       type: "worktreeCreateDefaults",
       repoId: REPO,
-      opening: 1,
+      // No door was opened here, so the controller is still on its initial
+      // opening (1_2's guard drops any other).
+      opening: 0,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal-feat-a",
@@ -2459,7 +2547,9 @@ describe("the destination follows the branch the user typed", () => {
     h.controller.handleCreateDefaults({
       type: "worktreeCreateDefaults",
       repoId: REPO,
-      opening: 1,
+      // No door was opened here, so the controller is still on its initial
+      // opening (1_2's guard drops any other).
+      opening: 0,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal-feat-login",
@@ -2477,7 +2567,9 @@ describe("the destination follows the branch the user typed", () => {
     h.controller.handleCreateDefaults({
       type: "worktreeCreateDefaults",
       repoId: REPO,
-      opening: 1,
+      // No door was opened here, so the controller is still on its initial
+      // opening (1_2's guard drops any other).
+      opening: 0,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal-2",
@@ -2651,7 +2743,10 @@ describe("a notice outlives the row it was about", () => {
     const defaults: WorktreeCreateDefaultsMessage = {
       type: "worktreeCreateDefaults",
       repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
-      opening: 1,
+      // No door was opened here, so the controller is still on its initial
+      // opening (1_2's guard drops any other). The `held.size` assertion below
+      // is what proves this setup actually landed.
+      opening: 0,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal",

@@ -1087,6 +1087,13 @@ export class WorktreeController {
    * this simply takes the latest, and never keeps two.
    */
   handleProvisionOffer(msg: WorktreeProvisionOfferMessage): void {
+    // The rule `handleRefs` already applies, at the site that had none. Without
+    // it this cached whatever arrived, so a predecessor's read landing after a
+    // reopening published its model into a form that never asked for it
+    // (design.md D2).
+    if (msg.opening !== this.refsToken) {
+      return;
+    }
     this.provisionOffers.set(msg.repoId, msg);
     // Only the repository that changed, and only the offer. Rebuilding every
     // repository's record to update one was O(repos²) across a workspace's
@@ -1185,6 +1192,14 @@ export class WorktreeController {
 
   /** The host's create destination for one repo, and the form it was asked for. */
   handleCreateDefaults(msg: WorktreeCreateDefaultsMessage): void {
+    // Before the branch-versus-branch-less distinction below, because that one
+    // tells a superseded ask's leftovers from a current answer WITHIN one
+    // opening. It cannot tell two openings apart at all: both ask branch-less
+    // first, so a predecessor's opening answer is shaped exactly like the live
+    // one's (design.md D2).
+    if (msg.opening !== this.refsToken) {
+      return;
+    }
     this.createDefaults.set(msg.repoId, msg);
     const pending = this.pendingCreate;
     if (pending === null || !pending.outstanding.has(msg.repoId)) {
