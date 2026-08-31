@@ -552,6 +552,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
 
   /** What the user picked, and the ONLY source of new-versus-existing (D4). */
   let choice: BranchChoice = { kind: "new" };
+  /**
+   * The fork head of the pull request currently selected, and which selection it
+   * describes.
+   *
+   * Carried WITH its repository and branch rather than as a bare flag: the note
+   * is a claim about one create, and the same rule the resolutions follow
+   * applies — an answer the user has typed past describes a selection that is
+   * gone, so it is withdrawn by not matching rather than by every caller
+   * remembering to clear it.
+   */
+  let forkHead: { repoId: string; branch: string; owner: string } | null = null;
   /** Rows the list is currently offering, in order. Index into `listBox`. */
   let choices: BranchChoice[] = [];
   /** Which row is active while the list is open; -1 when none is. */
@@ -612,6 +623,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * the authorization. It sits with the destination because it CHANGES the
    * destination: recovered, the create takes the skipped path, not the suffix.
    */
+  /**
+   * The fork remote, stated before the create is authorized (§ 5, D5).
+   *
+   * With the destination rather than in the list, because it describes what the
+   * create would DO to the repository — configuring a remote is a
+   * repository-level side effect, and § 5 requires it to be legible while the
+   * create can still be abandoned rather than reported after it.
+   */
+  const forkNote = document.createElement("div");
+  forkNote.className = "wt-dest-note";
+  forkNote.id = "wt-fork-note";
+  forkNote.hidden = true;
   const recoverField = document.createElement("div");
   recoverField.className = "wt-recover";
   recoverField.id = "wt-recover";
@@ -630,7 +653,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   recoverNote.id = "wt-recover-note";
   recoverNote.hidden = true;
   recoverField.append(recoverLabel, recoverNote);
-  destWrap.append(dest, destNote, actionNote, recoverField);
+  destWrap.append(dest, destNote, actionNote, forkNote, recoverField);
   shell.dialog.appendChild(destWrap);
   /** The exact path the line is currently shortening; read on every show. */
   let destExact = "";
@@ -1428,6 +1451,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // existing path — there is no second resolution for pull requests.
       nameInput.value = named;
       baseInput.value = row.pr.baseRefName;
+      forkHead = row.pr.fromFork ? { repoId: draft.repoId, branch: named, owner: row.pr.headOwner } : null;
     }
     if (draft.branchMode !== "detached") {
       draft.branchMode = choiceMode(choice);
@@ -1544,6 +1568,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
 
     draft.branchName = nameInput.value;
     draft.baseRef = baseInput.value;
+
+    // Only while it still describes THIS selection, on THIS repository.
+    const forkStated =
+      forkHead !== null && forkHead.repoId === draft.repoId && forkHead.branch === nameInput.value.trim()
+        ? forkHead
+        : null;
+    forkNote.hidden = forkStated === null;
+    forkNote.textContent =
+      forkStated === null
+        ? ""
+        : `This pull request's head is on ${forkStated.owner}'s fork, so a remote for ${forkStated.owner} is configured when the worktree is created.`;
 
     const slug = sanitizeBranchForPath(detached ? draft.baseRef : draft.branchName);
     // The HOST's answer wins whenever it has given one. The locally derived

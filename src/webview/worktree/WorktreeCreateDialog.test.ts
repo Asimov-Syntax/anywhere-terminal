@@ -2901,6 +2901,7 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
       base: () => h.q<HTMLInputElement>("#wt-base"),
       baseNote: () => h.q<HTMLElement>("#wt-base-note"),
       error: () => h.q<HTMLElement>(".wt-ferror"),
+      fork: () => h.q<HTMLElement>("#wt-fork-note"),
       /** Open the list and take the row for pull request `number`. */
       pick: (number: number) => {
         const input = h.q<HTMLInputElement>("#wt-branch");
@@ -2964,6 +2965,60 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
     expect(h.branch().value).toBe("pr/42");
     expect(h.base().disabled).toBe(true);
     expect(h.baseNote().textContent).toContain("already exists");
+  });
+
+  // ── The fork remote is stated up front (§ 5, D5) ──
+
+  it("states the fork remote while the create can still be abandoned", () => {
+    // § 5: configuring a fork remote is a repository-level side effect, and the
+    // spec's whole point is that it is not something to discover afterwards. So
+    // the assertion is that the statement exists with nothing submitted.
+    const h = withPrs();
+    h.pick(7);
+
+    expect(h.fork().hidden).toBe(false);
+    expect(h.fork().textContent).toContain("contributor");
+    expect(h.submitted).toHaveLength(0);
+  });
+
+  it("says nothing about a remote for a pull request whose head is on this repository", () => {
+    const h = withPrs();
+    h.pick(42);
+
+    expect(h.fork().hidden).toBe(true);
+    expect(h.fork().textContent).toBe("");
+  });
+
+  it("withdraws the statement once the selection it described is gone", () => {
+    // The statement belongs to ONE selection. Left standing over a name the
+    // user typed afterwards it describes a create that is no longer the one
+    // about to happen.
+    const h = withPrs();
+    h.pick(7);
+    expect(h.fork().hidden).toBe(false);
+
+    type(h.branch(), "something-else");
+
+    expect(h.fork().hidden).toBe(true);
+  });
+
+  it("does not resurrect a withdrawn statement when the same name is typed back", () => {
+    // Selecting the same-repo PR drops the fork head rather than leaving it
+    // standing behind a name that no longer matches. Typing the old name back
+    // is what tells the two apart: a form that only HID the statement would
+    // show it again here, describing a remote for a selection nobody made.
+    const h = withPrs();
+    h.pick(7);
+    expect(h.fork().hidden).toBe(false);
+
+    type(h.branch(), "42");
+    h.pick(42);
+    expect(h.branch().value).toBe("pr/42");
+    expect(h.fork().hidden).toBe(true);
+
+    type(h.branch(), "pr/7");
+
+    expect(h.fork().hidden).toBe(true);
   });
 
   it("refuses a pull request whose branch another worktree holds, in the same words", () => {

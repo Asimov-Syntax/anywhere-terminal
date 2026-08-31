@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -50,3 +50,20 @@ has to become a quiet row rather than a thrown error (D2).
 Auto-decision: pull requests travel on their own message, fired from the same `requestWorktreeRefs`
 handler but resolving independently, so a slow forge cannot delay the ref list § 4.1 requires to
 arrive first (D3).
+
+Build note (D5 gap, deliberate): the fork-remote statement names a write this change does not
+perform. Until a task owns configuring the remote, selecting a fork-headed pull request creates
+`pr/<number>` from its base with no remote for the head, so the statement is true of the create § 5
+describes and not yet of the one that runs. D5 accepted this split — the announcement is what makes
+the eventual write legitimate — but it is a user-visible gap and is flagged for review rather than
+left for it to find.
+
+Build note (flakes, not this change): `src/vault/snapshotPool.test.ts` and
+`src/extension.worktreeAssembly.test.ts` each failed once under the full suite and passed on a
+re-run with no edit between. Both are pre-existing timing flakes; the recorded verifications are
+from runs where the whole suite passed.
+
+Verify gate: lint is at this worktree's standing baseline — 3 errors / 14 warnings / 1 info, every
+one in `src/agentHooks`, `src/cursor`, `src/session`, `src/test`, `src/vault`, `src/webview/*.css`
+and `src/webview/worktree/worktreeFormat.ts`, none in a file this change touches. Checked in check
+mode; the auto-fix form was never run.

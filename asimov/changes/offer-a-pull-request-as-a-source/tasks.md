@@ -66,7 +66,7 @@
     3. `src/webview/worktree/WorktreeCreateDialog.test.ts`: a fresh PR resolves `new` with the PR's base; the same PR once `pr/<number>` exists resolves `reuse`; a PR whose branch is held by another worktree is refused with the held-by wording; the title changing does not change the branch.
   - **Boundary**: no new resolution path — this task feeds the existing one
 
-- [ ] 3_2 State the fork remote before the create is authorized
+- [x] 3_2 State the fork remote before the create is authorized — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: specs/worktree-panel/spec.md#a-fork-head-states-the-remote-before-the-action-is-authorized; design.md D5; docs/design/worktree-create.md#5-pull-request-as-a-source
   - **Acceptance**:
