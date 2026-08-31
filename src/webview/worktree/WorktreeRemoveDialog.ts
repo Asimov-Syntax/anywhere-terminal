@@ -143,10 +143,14 @@ const REPORT: Record<string, Presenter> = {
   },
   idlePanes: {
     icon: ICON_TERMINAL,
+    // Not "idle terminals", whatever the check is named: the producer counts
+    // every pane in the worktree that has not exited, running and waiting ones
+    // included, so calling them idle understates active use of a directory this
+    // dialog is about to delete (round-1 W2).
     failed: (c, _i, s) =>
       countLine(
         s,
-        `${c.count ?? 0} idle ${plural(c.count ?? 0, "terminal", "terminals")}`,
+        `${c.count ?? 0} ${plural(c.count ?? 0, "terminal", "terminals")}`,
         `in this window ${plural(c.count ?? 0, "has", "have")} it as their working directory.`,
       ),
     passed: "No terminal in this window is working in it.",
@@ -466,6 +470,16 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       el.style.paddingLeft = "0";
       el.style.paddingRight = "0";
       shell.dialog.appendChild(el);
+    }
+
+    // The refusal reports what was checked too. The requirement names no dialog,
+    // and this is the one the user cannot argue with, so withholding the list
+    // here left the least answerable refusal the least evidenced (round-1 B2).
+    // No control is mounted below it: saying what ran is not offering a way past.
+    shell.dialog.append(buildBlockerList(checks, info));
+    const refusedProofs = buildProofList(checks, info);
+    if (refusedProofs !== null) {
+      shell.dialog.append(refusedProofs);
     }
 
     const close = textButton("Close", "plain", cancel);

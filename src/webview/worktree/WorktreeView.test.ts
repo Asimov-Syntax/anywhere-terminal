@@ -1957,7 +1957,11 @@ describe("dialogs", () => {
     });
     expect(host.querySelector(".wt-refusebox")).not.toBeNull();
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
-    expect(host.querySelector(".wt-blockers")).toBeNull();
+    // The refusal reports what was checked as every other report does (round-1
+    // B2); what makes it a refusal is that no control follows the list.
+    expect([...host.querySelectorAll("[data-check]")].map((e) => e.getAttribute("data-check"))).toEqual(
+      refusedBlocker.checks.map((c) => c.id),
+    );
   });
 
   it("still refuses on an unreadable row, but stops claiming to know it is working", () => {

@@ -243,7 +243,8 @@ describe("remove worktree — confirmation (§ 11)", () => {
     const items = Array.from(host.querySelectorAll(".wt-blockers li")).map((li) => li.textContent);
     expect(items.some((t) => t?.includes("uncommitted changes"))).toBe(true);
     expect(items.some((t) => t?.includes("3 untracked files"))).toBe(true);
-    expect(items.some((t) => t?.includes("2 idle terminals"))).toBe(true);
+    // Not "2 idle terminals" — the producer counts every non-exited pane (W2).
+    expect(items.some((t) => t?.includes("2 terminals"))).toBe(true);
     expect(items.some((t) => t?.includes("1 session in another window"))).toBe(true);
     expect(items.some((t) => t?.includes("spike, keep until Friday"))).toBe(true);
   });
@@ -319,7 +320,31 @@ describe("remove worktree — refused (§ 12)", () => {
     expect(host.querySelector(".wt-refusebox")).not.toBeNull();
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
     expect(host.querySelectorAll(".wt-btn:disabled")).toHaveLength(0);
-    expect(host.querySelector(".wt-blockers")).toBeNull();
+  });
+
+  it("[1_4] lists the checks the assessment reported, as every other report does", () => {
+    // Round-1 B2: the refusal branch returned before the lists were appended, so
+    // the one dialog a user cannot argue with was also the one that never said
+    // how much had been looked at. The requirement names no dialog.
+    const { host } = open(refusedBlocker, { agentRows: [busy] });
+
+    expect(reported(host)).toEqual(refusedBlocker.checks.map((c) => c.id));
+    expect(outcomeOf(host, "busyAgents")).toBe("failed");
+    expect(outcomeOf(host, "isMain")).toBe("passed");
+    // Still no control: listing what was checked is not offering a way past it.
+    expect(host.querySelector(".wt-btn--danger")).toBeNull();
+    expect(host.querySelector("#wt-confirm-name")).toBeNull();
+  });
+
+  it("[1_4] says what the counted terminals share, not that they are idle", () => {
+    // Round-1 W2: the producer counts every pane whose working directory is the
+    // worktree and is not exited — running and waiting ones included — so
+    // "idle terminals" understates active use right before deleting their cwd.
+    const { host } = open(withChecks(confirmableBlocker, { idlePanes: failedWith(2) }));
+
+    expect(saidOf(host, "idlePanes")).not.toMatch(/idle/i);
+    expect(saidOf(host, "idlePanes")).toMatch(/working directory/i);
+    expect(saidOf(host, "idlePanes")).toContain("2 terminals");
   });
 
   it("also lands focus inside the refusal", () => {

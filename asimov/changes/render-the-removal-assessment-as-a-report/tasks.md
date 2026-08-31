@@ -33,3 +33,15 @@
     - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
   - **Plan**:
     1. `src/webview/worktree/WorktreeRemoveDialog.ts`: in `buildForceWarning`, keep each clause's own truth condition — the pane clause only where panes were counted, the branch clause only where a branch is named — and state them for the ordinary confirmation as well as the forced one.
+
+- [x] 1_4 Fix round-1 B2 and W2 — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
+  - **Deps**: 1_3
+  - **Refs**: specs/worktree-panel/spec.md#the-removal-report-shows-every-check-it-ran-with-its-own-outcome; design.md D1; .reviews/round-1.md B2, W2
+  - **Acceptance**:
+    - Outcome: A refused dialog lists every check the assessment reported
+    - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeRemoveDialog.ts`: render the reported check list in the refusal path too, keeping the refusal explanation and mounting no confirmation control.
+    2. Same file: word the `idlePanes` failing sentence from the evidence the producer actually carries — panes whose working directory is the worktree — rather than claiming they are idle.
+    3. `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: replace the inherited assertions that a refused dialog has no `.wt-blockers`, and assert the pane wording against a running pane.
+  - **Boundary**: no change to `src/worktree/worktreeBlockers.ts`'s pane selection or to any message shape — the wording is the defect, not the count
