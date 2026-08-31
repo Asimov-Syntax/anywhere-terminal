@@ -1718,6 +1718,39 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         void answerDebrisAuthorization(surface, msg);
         return;
       }
+      case "worktreeCreateClosed": {
+        // The only signal that a create conversation ENDED. Closure cannot be
+        // inferred from the next opening: a form cancelled and never reopened
+        // is exactly the case such a rule would never reach, and it is the case
+        // that matters most — its read keeps the right to mint host authority
+        // for a form the user dismissed (design.md D3).
+        const key = surfaceKey(surface);
+        // Retirement spends the same authority an answer does. A close naming
+        // an opening this surface no longer holds is a late or replayed message
+        // from a form already replaced; honouring it would let it silence the
+        // form the user is looking at now (D2).
+        if (liveOpening.get(key) !== msg.opening) {
+          return;
+        }
+        liveOpening.delete(key);
+        // Every read this surface has in flight belonged to the opening that
+        // just retired — a read is only started by an opening ask, and this
+        // surface held exactly one. Clearing the slot is what makes the guard
+        // in that read's continuation refuse to publish.
+        const gone = `${key} `;
+        for (const reading of [...provisionReading.keys()]) {
+          if (reading.startsWith(gone)) {
+            provisionReading.delete(reading);
+          }
+        }
+        // And what the opening already issued goes with it (D5). A create
+        // citing an evicted id needs no new refusal path: § 2.4 already
+        // requires no create, no provisioning, a freshly resolved model, and a
+        // second submission. Across every repository, because one form can ask
+        // about more than one before it closes.
+        offers.forgetSurface(key);
+        return;
+      }
       case "requestWorktreeCreateDefaults": {
         // Answered by the HOST because only it knows the configured root, the
         // repo's own layout, and which candidates are free. A panel-computed
@@ -2663,6 +2696,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeUnlock":
       case "worktreePrune":
       case "requestWorktreeCreateDefaults":
+      case "worktreeCreateClosed":
       case "requestWorktreeRefs":
       case "worktreeCreateProbe":
       case "worktreeAuthorizeDebris":

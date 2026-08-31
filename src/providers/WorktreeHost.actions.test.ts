@@ -2553,6 +2553,72 @@ describe("the provisioning offer the create form is given", () => {
     dispose();
   });
 
+  it("[2_2] a read landing after the form closed publishes nothing", async () => {
+    // A cancelled form is the case a "supersede on the next opening" rule never
+    // reaches: nothing reopens, so the read kept its right to publish forever
+    // and minted host authority for a conversation the user ended (D3).
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => {
+        await held;
+        return model(".env.abandoned");
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 3 });
+    await settle();
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 3 });
+    release?.();
+    await settle();
+
+    expect(offersIn(view)).toHaveLength(0);
+    dispose();
+  });
+
+  it("[2_2] a retired opening has no authority left to spend", async () => {
+    // Retirement is what makes the offer unredeemable, and § 2.4 already owns
+    // what a create citing a dead id does. What is observable here is the other
+    // half: the opening itself stops being answerable, so nothing new is issued
+    // against it either.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => model(".env"),
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 3 });
+    await settle();
+    // The setup landed: the opening WAS answerable before the close.
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(1);
+
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 3 });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 3, branch: "feat/x" });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(1);
+    dispose();
+  });
+
+  it("[2_2] a retirement naming a dead opening leaves the live one alone", async () => {
+    // Retirement spends the same authority an answer does. An unconditional
+    // delete would let a late or replayed close from a form the user already
+    // replaced silence the form they are looking at now (D2).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => model(".env"),
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 4 });
+    await settle();
+    // The predecessor's close arrives after the live form already opened.
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 3 });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 4, branch: "feat/x" });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(2);
+    dispose();
+  });
+
   it("[r2 B5] a reopened form never receives its predecessor's model", async () => {
     // Keying the read by surface+repo alone made a reopening JOIN the read
     // already in flight, so the second form was handed the first form's answer.

@@ -38,3 +38,8 @@ messages already echo it, so extending that identity is reuse rather than a choi
 two staleness rules on one form is the defect this change removes.
 
 Planned at: 9f261154
+
+2_2: D5's eviction (`offers.forgetSurface` on close) has no behavioural witness in the host suite —
+`offers.lookup` still has no caller in `src/`, so nothing redeems an offer id yet (WT-012.2 owns the
+first redeemer). The retirement's two other effects are witnessed and mutation-verified; the eviction
+rests on `offerStore.test.ts`'s own `forgetSurface` coverage until a redeemer exists.

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "bind-a-result-to-the-form-that-asked"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788174355888,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788174355888,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "build",
+          "from": 1788174355888
+        }
+      ],
+      "firstAt": 1788174355888,
+      "lastAt": 1788174355888,
+      "buckets": []
+    }
+  ]
+}

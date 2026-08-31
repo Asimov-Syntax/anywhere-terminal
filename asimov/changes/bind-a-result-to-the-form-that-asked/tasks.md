@@ -39,7 +39,7 @@
     4. `src/providers/WorktreeHost.actions.test.ts`: the duplicate ask runs one read and still answers; an unknown opening posts nothing; a superseding opening's predecessor publishes nothing.
   - **Boundary**: the destination reply must not wait on the provisioning read — they stay independent, per the proposal's must-not
 
-- [ ] 2_2 Retire an opening, and evict what it authorized
+- [x] 2_2 Retire an opening, and evict what it authorized — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#closing-a-create-form-retires-its-opening; design.md D3, D5
   - **Acceptance**:
