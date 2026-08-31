@@ -42,3 +42,10 @@ no shared comparison logic, and the removal store guards the riskier action (D2)
 Auto-decision: the delete site is allowlisted in the I10 gate rather than moved outside its scope —
 passing by hiding inverts what the gate is for (D4).
 
+Handback (1_6): the wire has no carrier for a debris authorization. `worktreeCreateResolution`
+carries `ResolvedDisposition`, which the previous change deliberately narrowed so a probe answer
+holds nothing a delete could be built from, and no other message lets the host issue one — so the
+webview cannot populate `DestinationDisposition.debris.authorization`. Tasks 1_1-1_5 are committed
+and the host half is complete; 1_6 needs a new host-to-webview carrier, which is a `new-api-contract`
+change needing its own D# rather than a fix inside this task.
+
