@@ -3055,7 +3055,10 @@ describe("the host resolves a selection before the create runs", () => {
     // reattach CANDIDATE — the one mode that corroborates.
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
-    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution"), "the probe answered before the read").toHaveLength(0);
+    expect(
+      view.posts.filter((m) => m.type === "worktreeCreateResolution"),
+      "the probe answered before the read",
+    ).toHaveLength(0);
 
     await setFolders([OTHER_ROOT]);
     expect(host.openingsHeld(), "the setup never released the opening").toBe(0);
