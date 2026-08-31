@@ -59,6 +59,17 @@ let dirtyPaths: string[] = [];
 /** Set by a test that needs git to be killed part-way through a removal. */
 let removeTimesOut = false;
 /**
+ * Set by a test that needs the repositories here WATCHED.
+ *
+ * Off by default, and deliberately: the walks below rely on every repository
+ * being unwatched, which is what the removal-refusal note records. A test that
+ * needs a rebuild to be PENDING rather than absent turns it on, and then owns
+ * when — or whether — that rebuild is delivered.
+ */
+let watchRepos = false;
+/** Every watcher the pool asked the mock for, with the events it never delivered. */
+let watchers: { path: string; deliver: () => void }[] = [];
+/**
  * Set by a test that needs git and the filesystem to DISAGREE after a removal.
  *
  * Round-2 B7: this used to skip the whole simulated mutation, leaving BOTH the registration
@@ -422,6 +433,8 @@ beforeEach(() => {
   dirtyPaths = [];
   removeTimesOut = false;
   removeLeavesRegistration = false;
+  watchRepos = false;
+  watchers = [];
   posted = [];
   outbound = [];
   registered = [LINKED];
@@ -448,6 +461,36 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   vscode.__resetAll();
   vscode.__setWorkspaceFolders([{ uri: { fsPath: REPO } }]);
   (vscode.extensions as { onDidChange?: unknown }).onDidChange = () => ({ dispose: () => {} });
+  if (watchRepos) {
+    // The pool's own fallback is `vscode.workspace.createFileSystemWatcher`, and
+    // this mock has none — which is why `tryCreateWatcher` catches and every
+    // repository here is unwatched. Installed on the mock object rather than in
+    // it: the fake belongs to the one walk that needs a rebuild it can withhold.
+    (vscode.workspace as Record<string, unknown>).createFileSystemWatcher = (pattern: {
+      baseUri?: { fsPath?: string };
+    }) => {
+      const created: (() => void)[] = [];
+      const deleted: (() => void)[] = [];
+      const on = (into: (() => void)[]) => (cb: () => void) => {
+        into.push(cb);
+        return { dispose: () => {} };
+      };
+      watchers.push({
+        path: pattern.baseUri?.fsPath ?? "",
+        deliver: () => {
+          for (const cb of [...created, ...deleted]) {
+            cb();
+          }
+        },
+      });
+      return {
+        onDidCreate: on(created),
+        onDidChange: on([]),
+        onDidDelete: on(deleted),
+        dispose: () => {},
+      };
+    };
+  }
   const win = vscode.window as Record<string, unknown>;
   win.state ??= { focused: true, active: true };
   win.onDidChangeWindowState ??= () => ({ dispose: () => {} });
@@ -738,6 +781,44 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await settle();
 
     expect(gitCalls("remove")).toEqual([]);
+  });
+
+  it("[3_4] assesses the registration the barrier resolved, not the one the cache held", async () => {
+    // Round-4 B3, through the shipped wiring. The assess used to read straight
+    // from the cache, so with a watcher rebuild still pending it described the
+    // predecessor while reading the replacement's evidence — and minted force
+    // authority over it. Taking the coordinator's barrier is what makes the
+    // registration the report describes the one the confirmation acts on (D10).
+    watchRepos = true;
+    await assemble();
+
+    // The setup has to have landed, or every assertion below is about a walk
+    // that never happened: the predecessor is registered and rendered, the
+    // repository is genuinely watched, and nothing has rebuilt since.
+    expect(document.body.textContent).toContain("feature");
+    expect(watchers.length, "no watcher was created, so no rebuild could be pending").toBeGreaterThan(0);
+    const listings = (): number => argv.filter((c) => c.args[0] === "worktree" && c.args[1] === "list").length;
+    const before = listings();
+
+    // The replacement: same path, a registration git now reports as locked,
+    // which is a confirmable risk the predecessor did not carry. Its watcher
+    // event is DELIBERATELY not delivered — `watchers[0].deliver()` is the
+    // rebuild this walk withholds.
+    lockedRow = true;
+    await settle();
+    expect(listings(), "a rebuild landed before the click, so nothing was stale").toBe(before);
+
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog, "the menu click opened no report at all").not.toBeNull();
+    // Read from the replacement: the lock is named, the control is the typed
+    // one, and a fingerprint was therefore issued. Against the cached
+    // predecessor this report is clean and confirms with a plain Remove.
+    expect(dialog?.querySelector("#wt-confirm-name"), "the report was built from the cached registration").not.toBeNull();
+    expect(dialog?.textContent ?? "").toMatch(/lock/i);
+    expect(gitCalls("remove"), "git ran before the user had answered anything").toEqual([]);
   });
 
   it("shows the removal's outcome, in the order the coordinator really produces", async () => {

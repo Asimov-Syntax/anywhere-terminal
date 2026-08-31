@@ -187,7 +187,7 @@
     5. `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: the two falsifiers the id-only draft failed — reply 1 of two requests for the SAME worktree opens nothing, and a reply landing after the view's own opener leaves that dialog standing — plus a reply for a different worktree, a re-scoped `unavailable` rendering no Retry, a suppressed duplicate request, and the ordinary path still opening its report.
   - **Boundary**: the token orders answers and authorizes nothing — force authority stays D7's fingerprint, and a stale-token reply is discarded rather than trusted for any part of itself
 
-- [ ] 3_4 Prove the replacement cannot be deleted under its predecessor's report
+- [x] 3_4 Prove the replacement cannot be deleted under its predecessor's report — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 3_1, 3_2, 3_3
   - **Refs**: design.md D10, D11
   - **Acceptance**:
