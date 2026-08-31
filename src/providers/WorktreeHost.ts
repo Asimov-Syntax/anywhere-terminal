@@ -1233,11 +1233,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>,
     repo: WorktreeRepo,
   ): Promise<void> {
-    const { freePath, occupiedCandidate } = resolveDestination(
-      repo,
-      msg.query,
-      await vettedOverride(msg.candidatePath, repo),
-    );
+    // Identity, never a captured reference (D9). The map entry can be released
+    // while this continuation is suspended — the repository leaves the
+    // workspace, a newer opening replaces it — and an object taken before the
+    // await cannot be reached by that release, so the probe resumed and posted
+    // from facts about a repository nobody has any more (round-5 B7).
+    const stillOurs = (): Opening | undefined => {
+      const held = openingFor(surface, msg.repoId, msg.token);
+      return held !== undefined && held.latestSeq <= msg.seq ? held : undefined;
+    };
+
+    const override = await vettedOverride(msg.candidatePath, repo);
+    const opening = stillOurs();
+    if (opening === undefined) {
+      return;
+    }
+    const { freePath, occupiedCandidate } = resolveDestination(repo, msg.query, override);
 
     // The enumeration the dialog's opening already took, not a second one: a
     // probe per settled edit that re-asks git is the per-keystroke read D2
@@ -1247,13 +1258,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // resolves every query to `fresh`. That is the documented fail-OPEN: a
     // branch we cannot confirm exists is treated as one to create, and git's
     // own refusal at `add` is the backstop, surfaced verbatim (§ 6).
-    const opening = openingFor(surface, msg.repoId, msg.token);
-    const read = await opening?.read.catch(() => undefined);
+    const read = await opening.read.catch(() => undefined);
     // A newer probe was asked for this opening while this one was suspended on
     // the enumeration. Answering now would post a classification the form has
     // already moved past, and under a slow read every keystroke's continuation
     // would resume and re-classify (round-1 B5, B6).
-    if ((opening?.latestSeq ?? msg.seq) > msg.seq) {
+    if (stillOurs() === undefined) {
       return;
     }
     const refs = read !== undefined && read.ok === true ? read.refs : [];
@@ -1286,7 +1296,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
 
     // The surface may have detached while git was answering. Posting to a dead
     // one is at best wasted, and the form it described is gone.
-    if (disposed || !surfaces.has(surface) || (opening?.latestSeq ?? msg.seq) > msg.seq) {
+    if (disposed || !surfaces.has(surface) || stillOurs() === undefined) {
       return;
     }
     // Only where a base can actually apply. `reuse` and `reattach` take their
@@ -1298,7 +1308,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // the one path that still uses it (round-3 B4).
     const takesBase = mode.kind === "fresh" || mode.kind === "adopt";
     const baseValid = takesBase ? await resolveBaseVerdict(repo, msg.base) : undefined;
-    if (disposed || !surfaces.has(surface) || (opening?.latestSeq ?? msg.seq) > msg.seq) {
+    if (disposed || !surfaces.has(surface) || stillOurs() === undefined) {
       return;
     }
     surface.post({

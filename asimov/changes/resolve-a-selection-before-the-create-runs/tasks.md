@@ -178,7 +178,7 @@
     3. Same file: the resolution applier consumes a detached answer's destination while still discarding its mode.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched
 
-- [ ] 7_2 A suspended probe re-identifies its opening before it answers
+- [x] 7_2 A suspended probe re-identifies its opening before it answers — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: none
   - **Refs**: design.md D9
   - **Acceptance**:

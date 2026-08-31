@@ -478,6 +478,13 @@ async function builtHost(
       await settle();
       noteTree(view);
     },
+    /** The workspace becomes exactly these folders, and the tree is rebuilt. */
+    setFolders: async (next: string[]) => {
+      folders.now = next;
+      host.handleMessage(view, { type: "requestWorktreeTree", force: true });
+      await settle();
+      noteTree(view);
+    },
     /** The sibling repository leaves the workspace, and the tree is rebuilt. */
     dropSibling: async () => {
       folders.now = ["/repo"];
@@ -3018,6 +3025,113 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 2, seq: 0, query: "feat" });
     await settle();
     expect(resolutionIn(view)).toMatchObject({ token: 2, mode: { kind: "reuse" } });
+    dispose();
+  });
+
+  it("[7_2] drops a suspended probe rather than corroborating for a departed repository", async () => {
+    // Releasing the map entry cannot reach a continuation that captured the
+    // opening OBJECT before its await, so the probe resumed and classified from
+    // facts about a repository the workspace no longer has. Identity after every
+    // await is what authorizes the answer (round-5 B7, design.md D9).
+    //
+    // Each window needs its own case: the gates are sequential, so whichever is
+    // reached first catches a departure and the ones after it never run. What
+    // separates them is the WORK between them — this one proves the
+    // corroboration never happens.
+    let release: ((r: RepoRefsRead) => void) | undefined;
+    const probeSubjects: { repoPath: string; branch: string; repairPath: string }[] = [];
+    const { host, view, setFolders, dispose } = await builtHost([windowRow()], true, {
+      createRoot: "/trees",
+      sibling: true,
+      probeSubjects,
+      probeReattach: async () => ({ kind: "declined", because: "headMoved" }),
+      readRefs: () =>
+        new Promise<RepoRefsRead>((resolve) => {
+          release = resolve;
+        }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    // `feat` is held by a worktree git reports prunable, so it classifies as a
+    // reattach CANDIDATE — the one mode that corroborates.
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution"), "the probe answered before the read").toHaveLength(0);
+
+    await setFolders([OTHER_ROOT]);
+    expect(host.openingsHeld(), "the setup never released the opening").toBe(0);
+
+    release?.({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false });
+    await settle();
+
+    expect(probeSubjects, "a departed repository was still corroborated").toEqual([]);
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(0);
+    dispose();
+  });
+
+  it("[7_2] drops a probe whose repository leaves while it is corroborating", async () => {
+    const baseAsks: string[] = [];
+    let depart: () => Promise<void> = async () => {};
+    const { host, view, setFolders, dispose } = await builtHost([windowRow()], true, {
+      createRoot: "/trees",
+      sibling: true,
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      probeReattach: async () => {
+        await depart();
+        return { kind: "declined", because: "headMoved" };
+      },
+      resolveBase: async ({ ref }) => {
+        baseAsks.push(ref);
+        return "abc";
+      },
+    });
+    depart = () => setFolders([OTHER_ROOT]);
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "feat",
+      base: { kind: "ref", ref: "origin/main" },
+    });
+    // The departure runs its own rebuild inside the corroboration, so the
+    // continuation resumes a turn later than the settle that released it.
+    await settle();
+    await settle();
+
+    // A declined corroboration falls back to `fresh`, which is the one mode that
+    // goes on to resolve a base — so the base ask is what says this continuation
+    // kept running for a repository that had left.
+    expect(baseAsks, "a departed repository was still asked to resolve a base").toEqual([]);
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(0);
+    dispose();
+  });
+
+  it("[7_2] drops a probe whose repository leaves while its base is being resolved", async () => {
+    let depart: () => Promise<void> = async () => {};
+    const { host, view, setFolders, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      sibling: true,
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase: async () => {
+        await depart();
+        return "abc";
+      },
+    });
+    depart = () => setFolders([OTHER_ROOT]);
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "brand-new",
+      base: { kind: "ref", ref: "origin/main" },
+    });
+    await settle();
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(0);
     dispose();
   });
 
