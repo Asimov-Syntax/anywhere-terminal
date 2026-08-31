@@ -166,7 +166,7 @@
     6. `src/extension.worktreeAssembly.test.ts`: override walks for reattach and for an occupied fresh candidate, asserting displayed path, posted path and issued argv name one path (W7).
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched; no new `D#`
 
-- [ ] 7_1 The resolution's target is the destination, in every mode
+- [x] 7_1 The resolution's target is the destination, in every mode — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: none
   - **Refs**: design.md D5, D8; specs/worktree-panel/spec.md#{a-selection-resolves-to-what-the-create-would-actually-do-before-submit, the-whole-selection-is-resolved-in-every-mode, a-supplied-destination-is-a-candidate-the-resolution-answers-not-the-path-submitted, a-mode-that-fixes-its-own-target-refuses-the-destination-control}
   - **Acceptance**:

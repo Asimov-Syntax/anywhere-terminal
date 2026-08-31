@@ -2154,6 +2154,66 @@ describe("the base ref states when it cannot apply", () => {
     expect(submitted[0]?.path).toBe("/trees/stale");
   });
 
+  it("[7_1] states and submits the path the host answered, not the override it answered about", () => {
+    // The override is the QUESTION. A candidate the host suffixed past is not a
+    // destination it agreed to, and displaying one path while git is handed
+    // another is the failure this change exists to remove (round-5 B3).
+    const submitted: WorktreeCreateDraft[] = [];
+    const h = withResolution({ onSubmit: (d) => submitted.push(d), onSelectionChange: () => {} });
+    settleBranch(h, "brand-new");
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    settle(h.q<HTMLInputElement>("#wt-path"), "/trees/mine");
+
+    h.resolve({ query: "brand-new", seq: 1, mode: { kind: "fresh" }, freePath: "/trees/mine-2" });
+
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/mine-2");
+    primary(h.host).click();
+    expect(submitted[0]?.path).toBe("/trees/mine-2");
+  });
+
+  it("[7_1] keeps the override as the candidate it asks about, so editing it asks again", () => {
+    // Taking the answer's target must not overwrite the candidate: the form
+    // would then be asking about the answer to its own last question, and an
+    // edit the user made would be unaskable.
+    const asked: unknown[] = [];
+    const h = withResolution({ onSelectionChange: (sel) => asked.push(sel) });
+    settleBranch(h, "brand-new");
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    settle(h.q<HTMLInputElement>("#wt-path"), "/trees/mine");
+    h.resolve({ query: "brand-new", seq: 1, mode: { kind: "fresh" }, freePath: "/trees/mine-2" });
+
+    expect(h.q<HTMLInputElement>("#wt-path").value, "the answer overwrote the candidate").toBe("/trees/mine");
+    settle(h.q<HTMLInputElement>("#wt-path"), "/trees/other");
+    expect(asked.at(-1)).toMatchObject({ candidatePath: "/trees/other" });
+  });
+
+  it("[7_1] takes a detached answer's destination while still discarding its mode", () => {
+    const submitted: WorktreeCreateDraft[] = [];
+    const h = withResolution({ onSubmit: (d) => submitted.push(d), onSelectionChange: () => {} });
+    h.q<HTMLButtonElement>("#wt-detached").click();
+    settle(h.q<HTMLInputElement>("#wt-base"), "9f2c1ab");
+
+    // A create is not offered against a selection nobody has resolved, detached
+    // included — the toggle outranks the classification's MODE and nothing else
+    // (round-5 B10).
+    expect(primary(h.host).disabled).toBe(true);
+
+    h.resolve({
+      query: "9f2c1ab",
+      seq: 1,
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" },
+      freePath: "/trees/repo-9f2c1ab",
+    });
+
+    // The mode is discarded: the field is not a branch name under detached, so
+    // no classification of it can turn this into a repair.
+    expect(h.q<HTMLInputElement>("#wt-path").disabled, "a discarded mode still refused the destination").toBe(false);
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/repo-9f2c1ab");
+    primary(h.host).click();
+    expect(submitted[0]).toMatchObject({ branchMode: "detached", path: "/trees/repo-9f2c1ab" });
+    expect(submitted[0]?.resolved, "a discarded mode travelled with the submission").toBeUndefined();
+  });
+
   it("[B6] asks once per settled edit, not once per keystroke", () => {
     const asked: unknown[] = [];
     const h = withResolution({ onSelectionChange: (sel) => asked.push(sel) });

@@ -377,6 +377,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   };
   /** True until the user edits the path themselves; after that we stop deriving it. */
   let pathIsDerived = true;
+  /**
+   * The destination the user typed — the QUESTION, never the answer (D8).
+   *
+   * `draft.path` is what the form states and submits, and once a resolution has
+   * landed that is the resolution's own target. Keeping the candidate here is
+   * what lets the two differ: a candidate the host suffixed past, or refused
+   * because it resolves outside the create root, stays askable and visible in
+   * the field while the create carries the path the host actually answered.
+   */
+  let supplied = "";
   /** What the user picked, in the form's vocabulary. `draft.openAfter` is derived
    *  from this and `folderMode` — one wire value, never two sources for it. */
   let afterChoice: AfterChoice = "none";
@@ -811,7 +821,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // The classification travels WITH the submission, so the owner builds the
     // request from the answer this form was showing rather than from its own
     // second copy of it (round-3 B3).
-    deps.onSubmit({ ...draft, ...launch, ...(effective === null ? {} : { resolved: effective.mode }) });
+    // The mode the toggle discarded does not travel either: the owner builds the
+    // request from it, so sending a classification of text that is not a branch
+    // name would turn a detached create into the repair the form refused.
+    const carried = draft.branchMode === "detached" ? null : effective;
+    deps.onSubmit({ ...draft, ...launch, ...(carried === null ? {} : { resolved: carried.mode }) });
     disposeAll();
   }
 
@@ -913,7 +927,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // Only an override travels. The derived path is the host's own answer
       // coming back, and sending it would pin the resolution to the value it
       // just produced instead of letting it re-derive.
-      ...(pathIsDerived || draft.path.trim().length === 0 ? {} : { candidatePath: draft.path }),
+      ...(pathIsDerived || supplied.trim().length === 0 ? {} : { candidatePath: supplied }),
     };
   }
 
@@ -926,7 +940,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * (round-3 B3).
    */
   function targetOf(resolution: WorktreeCreateResolutionMessage): string {
-    return resolution.mode.kind === "reattach" ? resolution.mode.repairPath : resolution.freePath;
+    // The mode the FORM holds, not the one the answer carried: under detached
+    // the classification is discarded (D5), so a repair path it named is not a
+    // directory this create will ever act on.
+    const mode = resolution.mode;
+    return mode.kind === "reattach" && draft.branchMode !== "detached" ? mode.repairPath : resolution.freePath;
   }
 
   /** Ask the host what this selection would do, at most once each. */
@@ -1250,10 +1268,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // (round-3 B12).
     // The RESOLUTION's own path first: it answered the whole selection, and the
     // defaults reply answered only the branch (round-3 B3).
-    const resolvedPath = (effective === null ? undefined : targetOf(effective)) ?? repo.resolvedPath;
+    const answered = effective === null ? undefined : targetOf(effective);
+    const resolvedPath = answered ?? repo.resolvedPath;
     const derived = resolvedPath ?? (slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "");
     if (pathIsDerived) {
-      draft.path = derived;
       // Whoever owns the caret owns the text. Guarding the CALLERS was the
       // round-2 fix and it left the other eight unguarded by construction — the
       // answer callback arrives on the host's schedule, so it is the one that can
@@ -1265,12 +1283,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     pathInput.placeholder = `…/${repo.pathPrefix}-<branch>`;
 
-    // The line states the path the SUBMISSION carries, which is the override the
-    // moment there is one. Two values — the host's answer and `draft.path` — can
-    // disagree the instant the display stops being the input, and a line showing
-    // the host default over a submitted override is the worse of the two lies.
-    const overridden = !pathIsDerived;
-    const stated = overridden ? draft.path : resolvedPath;
+    // The answer owns the destination once it lands, override or not: a supplied
+    // path is the candidate the probe carried, and what the form states and
+    // submits is what came back about it (D8). Before any answer there is only
+    // the candidate, or the derived shape.
+    const stated = answered ?? (pathIsDerived ? derived : supplied);
+    // ONE value, read by the line and by the submission — the split between them
+    // is what let a create display one directory and hand git another.
+    draft.path = stated;
     if (stated) {
       destExact = stated;
       dest.setAttribute("aria-label", stated);
@@ -1297,8 +1317,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // The candidate the suffixing SKIPPED, from the resolution that skipped it.
     // `collidedWith` is the defaults reply's answer to the narrower question,
     // and kept only until a resolution has spoken (round-3 B3).
-    const skipped = effective === null ? repo.collidedWith : lastSegment(effective.occupiedCandidate?.path ?? "");
-    if (skipped && !overridden) {
+    // Before any answer an override retires it: the defaults reply answered the
+    // branch, and it knows nothing about the path the user then typed. Once the
+    // answer lands the note is the whole point of an override — it is what says
+    // the candidate was occupied and names what the create took instead.
+    const skipped =
+      effective === null
+        ? pathIsDerived
+          ? repo.collidedWith
+          : ""
+        : lastSegment(effective.occupiedCandidate?.path ?? "");
+    if (skipped) {
       destNote.hidden = false;
       const taken = document.createElement("b");
       taken.textContent = skipped;
@@ -1364,9 +1393,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       draft.path.trim().length === 0 ||
       outstanding ||
       unasked ||
-      // Detached is the user's own toggle and asks no classification of the
-      // typed text, so it is not held behind one.
-      (resolutionOutstanding && !detached) ||
+      resolutionOutstanding ||
       baseUnresolvable ||
       postureMissing;
     shell.refreshFocusTrap();
@@ -1419,7 +1446,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // override. One-way, the face showed a derivation that had been switched off
     // and Create was disabled with the explaining control behind the disclosure.
     pathIsDerived = pathInput.value.trim() === "";
-    draft.path = pathInput.value;
+    supplied = pathInput.value;
     syncDerived();
   });
   shell.dialog.addEventListener("keydown", (ev) => {
@@ -1510,13 +1537,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // An answer the user has typed past describes a selection that is gone.
     // This is what `query` echoes for — the token separates two OPENINGS, and
     // only this separates two edits within one (design.md D1).
-    if (resolution.query.trim() !== nameInput.value.trim()) {
-      return;
-    }
-    // Detached is the user's own toggle and outranks a classification of the
-    // typed text: the resolution answers "what is this branch name", and under
-    // detached the field is not a branch name at all.
-    if (draft.branchMode === "detached") {
+    // Under detached the selection's branch is the REF, so that is what the echo
+    // is compared against — the branch field is not what was asked about.
+    const detached = draft.branchMode === "detached";
+    if (resolution.query.trim() !== (detached ? baseInput.value : nameInput.value).trim()) {
       return;
     }
     // `adopt` is reported so the resolver can name the state it found; the form
@@ -1531,7 +1555,15 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // It carries `freePath`, which is the destination the form states and
     // submits, so this answer settles the destination question too.
     outstanding = false;
-    switch (resolution.mode.kind) {
+    // Detached is the user's own toggle and outranks a classification of the
+    // typed text: the resolution answers "what is this branch name", and under
+    // detached the field is not a branch name at all. It outranks the MODE and
+    // nothing else — the answer's destination is no less true for the toggle
+    // being on, and discarding it wholesale left a detached create offered
+    // against a destination nobody had resolved (D5, round-5 B10).
+    switch (detached ? "detached" : resolution.mode.kind) {
+      case "detached":
+        break;
       case "reattach":
         draft.branchMode = "reattach";
         break;
