@@ -1735,17 +1735,35 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // that half was never a reason to avoid it, and the capability now takes
         // that barrier itself, because a report read from the cache can describe
         // a registration the confirmation will not act on (D10).
+        // Answered, not dropped. D12 admits no exception: an unanswered request
+        // leaves the panel's own duplicate-request guard holding a reply that
+        // is never coming, and the menu item dead for that row (D10, D11).
+        const unavailable = (unreadable: readonly string[]): void => {
+          if (surfaces.has(surface)) {
+            surface.post({
+              type: "worktreeRemoveAssessment",
+              worktreeId: assessTarget,
+              token: msg.token,
+              result: { kind: "unavailable", unreadable },
+            });
+          }
+        };
         if (assess === undefined || assessRepo === undefined || actionPath(assessTarget, true) === undefined) {
+          unavailable(["the worktree is no longer registered"]);
           return;
         }
         void assess({ repoId: assessRepo, worktreeId: assessTarget, origin: surface })
           .then((result) => {
             // Re-checked after the await, like every other read here: the
             // surface may have gone, and this answer carries a fingerprint.
-            if (result === null || !surfaces.has(surface)) {
+            if (!surfaces.has(surface)) {
               return;
             }
-            surface.post({ type: "worktreeRemoveAssessment", worktreeId: assessTarget, result });
+            if (result === null) {
+              unavailable(["the worktree is no longer registered"]);
+              return;
+            }
+            surface.post({ type: "worktreeRemoveAssessment", worktreeId: assessTarget, token: msg.token, result });
           })
           .catch(() => {
             // Inventing an empty report would render a worktree of unknown risk
@@ -1754,14 +1772,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             // already defines is the honest third answer, and naming the
             // assessment itself keeps its promise that the list is never empty
             // (D12).
-            if (!surfaces.has(surface)) {
-              return;
-            }
-            surface.post({
-              type: "worktreeRemoveAssessment",
-              worktreeId: assessTarget,
-              result: { kind: "unavailable", unreadable: ["the assessment"] },
-            });
+            unavailable(["the assessment"]);
           });
         return;
       }

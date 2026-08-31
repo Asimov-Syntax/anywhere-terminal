@@ -172,6 +172,12 @@ export interface WorktreeViewDeps {
    * resolve first — re-running either would be guessing.
    */
   onRetryAction?: (result: WorktreeActionResult) => void;
+  /**
+   * A dialog is being opened. Every opener below calls it, including the
+   * blocked notice's own — a guard the controller clears is not cleared when
+   * the view is what opened the dialog (round-4 W4, design.md D11).
+   */
+  onDialogOpened?: () => void;
   /** Seeds the create form; absent → the create affordance does nothing. */
   createDialogDeps?: () => Omit<WorktreeCreateDialogDeps, "onSubmit" | "onCancel">;
   onCreateSubmit?: WorktreeCreateDialogDeps["onSubmit"];
@@ -568,13 +574,23 @@ export class WorktreeView {
     this.repaint();
   }
 
+  /**
+   * Retire whatever the panel was waiting on, then clear the floor for a new
+   * dialog. Both halves belong together: `closeDialog` is global, so opening
+   * any dialog is also what makes a still-outstanding assess obsolete (D11).
+   */
+  private beginDialog(): void {
+    this.deps.onDialogOpened?.();
+    this.closeDialog?.();
+  }
+
   /** Open the create form over the panel. No-op without `createDialogDeps`. */
   openCreateDialog(initialRepoId?: string): void {
     const seed = this.deps.createDialogDeps?.();
     if (!seed || seed.repos.length === 0) {
       return;
     }
-    this.closeDialog?.();
+    this.beginDialog();
     // Captured HERE, while this form is the one being opened. Everything below
     // closes over it, so no exit has to ask what the current opening is at the
     // moment it runs (B3).
@@ -624,7 +640,7 @@ export class WorktreeView {
     if (agents.length === 0) {
       return;
     }
-    this.closeDialog?.();
+    this.beginDialog();
     // Tracked like every other modal here: an untracked one stays mounted under
     // the next dialog, holding a focus trap and a document listener nothing
     // will ever release.
@@ -643,7 +659,7 @@ export class WorktreeView {
 
   /** Open the prune confirmation. The count is the host's; the panel never guesses it. */
   openPruneDialog(args: Omit<PruneDialogDeps, "onConfirm" | "onCancel">, onConfirm: (count: number) => void): void {
-    this.closeDialog?.();
+    this.beginDialog();
     openWorktreePruneDialog(this.deps.host, {
       ...args,
       onConfirm: (count) => {
@@ -658,7 +674,7 @@ export class WorktreeView {
 
   /** Open the remove confirmation — or its refusal, when nothing can authorize it. */
   openRemoveDialog(args: Omit<WorktreeRemoveDialogDeps, "onConfirm" | "onCancel" | "now">): void {
-    this.closeDialog?.();
+    this.beginDialog();
     this.closeDialog = openWorktreeRemoveDialog(this.deps.host, {
       ...args,
       now: this.now(),
@@ -1511,7 +1527,10 @@ export class WorktreeView {
       // NOT a failure and NOT unclear: nothing was attempted, because what the
       // action would affect could not be read. That is the one outcome a retry
       // can actually change, so it is the only one that offers one.
-      const retry = this.deps.onRetryAction;
+      // Offered only where it can act. A re-scoped result has lost the
+      // worktreeId the re-ask needs, and a button that does nothing is worse
+      // than no button (round-4 W4).
+      const retry = result.worktreeId === undefined ? undefined : this.deps.onRetryAction;
       return renderNotice({
         tone: "warn",
         live: "alert",

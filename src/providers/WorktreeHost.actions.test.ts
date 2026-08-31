@@ -4517,20 +4517,22 @@ describe("a removal is reported without being performed", () => {
 
   it("answers the asking surface and never reaches the removal", async () => {
     const { host, view, calls, dispose } = await builtHost([windowRow()], false, { assessReport: REPORT(null) });
-    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     await settle();
 
     // The whole point of round-3 B1: asking must not be a way of removing. The
     // full `calls` list, not a filter — a `removeWorktree` entry appearing here
     // is the defect, and a filtered assertion would not see it.
     expect(calls).toEqual([["assessRemovalReport", { repoId: REPO, worktreeId: RAW_ID, origin: view }]]);
-    expect(view.posts).toEqual([{ type: "worktreeRemoveAssessment", worktreeId: RAW_ID, result: REPORT(null) }]);
+    expect(view.posts).toEqual([
+      { type: "worktreeRemoveAssessment", worktreeId: RAW_ID, token: "t-1", result: REPORT(null) },
+    ]);
     dispose();
   });
 
   it("carries the fingerprint the service issued, and carries none when it issued none", async () => {
     const withRisk = await builtHost([windowRow()], false, { assessReport: REPORT("fp-9") });
-    withRisk.host.handleMessage(withRisk.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    withRisk.host.handleMessage(withRisk.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     await settle();
     const risky = withRisk.view.posts[0];
     expect(
@@ -4542,7 +4544,7 @@ describe("a removal is reported without being performed", () => {
     // that authorizes nothing. Asserted separately so a change that started
     // issuing unconditionally fails here rather than passing both cases.
     const clean = await builtHost([windowRow()], false, { assessReport: REPORT(null) });
-    clean.host.handleMessage(clean.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    clean.host.handleMessage(clean.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     await settle();
     const post = clean.view.posts[0];
     expect(
@@ -4551,13 +4553,23 @@ describe("a removal is reported without being performed", () => {
     clean.dispose();
   });
 
-  it("posts nothing when the id names nothing", async () => {
+  it("reaches no capability for an id that names nothing, and still answers", async () => {
+    // D12 admits no exception: an unanswered request leaves the panel's own
+    // duplicate-request guard waiting on a reply that is never coming, and the
+    // menu item dead for that row.
     const { host, view, calls, dispose } = await builtHost([windowRow()], false, { assessReport: REPORT(null) });
-    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: "/nowhere" });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: "/nowhere", token: "t-1" });
     await settle();
 
     expect(calls).toEqual([]);
-    expect(view.posts).toEqual([]);
+    expect(view.posts).toEqual([
+      {
+        type: "worktreeRemoveAssessment",
+        worktreeId: "/nowhere",
+        token: "t-1",
+        result: { kind: "unavailable", unreadable: ["the worktree is no longer registered"] },
+      },
+    ]);
     dispose();
   });
 
@@ -4569,7 +4581,7 @@ describe("a removal is reported without being performed", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       assessReport: { kind: "unavailable", unreadable: ["/repo-wt/feat"] },
     });
-    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     await settle();
 
     const post = view.posts[0];
@@ -4586,13 +4598,14 @@ describe("a removal is reported without being performed", () => {
         throw new Error("status read failed");
       },
     });
-    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     await settle();
 
     expect(view.posts).toEqual([
       {
         type: "worktreeRemoveAssessment",
         worktreeId: RAW_ID,
+        token: "t-1",
         result: { kind: "unavailable", unreadable: ["the assessment"] },
       },
     ]);
@@ -4610,7 +4623,7 @@ describe("a removal is reported without being performed", () => {
         throw new Error("status read failed");
       },
     });
-    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     dispose();
     release?.();
     await settle();

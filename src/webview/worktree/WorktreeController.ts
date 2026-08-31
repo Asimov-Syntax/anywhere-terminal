@@ -162,6 +162,13 @@ export function worktreeMenuActions(
    * and additionally per-row: a row with no session is never offered it.
    */
   onResumeHere?: (row: WorktreeAgentRow) => void,
+  /**
+   * Mint the token this request will be answered under, or `null` to drop it
+   * because one is already outstanding for the same worktree (D10, D11). Absent
+   * → a bare token that no controller is ordering answers against, which is the
+   * right shape for a menu built with no controller behind it.
+   */
+  beginAssess?: (worktreeId: string) => string | null,
 ): WorktreeMenuActions {
   return {
     ...(onCreate === undefined ? {} : { createWorktree: onCreate }),
@@ -183,7 +190,13 @@ export function worktreeMenuActions(
     // `worktreeRemove` this used to post deleted a clean worktree outright,
     // because the host reports only from the path that already attempted the
     // deletion — the whole of round-3 B1 (design.md D6).
-    removeWorktree: (info) => post({ type: "worktreeRemoveAssess", worktreeId: info.id }),
+    removeWorktree: (info) => {
+      const token = beginAssess === undefined ? "" : beginAssess(info.id);
+      if (token === null) {
+        return;
+      }
+      post({ type: "worktreeRemoveAssess", worktreeId: info.id, token });
+    },
     // Repo-scoped: a prune drops stale REGISTRATIONS, which belong to the
     // repository rather than to the worktree the menu was opened on. The count
     // is the one the confirmation named, and the host abandons the prune if it
@@ -368,6 +381,16 @@ export class WorktreeController {
   /** Held rather than passed: the two launch items appear only once one can act. */
   private readonly menuActions: WorktreeMenuActions;
 
+  /**
+   * The assess this surface is still waiting on, if any. At most one: a second
+   * request for the same worktree is dropped rather than queued, because each
+   * one holds the host's per-repo mutation queue across two forced rebuilds and
+   * the reads between them (D10).
+   */
+  private liveAssess: { token: string; worktreeId: string } | null = null;
+
+  private assessSeq = 0;
+
   /** True between asking which agents can start a session and being told. */
   private awaitingLaunchTargets = false;
 
@@ -433,6 +456,9 @@ export class WorktreeController {
       (info) => this.repoFor(info),
       (info) => this.openCreateFor(info),
       (repoId) => this.confirmPrune(repoId),
+      undefined,
+      undefined,
+      (worktreeId) => this.beginAssess(worktreeId),
     );
     // Always wired, unlike `resumeHere`: the capture is what makes the menu's
     // own view of the tree authoritative, and it must happen even on an open
@@ -547,8 +573,15 @@ export class WorktreeController {
       // where nothing about the worktree's risk is known at all.
       onRetryAction: (result) => {
         if (result.worktreeId !== undefined) {
-          deps.postMessage({ type: "worktreeRemoveAssess", worktreeId: result.worktreeId });
+          this.askRemoval(result.worktreeId);
         }
+      },
+      // Any dialog opening retires the outstanding assess: what the user is
+      // looking at now is the answer to a newer question, and the view's own
+      // blocked-notice opener is why this cannot be a controller-local guard
+      // (D11).
+      onDialogOpened: () => {
+        this.liveAssess = null;
       },
       /** The opening the form being opened right now will ride (D1). */
       createOpening: () => this.refsToken,
@@ -1317,6 +1350,31 @@ export class WorktreeController {
     this.showActionResult(toActionResult(msg));
   }
 
+  /**
+   * Claim the one live assess slot for `worktreeId`, or refuse a duplicate.
+   *
+   * The token orders answers and authorizes nothing: a reply carrying a stale
+   * one is discarded rather than trusted for any part of itself (D11).
+   */
+  private beginAssess(worktreeId: string): string | null {
+    if (this.liveAssess !== null && this.liveAssess.worktreeId === worktreeId) {
+      return null;
+    }
+    this.assessSeq += 1;
+    const token = `assess-${this.assessSeq}`;
+    this.liveAssess = { token, worktreeId };
+    return token;
+  }
+
+  /** Ask what a removal would cost, under a token this surface can recognise. */
+  private askRemoval(worktreeId: string): void {
+    const token = this.beginAssess(worktreeId);
+    if (token === null) {
+      return;
+    }
+    this.deps.postMessage({ type: "worktreeRemoveAssess", worktreeId, token });
+  }
+
   /** One notice per scope and verb, wherever the outcome came from. */
   private showActionResult(raw: WorktreeActionResult): void {
     const result = this.rescope(raw);
@@ -1340,6 +1398,13 @@ export class WorktreeController {
    * the host's own `unavailable` already goes.
    */
   handleRemoveAssessment(msg: WorktreeRemoveAssessmentMessage): void {
+    // Whatever its worktreeId. An id-only guard cannot order two requests for
+    // the SAME worktree, and reply 1 landing after request 2 would still open
+    // (D11).
+    if (this.liveAssess === null || this.liveAssess.token !== msg.token) {
+      return;
+    }
+    this.liveAssess = null;
     const info = this.infoOf(msg.worktreeId);
     if (msg.result.kind === "unavailable") {
       const repoId = info === undefined ? undefined : this.repoFor(info)?.repoId;

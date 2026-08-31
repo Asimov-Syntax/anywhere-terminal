@@ -2455,6 +2455,25 @@ describe("an outcome that could not be checked, and one that simply worked", () 
     expect(retried).toEqual([unavailable]);
   });
 
+  it("[W4] offers no retry once the result has lost the target it would re-ask about", () => {
+    // The second half of W4. A row that departs while the read was in flight
+    // gets its result re-scoped, dropping `worktreeId` — and the re-ask has
+    // nothing to name, so the button did nothing while still on screen.
+    const retried: WorktreeActionResult[] = [];
+    const { view } = mount({ onRetryAction: (r: WorktreeActionResult) => retried.push(r) });
+    const { worktreeId: _gone, ...rescoped } = unavailable;
+    view.setData({ ...populated(), actionResults: [rescoped] });
+
+    const notice = view.element.querySelector(".wt-notice--warn");
+    expect(notice, "the re-scoped result rendered no notice at all").not.toBeNull();
+    expect(
+      [...(notice?.querySelectorAll<HTMLButtonElement>("button") ?? [])].filter((b) =>
+        /retry|try again/i.test(b.textContent ?? ""),
+      ),
+    ).toEqual([]);
+    expect(retried).toEqual([]);
+  });
+
   it("names which reads failed rather than saying it could not check", () => {
     const { view } = mount();
     view.setData({ ...populated(), actionResults: [unavailable] });

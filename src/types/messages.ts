@@ -1238,6 +1238,14 @@ export interface WorktreeRemoveRequestMessage {
 export interface WorktreeRemoveAssessRequestMessage {
   type: "worktreeRemoveAssess";
   worktreeId: string;
+  /**
+   * Orders answers; authorizes NOTHING. Minted per request by the asking
+   * surface and echoed back unchanged, so a reply that arrives after the user
+   * moved on is discarded instead of closing whatever dialog is open now and
+   * replacing it with an obsolete report (round-4 W4, design.md D11). Force
+   * authority stays the fingerprint below.
+   */
+  token: string;
 }
 
 /**
@@ -1253,6 +1261,8 @@ export interface WorktreeRemoveAssessRequestMessage {
 export interface WorktreeRemoveAssessmentMessage {
   type: "worktreeRemoveAssessment";
   worktreeId: string;
+  /** The request's own token, echoed unchanged. The host never reads it (D11). */
+  token: string;
   result:
     | {
         kind: "assessed";

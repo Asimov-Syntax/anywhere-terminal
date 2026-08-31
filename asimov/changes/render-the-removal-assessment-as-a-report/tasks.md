@@ -173,7 +173,7 @@
     2. `src/providers/WorktreeHost.actions.test.ts`: a rejecting assessment capability produces exactly one `unavailable` reply; a rejection after the surface detached posts nothing.
   - **Boundary**: no new arm on the wire — D12 chose to name what failed inside the existing `unreadable` list precisely so `WorktreeRemoveAssessmentMessage` does not grow a third case
 
-- [ ] 3_3 A reply is honoured only while it answers the live request
+- [x] 3_3 A reply is honoured only while it answers the live request — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 3_1, 3_2
   - **Refs**: design.md D11; specs/worktree-panel/spec.md#a-report-is-shown-only-while-it-still-answers-what-the-user-asked
   - **Acceptance**:
@@ -181,7 +181,7 @@
     - Verify: unit src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
     1. `src/types/messages.ts`: `worktreeRemoveAssess` carries a token and `worktreeRemoveAssessment` echoes it, per D11's block.
-    2. `src/providers/WorktreeHost.ts`: echo the token unchanged on every arm, including the two D12 answers. The host neither mints nor interprets it.
+    2. `src/providers/WorktreeHost.ts` and `src/providers/WorktreeHost.actions.test.ts`: echo the token unchanged on every arm, including the two D12 answers. The host neither mints nor interprets it. The pre-flight gate answers `unavailable` too rather than returning silently — D12 says one live request gets one reply with no exception, and it is that silence the duplicate drop below would otherwise dead-end on.
     3. `src/webview/worktree/WorktreeController.ts`: mint the token where the assess is posted and hold at most one live; drop a reply whose token is not it; drop a duplicate request while one is outstanding for the same worktree (D10's backlog control).
     4. `src/webview/worktree/WorktreeView.ts`: the blocked-notice *Force remove…* opener tells the controller it opened a dialog, so the live token is cleared on that path too; render Retry only where the result still carries a `worktreeId`.
     5. `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: the two falsifiers the id-only draft failed — reply 1 of two requests for the SAME worktree opens nothing, and a reply landing after the view's own opener leaves that dialog standing — plus a reply for a different worktree, a re-scoped `unavailable` rendering no Retry, a suppressed duplicate request, and the ordinary path still opening its report.

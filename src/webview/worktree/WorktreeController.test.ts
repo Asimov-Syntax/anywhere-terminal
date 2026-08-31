@@ -23,7 +23,9 @@ import type {
   WorktreeAgentRow,
   WorktreeCreateDefaults,
   WorktreeInfo,
+  WorktreeLaunchAgent,
   WorktreePresence,
+  WorktreeRemoveReport,
   WorktreeRowActivation,
 } from "./worktreeViewTypes";
 
@@ -655,7 +657,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     // already attempted it (round-3 B1, design.md D6).
     const { actions, posted } = controllerActions();
     actions.removeWorktree?.(worktree({ id: "/wt" }));
-    expect(posted).toEqual([{ type: "worktreeRemoveAssess", worktreeId: "/wt" }]);
+    expect(posted).toEqual([{ type: "worktreeRemoveAssess", worktreeId: "/wt", token: expect.any(String) }]);
     expect(
       posted.some((m) => m.type === "worktreeRemove"),
       "the menu click posted a removal",
@@ -2457,7 +2459,11 @@ describe("what a mutation did comes back to the panel", () => {
     });
 
     expect(h.posts).toEqual([
-      { type: "worktreeRemoveAssess", worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" },
+      {
+        type: "worktreeRemoveAssess",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        token: expect.any(String),
+      },
     ]);
   });
 
@@ -2938,20 +2944,35 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
   const danger = (): HTMLButtonElement | null =>
     document.querySelector<HTMLButtonElement>('[role="dialog"] button.wt-btn--danger');
 
+  /**
+   * Ask through the menu and return the token the panel actually minted. Replies
+   * are answered under the live token only, so a test that invents one is
+   * asserting against a reply production would discard (D11).
+   */
+  function ask(h: ReturnType<typeof ready>, id: string = VALIDATOR): string {
+    menuActions(h).removeWorktree?.(worktree({ id }));
+    const posted = h.posts.at(-1);
+    if (posted?.type !== "worktreeRemoveAssess") {
+      throw new Error("the menu item posted no assessment request");
+    }
+    h.posts.length = 0;
+    return posted.token;
+  }
+
   it("posts an assessment request and no removal when the menu item is chosen", () => {
     const h = ready();
     menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
 
-    expect(h.posts).toEqual([{ type: "worktreeRemoveAssess", worktreeId: VALIDATOR }]);
+    expect(h.posts).toEqual([{ type: "worktreeRemoveAssess", worktreeId: VALIDATOR, token: expect.any(String) }]);
   });
 
   it("answers a clean report with an ordinary removal, carrying no fingerprint", () => {
     const h = ready();
-    menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
-    h.posts.length = 0;
+    const token = ask(h);
     h.controller.handleRemoveAssessment({
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
+      token,
       result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
     });
 
@@ -2965,9 +2986,11 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
 
   it("answers a report with a failed risk using the fingerprint that report carried", () => {
     const h = ready();
+    const token = ask(h);
     h.controller.handleRemoveAssessment({
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
+      token,
       result: {
         kind: "assessed",
         assessment: {
@@ -2996,9 +3019,11 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     // refusal-class checks included, so rendering it as a report would show a
     // worktree the host merely could not read as a hard refusal (design.md D8).
     const h = ready();
+    const token = ask(h);
     h.controller.handleRemoveAssessment({
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
+      token,
       result: { kind: "unavailable", unreadable: ["status", "sessions"] },
     });
 
@@ -3017,13 +3042,106 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
 
   it("opens no report for a worktree that left the tree while the host was reading it", () => {
     const h = ready();
+    const ghost = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/never-existed";
+    const token = ask(h, ghost);
     h.controller.handleRemoveAssessment({
       type: "worktreeRemoveAssessment",
-      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/never-existed",
+      worktreeId: ghost,
+      token,
       result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-ghost" },
     });
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(h.posts).toEqual([]);
+  });
+
+  it("[W4] opens nothing for the first of two requests for the SAME worktree", () => {
+    // The falsifier an id-only guard fails. Reply 1 arriving after request 2 was
+    // made still matches an id-only intent, so it opens — and the user's latest
+    // question is left with no visible answer (D11).
+    const h = ready();
+    const first = ask(h);
+    // Through a real door, not by poking the field: opening any dialog retires
+    // the outstanding assess, which is what lets the user ask a second time
+    // rather than having the duplicate dropped (D11's table, D10's drop).
+    (
+      h.controller as unknown as {
+        view: { openLaunchDialog(label: string, agents: readonly WorktreeLaunchAgent[]): void };
+      }
+    ).view.openLaunchDialog("feat/login", [
+      { id: "claude", label: "Claude Code", canSeedPrompt: true, permissionChoices: [] },
+    ]);
+    const second = ask(h);
+    expect(second).not.toBe(first);
+
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      token: first,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+    // The launch dialog is what the user is looking at, and a global
+    // `closeDialog` is exactly how a stale report would take it down.
+    expect(danger(), "the superseded reply opened a report over the launch dialog").toBeNull();
+
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      token: second,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+    expect(danger()?.textContent, "the live reply opened nothing either").toBe("Remove");
+  });
+
+  it("[W4] leaves the dialog the VIEW opened standing when a late reply lands", () => {
+    // The refutation that put the token on the wire: the blocked notice's own
+    // opener calls `openRemoveReport` from the view, so a guard only the
+    // controller clears is not cleared here (WorktreeView.ts, D11).
+    const h = ready();
+    const token = ask(h);
+    const view = (h.controller as unknown as {
+      view: { openRemoveReport(info: WorktreeInfo, report: WorktreeRemoveReport): void };
+    }).view;
+    view.openRemoveReport(worktree({ id: VALIDATOR }), {
+      checks: PASSING.map((c) => (c.id === "dirty" ? { ...c, outcome: "failed" as const, count: 2 } : c)),
+      contained: [],
+      fingerprint: "fp-blocked",
+    });
+    expect(document.querySelector("#wt-confirm-name"), "the blocked report asked for no typed confirmation").not.toBeNull();
+
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      token,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+
+    // Still the forced one. The clean report would have replaced its typed
+    // field with an ordinary Remove button.
+    expect(document.querySelector("#wt-confirm-name")).not.toBeNull();
+  });
+
+  it("[W4] drops a reply for a worktree that is not the one being asked about", () => {
+    const h = ready();
+    const token = ask(h);
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel",
+      token: `${token}-other`,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("[D10] posts one request while one is still outstanding for that worktree", () => {
+    // Each assess holds the host's per-repo mutation queue across two forced
+    // rebuilds and the reads between them, so an unbounded request door made the
+    // "one human click" cost model false rather than merely optimistic.
+    const h = ready();
+    menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
+    menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
+
+    expect(h.posts.filter((m) => m.type === "worktreeRemoveAssess")).toHaveLength(1);
   });
 });
