@@ -150,3 +150,23 @@ The change therefore stands at 2 open blockers, and the gate that would let it a
 
 ### 3_4, for whoever reviews it next
 Every problem append now routes through one `report` helper that consults the budget first, and a capped draft stops rather than walking the remaining sections. Four regression tests: a file of nothing but unknown keys, a `copy` list of non-path elements, exactly one cap row with the later sections skipped, and a malformed collection shape still reported when there is room. Verify Gate re-run on `450670d4`: type check pass, 5,629 tests pass, I10 ok, lint byte-identical to the change base.
+
+
+## Author triage — thrash-stop resolution (2026-08-31)
+
+The 3rd round of cycle 1 ended with blockers, so the thrash stop applied and the three options went
+to the user. They chose **option 1 — hand back to `asimov-plan` for a designed fix**.
+
+- **B5** and **B6** — accepted, and deliberately NOT fixed in this change. They are one invariant:
+  a provisioning result must belong to the form that asked for it, and a cancelled or submitted
+  form must stop being able to receive one. B6's own SuggestedFix says to return the
+  close/opening-identity contract to planning. Closing it requires an opening identity minted in
+  the webview and echoed by the host, which mints a **new invariant owner** — so the obligation
+  test makes it a separate change, not remediation. Landing it here as a fix commit would close
+  this cycle as `superseded` and burn a round for a contract this task's Boundary forbids anyway.
+  Owner: docs/PLAN.md **WT-012.16**; WT-012.1 now depends on it and resumes once it lands.
+- **B7** — accepted and fixed as task 3_4 (every model and problem append routed through the
+  budget-aware helpers, with unknown-key and malformed-shape overflow cases added).
+
+This is not a risk acceptance: nothing ships from this change while the blockers stand, because the
+change stays parked rather than being archived.

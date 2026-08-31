@@ -51,3 +51,11 @@ Verify gate: biome reports 3 pre-existing format errors and the baseline 14 warn
 Reversed (3_3, round-2 W4): 2_4 deferred per-adapter id collision to WT-012.4 on the grounds that minting belongs to an assembly layer that does not exist yet. Round 2 named the layer that does: `offerStore.issue` already receives the completed model, so reminting there needs no registry, no detection order and no merge algorithm — the objection was to guessing the merge's shape, and this guesses nothing. The `ProvisionItemId` comment now states an enforced property instead of an outstanding obligation.
 
 Round 3 (REJECT, 3 blockers): B7 fixed as task 3_4. B5 and B6 are one invariant — the create form's opening identity and its close — and they cannot be bound host-locally: the webview clears its cache and posts, the host bumps its generation only on receipt, and cancel/submit tell the host nothing at all. Closing them needs an opening id echoed on the wire, which is a `worktree-rpc.md` § 2.4 contract change and the exact expansion task 3_1's Boundary forbids. Not attempted. The change sits at 2 open blockers pending the user's choice between a handback to `asimov-plan` and a risk acceptance; nothing in this change executes a provisioning model, so the residual is what WT-012.2 would inherit rather than anything that ships today.
+
+Thrash stop resolved (user, 2026-08-31): option 1 — hand back for a designed fix. B5 and B6 are one
+invariant, form-opening lifetime across the boundary, and closing it mints an identity the webview
+owns and the host echoes. That is a new invariant owner, so per the design lifecycle it is its own
+change rather than a fix commit here: docs/PLAN.md task **WT-012.16**, which WT-012.1 now depends
+on. This change stays parked at review with B5/B6 open until WT-012.16 lands; B7 was fixed as task
+3_4 and needs nothing further. The user authorised the PLAN.md task addition explicitly, which is
+the one edit outside the Status row this workflow was permitted.

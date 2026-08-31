@@ -482,13 +482,27 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Acceptance** | The create request carries a discriminated branch-mode union in which `baseRef` cannot be expressed for reuse, reattach or adopt, and in which reattach and adopt are separate variants naming different paths and different expected-OID guards, and a destination disposition **independent** of it so an existing branch and a debris-occupied destination can both be stated; the after-create value is a union whose agent fields and setup-wait flag exist only on its agent variant; every selectable provisioning item carries an opaque host-issued id and a selection carries ids only, with no field capable of carrying a command or a path; an unknown or invalidated offer performs no create and no provisioning, re-presents, and requires a second submission; the removal assessment carries a per-check class and a four-value outcome including `notApplicable`, and the legacy boolean blocker record is gone rather than kept beside it; a branch-delete request carries both ref names, both OIDs, and the assessment fingerprint; path validation is mode- and disposition-dependent rather than a blanket non-existence rule |
 | **Status** | done |
 
+### [WT-012.16] A Form's Results Belong to the Form That Asked
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Give the create dialog an opening identity that travels on the wire, so a provisioning result can only reach the form that asked for it, and a cancelled or submitted form retires its own |
+| **Design Ref** | [worktree-rpc.md](design/worktree-rpc.md) § 2.1, § 2.2, § 2.4 |
+| **Depends On** | WT-012.0 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | new-api-contract, cross-boundary |
+| **Notes** | Split out of WT-012.1 after its review found the invariant unclosable inside that task. A host-local generation is minted only once the host processes a request, so it cannot bind a result to the webview's *live* opening: the dialog clears its cache and posts asynchronously, and a predecessor read can resolve in the gap while the host still believes its generation current. Normal cancel and submit tell the host nothing at all, so a dead form's read still mints host authority. Both are one invariant — **form-opening lifetime across the boundary** — and closing it requires an identity the webview owns and the host echoes, which is a new owner rather than a fix inside a rendering task. WT-012.2 is the first task that would redeem such an offer, so this lands before anything acts on one |
+| **Acceptance** | A create form's opening carries an identity minted by the webview, sent on every opening request and echoed on every defaults and offer reply, and a reply whose identity is not the live one is dropped rather than cached or rendered; reopening a dialog while its predecessor's read is still in flight renders nothing from that predecessor, whether the predecessor resolves or rejects; cancelling or submitting a form retires its opening, and a result arriving for a retired opening mints no host authority and leaves no host or controller state behind; duplicate or repeated requests naming one opening join or are ignored rather than each starting another concurrent read, so a repeated message cannot suppress the legitimate result or grow reads without bound; a request naming an opening the host does not hold is answered with nothing |
+| **Status** | todo |
+
 ### [WT-012.1] Bring Over States What a Worktree Will Lack
 
 | Field | Value |
 |-------|-------|
 | **Goal** | Render a Bring over section in the create dialog from the repository's own provisioning config, with every entry naming the file that declared it |
 | **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 2, § 3.1, § 4.0, § 4.3 |
-| **Depends On** | WT-012.0 |
+| **Depends On** | WT-012.0, WT-012.16 |
 | **Stage** | 9 |
 | **Size** | M |
 | **Labels** | user-visible-ui |
