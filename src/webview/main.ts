@@ -57,6 +57,7 @@ import { isStackedLayout, shouldCollapseAfterSelection } from "./vault/collapseA
 import { VaultPanel } from "./vault/VaultPanel";
 import { activatePane } from "./worktree/activatePane";
 import { resolveInitialView, WorktreeController } from "./worktree/WorktreeController";
+import { worktreeDelegatedHandlers } from "./worktree/worktreeMessageHandlers";
 
 // Inject the vendored Seti icon-font @font-face rule (with the woff embedded
 // as a data URL) into the document. Lives in the webview bundle because
@@ -845,36 +846,10 @@ const routeMessage = createMessageRouter({
     }
     worktreeController?.handleTreeResponse(msg);
   },
-  onWorktreeRowActivation(msg) {
-    worktreeController?.setRowActivation(msg.activation);
-  },
-  onWorktreeShowPreview(msg) {
-    worktreeController?.showPreview(msg.entryId);
-  },
-  onWorktreeActivatePane(msg) {
-    worktreeController?.activatePane(msg.paneId);
-  },
-  onWorktreeCreateDefaults(msg) {
-    worktreeController?.handleCreateDefaults(msg);
-  },
-  onWorktreeProvisionOffer(msg) {
-    worktreeController?.handleProvisionOffer(msg);
-  },
-  onWorktreeRefs(msg) {
-    worktreeController?.handleRefs(msg);
-  },
-  onWorktreePullRequests(msg) {
-    worktreeController?.handlePullRequests(msg);
-  },
-  onWorktreeCreateResolution(msg) {
-    worktreeController?.handleCreateResolution(msg);
-  },
-  onWorktreeDebrisAuthorized(msg) {
-    worktreeController?.handleDebrisAuthorized(msg);
-  },
-  onWorktreeMutationResult(msg) {
-    worktreeController?.handleMutationResult(msg);
-  },
+  // The routes that only delegate live in ONE table, shared with the assembly
+  // test so a route cannot exist in the test and not here (round-1 W4). The two
+  // below stay written out because main.ts genuinely does more than delegate.
+  ...worktreeDelegatedHandlers(() => worktreeController),
   onVaultContextCwd(msg) {
     // Drop a reply for a pane that is no longer active (stale-guard): the user
     // switched panes before this resolved, and a later request owns the scope.

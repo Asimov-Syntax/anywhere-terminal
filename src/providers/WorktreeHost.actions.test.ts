@@ -1277,9 +1277,14 @@ describe("the list of branches a create can pick from comes from the host", () =
     dispose();
   });
 
-  it("says nothing about pull requests where a reader that throws took its own answer down", async () => {
-    // The refs answer and the destination reply must survive it — this read is
-    // discovery, and discovery never takes the create with it.
+  it("answers unavailable where the reader threw, rather than leaving the form waiting", async () => {
+    // A rejection is one more way the forge did not answer, so it gets the same
+    // one row every other failure gets. Swallowed, it would leave the form in
+    // "not asked yet" forever — the ONE state D1 exists to collapse every
+    // failure out of (.reviews/round-1.md W1).
+    //
+    // The refs answer and the destination reply must still survive it: this read
+    // is discovery, and discovery never takes the create with it.
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       readRefs: async () => ({ ok: true, refs: [{ name: "main" }], truncated: false }),
       readPullRequests: async () => {
@@ -1290,7 +1295,11 @@ describe("the list of branches a create can pick from comes from the host", () =
     await settle();
 
     expect(view.posts.find((m) => m.type === "worktreeRefs")).toBeDefined();
-    expect(view.posts.find((m) => m.type === "worktreePullRequests")).toBeUndefined();
+    expect(view.posts.find((m) => m.type === "worktreePullRequests")).toMatchObject({
+      repoId: REPO,
+      token: 1,
+      available: false,
+    });
     dispose();
   });
 

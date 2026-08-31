@@ -65,12 +65,20 @@ function toPullRequest(value: unknown): PullRequest | null {
   const owner = row.headRepositoryOwner;
   const login =
     typeof owner === "object" && owner !== null ? fieldString(owner as Record<string, unknown>, "login") : null;
+  const fromFork = row.isCrossRepository === true;
+  // A fork whose owner the forge did not name is dropped, by the same rule that
+  // drops a row with no number or no base. The ONLY thing a fork head is offered
+  // for is the statement naming its remote (§ 5), and an unnamed one would state
+  // a remote belonging to nobody (.reviews/round-1.md W3).
+  if (fromFork && (login === null || login.length === 0)) {
+    return null;
+  }
   return {
     number,
     title: fieldString(row, "title") ?? "",
     headRefName: fieldString(row, "headRefName") ?? "",
     baseRefName,
-    fromFork: row.isCrossRepository === true,
+    fromFork,
     headOwner: login ?? "",
   };
 }

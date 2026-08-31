@@ -1817,30 +1817,42 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // code path on which the refs answer awaits this one.
         const forge = options.readPullRequests;
         if (forge !== undefined) {
+          const unavailable = {
+            type: "worktreePullRequests",
+            token: msg.token,
+            repoId: msg.repoId,
+            available: false,
+          } as const;
+          const postForge = (answer: PullRequestsRead | undefined): void => {
+            if (disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // Unavailable is POSTED rather than withheld: the form has a row
+            // to render for it, and silence would leave "not asked yet" and
+            // "asked and there are none to be had" indistinguishable.
+            surface.post(
+              answer?.ok === true
+                ? {
+                    type: "worktreePullRequests",
+                    token: msg.token,
+                    repoId: msg.repoId,
+                    pullRequests: answer.pullRequests,
+                    truncated: answer.truncated,
+                    available: true,
+                  }
+                : unavailable,
+            );
+          };
           void forge({ cwd: repo.mainPath })
-            .then((answer) => {
-              if (disposed || !surfaces.has(surface)) {
-                return;
-              }
-              // Unavailable is POSTED rather than withheld: the form has a row
-              // to render for it, and silence would leave "not asked yet" and
-              // "asked and there are none to be had" indistinguishable.
-              surface.post(
-                answer.ok
-                  ? {
-                      type: "worktreePullRequests",
-                      token: msg.token,
-                      repoId: msg.repoId,
-                      pullRequests: answer.pullRequests,
-                      truncated: answer.truncated,
-                      available: true,
-                    }
-                  : { type: "worktreePullRequests", token: msg.token, repoId: msg.repoId, available: false },
-              );
-            })
+            .then(postForge)
             // Discovery, never the create. A reader that throws must not take
-            // the destination reply — or the refs answer — down with it.
-            .catch(() => {});
+            // the destination reply — or the refs answer — down with it. It also
+            // must not leave the form waiting forever: a rejection is one more
+            // way the forge did not answer, so it POSTS the unavailable row
+            // rather than being swallowed (.reviews/round-1.md W1).
+            .catch(() => {
+              postForge(undefined);
+            });
         }
         const read = options.readRefs;
         if (read === undefined) {

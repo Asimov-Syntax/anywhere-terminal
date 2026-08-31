@@ -2345,18 +2345,31 @@ export interface WorktreeProvisionOfferMessage {
  *
  * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
  */
-export interface WorktreePullRequestsMessage {
+interface WorktreePullRequestsBase {
   type: "worktreePullRequests";
   repoId: string;
   /** Echoed from the refs request, so an answer can be matched to its opening. */
   token: number;
-  /** The rows, when the forge answered. Absent means it did not. */
-  pullRequests?: readonly PullRequestOffer[];
-  /** The enumeration hit its cap and the list is partial — the form says so. */
-  truncated?: boolean;
-  /** False is the single unavailable state; the form renders one quiet row. */
-  available: boolean;
 }
+
+/**
+ * A union on `available` rather than optional fields beside a flag
+ * (.reviews/round-1.md W2). Optional rows next to a boolean can spell "answered
+ * with no list" and "unavailable with a list", and every reader then has to
+ * decide which half to believe. Here the invalid pairs cannot be written.
+ */
+export type WorktreePullRequestsMessage =
+  | (WorktreePullRequestsBase & {
+      available: true;
+      pullRequests: readonly PullRequestOffer[];
+      /** The enumeration hit its cap and the list is partial — the form says so. */
+      truncated: boolean;
+    })
+  | (WorktreePullRequestsBase & {
+      available: false;
+      pullRequests?: undefined;
+      truncated?: undefined;
+    });
 
 /**
  * One pull request as the form receives it.

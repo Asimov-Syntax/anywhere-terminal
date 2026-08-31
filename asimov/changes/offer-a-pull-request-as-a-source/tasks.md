@@ -88,3 +88,20 @@
     2. `src/extension.worktreeAssembly.test.ts`: assert the assembled host offers pull requests through the real wiring, so removing the dep fails rather than passing against a fake.
   - **Boundary**: no change to how `readRefs` is wired, and no second process seam — the `gh` runner is the shared factory with a different executable
 
+## 4. Review round 1
+
+- [x] 4_1 Fix the round-1 findings — B1, B2, B3 and W1–W4 — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_2
+  - **Refs**: .reviews/round-1.md; specs/worktree-panel/spec.md#a-fork-head-states-the-remote-before-the-action-is-authorized; design.md D1, D3, D5; docs/design/worktree-create.md#5-pull-request-as-a-source
+  - **Acceptance**:
+    - Outcome: Every accepted round-1 finding has a test that fails without its fix
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. B1 — `src/webview/worktree/WorktreeCreateDialog.ts`: the fork note states the remote the head REQUIRES, not one this create configures. The remote write stays unowned.
+    2. B2 — same file: the note is withdrawn under detached, which submits a base and no branch at all.
+    3. B3 — same file: a capped pull-request list says so, beside the refs one and independently of it.
+    4. W1 — `src/providers/WorktreeHost.ts`: a rejected forge read posts the unavailable answer instead of being swallowed. `src/providers/WorktreeHost.actions.test.ts`: a rejecting reader.
+    5. W2 — `src/types/messages.ts`: `WorktreePullRequestsMessage` becomes a discriminated union on `available`, so "available with no list" and "unavailable with a list" stop being spellable. `src/webview/worktree/worktreeViewTypes.ts`, `src/webview/worktree/WorktreeController.ts` and `src/webview/worktree/WorktreeController.test.ts` follow the shape.
+    6. W3 — `src/worktree/repoPullRequests.ts` and `src/worktree/repoPullRequests.test.ts`: a cross-repository row with no owner login is dropped by the same rule that drops a row with no number or base.
+    7. W4 — `src/webview/worktree/worktreeMessageHandlers.ts` (new): the pure-delegation worktree route table, built from a controller getter. `src/webview/main.ts` spreads it; `src/extension.worktreeAssembly.test.ts` uses it instead of hand-mirroring it, keeping its own entries only for the two routes main.ts genuinely writes differently.
+  - **Boundary**: no fork remote is configured and no new resolution path is added — B1 is fixed by making the statement true, never by making the write happen

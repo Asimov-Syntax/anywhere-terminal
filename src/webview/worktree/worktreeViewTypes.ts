@@ -190,14 +190,24 @@ export interface WorktreeCreateDefaults {
   pullRequests?: WorktreePullRequestOffer;
 }
 
-/** The host's answer about pull requests, as the form holds it. */
-export interface WorktreePullRequestOffer {
-  readonly list: readonly PullRequestOffer[];
-  /** The enumeration hit its cap, so the form says the list is partial. */
-  readonly truncated: boolean;
-  /** False is the ONE unavailable state: missing client, no auth, timeout. */
-  readonly available: boolean;
-}
+/**
+ * The host's answer about pull requests, as the form holds it.
+ *
+ * A union for the reason the wire message is one (W2): a list and "the forge
+ * could not answer" are different answers, and a shape that can carry both at
+ * once makes the renderer pick.
+ */
+export type WorktreePullRequestOffer =
+  | {
+      readonly available: true;
+      readonly list: readonly PullRequestOffer[];
+      /** The enumeration hit its cap, so the form says the list is partial. */
+      readonly truncated: boolean;
+    }
+  | {
+      /** The ONE unavailable state: missing client, no auth, timeout, bad JSON. */
+      readonly available: false;
+    };
 
 /** The host's answer to `requestWorktreeRefs`, as the form holds it. */
 export interface WorktreeRefOffer {

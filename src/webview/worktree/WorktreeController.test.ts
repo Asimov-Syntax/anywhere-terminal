@@ -1494,7 +1494,10 @@ describe("the create a toolbar with no repository opens", () => {
       available: false,
     });
 
-    expect(applied).toEqual([{ list: [], truncated: false, available: false }]);
+    // The union carries no list and no cap for unavailable (round-1 W2): those
+    // fields belonged to an answer that did not happen, and an empty list beside
+    // `available: false` is the "answered with nothing" the row must not mean.
+    expect(applied).toEqual([{ available: false }]);
   });
 
   it("[2_2] drops a forge answer that outlived its opening", () => {

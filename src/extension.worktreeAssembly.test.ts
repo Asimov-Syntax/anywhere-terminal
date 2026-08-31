@@ -28,6 +28,7 @@ import type { CreateSessionOptions } from "./vault/VaultLauncher";
 import { createMessageRouter, type MessageHandlers } from "./webview/messaging/MessageRouter";
 import { WorktreeController } from "./webview/worktree/WorktreeController";
 import { agentRow } from "./webview/worktree/worktreeFixtures";
+import { type WorktreeDelegatedHandlers, worktreeDelegatedHandlers } from "./webview/worktree/worktreeMessageHandlers";
 import type { WorktreeAgentRow, WorktreePresence } from "./webview/worktree/worktreeViewTypes";
 import { MAX_PULL_REQUESTS } from "./worktree/repoPullRequests";
 import { MAX_REFS } from "./worktree/repoRefs";
@@ -470,27 +471,19 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   }
 
   let controller: WorktreeController | undefined;
-  // The routing main.ts performs, on the messages this change added.
-  // The terminal handlers are required by the router's type and irrelevant here;
-  // only the worktree ones carry this walk.
-  const worktreeHandlers: Pick<
-    MessageHandlers,
-    | "onWorktreeTreeResponse"
-    | "onWorktreeCreateDefaults"
-    | "onWorktreeRefs"
-    | "onWorktreePullRequests"
-    | "onWorktreeCreateResolution"
-    | "onWorktreeMutationResult"
-    | "onVaultLaunchTargets"
-  > = {
+  // PRODUCTION's own route table, not a copy of it (round-1 W4). A hand-mirrored
+  // set is what let `onWorktreePullRequests` exist here while main.ts had no
+  // route for it, so this walk stayed green over a feature that shipped dark.
+  // Deleting a route from the shared table now fails this file.
+  //
+  // The two written out below are the two main.ts genuinely writes itself: the
+  // tree response goes through the tab-bar scope seam there, and the launch
+  // targets reply is routed by the capability it echoes — the vault panel gets
+  // `continue`, the worktree controller gets `start`.
+  const worktreeHandlers: WorktreeDelegatedHandlers &
+    Pick<MessageHandlers, "onWorktreeTreeResponse" | "onVaultLaunchTargets"> = {
+    ...worktreeDelegatedHandlers(() => controller),
     onWorktreeTreeResponse: (m) => controller?.handleTreeResponse(m),
-    onWorktreeCreateDefaults: (m) => controller?.handleCreateDefaults(m),
-    onWorktreeRefs: (m) => controller?.handleRefs(m),
-    onWorktreePullRequests: (m) => controller?.handlePullRequests(m),
-    onWorktreeCreateResolution: (m) => controller?.handleCreateResolution(m),
-    onWorktreeMutationResult: (m) => controller?.handleMutationResult(m),
-    // Routed by the capability it echoes, exactly as main.ts does — the vault
-    // panel gets `continue`, the worktree controller gets `start`.
     onVaultLaunchTargets: (m) => controller?.handleLaunchTargets(m),
   };
   const route = createMessageRouter(worktreeHandlers as MessageHandlers);

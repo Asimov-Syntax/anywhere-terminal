@@ -1393,7 +1393,10 @@ describe("the create dialog offers branches and a create-new entry in one list",
       repos: [
         createDefaults({
           refs: { list: [...REFS], truncated: false },
-          pullRequests: { list: [...(over.prs ?? PRS)], truncated: false, available: over.available ?? true },
+          pullRequests:
+            over.available === false
+              ? { available: false }
+              : { available: true, list: [...(over.prs ?? PRS)], truncated: false },
         }),
       ],
     });
@@ -1472,6 +1475,52 @@ describe("the create dialog offers branches and a create-new entry in one list",
       ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
 
     expect(q<HTMLInputElement>("#wt-branch").value).toBe(before);
+  });
+
+  it("says a capped pull-request list is capped, independently of the branch list", () => {
+    // § 5's rule about the refs list is not weaker for pull requests — it is
+    // stronger. Their filtering is local, so a request past the cap cannot be
+    // reached by typing either (.reviews/round-1.md B3).
+    const { host, q } = open({
+      repos: [
+        createDefaults({
+          refs: { list: [...REFS], truncated: false },
+          pullRequests: { list: [...PRS], truncated: true, available: true },
+        }),
+      ],
+    });
+    q<HTMLInputElement>("#wt-branch").focus();
+
+    const note = host.querySelector<HTMLElement>("#wt-branch-partial");
+    expect(note?.hidden).toBe(false);
+    expect(note?.textContent).toContain("pull requests");
+    expect(note?.textContent).not.toContain("branches");
+  });
+
+  it("says both lists are capped when both are", () => {
+    const { host, q } = open({
+      repos: [
+        createDefaults({
+          refs: { list: [...REFS], truncated: true },
+          pullRequests: { list: [...PRS], truncated: true, available: true },
+        }),
+      ],
+    });
+    q<HTMLInputElement>("#wt-branch").focus();
+
+    const note = host.querySelector<HTMLElement>("#wt-branch-partial");
+    expect(note?.hidden).toBe(false);
+    expect(note?.textContent).toContain("branches");
+    expect(note?.textContent).toContain("pull requests");
+  });
+
+  it("says nothing about a cap the unavailable forge never reported", () => {
+    // The pair for the union (W2): unavailable carries no list and no cap, so
+    // there is nothing to say it is part of.
+    const { host, q } = withPrs({ available: false });
+    q<HTMLInputElement>("#wt-branch").focus();
+
+    expect(host.querySelector<HTMLElement>("#wt-branch-partial")?.hidden).toBe(true);
   });
 
   it("says nothing about pull requests before the forge has answered", () => {
@@ -2979,6 +3028,33 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
     expect(h.fork().hidden).toBe(false);
     expect(h.fork().textContent).toContain("contributor");
     expect(h.submitted).toHaveLength(0);
+  });
+
+  it("states what the fork head requires, never a write this create does not perform", () => {
+    // The gap the wording used to paper over: no part of this create configures
+    // a remote (D5, and the task Boundary). A statement made to EARN an
+    // authorization has to be true of the create being authorized, so it names
+    // the requirement and says the create does not meet it
+    // (.reviews/round-1.md B1).
+    const h = withPrs();
+    h.pick(7);
+
+    expect(h.fork().textContent).toContain("requires a remote for contributor");
+    expect(h.fork().textContent).toContain("does not configure");
+    expect(h.fork().textContent).not.toMatch(/is configured when/);
+  });
+
+  it("withdraws the statement when detached takes the create away from the pull request", () => {
+    // Detached submits a base and no branch, so the pull request is not the
+    // source any more — but the branch field keeps its text, which is what the
+    // first version of the guard was reading (.reviews/round-1.md B2).
+    const h = withPrs();
+    h.pick(7);
+    expect(h.fork().hidden).toBe(false);
+
+    h.q<HTMLButtonElement>("#wt-detached").click();
+
+    expect(h.fork().hidden).toBe(true);
   });
 
   it("says nothing about a remote for a pull request whose head is on this repository", () => {

@@ -44,6 +44,17 @@ import type {
   WorktreeTree,
 } from "./worktreeViewTypes";
 
+/**
+ * The wire answer as the form holds it (W2).
+ *
+ * One conversion, used by both the live route and the snapshot the form is
+ * opened from. Two copies of it were what let the two disagree about what
+ * `available: false` carries.
+ */
+function pullRequestOffer(msg: WorktreePullRequestsMessage): WorktreePullRequestOffer {
+  return msg.available ? { available: true, list: msg.pullRequests, truncated: msg.truncated } : { available: false };
+}
+
 /** The persisted-state reads and writes the view's two disclosure levels need. */
 export interface WorktreeStateStore {
   getState(): WebviewState;
@@ -1061,15 +1072,7 @@ export class WorktreeController {
         ...(refs === undefined ? {} : { refs: { list: refs.refs, truncated: refs.truncated } }),
         // Absent stays absent: "not asked yet" is not the unavailable row, and
         // the form is what decides how each of those reads.
-        ...(prs === undefined
-          ? {}
-          : {
-              pullRequests: {
-                list: prs.pullRequests ?? [],
-                truncated: prs.truncated ?? false,
-                available: prs.available,
-              },
-            }),
+        ...(prs === undefined ? {} : { pullRequests: pullRequestOffer(prs) }),
       });
     }
     return repos;
@@ -1123,11 +1126,7 @@ export class WorktreeController {
       return;
     }
     this.repoPullRequests.set(msg.repoId, msg);
-    this.applyPullRequests?.(msg.repoId, {
-      list: msg.pullRequests ?? [],
-      truncated: msg.truncated ?? false,
-      available: msg.available,
-    });
+    this.applyPullRequests?.(msg.repoId, pullRequestOffer(msg));
   }
 
   /**

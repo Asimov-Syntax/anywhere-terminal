@@ -119,6 +119,26 @@ function orderChoices(
  * someone is completing, while a title is prose and a prefix rule would make
  * titles effectively unsearchable.
  */
+/**
+ * What a capped list says about itself.
+ *
+ * Branches and pull requests are capped independently and answer the typed text
+ * differently: a branch past the cap can still be reached by typing, because the
+ * host re-reads on the query, while pull requests are filtered locally out of
+ * the one page that was fetched. So the two are not one sentence with a
+ * substituted noun (.reviews/round-1.md B3).
+ */
+function partialListText(refsPartial: boolean, prsPartial: boolean): string {
+  const parts: string[] = [];
+  if (refsPartial) {
+    parts.push("Showing part of this repository's branches — type to find others.");
+  }
+  if (prsPartial) {
+    parts.push("Showing part of this repository's open pull requests; the rest are not searchable here.");
+  }
+  return parts.join(" ");
+}
+
 function pullRequestChoices(offer: WorktreePullRequestOffer | undefined, query: string): BranchChoice[] {
   if (offer === undefined) {
     return [];
@@ -1561,24 +1581,39 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     actionNote.textContent = actionText ?? "";
     actionNote.classList.toggle("wt-dest-note--error", baseUnresolvable);
     // Said, rather than left to look complete: a capped list presented as the
-    // repository's whole set is the one claim this control must not make.
-    const truncated = repo.refs?.truncated === true;
-    partialNote.hidden = !truncated;
-    partialNote.textContent = truncated ? "Showing part of this repository's branches — type to find others." : "";
+    // repository's whole set is the one claim this control must not make. Both
+    // lists are capped independently, and the pull requests were silent about it
+    // (.reviews/round-1.md B3).
+    const refsPartial = repo.refs?.truncated === true;
+    const prsPartial = repo.pullRequests?.available === true && repo.pullRequests.truncated;
+    partialNote.hidden = !refsPartial && !prsPartial;
+    partialNote.textContent = partialListText(refsPartial, prsPartial);
 
     draft.branchName = nameInput.value;
     draft.baseRef = baseInput.value;
 
-    // Only while it still describes THIS selection, on THIS repository.
+    // Only while it still describes THIS selection, on THIS repository, under a
+    // mode that still uses the pull request as its source. Detached submits a
+    // base and no branch at all, so the pull request is not what it creates
+    // from and the statement would describe a different operation
+    // (.reviews/round-1.md B2).
     const forkStated =
-      forkHead !== null && forkHead.repoId === draft.repoId && forkHead.branch === nameInput.value.trim()
+      forkHead !== null &&
+      forkHead.repoId === draft.repoId &&
+      forkHead.branch === nameInput.value.trim() &&
+      draft.branchMode !== "detached"
         ? forkHead
         : null;
     forkNote.hidden = forkStated === null;
+    // What is TRUE, not what would be convenient. Configuring the remote is a
+    // repository-level write no part of this create performs (D5), and a
+    // statement made to earn an authorization has to describe the create being
+    // authorized (.reviews/round-1.md B1). So it states the requirement the fork
+    // head carries and says plainly that this create does not meet it.
     forkNote.textContent =
       forkStated === null
         ? ""
-        : `This pull request's head is on ${forkStated.owner}'s fork, so a remote for ${forkStated.owner} is configured when the worktree is created.`;
+        : `This pull request's head is on ${forkStated.owner}'s fork, so fetching that head requires a remote for ${forkStated.owner}. This create does not configure one.`;
 
     const slug = sanitizeBranchForPath(detached ? draft.baseRef : draft.branchName);
     // The HOST's answer wins whenever it has given one. The locally derived

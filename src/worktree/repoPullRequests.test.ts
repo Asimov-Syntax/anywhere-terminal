@@ -168,3 +168,36 @@ describe("readPullRequests", () => {
     expect(read.ok === true && read.pullRequests.map((p) => p.number)).toEqual([5]);
   });
 });
+
+describe("a fork row the forge did not name an owner for", () => {
+  it("is dropped, like a row with no number or no base", async () => {
+    // The only thing a fork head is offered FOR is the statement naming its
+    // remote (§ 5). An unnamed one would state a remote belonging to nobody, so
+    // it fails closed at the reader rather than reaching the form
+    // (.reviews/round-1.md W3).
+    const { runner } = runnerOf(
+      ok(
+        JSON.stringify([
+          row(1, { isCrossRepository: true, headRepositoryOwner: { login: "contributor" } }),
+          row(2, { isCrossRepository: true, headRepositoryOwner: null }),
+          row(3, { isCrossRepository: true, headRepositoryOwner: { login: "" } }),
+          row(4),
+        ]),
+      ),
+    );
+
+    const read = await readPullRequests(runner, { cwd: "/repo" });
+
+    expect(read.ok).toBe(true);
+    expect(read.ok === true && read.pullRequests.map((p) => p.number)).toEqual([1, 4]);
+  });
+
+  it("keeps a same-repository row whose owner the forge did not name", async () => {
+    // The pair: an owner is only ever REQUIRED where the head is on a fork.
+    const { runner } = runnerOf(ok(JSON.stringify([row(9, { headRepositoryOwner: null })])));
+
+    const read = await readPullRequests(runner, { cwd: "/repo" });
+
+    expect(read.ok === true && read.pullRequests.map((p) => p.number)).toEqual([9]);
+  });
+});
