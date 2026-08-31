@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -46,3 +46,5 @@ Planned at: 16f3a192
 - 2_2: `heldBranch()` returns undefined under `reattach`. `heldBy` comes from `readRepoRefs`, whose `RepoRefsWorktree` has no `prunable` field, so a stale holder is reported exactly like a live one and the guard that stops a branch being checked out twice would also have stopped the one action that repairs it. The resolution is what tells the two apart — `blockedBy` for a live holder, `reattach` for a stale one.
 - 2_2: the disabled base ref carries `wt-fhint`, the class the partial-list note already uses. `docs/ui/worktree-create-dialog.css` is owned by the external design pass and was not edited, and no new class was invented that would need it.
 - Knowledge candidate: `src/extension.worktreeAssembly.test.ts` hand-mirrors `src/webview/main.ts`'s router handler map instead of using it | Surprise: the test written to catch "declared, posted, handled, never routed" reproduced that exact gap in its own harness — the resolution was posted and dropped, and the failure looked like a classification bug for three debug cycles | Evidence: src/extension.worktreeAssembly.test.ts#worktreeHandlers vs src/webview/main.ts | Consumer: plan | Action: a task adding an Extension→WebView message must add the handler in BOTH places, or the assembly test proves less than it claims; a future change could have the harness import main.ts's map instead.
+
+- Verify gate: biome ran in check mode and reported the branch's recorded baseline unchanged — 3 errors / 14 warnings, every one of them in `src/agentHooks`, `src/cursor`, `src/vault` and CSS files this change does not touch. `pnpm run gate:fs-deletion` also ran: I10 ok.
