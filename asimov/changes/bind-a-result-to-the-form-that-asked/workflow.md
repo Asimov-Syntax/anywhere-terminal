@@ -37,7 +37,7 @@ messages already echo it, so extending that identity is reuse rather than a choi
 (D1). The alternative — a second id owned by the create form — was rejected without asking, because
 two staleness rules on one form is the defect this change removes.
 
-Planned at: 9f261154
+Planned at: 7067bd9a
 
 2_2: D5's eviction (`offers.forgetSurface` on close) has no behavioural witness in the host suite —
 `offers.lookup` still has no caller in `src/`, so nothing redeems an offer id yet (WT-012.2 owns the
@@ -81,3 +81,35 @@ nothing needs designing and no blocker is unresolved.
 Bounded: ONE round, no scope growth. Hypothesis to test — the six accepted blockers plus the
 cross-repository late publish are closed by ec53cc98 / 8b06a240 / 7ed9cd15 / 9442228d, and the
 wire-contract lens that never returned in round 1 has still not seen this change.
+
+Round 3 closed: B2 fixed in 7067bd9a (task 4_4). `requestWorktreeRefs` was the writer that CREATES
+the `openings` record retirement sweeps, and it validated nothing — so replaying a retired token
+rebuilt the record and restored deletion authority. A hole in round-1 B2's own fix. Guard is
+equality with the surface's live opening, plus a liveness recheck in each continuation; three
+witnesses, three of four mutants killed (the fourth, `namedOpening` at that door, is redundant
+behind the equality by construction and is documented as defence in depth rather than given a test
+that cannot fail).
+
+Round 4 superseded (0 adjudicated). Trigger is NEW to this project's record: not a `D#` or spec
+change — `design.md` and `spec.md` are byte-identical across the range — but the new TASK 4_4
+carrying its own Acceptance outcome, Plan and Boundary. The chair's verification scope lock treats
+any new or semantically changed task contract as a new discovery cycle. The pre-flight diff must
+therefore cover `tasks.md`, not just `design.md` and `spec.md`, and a fix task has to be committed
+outside the range handed to the reviewer.
+
+Handback (round 4): Gate 2 reopened for the task 4_4 delta, fastlane. NOT a new change and not a
+product-scope fork — the round-4 chair certifies it itself: "No new invariant owner is claimed: task
+4_4 remains inside D5's existing opening-retirement owner. Extraction is not required." 4_4's
+Outcome restates an already-accepted spec requirement (a retired opening mints no authority,
+publishes nothing, leaves no state behind) at the one door that still violated it, so it is a
+mechanism obligation inside accepted external behaviour.
+
+Premise audit (mandatory at the cycle cap): passed, nothing to cut. Both adjudicated rounds split
+100% feature — round 1 "6 feature / 0 machinery", round 3 "1 feature / 0 machinery". No machinery
+was admitted for an unevidenced state, so the scope-cut handback does not apply.
+
+Thrash stop at round 5 resolved by option 1, which the cycle cap makes MANDATORY at a third cycle
+rather than a choice: hand back to plan. Options 2 and 3 are unavailable anyway — no user has
+risk-accepted anything, and the bounded extension was spent on round 3. The 1->1 trajectory that
+fired the guard is again supersession accounting: round 4 spawned no specialist and adjudicated
+nothing, so B2's fix has never been looked at. Adjudicated-round trajectory is 6 -> 1.

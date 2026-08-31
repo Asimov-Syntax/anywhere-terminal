@@ -117,7 +117,7 @@
   - **Deps**: 4_3
   - **Refs**: specs/worktree-panel/spec.md#closing-a-create-form-retires-its-opening; design.md D5
   - **Acceptance**:
-    - Outcome: A refs request naming a retired, never-held or malformed opening seeds no record and publishes nothing
+    - Outcome: A refs ask on an opening the surface does not hold publishes nothing
     - Verify: unit src/providers/WorktreeHost.actions.test.ts
   - **Plan**:
     1. `src/providers/WorktreeHost.ts`: `requestWorktreeRefs` requires `namedOpening(msg.token)` and `msg.token === liveOpening.get(key)` before either reader starts or `openings.set` runs; both continuations recheck liveness before posting.
