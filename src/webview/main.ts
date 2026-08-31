@@ -866,6 +866,9 @@ const routeMessage = createMessageRouter({
   onWorktreeCreateResolution(msg) {
     worktreeController?.handleCreateResolution(msg);
   },
+  onWorktreeDebrisAuthorized(msg) {
+    worktreeController?.handleDebrisAuthorized(msg);
+  },
   onWorktreeMutationResult(msg) {
     worktreeController?.handleMutationResult(msg);
   },

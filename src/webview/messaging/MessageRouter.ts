@@ -49,6 +49,7 @@ import type {
   WorktreeActivatePaneMessage,
   WorktreeCreateDefaultsMessage,
   WorktreeCreateResolutionMessage,
+  WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
   WorktreeRefsMessage,
@@ -127,6 +128,8 @@ export interface MessageHandlers {
   onWorktreeProvisionOffer?(msg: WorktreeProvisionOfferMessage): void;
   onWorktreeRefs?(msg: WorktreeRefsMessage): void;
   onWorktreeCreateResolution?(msg: WorktreeCreateResolutionMessage): void;
+  /** Whether a destination may be cleared, answered to the request that named it. */
+  onWorktreeDebrisAuthorized?(msg: WorktreeDebrisAuthorizedMessage): void;
   /** What a mutation this surface started actually did. */
   onWorktreeMutationResult?(msg: WorktreeMutationResultMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
@@ -289,6 +292,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeCreateResolution":
         handlers.onWorktreeCreateResolution?.(msg);
+        break;
+      case "worktreeDebrisAuthorized":
+        handlers.onWorktreeDebrisAuthorized?.(msg);
         break;
       case "worktreeMutationResult":
         handlers.onWorktreeMutationResult?.(msg);

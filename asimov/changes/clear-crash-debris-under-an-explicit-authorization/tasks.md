@@ -78,7 +78,7 @@
     6. `src/worktree/worktreeMutationService.test.ts`: the issued token is one the create can actually spend over the entries reported, and a `.git`-holding or unreadable path issues nothing.
   - **Boundary**: `ResolvedDisposition` is not widened — D6 records why the probe answer must never carry a token
 
-- [ ] 1_7 Offer recover in the create dialog
+- [x] 1_7 Offer recover in the create dialog — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 1_6
   - **Refs**: specs/worktree-panel/spec.md#a-destination-holding-debris-is-offered-as-recover-not-silently-avoided; docs/design/worktree-create.md#20-branch-mode-and-destination-disposition-are-two-questions
   - **Acceptance**:
@@ -87,5 +87,7 @@
   - **Plan**:
     1. `src/webview/worktree/WorktreeCreateDialog.ts`: render the recover offer for a reported debris destination, stating the directory and what will be removed.
     2. `src/webview/worktree/WorktreeController.ts`: replace the hardcoded `disposition: { kind: "free" }` at the submit site with the draft's disposition, carrying the authorization where recover was accepted.
-    3. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: the offer appears only for debris, composes with an existing-branch selection, and an unaccepted offer submits `free`.
+    3. `src/webview/worktree/worktreeViewTypes.ts`: the draft carries the disposition the form settled on, so the owner builds the request from the answer the form was showing rather than from a second lookup.
+    4. `src/webview/messaging/MessageRouter.ts` and `src/webview/main.ts`: route the authorization answer to the controller — a declared-but-unrouted message ships inert.
+    5. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: the offer appears only for debris, composes with an existing-branch selection, and an unaccepted offer submits `free`.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are not edited

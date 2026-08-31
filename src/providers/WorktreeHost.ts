@@ -9,9 +9,9 @@
 import type * as vscode from "vscode";
 import type {
   BaseVerdict,
+  DebrisAuthorization,
   DestinationDisposition,
   ExtensionToWebViewMessage,
-  DebrisAuthorization,
   ProbeBase,
   ProvisionModel,
   ResolvedDisposition,
@@ -1454,7 +1454,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     answer(
       issued === null
         ? { granted: false, because: "notDebris" }
-        : { granted: true, authorization: { path: msg.path, fingerprint: issued.fingerprint }, entries: issued.entries },
+        : {
+            granted: true,
+            authorization: { path: msg.path, fingerprint: issued.fingerprint },
+            entries: issued.entries,
+          },
     );
   }
 

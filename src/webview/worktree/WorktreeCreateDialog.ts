@@ -13,7 +13,13 @@
 //  - A dangerous permission posture is labelled and never preselected.
 //  - The repo picker appears only once the workspace holds more than one repo.
 
-import type { ProbeBase, ResolvedMode, WorktreeCreateResolutionMessage } from "../../types/messages";
+import type {
+  DebrisAuthorization,
+  ProbeBase,
+  ResolvedMode,
+  WorktreeCreateResolutionMessage,
+  WorktreeDebrisAuthorizedMessage,
+} from "../../types/messages";
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
 import { attachTooltip } from "../ui/Tooltip";
 import { createWorktreeAgentBox } from "./worktreeAgentBox";
@@ -178,6 +184,22 @@ export interface WorktreeCreateDialogDeps {
    * and applying it would state a mode nobody chose (design.md D1).
    */
   bindResolution?: (apply: (resolution: WorktreeCreateResolutionMessage) => void) => void;
+  /**
+   * Ask the host to authorize clearing this directory.
+   *
+   * Its own request, sent only when the user ACCEPTS the offer. The resolution
+   * carries no authorization because it is answered on every settled edit, and
+   * a token minted per keystroke is one nobody asked for (design.md D6).
+   */
+  onAuthorizeDebris?: (request: { repoId: string; path: string }) => void;
+  /**
+   * Receive the function that applies the host's answer to that request.
+   *
+   * Paired with `onAuthorizeDebris`: without both, no answer can ever arrive,
+   * and an offer that cannot be authorized is a control that does nothing — so
+   * the offer is not rendered at all.
+   */
+  bindDebrisAuthorization?: (apply: (answer: WorktreeDebrisAuthorizedMessage) => void) => void;
   onSubmit: (draft: WorktreeCreateDraft) => void;
   onCancel?: () => void;
 }
@@ -536,7 +558,34 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   actionNote.className = "wt-dest-note";
   actionNote.id = "wt-action-note";
   actionNote.hidden = true;
-  destWrap.append(dest, destNote, actionNote);
+  /**
+   * The recover offer: a destination the suffixing skipped because a directory
+   * with no `.git` sits there (worktree-create.md § 2.2).
+   *
+   * A checkbox rather than a bare statement, because accepting it is what asks
+   * the host for the authorization — the offer is the question, and Create is
+   * the authorization. It sits with the destination because it CHANGES the
+   * destination: recovered, the create takes the skipped path, not the suffix.
+   */
+  const recoverField = document.createElement("div");
+  recoverField.className = "wt-recover";
+  recoverField.id = "wt-recover";
+  recoverField.hidden = true;
+  const recoverLabel = document.createElement("label");
+  recoverLabel.className = "wt-recover-label";
+  recoverLabel.htmlFor = "wt-recover-accept";
+  const recoverBox = document.createElement("input");
+  recoverBox.type = "checkbox";
+  recoverBox.id = "wt-recover-accept";
+  const recoverText = document.createElement("span");
+  recoverLabel.append(recoverBox, recoverText);
+  /** What is there, or why it will not be cleared. Never a claim about a path this create left behind. */
+  const recoverNote = document.createElement("p");
+  recoverNote.className = "wt-fhint";
+  recoverNote.id = "wt-recover-note";
+  recoverNote.hidden = true;
+  recoverField.append(recoverLabel, recoverNote);
+  destWrap.append(dest, destNote, actionNote, recoverField);
   shell.dialog.appendChild(destWrap);
   /** The exact path the line is currently shortening; read on every show. */
   let destExact = "";
@@ -825,7 +874,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // request from it, so sending a classification of text that is not a branch
     // name would turn a detached create into the repair the form refused.
     const carried = draft.branchMode === "detached" ? null : effective;
-    deps.onSubmit({ ...draft, ...launch, ...(carried === null ? {} : { resolved: carried.mode }) });
+    // The grant, only where it still covers the destination this form is
+    // showing. Absent, the create is an ordinary one against a free path — the
+    // form never asks for a removal it cannot name the authorization for.
+    const disposition = settledDisposition();
+    deps.onSubmit({
+      ...draft,
+      ...launch,
+      ...(carried === null ? {} : { resolved: carried.mode }),
+      ...(disposition === undefined ? {} : { disposition }),
+    });
     disposeAll();
   }
 
@@ -903,6 +961,80 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    */
   let resolutionOutstanding = false;
 
+  /** The user accepted the recover offer. Withdrawn by any change of selection. */
+  let recoverWanted = false;
+  /** The authorization the host issued, and the entries it was digested over. */
+  let recoverGrant: { path: string; authorization: DebrisAuthorization; entries: readonly string[] } | null = null;
+  /** A request is out and no answer has landed. Create waits for it, as it waits for the resolution. */
+  let recoverPending = false;
+  /** Why the host refused, stated where the offer was — a refusal is an answer, not silence. */
+  let recoverRefused: string | null = null;
+
+  /**
+   * The directory this form would offer to clear, or null where it offers none.
+   *
+   * Only a candidate the suffixing SKIPPED, only where the resolution classified
+   * it as debris, and only where the create would actually take that path once
+   * it is cleared: under `reattach` the create acts on the registration's own
+   * path, so the skipped candidate is a directory this create never touches, and
+   * offering to delete it would be the round-3 B3 defect with a delete attached.
+   */
+  function debrisOffer(): string | null {
+    if (deps.onAuthorizeDebris === undefined || deps.bindDebrisAuthorization === undefined) {
+      // Nothing can answer the request, so the offer would be a control that
+      // cannot be acted on.
+      return null;
+    }
+    if (effective === null) {
+      return null;
+    }
+    const occupied = effective.occupiedCandidate;
+    if (occupied === undefined || occupied.disposition.kind !== "debris") {
+      return null;
+    }
+    return targetOf(effective) === effective.freePath ? occupied.path : null;
+  }
+
+  /** The disposition the form settled on — `debris` only under a grant for the path on screen. */
+  function settledDisposition(): { kind: "debris"; authorization: DebrisAuthorization } | undefined {
+    const offer = debrisOffer();
+    if (!recoverWanted || offer === null || recoverGrant === null || recoverGrant.path !== offer) {
+      return undefined;
+    }
+    return { kind: "debris", authorization: recoverGrant.authorization };
+  }
+
+  /** Forget an acceptance and its grant. The authorization binds one path and one content. */
+  function withdrawRecover(): void {
+    recoverWanted = false;
+    recoverGrant = null;
+    recoverPending = false;
+    recoverRefused = null;
+    recoverBox.checked = false;
+  }
+
+  recoverBox.addEventListener("change", () => {
+    const offer = debrisOffer();
+    if (offer === null) {
+      recoverBox.checked = false;
+      return;
+    }
+    if (!recoverBox.checked) {
+      withdrawRecover();
+      syncDerived();
+      return;
+    }
+    recoverWanted = true;
+    recoverRefused = null;
+    if (recoverGrant?.path !== offer) {
+      // A grant for a different directory authorizes nothing here.
+      recoverGrant = null;
+      recoverPending = true;
+      deps.onAuthorizeDebris?.({ repoId: draft.repoId, path: offer });
+    }
+    syncDerived();
+  });
+
   /** What the form would start a new branch from, where the mode takes one. */
   function probeBase(): ProbeBase | undefined {
     // The toggle and the field, and nothing the ANSWER set: `branchMode` also
@@ -967,6 +1099,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // A new question invalidates the old answer immediately, rather than
       // leaving the previous classification readable until the reply lands.
       effective = null;
+      // And with it the acceptance: an authorization is issued over ONE path and
+      // what was in it, so carrying it across a changed selection would submit a
+      // token for a directory this create is no longer aimed at.
+      withdrawRecover();
       // Only where an answer is actually coming. With no resolver bound none
       // ever arrives, and gating on it would leave Create permanently disabled
       // rather than waiting for something.
@@ -1205,6 +1341,49 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     syncDerived(true);
   }
 
+  /** How many entries the note names before it summarises the rest. */
+  const RECOVER_ENTRY_CAP = 6;
+
+  /**
+   * State the offer, and what accepting it would remove.
+   *
+   * The list is the one the AUTHORIZATION was digested over, so what is shown
+   * and what is bound cannot differ — a list read separately for display would
+   * be a second answer to the question the token already answered.
+   */
+  function renderRecover(): void {
+    const offer = debrisOffer();
+    if (offer === null) {
+      recoverField.hidden = true;
+      recoverNote.hidden = true;
+      recoverNote.textContent = "";
+      recoverBox.checked = false;
+      return;
+    }
+    recoverField.hidden = false;
+    recoverBox.checked = recoverWanted;
+    recoverText.textContent = `Recover ${lastSegment(offer)} — clear this directory and create here.`;
+    const note =
+      recoverRefused ??
+      (recoverPending
+        ? "Reading what is there…"
+        : recoverGrant !== null && recoverGrant.path === offer
+          ? recoverGrant.entries.length === 0
+            ? `Removes ${offer}, which is empty.`
+            : `Removes ${recoverGrant.entries.length} item(s) from ${offer}: ${listed(recoverGrant.entries)}`
+          : `${offer} is not a git checkout. Accepting clears it before the worktree is created.`);
+    recoverNote.hidden = false;
+    // `textContent`, not markup: these are directory names off the user's disk.
+    recoverNote.textContent = note;
+  }
+
+  /** The first few names, and a count for the rest — a capped list never reads as the whole set. */
+  function listed(entries: readonly string[]): string {
+    const shown = entries.slice(0, RECOVER_ENTRY_CAP).join(", ");
+    const rest = entries.length - RECOVER_ENTRY_CAP;
+    return rest > 0 ? `${shown} and ${rest} more.` : `${shown}.`;
+  }
+
   /**
    * Re-derive the path and its hint from the branch, and re-validate. The hint
    * names the collided path AND the suffixed one the create will actually use —
@@ -1276,7 +1455,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // (round-3 B12).
     // The RESOLUTION's own path first: it answered the whole selection, and the
     // defaults reply answered only the branch (round-3 B3).
-    const answered = effective === null ? undefined : targetOf(effective);
+    // An accepted recover replaces it: clearing the ground is what makes the
+    // skipped candidate available, so that — not the suffix — is where this
+    // create lands, and the line has to say so before Create authorizes it.
+    const recovered = settledDisposition() === undefined ? undefined : recoverGrant?.path;
+    const answered = recovered ?? (effective === null ? undefined : targetOf(effective));
     const resolvedPath = answered ?? repo.resolvedPath;
     const derived = resolvedPath ?? (slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "");
     if (pathIsDerived) {
@@ -1329,12 +1512,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // branch, and it knows nothing about the path the user then typed. Once the
     // answer lands the note is the whole point of an override — it is what says
     // the candidate was occupied and names what the create took instead.
+    // An accepted recover retires it: the candidate is not being skipped any
+    // more, and "so this is created as <suffix>" would name a path this create
+    // no longer takes.
     const skipped =
-      effective === null
-        ? pathIsDerived
-          ? repo.collidedWith
-          : ""
-        : lastSegment(effective.occupiedCandidate?.path ?? "");
+      recovered !== undefined
+        ? ""
+        : effective === null
+          ? pathIsDerived
+            ? repo.collidedWith
+            : ""
+          : lastSegment(effective.occupiedCandidate?.path ?? "");
     if (skipped) {
       destNote.hidden = false;
       const taken = document.createElement("b");
@@ -1351,6 +1539,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
         destNote.append(document.createTextNode("; a free suffix is chosen when the worktree is created."));
       }
     }
+
+    renderRecover();
 
     const heldBy = heldBranch();
     const error =
@@ -1402,6 +1592,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       outstanding ||
       unasked ||
       resolutionOutstanding ||
+      // The user accepted a removal and the host has not said what it would
+      // remove. Submitting here would submit a recover with no authorization,
+      // which the host refuses — so the form waits instead of failing after.
+      recoverPending ||
       baseUnresolvable ||
       postureMissing;
     shell.refreshFocusTrap();
@@ -1592,6 +1786,35 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // question nobody will ask. It converges — the second answer withdraws
     // nothing further, so the key is stable (round-4 B3).
     syncDerived(true);
+  });
+
+  // The answer to the ONE request the acceptance sent. Anything about another
+  // directory is dropped rather than applied: an authorization is bound to a
+  // path, and applying one issued for a different path is exactly the confusion
+  // the fingerprint exists to stop.
+  deps.bindDebrisAuthorization?.((answer) => {
+    if (closed || answer.repoId !== draft.repoId) {
+      return;
+    }
+    const offer = debrisOffer();
+    if (offer === null || answer.path !== offer) {
+      return;
+    }
+    recoverPending = false;
+    if (answer.granted) {
+      recoverGrant = { path: answer.path, authorization: answer.authorization, entries: answer.entries };
+      recoverRefused = null;
+    } else {
+      // Not debris, or unreadable — either way there is nothing to authorize,
+      // so the acceptance is withdrawn and the create falls back to the suffix.
+      recoverGrant = null;
+      recoverWanted = false;
+      recoverRefused =
+        answer.because === "notDebris"
+          ? "That directory holds a repository, so it will not be cleared."
+          : "That directory could not be read, so it will not be cleared.";
+    }
+    syncDerived();
   });
 
   syncOpenAfter();

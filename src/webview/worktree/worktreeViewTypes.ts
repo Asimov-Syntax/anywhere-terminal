@@ -18,7 +18,7 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
-import type { ProvisionModel, RemovalCheck, ResolvedMode } from "../../types/messages";
+import type { DestinationDisposition, ProvisionModel, RemovalCheck, ResolvedMode } from "../../types/messages";
 import type { WorktreeRef } from "../../worktree/repoRefs";
 
 export type {
@@ -227,4 +227,11 @@ export interface WorktreeCreateDraft {
    * (round-3 B3).
    */
   resolved?: ResolvedMode;
+  /**
+   * What the form settled on for the DESTINATION, carried for the same reason
+   * `resolved` is: the owner builds the request from the answer this form was
+   * showing. Absent means free — a `debris` disposition exists only where the
+   * host issued an authorization for the path the form displayed.
+   */
+  disposition?: DestinationDisposition;
 }

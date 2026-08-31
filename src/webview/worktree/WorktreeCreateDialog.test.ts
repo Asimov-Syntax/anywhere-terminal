@@ -4,7 +4,7 @@
 // branch, collided path, agent picker expanded).
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorktreeCreateResolutionMessage } from "../../types/messages";
+import type { WorktreeCreateResolutionMessage, WorktreeDebrisAuthorizedMessage } from "../../types/messages";
 import { openWorktreeCreateDialog, sanitizeBranchForPath } from "./WorktreeCreateDialog";
 import {
   createDefaults,
@@ -2376,5 +2376,261 @@ describe("the base ref states when it cannot apply", () => {
       expect(h.action().textContent).not.toContain("should not be read");
       expect(h.base().disabled).toBe(true);
     });
+  });
+});
+
+/**
+ * The recover offer (WT-012.12).
+ *
+ * A destination the suffixing skipped because a non-git directory sits there is
+ * offered rather than silently avoided. Accepting it is what ASKS the host for
+ * the authorization — the resolution answer never carries one, because it is
+ * sent on every settled edit (design.md D6).
+ */
+describe("create worktree — recover a debris destination", () => {
+  const SKIPPED = "/trees/repo-feat-search";
+  const SUFFIXED = "/trees/repo-feat-search-2";
+
+  function withDebris(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
+    let applyResolution: ((resolution: WorktreeCreateResolutionMessage) => void) | undefined;
+    let applyAuth: ((answer: WorktreeDebrisAuthorizedMessage) => void) | undefined;
+    const asked: string[] = [];
+    const h = open({
+      onSelectionChange: () => {},
+      bindResolution: (fn) => {
+        applyResolution = fn;
+      },
+      onAuthorizeDebris: ({ path }) => asked.push(path),
+      bindDebrisAuthorization: (fn) => {
+        applyAuth = fn;
+      },
+      ...over,
+    });
+    const commit = (value: string): void => {
+      const name = h.q<HTMLInputElement>("#wt-branch");
+      name.value = value;
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+      name.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    return {
+      ...h,
+      asked,
+      commit,
+      offer: () => h.q<HTMLElement>("#wt-recover"),
+      accept: () => h.q<HTMLInputElement>("#wt-recover-accept"),
+      note: () => h.q<HTMLElement>("#wt-recover-note"),
+      create: () => {
+        const found = [...h.host.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+          b.textContent?.startsWith("Create worktree"),
+        );
+        if (found === undefined) {
+          throw new Error("missing Create");
+        }
+        return found;
+      },
+      resolve: (msg: Partial<WorktreeCreateResolutionMessage> = {}) =>
+        applyResolution?.({
+          type: "worktreeCreateResolution",
+          repoId: REPO_ID,
+          token: 1,
+          seq: 0,
+          query: "feat/search",
+          mode: { kind: "fresh" },
+          freePath: SUFFIXED,
+          occupiedCandidate: { path: SKIPPED, disposition: { kind: "debris" } },
+          ...msg,
+        }),
+      authorize: (answer: Partial<WorktreeDebrisAuthorizedMessage> = {}) =>
+        applyAuth?.({
+          type: "worktreeDebrisAuthorized",
+          repoId: REPO_ID,
+          token: 1,
+          path: SKIPPED,
+          granted: true,
+          authorization: { path: SKIPPED, fingerprint: "fp-1" },
+          entries: ["node_modules", "src"],
+          ...answer,
+        } as WorktreeDebrisAuthorizedMessage),
+    };
+  }
+
+  function check(box: HTMLInputElement): void {
+    box.checked = true;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  it("offers the skipped directory rather than silently taking the suffix", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+
+    expect(h.offer().hidden).toBe(false);
+    expect(h.offer().textContent).toContain("repo-feat-search");
+  });
+
+  it("does not offer a destination the resolution reported free", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve({ occupiedCandidate: { path: SKIPPED, disposition: { kind: "free" } } });
+
+    expect(h.offer().hidden).toBe(true);
+  });
+
+  it("does not offer a destination nothing was skipped at", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve({ occupiedCandidate: undefined, freePath: SKIPPED });
+
+    expect(h.offer().hidden).toBe(true);
+  });
+
+  it("asks for the authorization only when the offer is accepted", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    expect(h.asked).toEqual([]);
+
+    check(h.accept());
+    expect(h.asked).toEqual([SKIPPED]);
+  });
+
+  it("holds Create shut until the authorization it asked for lands", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    expect(h.create().disabled).toBe(false);
+
+    check(h.accept());
+    expect(h.create().disabled).toBe(true);
+
+    h.authorize();
+    expect(h.create().disabled).toBe(false);
+  });
+
+  it("states what will be removed once the authorization names it", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.authorize();
+
+    expect(h.note().hidden).toBe(false);
+    expect(h.note().textContent).toContain("node_modules");
+    expect(h.note().textContent).toContain("src");
+  });
+
+  it("aims the create at the recovered directory, not at the suffix", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(SUFFIXED);
+
+    check(h.accept());
+    h.authorize();
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(SKIPPED);
+  });
+
+  it("submits the authorization the host issued for the path on screen", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.authorize();
+    h.create().click();
+
+    expect(h.submitted[0]?.path).toBe(SKIPPED);
+    expect(h.submitted[0]?.disposition).toEqual({
+      kind: "debris",
+      authorization: { path: SKIPPED, fingerprint: "fp-1" },
+    });
+  });
+
+  it("submits free where the offer was never accepted", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    h.create().click();
+
+    expect(h.submitted[0]?.path).toBe(SUFFIXED);
+    expect(h.submitted[0]?.disposition).toBeUndefined();
+  });
+
+  it("composes with an existing branch — recover is not a branch mode", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve({ mode: { kind: "reuse" } });
+    check(h.accept());
+    h.authorize();
+    h.create().click();
+
+    expect(h.submitted[0]?.branchMode).toBe("existing");
+    expect(h.submitted[0]?.disposition?.kind).toBe("debris");
+  });
+
+  it("withdraws the offer where the host refuses to authorize it", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.authorize({ granted: false, because: "notDebris" } as Partial<WorktreeDebrisAuthorizedMessage>);
+
+    expect(h.accept().checked).toBe(false);
+    expect(h.note().textContent).toContain("repository");
+    expect(h.create().disabled).toBe(false);
+    h.create().click();
+    expect(h.submitted[0]?.disposition).toBeUndefined();
+    expect(h.submitted[0]?.path).toBe(SUFFIXED);
+  });
+
+  it("withdraws the offer when the user unchecks it", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.authorize();
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(SKIPPED);
+
+    h.accept().checked = false;
+    h.accept().dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe(SUFFIXED);
+    h.create().click();
+    expect(h.submitted[0]?.disposition).toBeUndefined();
+    expect(h.submitted[0]?.path).toBe(SUFFIXED);
+  });
+
+  it("drops an authorization for a directory the offer no longer names", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.authorize({ path: "/trees/somewhere-else" });
+
+    // Still waiting for the answer to the question it actually asked.
+    expect(h.create().disabled).toBe(true);
+  });
+
+  it("withdraws an accepted offer when the selection changes under it", () => {
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.authorize();
+
+    // A different branch is a different destination, so the authorization
+    // issued over the old one binds nothing here.
+    h.commit("feat/other");
+    h.resolve({ query: "feat/other" });
+    expect(h.accept().checked).toBe(false);
+    h.create().click();
+    expect(h.submitted[0]?.disposition).toBeUndefined();
+  });
+
+  it("makes no offer where nothing can answer the request", () => {
+    const h = withDebris({ onAuthorizeDebris: undefined, bindDebrisAuthorization: undefined });
+    h.commit("feat/search");
+    h.resolve();
+
+    expect(h.offer().hidden).toBe(true);
   });
 });

@@ -14,6 +14,7 @@ import type {
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
   WorktreeCreateResolutionMessage,
+  WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
   WorktreeRefsMessage,
@@ -327,6 +328,7 @@ export class WorktreeController {
    */
   private applyRefs: ((repoId: string, refs: WorktreeRefOffer) => void) | null = null;
   private applyResolution: ((resolution: WorktreeCreateResolutionMessage) => void) | null = null;
+  private applyDebrisAuthorization: ((answer: WorktreeDebrisAuthorizedMessage) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
   private actionResults: WorktreeActionResult[] = [];
   /**
@@ -468,6 +470,15 @@ export class WorktreeController {
         bindResolution: (apply) => {
           this.applyResolution = apply;
         },
+        // Its own request, sent only when the user accepts the recover offer —
+        // the probe is answered per settled edit, so a token riding it would be
+        // one nobody asked for (design.md D6).
+        onAuthorizeDebris: ({ repoId, path }) => {
+          deps.postMessage({ type: "worktreeAuthorizeDebris", repoId, token: this.refsToken, path });
+        },
+        bindDebrisAuthorization: (apply) => {
+          this.applyDebrisAuthorization = apply;
+        },
       }),
       onLaunchSubmit: (request) => {
         const frozen = this.frozenLaunch;
@@ -535,9 +546,11 @@ export class WorktreeController {
           repoId: draft.repoId,
           path: draft.path,
           mode,
-          // Nothing in this form offers a debris destination yet; WT-012.12
-          // adds the authorization that makes the other member reachable.
-          disposition: { kind: "free" },
+          // The disposition the FORM settled on, carried on the draft for the
+          // same reason the mode is: re-deriving it here would be a second
+          // interpretation of one answer, and this one authorizes a delete.
+          // Absent means free — a recover the user never accepted is not one.
+          disposition: draft.disposition ?? { kind: "free" },
           // The launch details travel with the agent variant and with no other —
           // the union is what makes any other pairing unrepresentable.
           afterCreate:
@@ -1095,6 +1108,21 @@ export class WorktreeController {
     }
     this.createResolutions.set(msg.repoId, msg);
     this.applyResolution?.(msg);
+  }
+
+  /**
+   * The host's answer to the form's request to clear a directory.
+   *
+   * Dropped on the token like every other create-dialog answer: an answer to a
+   * PREVIOUS opening authorizes nothing in this one. Not stored — an
+   * authorization is spent by the create that redeems it, so keeping a copy
+   * here would outlive the form that asked for it.
+   */
+  handleDebrisAuthorized(msg: WorktreeDebrisAuthorizedMessage): void {
+    if (msg.token !== this.refsToken) {
+      return;
+    }
+    this.applyDebrisAuthorization?.(msg);
   }
 
   /**

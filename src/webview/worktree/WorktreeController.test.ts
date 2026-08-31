@@ -1521,6 +1521,87 @@ describe("the create a toolbar with no repository opens", () => {
     expect(h.controller.resolutionFor(REPO_A)).toBeUndefined();
   });
 
+  it("[1_7] posts the authorization request the recover offer asked for, under the current opening", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    const deps = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { onAuthorizeDebris(r: { repoId: string; path: string }): void } } };
+      }
+    ).view.deps.createDialogDeps();
+
+    deps.onAuthorizeDebris({ repoId: REPO_A, path: "/trees/debris" });
+
+    expect(h.posts.find((m) => m.type === "worktreeAuthorizeDebris")).toMatchObject({
+      repoId: REPO_A,
+      path: "/trees/debris",
+      token: 1,
+    });
+  });
+
+  it("[1_7] drops an authorization answering a PREVIOUS opening", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    const answers: unknown[] = [];
+    (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { bindDebrisAuthorization(fn: (a: unknown) => void): void } } };
+      }
+    ).view.deps
+      .createDialogDeps()
+      .bindDebrisAuthorization((a) => answers.push(a));
+
+    // Token 1 is this opening; the second opening moves it to 2, and an answer
+    // for 1 authorizes nothing in the form now on screen.
+    h.controller.openCreate();
+    h.controller.handleDebrisAuthorized({
+      type: "worktreeDebrisAuthorized",
+      repoId: REPO_A,
+      token: 1,
+      path: "/trees/debris",
+      granted: true,
+      authorization: { path: "/trees/debris", fingerprint: "fp-stale" },
+      entries: ["node_modules"],
+    });
+    expect(answers, "a superseded authorization reached the form").toEqual([]);
+
+    h.controller.handleDebrisAuthorized({
+      type: "worktreeDebrisAuthorized",
+      repoId: REPO_A,
+      token: 2,
+      path: "/trees/debris",
+      granted: true,
+      authorization: { path: "/trees/debris", fingerprint: "fp-live" },
+      entries: ["node_modules"],
+    });
+    expect(answers).toHaveLength(1);
+  });
+
+  it("[1_7] submits the disposition the form settled on, and free where it settled on none", () => {
+    const h = mount();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    const draft = {
+      repoId: "/repo/.git",
+      branchMode: "new" as const,
+      branchName: "feat",
+      baseRef: "",
+      path: "/trees/debris",
+      openAfter: "none" as const,
+    };
+
+    view.deps.onCreateSubmit({
+      ...draft,
+      disposition: { kind: "debris", authorization: { path: "/trees/debris", fingerprint: "fp-1" } },
+    });
+    expect(h.posts.find((m) => m.type === "worktreeCreate")).toMatchObject({
+      path: "/trees/debris",
+      disposition: { kind: "debris", authorization: { path: "/trees/debris", fingerprint: "fp-1" } },
+    });
+
+    view.deps.onCreateSubmit(draft);
+    expect(h.posts.filter((m) => m.type === "worktreeCreate")[1]).toMatchObject({ disposition: { kind: "free" } });
+  });
+
   it("[1_2][r1 W2] a list that outlived a dialog that really opened and closed changes nothing", () => {
     // The round-1 version asserted this with no dialog ever opened, so
     // `applyRefs` was null for a reason the test did not name — it could not
