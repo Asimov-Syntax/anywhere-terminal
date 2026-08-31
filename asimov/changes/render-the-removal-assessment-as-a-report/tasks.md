@@ -12,7 +12,7 @@
     3. Same file: checks with `cls === "proof"` render under their own heading, worded as what they would unlock rather than as a risk.
   - **Boundary**: no change to `src/worktree/removalChecks.ts`'s classification or to any message shape
 
-- [ ] 1_2 Choose the confirmation control from the classes the host sent
+- [x] 1_2 Choose the confirmation control from the classes the host sent — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-typed-confirmation-is-required-only-where-a-confirmable-risk-earned-one; design.md D2, D3
   - **Acceptance**:
@@ -22,6 +22,7 @@
     1. `src/webview/worktree/WorktreeRemoveDialog.ts`: add one exported function over the checks returning `"refused" | "typed" | "ordinary"` — refused from `isRefusedByChecks`, typed when any `cls === "confirmable"` check has outcome `failed` or `unproven`, ordinary otherwise.
     2. Same file: mount a name-entry field that enables the destructive button only on an exact match with the worktree's name, for the typed case.
     3. Same file: delete the `!checks.some((c) => c.cls !== "proof" && c.outcome === "unproven")` guard around the force button, which the typed confirmation replaces.
+    4. `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/extension.worktreeAssembly.test.ts`: the inherited tests answer the confirmation by clicking it, which the typed case no longer accepts — enter the name first where the report earns one.
   - **Boundary**: the fingerprint the confirmation re-sends is unchanged — a typed confirmation authorizes the same set, not a wider one
 
 - [ ] 1_3 State what the removal leaves behind, per clause

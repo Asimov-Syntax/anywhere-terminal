@@ -286,6 +286,13 @@ describe("remove worktree — confirmation (§ 11)", () => {
 
   it("re-sends the fingerprint the user was shown", () => {
     const { host, confirmed } = open(confirmableBlocker);
+    // A failing confirmable risk now earns the typed confirmation (1_2), so the
+    // name is entered before the button will answer at all.
+    const field = host.querySelector<HTMLInputElement>("#wt-confirm-name");
+    if (field !== null) {
+      field.value = SPIKE.branch ?? "";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     host.querySelector<HTMLButtonElement>(".wt-btn--danger")?.click();
     expect(confirmed).toEqual([confirmableBlocker.fingerprint]);
   });
@@ -446,11 +453,11 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
   // `textButton` renders `wt-btn wt-btn--danger`. Round-2 W3: the first spelling
   // of this helper queried `.danger`, which matches nothing, so its assertions
   // held whether or not the button was there.
-  function danger(host: HTMLElement): HTMLElement | null {
-    return host.querySelector("button.wt-btn--danger");
+  function danger(host: HTMLElement): HTMLButtonElement | null {
+    return host.querySelector<HTMLButtonElement>("button.wt-btn--danger");
   }
 
-  it("withholds force when a confirmable check could not be read", () => {
+  it("names every check it could not read", () => {
     // The report now NAMES the checks it could not evaluate, which is what the
     // withholding was standing in for. The control this earns is 1_2's; what is
     // asserted here is that the gap is described rather than silent.
@@ -465,14 +472,74 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
     );
 
     expect(host.querySelectorAll('.wt-blockers li[data-outcome="unproven"]').length).toBe(5);
-    expect(danger(host)).toBeNull();
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Force remove");
   });
 
-  it("withholds force when a refusal-class check could not be read", () => {
+  it("does not refuse the removal for a refusal-class check that could not be read", () => {
+    // `isRefusedByChecks` refuses on `failed`, never on `unproven` (design.md
+    // D2), and D3 retired the blanket withhold — so an unreadable refusal check
+    // leaves the control to the confirmable classes rather than making the
+    // worktree unremovable.
     const { host } = open(withChecks(confirmableBlocker, { busyAgents: unproven }));
 
-    expect(danger(host)).toBeNull();
+    expect(danger(host), "an unreadable check made the worktree unremovable").not.toBeNull();
+    expect(host.querySelector("#wt-confirm-name")).not.toBeNull();
+  });
+
+  it("[1_2] asks for an ordinary confirmation when only a proof could not be evaluated", () => {
+    // Nothing about an unfetched default branch makes deleting the worktree more
+    // dangerous, so a withheld proof never earns the speed bump (§ 2.4).
+    const { host, confirmed } = open(FULL_REPORT, { info: CLEAN });
+
+    expect(host.querySelector("#wt-confirm-name"), "a proof demanded a typed confirmation").toBeNull();
+    const button = danger(host);
+    expect(button?.disabled).toBe(false);
+    button?.click();
+    expect(confirmed).toEqual([FULL_REPORT.fingerprint]);
+  });
+
+  it("[1_2] asks the user to type the name when a confirmable risk failed", () => {
+    const { host, confirmed } = open(confirmableBlocker);
+    const field = host.querySelector<HTMLInputElement>("#wt-confirm-name");
+    expect(field, "a failing confirmable risk asked for no typed confirmation").not.toBeNull();
+
+    expect(danger(host)?.disabled).toBe(true);
+    danger(host)?.click();
+    expect(confirmed, "the destructive button authorized before the name was typed").toEqual([]);
+
+    if (field !== null) {
+      field.value = "not-the-name";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    expect(danger(host)?.disabled).toBe(true);
+
+    if (field !== null) {
+      field.value = SPIKE.branch ?? "";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    expect(danger(host)?.disabled).toBe(false);
+    danger(host)?.click();
+    // The SAME fingerprint: typing is a stronger gesture over the set the user
+    // was shown, not authorization for a wider one.
+    expect(confirmed).toEqual([confirmableBlocker.fingerprint]);
+  });
+
+  it("[1_2] offers the removal behind a typed confirmation when a confirmable risk could not be read", () => {
+    // The report now names the gap, so the removal is offered with the higher
+    // bar rather than withheld — a slow or unreadable disk must not make a
+    // worktree unremovable (design.md D3).
+    const { host } = open(
+      withChecks(confirmableBlocker, {
+        dirty: unproven,
+        untracked: unproven,
+        idlePanes: unproven,
+        externalAgents: unproven,
+        locked: unproven,
+      }),
+    );
+
+    expect(danger(host), "the removal was withheld rather than gated").not.toBeNull();
+    expect(host.querySelector("#wt-confirm-name")).not.toBeNull();
+    expect(danger(host)?.disabled).toBe(true);
   });
 
   it("still offers force when every check was actually evaluated", () => {
@@ -500,17 +567,26 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
     expect(danger(host)).not.toBeNull();
   });
 
-  it("still withholds force when a RISK is unproven beside the proofs", () => {
+  it("still raises the bar when a RISK is unproven beside the proofs", () => {
     // The negative that gives the case above its meaning: the exclusion is by
-    // class, not a blanket removal of the guard.
+    // class. An unproven RISK earns the typed confirmation where an unproven
+    // proof earns nothing.
+    // The unproven RISK is the only thing here that could earn the bar: every
+    // other confirmable passed, so the assertion fails if the class test drops
+    // `unproven`.
+    const onlyDirtyUnread = withChecks(confirmableBlocker, {
+      dirty: unproven,
+      untracked: passed,
+      idlePanes: passed,
+      externalAgents: passed,
+      locked: passed,
+    });
     const { host } = open({
-      ...withChecks(confirmableBlocker, { dirty: unproven }),
-      checks: [
-        ...withChecks(confirmableBlocker, { dirty: unproven }).checks,
-        { id: "lockAged", cls: "proof", outcome: "passed" },
-      ],
+      ...onlyDirtyUnread,
+      checks: [...onlyDirtyUnread.checks, { id: "lockAged", cls: "proof", outcome: "unproven" }],
     });
 
-    expect(danger(host)).toBeNull();
+    expect(host.querySelector("#wt-confirm-name")).not.toBeNull();
+    expect(danger(host)?.disabled).toBe(true);
   });
 });

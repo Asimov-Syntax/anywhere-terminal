@@ -56,6 +56,23 @@ export function isRemoveRefused(checks: readonly RemovalCheck[]): boolean {
   return isRefusedByChecks(checks);
 }
 
+/**
+ * Which confirmation this assessment earned, decided once (design.md D2).
+ *
+ * Reads the CLASS the host sent rather than a list of ids, which is why it lands
+ * on the right side for a check whose class is computed host-side —
+ * `externalAgents` is a refusal or a confirmable risk depending on what was found
+ * — without this file knowing that rule exists. A safety rule implemented in two
+ * places is one that will disagree with itself (worktree-removal.md § 2.2).
+ */
+export function confirmationFor(checks: readonly RemovalCheck[]): "refused" | "typed" | "ordinary" {
+  if (isRefusedByChecks(checks)) {
+    return "refused";
+  }
+  const earned = checks.some((c) => c.cls === "confirmable" && (c.outcome === "failed" || c.outcome === "unproven"));
+  return earned ? "typed" : "ordinary";
+}
+
 /** `<b>7 tracked files</b> have uncommitted changes.` */
 function countLine(span: HTMLElement, count: string, rest: string): void {
   const b = document.createElement("b");
@@ -465,31 +482,35 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   shell.dialog.append(buildForceWarning(checks, info));
   const cancelBtn = textButton("Cancel", "plain", cancel);
   shell.actions.append(cancelBtn);
-  // A check nobody could evaluate renders nothing — `buildBlockerList` keys every
-  // line on `failed` or a positive count, and `unproven` is neither. Offering
-  // force underneath that empty list would ask the user to authorize destroying a
-  // risk set the dialog just failed to describe, which is the one direction this
-  // action must never fail in (round-1 W2).
-  //
-  // Withholding the button rather than explaining the gap is deliberate. The
-  // copy that makes an unreadable report legible is WT-013.4's.
-  //
-  // Proof-class checks are excluded, and that exclusion is the whole point of
-  // the class. The guard is about a RISK the dialog could not describe; a proof
-  // describes no risk, and every confirmable report now carries three of them
-  // that are routinely unproven — a locked file nobody can stat, a default
-  // branch that does not resolve. Counting those here would withhold force from
-  // every removal, which is a proof refusing one (worktree-removal.md § 2.2).
-  if (!checks.some((c) => c.cls !== "proof" && c.outcome === "unproven")) {
-    shell.actions.append(
-      textButton("Force remove", "danger", () => {
-        // Re-sent with the fingerprint the user was SHOWN: force is authorization for
-        // this blocker set, not a blanket one.
-        deps.onConfirm(deps.report.fingerprint);
-        shell.dispose();
-      }),
-    );
+  const typed = confirmationFor(checks) === "typed";
+  const confirm = textButton(typed ? "Force remove" : "Remove", "danger", () => {
+    // Re-sent with the fingerprint the user was SHOWN: this authorizes the
+    // blocker set they read, not a blanket one. Typing raises the bar over that
+    // same set; it never widens it.
+    deps.onConfirm(deps.report.fingerprint);
+    shell.dispose();
+  });
+  if (typed) {
+    // A speed bump for the cases that earned one. It replaces the round-1 W2
+    // guard, which withheld the button entirely whenever a confirmable check was
+    // unproven — correct while the report could not describe the gap, and wrong
+    // once it names it, because it left a worktree with an unreadable status
+    // permanently unremovable (design.md D3).
+    const label = document.createElement("label");
+    label.className = "wt-confirm-name";
+    label.htmlFor = "wt-confirm-name";
+    label.textContent = `Type ${branch} to confirm:`;
+    const field = document.createElement("input");
+    field.id = "wt-confirm-name";
+    field.type = "text";
+    field.autocomplete = "off";
+    confirm.disabled = true;
+    field.addEventListener("input", () => {
+      confirm.disabled = field.value !== branch;
+    });
+    shell.dialog.append(label, field);
   }
+  shell.actions.append(confirm);
   shell.dialog.appendChild(shell.actions);
   shell.refreshFocusTrap();
   // Focus lands on Cancel, never on the destructive button: an accidental Enter
