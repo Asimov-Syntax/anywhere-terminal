@@ -1703,3 +1703,71 @@ describe("clearing crash debris", () => {
     expect(h.runner.run).toHaveBeenCalled();
   });
 });
+
+describe("a removal report is produced without performing the removal", () => {
+  const ASK = { repoId: "/repo/.git", worktreeId: RAW_ID };
+
+  it("issues no fingerprint for a worktree with nothing at risk", async () => {
+    // D7, and the load-bearing half of it. Round-3 B1's SuggestedFix was to bind
+    // a fingerprint to every report; a fingerprint is force-removal authority,
+    // so that would make "what would this cost" the door that makes destroying
+    // an unproblematic worktree possible. The clean confirmation travels the
+    // ordinary unforced path instead, which re-checks before it acts.
+    const h = harness({ assessRemoval: async () => ({ kind: "confirmable", evidence: evidence(), fingerprint: "" }) });
+    const report = await h.service.assessRemovalReport(ASK);
+
+    expect(report).toEqual({
+      kind: "assessed",
+      assessment: { kind: "confirmable", evidence: evidence(), fingerprint: "" },
+      fingerprint: null,
+    });
+    // Reading, not removing: no git subcommand ran at all.
+    expect(h.order).toEqual([]);
+  });
+
+  it("issues one exactly where the blocked path already would", async () => {
+    // Tied to `atRisk` rather than restated: one dirty path is enough, and it is
+    // the same predicate and the same call the blocked outcome makes.
+    const h = harness({
+      assessRemoval: async () => ({
+        kind: "confirmable",
+        evidence: evidence({ dirtyPaths: ["src/a.ts"] }),
+        fingerprint: "",
+      }),
+    });
+    const report = await h.service.assessRemovalReport(ASK);
+
+    expect(report?.kind === "assessed" && typeof report.fingerprint).toBe("string");
+    // Still nothing performed. `fingerprints.issue` is called directly here, as
+    // the blocked path calls it — not through `issueFingerprint`, which resolves
+    // a second time for a target `assessRemoval` has already answered null for.
+    expect(h.order).toEqual([]);
+  });
+
+  it("issues none for a refusal, which has no evidence to bind one to", async () => {
+    const h = harness({
+      assessRemoval: async () => ({
+        kind: "refused" as const,
+        isMain: true,
+        busyAgents: 0,
+        containsWorktrees: [],
+        liveExternalSessionIds: [],
+      }),
+    });
+    const report = await h.service.assessRemovalReport(ASK);
+
+    expect(report?.kind === "assessed" && report.fingerprint).toBe(null);
+  });
+
+  it("says an assessment could not be made rather than reporting empty checks", async () => {
+    const h = harness({ assessRemoval: async () => ({ kind: "unavailable", unreadable: ["status"] }) });
+
+    expect(await h.service.assessRemovalReport(ASK)).toEqual({ kind: "unavailable", unreadable: ["status"] });
+  });
+
+  it("answers null when the id names nothing", async () => {
+    const h = harness({ assessRemoval: async () => null });
+
+    expect(await h.service.assessRemovalReport(ASK)).toBe(null);
+  });
+});

@@ -276,9 +276,38 @@ export interface MutationServiceDeps {
   coordinator?: MutationCoordinator;
 }
 
+/**
+ * What a removal WOULD cost, and what answering the report is worth.
+ *
+ * `fingerprint` is non-null under exactly `atRisk` — the same predicate, in the
+ * same module, that the blocked path issues under. That colocation is the point
+ * of putting this here rather than in the host: deciding it anywhere else would
+ * be a second copy of `atRisk`, and the two would drift on the one action that
+ * cannot be undone (design.md D7).
+ */
+export type RemovalReport =
+  | {
+      kind: "assessed";
+      assessment: Exclude<RemovalAssessment, { kind: "unavailable" }>;
+      fingerprint: string | null;
+    }
+  | { kind: "unavailable"; unreadable: readonly string[] };
+
 export interface WorktreeMutationService extends WorktreeMutationCapabilities {
   /** Issue the confirmation token for what the user is about to be shown. */
   issueFingerprint(target: WorktreeMutationTarget, evidence: RemovalEvidence): string | null;
+  /**
+   * Assess a removal WITHOUT performing it. Reads only; deletes nothing.
+   *
+   * The reason this exists at all: the only other way to obtain a report is the
+   * `blocked` outcome, which this module produces BY ATTEMPTING THE REMOVAL. So
+   * a worktree with nothing at risk fell straight through to git and was deleted
+   * having never been reported (round-3 B1).
+   *
+   * `null` when the id names nothing — the same answer `assessRemoval` gives, and
+   * the caller posts nothing rather than inventing an empty report.
+   */
+  assessRemovalReport(target: WorktreeMutationTarget): Promise<RemovalReport | null>;
   /**
    * Issue a clearance authorization for `path`, or say why there is none.
    *
@@ -371,6 +400,33 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
         return null;
       }
       return fingerprints.issue({ worktreeId: target.worktreeId }, evidence, deps.now());
+    },
+
+    async assessRemovalReport(target) {
+      const assessment = await deps.assessRemoval(target);
+      if (assessment === null) {
+        return null;
+      }
+      if (assessment.kind === "unavailable") {
+        return { kind: "unavailable", unreadable: assessment.unreadable };
+      }
+      // A refusal carries no evidence BY CONSTRUCTION, so there is nothing to
+      // bind a fingerprint to and nothing a forced removal could redeem — the
+      // same null the blocked path already sends for one.
+      if (assessment.kind === "refused") {
+        return { kind: "assessed", assessment, fingerprint: null };
+      }
+      // The whole of D7 is this line. `atRisk` false means the ordinary unforced
+      // removal is legal, so the report needs no force authority and gets none:
+      // asking what a clean worktree would cost must not be the door that makes
+      // destroying one possible.
+      return {
+        kind: "assessed",
+        assessment,
+        fingerprint: atRisk(assessment.evidence)
+          ? fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now())
+          : null,
+      };
     },
 
     async issueDebrisAuthorization(path) {

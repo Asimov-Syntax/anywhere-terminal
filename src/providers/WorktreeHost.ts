@@ -22,6 +22,7 @@ import type {
   WorktreeAgentLaunchFields,
   WorktreeCreateMode,
   WorktreeMutationResultMessage,
+  WorktreeRemoveAssessmentMessage,
   WorktreeSubscriptionLevel,
 } from "../types/messages";
 import { isResolvedPathInside, type ResolvedPathInsideDeps } from "../utils/resolvedPathBoundary";
@@ -335,6 +336,17 @@ export interface WorktreeActions {
     origin?: WorktreeSurface;
   }): Promise<void>;
   removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
+  /**
+   * What removing this worktree WOULD cost, without removing it.
+   *
+   * Answers in the wire's own shape, already carrying whatever authority the
+   * report is worth. The host neither computes that authority nor converts the
+   * assessment: both live beside `atRisk` and the check catalogue, and a copy
+   * here would be a second opinion about a deletion (design.md D6, D7).
+   *
+   * `null` when the id names nothing, and the host then posts nothing.
+   */
+  assessRemovalReport?(target: WorktreeMutationTarget): Promise<WorktreeRemoveAssessmentMessage["result"] | null>;
   lockWorktree?(target: WorktreeMutationTarget, reason: string | undefined): Promise<void>;
   unlockWorktree?(target: WorktreeMutationTarget): Promise<void>;
   /**
@@ -1714,6 +1726,31 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         }
         return;
       }
+      case "worktreeRemoveAssess": {
+        const assess = actions.assessRemovalReport;
+        const assessTarget = msg.worktreeId;
+        const assessRepo = repoIdOf(assessTarget);
+        // NOT `perform`: that wrapper takes the rebuild gate and publishes a
+        // mutation result, so a read routed through it would queue behind writes
+        // and announce itself as one.
+        if (assess === undefined || assessRepo === undefined || actionPath(assessTarget, true) === undefined) {
+          return;
+        }
+        void assess({ repoId: assessRepo, worktreeId: assessTarget, origin: surface })
+          .then((result) => {
+            // Re-checked after the await, like every other read here: the
+            // surface may have gone, and this answer carries a fingerprint.
+            if (result === null || !surfaces.has(surface)) {
+              return;
+            }
+            surface.post({ type: "worktreeRemoveAssessment", worktreeId: assessTarget, result });
+          })
+          .catch(() => {
+            // Posts nothing. Inventing an empty report would render a worktree
+            // of unknown risk as one with none.
+          });
+        return;
+      }
       case "worktreeRemove": {
         // A `missing` worktree still resolves: `git worktree remove` is how its
         // stale registration gets pruned (worktree-rpc.md:241).
@@ -2913,6 +2950,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeResumeHere":
       case "worktreeCreate":
       case "worktreeRemove":
+      case "worktreeRemoveAssess":
       case "worktreeLock":
       case "worktreeUnlock":
       case "worktreePrune":

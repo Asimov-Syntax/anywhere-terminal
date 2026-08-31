@@ -989,6 +989,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       launchTargets: () => detectLaunchTargets("start"),
       resumeSessionAt: (entryId, cwd) => vaultLauncher.resolve(entryId, "resume", undefined, undefined, cwd),
       removeWorktree: (target, force, fingerprint) => mutations().removeWorktree(target, force, fingerprint),
+      // The service decides the authority; this only reshapes the assessment for
+      // the wire, through the SAME converter the blocked path uses — a second
+      // one would let the two reports disagree about what the user was shown.
+      assessRemovalReport: async (target) => {
+        const report = await mutations().assessRemovalReport(target);
+        if (report === null) {
+          return null;
+        }
+        return report.kind === "unavailable"
+          ? { kind: "unavailable", unreadable: report.unreadable }
+          : { kind: "assessed", assessment: toAssessmentPayload(report.assessment), fingerprint: report.fingerprint };
+      },
       lockWorktree: (target, reason) => mutations().lockWorktree(target, reason),
       unlockWorktree: (target) => mutations().unlockWorktree(target),
       pruneRepo: (repoId, confirmedCount, origin) => mutations().pruneRepo(repoId, confirmedCount, origin),

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "render-the-removal-assessment-as-a-report"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788191375860,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788191375860,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788191375860
+        }
+      ],
+      "firstAt": 1788191375860,
+      "lastAt": 1788191375860,
+      "buckets": []
+    }
+  ]
+}

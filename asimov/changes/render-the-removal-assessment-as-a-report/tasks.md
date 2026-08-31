@@ -96,7 +96,7 @@
     3. `src/providers/TerminalViewProvider.worktree.test.ts`: the routing test is driven from `WORKTREE_MESSAGE_TYPES` and requires one sample message per listed type — add the `worktreeRemoveAssess` sample so the new door is proven to reach a provider.
   - **Boundary**: types only — no handler, no render, no behaviour changes here
 
-- [ ] 2_2 The host answers a report and removes nothing
+- [x] 2_2 The host answers a report and removes nothing — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 2_1
   - **Refs**: design.md D6, D7, D8; specs/worktree-panel/spec.md#a-removal-is-reported-before-anything-is-deleted
   - **Acceptance**:
@@ -104,8 +104,10 @@
     - Verify: unit src/providers/WorktreeHost.actions.test.ts
   - **Plan**:
     1. `src/providers/WorktreeHost.ts`: handle `worktreeRemoveAssess` by calling the existing `assessRemoval` binding and posting `worktreeRemoveAssessment` to the asking surface. A target that will not resolve posts nothing.
-    2. Same file: expose the fingerprint the assessment carries through the mutation bindings rather than reimplementing it — `WorktreeMutationService.issueFingerprint` exists but is not on `WorktreeMutationBindings`, so widen that seam.
-    3. `src/providers/WorktreeHost.actions.test.ts`: the removal capability is never invoked for an assess; an unresolvable target posts nothing.
+    2. `src/worktree/worktreeMutationService.ts`: the report and its authority are produced HERE, as one new read-only capability, because `assessRemoval`, `checksFor`, `atRisk` and `fingerprints.issue` all already live together in this module. Deciding the fingerprint host-side would be a second copy of `atRisk`, which D7 forbids by construction rather than by review.
+    3. `src/providers/WorktreeHost.ts`: declare that capability on `WorktreeActions` alongside `removeWorktree`, and `src/extension.ts`: wire it to the service, as every other mutation capability is wired.
+    4. `src/providers/WorktreeHost.actions.test.ts`: the removal capability is never invoked for an assess; an unresolvable target posts nothing; the assessed arm carries the fingerprint the service issued and the unavailable arm carries none.
+    5. `src/worktree/worktreeMutationService.test.ts`: D7's real witness. The host test stubs the capability, so it cannot prove the `atRisk` tie — assert here that a clean assessment issues no fingerprint, a risky one does, a refusal issues none, and that no git removal command is run.
   - **Boundary**: `assessRemoval` and `evaluateRemoval` are called, never reimplemented, and no check is added, removed or reclassified
 
 - [ ] 2_3 The confirmation carries only the authority it was handed

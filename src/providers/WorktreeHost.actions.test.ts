@@ -10,7 +10,12 @@
 // See: asimov/changes/wire-worktree-navigation-actions/design.md D2, D3, D4.
 
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionToWebViewMessage, ProvisionModel, WorktreeMutationResultMessage } from "../types/messages";
+import type {
+  ExtensionToWebViewMessage,
+  ProvisionModel,
+  WorktreeMutationResultMessage,
+  WorktreeRemoveAssessmentMessage,
+} from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
@@ -212,7 +217,7 @@ const LAUNCH_TARGETS = [
   },
 ];
 
-function recordingActions() {
+function recordingActions(assessReport?: WorktreeRemoveAssessmentMessage["result"] | null) {
   const calls: Array<[string, ...unknown[]]> = [];
   const reconciles: string[][] = [];
   const track =
@@ -230,6 +235,12 @@ function recordingActions() {
     copySessionCwd: track("copySessionCwd") as WorktreeActions["copySessionCwd"],
     createWorktree: track("createWorktree") as NonNullable<WorktreeActions["createWorktree"]>,
     removeWorktree: track("removeWorktree") as NonNullable<WorktreeActions["removeWorktree"]>,
+    // Recorded like any other capability, so a test can assert the removal was
+    // NOT what an assess reached.
+    assessRemovalReport: async (target) => {
+      calls.push(["assessRemovalReport", target]);
+      return assessReport === undefined ? null : assessReport;
+    },
     lockWorktree: track("lockWorktree") as NonNullable<WorktreeActions["lockWorktree"]>,
     unlockWorktree: track("unlockWorktree") as NonNullable<WorktreeActions["unlockWorktree"]>,
     pruneRepo: track("pruneRepo") as NonNullable<WorktreeActions["pruneRepo"]>,
@@ -317,6 +328,8 @@ async function builtHost(
     claimedByPane?: ReadonlyMap<string, string>;
     /** Let `git status --porcelain` answer, so an assessment can reach a verdict. */
     statusReadable?: boolean;
+    /** What the read-only removal report should answer. Omitted means `null`. */
+    assessReport?: WorktreeRemoveAssessmentMessage["result"] | null;
     /** § 2.3's corroboration, and every subject it was asked about. */
     probeReattach?: (input: { repoPath: string; branch: string; repairPath: string }) => Promise<ReattachVerdict>;
     probeSubjects?: { repoPath: string; branch: string; repairPath: string }[];
@@ -341,7 +354,7 @@ async function builtHost(
     claimedSessionIds: () => new Map<string, string>(),
     forgetDrawOrder: () => {},
   };
-  const { actions, calls, reconciles } = recordingActions();
+  const { actions, calls, reconciles } = recordingActions(over.assessReport);
   // One runner for the whole host, so a test can observe which git commands the
   // host actually issued — including the ones it deliberately does not.
   const argv: string[][] = [];
@@ -4483,6 +4496,76 @@ describe("the host resolves a selection before the create runs", () => {
     await settle();
 
     expect(resolutionIn(view)).toBeUndefined();
+    dispose();
+  });
+});
+
+describe("a removal is reported without being performed", () => {
+  const REPORT = (fingerprint: string | null): WorktreeRemoveAssessmentMessage["result"] => ({
+    kind: "assessed",
+    assessment: { checks: [{ id: "dirty", cls: "confirmable", outcome: "passed" }], contained: [] },
+    fingerprint,
+  });
+
+  it("answers the asking surface and never reaches the removal", async () => {
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, { assessReport: REPORT(null) });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    await settle();
+
+    // The whole point of round-3 B1: asking must not be a way of removing. The
+    // full `calls` list, not a filter — a `removeWorktree` entry appearing here
+    // is the defect, and a filtered assertion would not see it.
+    expect(calls).toEqual([["assessRemovalReport", { repoId: REPO, worktreeId: RAW_ID, origin: view }]]);
+    expect(view.posts).toEqual([{ type: "worktreeRemoveAssessment", worktreeId: RAW_ID, result: REPORT(null) }]);
+    dispose();
+  });
+
+  it("carries the fingerprint the service issued, and carries none when it issued none", async () => {
+    const withRisk = await builtHost([windowRow()], false, { assessReport: REPORT("fp-9") });
+    withRisk.host.handleMessage(withRisk.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    await settle();
+    const risky = withRisk.view.posts[0];
+    expect(risky?.type === "worktreeRemoveAssessment" && risky.result.kind === "assessed" && risky.result.fingerprint).toBe(
+      "fp-9",
+    );
+    withRisk.dispose();
+
+    // D7: a clean report is not a weaker version of the same message, it is one
+    // that authorizes nothing. Asserted separately so a change that started
+    // issuing unconditionally fails here rather than passing both cases.
+    const clean = await builtHost([windowRow()], false, { assessReport: REPORT(null) });
+    clean.host.handleMessage(clean.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    await settle();
+    const post = clean.view.posts[0];
+    expect(post?.type === "worktreeRemoveAssessment" && post.result.kind === "assessed" && post.result.fingerprint).toBe(
+      null,
+    );
+    clean.dispose();
+  });
+
+  it("posts nothing when the id names nothing", async () => {
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, { assessReport: REPORT(null) });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: "/nowhere" });
+    await settle();
+
+    expect(calls).toEqual([]);
+    expect(view.posts).toEqual([]);
+    dispose();
+  });
+
+  it("posts nothing when the assessment could not be made at all", async () => {
+    // D8: `unavailable` travels as its own arm. A flat report would arrive with
+    // every check unproven, which since 1_5 reads as a hard refusal — the host
+    // would be telling the user a worktree it merely could not READ may never
+    // be removed.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      assessReport: { kind: "unavailable", unreadable: ["/repo-wt/feat"] },
+    });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    await settle();
+
+    const post = view.posts[0];
+    expect(post?.type === "worktreeRemoveAssessment" && post.result.kind).toBe("unavailable");
     dispose();
   });
 });
