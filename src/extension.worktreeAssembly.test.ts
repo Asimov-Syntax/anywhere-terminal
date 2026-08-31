@@ -119,6 +119,11 @@ const SCRIPT: Record<string, { code?: number; stdout?: string; stderr?: string }
   [`${REPO}|for-each-ref --format=%(refname:short) --count=${MAX_REFS + 1} refs/heads/`]: {
     stdout: "main\nfeature\nidle\n",
   },
+  // § 2.3 condition 3: the branch's tip, and the directory's own HEAD. They
+  // agree here, which is what makes the repair offerable at all.
+  [`${REPO}|rev-parse refs/heads/feature`]: { stdout: `${"2".repeat(40)}\n` },
+  [`${LINKED}|rev-parse HEAD`]: { stdout: `${"2".repeat(40)}\n` },
+  [`${REPO}|worktree repair ${LINKED}`]: { stdout: "" },
 };
 
 vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
@@ -128,6 +133,12 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
     createGitCommandRunner: () => ({
       run: async (args: readonly string[], cwd: string, runOptions?: { timeoutMs?: number }) => {
         argv.push({ args: [...args], cwd, timeoutMs: runOptions?.timeoutMs });
+        if (args[0] === "worktree" && args[1] === "repair") {
+          // Real `worktree repair` rewrites the two-way link, and the listing
+          // stops reporting the registration as stale. A fake that left the
+          // flag up would make § 2.3 condition 4 unobservable either way.
+          prunableRow = false;
+        }
         if (args[0] === "worktree" && args[1] === "remove") {
           // Real git drops the registration AND the directory; the host reads
           // both independently, so a fake that moved only one would leave every
@@ -410,7 +421,7 @@ beforeEach(() => {
  * messages enter `host.handleMessage(surface, msg)`, and everything the host
  * posts back to that surface goes through the real `routeExtensionMessage`.
  */
-async function assemble(): Promise<{ controller: WorktreeController; host: WorktreeHost }> {
+async function assemble(): Promise<{ controller: WorktreeController; host: WorktreeHost; surface: WorktreeSurface }> {
   const { activate, deactivate } = await import("./extension");
   subscriptions = [];
   teardown = deactivate;
@@ -450,12 +461,14 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
     | "onWorktreeTreeResponse"
     | "onWorktreeCreateDefaults"
     | "onWorktreeRefs"
+    | "onWorktreeCreateResolution"
     | "onWorktreeMutationResult"
     | "onVaultLaunchTargets"
   > = {
     onWorktreeTreeResponse: (m) => controller?.handleTreeResponse(m),
     onWorktreeCreateDefaults: (m) => controller?.handleCreateDefaults(m),
     onWorktreeRefs: (m) => controller?.handleRefs(m),
+    onWorktreeCreateResolution: (m) => controller?.handleCreateResolution(m),
     onWorktreeMutationResult: (m) => controller?.handleMutationResult(m),
     // Routed by the capability it echoes, exactly as main.ts does — the vault
     // panel gets `continue`, the worktree controller gets `start`.
@@ -510,10 +523,21 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
     () => document.querySelectorAll('[role="treeitem"]').length > 0,
     "the first worktree tree push to render a row",
   );
-  return { controller, host };
+  return { controller, host, surface };
 }
 
 /** Let the host's rebuild, its git calls and the resulting push all land. */
+/**
+ * Make the linked worktree look like one git could repair: a `.git` FILE whose
+ * `gitdir:` names an administrative directory that exists. Without both, the
+ * probe answers adopt or declines, and the repair is correctly never offered.
+ */
+function linkTheWorktree(): void {
+  const admin = path.join(REPO_ID, "worktrees", "feature");
+  fs.mkdirSync(admin, { recursive: true });
+  fs.writeFileSync(path.join(LINKED, ".git"), `gitdir: ${admin}\n`);
+}
+
 async function settle(): Promise<void> {
   for (let i = 0; i < 40; i++) {
     await Promise.resolve();
@@ -1153,6 +1177,70 @@ describe("the invariants that span the host and the webview", () => {
     // One git read for the list. A producer that re-listed the worktrees to
     // answer held-by would show a second call here.
     expect(argv.filter((c) => c.args[0] === "for-each-ref")).toHaveLength(1);
+  });
+
+  it("[4_1] answers a probe through the real wiring, and the answer reaches the form", async () => {
+    // A module test asserting against its own injected fake cannot see a
+    // wrapper that drops an argument, and it cannot see a message that is
+    // declared, posted and handled but never routed — which is how
+    // `requestWorktreeSubagents` shipped inert with a green suite.
+    prunableRow = true;
+    linkTheWorktree();
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.focus();
+    branch.value = "feature";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    // Waited on the ANSWER, not on the note: the note shows as soon as the form
+    // classifies the typed text itself, so waiting on it would pass with the
+    // resolution still in flight and prove nothing about the wire.
+    await settleUntil(
+      () => posted.some((m) => m.type === "worktreeCreateResolution" && m.query === "feature"),
+      "the resolution for the typed branch",
+    );
+
+    // The mode the whole chain produced: the listing said prunable, the probe
+    // corroborated the link and the HEAD, and the form states what the create
+    // will do rather than discovering it after the create failed.
+    expect(document.querySelector<HTMLElement>("#wt-base-note")?.textContent).toContain("already on disk");
+    expect(document.querySelector<HTMLInputElement>("#wt-base")?.disabled).toBe(true);
+    // Corroborated, not assumed: git was asked for both commits.
+    expect(argv.some((c) => c.args.join(" ") === "rev-parse refs/heads/feature" && c.cwd === REPO)).toBe(true);
+    expect(argv.some((c) => c.args.join(" ") === "rev-parse HEAD" && c.cwd === LINKED)).toBe(true);
+  });
+
+  it("[4_1] repairs the stale registration it really has, and never adds beside it", async () => {
+    prunableRow = true;
+    linkTheWorktree();
+    const { host, surface } = await assemble();
+
+    await host.handleMessage(surface, {
+      type: "worktreeCreate",
+      repoId: REPO_ID,
+      path: LINKED,
+      mode: { kind: "reattach", branch: "feature", repairPath: LINKED, expectedOid: "2".repeat(40) },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
+    } as never);
+    await settle();
+
+    const issued = argv.map((c) => c.args);
+    expect(issued.some((a) => a[0] === "worktree" && a[1] === "repair" && a[2] === LINKED)).toBe(true);
+    expect(issued.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(false);
+    // § 2.3 condition 4, observed rather than claimed: the repair cleared the
+    // flag, and the create reported success on THAT rather than on git's code.
+    expect(prunableRow).toBe(false);
+    expect(posted.find((m) => m.type === "worktreeMutationResult")).toMatchObject({
+      verb: "create",
+      result: { kind: "ok" },
+    });
   });
 
   it("carries the three proofs across the production boundary", async () => {

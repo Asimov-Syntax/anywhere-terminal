@@ -67,7 +67,7 @@
     4. Cover in `src/worktree/worktreeMutationService.test.ts`: a repair issues `worktree repair` and never `worktree add`; a moved `expectedOid` refuses and issues nothing; a listing still reporting `prunable` afterwards is reported as a failed repair; the working tree is never written.
   - **Boundary**: no `--force` and no fallback to `add` — where the repair cannot be made, it is refused (§ 6)
 
-- [ ] 4_1 The resolution survives the production boundary
+- [x] 4_1 The resolution survives the production boundary — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2, 3_1
   - **Refs**: design.md D1, D2, D6
   - **Acceptance**:
