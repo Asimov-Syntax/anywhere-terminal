@@ -347,6 +347,73 @@ describe("remove worktree — refused (§ 12)", () => {
     expect(saidOf(host, "idlePanes")).toContain("2 terminals");
   });
 
+  const refusebox = (host: HTMLElement): string => host.querySelector(".wt-refusebox")?.textContent ?? "";
+  const unprovenOutcome = { outcome: "unproven" as const };
+
+  it("[1_6] does not turn an unreadable check into a past-tense claim", () => {
+    // Round-2 W3. 1_5 routed an unproven refusal check into this branch, whose
+    // chain tested only `failed`, so every unproven refusal fell through to the
+    // local-agent copy — "An agent WAS mid-turn" from a check that read nothing,
+    // one line above the list saying it could not tell.
+    const { host } = open(withChecks(refusedBlocker, { busyAgents: unprovenOutcome }));
+
+    expect(refusebox(host), "an unproven check was reported as a fact").not.toMatch(/was mid-turn/i);
+    expect(refusebox(host)).toMatch(/could not/i);
+    expect(host.querySelector("button.wt-btn--danger")).toBeNull();
+  });
+
+  it("[1_6] explains a session in another window as one, not as a local agent", () => {
+    // `externalAgents` is refusal-class in a refused assessment, and "stop it
+    // first" points at a row this window does not have.
+    const { host } = open({
+      ...withChecks(refusedBlocker, { busyAgents: passed }),
+      checks: [
+        ...withChecks(refusedBlocker, { busyAgents: passed }).checks,
+        { id: "externalAgents", cls: "refusal", outcome: "failed", count: 1 },
+      ],
+    });
+
+    expect(refusebox(host)).toMatch(/another window/i);
+    expect(refusebox(host), "a refusal from another window told the user to stop a local agent").not.toMatch(
+      /stop it first/i,
+    );
+  });
+
+  it("[1_6] keeps the reason-specific copy for a refusal that actually failed", () => {
+    // The negative: this task must not cost the reachable refusals their own
+    // explanations (worktree-panel § A refusal names the reason it actually has).
+    const { host } = open(refusedBlocker, { agentRows: [busy] });
+
+    expect(refusebox(host)).toMatch(/mid-turn/i);
+    expect(refusebox(host)).toMatch(/stop it first/i);
+  });
+
+  it("[1_6] picks the refusing check by class, not merely the first bad outcome", () => {
+    // A confirmable check earlier in the list must not be mistaken for the one
+    // that refused: today's producers happen to order the refusal checks first,
+    // so without this the class test could be dropped and nothing would notice.
+    const { host } = open({
+      ...refusedBlocker,
+      checks: [
+        { id: "dirty", cls: "confirmable", outcome: "failed", count: 4 },
+        { id: "isMain", cls: "refusal", outcome: "passed" },
+        { id: "busyAgents", cls: "refusal", outcome: "unproven" },
+      ],
+    });
+
+    // The refusal is explained by `busyAgents`, the check that refused — not by
+    // the failing `dirty`, which is a risk a confirmation would have covered.
+    expect(refusebox(host)).toMatch(/could not tell whether an agent/i);
+    expect(refusebox(host), "a confirmable risk was presented as the refusal reason").not.toMatch(/uncommitted/i);
+  });
+
+  it("[1_6] does not explain an unproven containment check as a busy agent", () => {
+    const { host } = open(withChecks(refusedBlocker, { busyAgents: passed, containsWorktrees: unprovenOutcome }));
+
+    expect(refusebox(host)).not.toMatch(/agent/i);
+    expect(refusebox(host)).toMatch(/inside this one/i);
+  });
+
   it("also lands focus inside the refusal", () => {
     const { host } = open(refusedBlocker, { agentRows: [busy] });
     expect(host.querySelector(".wt-dialog")?.contains(document.activeElement)).toBe(true);

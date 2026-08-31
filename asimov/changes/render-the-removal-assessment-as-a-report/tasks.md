@@ -57,3 +57,16 @@
     2. `src/worktree/removalChecks.test.ts`: cover the unproven refusal alongside the failing one, and that a confirmable or proof unproven still does not refuse.
     3. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: the round-1 test asserting an unreadable refusal check leaves the removal gated now asserts it refuses; keep the case that an unreadable CONFIRMABLE check is gated rather than refused.
   - **Boundary**: no change to the host's own refusal path — `assessment.kind` stays the host's decision, and no message shape moves
+
+- [x] 1_6 Explain the refusal from the check that actually refused — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
+  - **Deps**: 1_5
+  - **Refs**: specs/worktree-panel/spec.md#the-removal-report-shows-every-check-it-ran-with-its-own-outcome; design.md D1; .reviews/round-2.md W3
+  - **Acceptance**:
+    - Outcome: A refusal explains the check that refused it, in that check's own outcome
+    - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeRemoveDialog.ts`: pick the refusing check — the first refusal-class check in host order whose outcome is `failed` or `unproven` — and select the refusal copy from its id and outcome, extending D1's keyed-by-check principle to the refusal box rather than keeping a chain of `failed(...)` tests.
+    2. Same file: give `externalAgents` its own explanation instead of the local-agent copy, and give every `unproven` refusal wording that says the check could not be evaluated rather than asserting what it found.
+    3. Same file: keep the local-agent chain — the vouched / unconfirmed / unread composition — for a `busyAgents` refusal that actually failed.
+    4. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: assert the sentence a user reads for each refusing check and outcome, not only that a control is absent.
+  - **Boundary**: the refusal still mounts no confirmation control in any case — this task changes only what the refusal says

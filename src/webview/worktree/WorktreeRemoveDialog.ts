@@ -102,6 +102,20 @@ interface Presenter {
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
 
+/**
+ * What a refusal says when its own check could not be evaluated.
+ *
+ * Separate wording per check, because "could not tell" is only useful if it names
+ * WHICH question went unanswered — and each of these says what is unknown rather
+ * than what was found (round-2 W3).
+ */
+const UNPROVEN_REFUSAL: Record<string, string> = {
+  isMain: "Could not tell whether this is the repository's main worktree.",
+  busyAgents: "Could not tell whether an agent is mid-turn in this worktree.",
+  containsWorktrees: "Could not tell whether other worktrees live inside this one.",
+  externalAgents: "Could not tell whether a session in another window is rooted here.",
+};
+
 const REPORT: Record<string, Presenter> = {
   isMain: {
     icon: ICON_WARNING,
@@ -385,10 +399,25 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     const box = document.createElement("div");
     box.className = "wt-refusebox";
     const lead = document.createElement("b");
-    // Three refusal reasons, three explanations. An if/else over two of them
-    // would render the agent copy for a containment refusal — telling the user
-    // to stop an agent that is not running (round-1 P1 / oracle O3).
-    if (failed(checks, "isMain")) {
+    // Keyed on the check that actually refused, in the host's own order, rather
+    // than a chain of `failed(...)` tests: 1_5 routed unproven refusals here too,
+    // and a chain testing only `failed` sent every one of them to the local-agent
+    // copy — asserting an agent "was mid-turn" from a check that read nothing
+    // (round-2 W3, worktree-panel § A refusal names the reason it actually has).
+    const refuser = checks.find((c) => c.cls === "refusal" && (c.outcome === "failed" || c.outcome === "unproven"));
+    if (refuser?.outcome === "unproven") {
+      lead.textContent = UNPROVEN_REFUSAL[refuser.id] ?? "A check that can refuse this removal could not be read.";
+      box.append(lead, document.createTextNode(" The removal is refused while it stays unknown."));
+    } else if (refuser?.id === "externalAgents") {
+      // Not the local-agent copy: "stop it first" points at a row this window
+      // does not have, because the session is in another one.
+      const n = countOf(checks, "externalAgents");
+      lead.textContent =
+        n === 1
+          ? "A session in another window is rooted in this worktree."
+          : `${n} sessions in another window are rooted in this worktree.`;
+      box.append(lead, document.createTextNode(" Close it there first — this window cannot stop it for you."));
+    } else if (failed(checks, "isMain")) {
       lead.textContent = "This is the repository's main worktree.";
       box.append(lead, document.createTextNode(" It cannot be removed — no confirmation overrides it."));
     } else if (failed(checks, "containsWorktrees")) {
