@@ -673,6 +673,54 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
 
+  it("[2_5] reports what a clean removal would cost, and removes only once that is answered", async () => {
+    // The whole of round-3 B1, walked through the shipped wiring: a worktree with
+    // nothing wrong with it used to be deleted from the first menu click, because
+    // the only path that produced a report was the one that had already attempted
+    // the deletion. The report now comes from a message that acts on nothing.
+    await assemble();
+
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog, "the menu click opened no report").not.toBeNull();
+    // A report, not a bare "are you sure": every check the host evaluated is named.
+    expect([...(dialog?.querySelectorAll("[data-check]") ?? [])].length).toBeGreaterThan(0);
+    expect(gitCalls("remove"), "git ran before the user had answered anything").toEqual([]);
+
+    // Nothing at risk, so the host issued no fingerprint and the ordinary control
+    // is what is offered — a typed confirmation here would mean force authority
+    // was minted for a healthy worktree (design.md D7).
+    expect(dialog?.querySelector("#wt-confirm-name")).toBeNull();
+    confirmRemoval("feature");
+    await settle();
+
+    expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
+  });
+
+  it("[2_5] makes the typed confirmation the thing that authorizes a forced removal", async () => {
+    dirtyPaths = ["a.txt"];
+    await assemble();
+
+    clickItem(openMenu("feature"), /remove/i);
+    await settle();
+
+    const confirm = document.querySelector<HTMLButtonElement>('[role="dialog"] button.wt-btn--danger');
+    expect(confirm?.textContent).toBe("Force remove");
+    // Clicking before typing is not an authorization, and the assertion is on
+    // git rather than on `disabled`: a control that looks locked and still fires
+    // is the failure worth catching.
+    confirm?.click();
+    await settle();
+    expect(gitCalls("remove"), "the destructive button authorized before the name was typed").toEqual([]);
+
+    confirmRemoval("feature");
+    await settle();
+
+    expect(gitCalls("remove")).toEqual([["worktree", "remove", "--force", LINKED]]);
+  });
+
   it("runs no removal command once the repository stops being observed (round-9 W9)", async () => {
     // The binding-level tests prove `assessRemoval` refuses. What they cannot
     // see is whether the shipped mutation service honours that refusal — this
@@ -1779,8 +1827,10 @@ describe("the invariants that span the host and the webview", () => {
     dirtyPaths = ["a.txt"];
     await assemble();
 
-    // An unforced remove against a non-empty blocker set does not run: it comes
-    // back as a notice offering the confirmation, which is what opens the dialog.
+    // The menu click asks rather than removes, so the dialog it opens IS the
+    // report (design.md D6). What this walk still proves is the blocked path
+    // underneath it: the confirmation is answered against a set that has since
+    // changed, and the host re-prompts rather than acting.
     clickItem(openMenu("feature"), /remove/i);
     await settle();
     expect(gitCalls("remove")).toEqual([]);

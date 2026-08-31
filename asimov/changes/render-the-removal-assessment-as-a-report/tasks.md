@@ -138,7 +138,7 @@
     5. `src/extension.worktreeAssembly.test.ts`: carry the four existing menu-to-git walks onto the new entry point — the menu click is now an assess, so a walk that asserts git argv has to answer the report first. Only the EXISTING walks; 2_5 owns the new proofs, and this step exists because a task that leaves the suite red is not done.
   - **Boundary**: the existing blocked-result path stays — a removal blocked at execution time still reports and re-offers, and D7 depends on it
 
-- [ ] 2_5 Prove it through the shipped wiring
+- [x] 2_5 Prove it through the shipped wiring — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 2_4
   - **Refs**: design.md D6, D7
   - **Acceptance**:
