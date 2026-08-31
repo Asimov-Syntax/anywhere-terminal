@@ -816,7 +816,10 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // Read from the replacement: the lock is named, the control is the typed
     // one, and a fingerprint was therefore issued. Against the cached
     // predecessor this report is clean and confirms with a plain Remove.
-    expect(dialog?.querySelector("#wt-confirm-name"), "the report was built from the cached registration").not.toBeNull();
+    expect(
+      dialog?.querySelector("#wt-confirm-name"),
+      "the report was built from the cached registration",
+    ).not.toBeNull();
     expect(dialog?.textContent ?? "").toMatch(/lock/i);
     expect(gitCalls("remove"), "git ran before the user had answered anything").toEqual([]);
   });

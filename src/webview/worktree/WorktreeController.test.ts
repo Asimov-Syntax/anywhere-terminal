@@ -3099,15 +3099,20 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     // controller clears is not cleared here (WorktreeView.ts, D11).
     const h = ready();
     const token = ask(h);
-    const view = (h.controller as unknown as {
-      view: { openRemoveReport(info: WorktreeInfo, report: WorktreeRemoveReport): void };
-    }).view;
+    const view = (
+      h.controller as unknown as {
+        view: { openRemoveReport(info: WorktreeInfo, report: WorktreeRemoveReport): void };
+      }
+    ).view;
     view.openRemoveReport(worktree({ id: VALIDATOR }), {
       checks: PASSING.map((c) => (c.id === "dirty" ? { ...c, outcome: "failed" as const, count: 2 } : c)),
       contained: [],
       fingerprint: "fp-blocked",
     });
-    expect(document.querySelector("#wt-confirm-name"), "the blocked report asked for no typed confirmation").not.toBeNull();
+    expect(
+      document.querySelector("#wt-confirm-name"),
+      "the blocked report asked for no typed confirmation",
+    ).not.toBeNull();
 
     h.controller.handleRemoveAssessment({
       type: "worktreeRemoveAssessment",

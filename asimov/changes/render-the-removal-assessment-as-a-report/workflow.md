@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -184,3 +184,20 @@ Its task-acceptance notes were accepted too: 3_1 must hold `forceRebuild` unreso
 ordering rather than observe it, 3_3 gained the two falsifiers the id-only draft failed, and 3_4 must
 first give the assembly a controllable watcher — it has none today, so the walk as first written
 would have passed for want of anything happening.
+
+- Section 3 built as four serial tasks. Two deviations from the plan, both recorded rather than
+  improvised around: 3_3 took `src/providers/WorktreeHost.actions.test.ts` into its Plan paths, and
+  the host's PRE-FLIGHT gate now answers `unavailable` rather than returning silently. D12 says one
+  live request gets one reply with no exception, and that silence is precisely what D10's
+  duplicate-request drop would have dead-ended on: an unanswered request leaves the live-token slot
+  held and the menu item dead for that row.
+- `bun test` is asm's default verify runner and it cannot run this project's jsdom suites — 3_1 and
+  3_2 happened to pass under it, 3_3 reported 153/153 failures on a file vitest passes. Tasks 3_3 and
+  3_4 were verified with `--runner 'pnpm exec vitest run'`, as sections 1 and 2 were.
+- Every new guard was mutation-checked rather than assumed: reverting D11's token to the id-only
+  draft kills exactly the two falsifiers the plan attack said it would, restoring the ungated Retry
+  kills the third, and bypassing D10's barrier fails the assembly walk.
+- Verify Gate: check-types clean, 6254/6254, `gate:fs-deletion` ok, biome check-mode at the
+  3 errors / 14 warnings / 1 info baseline. Four format errors were hand-applied exactly as the
+  formatter printed them; write mode was never run.
+

@@ -1832,8 +1832,9 @@ describe("a removal report is produced without performing the removal", () => {
 
     const report = await h.service.assessRemovalReport(ASK);
 
-    expect(report?.kind === "assessed" && report.assessment.kind === "confirmable" && report.assessment.evidence)
-      .toEqual(evidence({ dirtyPaths: ["src/replacement.ts"] }));
+    expect(
+      report?.kind === "assessed" && report.assessment.kind === "confirmable" && report.assessment.evidence,
+    ).toEqual(evidence({ dirtyPaths: ["src/replacement.ts"] }));
     expect(report?.kind === "assessed" && typeof report.fingerprint).toBe("string");
   });
 });
