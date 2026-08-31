@@ -102,6 +102,12 @@ same single-source rule D4 of WT-012.7 applied to `openAfter` and to new-versus-
 disabled control carries the one-line reason; it is not hidden, because a field that vanishes when
 the mode changes reads as a bug rather than as a rule.
 
+**Amended (cycle 2):** the detached toggle outranks the classification's MODE, and nothing else. It
+was read as exempting the whole selection from being resolved — the resolution is discarded wholesale
+under detached and the submit gate skips it — which let a detached create be offered on the
+destination reply alone, against a destination nobody had resolved (round-5 B10). What a resolution
+drives, and in which modes, is D8's; this decision owns only which control the mode disables.
+
 The validation for `fresh` — the base must resolve to a commit — is host-side and rides the
 resolution, since the resolver is already asking git about refs.
 
@@ -159,6 +165,45 @@ it. Superseded on every new probe, so a held answer never outlives the selection
 
 This is the same single-source rule D5 applies to the base control, extended to the whole
 classification; it is not a new mechanism.
+
+**Amended (cycle 2) — what a supplied destination IS.** Three fix attempts failed on the same
+sentence, because "one effective resolution drives the form" was implemented everywhere except the
+one place a second owner survived: a supplied destination stayed the value the form displayed and
+submitted, and the resolution's own target was consulted only when there was no override. So a
+candidate the host suffixed past, or refused because it resolves outside the create root, was still
+what the create carried (round-3 B3, round-4 B3, round-5 B3).
+
+A supplied destination is a **candidate the probe carries**, never the value submitted. It is part of
+the selection's identity — it is what the question is about, so changing it asks a new one — and the
+answer's target is what the form states and submits, exactly as for a derived destination. The two
+agree whenever the candidate is free, which is why every walk written so far passed; the decision is
+about the case where they differ.
+
+**Amended (cycle 2) — every mode.** The resolution drives the destination in every mode the dialog
+offers, detached included. Under detached the answer's MODE is still discarded, because D5 says the
+toggle outranks a classification of the typed text; its DESTINATION is not, because nothing about
+that toggle makes the host's answer about where the worktree goes any less true.
+
+Rejected — keeping the override authoritative and merely warning about it: the accepted requirement
+is that a create names the destination it will actually use, and a form that displays one path while
+git is handed another is the failure this change exists to remove, not a smaller version of it.
+
+### D9 — An opening is identified after every await, never captured before one
+
+`answerCreateProbe` resolves its opening once, before its awaits, and every later check reads that
+captured object. Releasing the map entry — on a repository leaving the workspace, on a newer opening
+replacing it — cannot reach a continuation that already holds the object, so a probe suspended
+across that release still classifies and posts from facts about a repository the workspace no longer
+has (round-5 B7). The `openingsHeld()` witness added in cycle 2 proves the map releases; it says
+nothing about who is still holding what it released.
+
+**Chosen:** the probe path re-resolves its opening by `(surface, repository, token)` after every
+await and before acting or posting, and treats "not the same opening" exactly as it treats a
+superseded sequence — drop, post nothing. Identity, not a captured reference, is what authorizes an
+answer.
+
+This is the same shape as the three post-await supersede checks already in that function, and for
+the same reason: each await is a window, and a guard read before one does not hold after it.
 
 ## Failure-surface inventory
 

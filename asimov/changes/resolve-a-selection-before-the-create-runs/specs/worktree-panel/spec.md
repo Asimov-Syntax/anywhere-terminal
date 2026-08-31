@@ -15,6 +15,17 @@ only as a failure after the create was attempted.
 - **THEN** the create checks that branch out into the new worktree, and does not create a
   near-duplicate branch under a suffixed name
 
+### Requirement: The whole selection is resolved, in every mode
+
+The selection is the branch or ref named, the base the create would start from, and any destination
+the user supplied. A create SHALL NOT be offered until the resolution answering that exact selection
+has arrived, in every mode the dialog offers, a detached create included.
+
+#### Scenario: A create is not offered against an unresolved selection
+
+- **WHEN** any part of the selection changes and the resolution for it has not arrived
+- **THEN** the create is not offered, in every mode including a detached create
+
 ### Requirement: The resolution names both the path the create will take and the one it skipped
 
 The resolution SHALL state the free path the create would use, and WHERE the derived candidate was
@@ -26,6 +37,29 @@ it is a worktree or a directory that is not one.
 - **WHEN** the derived destination is occupied and the create resolves to a suffixed path
 - **THEN** the resolution names the suffixed path it will use and the occupied path it skipped, with
   what was found there
+
+### Requirement: A supplied destination is a candidate the resolution answers, not the path submitted
+
+WHERE the user supplies a destination, what the form states and the create submits SHALL be the path
+the resolution names for it. A supplied destination that is occupied, or that the create root does
+not contain, SHALL NOT be stated as the destination nor submitted as one.
+
+#### Scenario: A supplied destination that is occupied is not the one submitted
+
+- **WHEN** the user supplies a destination that is already occupied
+- **THEN** the form states the path the resolution named instead, and the create submits that path
+
+### Requirement: A mode that fixes its own target refuses the destination control
+
+WHERE the resolved mode acts on a directory of its own — a repair acts on the registration's — the
+destination control SHALL be refused with its reason rather than accepted and ignored, on the same
+rule the base ref already follows.
+
+#### Scenario: A repair keeps the directory it is repairing
+
+- **WHEN** the selection resolves to a repair and the user had supplied a destination
+- **THEN** the destination control is refused with its reason, and the form states and submits the
+  directory being repaired
 
 ### Requirement: Reporting an occupied destination does not authorize removing it
 

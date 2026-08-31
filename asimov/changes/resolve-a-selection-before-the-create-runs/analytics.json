@@ -32,7 +32,7 @@
         }
       ],
       "firstAt": 1788131775547,
-      "lastAt": 1788145147245,
+      "lastAt": 1788145386609,
       "buckets": [
         {
           "runtime": "claude",
@@ -57,15 +57,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 482,
-          "inputTokens": 964,
-          "outputTokens": 357557,
-          "reasoningTokens": 85742,
-          "cacheWriteTokens": 1204225,
-          "cacheReadTokens": 119598701,
+          "messages": 497,
+          "inputTokens": 994,
+          "outputTokens": 373030,
+          "reasoningTokens": 90122,
+          "cacheWriteTokens": 1235816,
+          "cacheReadTokens": 124543734,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 1204225,
+            "cacheWrite1hTokens": 1235816,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }

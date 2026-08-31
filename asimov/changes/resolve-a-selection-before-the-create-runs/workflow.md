@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved — no fork; worktree-create.md § 2, § 2.1, § 2.3 and § 6 name a command and a condition set for every mode, and worktree-rpc.md § 2.2 already specifies the message pair _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved (fastlane) — re-earned after the round-1 handback: D1 amended, D7 and D8 added, tasks 5_1..5_4
+- [x] Gate 2: plan approved — REOPENED by the cycle-2 handback: D5 and D8 amended, D9 added, tasks 7_1..7_3
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.8
 Lane: full (standard) — a new wire pair and a git mutation on the administrative directory, on the create path | flags: new-api-contract
-Planned at: 6d55dc07 (re-planned after round 1)
+Planned at: c7fc268d (re-planned after the cycle-2 handback)
 
 - Admission screen: reattach's `git worktree repair` is arguably a second new invariant owner beside the resolver. NOT split — the blueprint packaged them, and splitting would ship a resolution that names a mode nothing can act on, which changes delivery semantics and is never auto-chosen under fastlane.
 - D1 departs from worktree-rpc.md § 2.2 by adding the per-opening `token` to a pair the blueprint records without one. `query` echoes for staleness within an opening and cannot separate two openings of the same dialog on the same repository. Shipping a NEW message with a gap in order to match two pre-existing messages that have it would be choosing the defect; retrofitting those two stays out of scope.

@@ -166,3 +166,35 @@
     6. `src/extension.worktreeAssembly.test.ts`: override walks for reattach and for an occupied fresh candidate, asserting displayed path, posted path and issued argv name one path (W7).
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched; no new `D#`
 
+- [ ] 7_1 The resolution's target is the destination, in every mode
+  - **Deps**: none
+  - **Refs**: design.md D5, D8; specs/worktree-panel/spec.md#{a-selection-resolves-to-what-the-create-would-actually-do-before-submit, the-whole-selection-is-resolved-in-every-mode, a-supplied-destination-is-a-candidate-the-resolution-answers-not-the-path-submitted, a-mode-that-fixes-its-own-target-refuses-the-destination-control}
+  - **Acceptance**:
+    - Outcome: The form states and submits the resolution's path, never the supplied destination it answered
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts`: the displayed and submitted destination come from the effective resolution once one has landed, whether or not a destination was supplied. The supplied value stays the probe's candidate and the ask key's, which is what makes an edit to it a new question.
+    2. Same file: a mode that fixes its own target keeps refusing the control, and the detached toggle no longer exempts the selection from the submit gate — it exempts only the answer's mode.
+    3. Same file: the resolution applier consumes a detached answer's destination while still discarding its mode.
+  - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched
+
+- [ ] 7_2 A suspended probe re-identifies its opening before it answers
+  - **Deps**: none
+  - **Refs**: design.md D9
+  - **Acceptance**:
+    - Outcome: A probe whose repository departs mid-await posts nothing
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: `answerCreateProbe` re-resolves its opening by surface, repository and token after every await, and drops on a mismatch exactly as it drops on a superseded sequence.
+    2. `src/providers/WorktreeHost.actions.test.ts`: a deferred refs read, with the repository removed from the workspace while the probe is suspended.
+
+- [ ] 7_3 The assembly walk makes the candidate and the resolved target differ
+  - **Deps**: 7_1
+  - **Refs**: design.md D8; `.reviews/round-5.md` W7
+  - **Acceptance**:
+    - Outcome: An assembly walk with an occupied override submits the resolution's path, not the override
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts`: an occupied fresh override, and a standing override withdrawn by a reattach resolution. Both assert the stated path, the posted path and the issued argv are one path — and both must fail if the override wins, which the existing free-override walk cannot.
+  - **Boundary**: assertions only; production behaviour is 7_1's
+
