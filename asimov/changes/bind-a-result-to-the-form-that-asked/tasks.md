@@ -91,7 +91,7 @@
     2. `src/providers/WorktreeHost.actions.test.ts`: after a close, `worktreeCreateProbe` publishes nothing and `worktreeAuthorizeDebris` issues no authorization; each asserted with a setup-landed check first.
   - **Boundary**: the debris carve-out's own rule is unchanged — a deletion still needs an explicit authorization naming a fingerprint. What changes is that a cancelled form can no longer be the thing that names one.
 
-- [ ] 4_2 A duplicate after the read settles still runs no second read
+- [x] 4_2 A duplicate after the read settles still runs no second read — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: specs/worktree-panel/spec.md#a-repeated-request-for-one-opening-never-starts-a-second-read; design.md D4
   - **Acceptance**:

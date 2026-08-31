@@ -1929,10 +1929,23 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             })
             // The section is not the create. A provider layer that cannot
             // answer must not delay or refuse the destination the form needs.
-            .catch(() => {})
-            .finally(() => {
-              // Only the generation that still owns the slot clears it — a
-              // superseded read finishing late must not unlock the live one.
+            //
+            // Clearing the marker is the FAILURE path's job, and only its job.
+            // It used to run in a `finally`, so a read that succeeded released
+            // the slot too — which bounded concurrent duplicates and nothing
+            // else: a repeat delivered after the read settled found no marker,
+            // read again, and rotated the offer under a dialog the user had not
+            // stopped looking at (.reviews/round-1.md B4). A successful read's
+            // marker is now released by retirement — close, supersede or detach.
+            //
+            // A FAILED read is different, and D4 says so: the marker records
+            // that a read succeeded, not that one was attempted. Held through a
+            // failure it would cost the user the provisioning section for the
+            // life of the form, with no way back but closing and reopening it.
+            //
+            // Only the generation that still owns the slot clears it — a
+            // superseded read failing late must not unlock the live one.
+            .catch(() => {
               if (provisionReading.get(reading) === mine) {
                 provisionReading.delete(reading);
               }

@@ -2746,6 +2746,64 @@ describe("the provisioning offer the create form is given", () => {
     dispose();
   });
 
+  it("[4_2] a repeat delivered after the read finished still starts no second read", async () => {
+    // The join marker was cleared when the read SETTLED, so it bounded
+    // concurrent duplicates only: a repeat arriving afterwards found nothing and
+    // read again, rotating the offer under a dialog the user had not stopped
+    // looking at (.reviews/round-1.md B4). One read per opening, not one
+    // concurrent read per opening (D4).
+    let reads = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => {
+        reads += 1;
+        return model(".env");
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 6 });
+    await settle();
+    expect(reads, "the first read never ran, so a repeat proves nothing").toBe(1);
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 6 });
+    await settle();
+
+    expect(reads).toBe(1);
+    // And the repeat is still answered — joining the read must not cost it the
+    // destination reply.
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(2);
+    // One offer, not two: nothing rotated under the open form.
+    expect(offersIn(view)).toHaveLength(1);
+    dispose();
+  });
+
+  it("[4_2] a read that FAILED may be retried within its opening", async () => {
+    // The marker records that a read succeeded, not that one was attempted. Held
+    // through a failure it would cost the user the provisioning section for the
+    // life of the form, with no way back but closing and reopening it (D4).
+    let reads = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => {
+        reads += 1;
+        if (reads === 1) {
+          throw new Error("provider unreadable");
+        }
+        return model(".env");
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 6 });
+    await settle();
+    expect(reads).toBe(1);
+    expect(offersIn(view), "the failed read published an offer").toHaveLength(0);
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 6 });
+    await settle();
+
+    expect(reads).toBe(2);
+    expect(offersIn(view)).toHaveLength(1);
+    dispose();
+  });
+
   it("[r2 B5] a reopened form never receives its predecessor's model", async () => {
     // Keying the read by surface+repo alone made a reopening JOIN the read
     // already in flight, so the second form was handed the first form's answer.
