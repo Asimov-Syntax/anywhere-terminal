@@ -148,3 +148,49 @@
     1. `src/extension.worktreeAssembly.test.ts`: walk a clean worktree from the menu action to the report, assert nothing was removed before the confirm, then that the confirm removes it.
     2. Same file: walk a worktree with a failed confirmable check and assert the typed confirmation is what authorizes the forced removal.
   - **Boundary**: no production behaviour is added here — this task proves what 2_1 to 2_4 built, through the real assembly
+
+## 3. The report answers for the worktree it named (round-4 B3, W4, W5)
+
+- [ ] 3_1 Assess behind the same barrier a mutation takes
+  - **Deps**: 2_5
+  - **Refs**: design.md D10; specs/worktree-panel/spec.md#a-report-describes-the-worktree-the-confirmation-will-act-on
+  - **Acceptance**:
+    - Outcome: A worktree replaced at the same path cannot be assessed under its predecessor's registration
+    - Verify: unit src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts`: `assessRemovalReport` runs its assessment inside `coordinator.run(target.repoId, …)` — `resolve` is `deps.resolve(target)`, `missing` returns `null`, and the body is the existing assess-and-classify. Nothing calls `deps.report`; `withTarget` is not used and is what would publish.
+    2. `src/worktree/worktreeMutationService.test.ts`: the assess awaits the forced rebuild BEFORE it reads — assert the ordering, not merely that a rebuild happened; a target that vanishes across the barrier returns `null`; a stale registration replaced across the barrier is assessed as the replacement, and the token it mints is the replacement's.
+  - **Boundary**: the coordinator's own contract is not touched — no opt-out flag for the post-attempt rebuild, because that `finally` is load-bearing for every mutation that shares it (D10)
+
+- [ ] 3_2 The host stops swallowing an assessment that failed
+  - **Deps**: 3_1
+  - **Refs**: design.md D12; specs/worktree-panel/spec.md#an-assessment-that-fails-outright-is-reported-not-swallowed
+  - **Acceptance**:
+    - Outcome: A rejected assessment reaches the retry surface instead of leaving the action unanswered
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: the `worktreeRemoveAssess` catch posts the `unavailable` arm rather than nothing, re-checking surface liveness the same way the success leg does. Correct the comment above the handler: the ground it gives for avoiding `perform` is half wrong, and D10 is what it should cite.
+    2. `src/providers/WorktreeHost.actions.test.ts`: a rejecting assessment capability produces one `unavailable` reply; a rejection after the surface detached posts nothing.
+  - **Boundary**: no new arm on the wire — D12 chose to name the assessment as the failed read precisely so `WorktreeRemoveAssessmentMessage` does not grow a third case
+
+- [ ] 3_3 A late report never replaces what the user is looking at
+  - **Deps**: 3_1
+  - **Refs**: design.md D11; specs/worktree-panel/spec.md#a-report-is-shown-only-while-it-still-answers-what-the-user-asked
+  - **Acceptance**:
+    - Outcome: An assessment answered after the user moved on opens nothing
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeController.ts`: hold the one live remove intent — set where `worktreeRemoveAssess` is posted, cleared when any dialog opens, when the report is answered or cancelled, and when a newer removal is asked. `handleRemoveAssessment` drops a reply that no longer matches it.
+    2. `src/webview/worktree/WorktreeView.ts`: render Retry only where the result still carries a `worktreeId`, so the one control whose whole purpose is to act is never offered where it cannot.
+    3. `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: a reply for one worktree after a removal was asked for another opens nothing; a reply landing after another dialog opened leaves that dialog standing; a re-scoped `unavailable` result renders no Retry; the ordinary path still opens its report.
+  - **Boundary**: no request token on the wire — D11 rejected it, and adding one here would be a contract change the spec delta does not carry
+
+- [ ] 3_4 Prove the replacement cannot be deleted under its predecessor's report
+  - **Deps**: 3_1, 3_2, 3_3
+  - **Refs**: design.md D10, D11
+  - **Acceptance**:
+    - Outcome: The assembled extension refuses to force-remove a worktree the report did not describe
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts`: walk a remove-and-recreate at the same path with the watcher rebuild deferred, then assert through the real assembly that no forced removal of the replacement is authorized by the report the user read.
+  - **Boundary**: no production behaviour is added here — this task proves what 3_1 to 3_3 built, through the real assembly

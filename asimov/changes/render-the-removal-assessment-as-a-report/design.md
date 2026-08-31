@@ -140,6 +140,11 @@ is deleted because there is no way to ask.
 Reuse, not new machinery — `WorktreeMutationBindings.assessRemoval`
 (`worktreeMutationService.ts:203`) already exists and is what the removal path itself calls.
 
+**"Resolves the target" was underspecified, and round-4 B3 is what that cost.** This decision said
+what the message does not do — it does not act — and left unstated *against which tree* it resolves.
+The answer is now D10's: the same forced-rebuild barrier a mutation takes, and still no mutation
+result published. Read D6 and D10 together; where the two disagree D10 governs.
+
 **Rejected — make every unforced removal report first.** The user would then need a way to say "I
 have seen it", which is either a second unforced request the host cannot tell from the first, or new
 per-worktree host state. That is more machinery than a read-only message, and it fuses "ask" with
@@ -157,6 +162,12 @@ blocked path already uses — `atRisk(assessment.evidence)` at `worktreeMutation
 refusal carries `null`, as the blocked path already sends (`:461`). A clean or `notApplicable`
 assessment carries `null` and its confirmation therefore goes down the **existing unforced path**,
 which re-evaluates and blocks if the worktree stopped being clean in the meantime.
+
+**Which worktree the token is bound to.** `fingerprints.issue` keys on `worktreeId` plus evidence,
+never on the registration the report described — deliberately, because round-2 B5 established that no
+available field can identify an incarnation uniquely. The binding is `forget`, and D10 is what makes
+it fire before the token is minted rather than after. Without D10 this line mints authority over
+whatever now occupies the path.
 
 So assessing a healthy worktree mints no force authority. The alternative — issue on every assess,
 for symmetry, which is what round-3 B1's SuggestedFix proposes — is **rejected**: it would make "ask
@@ -213,6 +224,96 @@ refusal predicate does the same within its own class. The fourth state was alway
 never *named*, and an unnamed reachable state is one a later edit breaks silently. The spec now names
 it and a test pins it. No code changes for this decision.
 
+### D10 — An authority-bearing read takes the same freshness barrier a mutation takes
+
+Round-4 B3. D6 said the assess "resolves the target, evaluates, posts, and removes nothing", and the
+code took that literally: `worktreeRemoveAssess` calls `assessRemovalReport` directly, so it reads
+from whatever the cache holds. The build-time comment justifying that named two grounds for avoiding
+the mutation wrapper — it takes the rebuild gate, and it publishes a mutation result. **The first
+ground was wrong.** Queueing an authority-bearing read behind writes is not a cost to avoid; it is
+the property the read needs. Only the second ground survives.
+
+The two are separable, and the seam already exists:
+
+```
+mutationCoordinator.run<T, R>(repoId, step)     ← queue lock, forced rebuild barrier,
+  │                                                re-resolve, body, post-attempt rebuild.
+  │                                                Generic. Publishes NOTHING.
+  └── withTarget(verb, target, body)            ← wraps run, then calls deps.report(...)
+                                                   THIS is what announces a mutation.
+```
+
+So `assessRemovalReport` runs its assessment inside `coordinator.run` and the host still publishes
+no mutation result. **No new invariant owner is minted** — the existing one is adopted, which is why
+this is an amendment rather than its own change.
+
+**What this closes, and by which existing mechanism.** Binding the token to an incarnation was tried
+and rejected at round-2 B5: `head:branch` repeats on a recreate onto the same commit, and git reuses
+`.git/worktrees/<name>` once the name is free, so no field available can be made unique. The binding
+lives in `FingerprintStore.forget` (`worktreeFingerprint.ts:44-53`) instead — the rebuild that fails
+to find an id destroys every token for it, so a worktree created later at the same path cannot
+inherit one. B3 is reachable precisely because that rebuild had **not run yet**. Taking the barrier
+first is therefore not a new defence; it is what makes the shipped one fire before authority is
+minted rather than after.
+
+**Cost, accepted rather than engineered around.** `coordinator.run` forces a rebuild in its `finally`
+after every body, and a forced request bypasses the rebuild floor (`rebuildGate.ts:14`). An assess
+therefore costs two forced rebuilds where it previously cost none, and resets the floor. Accepted:
+this is one human click on a menu item, not a hot path, and the alternative — an opt-out flag on the
+shared coordinator — would put a way to skip the post-attempt rebuild within reach of every mutation,
+where it is load-bearing for exactly the reason its comment gives.
+
+**A target that vanished** returns `null` through the coordinator's `missing` leg and the host posts
+nothing, unchanged from today. The rebuild that observed the disappearance has already removed the
+row, so the panel's answer to the user is the row leaving the tree.
+
+### D11 — A late answer never replaces what the user is looking at now
+
+Round-4 W4. `WorktreeView.openRemoveDialog` calls one global `closeDialog`, so an assessment answered
+late closes whatever dialog is open and puts an obsolete report in its place.
+
+The remedy is a **controller-local live-intent guard, not a wire field.** The controller is the only
+thing that opens a dialog — create, launch, prune and the report all go through it — so it can hold
+the one remove intent that is live and drop any reply that no longer answers it. A per-surface token
+echoed through the message was considered and rejected: it costs a contract change to distinguish two
+assessments **of the same worktree**, and those two render the same report, so the distinction buys
+nothing. Every boundary the finding names is closed without it:
+
+| Late reply arrives after… | Guard |
+|---|---|
+| a removal was asked for a DIFFERENT worktree | intent names one worktree; a mismatch is dropped |
+| a create, launch or prune dialog opened | opening any dialog clears the intent |
+| the user cancelled the report | the dialog's own cancel clears it |
+| the row departed (`unavailable` arm) | Retry renders only while the target still resolves |
+
+The last row is the second half of W4: a re-scoped `unavailable` result loses its `worktreeId`, and
+`onRetryAction` then silently does nothing while the button is still on screen. A control that cannot
+act is not offered.
+
+Two assessments of the same worktree completing out of order remain possible and are harmless: with
+D10 in place both reports were produced behind the barrier, and a token issued over older evidence
+reprompts at redemption if the worktree has since changed.
+
+### D12 — A failed assessment is answered, not swallowed
+
+Round-4 W5. The host's `catch` posts nothing. That was written against a real hazard — inventing an
+empty report would render a worktree of unknown risk as one with none — but the conclusion was wrong:
+the choice is not between a false report and silence, it is between a false report and the
+`unavailable` arm D8 already defines for exactly this.
+
+The obstacle is that `unavailable` promises a **named** list (`unreadable: readonly string[]`, which
+the panel renders under "These reads failed:") and a rejection has no source to name. Two ways out
+were weighed:
+
+- **Widen the result union with a third `failed` arm.** Rejected: a new wire arm, a new panel branch,
+  and a third thing that means "we could not tell you" beside the two that already do.
+- **Name the assessment itself as the read that failed** — `unreadable: ["the assessment"]`. Chosen.
+  It keeps D8's shape and its retry surface, and the sentence it renders is true: the assessment is
+  what could not be read. The promise that the list is never empty is kept rather than weakened.
+
+Fail-closed is preserved either way — nothing is deleted — but an explicit destructive request now
+always gets an answer.
+
 ## Obligation ledger
 
 | Claim | Semantics | Defeater | Witness / check | Disposition |
@@ -223,4 +324,7 @@ it and a test pins it. No code changes for this decision.
 | A worktree that could not be read cannot be rendered as refusing removal | An `unavailable` assessment reaches no code path that computes `confirmationFor` | A flat reply shape that erases the kind, leaving every check `unproven` | D8's discriminant. A test sends `kind: "unavailable"` and asserts the retry surface, not a report, and that no confirmation control exists | supported |
 | The panel cannot manufacture force authority | The dialog forwards `fingerprint` and never synthesises one | `onConfirm` defaulting a null to a string, or the controller posting `force: true` when it holds no fingerprint | D7's nullable `onConfirm`. A test drives a null-fingerprint confirm and asserts the posted message is `force: false` with no `fingerprint` key | supported |
 | Redemption cannot be satisfied by evidence the user never saw | — | Lock reason A → unlock → lock reason B between report and confirm redeems, because `isIdentityPreservingSubset` (`worktreeBlockers.ts:35-36`) compares the lock as a BOOLEAN and the digest (`worktreeFingerprint.ts:179-189`) omits `lockReason`. Second schedule: the 150 ms presence projection cap can leave pane rows stale while an agent has begun running, and redemption compares pane IDENTITY, not activity | **Not a claim this change makes.** Both defeaters are properties of the shipped force path, reachable today through blocked→force, and neither is introduced or widened here — see the window row above. Recorded so it is not mistaken for something this change closed | n/a — pre-existing; needs its own PLAN task, named in workflow.md Notes |
+| A report and the removal its confirmation authorizes name the same registration | For every assessed reply, the tree the assessment resolved against is the tree the barrier had just rebuilt | A watcher rebuild still pending while the path was removed and recreated outside the panel: the old cached row is described, the replacement's evidence is read, and `forget` has not fired | D10. `coordinator.run` awaits `gate.request(force: true)` before `resolve`, so the rebuild that would call `forget` (`worktreeFingerprint.ts:44-53`) has completed. Test: a deferred-watcher replacement produces no assessed reply carrying a token redeemable against the replacement | supported |
+| A late assessment cannot replace what the user is looking at | An assessed reply opens a report only while it answers the live remove intent | `openRemoveDialog`'s single global `closeDialog` closing a newer create/launch/prune/report dialog | D11's controller-local intent guard. Tests: a reply for worktree A after a removal was asked for B opens nothing; a reply landing after another dialog opened leaves it standing; a re-scoped `unavailable` result renders no Retry | supported |
+| An explicit destructive request always gets an answer | Every `worktreeRemoveAssess` from a live surface is followed by exactly one reply or by the row leaving the tree | The `catch` posting nothing, leaving Remove Worktree inert | D12. Test: a rejecting assessment capability produces an `unavailable` reply and the retry surface, not silence | supported |
 | Typing never unlocks a proof-gated option | The typed predicate excludes `cls === "proof"` | A proof check misclassified `confirmable` | The class is the host's and the panel reads it. The witness is **vacuous until WT-013.3** ships a proof-gated control: with none in the DOM, no test can fail. Stated rather than dressed as covered | n/a — no proof-gated control exists to gate; WT-013.3 owns the real witness |

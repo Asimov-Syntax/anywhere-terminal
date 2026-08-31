@@ -71,3 +71,40 @@ refusal to remove.
 
 - **WHEN** the assessment cannot be produced because what it would inspect could not be read
 - **THEN** the panel says so and offers a retry, rather than showing a report with every check unproven
+
+### Requirement: A report describes the worktree the confirmation will act on
+
+The report the user reads and the removal their confirmation authorizes SHALL be the same worktree
+registration. WHERE the registration a report identified has been replaced by another at the same
+location, the confirmation SHALL NOT be honoured against the replacement.
+
+#### Scenario: A worktree is replaced at the same path before the report is produced
+
+- **WHEN** the worktree is removed and a different one is created at the same location outside the panel, and the user then asks to remove it
+- **THEN** the report describes whichever worktree is registered at that location when the report is produced, and confirming it acts on that same one
+
+### Requirement: A report is shown only while it still answers what the user asked
+
+An assessment answered late SHALL NOT replace what the user is looking at now. WHERE the user has
+since asked for something else, cancelled, or moved to another worktree, the late report SHALL be
+discarded. A retry SHALL be offered only where it could still act.
+
+#### Scenario: The user moves on before the report arrives
+
+- **WHEN** an assessment for one worktree is answered after the user has asked to remove a different worktree, or has opened another dialog
+- **THEN** the late report is discarded and what the user is looking at is left alone
+
+#### Scenario: The worktree left the tree before the failure was reported
+
+- **WHEN** an assessment that could not be made is reported after its worktree is no longer listed
+- **THEN** no retry is offered, because there is nothing left for it to ask about
+
+### Requirement: An assessment that fails outright is reported, not swallowed
+
+WHERE the assessment cannot be completed at all, the panel SHALL tell the user it could not be made
+and offer to ask again. Asking to remove a worktree SHALL NOT leave the user with no response.
+
+#### Scenario: The assessment fails rather than reporting what it could not read
+
+- **WHEN** producing the assessment fails outright
+- **THEN** the panel says the assessment could not be made and offers a retry, exactly as it does for one that reported which reads failed
