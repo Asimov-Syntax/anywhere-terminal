@@ -29,6 +29,7 @@ import { createMessageRouter, type MessageHandlers } from "./webview/messaging/M
 import { WorktreeController } from "./webview/worktree/WorktreeController";
 import { agentRow } from "./webview/worktree/worktreeFixtures";
 import type { WorktreeAgentRow, WorktreePresence } from "./webview/worktree/worktreeViewTypes";
+import { MAX_PULL_REQUESTS } from "./worktree/repoPullRequests";
 import { MAX_REFS } from "./worktree/repoRefs";
 
 // A REAL directory: the create-path probe asks the filesystem, and a fake root
@@ -124,6 +125,22 @@ const SCRIPT: Record<string, { code?: number; stdout?: string; stderr?: string }
   [`${REPO}|rev-parse refs/heads/feature`]: { stdout: `${"2".repeat(40)}\n` },
   [`${LINKED}|rev-parse HEAD`]: { stdout: `${"2".repeat(40)}\n` },
   [`${REPO}|worktree repair ${LINKED}`]: { stdout: "" },
+  // The forge, through the same faked factory: `createGitCommandRunner` is
+  // mocked without regard to its executable, so the `gh` runner the entry point
+  // builds lands here too.
+  [`${REPO}|pr list --state=open --json=number,title,headRefName,baseRefName,isCrossRepository,headRepositoryOwner --limit=${MAX_PULL_REQUESTS + 1}`]:
+    {
+      stdout: JSON.stringify([
+        {
+          number: 42,
+          title: "Add search",
+          headRefName: "feat-search",
+          baseRefName: "main",
+          isCrossRepository: false,
+          headRepositoryOwner: { login: "acme" },
+        },
+      ]),
+    },
 };
 
 vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
@@ -461,6 +478,7 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
     | "onWorktreeTreeResponse"
     | "onWorktreeCreateDefaults"
     | "onWorktreeRefs"
+    | "onWorktreePullRequests"
     | "onWorktreeCreateResolution"
     | "onWorktreeMutationResult"
     | "onVaultLaunchTargets"
@@ -468,6 +486,7 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
     onWorktreeTreeResponse: (m) => controller?.handleTreeResponse(m),
     onWorktreeCreateDefaults: (m) => controller?.handleCreateDefaults(m),
     onWorktreeRefs: (m) => controller?.handleRefs(m),
+    onWorktreePullRequests: (m) => controller?.handlePullRequests(m),
     onWorktreeCreateResolution: (m) => controller?.handleCreateResolution(m),
     onWorktreeMutationResult: (m) => controller?.handleMutationResult(m),
     // Routed by the capability it echoes, exactly as main.ts does — the vault
@@ -1171,7 +1190,10 @@ describe("the invariants that span the host and the webview", () => {
     await settle();
 
     const rows = [...document.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']")];
-    expect(rows.map((r) => r.dataset.branch ?? r.dataset.kind)).toEqual(["main", "feature", "idle", "new"]);
+    // `pr-42` sits between the refs and create-new because the same assembly
+    // now answers the forge too (§ 4.1's order). The refs assertions below are
+    // what this test is about and are unchanged.
+    expect(rows.map((r) => r.dataset.branch ?? r.dataset.kind)).toEqual(["main", "feature", "idle", "pr-42", "new"]);
     // Derived from the listing this assembly already holds, not read from git a
     // second time — and it names the DIRECTORY, never the path (design.md D2).
     const feature = rows.find((r) => r.dataset.branch === "feature");
@@ -1181,6 +1203,34 @@ describe("the invariants that span the host and the webview", () => {
     // One git read for the list. A producer that re-listed the worktrees to
     // answer held-by would show a second call here.
     expect(argv.filter((c) => c.args[0] === "for-each-ref")).toHaveLength(1);
+  });
+
+  it("offers the repository's pull requests in the same list, through the real wiring", async () => {
+    // The same hole this file exists to catch, one feature later: every module
+    // test for the forge read passes against its own fake, so an entry point
+    // that never supplies `readPullRequests` would ship a combobox with no pull
+    // requests in it and nothing red anywhere (.reviews/round-1.md B1).
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.focus();
+    branch.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    await settle();
+
+    const rows = [...document.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']")];
+    // § 4.1's order, end to end: refs, then the pull request, then create-new.
+    expect(rows.map((r) => r.dataset.branch ?? r.dataset.kind)).toEqual(["main", "feature", "idle", "pr-42", "new"]);
+    expect(rows.find((r) => r.dataset.pr === "42")?.textContent).toContain("Add search");
+    // Asked once, and asked where the repository is — `gh` resolves it from the
+    // checkout rather than from a name assembled here.
+    const asked = argv.filter((c) => c.args[0] === "pr");
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.cwd).toBe(REPO);
   });
 
   it("[4_1] answers a probe through the real wiring, and the answer reaches the form", async () => {

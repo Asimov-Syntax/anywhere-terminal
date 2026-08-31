@@ -76,3 +76,15 @@
     1. `src/webview/worktree/WorktreeCreateDialog.ts`: render the remote statement from `fromFork` and `headOwner` on selection, beside the destination line rather than after submit.
     2. `src/webview/worktree/WorktreeCreateDialog.test.ts`: a fork PR states the remote before submit; a same-repo PR does not; changing selection withdraws the statement.
   - **Boundary**: this change STATES the remote and does not configure it — no git config write, no remote add, per D5
+
+- [x] 3_3 Wire the reader into the shipped extension — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 1_2
+  - **Refs**: design.md D1, D2
+  - **Acceptance**:
+    - Outcome: The assembled extension offers pull requests through its real wiring
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.ts`: pass `readPullRequests` into `createWorktreeHost`, built as `readPullRequests(ghRunner, input)` with `ghRunner = createGitCommandRunner({ executable: "gh" })` — beside `readRefs`, and for the same stated reason.
+    2. `src/extension.worktreeAssembly.test.ts`: assert the assembled host offers pull requests through the real wiring, so removing the dep fails rather than passing against a fake.
+  - **Boundary**: no change to how `readRefs` is wired, and no second process seam — the `gh` runner is the shared factory with a different executable
+

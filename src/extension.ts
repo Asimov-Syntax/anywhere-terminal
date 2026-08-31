@@ -61,6 +61,7 @@ import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
 import { rosterFromDetail } from "./worktree/delegations";
+import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
 import { normalizeWorktreePath } from "./worktree/normalizePath";
@@ -72,6 +73,7 @@ import { readAsimovProvisioning } from "./worktree/provisioning/asimovProvider";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { checksFor } from "./worktree/removalChecks";
+import { readPullRequests } from "./worktree/repoPullRequests";
 import { readRepoRefs } from "./worktree/repoRefs";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
 import { composeSessionViews } from "./worktree/sessionViews";
@@ -763,6 +765,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   }
 
+  // `gh` is the forge client (design.md D1). One runner, built here, so the
+  // read below is the only thing that knows the executable is not git.
+  const ghRunner = createGitCommandRunner({ executable: "gh" });
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
     // Without this the create form never receives an offer and the whole
@@ -775,6 +780,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // The listing arrives from the host, which already holds it — this side
     // supplies only the git runner (design.md D2).
     readRefs: (input) => readRepoRefs(worktreeTreeDeps.runner, input),
+    // Same reason again, and the same failure it prevents: without this the
+    // combobox never offers a pull request in the shipped extension while every
+    // module test stays green against its own fake. The runner is the shared
+    // factory with a different executable — `gh` classifies a missing client as
+    // `failedToSpawn`, which is the one unavailable state (design.md D2).
+    readPullRequests: (input) => readPullRequests(ghRunner, input),
     // § 2.3's conditions 2 and 3, which are a filesystem read and a ref read.
     // Assembled here rather than in the host for the same reason `readRefs` is:
     // the host holds a listing, and neither `.git` nor `refs/heads` is one.
