@@ -304,8 +304,11 @@ export interface WorktreeMutationService extends WorktreeMutationCapabilities {
    * a worktree with nothing at risk fell straight through to git and was deleted
    * having never been reported (round-3 B1).
    *
-   * `null` when the id names nothing — the same answer `assessRemoval` gives, and
-   * the caller posts nothing rather than inventing an empty report.
+   * Runs behind the same forced-rebuild barrier a mutation takes, so the report
+   * describes the registration the confirmation will act on rather than whatever
+   * the cache still held (D10). An id the barrier finds gone answers
+   * `unavailable`, not silence (D12); `null` is left for an assessment the
+   * capability itself declined, where there is nothing to report.
    */
   assessRemovalReport(target: WorktreeMutationTarget): Promise<RemovalReport | null>;
   /**
@@ -369,6 +372,34 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       );
   }
 
+  /** The report itself, once the barrier above has fixed what it reads. */
+  async function assess(target: WorktreeMutationTarget): Promise<RemovalReport | null> {
+    const assessment = await deps.assessRemoval(target);
+    if (assessment === null) {
+      return null;
+    }
+    if (assessment.kind === "unavailable") {
+      return { kind: "unavailable", unreadable: assessment.unreadable };
+    }
+    // A refusal carries no evidence BY CONSTRUCTION, so there is nothing to
+    // bind a fingerprint to and nothing a forced removal could redeem — the
+    // same null the blocked path already sends for one.
+    if (assessment.kind === "refused") {
+      return { kind: "assessed", assessment, fingerprint: null };
+    }
+    // The whole of D7 is this line. `atRisk` false means the ordinary unforced
+    // removal is legal, so the report needs no force authority and gets none:
+    // asking what a clean worktree would cost must not be the door that makes
+    // destroying one possible.
+    return {
+      kind: "assessed",
+      assessment,
+      fingerprint: atRisk(assessment.evidence)
+        ? fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now())
+        : null,
+    };
+  }
+
   function settled(verb: MutationVerb, repoId: string, result: MutationResult): MutationOutcome {
     return result.ok ? { kind: "ok", verb, repoId } : { kind: "error", verb, repoId, message: result.message };
   }
@@ -402,31 +433,20 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       return fingerprints.issue({ worktreeId: target.worktreeId }, evidence, deps.now());
     },
 
-    async assessRemovalReport(target) {
-      const assessment = await deps.assessRemoval(target);
-      if (assessment === null) {
-        return null;
-      }
-      if (assessment.kind === "unavailable") {
-        return { kind: "unavailable", unreadable: assessment.unreadable };
-      }
-      // A refusal carries no evidence BY CONSTRUCTION, so there is nothing to
-      // bind a fingerprint to and nothing a forced removal could redeem — the
-      // same null the blocked path already sends for one.
-      if (assessment.kind === "refused") {
-        return { kind: "assessed", assessment, fingerprint: null };
-      }
-      // The whole of D7 is this line. `atRisk` false means the ordinary unforced
-      // removal is legal, so the report needs no force authority and gets none:
-      // asking what a clean worktree would cost must not be the door that makes
-      // destroying one possible.
-      return {
-        kind: "assessed",
-        assessment,
-        fingerprint: atRisk(assessment.evidence)
-          ? fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now())
-          : null,
-      };
+    assessRemovalReport(target) {
+      // Inside the coordinator, never `withTarget`: the barrier this read needs
+      // and the mutation result `withTarget` publishes are separable, and only
+      // the second is what D6 was right to avoid. Reading from the cache instead
+      // let a rebuild still pending hand the predecessor's report the
+      // replacement's evidence, and mint force authority over it (round-4 B3).
+      return coordinator.run<ResolvedTarget, RemovalReport | null>(target.repoId, {
+        resolve: async () => deps.resolve(target),
+        // The other silent exit. The departure is only the user's answer while
+        // the rebuild broadcasts it, and one whose presence projection rejects
+        // publishes nothing at all (D12).
+        missing: async () => ({ kind: "unavailable", unreadable: ["the worktree is no longer registered"] }),
+        body: () => assess(target),
+      });
     },
 
     async issueDebrisAuthorization(path) {

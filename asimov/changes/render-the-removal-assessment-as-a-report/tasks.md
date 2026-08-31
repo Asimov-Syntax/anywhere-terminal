@@ -151,7 +151,7 @@
 
 ## 3. The report answers for the worktree it named (round-4 B3, W4, W5)
 
-- [ ] 3_1 Assess behind the same barrier a mutation takes
+- [x] 3_1 Assess behind the same barrier a mutation takes — verified: bun test 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 2_5
   - **Refs**: design.md D10; specs/worktree-panel/spec.md#a-report-describes-the-worktree-the-confirmation-will-act-on
   - **Acceptance**:

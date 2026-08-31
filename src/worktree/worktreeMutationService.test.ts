@@ -1721,8 +1721,10 @@ describe("a removal report is produced without performing the removal", () => {
       assessment: { kind: "confirmable", evidence: evidence(), fingerprint: "" },
       fingerprint: null,
     });
-    // Reading, not removing: no git subcommand ran at all.
-    expect(h.order).toEqual([]);
+    // Reading, not removing: no git subcommand ran at all. The barrier's own
+    // rebuild and resolve are in `order` now (D10), so the claim is filtered to
+    // git rather than widened to "nothing happened".
+    expect(h.order.filter((s) => s.startsWith("git:"))).toEqual([]);
   });
 
   it("issues one exactly where the blocked path already would", async () => {
@@ -1741,7 +1743,7 @@ describe("a removal report is produced without performing the removal", () => {
     // Still nothing performed. `fingerprints.issue` is called directly here, as
     // the blocked path calls it — not through `issueFingerprint`, which resolves
     // a second time for a target `assessRemoval` has already answered null for.
-    expect(h.order).toEqual([]);
+    expect(h.order.filter((s) => s.startsWith("git:"))).toEqual([]);
   });
 
   it("issues none for a refusal, which has no evidence to bind one to", async () => {
@@ -1769,5 +1771,69 @@ describe("a removal report is produced without performing the removal", () => {
     const h = harness({ assessRemoval: async () => null });
 
     expect(await h.service.assessRemovalReport(ASK)).toBe(null);
+  });
+
+  it("[B3] resolves and assesses only after the forced rebuild has released", async () => {
+    // Held unresolved deliberately. Inspecting the finished order would also
+    // pass with no barrier at all, on any schedule where the calls happened to
+    // land that way — the claim is that the rebuild GATES them (D10).
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: string[] = [];
+    const h = harness({
+      forceRebuild: async () => {
+        await barrier;
+      },
+      resolve: () => {
+        seen.push("resolve");
+        return target();
+      },
+      assessRemoval: async () => {
+        seen.push("assess");
+        return { kind: "confirmable" as const, evidence: evidence(), fingerprint: "" };
+      },
+    });
+
+    const pending = h.service.assessRemovalReport(ASK);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen).toEqual([]);
+
+    release();
+    await pending;
+    expect(seen).toEqual(["resolve", "assess"]);
+  });
+
+  it("[B3] says the worktree is no longer registered when the barrier finds it gone", async () => {
+    // D12: the coordinator's `missing` leg is a silent exit too. A rebuild whose
+    // presence projection rejects publishes nothing, so the row does not depart
+    // AND no reply arrives — the user's destructive request goes unanswered.
+    const h = harness({ resolve: () => null });
+
+    expect(await h.service.assessRemovalReport(ASK)).toEqual({
+      kind: "unavailable",
+      unreadable: ["the worktree is no longer registered"],
+    });
+  });
+
+  it("[B3] assesses the registration the barrier revealed, not the one the cache held", async () => {
+    // The finding itself: a remove-and-recreate at the same path with the
+    // watcher rebuild still pending. Read before the barrier, the predecessor is
+    // clean and the report mints no token; read after it, the replacement is
+    // dirty and the token binds the evidence the user is actually shown.
+    let registered = evidence();
+    const h = harness({
+      forceRebuild: async () => {
+        registered = evidence({ dirtyPaths: ["src/replacement.ts"] });
+      },
+      assessRemoval: async () => ({ kind: "confirmable" as const, evidence: registered, fingerprint: "" }),
+    });
+
+    const report = await h.service.assessRemovalReport(ASK);
+
+    expect(report?.kind === "assessed" && report.assessment.kind === "confirmable" && report.assessment.evidence)
+      .toEqual(evidence({ dirtyPaths: ["src/replacement.ts"] }));
+    expect(report?.kind === "assessed" && typeof report.fingerprint).toBe("string");
   });
 });
