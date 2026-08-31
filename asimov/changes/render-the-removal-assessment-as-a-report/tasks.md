@@ -45,3 +45,15 @@
     2. Same file: word the `idlePanes` failing sentence from the evidence the producer actually carries — panes whose working directory is the worktree — rather than claiming they are idle.
     3. `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: replace the inherited assertions that a refused dialog has no `.wt-blockers`, and assert the pane wording against a running pane.
   - **Boundary**: no change to `src/worktree/worktreeBlockers.ts`'s pane selection or to any message shape — the wording is the defect, not the count
+
+- [ ] 1_5 Refuse on a refusal-class check nobody could evaluate
+  - **Deps**: 1_4
+  - **Refs**: specs/worktree-panel/spec.md#a-typed-confirmation-is-required-only-where-a-confirmable-risk-earned-one; design.md D2; .reviews/round-1.md W1
+  - **Acceptance**:
+    - Outcome: A report whose refusal-class check is unproven offers no confirmation control
+    - Verify: unit src/worktree/removalChecks.test.ts
+  - **Plan**:
+    1. `src/worktree/removalChecks.ts`: `isRefusedByChecks` returns true for a `cls === "refusal"` check whose outcome is `failed` or `unproven`.
+    2. `src/worktree/removalChecks.test.ts`: cover the unproven refusal alongside the failing one, and that a confirmable or proof unproven still does not refuse.
+    3. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: the round-1 test asserting an unreadable refusal check leaves the removal gated now asserts it refuses; keep the case that an unreadable CONFIRMABLE check is gated rather than refused.
+  - **Boundary**: no change to the host's own refusal path — `assessment.kind` stays the host's decision, and no message shape moves

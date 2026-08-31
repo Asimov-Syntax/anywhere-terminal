@@ -42,9 +42,26 @@ copy, and would lose the count element the panel renders in its own right (`coun
 ### D2 — The confirmation control is chosen once, from the classes the host sent
 
 **Chosen:** one function over the checks returns which of three controls the dialog mounts —
-none (refused), typed, or ordinary — and the dialog mounts what it returns. Refusal keeps reading
-`isRefusedByChecks`. Typed is required when any check with `cls === "confirmable"` has outcome
+none (refused), typed, or ordinary — and the dialog mounts what it returns. Refusal is earned by a
+check with `cls === "refusal"` whose outcome is `failed` **or `unproven`**. Typed is required when
+no refusal-class check earned a refusal and any check with `cls === "confirmable"` has outcome
 `failed` or `unproven`. Everything else is ordinary.
+
+**Corrected after round-1 W1.** This decision first read "refusal keeps reading
+`isRefusedByChecks`", which refuses only on `failed`, so a refusal-class check nobody could evaluate
+fell through to a confirmation. DESIGN.md D43 had already decided otherwise — "a hard refusal
+unproven still refuses" — and worktree-removal.md § 2.2 says the same in the domain's own words:
+"Activity that cannot be determined is treated as live". The blueprint outranks this file, so the
+predicate changes rather than the rule. Fail-closed within each class is what D43 makes the shared
+meaning of `unproven`: it withholds whatever its own class gates — the removal for a refusal, an
+ordinary confirm for a risk, only the option it gated for a proof.
+
+`isRefusedByChecks` is the single definition and has no host caller, so the correction changes what
+this dialog offers and no host behavior. The host reaches its own refusal through
+`assessment.kind`, and routes a wholly `unavailable` assessment — the one case that reports every
+check `unproven` — to retry UI rather than to this dialog. That routing is why the shipped path was
+fail-closed in spite of the wrong predicate, and it is not something to depend on: it is one
+producer away from authorizing a deletion while agent activity is unknown.
 
 `cls` travels on the wire precisely so this rule is not re-derived webview-side (worktree-removal.md
 § 2.2). Reading `cls` rather than a list of ids means a check whose class is computed host-side —

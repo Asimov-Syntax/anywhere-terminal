@@ -18,7 +18,7 @@ The remove dialog SHALL render every check the assessment reported — the ones 
 
 ### Requirement: A typed confirmation is required only where a confirmable risk earned one
 
-WHEN a check of the confirmable class is failing or could not be evaluated, the removal SHALL require the user to type the worktree's name before it is authorized. Otherwise the removal SHALL be offered with an ordinary confirmation, and a proof that is unproven or withheld SHALL NOT cause a typed confirmation to be required.
+WHEN a check of the refusal class is failing or could not be evaluated, no confirmation SHALL be offered. WHEN no refusal-class check is failing or unproven and a check of the confirmable class is failing or could not be evaluated, the removal SHALL require the user to type the worktree's name before it is authorized. Otherwise the removal SHALL be offered with an ordinary confirmation, and a proof that is unproven or withheld SHALL NOT cause a typed confirmation to be required.
 
 #### Scenario: Only a proof is unproven
 
@@ -29,3 +29,8 @@ WHEN a check of the confirmable class is failing or could not be evaluated, the 
 
 - **WHEN** a confirmable check is reported as unproven
 - **THEN** the removal is offered behind a typed confirmation rather than withheld
+
+#### Scenario: A refusal-class check could not be evaluated
+
+- **WHEN** a refusal-class check is reported as unproven
+- **THEN** no confirmation is offered, the same as if that check had failed
