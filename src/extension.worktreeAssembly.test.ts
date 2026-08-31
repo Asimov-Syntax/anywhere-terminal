@@ -771,9 +771,19 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
       },
     };
     host.attach(probe).setDisplayed(true);
+    // One opening for the whole walk. This fixture named none at all until the
+    // host began validating the field, and it passed only because an absent
+    // opening compared equal to an unheld one — which is the defect round-1 B3
+    // reported, visible here as a test that could not have failed.
+    const OPENING = 1;
     const ask = async (branch?: string): Promise<{ path: string; collidedWith?: string; branch?: string }> => {
       answers.length = 0;
-      host.handleMessage(probe, { type: "requestWorktreeCreateDefaults", repoId: REPO_ID, branch } as never);
+      host.handleMessage(probe, {
+        type: "requestWorktreeCreateDefaults",
+        repoId: REPO_ID,
+        opening: OPENING,
+        branch,
+      } as never);
       await settle();
       const answer = answers[0];
       if (answer === undefined) {

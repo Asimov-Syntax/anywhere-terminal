@@ -603,6 +603,63 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   const liveOpening = new Map<string, number>();
   /**
+   * An `opening` the host is willing to reason about at all.
+   *
+   * The forwarding boundary checks the discriminator and nothing else
+   * (`isWorktreeMessage`), so shape validation has to happen here. Without it
+   * `undefined` collapsed three states into one: absent, malformed and retired
+   * all compared equal to a missing map entry, so a malformed message acquired
+   * authority and kept it across a close (.reviews/round-1.md B1).
+   *
+   * Zero is refused with the rest. The panel pre-increments before its first
+   * ask, so zero only ever appears on an ask made before any form opened —
+   * which was already answered with nothing.
+   */
+  const namedOpening = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+  /**
+   * Everything one surface's create form holds, dropped together.
+   *
+   * Close, supersede and detach are the same event told three ways, and having
+   * only `worktreeCreateClosed` do the sweep left the other two leaking: a
+   * supersede retired only the read slots the new opening happened to re-ask
+   * about, and a detach retired nothing at all (round-1 B2, W1).
+   *
+   * The read slots are per surface AND repository because one opening asks
+   * about every repository in the workspace, so retiring by surface alone is
+   * the only sweep that covers them.
+   */
+  /**
+   * The highest opening each surface has ever named.
+   *
+   * Liveness alone could not say "this one is OVER": `retireOpening` deletes the
+   * entry, so a replay of the closed form's own request found no entry and was
+   * adopted as a fresh opening — the retirement undone by the message that
+   * preceded it. A delayed opening N arriving after N+1 did the same thing
+   * backwards, moving the surface onto a form the user had already left
+   * (.reviews/round-1.md B1).
+   *
+   * Kept beside `liveOpening` rather than replacing it: they answer different
+   * questions. This one says which openings are spent; that one says which is
+   * being served. Both are per surface, and both go when the surface does.
+   */
+  const openingHighWater = new Map<string, number>();
+  const retireOpening = (key: string): void => {
+    liveOpening.delete(key);
+    const gone = `${key} `;
+    for (const reading of [...provisionReading.keys()]) {
+      if (reading.startsWith(gone)) {
+        provisionReading.delete(reading);
+      }
+    }
+    offers.forgetSurface(key);
+  };
+  /** Drop a surface's opening history too. Only detach may do this. */
+  const forgetSurfaceOpenings = (key: string): void => {
+    retireOpening(key);
+    openingHighWater.delete(key);
+  };
+  /**
    * The branch enumeration each repository's open dialog is riding.
    *
    * Bounded by the number of repositories in the workspace, and each entry is
@@ -1729,32 +1786,32 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // an opening this surface no longer holds is a late or replayed message
         // from a form already replaced; honouring it would let it silence the
         // form the user is looking at now (D2).
-        if (liveOpening.get(key) !== msg.opening) {
+        //
+        // The shape check is defensive and honestly so: a live opening is
+        // always a positive integer, so the comparison already refuses every
+        // malformed value, and no test can tell the two apart. It is here
+        // because reading an unvalidated field as an identity is wrong, not
+        // because a symptom was measured.
+        if (!namedOpening(msg.opening) || liveOpening.get(key) !== msg.opening) {
           return;
         }
-        liveOpening.delete(key);
-        // Every read this surface has in flight belonged to the opening that
-        // just retired — a read is only started by an opening ask, and this
-        // surface held exactly one. Clearing the slot is what makes the guard
-        // in that read's continuation refuse to publish.
-        const gone = `${key} `;
-        for (const reading of [...provisionReading.keys()]) {
-          if (reading.startsWith(gone)) {
-            provisionReading.delete(reading);
-          }
-        }
-        // And what the opening already issued goes with it (D5). A create
-        // citing an evicted id needs no new refusal path: § 2.4 already
-        // requires no create, no provisioning, a freshly resolved model, and a
-        // second submission. Across every repository, because one form can ask
-        // about more than one before it closes.
-        offers.forgetSurface(key);
+        // What the opening issued goes with it (D5). A create citing an evicted
+        // id needs no new refusal path: § 2.4 already requires no create, no
+        // provisioning, a freshly resolved model, and a second submission.
+        retireOpening(key);
         return;
       }
       case "requestWorktreeCreateDefaults": {
         // Answered by the HOST because only it knows the configured root, the
         // repo's own layout, and which candidates are free. A panel-computed
         // path would state a destination the create might refuse.
+        //
+        // Before the repository read and before the destination is resolved:
+        // work done for a message the host will refuse anyway is work an
+        // untrusted sender chose (round-1 B1).
+        if (!namedOpening(msg.opening)) {
+          return;
+        }
         const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
         if (repo === undefined) {
           return;
@@ -1786,7 +1843,24 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // this surface holds, or it is answered with nothing — a retired or
         // never-seen opening has no authority to spend (D2).
         if (opening) {
+          // An opening ask may only REPEAT the one being served or ADVANCE past
+          // everything this surface has ever named. Anything else is a replay of
+          // a spent form or a delayed predecessor, and adopting either put the
+          // host back onto a conversation the user had already ended (B1).
+          const repeat = liveOpening.get(key) === msg.opening;
+          if (!repeat && msg.opening <= (openingHighWater.get(key) ?? 0)) {
+            return;
+          }
+          // A DIFFERENT opening retires the last one whole — every read slot it
+          // holds and every offer it issued, not just the ones this new opening
+          // happens to re-ask about. Rewriting only the slots it touches left a
+          // read for another repository still holding its predecessor, and that
+          // read published an offer for a form that no longer existed.
+          if (!repeat) {
+            retireOpening(key);
+          }
           liveOpening.set(key, msg.opening);
+          openingHighWater.set(key, msg.opening);
         } else if (liveOpening.get(key) !== msg.opening) {
           return;
         }
@@ -1813,7 +1887,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               // A later opening already took over this form. Its own read is in
               // flight or answered, and this model describes a form the user has
               // closed.
-              if (provisionReading.get(reading) !== mine) {
+              // Both records, not just the read slot. The slot is per
+              // repository and the opening is per surface, so the slot alone
+              // could not see an opening superseded through a DIFFERENT
+              // repository — that read kept its slot and published for a form
+              // that no longer existed (.reviews/round-1.md B2).
+              //
+              // The supersede path now sweeps those slots as well, so either
+              // half alone would refuse this. That is deliberate and each is
+              // stated separately: the sweep bounds the map, and this states
+              // the actual invariant — publish only for the opening still being
+              // served. Mutating either alone is therefore NOT caught by the
+              // suite; mutating both is.
+              if (provisionReading.get(reading) !== mine || liveOpening.get(key) !== mine) {
                 return;
               }
               const offer = offers.issue(offerKey, model);
@@ -2632,10 +2718,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return {
       dispose: () => {
         surfaces.delete(surface);
-        // The models this surface was shown go with it. Nothing else evicts
-        // them, so without this the store grows with every window ever opened
-        // and a stale id stays resolvable (.reviews/round-1.md B6).
-        offers.forgetSurface(surfaceKey(surface));
+        // The models this surface was shown go with it, and so does the
+        // opening that was shown them. Nothing else evicts either, so without
+        // this the store grows with every window ever opened, a stale id stays
+        // resolvable (.reviews/round-1.md B6), and the opening record outlives
+        // the window that held it (round-1 W1).
+        forgetSurfaceOpenings(surfaceKey(surface));
         // A detached surface's openings can never be answered, and their
         // enumerations would otherwise be retained for the life of the host.
         const gone = `${surfaceKey(surface)}\u0000`;

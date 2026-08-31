@@ -169,6 +169,8 @@ export interface WorktreeViewDeps {
   /** Seeds the create form; absent → the create affordance does nothing. */
   createDialogDeps?: () => Omit<WorktreeCreateDialogDeps, "onSubmit" | "onCancel">;
   onCreateSubmit?: WorktreeCreateDialogDeps["onSubmit"];
+  /** The opening the create form is about to ride, read once as it opens. */
+  createOpening?: () => number;
   /**
    * The create conversation ended, by either door.
    *
@@ -176,8 +178,14 @@ export interface WorktreeViewDeps {
    * alone leaves a submitted form's authority live, and one wired into submit
    * alone leaves a cancelled form's live forever — which is the case that
    * matters most, because nothing ever reopens to supersede it (design.md D3).
+   *
+   * Carries the opening rather than letting the owner read its own current one.
+   * The owner's token moves when the NEXT form is asked for, and that ask goes
+   * out before this form is torn down — so a close resolved at callback time
+   * named the successor and retired the form the user was looking at
+   * (.reviews/round-1.md B3).
    */
-  onCreateClosed?: () => void;
+  onCreateClosed?: (opening: number) => void;
   /** What the launch dialog collected, for the worktree it was opened on. */
   onLaunchSubmit?: (request: WorktreeLaunchRequest) => void;
   /**
@@ -561,7 +569,19 @@ export class WorktreeView {
       return;
     }
     this.closeDialog?.();
-    this.closeDialog = openWorktreeCreateDialog(this.deps.host, {
+    // Captured HERE, while this form is the one being opened. Everything below
+    // closes over it, so no exit has to ask what the current opening is at the
+    // moment it runs (B3).
+    const opening = this.deps.createOpening?.();
+    let retired = false;
+    const retire = (): void => {
+      if (retired || opening === undefined) {
+        return;
+      }
+      retired = true;
+      this.deps.onCreateClosed?.(opening);
+    };
+    const dispose = openWorktreeCreateDialog(this.deps.host, {
       ...seed,
       initialRepoId: initialRepoId ?? seed.initialRepoId,
       onSubmit: (draft) => {
@@ -570,13 +590,23 @@ export class WorktreeView {
         // provisioning offer by id and retirement evicts it, so retiring first
         // would strip the request of the model it was built from.
         this.deps.onCreateSubmit?.(draft);
-        this.deps.onCreateClosed?.();
+        retire();
       },
       onCancel: () => {
         this.closeDialog = null;
-        this.deps.onCreateClosed?.();
+        retire();
       },
     });
+    // The dialog returns its raw disposer, and only its own `cancel` calls
+    // `onCancel` — so a form superseded by `this.closeDialog?.()` at the top of
+    // any other dialog's opener was torn down without ever retiring, leaving
+    // its opening live on the owner for good. `retired` makes the two paths
+    // idempotent rather than mutually exclusive: cancel disposes as well, and
+    // one exit must not retire twice.
+    this.closeDialog = () => {
+      retire();
+      dispose();
+    };
   }
 
   /**

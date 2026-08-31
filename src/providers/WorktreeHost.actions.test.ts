@@ -468,6 +468,13 @@ async function builtHost(
     view,
     calls,
     reconciles,
+    /**
+     * The surface's own attachment. Detaching a surface and disposing the HOST
+     * are different lifecycles, and only the host's had a handle here — so the
+     * detach path's cleanup was untestable, which is how `liveOpening` came to
+     * leak through it (.reviews/round-1.md B5).
+     */
+    attachment,
     /** How many `git status` invocations the host has made so far. */
     statusRuns: () => argv.filter((a) => a[0] === "status").length,
     /** Replace the feat worktree with a different one at the same id. */
@@ -2616,6 +2623,126 @@ describe("the provisioning offer the create form is given", () => {
     await settle();
 
     expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(2);
+    dispose();
+  });
+
+  it("[r1 B3] answers nothing for an opening that is not a number at all", async () => {
+    // The forwarding boundary checks the discriminator and nothing else, so a
+    // malformed payload reaches the handler intact. `undefined` was the worst
+    // of them: it compared equal to a missing map entry, so absent, malformed
+    // and RETIRED were one state and a malformed message kept authority across
+    // a close (.reviews/round-1.md B3).
+    let reads = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => {
+        reads += 1;
+        return model(".env");
+      },
+    });
+
+    for (const bad of [undefined, "1", Number.NaN, Number.POSITIVE_INFINITY, 1.5, -1, 0]) {
+      host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: bad } as never);
+    }
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(0);
+    expect(reads, "a malformed opening started a provider read").toBe(0);
+    dispose();
+  });
+
+  it("[r1 B1] a replay of a retired opening does not bring it back", async () => {
+    // Retirement DELETES the live entry, so the closed form's own opening ask —
+    // replayed, or merely delivered twice with the close in between — found no
+    // entry and was adopted as if it were new. The retirement undone by the
+    // message that preceded it (B1).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => model(".env"),
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 5 });
+    await settle();
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(1);
+
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 5 });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 5 });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(1);
+    dispose();
+  });
+
+  it("[r1 B1] a delayed predecessor never moves the surface backward", async () => {
+    // Opening 4 arriving after 5 is the same defect running the other way: it
+    // would retire the form the user is looking at and take over its slot.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => model(".env"),
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 5 });
+    await settle();
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 4 });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(1);
+    // And 5 is still the one being served — the late 4 took nothing with it.
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 5, branch: "feat/x" });
+    await settle();
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(2);
+    dispose();
+  });
+
+  it("[r1 B2] a read for another repository cannot publish once its opening is gone", async () => {
+    // `liveOpening` is per surface; the read slots are per surface AND
+    // repository. An opening that asked about two repositories and was then
+    // superseded through only one of them left the other's slot holding it, and
+    // that read published an offer for a form that no longer existed.
+    const releases: (() => void)[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      sibling: true,
+      readProvisioning: async () => {
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return model(".env");
+      },
+    });
+
+    // Opening 1 asks about this repository; opening 2 supersedes it asking only
+    // about the sibling, so nothing rewrites the first repository's slot.
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: `${OTHER_ROOT}/.git`, opening: 2 });
+    await settle();
+    for (const release of releases) {
+      release();
+    }
+    await settle();
+
+    // Only the live opening's own read published.
+    expect(offersIn(view).map((o) => (o as unknown as { opening: number }).opening)).toEqual([2]);
+    dispose();
+  });
+
+  it("[r1 B5] detaching a surface takes its opening with it", async () => {
+    // `liveOpening` is keyed by the stable string `surfaceKey` mints, so a
+    // surface closed with a form open left an entry for the host's lifetime —
+    // growth per surface EVER attached, not per attached surface. Detach, not
+    // host dispose: they are different lifecycles and only one was cleaned up.
+    const { host, view, attachment, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => model(".env"),
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 9 });
+    await settle();
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(1);
+
+    attachment.dispose();
+    // The same surface object, reattached — so `surfaceKey` mints the same key
+    // and any leftover entry is reachable again. Nothing it was told before is
+    // still owed to it: the opening it held is gone, so a branch ask riding it
+    // is answered with nothing.
+    host.attach(view).setDisplayed(true);
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 9, branch: "feat/x" });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(1);
     dispose();
   });
 

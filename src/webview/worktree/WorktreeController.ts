@@ -535,12 +535,21 @@ export class WorktreeController {
           deps.postMessage({ type: "worktreeRemove", worktreeId: result.worktreeId, force: false });
         }
       },
-      // Both doors of the create form, and the only signal the host has that
-      // the conversation ended. `refsToken` is the opening being retired — the
-      // same number the form's defaults, refs, probe and offer all ride, so
-      // there is one identity to reason about rather than two (D1).
-      onCreateClosed: () => {
-        this.deps.postMessage({ type: "worktreeCreateClosed", opening: this.refsToken });
+      /** The opening the form being opened right now will ride (D1). */
+      createOpening: () => this.refsToken,
+      // Every door of the create form, and the only signal the host has that
+      // the conversation ended. The opening comes from the view, which captured
+      // it when the form opened — reading `refsToken` here instead named
+      // whatever opening had been asked for most recently, which during the
+      // window between asking for a new form and that form arriving is the
+      // SUCCESSOR (round-1 B3).
+      onCreateClosed: (opening: number) => {
+        this.deps.postMessage({ type: "worktreeCreateClosed", opening });
+        // NOT followed by marking the token non-live here. Round-1 B6 asks for
+        // that too, and it is the same decision as B2: `refsToken` is the guard
+        // for refs, resolutions, probes and debris as well, so invalidating it
+        // withdraws those channels' authority — which D5 explicitly does not
+        // extend retirement to. Parked for planning rather than smuggled in.
       },
       // Create's shipped entry path. The dialog has existed since WT-002.1 and
       // nothing ever submitted it anywhere (round-1 B1); this is where the

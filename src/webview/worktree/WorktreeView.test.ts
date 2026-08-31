@@ -1919,17 +1919,20 @@ describe("dialogs", () => {
     // Cancel is the exit a "supersede on the next opening" rule never reaches:
     // the user may never open another form. Asserted separately from submit —
     // a retirement wired into one exit is the same bug in a different position.
-    let retired = 0;
+    const retired: number[] = [];
     const { view, host } = mount({
       createDialogDeps: () => ({ repos: [createDefaults()] }),
-      onCreateClosed: () => {
-        retired += 1;
+      createOpening: () => 7,
+      onCreateClosed: (opening) => {
+        retired.push(opening);
       },
     });
     view.setData(populated());
     view.openCreateDialog();
     [...host.querySelectorAll("button")].find((b) => b.textContent === "Cancel")?.click();
-    expect(retired).toBe(1);
+    // The opening this form was opened under, not whatever the owner's current
+    // one happens to be when the click lands (round-1 B6).
+    expect(retired).toEqual([7]);
   });
 
   it("[3_1] retires the opening when the create form is submitted", () => {
@@ -1938,6 +1941,7 @@ describe("dialogs", () => {
     const order: string[] = [];
     const { view, host } = mount({
       createDialogDeps: () => ({ repos: [createDefaults()] }),
+      createOpening: () => 7,
       onCreateSubmit: () => order.push("submit"),
       onCreateClosed: () => order.push("closed"),
     });

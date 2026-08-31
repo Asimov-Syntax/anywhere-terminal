@@ -679,11 +679,18 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     // and refusing it is exactly right, which is what makes a wrong number here
     // silently do nothing (D1, D2).
     const h = mount();
-    const view = (h.controller as unknown as { view: { deps: { onCreateClosed(): void } } }).view;
+    const view = (
+      h.controller as unknown as {
+        view: { deps: { createOpening(): number; onCreateClosed(opening: number): void } };
+      }
+    ).view;
     h.controller.openCreate();
     const opening = liveOpening(h.posts);
 
-    view.deps.onCreateClosed();
+    // Through the same seam the view uses: it reads the opening as the form
+    // opens and hands that value back at close, rather than the controller
+    // resolving its own current token when the callback runs (round-1 B6).
+    view.deps.onCreateClosed(view.deps.createOpening());
 
     expect(h.posts.filter((m) => m.type === "worktreeCreateClosed")).toEqual([
       { type: "worktreeCreateClosed", opening },
