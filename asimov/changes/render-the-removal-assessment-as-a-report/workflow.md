@@ -8,12 +8,12 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -126,3 +126,31 @@ both on huybuidac/create-worktree-harden only after a merge | Consumer: plan | A
   `.build/` is gitignored — so `verify-status` read seven `[x]` tasks as hand-ticked. Restored from
   the sibling worktree that produced them rather than re-run or waived; the records are the CLI's own
   output from those runs.
+
+HANDBACK (round-4 B3 + W4 + W5, cycle 3, 2026-09-01). Gate 2, All tasks done and Verify gate
+unticked; Review done and Gate: implementation approved were already unticked. Tasks 1_1 to 1_7 and
+2_1 to 2_5 stay `[x]` — they are built, verified and untouched by this.
+
+Round 4 (cycle 3 discovery) returned BLOCK: B3 accepted, W4 and W5 accepted. Triage is in
+`.reviews/round-4.md`. B4 was raised out of band by `asm-review-reuse` and REJECTED by the chair
+with reasons; the chair's file carries it, so nothing was dropped, and I agree with the rejection —
+both branches call the one shared `atRisk` and the one shared store, which is the construction D7
+asks for; an extraction is hygiene, not a gating obligation.
+
+No fix loop was opened, for two independent reasons, either of which alone is sufficient:
+- The cycle cap. This is cycle 3 on this change, and a 3rd cycle never opens another fix loop.
+- The remediation boundary. All three findings need a new invariant owner rather than a patch:
+  a freshness-and-identity discipline for authority-bearing READS. D6 rejected `perform` for real
+  reasons — the rebuild gate and the mutation-result publication — but took the coordinator's
+  freshness boundary out with it, and D7 then mints force authority on that unbounded read.
+  `worktreeMutationService.ts:340` already states the invariant for mutations in its own words.
+  W4 is the same defect owned on the webview side; W5 needs a `D#` because `unavailable` promises a
+  NAMED list of failed reads and a rejection has no source to name.
+
+The owner is new, so per the remediation boundary it becomes ITS OWN change with this one depending
+on it, never folded into these tasks. This change is PARKED complete-but-unapproved: B1 is fixed and
+the chair confirms it at its invariant witness, and nothing here is known-broken for a worktree whose
+registration is current.
+
+Verify Gate at the moment of parking (evidence retained, gate unticked per the handback rule):
+check-types clean, 6243/6243, gate:fs-deletion ok, biome 3/14/1 baseline.
