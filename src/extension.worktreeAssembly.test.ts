@@ -854,6 +854,10 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     }
     branch.value = "feat/agent";
     branch.dispatchEvent(new Event("input", { bubbles: true }));
+    // A settled edit, which is when the form asks the host — `input` alone is a
+    // keystroke, and the resolution the submit gate waits for is asked for once
+    // the edit stops (round-3 B6).
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
     await settle();
@@ -1216,6 +1220,42 @@ describe("the invariants that span the host and the webview", () => {
     expect(argv.some((c) => c.args.join(" ") === "rev-parse HEAD" && c.cwd === LINKED)).toBe(true);
   });
 
+  /** The destination the form is STATING, which is what the user is going on. */
+  function displayedDestination(): string | null {
+    return document.querySelector<HTMLElement>(".wt-dest")?.getAttribute("aria-label") ?? null;
+  }
+
+  /** Type a branch and let the edit settle, then wait for its resolution. */
+  async function settleBranch(name: string): Promise<void> {
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("no branch input");
+    }
+    branch.focus();
+    branch.value = name;
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () => posted.some((m) => m.type === "worktreeCreateResolution" && m.query === name),
+      `the resolution for ${name}`,
+    );
+  }
+
+  function clickCreate(): void {
+    const btn = clickCreate.button();
+    expect(btn.disabled, "the form would not have submitted, so the argv below would prove nothing").toBe(false);
+    btn.click();
+  }
+  clickCreate.button = (): HTMLButtonElement => {
+    const btn = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      b.textContent?.startsWith("Create worktree"),
+    );
+    if (btn === undefined) {
+      throw new Error("no Create button");
+    }
+    return btn;
+  };
+
   it("[5_4] carries one typed selection from probe to issued argv, through the real form", async () => {
     // The repair test below reaches the host directly. That is what let three
     // blockers survive a green gate: the resolution-to-submit seam — mode
@@ -1250,6 +1290,8 @@ describe("the invariants that span the host and the webview", () => {
       throw new Error("no Create button");
     }
     expect(create.disabled, "the form would not have submitted, so the argv below would prove nothing").toBe(false);
+    // Read while the form is still open — the submit disposes it.
+    const shown = displayedDestination();
     create.click();
     await settle();
 
@@ -1257,6 +1299,66 @@ describe("the invariants that span the host and the webview", () => {
     expect(issued.some((a) => a[0] === "worktree" && a[1] === "repair" && a[2] === LINKED)).toBe(true);
     expect(issued.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(false);
     expect(prunableRow).toBe(false);
+
+    // ONE path, at all three places it is stated. Asserting only the argv left
+    // the form free to show a free suffix beside the checkout while repairing
+    // something else — the seam the earlier assertions could not see
+    // (round-3 W7).
+    expect(shown).toBe(LINKED);
+    expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({
+      path: LINKED,
+      mode: { kind: "reattach", branch: "feature", repairPath: LINKED },
+    });
+  });
+
+  it("[5_4] carries a fresh selection's own destination to the same three places", async () => {
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    await settleBranch("brand-new");
+
+    expect(document.querySelector<HTMLElement>("#wt-action-note")?.textContent).toContain("Creates");
+    const shown = displayedDestination();
+    expect(shown, "the form stated no destination, so the rest proves nothing").toBeTruthy();
+
+    clickCreate();
+    await settle();
+
+    expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({
+      path: shown,
+      mode: { kind: "fresh", branch: "brand-new" },
+    });
+    const added = argv.map((c) => c.args).find((a) => a[0] === "worktree" && a[1] === "add");
+    expect(added, "no `worktree add` was issued").toBeDefined();
+    expect(added).toContain(shown);
+  });
+
+  it("[5_4] refuses a base that names no commit, before any create is issued", async () => {
+    // The base and its verdict travel the production sender, not a value a test
+    // injected into the dialog — which is how D7 was satisfied on paper while
+    // `baseValid` was never produced at all (round-3 B4, W7).
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    await settleBranch("brand-new");
+
+    const base = document.querySelector<HTMLInputElement>("#wt-base");
+    if (base === null) {
+      throw new Error("no base input");
+    }
+    base.focus();
+    base.value = "no-such-ref";
+    base.dispatchEvent(new Event("input", { bubbles: true }));
+    base.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () => posted.some((m) => m.type === "worktreeCreateResolution" && m.baseValid?.ok === false),
+      "the verdict on the typed base",
+    );
+
+    expect(outbound.some((m) => m.type === "worktreeCreateProbe" && m.base?.kind === "ref")).toBe(true);
+    expect(document.querySelector<HTMLElement>("#wt-action-note")?.textContent).toContain("no-such-ref");
+    expect(clickCreate.button().disabled).toBe(true);
+    expect(argv.some((c) => c.args[0] === "worktree" && c.args[1] === "add")).toBe(false);
   });
 
   it("[4_1] repairs the stale registration it really has, and never adds beside it", async () => {

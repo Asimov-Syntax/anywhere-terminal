@@ -23,7 +23,7 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeSubscriptionLevel,
 } from "../types/messages";
-import { isPathInside } from "../utils/pathBoundary";
+import { isResolvedPathInside, type ResolvedPathInsideDeps } from "../utils/resolvedPathBoundary";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { VaultLaunchTarget } from "../vault/types";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
@@ -185,6 +185,13 @@ export interface WorktreeHostOptions {
   now?(): number;
   /** Path-existence probe behind `initPayload`, injected in tests. */
   exists?(p: string): boolean;
+  /**
+   * The filesystem the RESOLVED containment check reads. Must answer for the
+   * same tree `exists` does — that check is what authorizes `exists`, so a
+   * containment answer from a different filesystem authorizes nothing
+   * (round-3 B8). Production leaves it absent and takes `node:fs`.
+   */
+  resolvedPathDeps?: ResolvedPathInsideDeps;
   /**
    * Read one session's delegation roster. Absent — every surface but the real
    * extension entry point — and an expansion request is ignored, exactly as it
@@ -583,6 +590,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   const openingKey = (s: WorktreeSurface, repoId: string, token: number): string =>
     `${surfaceKey(s)}\u0000${repoId}\u0000${token}`;
+
+  /**
+   * Drop every opening for this surface and repository but `keep`.
+   *
+   * The maps are keyed per opening so one dialog's answers cannot be borrowed
+   * by the next, and that keying is exactly what stops the old entries from
+   * being overwritten: without this they accumulate one settled read and one
+   * sequence per opening for the life of the extension host (round-3 B7).
+   */
+  const retireOpenings = (s: WorktreeSurface, repoId: string, keep: number): void => {
+    const prefix = `${surfaceKey(s)}\u0000${repoId}\u0000`;
+    const kept = `${prefix}${keep}`;
+    for (const key of [...refsReads.keys()]) {
+      if (key.startsWith(prefix) && key !== kept) {
+        refsReads.delete(key);
+      }
+    }
+    for (const key of [...latestProbe.keys()]) {
+      if (key.startsWith(prefix) && key !== kept) {
+        latestProbe.delete(key);
+      }
+    }
+  };
 
   const surfaceKey = (s: WorktreeSurface): string => {
     const held = surfaceKeys.get(s);
@@ -1096,6 +1126,33 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     });
   }
 
+  /** The configured create root for one repository. */
+  function createRootFor(repo: WorktreeRepo): string {
+    return resolveCreateRoot({
+      configured: options.createRoot?.() ?? { value: undefined, explicitlySet: false },
+      linkedWorktrees: repo.worktrees.filter((w) => w.id !== repo.mainPath).map((w) => w.id),
+      mainWorktree: repo.mainPath,
+    });
+  }
+
+  /**
+   * A destination override the probe may act on, or `undefined`.
+   *
+   * Resolved rather than lexical containment: the answer authorizes
+   * `options.exists`, which follows symlinks, so a path spelled beneath the
+   * root that traverses a link out of it would turn the resolution into an
+   * existence oracle for the filesystem (round-3 B8).
+   */
+  async function vettedOverride(candidate: string | undefined, repo: WorktreeRepo): Promise<string | undefined> {
+    if (candidate === undefined) {
+      return undefined;
+    }
+    const inside = await isResolvedPathInside(candidate, createRootFor(repo), options.resolvedPathDeps).catch(
+      () => false,
+    );
+    return inside ? candidate : undefined;
+  }
+
   /**
    * Where a create for this branch would go, and what it stepped over.
    *
@@ -1107,6 +1164,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   function resolveDestination(
     repo: WorktreeRepo,
     branch: string,
+    /** A destination override ALREADY proven to resolve inside the create root. */
     override?: string,
   ): {
     root: string;
@@ -1116,12 +1174,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     freePath: string;
     occupiedCandidate?: { path: string; disposition: ResolvedDisposition };
   } {
-    const linked = repo.worktrees.filter((w) => w.id !== repo.mainPath).map((w) => w.id);
-    const root = resolveCreateRoot({
-      configured: options.createRoot?.() ?? { value: undefined, explicitlySet: false },
-      linkedWorktrees: linked,
-      mainWorktree: repo.mainPath,
-    });
+    const root = createRootFor(repo);
     const registered = new Set(repo.worktrees.map((w) => w.id));
     // Registrations AND the filesystem: a directory nobody registered still
     // makes `git worktree add` fail, so proving a path free against the listing
@@ -1129,10 +1182,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     const taken = (candidate: string): boolean => registered.has(candidate) || (options.exists?.(candidate) ?? false);
     const slug = sanitizeBranchForPath(branch);
     const base = slug.length > 0 ? `${repo.label}-${slug}` : repo.label;
-    // An override is honoured only inside the configured root. The answer states
-    // whether a path is occupied, and assessing an arbitrary one would turn a
-    // probe the form sends per edit into an existence oracle for the filesystem.
-    const inRoot = override !== undefined && isPathInside(override, root) ? override : undefined;
+    // An override is honoured only inside the configured root — vetted by the
+    // caller through RESOLVED containment, because the answer states whether a
+    // path is occupied and lexical containment would let a link out of the root
+    // turn the probe into an existence oracle for the filesystem (round-3 B8).
+    const inRoot = override;
     const bare = inRoot ?? suggestFreePath(root, base, () => false);
     const freePath = taken(bare) ? suggestFreePath(root, base, taken) : bare;
     return {
@@ -1164,7 +1218,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>,
     repo: WorktreeRepo,
   ): Promise<void> {
-    const { freePath, occupiedCandidate } = resolveDestination(repo, msg.query, msg.candidatePath);
+    const { freePath, occupiedCandidate } = resolveDestination(
+      repo,
+      msg.query,
+      await vettedOverride(msg.candidatePath, repo),
+    );
 
     // The enumeration the dialog's opening already took, not a second one: a
     // probe per settled edit that re-asks git is the per-keystroke read D2
@@ -1219,7 +1277,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // Only where a base can actually apply. `reuse` and `reattach` take their
     // starting point from something that already exists, and a verdict on a
     // control the form has disabled would imply it is still live (D7).
-    const baseValid = mode.kind === "fresh" ? await resolveBaseVerdict(repo, msg.base) : undefined;
+    // Every mode the FORM turns into a new create, which is `adopt` as well as
+    // `fresh` — the dialog has no adopt action yet and falls back to creating
+    // one, so withholding the verdict there let an unresolvable base through
+    // the one path that still uses it (round-3 B4).
+    const takesBase = mode.kind === "fresh" || mode.kind === "adopt";
+    const baseValid = takesBase ? await resolveBaseVerdict(repo, msg.base) : undefined;
     if (disposed || !surfaces.has(surface) || (latestProbe.get(opening) ?? msg.seq) > msg.seq) {
       return;
     }
@@ -1255,6 +1318,58 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return oid === undefined
       ? { ok: false, reason: `"${base.ref}" does not name a commit in this repository.` }
       : { ok: true, oid };
+  }
+
+  /**
+   * Is this probe exactly the payload the contract declares?
+   *
+   * Exact rather than partial: a field the guard skips is a field that reaches
+   * async work, and `base` is the one that reaches git argv. Declared keys
+   * only, so a payload carrying an undeclared one is refused rather than
+   * silently trimmed; non-negative safe integers for the two ordering fields,
+   * because the comparisons that supersede answers are meaningless on a
+   * fraction or an infinity (round-3 W1).
+   */
+  function isWellFormedProbe(msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>): boolean {
+    const ordinal = (v: unknown): boolean => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+    const declared = new Set(["type", "repoId", "token", "seq", "query", "candidatePath", "base"]);
+    for (const key of Object.keys(msg)) {
+      if (!declared.has(key)) {
+        return false;
+      }
+    }
+    // Types and key set, not emptiness: an empty `repoId` matches no repository
+    // and an empty `candidatePath` resolves nowhere, so both already fail closed
+    // downstream and a clause here could not be told from its absence.
+    if (
+      typeof msg.repoId !== "string" ||
+      !ordinal(msg.token) ||
+      !ordinal(msg.seq) ||
+      typeof msg.query !== "string" ||
+      (msg.candidatePath !== undefined && typeof msg.candidatePath !== "string")
+    ) {
+      return false;
+    }
+    return isWellFormedBase(msg.base);
+  }
+
+  /** `undefined`, exactly `detached`, or exactly a `ref` naming something. */
+  function isWellFormedBase(base: ProbeBase | undefined): boolean {
+    if (base === undefined) {
+      return true;
+    }
+    if (typeof base !== "object" || base === null) {
+      return false;
+    }
+    const keys = Object.keys(base);
+    if ((base as { kind?: unknown }).kind === "detached") {
+      return keys.length === 1;
+    }
+    if ((base as { kind?: unknown }).kind === "ref") {
+      const ref = (base as { ref?: unknown }).ref;
+      return keys.length === 2 && typeof ref === "string" && ref.length > 0;
+    }
+    return false;
   }
 
   /** A registered worktree is not debris; a directory nobody registered is. */
@@ -1385,16 +1500,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         return;
       }
       case "worktreeCreateProbe": {
-        // The discriminant alone is not the payload. These four fields cross a
-        // trust boundary and then enter async logic, where a wrong type is an
-        // unhandled rejection rather than a refusal (round-1 W1).
-        if (
-          typeof msg.repoId !== "string" ||
-          !Number.isFinite(msg.token) ||
-          !Number.isFinite(msg.seq) ||
-          typeof msg.query !== "string" ||
-          (msg.candidatePath !== undefined && typeof msg.candidatePath !== "string")
-        ) {
+        // The discriminant alone is not the payload. Every field crosses a
+        // trust boundary and then enters async logic, where a wrong type is an
+        // unhandled rejection rather than a refusal (round-3 W1).
+        if (!isWellFormedProbe(msg)) {
           return;
         }
         const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
@@ -1517,6 +1626,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // another. One entry per repository, replaced on every ask.
         const inFlight = read({ cwd: repo.mainPath, worktrees: repo.worktrees });
         refsReads.set(openingKey(surface, msg.repoId, msg.token), inFlight);
+        // This ask IS the new opening, so every earlier one for this repository
+        // is unreachable from here on (round-3 B7).
+        retireOpenings(surface, msg.repoId, msg.token);
         void inFlight
           .then((answer) => {
             // The surface may have detached while git was answering. Posting to
@@ -2492,6 +2604,10 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       // what makes that completion a no-op rather than a late publication.
       rosters.clear();
       rosterReads.clear();
+      // Same reason, for the per-opening state: a probe suspended on one of
+      // these reads resolves into a disposed host and must find nothing.
+      refsReads.clear();
+      latestProbe.clear();
     },
   };
 }

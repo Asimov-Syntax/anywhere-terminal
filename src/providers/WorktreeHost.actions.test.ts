@@ -316,6 +316,12 @@ async function builtHost(
     probeSubjects?: { repoPath: string; branch: string; repairPath: string }[];
     /** D7's base resolution: the commit a ref names, or undefined for none. */
     resolveBase?: (input: { repoPath: string; ref: string }) => Promise<string | undefined>;
+    /**
+     * What `realpath` answers, for the containment check that gates the
+     * candidate path. Absent entries resolve to themselves, so the default
+     * filesystem has no links in it at all.
+     */
+    symlinks?: Record<string, string>;
   } = {},
 ) {
   const presence: WorktreePresence = { rowsByWorktreeId: { [MAIN_PATH]: rows }, scannedAt: 1, degradedSources: [] };
@@ -413,6 +419,13 @@ async function builtHost(
           },
         }),
     ...(over.resolveBase === undefined ? {} : { resolveBase: over.resolveBase }),
+    // The host resolves the candidate against the filesystem before it lets the
+    // candidate reach `exists`. These tests name paths that are not on disk, so
+    // the resolver is the fake one and `symlinks` is what makes it lie.
+    resolvedPathDeps: {
+      realpath: async (p: string) => over.symlinks?.[p] ?? p,
+      lstat: async () => ({}),
+    },
     ...(over.probeReattach === undefined && over.probeSubjects === undefined
       ? {}
       : {
@@ -2620,6 +2633,70 @@ describe("the host resolves a selection before the create runs", () => {
     dispose();
   });
 
+  it("refuses a probe whose payload is not exactly the declared contract", async () => {
+    // Every one of these reaches async work if the guard lets it through, and
+    // `base` is the field that reaches git argv (round-3 W1).
+    const resolveBase = vi.fn(async () => "deadbeef");
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase,
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    await settle();
+    view.posts.length = 0;
+
+    const malformed: Record<string, unknown>[] = [
+      // `base` was unvalidated entirely: this one threw on `base.kind` inside
+      // a detached promise nobody was awaiting.
+      { base: null },
+      { base: {} },
+      { base: { kind: "ref" } },
+      { base: { kind: "ref", ref: "" } },
+      { base: { kind: "ref", ref: "main", extra: 1 } },
+      { base: { kind: "detached", ref: "main" } },
+      { base: { kind: "tag", ref: "v1" } },
+      // `Number.isFinite` admitted all of these, and the comparisons that
+      // supersede an answer mean nothing on them.
+      { seq: -1 },
+      { seq: 0.5 },
+      { token: -2 },
+      { token: Number.MAX_SAFE_INTEGER + 2 },
+      { query: 7 },
+      { unexpected: "field" },
+    ];
+    for (const [index, patch] of malformed.entries()) {
+      host.handleMessage(view, {
+        type: "worktreeCreateProbe",
+        repoId: REPO,
+        token: 2,
+        // A fresh seq each time, so a refusal is the guard's and not the
+        // supersession gate dropping a repeat.
+        seq: index + 1,
+        query: "brand-new",
+        ...patch,
+      } as never);
+    }
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toEqual([]);
+    expect(resolveBase).not.toHaveBeenCalled();
+
+    // The negatives only mean something if the well-formed payload still goes
+    // through the same guard.
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 2,
+      seq: 99,
+      query: "brand-new",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+    expect(resolutionIn(view)).toMatchObject({ baseValid: { ok: true, oid: "deadbeef" } });
+    dispose();
+  });
+
   it("carries the commit a valid base resolves to", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
@@ -2638,6 +2715,31 @@ describe("the host resolves a selection before the create runs", () => {
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ baseValid: { ok: true, oid: "deadbeef" } });
+    dispose();
+  });
+
+  it("validates the base for adopt too, which the form turns into a new create", async () => {
+    // The dialog has no adopt action yet and falls back to creating one, so a
+    // withheld verdict here is a withheld verdict on the path that is actually
+    // taken (round-3 B4).
+    const { host, view, dispose } = await builtHost([windowRow()], true, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      probeReattach: async ({ repairPath }) => ({ kind: "adopt", adoptPath: repairPath }),
+      resolveBase: async () => undefined,
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "feat",
+      base: { kind: "ref", ref: "no-such-ref" },
+    });
+    await settle();
+
+    expect(resolutionIn(view)).toMatchObject({ mode: { kind: "adopt" }, baseValid: { ok: false } });
     dispose();
   });
 
@@ -2868,6 +2970,70 @@ describe("the host resolves a selection before the create runs", () => {
     const answer = resolutionIn(view);
     expect(answer?.freePath).toBe("/trees/repo-feat");
     expect(answer?.occupiedCandidate).toBeUndefined();
+    dispose();
+  });
+
+  it("retires a superseded opening rather than retaining it for the host's life", async () => {
+    // Both per-opening maps are keyed by surface + repository + token, which is
+    // what stops a new opening from overwriting the old entries — so without an
+    // explicit retirement they accumulate one settled read and one sequence per
+    // opening, forever (round-3 B7).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    expect(resolutionIn(view)).toMatchObject({ mode: { kind: "reuse" } });
+    view.posts.length = 0;
+
+    // A second opening. Nothing can reach the first one from here.
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    await settle();
+    view.posts.length = 0;
+
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+
+    // Answered at all — so the retired opening's `seq` is gone, and the
+    // dispatch gate no longer drops this probe as a repeat of one it saw.
+    // Answered `fresh` — so the retired opening's enumeration is gone too, and
+    // the classification failed open rather than borrowing it.
+    expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" } });
+    dispose();
+  });
+
+  it("ignores a candidate path that is spelled inside the root but resolves outside it", async () => {
+    // Lexical containment is not enough: the answer authorizes `exists`, which
+    // follows symlinks, so a link under the root would let the probe report on
+    // a path the root does not contain (round-3 B8).
+    const probed: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      symlinks: { "/trees/link": "/etc/secrets" },
+      exists: (p: string) => {
+        probed.push(p);
+        return p === "/etc/secrets" || p === "/trees/link";
+      },
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "feat",
+      candidatePath: "/trees/link",
+    });
+    await settle();
+
+    const answer = resolutionIn(view);
+    expect(answer?.freePath).toBe("/trees/repo-feat");
+    expect(answer?.occupiedCandidate).toBeUndefined();
+    // Not merely a different answer: the outside path was never read.
+    expect(probed).not.toContain("/trees/link");
     dispose();
   });
 

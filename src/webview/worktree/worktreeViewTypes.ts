@@ -18,7 +18,7 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
-import type { ProvisionModel, RemovalCheck } from "../../types/messages";
+import type { ProvisionModel, RemovalCheck, ResolvedMode } from "../../types/messages";
 import type { WorktreeRef } from "../../worktree/repoRefs";
 
 export type {
@@ -217,4 +217,14 @@ export interface WorktreeCreateDraft {
   /** `git check-ref-format` said no; the message is shown under the field. */
   branchError?: string;
   pathError?: string;
+  /**
+   * The classification the form was showing when this was submitted.
+   *
+   * Carried rather than looked up again, so the request is built from the same
+   * answer the destination line and the stated action were built from. The
+   * owner re-reading its own copy is a second interpretation of one answer, and
+   * that is how a repair could act on a path other than the one on screen
+   * (round-3 B3).
+   */
+  resolved?: ResolvedMode;
 }

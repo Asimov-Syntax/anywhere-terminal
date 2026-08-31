@@ -9,6 +9,7 @@
 // as it does for FileTreeController.
 
 import type {
+  ResolvedMode,
   VaultLaunchTargetsMessage,
   WebViewToExtensionMessage,
   WorktreeCreateDefaultsMessage,
@@ -224,6 +225,13 @@ function trim(map: Map<string, string>, limit: number): void {
   }
 }
 
+/** The repair the form resolved, or nothing when it resolved something else. */
+function repairOf(resolved: ResolvedMode | undefined, branch: string): WorktreeCreateMode | undefined {
+  return resolved?.kind === "reattach"
+    ? { kind: "reattach", branch, repairPath: resolved.repairPath, expectedOid: resolved.expectedOid }
+    : undefined;
+}
+
 export class WorktreeController {
   /** The tree element — goes into `VaultPanel`'s `worktreeBody`. */
   readonly element: HTMLElement;
@@ -424,19 +432,30 @@ export class WorktreeController {
         repos: this.createRepos(),
         // The destination depends on the branch, so every settled branch edit
         // re-asks and the answer replaces the seed in place (round-3 B12).
-        onBranchChange: (repoId, branch) => {
-          deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId, branch });
+        onSelectionChange: (selection) => {
+          deps.postMessage({
+            type: "requestWorktreeCreateDefaults",
+            repoId: selection.repoId,
+            branch: selection.branch,
+          });
           // The same settled edit, asked as the other question: the defaults
           // answer where a create would GO, and this one answers what it would
           // DO. Both ride the opening's token, because `repoId` names a
           // repository and not an opening (design.md D1).
+          //
+          // The WHOLE selection, forwarded field for field. A base or a
+          // destination the form holds but never posts is a field the host's
+          // answer cannot be about, and `baseValid` would then only ever exist
+          // in tests that inject it (round-3 B4).
           this.probeSeq += 1;
           deps.postMessage({
             type: "worktreeCreateProbe",
-            repoId,
+            repoId: selection.repoId,
             token: this.refsToken,
             seq: this.probeSeq,
-            query: branch,
+            query: selection.branch,
+            ...(selection.base === undefined ? {} : { base: selection.base }),
+            ...(selection.candidatePath === undefined ? {} : { candidatePath: selection.candidatePath }),
           });
         },
         bindDefaults: (apply) => {
@@ -508,7 +527,11 @@ export class WorktreeController {
               { kind: "fresh-detached", baseRef: baseRef.length > 0 ? baseRef : "HEAD" }
             : draft.branchMode === "new"
               ? { kind: "fresh", branch, ...(baseRef.length > 0 ? { baseRef } : {}) }
-              : (this.repairFor(draft.repoId, branch) ?? { kind: "reuse", branch });
+              : // The classification the FORM was showing, carried on the draft.
+                // Re-reading this controller's own map was a second
+                // interpretation of one answer, and the two could name
+                // different paths (round-3 B3).
+                (repairOf(draft.resolved, branch) ?? { kind: "reuse", branch });
         deps.postMessage({
           type: "worktreeCreate",
           repoId: draft.repoId,
@@ -1075,28 +1098,12 @@ export class WorktreeController {
   }
 
   /**
-   * The repair the held resolution authorizes for this branch, or nothing.
+   * The resolution currently held for a repository, if one has landed.
    *
-   * `reuse` is the fallback rather than a refusal: a form that says `reattach`
-   * while the resolution behind it has gone stale — a different query, or an
-   * answer that never landed — is describing a repair nobody corroborated, and
-   * `git worktree add` against a branch that exists is the honest thing to ask
-   * for. The mutation re-checks the OID either way (design.md D3).
+   * Held for the ANSWER's own lifecycle — supersession and the reopen that
+   * clears it — and read by nothing that builds a request: the submission
+   * carries the classification the form was showing (round-3 B3).
    */
-  private repairFor(repoId: string, branch: string): WorktreeCreateMode | undefined {
-    const held = this.createResolutions.get(repoId);
-    if (held === undefined || held.query.trim() !== branch || held.mode.kind !== "reattach") {
-      return undefined;
-    }
-    return {
-      kind: "reattach",
-      branch,
-      repairPath: held.mode.repairPath,
-      expectedOid: held.mode.expectedOid,
-    };
-  }
-
-  /** The resolution currently held for a repository, if one has landed. */
   resolutionFor(repoId: string): WorktreeCreateResolutionMessage | undefined {
     return this.createResolutions.get(repoId);
   }

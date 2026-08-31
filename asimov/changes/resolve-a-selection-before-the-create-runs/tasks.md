@@ -135,3 +135,18 @@
     1. In `src/extension.worktreeAssembly.test.ts` the current repair test handcrafts a `worktreeCreate` and calls `host.handleMessage` directly, so the resolution-to-submit seam is never crossed and three blockers survived a green gate.
     2. Drive one assembled dialog from typed selection through the real matching resolution and the real submit, then assert the visible action, the displayed path, the posted create payload and the issued git argv all agree. Add a delayed answer and a declined corroboration.
   - **Boundary**: no new production code — a defect this finds is fixed in the task that owns the file
+
+- [x] 6_1 The amended contract is enforced where production actually runs — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: none
+  - **Refs**: design.md D1, D2, D3, D7, D8; specs/worktree-panel/spec.md#{a-selection-resolves-to-what-the-create-would-actually-do-before-submit, the-resolution-names-both-the-path-the-create-will-take-and-the-one-it-skipped, a-stale-registration-is-repaired-in-place-and-only-while-git-can-repair-it}
+  - **Acceptance**:
+    - Outcome: A base ref typed into the form is validated by the host before submit, through the production sender
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts`: the post-repair proof becomes presence as a NON-prunable record at the same normalized path and branch. Absence is not success — a registration pruned between the pre-check and the command makes `repair` no-op at exit 0 and leaves nothing stale to find.
+    2. `src/providers/WorktreeHost.ts`: `candidatePath` containment goes through `src/utils/resolvedPathBoundary.ts` before any existence check, because the answer authorizes a filesystem read and lexical containment lets a path spelled under the root traverse a symlink out of it. Retire superseded openings from `refsReads` and `latestProbe` rather than only evicting on detach, and clear both on dispose. One exact validator for the probe union, `base` included, with non-negative safe integers.
+    3. `src/webview/worktree/WorktreeController.ts` and `src/webview/worktree/WorktreeCreateDialog.ts`: the probe carries the whole selection — query, base intent and the current destination override — and a base or path edit mints a new `seq` and re-opens the gate. Without this `baseValid` is never produced in production and D7 holds on paper only.
+    4. The effective resolution owns the DESTINATION as well as the mode: its own target drives the displayed and submitted path, and `occupiedCandidate` and `blockedBy` are rendered. The classification travels on the draft (`src/webview/worktree/worktreeViewTypes.ts`), so the controller stops rebuilding the reattach request from its own map.
+    5. `askForDestination` is debounced to a settled edit so the probe is not re-sent per keystroke, which is D2's stated cadence.
+    6. `src/extension.worktreeAssembly.test.ts` asserts the displayed destination, the posted create path and the issued git argv name ONE path, and drives a base through the production sender rather than injecting `baseValid`.
+  - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` stay untouched; no new `D#`

@@ -111,6 +111,30 @@ export interface RepairListingRecord {
   prunable: boolean;
 }
 
+/** The record for this exact path and branch, or undefined when the listing has none. */
+async function recordFor(
+  records: readonly RepairListingRecord[],
+  repairPath: string,
+  branch: string,
+  normalize: (raw: string) => Promise<string | null>,
+): Promise<RepairListingRecord | undefined> {
+  const target = normalizePathForCompare(repairPath);
+  const matches: RepairListingRecord[] = [];
+  for (const record of records) {
+    if (record.branch !== branch) {
+      continue;
+    }
+    const resolved = await normalize(record.displayPath);
+    if (resolved !== null && normalizePathForCompare(resolved) === target) {
+      matches.push(record);
+    }
+  }
+  // Two records for one path and branch is a listing nobody can reason about,
+  // and picking one would be a guess. Answered as "no record" so the caller
+  // fails closed rather than repairing against an ambiguous identity.
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 /** Whether the listing still carries the stale registration a repair was offered for. */
 async function holdsStaleRegistration(
   records: readonly RepairListingRecord[],
@@ -584,7 +608,22 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               if (after === null) {
                 return { kind: "unavailable", verb: "create", repoId: request.repoId, unreadable: ["prunable"] };
               }
-              if (await holdsStaleRegistration(after, repairPath, mode.branch, deps.pathDeps.normalize)) {
+              // Success is the registration STILL BEING THERE and no longer
+              // prunable — not the absence of a stale one. Absence is also what
+              // a registration pruned between the pre-check and the command
+              // looks like, and `repair` no-ops at exit 0 against that, so
+              // reading absence as success announced a repair that never
+              // happened (round-3 B1).
+              const proof = await recordFor(after, repairPath, mode.branch, deps.pathDeps.normalize);
+              if (proof === undefined) {
+                return {
+                  kind: "unavailable",
+                  verb: "create",
+                  repoId: request.repoId,
+                  unreadable: ["prunable"],
+                };
+              }
+              if (proof.prunable) {
                 return fail("Git still reports that worktree as stale, so the repair did not take.");
               }
               await deps.afterCreate(repairPath, request.afterCreate, request.origin).catch((error: unknown) => {

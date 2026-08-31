@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 /**
- * The form BEFORE any host answer — no `onBranchChange`, no `bindDefaults`, so
+ * The form BEFORE any host answer — no `onSelectionChange`, no `bindDefaults`, so
  * the destination is the local guess and `outstanding` never arms. Production
  * always supplies both (`WorktreeController.createDialogDeps`), so anything
  * asserting what a create SUBMITS wants the wired shape instead: `resolved()`
@@ -322,7 +322,7 @@ describe("the form waits for the destination it is going to submit (round-4 B12)
     const asked: { repoId: string; branch: string }[] = [];
     let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
     const h = open({
-      onBranchChange: (repoId, branch) => asked.push({ repoId, branch }),
+      onSelectionChange: ({ repoId, branch }) => asked.push({ repoId, branch }),
       bindDefaults: (fn) => {
         apply = fn;
       },
@@ -380,7 +380,7 @@ describe("the form is a worktree form (§ 3.2.1)", () => {
   function resolved(answer: Partial<ReturnType<typeof createDefaults>> = {}) {
     let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
     const h = open({
-      onBranchChange: () => {},
+      onSelectionChange: () => {},
       bindDefaults: (fn) => {
         apply = fn;
       },
@@ -574,7 +574,7 @@ describe("After creating offers four choices (§ 3.2.1)", () => {
       // reaches submit down a path the panel never takes.
       let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
       const { q, submitted } = open({
-        onBranchChange: () => {},
+        onSelectionChange: () => {},
         bindDefaults: (fn) => {
           apply = fn;
         },
@@ -676,7 +676,7 @@ describe("round-1 review fixes", () => {
     let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
     const h = open({
       repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
-      onBranchChange: (repoId, branch) => asked.push({ repoId, branch }),
+      onSelectionChange: ({ repoId, branch }) => asked.push({ repoId, branch }),
       bindDefaults: (fn) => {
         apply = fn;
       },
@@ -770,7 +770,7 @@ describe("round-2 review fixes", () => {
   function wired(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
     let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
     const h = open({
-      onBranchChange: () => {},
+      onSelectionChange: () => {},
       bindDefaults: (fn) => {
         apply = fn;
       },
@@ -835,7 +835,7 @@ describe("round-2 review fixes", () => {
     let apply: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
     const h = open({
       repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
-      onBranchChange: () => {},
+      onSelectionChange: () => {},
       bindDefaults: (fn) => {
         apply = fn;
       },
@@ -1110,7 +1110,7 @@ describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () =
     const dispose = openWorktreeCreateDialog(host, {
       repos: [createDefaults()],
       onSubmit: () => {},
-      onBranchChange: (_repoId, branch) => asked.push(branch),
+      onSelectionChange: ({ branch }) => asked.push(branch),
       bindDefaults: (apply) => {
         applyDefaults = apply;
       },
@@ -1866,6 +1866,34 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
 describe("the base ref states when it cannot apply", () => {
   const RESOLVED_REFS = [{ name: "main" }, { name: "feat/search" }, { name: "fix/lock", heldBy: "lock-spike" }];
 
+  /** Type into a field and let the edit SETTLE, which is when the host is asked. */
+  function settle(input: HTMLInputElement, value: string): void {
+    input.focus();
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.blur();
+  }
+
+  function settleBranch(h: { host: HTMLElement }, name: string): void {
+    const branch = h.host.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the form has no branch field");
+    }
+    settle(branch, name);
+  }
+
+  /** Create, by its label — `.wt-btn--primary` matches an earlier button too. */
+  function primary(host: HTMLElement): HTMLButtonElement {
+    const btn = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /create worktree/i.test(b.textContent ?? ""),
+    );
+    if (btn === undefined) {
+      throw new Error("the form has no Create button");
+    }
+    return btn;
+  }
+
   function withResolution(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
     let apply: ((resolution: WorktreeCreateResolutionMessage) => void) | undefined;
     const h = open({
@@ -1935,6 +1963,110 @@ describe("the base ref states when it cannot apply", () => {
 
     expect(h.base().hidden).toBe(false);
     expect(h.base().isConnected).toBe(true);
+  });
+
+  it("[B3] states and submits the path the resolution named, not the defaults one", () => {
+    const submitted: WorktreeCreateDraft[] = [];
+    const h = withResolution({ onSubmit: (d) => submitted.push(d), onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" },
+      freePath: "/trees/stale",
+    });
+
+    // A repair states the directory it repairs. The defaults reply's free
+    // suffix beside it is a path this create will never touch (round-3 B3).
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/stale");
+    primary(h.host).click();
+    expect(submitted[0]?.path).toBe("/trees/stale");
+    // And the classification travels with it, so the owner does not re-read a
+    // second copy of the answer to build the request.
+    expect(submitted[0]?.resolved).toEqual({ kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" });
+  });
+
+  it("[B3] names the occupied candidate the suffixing skipped", () => {
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "brand-new");
+    h.resolve({
+      query: "brand-new",
+      mode: { kind: "fresh" },
+      freePath: "/trees/repo-brand-new-2",
+      occupiedCandidate: { path: "/trees/repo-brand-new", disposition: { kind: "debris" } },
+    });
+
+    const note = h.q<HTMLElement>(".wt-dest-note");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toContain("repo-brand-new");
+    expect(note.textContent).toContain("already exists");
+    // The one the create will actually take is named too, so the line is not a
+    // complaint with no answer.
+    expect(note.textContent).toContain("repo-brand-new-2");
+  });
+
+  it("[B3] takes the live holder from the resolution rather than re-deriving it", () => {
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "brand-new");
+    // Nothing in the offered refs holds `brand-new` — the listing cannot
+    // produce this holder, so only the resolution can.
+    h.resolve({
+      query: "brand-new",
+      mode: { kind: "reuse" },
+      blockedBy: { ownerPath: "/trees/elsewhere" },
+    });
+
+    expect(h.host.textContent ?? "").toContain("/trees/elsewhere");
+    expect(primary(h.host).disabled).toBe(true);
+  });
+
+  it("[B4] asks with the base and the destination override the user set", () => {
+    const asked: unknown[] = [];
+    const h = withResolution({ onSelectionChange: (sel) => asked.push(sel) });
+    settleBranch(h, "brand-new");
+    settle(h.q<HTMLInputElement>("#wt-base"), "origin/main");
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    settle(h.q<HTMLInputElement>("#wt-path"), "/trees/mine");
+
+    expect(asked.at(-1)).toEqual({
+      repoId: REPO_ID,
+      branch: "brand-new",
+      base: { kind: "ref", ref: "origin/main" },
+      candidatePath: "/trees/mine",
+    });
+  });
+
+  it("[B4] holds Create while the answer for a changed base has not landed", () => {
+    // A base edit re-classifies — it decides whether the base names a commit at
+    // all — so the gate waits for its answer the way it waits for a branch's.
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "brand-new");
+    h.resolve({ query: "brand-new", mode: { kind: "fresh" }, baseValid: { ok: true, oid: "abc" } });
+    expect(primary(h.host).disabled, "the setup never got Create open").toBe(false);
+
+    settle(h.q<HTMLInputElement>("#wt-base"), "origin/main");
+
+    expect(primary(h.host).disabled).toBe(true);
+    h.resolve({
+      query: "brand-new",
+      seq: 1,
+      mode: { kind: "fresh" },
+      baseValid: { ok: true, oid: "def" },
+    });
+    expect(primary(h.host).disabled).toBe(false);
+  });
+
+  it("[B6] asks once per settled edit, not once per keystroke", () => {
+    const asked: unknown[] = [];
+    const h = withResolution({ onSelectionChange: (sel) => asked.push(sel) });
+    const branch = h.q<HTMLInputElement>("#wt-branch");
+    for (const partial of ["b", "br", "bra", "brand-new"]) {
+      branch.value = partial;
+      branch.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    expect(asked, "a keystroke asked the host").toEqual([]);
+
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ branch: "brand-new" });
   });
 
   it("ignores a resolution for a query the user has typed past", () => {
@@ -2014,7 +2146,7 @@ describe("the base ref states when it cannot apply", () => {
     it("holds Create shut until the classification for the typed selection lands", () => {
       let answerDefaults: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
       const h = withResolution({
-        onBranchChange: () => {},
+        onSelectionChange: () => {},
         bindDefaults: (fn) => {
           answerDefaults = fn;
         },
@@ -2035,7 +2167,7 @@ describe("the base ref states when it cannot apply", () => {
     });
 
     it("states what the create will do, outside the collapsed Advanced body", () => {
-      const h = withResolution({ onBranchChange: () => {} });
+      const h = withResolution({ onSelectionChange: () => {} });
       typed(h, "feat/search");
       h.resolve({ mode: { kind: "reuse" } });
 
@@ -2046,7 +2178,7 @@ describe("the base ref states when it cannot apply", () => {
     });
 
     it("returns the form to fresh when a repair is withdrawn", () => {
-      const h = withResolution({ onBranchChange: () => {} });
+      const h = withResolution({ onSelectionChange: () => {} });
       typed(h, "feat/search");
       h.resolve({ mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" } });
       expect(h.base().disabled).toBe(true);
@@ -2059,7 +2191,7 @@ describe("the base ref states when it cannot apply", () => {
     });
 
     it("refuses an unresolvable base before the create is attempted", () => {
-      const h = withResolution({ onBranchChange: () => {} });
+      const h = withResolution({ onSelectionChange: () => {} });
       typed(h, "brand-new");
       h.resolve({
         query: "brand-new",
@@ -2072,7 +2204,7 @@ describe("the base ref states when it cannot apply", () => {
     });
 
     it("withholds a base verdict where the mode refuses a base at all", () => {
-      const h = withResolution({ onBranchChange: () => {} });
+      const h = withResolution({ onSelectionChange: () => {} });
       typed(h, "feat/search");
       h.resolve({ mode: { kind: "reuse" }, baseValid: { ok: false, reason: "should not be read" } });
 

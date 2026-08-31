@@ -13,7 +13,7 @@
 //  - A dangerous permission posture is labelled and never preselected.
 //  - The repo picker appears only once the workspace holds more than one repo.
 
-import type { ResolvedMode, WorktreeCreateResolutionMessage } from "../../types/messages";
+import type { ProbeBase, ResolvedMode, WorktreeCreateResolutionMessage } from "../../types/messages";
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
 import { attachTooltip } from "../ui/Tooltip";
 import { createWorktreeAgentBox } from "./worktreeAgentBox";
@@ -116,6 +116,17 @@ function openAfterOptions(canLaunch: boolean): { value: AfterChoice; label: stri
   return AFTER_CHOICES.filter((o) => o.value !== "agent" || canLaunch);
 }
 
+/** Everything the host needs to say what a submit of this form would do. */
+export interface CreateSelection {
+  repoId: string;
+  /** The branch being named, or the ref being detached at. */
+  branch: string;
+  /** Absent where the mode refuses a base, so no verdict is asked for one. */
+  base?: ProbeBase;
+  /** Present only where the user typed over the derived destination. */
+  candidatePath?: string;
+}
+
 export interface WorktreeCreateDialogDeps {
   /** One entry per repo; a single entry suppresses the picker entirely (§ 3.2). */
   repos: WorktreeCreateDefaults[];
@@ -127,11 +138,13 @@ export interface WorktreeCreateDialogDeps {
    */
   validateBranch?: (name: string) => string | undefined;
   /**
-   * The branch changed, so the destination has to be resolved again — only the
-   * host can say which path is free. Called on every settled edit; the owner
-   * answers by calling the function it received from `bindDefaults`.
+   * The selection changed, so what a create would do has to be resolved again —
+   * only the host can say which path is free and whether the base names a
+   * commit. Called on every SETTLED edit, and it carries the whole selection
+   * rather than just the branch: a base or a destination the host is never told
+   * about is a field the resolution cannot be about (round-3 B4).
    */
-  onBranchChange?: (repoId: string, branch: string) => void;
+  onSelectionChange?: (selection: CreateSelection) => void;
   /**
    * Receive the function that applies a fresh answer from the host. Kept as a
    * callback rather than a return value so the form stays a single expression
@@ -556,7 +569,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       if (listOpen) {
         renderList();
       }
-      syncDerived();
+      syncDerived(true);
     });
     repoField.append(repoSelect, repoHint);
     shell.dialog.appendChild(repoField);
@@ -585,7 +598,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       deriveChoice();
     }
     closeList();
-    syncDerived();
+    syncDerived(true);
   });
   modeField.appendChild(detachToggle);
 
@@ -784,7 +797,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       return;
     }
     const launch = afterChoice === "agent" ? agentBox.read() : {};
-    deps.onSubmit({ ...draft, ...launch });
+    // The classification travels WITH the submission, so the owner builds the
+    // request from the answer this form was showing rather than from its own
+    // second copy of it (round-3 B3).
+    deps.onSubmit({ ...draft, ...launch, ...(effective === null ? {} : { resolved: effective.mode }) });
     disposeAll();
   }
 
@@ -829,7 +845,30 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    *  request is repo-scoped; a key that is not reuses one repo's answer for
    *  another, and the destination line is what states that answer. */
   let askedFor: string | null = null;
-  const askKey = (branch: string): string => `${draft.repoId}\u0000${branch}`;
+  /**
+   * The repo and branch of the same request, kept separately because the
+   * DEFAULTS reply can only echo those two — a base or destination edit changes
+   * `askedFor` without changing the question that reply is answering.
+   */
+  let defaultsAskedFor: string | null = null;
+  /**
+   * The whole selection, so an edit to the base or the destination re-asks.
+   * Keyed on the same value the request carries — anything the key drops is a
+   * field the form could change without the host ever hearing about it.
+   */
+  const askKey = (s: CreateSelection): string =>
+    JSON.stringify([s.repoId, s.branch, s.base ?? null, s.candidatePath ?? null]);
+  /**
+   * The part of the selection the CLASSIFICATION depends on.
+   *
+   * A destination override changes which path the host reports on, not whether
+   * the branch is fresh, reused or reattachable — so it is asked about, but
+   * Create is not held behind the answer the way it is for a branch or base
+   * edit, whose answer decides what the button would do.
+   */
+  const classifyKey = (s: CreateSelection): string => JSON.stringify([s.repoId, s.branch, s.base ?? null]);
+  /** The classification key of the last request, for the gate above. */
+  let classifyAskedFor: string | null = null;
   /** True while a destination request has no answer yet. Submit waits for it. */
   let outstanding = false;
   /**
@@ -849,24 +888,69 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    */
   let resolutionOutstanding = false;
 
-  /** Ask the host for the destination this branch would take, at most once each. */
+  /** What the form would start a new branch from, where the mode takes one. */
+  function probeBase(): ProbeBase | undefined {
+    // The toggle and the field, and nothing the ANSWER set: `branchMode` also
+    // carries `existing` and `reattach`, which the resolution writes back, so
+    // reading those here would change the question every time it was answered.
+    // Which modes refuse a base is the HOST's to decide — it withholds the
+    // verdict itself (D7).
+    if (draft.branchMode === "detached") {
+      return { kind: "detached" };
+    }
+    const ref = draft.baseRef.trim();
+    return ref.length === 0 ? undefined : { kind: "ref", ref };
+  }
+
+  /** The selection as the host would be told it. */
+  function selection(): CreateSelection {
+    const base = probeBase();
+    return {
+      repoId: draft.repoId,
+      branch: draft.branchMode === "detached" ? draft.baseRef : draft.branchName,
+      ...(base === undefined ? {} : { base }),
+      // Only an override travels. The derived path is the host's own answer
+      // coming back, and sending it would pin the resolution to the value it
+      // just produced instead of letting it re-derive.
+      ...(pathIsDerived || draft.path.trim().length === 0 ? {} : { candidatePath: draft.path }),
+    };
+  }
+
+  /**
+   * The directory this resolution's create would act on.
+   *
+   * A repair acts on the registration's OWN path; `freePath` is the free suffix
+   * the create would have taken instead, and stating that beside a checkout
+   * already sitting there described a directory this create will never touch
+   * (round-3 B3).
+   */
+  function targetOf(resolution: WorktreeCreateResolutionMessage): string {
+    return resolution.mode.kind === "reattach" ? resolution.mode.repairPath : resolution.freePath;
+  }
+
+  /** Ask the host what this selection would do, at most once each. */
   function askForDestination(): void {
-    const detached = draft.branchMode === "detached";
-    const branch = detached ? draft.baseRef : draft.branchName;
-    if (askKey(branch) === askedFor) {
+    const now = selection();
+    const key = askKey(now);
+    if (key === askedFor) {
       return;
     }
-    askedFor = askKey(branch);
-    if (deps.onBranchChange !== undefined) {
-      outstanding = true;
-      // A new question invalidates the old answer immediately, rather than
-      // leaving the previous classification readable until the reply lands.
-      effective = null;
-      // Only where an answer is actually coming. With no resolver bound none
-      // ever arrives, and gating on it would leave Create permanently disabled
-      // rather than waiting for something.
-      resolutionOutstanding = deps.bindResolution !== undefined;
-      deps.onBranchChange(draft.repoId, branch);
+    askedFor = key;
+    defaultsAskedFor = `${now.repoId}\u0000${now.branch}`;
+    const reclassifying = classifyKey(now) !== classifyAskedFor;
+    classifyAskedFor = classifyKey(now);
+    if (deps.onSelectionChange !== undefined) {
+      if (reclassifying) {
+        outstanding = true;
+        // A new question invalidates the old answer immediately, rather than
+        // leaving the previous classification readable until the reply lands.
+        effective = null;
+        // Only where an answer is actually coming. With no resolver bound none
+        // ever arrives, and gating on it would leave Create permanently disabled
+        // rather than waiting for something.
+        resolutionOutstanding = deps.bindResolution !== undefined;
+      }
+      deps.onSelectionChange(now);
     }
   }
 
@@ -888,7 +972,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (draft.branchMode === "reattach") {
       return undefined;
     }
-    // Derived from the typed NAME against the current repository's list, not
+    // The RESOLUTION when there is one. It is the answer that told a live
+    // holder from the stale registration a repair would fix, so re-deriving the
+    // holder from the listing here was a second interpretation of it
+    // (round-3 B3).
+    if (effective !== null) {
+      return effective.blockedBy?.ownerPath;
+    }
+    // Otherwise from the typed NAME against the current repository's list, not
     // from `choice`. Committing the create-new row deliberately sets `choice`
     // to `new` while leaving the typed text alone, so a guard reading `choice`
     // stops seeing the holder and submits a branch another worktree holds
@@ -1075,7 +1166,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     closeList();
     nameInput.focus();
-    syncDerived();
+    // Picking a row settles the name in one action — there is no keystroke
+    // after it for a `change` event to ride.
+    syncDerived(true);
   }
 
   /**
@@ -1083,7 +1176,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * names the collided path AND the suffixed one the create will actually use —
    * showing only the pretty default would be a claim the form cannot keep.
    */
-  function syncDerived(): void {
+  function syncDerived(settled = false): void {
     const repo = currentRepo();
     repoHint.textContent = repo.mainPath;
     syncBringOver(repo.provisioning);
@@ -1129,7 +1222,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // guessing is exactly what the spec forbids: a create names the destination
     // it will actually use, and only the host knows which candidates are free
     // (round-3 B12).
-    const derived = repo.resolvedPath ?? (slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "");
+    // The RESOLUTION's own path first: it answered the whole selection, and the
+    // defaults reply answered only the branch (round-3 B3).
+    const resolvedPath = (effective === null ? undefined : targetOf(effective)) ?? repo.resolvedPath;
+    const derived = resolvedPath ?? (slug ? `${repo.pathParent}/${repo.pathPrefix}-${slug}` : "");
     if (pathIsDerived) {
       draft.path = derived;
       // Whoever owns the caret owns the text. Guarding the CALLERS was the
@@ -1148,7 +1244,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // disagree the instant the display stops being the input, and a line showing
     // the host default over a submitted override is the worse of the two lies.
     const overridden = !pathIsDerived;
-    const stated = overridden ? draft.path : repo.resolvedPath;
+    const stated = overridden ? draft.path : resolvedPath;
     if (stated) {
       destExact = stated;
       dest.setAttribute("aria-label", stated);
@@ -1172,17 +1268,21 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // it described.
     destNote.hidden = true;
     destNote.replaceChildren();
-    if (repo.collidedWith && !overridden) {
+    // The candidate the suffixing SKIPPED, from the resolution that skipped it.
+    // `collidedWith` is the defaults reply's answer to the narrower question,
+    // and kept only until a resolution has spoken (round-3 B3).
+    const skipped = effective === null ? repo.collidedWith : lastSegment(effective.occupiedCandidate?.path ?? "");
+    if (skipped && !overridden) {
       destNote.hidden = false;
       const taken = document.createElement("b");
-      taken.textContent = repo.collidedWith;
+      taken.textContent = skipped;
       // No leading `…`. The host sends a directory name, so there is nothing
       // elided to mark — and when this field still carried a whole path, the
       // marker shortened none of it (worktree-create.md § 4.2).
       destNote.append(taken, document.createTextNode(" already exists"));
-      if (repo.resolvedPath) {
+      if (resolvedPath) {
         const final = document.createElement("b");
-        final.textContent = lastSegment(repo.resolvedPath);
+        final.textContent = lastSegment(resolvedPath);
         destNote.append(document.createTextNode(", so this is created as "), final, document.createTextNode("."));
       } else {
         destNote.append(document.createTextNode("; a free suffix is chosen when the worktree is created."));
@@ -1209,7 +1309,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // Asked here, before the button state below reads `outstanding` — a request
     // raised after it would leave Create enabled for one render on a path the
     // host has not resolved yet.
-    askForDestination();
+    //
+    // Only on a SETTLED edit. `syncDerived` runs per keystroke to keep the form
+    // responsive, and asking from there made this a request per character
+    // despite the comment on `edited` promising otherwise (round-3 B6). The
+    // drift guard below is what makes waiting safe.
+    if (settled) {
+      askForDestination();
+    }
+    // The selection on screen is not the one the host answered about. Between a
+    // keystroke and the edit settling that is the normal state, and submitting
+    // in it would submit against a classification for different text.
+    const unasked = deps.onSelectionChange !== undefined && classifyKey(selection()) !== classifyAskedFor;
 
     // A create with no target is not offered — the button is disabled, not a
     // dialog that fails after the click.
@@ -1226,6 +1337,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       !named ||
       draft.path.trim().length === 0 ||
       outstanding ||
+      unasked ||
       // Detached is the user's own toggle and asks no classification of the
       // typed text, so it is not held behind one.
       (resolutionOutstanding && !detached) ||
@@ -1238,7 +1350,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // request per character. `input` still re-renders locally, so the field never
   // feels laggy — only the authoritative destination waits for the edit to settle.
   const edited = (): void => {
-    syncDerived();
+    syncDerived(true);
   };
   nameInput.addEventListener("input", () => {
     // Typing re-decides what the text MEANS, on the same rule the ordering
@@ -1251,7 +1363,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   nameInput.addEventListener("change", edited);
   nameInput.addEventListener("blur", () => {
     closeList();
-    syncDerived();
+    syncDerived(true);
   });
   nameInput.addEventListener("keydown", (ev) => {
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
@@ -1275,6 +1387,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   });
   baseInput.addEventListener("input", () => syncDerived());
   baseInput.addEventListener("change", edited);
+  pathInput.addEventListener("change", edited);
   pathInput.addEventListener("input", () => {
     // Clearing the field is not an override of "nowhere" — it is withdrawing the
     // override. One-way, the face showed a derivation that had been switched off
@@ -1298,7 +1411,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // longer matches the name beside it (round-4 B12).
     // Compared against the key the question was asked under, so an answer for the
     // right branch but the wrong repository is discarded like any other stale one.
-    if (next.answersBranch !== undefined && `${next.repoId}\u0000${next.answersBranch}` !== askedFor) {
+    if (next.answersBranch !== undefined && `${next.repoId}\u0000${next.answersBranch}` !== defaultsAskedFor) {
       return;
     }
     const at = repos.findIndex((r) => r.repoId === next.repoId);
@@ -1361,9 +1474,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     syncDerived();
   });
 
-  // What the create would DO, on its own channel. It never touches
-  // `outstanding` — the destination is the gate, and a form held shut waiting
-  // on a classification would be a second gate nobody asked for.
+  // What the create would DO, on its own channel — and, since the resolution
+  // now owns the destination it names, an answer to the same question the
+  // defaults reply answers (round-3 B3).
   deps.bindResolution?.((resolution) => {
     if (closed || resolution.repoId !== draft.repoId) {
       return;
@@ -1389,6 +1502,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // just withdrawn (round-1 B3).
     effective = resolution;
     resolutionOutstanding = false;
+    // It carries `freePath`, which is the destination the form states and
+    // submits, so this answer settles the destination question too.
+    outstanding = false;
     switch (resolution.mode.kind) {
       case "reattach":
         draft.branchMode = "reattach";

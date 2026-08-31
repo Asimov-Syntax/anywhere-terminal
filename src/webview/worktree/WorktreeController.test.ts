@@ -827,17 +827,10 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     // could never reach either, and a stale registration would be answered by
     // a near-duplicate beside the checkout that is already there.
     const h = mount();
-    h.controller.handleCreateResolution({
-      type: "worktreeCreateResolution",
-      repoId: "/repo/.git",
-      token: 0,
-      seq: 0,
-      query: "feat",
-      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
-      freePath: "/trees/repo-feat",
-    });
-    expect(h.controller.resolutionFor("/repo/.git"), "the setup stored no resolution to submit from").toBeDefined();
     const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    // The classification travels ON the draft — the form submits the answer it
+    // was showing, rather than this controller re-reading its own copy of one
+    // (round-3 B3).
     view.deps.onCreateSubmit({
       repoId: "/repo/.git",
       branchMode: "reattach",
@@ -845,6 +838,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       baseRef: "",
       path: "/trees/stale",
       openAfter: "none",
+      resolved: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
     });
 
     expect(h.posts.find((m) => m.type === "worktreeCreate")).toMatchObject({
@@ -852,21 +846,12 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     });
   });
 
-  it("[2_2] falls back to reuse when the resolution behind the repair has gone stale", () => {
-    // A form saying `reattach` while its resolution answers a different query
+  it("[2_2] falls back to reuse when the submission carries no corroborated repair", () => {
+    // A form saying `reattach` while carrying no repair — a resolution that
+    // never arrived, or one that classified the selection as something else —
     // is describing a repair nobody corroborated. `git worktree add` against a
     // branch that exists is the honest thing to ask for instead.
     const h = mount();
-    h.controller.handleCreateResolution({
-      type: "worktreeCreateResolution",
-      repoId: "/repo/.git",
-      token: 0,
-      seq: 0,
-      query: "something-else",
-      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
-      freePath: "/trees/repo",
-    });
-    expect(h.controller.resolutionFor("/repo/.git"), "the setup stored no resolution at all").toBeDefined();
     const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
     view.deps.onCreateSubmit({
       repoId: "/repo/.git",
@@ -875,6 +860,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       baseRef: "",
       path: "/trees/stale",
       openAfter: "none",
+      resolved: { kind: "reuse", branch: "feat" },
     });
 
     expect(h.posts.find((m) => m.type === "worktreeCreate")).toMatchObject({ mode: { kind: "reuse", branch: "feat" } });
@@ -2119,7 +2105,12 @@ describe("the destination follows the branch the user typed", () => {
           deps: {
             createDialogDeps(): {
               repos: WorktreeCreateDefaults[];
-              onBranchChange(repoId: string, branch: string): void;
+              onSelectionChange(selection: {
+                repoId: string;
+                branch: string;
+                base?: unknown;
+                candidatePath?: string;
+              }): void;
               bindDefaults(apply: (next: WorktreeCreateDefaults) => void): void;
             };
           };
@@ -2132,7 +2123,7 @@ describe("the destination follows the branch the user typed", () => {
     // Round-3 B12: the host proved `<root>/<label>` free while the form
     // submitted `<parent>/<prefix>-<branch>` — a different path nobody checked.
     const h = ready();
-    dialogDeps(h).onBranchChange(REPO, "feat/login");
+    dialogDeps(h).onSelectionChange({ repoId: REPO, branch: "feat/login" });
 
     // Two questions about one settled edit: where the create would GO, and
     // what it would DO. Still exhaustive — nothing else is asked.
@@ -2140,6 +2131,40 @@ describe("the destination follows the branch the user typed", () => {
       { type: "requestWorktreeCreateDefaults", repoId: REPO, branch: "feat/login" },
       { type: "worktreeCreateProbe", repoId: REPO, token: 0, seq: 1, query: "feat/login" },
     ]);
+  });
+
+  it("forwards the base and the destination override, not just the branch", () => {
+    // The sole production sender posted `{repoId, token, seq, query}` and
+    // dropped both, so `baseValid` could only ever exist in a test that
+    // injected it and an override was never resolved at all (round-3 B4).
+    const h = ready();
+    dialogDeps(h).onSelectionChange({
+      repoId: REPO,
+      branch: "feat/login",
+      base: { kind: "ref", ref: "origin/main" },
+      candidatePath: "/trees/mine",
+    });
+
+    expect(h.posts).toContainEqual({
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 0,
+      seq: 1,
+      query: "feat/login",
+      base: { kind: "ref", ref: "origin/main" },
+      candidatePath: "/trees/mine",
+    });
+  });
+
+  it("mints a new sequence for a base edit under an unchanged branch", () => {
+    // `seq` is what orders two answers, and a base edit that reused one would
+    // let the earlier answer overwrite the later one (round-3 B4).
+    const h = ready();
+    dialogDeps(h).onSelectionChange({ repoId: REPO, branch: "feat/login" });
+    dialogDeps(h).onSelectionChange({ repoId: REPO, branch: "feat/login", base: { kind: "ref", ref: "v1" } });
+
+    const probes = h.posts.filter((m) => m.type === "worktreeCreateProbe");
+    expect(probes.map((p) => (p as { seq: number }).seq)).toEqual([1, 2]);
   });
 
   it("[2_1] rides the OPENING's token, so a probe cannot be matched to the wrong form", () => {
@@ -2150,7 +2175,7 @@ describe("the destination follows the branch the user typed", () => {
     h.controller.openCreate();
     h.controller.openCreate();
     h.posts.length = 0;
-    dialogDeps(h).onBranchChange(REPO, "feat/login");
+    dialogDeps(h).onSelectionChange({ repoId: REPO, branch: "feat/login" });
 
     expect(h.posts).toContainEqual({
       type: "worktreeCreateProbe",

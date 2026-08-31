@@ -1152,6 +1152,8 @@ describe("reattach repairs in place, and re-checks the pause", () => {
     over: {
       head?: string;
       stillPrunable?: readonly string[];
+      /** The administrative entry disappeared between the pre-check and now. */
+      goneAfter?: boolean;
       repairOk?: boolean;
       registeredBefore?: boolean;
       branchBefore?: string;
@@ -1174,7 +1176,15 @@ describe("reattach repairs in place, and re-checks the pause", () => {
             ? []
             : [{ displayPath: STALE, branch: over.branchBefore ?? "feat", prunable: true }];
         }
-        return (over.stillPrunable ?? []).map((p) => ({ displayPath: p, branch: "feat", prunable: true }));
+        // The registration is STILL THERE after a repair — what moves is its
+        // `prunable` flag. Modelling success as the record VANISHING is what
+        // let the vacuous-success path pass: a registration pruned between the
+        // pre-check and the command looks exactly like that, and `repair`
+        // no-ops at exit 0 against it (round-3 B1).
+        if (over.goneAfter === true) {
+          return [];
+        }
+        return [{ displayPath: STALE, branch: "feat", prunable: (over.stillPrunable ?? []).includes(STALE) }];
       },
       corroborateRepair: async ({ repairPath }) =>
         over.verdict ?? { kind: "offer", repairPath, expectedOid: over.head ?? "oid-1" },
@@ -1320,6 +1330,17 @@ describe("reattach repairs in place, and re-checks the pause", () => {
 
     expect(argvOf(h)).toContainEqual(["worktree", "repair", STALE]);
     expect(h.outcomes[0]).toMatchObject({ kind: "error", message: expect.stringContaining("did not take") });
+  });
+
+  it("does not report a repair when the registration it repaired is gone", async () => {
+    // The entry was pruned between the pre-check and the command. `repair`
+    // no-ops at exit 0 against that, so reading its ABSENCE from the listing as
+    // success announced a repair that never happened (round-3 B1).
+    const h = reattachHarness({ goneAfter: true });
+    await reattach(h);
+
+    expect(argvOf(h)).toContainEqual(["worktree", "repair", STALE]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable", verb: "create", unreadable: ["prunable"] });
   });
 
   it("does not read a listing it could not obtain as a successful repair", async () => {
