@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -43,3 +43,7 @@ Planned at: 9f261154
 `offers.lookup` still has no caller in `src/`, so nothing redeems an offer id yet (WT-012.2 owns the
 first redeemer). The retirement's two other effects are witnessed and mutation-verified; the eviction
 rests on `offerStore.test.ts`'s own `forgetSurface` coverage until a redeemer exists.
+
+Verify gate: `src/vault/snapshotPool.test.ts` and `src/extension.worktreeAssembly.test.ts` each
+flake intermittently under the full suite and pass on re-run — pre-existing, in files this change
+does not touch. Observed pass is a clean 269/269.
