@@ -12,7 +12,10 @@
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
 import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
 import { normalizePathForCompare } from "../utils/pathBoundary";
+import { type ClearDebrisDeps, clearDebris, removeRecursively } from "./clearDebris";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
+import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
+import { probeGitEntry } from "./debrisClassification";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
@@ -262,6 +265,10 @@ export interface MutationServiceDeps {
   addToGitExclude(gitDir: string, entry: string): Promise<void>;
   now(): number;
   fingerprints?: FingerprintStore;
+  /** Authorizations for clearing crash debris — the create path's own store (design.md D2). */
+  debrisAuthorizations?: DebrisAuthorizationStore;
+  /** How a cleared destination is actually removed. Production takes the module default. */
+  clearDebrisDeps?: ClearDebrisDeps;
   coordinator?: MutationCoordinator;
 }
 
@@ -272,6 +279,13 @@ export interface WorktreeMutationService extends WorktreeMutationCapabilities {
 
 export function createWorktreeMutationService(deps: MutationServiceDeps): WorktreeMutationService {
   const fingerprints = deps.fingerprints ?? createFingerprintStore();
+  const debrisAuthorizations = deps.debrisAuthorizations ?? createDebrisAuthorizationStore();
+  const clearDebrisDeps: ClearDebrisDeps = deps.clearDebrisDeps ?? {
+    lstat: deps.pathDeps.lstat,
+    readdir: deps.pathDeps.readdir,
+    probeGitEntry,
+    remove: removeRecursively,
+  };
   const coordinator =
     deps.coordinator ??
     createMutationCoordinator({
@@ -708,6 +722,27 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             const named = branchOf(request.mode);
             if (named !== undefined && (await branchNameIsValid(deps.runner, repoPath, named)) === false) {
               return fail(`Git will not accept "${named}" as a branch name.`);
+            }
+            // The clearance goes LAST, after every recheck and every question
+            // that can still refuse — a directory deleted before a refusal is a
+            // directory deleted for nothing. `clearDebris` re-takes the identity
+            // reading itself: `branchNameIsValid` above awaited, so the phase-2
+            // comparison no longer describes the moment of the delete (D3).
+            if (intent.kind === "mustMatchDebrisAuthorization") {
+              const entries = await deps.pathDeps.readdir(check.path);
+              const verdict = debrisAuthorizations.redeem(
+                check.path,
+                intent.authorization.fingerprint,
+                { entries: entries ?? [], identity: identityOf(await deps.pathDeps.lstat(check.path)) },
+                deps.now(),
+              );
+              if (verdict !== "proceed") {
+                return fail("That directory changed since it was shown to you. Please try again.");
+              }
+              const cleared = await clearDebris(check.path, ctx, first.recheckIdentity, clearDebrisDeps);
+              if (!cleared.ok) {
+                return fail(cleared.reason);
+              }
             }
             const result = await createWorktree(deps.runner, {
               repoPath,

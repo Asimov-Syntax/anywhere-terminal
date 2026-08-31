@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type ClearDebrisDeps, clearDebris } from "./clearDebris";
 
-const ROOT = "/trees";
+const CTX = { mainWorktree: "/repo", linkedWorktrees: ["/trees/other"] };
 const PATH = "/trees/repo-feat";
 const IDENTITY = "1:2";
 
@@ -25,14 +25,14 @@ function deps(over: Partial<ClearDebrisDeps> & { removed?: string[]; remaining?:
 describe("clearDebris", () => {
   it("removes the directory and reports success when nothing remains", async () => {
     const removed: string[] = [];
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ removed }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ removed }));
     expect(result).toEqual({ ok: true });
     expect(removed).toEqual([PATH]);
   });
 
   it("refuses and removes nothing when the identity no longer matches", async () => {
     const removed: string[] = [];
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ removed, lstat: async () => statLike(1, 99) }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ removed, lstat: async () => statLike(1, 99) }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
@@ -40,68 +40,75 @@ describe("clearDebris", () => {
   it("refuses where the platform gave no identity to bind to", async () => {
     // A null identity must not read as "matches anything".
     const removed: string[] = [];
-    const result = await clearDebris(PATH, ROOT, null, deps({ removed, lstat: async () => statLike(1, 0) }));
+    const result = await clearDebris(PATH, CTX, null, deps({ removed, lstat: async () => statLike(1, 0) }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
 
   it("refuses where a .git appeared after the authorization", async () => {
     const removed: string[] = [];
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ removed, probeGitEntry: () => "present" }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ removed, probeGitEntry: () => "present" }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
 
   it("refuses where the .git reading could not be taken", async () => {
     const removed: string[] = [];
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ removed, probeGitEntry: () => "unknown" }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ removed, probeGitEntry: () => "unknown" }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
 
   it("refuses where the directory is gone", async () => {
     const removed: string[] = [];
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ removed, lstat: async () => null }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ removed, lstat: async () => null }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
 
   it("refuses where the path is not a directory", async () => {
     const removed: string[] = [];
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ removed, lstat: async () => statLike(1, 2, false) }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ removed, lstat: async () => statLike(1, 2, false) }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
 
-  it("refuses a path outside the create root, whatever the authorization says", async () => {
+  it("refuses the repository's main worktree, whatever the authorization says", async () => {
     const removed: string[] = [];
-    const result = await clearDebris("/elsewhere/repo", ROOT, IDENTITY, deps({ removed }));
+    const result = await clearDebris(CTX.mainWorktree, CTX, IDENTITY, deps({ removed }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
 
-  it("refuses the create root itself", async () => {
+  it("refuses another worktree of this repository", async () => {
     const removed: string[] = [];
-    const result = await clearDebris(ROOT, ROOT, IDENTITY, deps({ removed }));
+    const result = await clearDebris("/trees/other", CTX, IDENTITY, deps({ removed }));
+    expect(result.ok).toBe(false);
+    expect(removed).toEqual([]);
+  });
+
+  it("refuses a path INSIDE another worktree of this repository", async () => {
+    const removed: string[] = [];
+    const result = await clearDebris("/trees/other/nested", CTX, IDENTITY, deps({ removed }));
     expect(result.ok).toBe(false);
     expect(removed).toEqual([]);
   });
 
   it("reports what REMAINS when the removal was partial", async () => {
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ remaining: ["locked.db", "sub"] }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ remaining: ["locked.db", "sub"] }));
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.reason).toContain("locked.db");
   });
 
   it("treats an emptied directory as cleared", async () => {
-    const result = await clearDebris(PATH, ROOT, IDENTITY, deps({ remaining: [] }));
+    const result = await clearDebris(PATH, CTX, IDENTITY, deps({ remaining: [] }));
     expect(result).toEqual({ ok: true });
   });
 
   it("reports a removal that threw, rather than claiming the path is clear", async () => {
     const result = await clearDebris(
       PATH,
-      ROOT,
+      CTX,
       IDENTITY,
       deps({
         remove: async () => {
@@ -118,7 +125,7 @@ describe("clearDebris", () => {
     // last check and the removal is a window where the directory can be
     // replaced, so this asserts the sequence rather than trusting the source.
     const order: string[] = [];
-    await clearDebris(PATH, ROOT, IDENTITY, {
+    await clearDebris(PATH, CTX, IDENTITY, {
       lstat: async () => {
         order.push("lstat");
         return statLike(1, 2);

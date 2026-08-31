@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createDebrisAuthorizationStore, type DebrisEvidence } from "./debrisAuthorization";
 import { FINGERPRINT_TTL_MS } from "./worktreeFingerprint";
-import { type DebrisEvidence, createDebrisAuthorizationStore } from "./debrisAuthorization";
 
 const PATH = "/trees/repo-feat";
 

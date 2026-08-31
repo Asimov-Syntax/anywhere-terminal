@@ -14,7 +14,7 @@
 import { rm } from "node:fs/promises";
 import * as path from "node:path";
 import { isPathInside, normalizePathForCompare } from "../utils/pathBoundary";
-import { type LstatLike, identityOf } from "./createPath";
+import { identityOf, type LstatLike } from "./createPath";
 import type { GitEntryProbe } from "./debrisClassification";
 
 export interface ClearDebrisDeps {
@@ -38,6 +38,12 @@ export const removeRecursively = async (p: string): Promise<void> => {
 
 export type ClearDebrisResult = { ok: true } | { ok: false; reason: string };
 
+/** The worktrees this delete must never touch — `CreatePathContext`'s own fields. */
+export interface ClearDebrisContext {
+  mainWorktree: string;
+  linkedWorktrees: readonly string[];
+}
+
 /**
  * Remove `resolvedPath`, or refuse and remove nothing.
  *
@@ -54,19 +60,22 @@ export type ClearDebrisResult = { ok: true } | { ok: false; reason: string };
  */
 export async function clearDebris(
   resolvedPath: string,
-  createRoot: string,
+  ctx: ClearDebrisContext,
   approvedIdentity: string | null,
   deps: ClearDebrisDeps,
 ): Promise<ClearDebrisResult> {
-  if (!isPathInside(resolvedPath, createRoot)) {
-    return { ok: false, reason: "That directory is outside the worktree root, so it will not be cleared." };
+  // The validator's own vocabulary, re-asked. `CreatePathContext` carries no
+  // "create root" — containment for a worktree destination is expressed as what
+  // it must NOT be — so this asks the same question rather than inventing a root
+  // it would have to be handed.
+  const same = (a: string, b: string): boolean => normalizePathForCompare(a) === normalizePathForCompare(b);
+  if (same(resolvedPath, ctx.mainWorktree)) {
+    return { ok: false, reason: "That is the repository's main worktree, so it will not be cleared." };
   }
-  // `isPathInside` counts the root as inside itself, which is the right answer to
-  // the question it is asked and the wrong one to act on here: the root holds
-  // every worktree the user has. Compared through the boundary module's own
-  // normalizer so the two answers cannot disagree about what one path is.
-  if (normalizePathForCompare(resolvedPath) === normalizePathForCompare(createRoot)) {
-    return { ok: false, reason: "That is the worktree root itself, so it will not be cleared." };
+  for (const linked of ctx.linkedWorktrees) {
+    if (same(resolvedPath, linked) || isPathInside(resolvedPath, linked)) {
+      return { ok: false, reason: "That path is inside another worktree of this repository." };
+    }
   }
   // A null identity is not a wildcard. Where the platform supplies none there is
   // nothing to bind the authorization to, and an unbindable delete is refused

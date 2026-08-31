@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type GitEntryProbe, classifyDestination } from "./debrisClassification";
+import { classifyDestination, type GitEntryProbe } from "./debrisClassification";
 
 const absent: GitEntryProbe = () => "absent";
 const present: GitEntryProbe = () => "present";

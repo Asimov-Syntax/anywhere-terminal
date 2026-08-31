@@ -49,7 +49,7 @@
     3. Same file: assert the allowlist in BOTH directions as `EXPECTED_GAPS` is — an entry whose module no longer deletes is a stale carve-out and fails, and an allowlisted path that no longer exists fails. A separate test file cannot host this: the gate is a script whose `main()` runs on import.
   - **Boundary**: `isRemovalPath`'s scope is not narrowed — the gate keeps covering `src/worktree/**` and `src/providers/WorktreeHost.ts`
 
-- [ ] 1_5 Run the clearance inside the create, before git and after the rechecks
+- [x] 1_5 Run the clearance inside the create, before git and after the rechecks — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 1_4
   - **Refs**: specs/worktree-panel/spec.md#a-create-never-reports-success-for-a-clearance-that-did-not-complete; design.md D3, D5
   - **Acceptance**:
@@ -59,6 +59,8 @@
     1. `src/worktree/worktreeMutationService.ts`: in the create body, where the intent is `mustMatchDebrisAuthorization`, redeem the authorization and run the clearance after the existing phase-2 rechecks and before `createWorktree`; a refused redemption or a failed clearance returns a failure and never reaches git.
     2. Same file: wire the authorization store through `MutationServiceDeps` beside `fingerprints`.
     3. `src/worktree/worktreeMutationService.test.ts`: a free-destination create performs no removal; a debris create clears then creates; a refused redemption creates nothing.
+    4. `src/worktree/clearDebris.ts` and `src/worktree/clearDebris.test.ts`: the containment argument becomes the validator's own vocabulary — the main worktree and the linked worktrees — because `CreatePathContext` carries no create root and an invented one would be a guard with a made-up argument.
+    5. `src/providers/WorktreeHost.ts`: import-order fix only, carried over from 1_1's import — the lint baseline is a gate this change must return to and 1_1 is already ticked.
   - **Boundary**: the two-phase validation is not restructured — the clearance is inserted into it, and `git worktree remove` remains the only path that deletes a registered worktree
 
 - [ ] 1_6 Offer recover in the create dialog

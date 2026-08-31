@@ -30,7 +30,7 @@ import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { resolveSelection } from "../worktree/createResolution";
-import { type GitEntryProbe, classifyDestination } from "../worktree/debrisClassification";
+import { classifyDestination, type GitEntryProbe } from "../worktree/debrisClassification";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
 import type { OrphanProofs } from "../worktree/orphanProofs";
