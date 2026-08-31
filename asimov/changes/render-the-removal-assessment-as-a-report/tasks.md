@@ -46,7 +46,7 @@
     3. `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: replace the inherited assertions that a refused dialog has no `.wt-blockers`, and assert the pane wording against a running pane.
   - **Boundary**: no change to `src/worktree/worktreeBlockers.ts`'s pane selection or to any message shape — the wording is the defect, not the count
 
-- [ ] 1_5 Refuse on a refusal-class check nobody could evaluate
+- [x] 1_5 Refuse on a refusal-class check nobody could evaluate — verified: pnpm exec vitest run 'src/worktree/removalChecks.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 1_4
   - **Refs**: specs/worktree-panel/spec.md#a-typed-confirmation-is-required-only-where-a-confirmable-risk-earned-one; design.md D2; .reviews/round-1.md W1
   - **Acceptance**:

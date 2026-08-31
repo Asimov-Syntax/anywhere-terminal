@@ -231,9 +231,18 @@ function formatBytes(bytes: number): string {
   return unit === 0 ? `${value} ${units[unit]}` : `${value.toFixed(1)} ${units[unit]}`;
 }
 
-/** Does any refusal-class check stand? No confirmation can authorize this removal. */
+/**
+ * Does any refusal-class check stand? No confirmation can authorize this removal.
+ *
+ * `unproven` counts, not only `failed`: DESIGN.md D43 makes fail-closed the
+ * meaning of `unproven` WITHIN each class, and for this class what is withheld is
+ * the removal — worktree-removal.md § 2.2, "Activity that cannot be determined is
+ * treated as live". Per class is the whole rule: a blanket "unproven refuses"
+ * would let an unfetched default branch block a removal nobody asked to delete a
+ * branch for, which is why a confirmable or proof `unproven` still returns false.
+ */
 export function isRefusedByChecks(checks: readonly RemovalCheck[]): boolean {
-  return checks.some((c) => c.cls === "refusal" && c.outcome === "failed");
+  return checks.some((c) => c.cls === "refusal" && (c.outcome === "failed" || c.outcome === "unproven"));
 }
 
 /**

@@ -62,7 +62,11 @@ describe("checksFor", () => {
     expect(checks.find((c) => c.id === "dirty")?.detail).toBe("The status could not be read.");
     // A check whose own source did not fail still cannot claim it passed.
     expect(checks.find((c) => c.id === "busyAgents")?.detail).toBeUndefined();
-    expect(isRefusedByChecks(checks)).toBe(false);
+    // An assessment that read NOTHING cannot rule out an agent mid-turn, so the
+    // refusal-class checks in it refuse (D43). The host routes this kind to retry
+    // UI rather than to a dialog; the predicate must be fail-closed regardless of
+    // which producer reaches it (round-1 W1).
+    expect(isRefusedByChecks(checks)).toBe(true);
   });
 
   it("names each failed source on the checks it feeds", () => {
@@ -94,6 +98,37 @@ describe("checksFor", () => {
     expect(countOf(checks, "busyAgents")).toBe(2);
     expect(countOf(checks, "containsWorktrees")).toBe(1);
     expect(failed(checks, "isMain")).toBe(false);
+  });
+
+  it("[1_5] refuses on a refusal-class check nobody could evaluate", () => {
+    // DESIGN.md D43: a hard refusal unproven still refuses. § 2.2 says it in the
+    // domain's words — activity that cannot be determined is treated as live.
+    // Fail-closed is per class, so `unproven` withholds whatever its own class
+    // gates, and for this class that is the removal itself.
+    const checks = [
+      { id: "isMain", cls: "refusal", outcome: "passed" },
+      { id: "busyAgents", cls: "refusal", outcome: "unproven" },
+      { id: "dirty", cls: "confirmable", outcome: "passed", count: 0 },
+    ] as const;
+
+    expect(isRefusedByChecks(checks)).toBe(true);
+  });
+
+  it("[1_5] does not refuse for an unproven check of any other class", () => {
+    // The negative that gives it meaning: the rule is per class, not a blanket
+    // "unproven refuses" — which would let an unfetched default branch stop a
+    // removal nobody asked to delete a branch for (D43).
+    const confirmableUnproven = [
+      { id: "busyAgents", cls: "refusal", outcome: "passed", count: 0 },
+      { id: "dirty", cls: "confirmable", outcome: "unproven" },
+    ] as const;
+    const proofUnproven = [
+      { id: "busyAgents", cls: "refusal", outcome: "passed", count: 0 },
+      { id: "branchMerged", cls: "proof", outcome: "unproven" },
+    ] as const;
+
+    expect(isRefusedByChecks(confirmableUnproven)).toBe(false);
+    expect(isRefusedByChecks(proofUnproven)).toBe(false);
   });
 
   it("passes every refusal check on a confirmable assessment", () => {

@@ -546,15 +546,16 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
     expect(host.querySelectorAll('.wt-blockers li[data-outcome="unproven"]').length).toBe(5);
   });
 
-  it("does not refuse the removal for a refusal-class check that could not be read", () => {
-    // `isRefusedByChecks` refuses on `failed`, never on `unproven` (design.md
-    // D2), and D3 retired the blanket withhold — so an unreadable refusal check
-    // leaves the control to the confirmable classes rather than making the
-    // worktree unremovable.
+  it("[1_5] refuses when a refusal-class check could not be read", () => {
+    // Fail-closed is per CLASS (design.md D2, DESIGN.md D43): an agent that
+    // cannot be ruled out is treated as live, so no confirmation is offered —
+    // whereas an unreadable CONFIRMABLE check is gated rather than refused, which
+    // is the case immediately below.
     const { host } = open(withChecks(confirmableBlocker, { busyAgents: unproven }));
 
-    expect(danger(host), "an unreadable check made the worktree unremovable").not.toBeNull();
-    expect(host.querySelector("#wt-confirm-name")).not.toBeNull();
+    expect(host.querySelector(".wt-refusebox"), "an unreadable refusal check offered a confirmation").not.toBeNull();
+    expect(danger(host)).toBeNull();
+    expect(host.querySelector("#wt-confirm-name")).toBeNull();
   });
 
   it("[1_2] asks for an ordinary confirmation when only a proof could not be evaluated", () => {
