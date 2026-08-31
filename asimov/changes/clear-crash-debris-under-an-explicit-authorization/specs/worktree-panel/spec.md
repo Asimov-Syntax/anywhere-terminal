@@ -54,3 +54,21 @@ debris SHALL remove nothing.
 
 - **WHEN** a create runs against a free destination
 - **THEN** no filesystem entry is removed
+
+### Requirement: An authorization to clear is issued only when it is asked for
+
+The panel SHALL issue an authorization to clear a destination only in answer to a request naming that
+destination, and SHALL NOT include one in the answer it gives while a destination is being resolved.
+Where the named destination is not debris, or cannot be read, the panel SHALL answer with a refusal
+stating which, and SHALL NOT issue an authorization.
+
+#### Scenario: Resolving a destination mints no authorization
+
+- **WHEN** a destination is resolved and reported as debris
+- **THEN** the answer carries no authorization, and nothing at that path can be removed until one is
+  requested
+
+#### Scenario: A destination that is not debris is refused an authorization
+
+- **WHEN** an authorization is requested for a destination holding a `.git` entry
+- **THEN** the answer is a refusal naming that reason, and no authorization is issued

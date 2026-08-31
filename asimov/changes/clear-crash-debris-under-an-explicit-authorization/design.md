@@ -73,3 +73,32 @@ The mutable resource is **the debris directory on disk**.
 | What a crash mid-write leaves behind | A partially removed directory. D5 reports what remains; the next create re-classifies the remainder from scratch, since classification (D1) reads the filesystem rather than any stored state. |
 | Failed / malformed read | Fails **closed**. `readdir` or `lstat` returning null is "not proven to be debris" — no authorization is issued and no delete runs. |
 | Two racing hosts | Both may hold an authorization for the same path. The first delete wins; the second finds a changed identity or a missing directory and refuses. Neither deletes what the other created, because a directory created after the authorization has a different inode. |
+
+## D6 — The authorization has its own request, and never rides the probe
+
+Added after 1_6 found no carrier: `worktreeCreateResolution` reports a
+`ResolvedDisposition`, which the previous change narrowed on purpose so that a probe answer holds
+nothing a delete could be built from, and nothing else on the wire issues a `DebrisAuthorization`.
+So the webview could not populate the field `DestinationDisposition.debris` requires.
+
+The carrier is a **separate request the user's intent triggers**, not a field added to the probe
+answer:
+
+```
+webview → host   worktreeAuthorizeDebris   { repoId, token, path }
+host  →  webview worktreeDebrisAuthorized  { repoId, token, path, authorization, entries } | { refused }
+```
+
+Widening the probe answer instead would have been smaller and wrong. The probe is sent on **every
+settled edit** — it is how the form stays live while someone types — so a probe answer that carried
+an authorization would mint a delete token for a path nobody had asked to delete, dozens of times
+per dialog. That is the exact defect the narrowed type was introduced to prevent, and reintroducing
+it through a different field is still reintroducing it.
+
+`entries` travels with the authorization because the offer has to state what will be removed, and
+the list the user is shown must be the same list the token was digested over — two reads would let
+the dialog name one set and the fingerprint bind another.
+
+A refusal is its own variant rather than an absent field: "that is not debris" and "the host could
+not tell" both have to reach the user as a reason the offer is unavailable, and an optional field
+would collapse them into silence.
