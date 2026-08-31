@@ -25,7 +25,7 @@
     3. `src/worktree/debrisAuthorization.test.ts`: an appeared entry re-prompts, a disappeared entry proceeds, a changed identity re-prompts, a replayed token re-prompts, an expired record re-prompts.
   - **Boundary**: `src/worktree/worktreeFingerprint.ts` is not modified — D2 records why removal's store is not generalized
 
-- [ ] 1_3 Remove the debris directory under the bounds, and report a partial removal
+- [x] 1_3 Remove the debris directory under the bounds, and report a partial removal — verified: pnpm exec vitest run 'src/worktree/clearDebris.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#a-create-never-reports-success-for-a-clearance-that-did-not-complete; design.md D3, D5; docs/design/worktree-create.md#22-recover-deletes-and-says-so
   - **Acceptance**:
