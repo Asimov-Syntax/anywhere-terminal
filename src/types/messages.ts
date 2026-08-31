@@ -1070,6 +1070,20 @@ export interface WorktreeCreateDefaultsRequestMessage {
   type: "requestWorktreeCreateDefaults";
   repoId: string;
   /**
+   * The form OPENING this belongs to, minted by the panel.
+   *
+   * `repoId` names a repository, not a conversation: a dialog closed and
+   * reopened on the same one leaves two whose messages are otherwise
+   * indistinguishable. The same identity `requestWorktreeRefs`,
+   * `worktreeCreateProbe` and `worktreeAuthorizeDebris` already carry — this is
+   * not a second one (design.md D1).
+   *
+   * Required. An absent opening would have to be read as "the live one", which
+   * is the permissive reading that lets a malformed message adopt a form's
+   * authority.
+   */
+  opening: number;
+  /**
    * The branch the form currently holds, if any.
    *
    * The destination depends on it, so the host has to resolve against the
@@ -1077,6 +1091,22 @@ export interface WorktreeCreateDefaultsRequestMessage {
    * and the form submitted a different, branch-derived one (round-3 B12).
    */
   branch?: string;
+}
+
+/**
+ * WebView → Extension: this create form closed.
+ *
+ * Its own message because closure cannot be inferred. The host reads a
+ * branch-less defaults request as "a form opened", and has no counterpart for
+ * the other end — which is why a cancelled form's read still minted authority
+ * nothing would ever redeem. Posted on BOTH exits, cancel and submit: a form
+ * cancelled and never reopened is exactly the case a "supersede on next
+ * opening" rule would never reach (design.md D3).
+ */
+export interface WorktreeCreateClosedMessage {
+  type: "worktreeCreateClosed";
+  /** The opening being retired. Nothing about it is honoured afterwards. */
+  opening: number;
 }
 
 /**
@@ -1410,6 +1440,7 @@ export type WebViewToExtensionMessage =
   | WorktreeResumeHereMessage
   | WorktreeCreateRequestMessage
   | WorktreeCreateDefaultsRequestMessage
+  | WorktreeCreateClosedMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
   | WorktreeAuthorizeDebrisMessage
@@ -1446,6 +1477,7 @@ export type WorktreeInboundMessage = Extract<
  */
 export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
+  "worktreeCreateClosed",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
   "worktreeAuthorizeDebris",
@@ -2242,6 +2274,8 @@ export interface WorktreeMutationResultMessage {
 export interface WorktreeCreateDefaultsMessage {
   type: "worktreeCreateDefaults";
   repoId: string;
+  /** Echoes the opening that asked, so a superseded form's answer is droppable. */
+  opening: number;
   /** Free, suffixed if taken. */
   path: string;
   root: string;
@@ -2325,6 +2359,14 @@ export interface WorktreeCreateResolutionMessage {
 export interface WorktreeProvisionOfferMessage {
   type: "worktreeProvisionOffer";
   repoId: string;
+  /**
+   * Echoes the opening this model was resolved for.
+   *
+   * Without it the panel cached whatever arrived, so a predecessor's read
+   * landing after a reopening published its model into a form that never asked
+   * for it (design.md D2).
+   */
+  opening: number;
   /** Opaque and per-offer. Not a path, and not stable across offers. */
   offerId: string;
   model: ProvisionModel;

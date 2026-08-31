@@ -1160,6 +1160,7 @@ describe("the launch entry paths WT-005.3 supplies", () => {
     h.controller.handleCreateDefaults({
       type: "worktreeCreateDefaults",
       repoId: CREATE_REPO,
+      opening: 1,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal",
@@ -1240,7 +1241,7 @@ describe("the create a toolbar with no repository opens", () => {
   const REPO_B = "/Users/dev/Projects/cyberk-skills/.git";
 
   function answer(repoId: string, root: string): WorktreeCreateDefaultsMessage {
-    return { type: "worktreeCreateDefaults", repoId, root, prefix: "p", path: `${root}/p-x` };
+    return { type: "worktreeCreateDefaults", repoId, opening: 1, root, prefix: "p", path: `${root}/p-x` };
   }
   function ready(tree: WorktreeTreeResponseMessage) {
     const h = mount();
@@ -1344,6 +1345,7 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.handleProvisionOffer({
       type: "worktreeProvisionOffer",
       repoId: REPO_A,
+      opening: 1,
       offerId: "provision-1",
       model: provisionModel(),
     });
@@ -1362,6 +1364,7 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.handleProvisionOffer({
       type: "worktreeProvisionOffer",
       repoId: REPO_A,
+      opening: 1,
       offerId: "provision-1",
       model: provisionModel(),
     });
@@ -1377,6 +1380,7 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.handleProvisionOffer({
       type: "worktreeProvisionOffer",
       repoId: REPO_A,
+      opening: 1,
       offerId: "provision-1",
       model: provisionModel(),
     });
@@ -1796,6 +1800,7 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.handleProvisionOffer({
       type: "worktreeProvisionOffer",
       repoId: REPO_B,
+      opening: 1,
       offerId: "provision-1",
       model: provisionModel(),
     });
@@ -1932,6 +1937,7 @@ describe("the destination a create opens on", () => {
     return {
       type: "worktreeCreateDefaults",
       repoId: REPO,
+      opening: 1,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal",
@@ -1958,8 +1964,11 @@ describe("the destination a create opens on", () => {
 
     // Still exhaustive: the destination ask, and the branch list that opened
     // beside it. Nothing else — no path derived here, no third question.
+    // Both name the SAME opening — the destination ask and the branch list are
+    // one conversation, and a form that asked under two identities could have a
+    // reply from each honoured against the other.
     expect(h.posts).toEqual([
-      { type: "requestWorktreeCreateDefaults", repoId: REPO },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 },
       { type: "requestWorktreeRefs", repoId: REPO, token: 1 },
     ]);
   });
@@ -2331,6 +2340,7 @@ describe("the destination follows the branch the user typed", () => {
     h.controller.handleCreateDefaults({
       type: "worktreeCreateDefaults",
       repoId: REPO,
+      opening: 1,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal-feat-a",
@@ -2383,7 +2393,7 @@ describe("the destination follows the branch the user typed", () => {
     // Two questions about one settled edit: where the create would GO, and
     // what it would DO. Still exhaustive — nothing else is asked.
     expect(h.posts).toEqual([
-      { type: "requestWorktreeCreateDefaults", repoId: REPO, branch: "feat/login" },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 0, branch: "feat/login" },
       { type: "worktreeCreateProbe", repoId: REPO, token: 0, seq: 1, query: "feat/login" },
     ]);
   });
@@ -2449,6 +2459,7 @@ describe("the destination follows the branch the user typed", () => {
     h.controller.handleCreateDefaults({
       type: "worktreeCreateDefaults",
       repoId: REPO,
+      opening: 1,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal-feat-login",
@@ -2466,6 +2477,7 @@ describe("the destination follows the branch the user typed", () => {
     h.controller.handleCreateDefaults({
       type: "worktreeCreateDefaults",
       repoId: REPO,
+      opening: 1,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal-2",
@@ -2639,6 +2651,7 @@ describe("a notice outlives the row it was about", () => {
     const defaults: WorktreeCreateDefaultsMessage = {
       type: "worktreeCreateDefaults",
       repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      opening: 1,
       root: "/trees",
       prefix: "anywhere-terminal",
       path: "/trees/anywhere-terminal",

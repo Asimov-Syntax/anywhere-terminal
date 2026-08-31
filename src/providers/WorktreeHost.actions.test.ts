@@ -1104,11 +1104,11 @@ describe("the destination a create opens on comes from the host", () => {
     // The panel may not guess: a webview-computed path states a destination the
     // create could refuse, which the spec forbids outright.
     const { host, view, dispose } = await builtHost();
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     const answer = view.posts.find((m) => m.type === "worktreeCreateDefaults");
-    expect(answer).toMatchObject({ type: "worktreeCreateDefaults", repoId: REPO });
+    expect(answer).toMatchObject({ type: "worktreeCreateDefaults", repoId: REPO, opening: 1 });
     const defaults = answer as { root: string; path: string };
     expect(defaults.path.startsWith(defaults.root)).toBe(true);
     dispose();
@@ -1124,7 +1124,7 @@ describe("the destination a create opens on comes from the host", () => {
       createRoot: "/trees",
       extra: [["worktree /trees/repo", "HEAD 345", "branch refs/heads/taken"]],
     });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     const defaults = view.posts.find((m) => m.type === "worktreeCreateDefaults") as {
@@ -1147,7 +1147,7 @@ describe("the destination a create opens on comes from the host", () => {
 
   it("names no collision when the first candidate was free", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { createRoot: "/trees" });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     const defaults = view.posts.find((m) => m.type === "worktreeCreateDefaults") as {
@@ -1161,7 +1161,7 @@ describe("the destination a create opens on comes from the host", () => {
 
   it("answers nothing for a repository it never published", async () => {
     const { host, view, dispose } = await builtHost();
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: "/not/a/repo" });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: "/not/a/repo", opening: 1 });
     await settle();
 
     expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toEqual([]);
@@ -1294,7 +1294,7 @@ describe("the list of branches a create can pick from comes from the host", () =
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
     // Asked, so the claim above about the destination is one this test can
     // actually make. It could not before (.reviews/round-2.md S1).
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     expect(view.posts.find((m) => m.type === "worktreeRefs")).toBeDefined();
@@ -1509,7 +1509,12 @@ describe("the destination the host resolves for a branch", () => {
     // form submitted `<parent>/<prefix>-<branch>`, so the path proved free and
     // the path created were different paths.
     const { host, view, dispose } = await builtHost([windowRow()], false, { createRoot: "/trees" });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, branch: "feat/Login UI" });
+    host.handleMessage(view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      branch: "feat/Login UI",
+    });
     await settle();
 
     const answer = view.posts.find((m) => m.type === "worktreeCreateDefaults") as { path: string };
@@ -1519,7 +1524,7 @@ describe("the destination the host resolves for a branch", () => {
 
   it("falls back to the bare default when no branch has been typed yet", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, { createRoot: "/trees" });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     expect((view.posts.find((m) => m.type === "worktreeCreateDefaults") as { path: string }).path).toBe("/trees/repo");
@@ -1533,7 +1538,7 @@ describe("the destination the host resolves for a branch", () => {
       createRoot: "/trees",
       exists: (p: string) => p === "/trees/repo",
     });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     const answer = view.posts.find((m) => m.type === "worktreeCreateDefaults") as {
@@ -1553,7 +1558,7 @@ describe("the destination the host resolves for a branch", () => {
       createRoot: "/trees",
       exists: (candidate: string) => candidate === "/trees/repo",
     });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     const defaults = view.posts.find((m) => m.type === "worktreeCreateDefaults") as {
@@ -2409,7 +2414,7 @@ describe("the provisioning offer the create form is given", () => {
     const { host, view, dispose } = await builtHost(undefined, false, {
       readProvisioning: async () => model(".env"),
     });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     const offers = offersIn(view);
@@ -2433,10 +2438,10 @@ describe("the provisioning offer the create form is given", () => {
         return model(".env");
       },
     });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
     for (const branch of ["f", "fe", "fea", "feat"]) {
-      host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, branch });
+      host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1, branch });
       await settle();
     }
 
@@ -2463,12 +2468,12 @@ describe("the provisioning offer the create form is given", () => {
       },
     });
 
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
     expect(reads).toBe(1);
     // Typing does not re-read; only an opening does.
     for (const branch of ["f", "fe"]) {
-      host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, branch });
+      host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1, branch });
       await settle();
     }
     expect(reads).toBe(1);
@@ -2496,10 +2501,10 @@ describe("the provisioning offer the create form is given", () => {
       },
     });
 
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
     // The form closes and a new one opens while the first read is unanswered.
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
     expect(reads).toBe(2);
 
@@ -2529,7 +2534,7 @@ describe("the provisioning offer the create form is given", () => {
       },
     });
 
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
     dispose();
     release?.();
@@ -2546,7 +2551,7 @@ describe("the provisioning offer the create form is given", () => {
         throw new Error("no");
       },
     });
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     expect(offersIn(view)).toEqual([]);
@@ -2558,7 +2563,7 @@ describe("the provisioning offer the create form is given", () => {
     // Every surface but the real extension entry point, which behaves exactly
     // as it did before provisioning existed.
     const { host, view, dispose } = await builtHost();
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
 
     expect(offersIn(view)).toEqual([]);

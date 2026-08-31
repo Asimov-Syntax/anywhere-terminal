@@ -1,6 +1,6 @@
 ## 1. The identity on the wire
 
-- [ ] 1_1 Carry the opening on the destination request and both replies
+- [x] 1_1 Carry the opening on the destination request and both replies — verified: pnpm run check-types && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#a-create-form-s-opening-identity-travels-on-every-request-and-every-reply; design.md D1
   - **Acceptance**:
@@ -9,7 +9,8 @@
   - **Plan**:
     1. `src/types/messages.ts`: `opening: number` on `WorktreeCreateDefaultsRequest`, on `WorktreeCreateDefaultsMessage` and on `WorktreeProvisionOfferMessage`. Required, not optional — an absent opening is the permissive reading D1's failure-surface row rules out.
     2. Same file: `WorktreeCreateClosedMessage` (`opening`), webview → extension, added to `WORKTREE_MESSAGE_TYPES`.
-  - **Boundary**: no second identity and no change to `worktreeCreate`'s payload — this task moves one field onto four messages
+    3. The field is REQUIRED, so the tree does not compile until every existing site names an opening. Those sites are carried here, mechanically and with no behaviour change, because a task whose Verify is `check-types` cannot pass while it has broken the build for the tasks after it: `src/webview/worktree/WorktreeController.ts` (both posters, sending the token it already holds), `src/providers/WorktreeHost.ts` (echo it on both replies), and the four suites that construct these messages — `src/providers/TerminalViewProvider.worktree.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeController.state.test.ts`.
+  - **Boundary**: no guard, no drop, no retirement handling — 1_2 and 2_1 own those. This task makes the field exist and every caller name it, and nothing may start BEHAVING differently here
 
 - [ ] 1_2 Send and honour the opening in the panel
   - **Deps**: 1_1

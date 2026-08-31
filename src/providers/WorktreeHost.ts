@@ -1768,6 +1768,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               surface.post({
                 type: "worktreeProvisionOffer",
                 repoId: msg.repoId,
+                opening: msg.opening,
                 offerId: offer.offerId,
                 model: offer.model,
               });
@@ -1786,6 +1787,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         surface.post({
           type: "worktreeCreateDefaults",
           repoId: msg.repoId,
+          opening: msg.opening,
           root,
           prefix: repo.label,
           path,

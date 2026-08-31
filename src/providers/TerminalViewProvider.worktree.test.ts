@@ -395,7 +395,8 @@ type Surface = { send: (msg: unknown) => void; dispose: () => void };
 /** A minimal well-formed message of each worktree type, keyed by type. */
 const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unknown>> = {
   requestWorktreeTree: { type: "requestWorktreeTree" },
-  requestWorktreeCreateDefaults: { type: "requestWorktreeCreateDefaults", repoId: "/repo/.git" },
+  requestWorktreeCreateDefaults: { type: "requestWorktreeCreateDefaults", repoId: "/repo/.git", opening: 1 },
+  worktreeCreateClosed: { type: "worktreeCreateClosed", opening: 1 },
   requestWorktreeRefs: { type: "requestWorktreeRefs", repoId: "/repo/.git", token: 1 },
   worktreeCreateProbe: { type: "worktreeCreateProbe", repoId: "/repo/.git", token: 1, query: "feat" },
   worktreeAuthorizeDebris: {

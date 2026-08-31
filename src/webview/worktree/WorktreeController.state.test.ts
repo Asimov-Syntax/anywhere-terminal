@@ -204,6 +204,7 @@ describe("[1_3] a scope keeps the surface subscribed after the rail closes", () 
       controller.handleCreateDefaults({
         type: "worktreeCreateDefaults",
         repoId,
+        opening: 1,
         root: "/repo-wt",
         prefix: "p",
         path: "/repo-wt/p-x",

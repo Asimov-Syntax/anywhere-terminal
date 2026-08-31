@@ -458,6 +458,7 @@ export class WorktreeController {
           deps.postMessage({
             type: "requestWorktreeCreateDefaults",
             repoId: selection.repoId,
+            opening: this.refsToken,
             branch: selection.branch,
           });
           // The same settled edit, asked as the other question: the defaults
@@ -802,7 +803,7 @@ export class WorktreeController {
       ...(repoId === undefined ? {} : { initialRepoId: repoId }),
     };
     for (const target of targets) {
-      this.deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId: target });
+      this.deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId: target, opening: this.refsToken });
       // Not awaited by `pendingCreate`: the form opens on the destination alone
       // and gains the list when it lands, so a repository whose enumeration is
       // slow or fails never holds the dialog shut.
