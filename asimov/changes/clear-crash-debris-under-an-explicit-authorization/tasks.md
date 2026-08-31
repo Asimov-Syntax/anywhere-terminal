@@ -13,7 +13,7 @@
     4. `src/providers/WorktreeHost.actions.test.ts`: the probe answer reaches the reported disposition, so reverting the host to the registration proxy fails.
   - **Boundary**: no change to `suggestFreePath` or to which candidate is probed — the classification of the candidate is the defect, not its selection
 
-- [ ] 1_2 Issue and redeem an authorization bound to what was found
+- [x] 1_2 Issue and redeem an authorization bound to what was found — verified: pnpm exec vitest run 'src/worktree/debrisAuthorization.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#clearing-debris-happens-only-under-an-authorization-bound-to-what-was-found; design.md D2
   - **Acceptance**:
