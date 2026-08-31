@@ -14,24 +14,20 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
 ## Notes
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
-
-Blueprint: none
-Lane: full
-Planned at: 5dcf88c4
 
 Blueprint: docs/PLAN.md task WT-012.9
 Lane: full (L) — a new external dependency on the wire's far side and a new source kind in the one
@@ -67,3 +63,16 @@ Verify gate: lint is at this worktree's standing baseline — 3 errors / 14 warn
 one in `src/agentHooks`, `src/cursor`, `src/session`, `src/test`, `src/vault`, `src/webview/*.css`
 and `src/webview/worktree/worktreeFormat.ts`, none in a file this change touches. Checked in check
 mode; the auto-fix form was never run.
+
+Review: cycle 1, three rounds, APPROVE with 0 gating blockers. Round 1 REJECT (3 BLOCK, 4 WARN),
+round 2 BLOCK (2, both round-1 remediation stopping short of its own boundary), round 3 APPROVE. No
+finding was rebutted and none was risk-accepted.
+
+Blueprint sync: worktree-create.md § 4.1 gained the pull-request cap and why it is not the same
+claim as the ref cap; § 5 gained the split between stating the fork remote and configuring it, the
+fact that a pull request feeds the existing resolution rather than adding one, and the `gh` client
+that fixes what "unavailable" covers. WT-012.9 Status → done. No other PLAN row touched.
+
+Follow-up with no owner: nothing configures a fork remote. § 5 now records that the form states the
+requirement and that the create does not meet it. It needs its own PLAN task — a repository-level
+write with its own failure surface, which is why it was not folded into a fix round.

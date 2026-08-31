@@ -620,7 +620,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | Reverses a recorded deferral for the PR case only — see the Deferred section. Configuring a fork remote is a repository-level side effect, so it is stated up front rather than discovered afterwards. The deterministic branch is what makes the same PR twice a reuse rather than a second worktree |
 | **Acceptance** | PRs appear in the same list as refs with no additional tab; a PR resolves to a deterministic branch name and its base; a PR whose head is on a fork states the remote that will be configured before the action is authorized; the same PR selected twice resolves to reuse; an unauthenticated or unreachable forge shows one quiet row and leaves ref search working underneath it; a slow PR lookup never blocks local ref search |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.10] Uncommitted Work Moves With the Intent
 

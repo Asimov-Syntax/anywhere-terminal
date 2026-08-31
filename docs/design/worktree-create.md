@@ -356,6 +356,12 @@ not be read at all is stated as unavailable rather than rendered as a repository
 The create-new row is not gated on any of it, so a failed or partial enumeration costs discovery and
 never the ability to create.
 
+Pull requests are bounded the same way and say so **separately**, because the two caps are not the
+same claim. A branch past the cap is still reachable — the typed query goes back to git. A pull
+request past the cap is not: the list is fetched once and filtered in the form, so the cap is the
+end of what typing can find, and the notice says that rather than inviting a search that cannot
+succeed.
+
 **Escape belongs to the list while the list is open.** The first Escape closes the list and leaves
 the dialog standing; the second dismisses the dialog. The shell binds Escape on `document` in the
 capture phase before the form exists, so the form cannot register a handler that runs first — it
@@ -428,6 +434,25 @@ enforce it.
 A PR is a **source inside the combobox**, never a fifth tab. Selecting one resolves to a branch
 and a base, and states the fork remote up front when the head is on a fork — configuring a remote
 is a repository-level side effect and is not something to discover afterwards.
+
+**Stating the remote and configuring it are separate obligations, and only the first is met.** The
+form names the remote the fork head requires and says plainly that the create does not configure
+one. A statement made to earn an authorization has to be true of the create being authorized, so it
+describes the requirement rather than promising a write nothing performs. The write itself has no
+owner yet; until it has one, a fork-headed PR creates its branch from the stated base and the user
+configures the remote themselves.
+
+Selecting a PR feeds the **existing** resolution path rather than adding one: the branch name and
+base are written into the form and answered by the machinery that already answers reuse, held-by and
+collision for a typed name. The PR is therefore a source of two values, not a fourth branch mode.
+A mode that does not use those values withdraws the statement — detaching at a ref surrenders the PR
+as the source, so the fork line goes with it.
+
+The forge is read through the **`gh` CLI**, spawned by the same runner git is. That fixes what
+"unavailable" covers: a machine without `gh`, an unauthenticated one, a timeout, and output that
+does not parse are one state and one row. A pull request whose head is on a fork the forge did not
+name an owner for is dropped rather than offered, because naming the remote is the only thing a
+fork head is offered for.
 
 The branch is deterministic — `pr/<number>` — so the same PR twice is a reuse (§ 2), not a second
 worktree. An unauthenticated or unreachable forge is **one quiet row**, and branch search keeps
