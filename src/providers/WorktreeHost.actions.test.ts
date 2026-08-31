@@ -2858,7 +2858,8 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
       repoId: REPO,
-      token: 1, seq: 0,
+      token: 1,
+      seq: 0,
       query: "feat",
       candidatePath: "/etc/secrets",
     });
@@ -2880,7 +2881,8 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
       repoId: REPO,
-      token: 1, seq: 0,
+      token: 1,
+      seq: 0,
       query: "feat",
       candidatePath: "/trees/somewhere-else",
     });
@@ -2956,7 +2958,13 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: "/elsewhere/.git", token: 1, seq: 0, query: "feat" });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: "/elsewhere/.git",
+      token: 1,
+      seq: 0,
+      query: "feat",
+    });
     await settle();
 
     expect(resolutionIn(view)).toBeUndefined();

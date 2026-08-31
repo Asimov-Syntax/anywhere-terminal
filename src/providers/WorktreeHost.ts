@@ -1143,7 +1143,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       // Present only when the suffixing actually skipped something. `debris` is
       // the directory nobody registered — a registered worktree is not debris,
       // and nothing here mints an authorization to delete either (D4).
-      ...(freePath === bare ? {} : { occupiedCandidate: { path: bare, disposition: dispositionOf(registered.has(bare)) } }),
+      ...(freePath === bare
+        ? {}
+        : { occupiedCandidate: { path: bare, disposition: dispositionOf(registered.has(bare)) } }),
     };
   }
 

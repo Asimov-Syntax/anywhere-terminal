@@ -2152,7 +2152,13 @@ describe("the destination follows the branch the user typed", () => {
     h.posts.length = 0;
     dialogDeps(h).onBranchChange(REPO, "feat/login");
 
-    expect(h.posts).toContainEqual({ type: "worktreeCreateProbe", repoId: REPO, token: 2, seq: 1, query: "feat/login" });
+    expect(h.posts).toContainEqual({
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 2,
+      seq: 1,
+      query: "feat/login",
+    });
   });
 
   it("pushes an unsolicited answer into the form the user already has open", () => {

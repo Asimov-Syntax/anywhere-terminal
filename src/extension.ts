@@ -70,18 +70,17 @@ import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
 import { readAsimovProvisioning } from "./worktree/provisioning/asimovProvider";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
-import { probeReattach, readGitLink } from "./worktree/reattachProbe";
+import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { checksFor } from "./worktree/removalChecks";
 import { readRepoRefs } from "./worktree/repoRefs";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
 import { composeSessionViews } from "./worktree/sessionViews";
+import { listRepoWorktrees } from "./worktree/WorktreeDiscovery";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import { readWorktreeGitDir } from "./worktree/worktreeGitDir";
 import type { MutationOutcome } from "./worktree/worktreeMutationService";
 import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
-import { listRepoWorktrees } from "./worktree/WorktreeDiscovery";
-import type { ReattachVerdict } from "./worktree/reattachProbe";
 import { worktreeHeadOid } from "./worktree/worktreeMutations";
 
 /**
@@ -726,7 +725,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-
   /**
    * D3's conditions 2 and 3, in one place.
    *
@@ -740,27 +738,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     repoPath,
     branch,
     repairPath,
-  }: { repoPath: string; branch: string; repairPath: string }): Promise<ReattachVerdict> {
-      const tip = await worktreeTreeDeps.runner.run(["rev-parse", `refs/heads/${branch}`], repoPath);
-      if (tip.code !== 0 || tip.timedOut || tip.failedToSpawn) {
-        // A branch whose tip we could not read is one we cannot prove this
-        // directory still sits on, and an unprovable repair is not offered.
-        return { kind: "declined", because: "unreadable" };
-      }
-      return probeReattach(
-        { repairPath, branchOid: tip.stdout.toString("utf8").trim() },
-        {
-          readGitLink: (worktreePath) =>
-            readGitLink(worktreePath, {
-              lstat: (p) => fsp.lstat(p).catch(() => null),
-              readFile: (p) => fsp.readFile(p, "utf8").catch(() => null),
-            }),
-          adminDirExists: async (gitdir) => (await fsp.stat(gitdir).catch(() => null))?.isDirectory() === true,
-          headOid: (worktreePath) => worktreeHeadOid(worktreeTreeDeps.runner, worktreePath),
-        },
-      );
+  }: {
+    repoPath: string;
+    branch: string;
+    repairPath: string;
+  }): Promise<ReattachVerdict> {
+    const tip = await worktreeTreeDeps.runner.run(["rev-parse", `refs/heads/${branch}`], repoPath);
+    if (tip.code !== 0 || tip.timedOut || tip.failedToSpawn) {
+      // A branch whose tip we could not read is one we cannot prove this
+      // directory still sits on, and an unprovable repair is not offered.
+      return { kind: "declined", because: "unreadable" };
+    }
+    return probeReattach(
+      { repairPath, branchOid: tip.stdout.toString("utf8").trim() },
+      {
+        readGitLink: (worktreePath) =>
+          readGitLink(worktreePath, {
+            lstat: (p) => fsp.lstat(p).catch(() => null),
+            readFile: (p) => fsp.readFile(p, "utf8").catch(() => null),
+          }),
+        adminDirExists: async (gitdir) => (await fsp.stat(gitdir).catch(() => null))?.isDirectory() === true,
+        headOid: (worktreePath) => worktreeHeadOid(worktreeTreeDeps.runner, worktreePath),
+      },
+    );
   }
-
 
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
@@ -782,7 +783,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // `^{commit}` so an annotated tag answers the commit it points at rather
     // than the tag object, which is what `git worktree add` would start from.
     resolveBase: async ({ repoPath, ref }) => {
-      const result = await worktreeTreeDeps.runner.run(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repoPath);
+      const result = await worktreeTreeDeps.runner.run(
+        ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+        repoPath,
+      );
       if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
         return undefined;
       }

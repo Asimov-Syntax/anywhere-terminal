@@ -116,7 +116,9 @@ describe("readGitLink", () => {
   });
 
   it("calls a `.git` DIRECTORY a directory — a repository is not a linked worktree", async () => {
-    expect(await readGitLink("/repo", fs({ lstat: async () => ({ isDirectory: () => true, isFile: () => false }) }))).toEqual({
+    expect(
+      await readGitLink("/repo", fs({ lstat: async () => ({ isDirectory: () => true, isFile: () => false }) })),
+    ).toEqual({
       kind: "directory",
     });
   });
@@ -127,7 +129,10 @@ describe("readGitLink", () => {
     // and then had `readFile` follow it (round-1 B1).
     const readFile = vi.fn(async () => "gitdir: /elsewhere/.git/worktrees/x");
     expect(
-      await readGitLink("/wt/stale", fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => false }), readFile })),
+      await readGitLink(
+        "/wt/stale",
+        fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => false }), readFile }),
+      ),
     ).toEqual({ kind: "notAFile" });
     expect(readFile).not.toHaveBeenCalled();
   });
@@ -149,7 +154,9 @@ describe("readGitLink", () => {
   });
 
   it("answers unreadable when the file is there but cannot be read", async () => {
-    expect(await readGitLink("/wt/stale", fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => true }) }))).toEqual({
+    expect(
+      await readGitLink("/wt/stale", fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => true }) })),
+    ).toEqual({
       kind: "unreadable",
     });
   });
@@ -160,7 +167,10 @@ describe("readGitLink", () => {
     expect(
       await readGitLink(
         "/wt/stale",
-        fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => true }), readFile: async () => "something else\n" }),
+        fs({
+          lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
+          readFile: async () => "something else\n",
+        }),
       ),
     ).toEqual({ kind: "unreadable" });
   });
@@ -169,7 +179,10 @@ describe("readGitLink", () => {
     expect(
       await readGitLink(
         "/wt/stale",
-        fs({ lstat: async () => ({ isDirectory: () => false, isFile: () => true }), readFile: async () => "gitdir:   \n" }),
+        fs({
+          lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
+          readFile: async () => "gitdir:   \n",
+        }),
       ),
     ).toEqual({ kind: "unreadable" });
   });

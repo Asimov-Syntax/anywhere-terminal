@@ -14,10 +14,10 @@ import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages"
 import { normalizePathForCompare } from "../utils/pathBoundary";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
 import type { GitCommandRunner } from "./gitCommandRunner";
-import type { ReattachVerdict } from "./reattachProbe";
 import { excludePatternFor } from "./gitExclude";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
 import { createMutationQueue } from "./mutationQueue";
+import type { ReattachVerdict } from "./reattachProbe";
 import type { RemovalAssessment, RemovalEvidence } from "./worktreeBlockers";
 import { createFingerprintStore, type FingerprintStore } from "./worktreeFingerprint";
 import {

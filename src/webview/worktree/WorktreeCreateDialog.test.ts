@@ -2080,6 +2080,4 @@ describe("the base ref states when it cannot apply", () => {
       expect(h.base().disabled).toBe(true);
     });
   });
-
 });
-

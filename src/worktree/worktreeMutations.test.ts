@@ -371,4 +371,3 @@ describe("worktreeHeadOid", () => {
     expect(await worktreeHeadOid(r, "/repo/wt-a")).toBeUndefined();
   });
 });
-
