@@ -286,6 +286,7 @@ async function builtHost(
     createRoot?: string;
     exists?: (p: string) => boolean;
     probeGitEntry?: (p: string) => "present" | "absent" | "unknown";
+    issueDebrisAuthorization?: (p: string) => Promise<{ fingerprint: string; entries: readonly string[] } | null>;
     /** Add a second, unrelated repository to the workspace. */
     sibling?: boolean;
     /** No watcher can be established, as on a host without file watching. */
@@ -413,6 +414,7 @@ async function builtHost(
     },
     ...(over.exists === undefined ? {} : { exists: over.exists }),
     ...(over.probeGitEntry === undefined ? {} : { probeGitEntry: over.probeGitEntry }),
+    ...(over.issueDebrisAuthorization === undefined ? {} : { issueDebrisAuthorization: over.issueDebrisAuthorization }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
     ...(over.readProvisioning === undefined ? {} : { readProvisioning: over.readProvisioning }),
     ...(over.readRefs === undefined && over.refsInputs === undefined
@@ -2954,6 +2956,79 @@ describe("the host resolves a selection before the create runs", () => {
     // The whole point of the narrower type: a probe the form sends on every
     // settled edit must not hand out a delete authorization (D4).
     expect(Object.keys(answer?.occupiedCandidate?.disposition ?? {})).toEqual(["kind"]);
+    dispose();
+  });
+
+  it("mints no authorization while a destination is merely being resolved", async () => {
+    // The probe fires on every settled edit. A token on that answer would be a
+    // delete authorization for a path nobody asked to delete (design.md D6).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+
+    const answer = resolutionIn(view);
+    expect(answer?.occupiedCandidate?.disposition).toEqual({ kind: "debris" });
+    expect(JSON.stringify(answer)).not.toContain("fingerprint");
+    dispose();
+  });
+
+  it("issues an authorization over the entries it reports, when one is asked for", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      issueDebrisAuthorization: async (p: string) => ({ fingerprint: `fp-for-${p}`, entries: ["stale.log", "sub"] }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    await settle();
+
+    const posted = view.posts.find((m) => m.type === "worktreeDebrisAuthorized");
+    expect(posted).toMatchObject({
+      granted: true,
+      path: "/trees/repo-feat",
+      authorization: { path: "/trees/repo-feat", fingerprint: "fp-for-/trees/repo-feat" },
+      entries: ["stale.log", "sub"],
+    });
+    dispose();
+  });
+
+  it("refuses to authorize a path the issuer will not vouch for", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      issueDebrisAuthorization: async () => null,
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    await settle();
+
+    const posted = view.posts.find((m) => m.type === "worktreeDebrisAuthorized");
+    expect(posted).toMatchObject({ granted: false, because: "notDebris" });
+    expect(JSON.stringify(posted)).not.toContain("fingerprint");
+    dispose();
+  });
+
+  it("answers nothing for an authorization request under an unowned token", async () => {
+    let asked = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      issueDebrisAuthorization: async () => {
+        asked += 1;
+        return { fingerprint: "fp", entries: [] };
+      },
+    });
+    // No opening was minted for token 9.
+    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 9, path: "/trees/repo-feat" });
+    await settle();
+
+    expect(asked).toBe(0);
+    expect(view.posts.find((m) => m.type === "worktreeDebrisAuthorized")).toBeUndefined();
     dispose();
   });
 

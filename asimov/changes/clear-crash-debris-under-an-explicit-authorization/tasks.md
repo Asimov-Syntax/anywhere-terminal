@@ -63,8 +63,23 @@
     5. `src/providers/WorktreeHost.ts`: import-order fix only, carried over from 1_1's import — the lint baseline is a gate this change must return to and 1_1 is already ticked.
   - **Boundary**: the two-phase validation is not restructured — the clearance is inserted into it, and `git worktree remove` remains the only path that deletes a registered worktree
 
-- [ ] 1_6 Offer recover in the create dialog
+- [x] 1_6 Carry the authorization on its own request — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 1_5
+  - **Refs**: specs/worktree-panel/spec.md#an-authorization-to-clear-is-issued-only-when-it-is-asked-for; design.md D6
+  - **Acceptance**:
+    - Outcome: A resolution answer carries no authorization, and a request for one returns it
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/types/messages.ts`: add the request the webview sends and the answer the host returns, the answer being either an authorization plus the entries it covers or a refusal naming its reason; add the request to the webview-sent message list.
+    2. `src/providers/WorktreeHost.ts`: handle the request — classify the path, read its entries and identity once, issue through the change's authorization store, and answer. A path that is not debris or cannot be read is refused, never issued.
+    3. `src/types/messages.contract.test.ts` and `src/providers/WorktreeHost.actions.test.ts`: the resolution answer still carries no authorization; a request for a `.git`-holding path is refused; the entries in the answer are the ones the token was digested over.
+    4. `src/providers/TerminalViewProvider.worktree.test.ts`: add the new request to the routing fixture — the list exists because a declared-but-unrouted message shipped inert once, and the type error it raised is that guard working.
+    5. `src/worktree/worktreeMutationService.ts` and `src/extension.ts`: expose the issuer on the service and supply it as the host option, so the handler is reachable in production rather than only under an injected test double.
+    6. `src/worktree/worktreeMutationService.test.ts`: the issued token is one the create can actually spend over the entries reported, and a `.git`-holding or unreadable path issues nothing.
+  - **Boundary**: `ResolvedDisposition` is not widened — D6 records why the probe answer must never carry a token
+
+- [ ] 1_7 Offer recover in the create dialog
+  - **Deps**: 1_6
   - **Refs**: specs/worktree-panel/spec.md#a-destination-holding-debris-is-offered-as-recover-not-silently-avoided; docs/design/worktree-create.md#20-branch-mode-and-destination-disposition-are-two-questions
   - **Acceptance**:
     - Outcome: A probe reporting debris offers recover, naming the path, and submits a `debris` disposition carrying the authorization

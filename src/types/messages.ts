@@ -739,6 +739,39 @@ export type WorktreeCreateMode =
       expectedBranchOid: string;
     };
 
+/**
+ * WebView → Extension: issue an authorization to clear this destination.
+ *
+ * Its OWN request, deliberately. The probe fires on every settled edit, so an
+ * authorization riding that answer would mint a delete token for a path nobody
+ * asked to delete, many times per dialog (design.md D6).
+ */
+export interface WorktreeAuthorizeDebrisMessage {
+  type: "worktreeAuthorizeDebris";
+  repoId: string;
+  /** Echoed, so an answer below the current opening is dropped. */
+  token: number;
+  /** The destination the user asked to clear. */
+  path: string;
+}
+
+/**
+ * Extension → WebView: the authorization, or why there is not one.
+ *
+ * `entries` is what the token was digested over AND what the offer states will
+ * be removed — one read, so the list shown and the list bound cannot differ.
+ */
+export type WorktreeDebrisAuthorizedMessage = {
+  type: "worktreeDebrisAuthorized";
+  repoId: string;
+  token: number;
+  path: string;
+} & (
+  | { granted: true; authorization: DebrisAuthorization; entries: readonly string[] }
+  /** Named rather than absent: "not debris" and "could not read it" are different answers. */
+  | { granted: false; because: "notDebris" | "unreadable" }
+);
+
 /** Authorizes deleting exactly what the user was shown, at exactly the place they were shown it. */
 export interface DebrisAuthorization {
   readonly path: string;
@@ -1367,6 +1400,7 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateDefaultsRequestMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
+  | WorktreeAuthorizeDebrisMessage
   | WorktreeRemoveRequestMessage
   | WorktreeLockMessage
   | WorktreeUnlockMessage
@@ -1402,6 +1436,7 @@ export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
+  "worktreeAuthorizeDebris",
   "requestWorktreeTree",
   "requestWorktreeSubagents",
   "worktreeViewVisibility",
@@ -2288,6 +2323,7 @@ export type ExtensionToWebViewMessage =
   | WorktreeCreateDefaultsMessage
   | WorktreeRefsMessage
   | WorktreeCreateResolutionMessage
+  | WorktreeDebrisAuthorizedMessage
   | WorktreeProvisionOfferMessage
   | InitMessage
   | OutputMessage

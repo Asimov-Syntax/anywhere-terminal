@@ -9,6 +9,7 @@
 // so Lock and Remove were inert and Create and Prune were unreachable. This
 // module is that assembly, and the one place the ordering rules live.
 
+import * as nodePath from "node:path";
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
 import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
 import { normalizePathForCompare } from "../utils/pathBoundary";
@@ -275,6 +276,14 @@ export interface MutationServiceDeps {
 export interface WorktreeMutationService extends WorktreeMutationCapabilities {
   /** Issue the confirmation token for what the user is about to be shown. */
   issueFingerprint(target: WorktreeMutationTarget, evidence: RemovalEvidence): string | null;
+  /**
+   * Issue a clearance authorization for `path`, or `null` where it is not debris
+   * or could not be read.
+   *
+   * Lives here because the store it writes to is the one the create redeems
+   * against — an issuer anywhere else would mint tokens nothing could spend.
+   */
+  issueDebrisAuthorization(path: string): Promise<{ fingerprint: string; entries: readonly string[] } | null>;
 }
 
 export function createWorktreeMutationService(deps: MutationServiceDeps): WorktreeMutationService {
@@ -357,6 +366,24 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
         return null;
       }
       return fingerprints.issue({ worktreeId: target.worktreeId }, evidence, deps.now());
+    },
+
+    async issueDebrisAuthorization(path) {
+      // ONE observation answers both halves: what the offer will state, and what
+      // the token binds. Reading twice would let them disagree (design.md D6).
+      const stat = await deps.pathDeps.lstat(path);
+      const identity = identityOf(stat);
+      if (stat === null || !stat.isDirectory() || identity === null) {
+        return null;
+      }
+      if (clearDebrisDeps.probeGitEntry(nodePath.join(path, ".git")) !== "absent") {
+        return null;
+      }
+      const entries = await deps.pathDeps.readdir(path);
+      if (entries === null) {
+        return null;
+      }
+      return { fingerprint: debrisAuthorizations.issue(path, { entries, identity }, deps.now()), entries };
     },
 
     lockWorktree: (target, reason) =>

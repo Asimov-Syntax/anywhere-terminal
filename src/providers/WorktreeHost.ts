@@ -11,6 +11,7 @@ import type {
   BaseVerdict,
   DestinationDisposition,
   ExtensionToWebViewMessage,
+  DebrisAuthorization,
   ProbeBase,
   ProvisionModel,
   ResolvedDisposition,
@@ -192,6 +193,12 @@ export interface WorktreeHostOptions {
    * takes `node:fs`; `exists` is not reused because it follows symlinks.
    */
   probeGitEntry?: GitEntryProbe;
+  /**
+   * Issue a clearance authorization for this path, or `null` where it is not
+   * debris or could not be read. Supplied by the mutation assembly, which owns
+   * the store the create later redeems against (design.md D6).
+   */
+  issueDebrisAuthorization?(path: string): Promise<{ fingerprint: string; entries: readonly string[] } | null>;
   /**
    * The filesystem the RESOLVED containment check reads. Must answer for the
    * same tree `exists` does — that check is what authorizes `exists`, so a
@@ -1414,6 +1421,43 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return classifyDestination(candidatePath, isRegistered, options.probeGitEntry);
   }
 
+  /**
+   * Issue an authorization to clear `path`, or say why there is none.
+   *
+   * ONE read of the directory answers both questions — what the offer will state
+   * and what the token is digested over. Reading twice would let the user be
+   * shown one set and the fingerprint bind another (design.md D6).
+   */
+  async function answerDebrisAuthorization(
+    surface: WorktreeSurface,
+    msg: Extract<WorktreeActionMessage, { type: "worktreeAuthorizeDebris" }>,
+  ): Promise<void> {
+    const answer = (
+      rest:
+        | { granted: true; authorization: DebrisAuthorization; entries: readonly string[] }
+        | { granted: false; because: "notDebris" | "unreadable" },
+    ): void => {
+      surface.post({
+        type: "worktreeDebrisAuthorized",
+        repoId: msg.repoId,
+        token: msg.token,
+        path: msg.path,
+        ...rest,
+      });
+    };
+    const issue = options.issueDebrisAuthorization;
+    if (issue === undefined) {
+      answer({ granted: false, because: "unreadable" });
+      return;
+    }
+    const issued = await issue(msg.path);
+    answer(
+      issued === null
+        ? { granted: false, because: "notDebris" }
+        : { granted: true, authorization: { path: msg.path, fingerprint: issued.fingerprint }, entries: issued.entries },
+    );
+  }
+
   /** § 2.3 conditions 2 and 3, or `undefined` when nobody can ask them. */
   async function corroborate(
     repo: WorktreeRepo,
@@ -1558,6 +1602,20 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         }
         opening.latestSeq = msg.seq;
         void answerCreateProbe(surface, msg, repo);
+        return;
+      }
+      case "worktreeAuthorizeDebris": {
+        if (typeof msg.path !== "string" || msg.path.length === 0 || typeof msg.token !== "number") {
+          return;
+        }
+        const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
+        if (repo === undefined) {
+          return;
+        }
+        if (openingFor(surface, msg.repoId, msg.token) === undefined) {
+          return;
+        }
+        void answerDebrisAuthorization(surface, msg);
         return;
       }
       case "requestWorktreeCreateDefaults": {
@@ -2444,6 +2502,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "requestWorktreeCreateDefaults":
       case "requestWorktreeRefs":
       case "worktreeCreateProbe":
+      case "worktreeAuthorizeDebris":
         handleAction(surface, msg);
         return;
       case "requestWorktreeTree":

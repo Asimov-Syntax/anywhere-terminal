@@ -779,6 +779,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Assembled here rather than in the host for the same reason `readRefs` is:
     // the host holds a listing, and neither `.git` nor `refs/heads` is one.
     probeReattach: corroborateRepair,
+    // Through the mutation service, because the store it writes to is the one
+    // the create redeems against (design.md D6).
+    issueDebrisAuthorization: (p) => mutations().issueDebrisAuthorization(p),
     // D5 puts the base validation host-side "riding the resolution". Asked with
     // `^{commit}` so an annotated tag answers the commit it points at rather
     // than the tag object, which is what `git worktree add` would start from.

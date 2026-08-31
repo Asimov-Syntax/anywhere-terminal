@@ -1398,7 +1398,13 @@ describe("clearing crash debris", () => {
   const DEBRIS = "/repo/wt/new";
 
   function debrisHarness(
-    over: { entries?: string[]; remaining?: string[] | null; ino?: number; removed?: string[] } = {},
+    over: {
+      entries?: string[] | null;
+      remaining?: string[] | null;
+      ino?: number;
+      removed?: string[];
+      git?: "present" | "absent" | "unknown";
+    } = {},
   ) {
     const removed = over.removed ?? [];
     const store = createDebrisAuthorizationStore();
@@ -1409,7 +1415,7 @@ describe("clearing crash debris", () => {
         // What REMAINS after the removal — a different question from what the
         // evidence read before it.
         readdir: async () => over.remaining ?? null,
-        probeGitEntry: () => "absent",
+        probeGitEntry: () => over.git ?? "absent",
         remove: async (p: string) => {
           removed.push(p);
         },
@@ -1417,7 +1423,7 @@ describe("clearing crash debris", () => {
       pathDeps: {
         platform: "darwin",
         lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: over.ino ?? 7 }),
-        readdir: async () => over.entries ?? ["stale.log"],
+        readdir: async () => (over.entries === null ? null : (over.entries ?? ["stale.log"])),
         normalize: async (raw: string) => raw,
       },
     });
@@ -1491,6 +1497,37 @@ describe("clearing crash debris", () => {
 
     expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(false);
     expect(outcomes[0]).toMatchObject({ kind: "error" });
+  });
+
+  it("issues a token the create can actually spend, over the entries it reports", async () => {
+    // The round trip. An issuer writing to a different store than the create
+    // redeems from would mint tokens nothing can spend, and every unit test on
+    // either half would still pass.
+    const removed: string[] = [];
+    const h = debrisHarness({ removed });
+    const issued = await h.service.issueDebrisAuthorization(DEBRIS);
+    expect(issued).not.toBeNull();
+    expect(issued?.entries).toEqual(["stale.log"]);
+
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: DEBRIS,
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "debris", authorization: { path: DEBRIS, fingerprint: issued?.fingerprint ?? "" } },
+    });
+
+    expect(removed).toEqual([DEBRIS]);
+  });
+
+  it("issues nothing for a path holding a .git", async () => {
+    const h = debrisHarness({ git: "present" });
+    expect(await h.service.issueDebrisAuthorization(DEBRIS)).toBeNull();
+  });
+
+  it("issues nothing for a path whose entries could not be read", async () => {
+    const h = debrisHarness({ entries: null });
+    expect(await h.service.issueDebrisAuthorization(DEBRIS)).toBeNull();
   });
 
   it("removes nothing on an ordinary free-destination create", async () => {

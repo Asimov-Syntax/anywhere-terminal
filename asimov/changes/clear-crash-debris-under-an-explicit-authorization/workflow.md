@@ -48,4 +48,8 @@ holds nothing a delete could be built from, and no other message lets the host i
 webview cannot populate `DestinationDisposition.debris.authorization`. Tasks 1_1-1_5 are committed
 and the host half is complete; 1_6 needs a new host-to-webview carrier, which is a `new-api-contract`
 change needing its own D# rather than a fix inside this task.
+Gate 2 re-earned at f28549b9 after the 1_6 handback: D6 adds the carrier, the delta gains the
+"issued only when asked for" requirement, and 1_6 splits into the wire (1_6) and the dialog (1_7).
+Auto-decision: a separate request rather than widening the probe answer — the probe fires on every
+settled edit, so a token on it would mint deletes for paths nobody asked to delete (D6).
 
