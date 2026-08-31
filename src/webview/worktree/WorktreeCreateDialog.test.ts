@@ -1877,6 +1877,7 @@ describe("the base ref states when it cannot apply", () => {
     });
     return {
       ...h,
+      action: () => h.q<HTMLElement>("#wt-action-note"),
       base: () => h.q<HTMLInputElement>("#wt-base"),
       note: () => h.q<HTMLElement>("#wt-base-note"),
       resolve: (msg: Partial<WorktreeCreateResolutionMessage> & { mode: WorktreeCreateResolutionMessage["mode"] }) =>
@@ -1990,4 +1991,95 @@ describe("the base ref states when it cannot apply", () => {
     // Still `existing` — the repair reason would have replaced this one.
     expect(h.note().textContent).toContain("already exists");
   });
+
+  describe("[5_3] one effective resolution drives the form", () => {
+    /** The Create button by its label — several controls carry `wt-btn--primary`. */
+    function createBtn(h: { host: HTMLElement }): HTMLButtonElement {
+      const found = [...h.host.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+        b.textContent?.startsWith("Create worktree"),
+      );
+      if (found === undefined) {
+        throw new Error("missing Create");
+      }
+      return found;
+    }
+
+    function typed(h: ReturnType<typeof withResolution>, value: string): void {
+      const name = h.q<HTMLInputElement>("#wt-branch");
+      name.value = value;
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+      name.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    it("holds Create shut until the classification for the typed selection lands", () => {
+      let answerDefaults: ((next: ReturnType<typeof createDefaults>) => void) | undefined;
+      const h = withResolution({
+        onBranchChange: () => {},
+        bindDefaults: (fn) => {
+          answerDefaults = fn;
+        },
+      });
+      // A branch the form did NOT open on, so this really is a new question.
+      typed(h, "brand-new-branch");
+      // The destination answers; the classification has not. Before this change
+      // that was enough to submit, which is the failure-after-submit the spec
+      // exists to remove (round-1 B2).
+      answerDefaults?.(createDefaults());
+
+      // The setup must actually arm the gate, or the assertion below passes
+      // for the wrong reason.
+      expect(createBtn(h).disabled).toBe(true);
+
+      h.resolve({ query: "brand-new-branch", mode: { kind: "fresh" } });
+      expect(createBtn(h).disabled).toBe(false);
+    });
+
+    it("states what the create will do, outside the collapsed Advanced body", () => {
+      const h = withResolution({ onBranchChange: () => {} });
+      typed(h, "feat/search");
+      h.resolve({ mode: { kind: "reuse" } });
+
+      expect(h.action().hidden).toBe(false);
+      expect(h.action().textContent).toContain("Checks out the branch that already exists");
+      // Advanced is still collapsed: the statement must not depend on it.
+      expect(h.q<HTMLElement>("#wt-action-note").closest("#wt-advanced-body")).toBeNull();
+    });
+
+    it("returns the form to fresh when a repair is withdrawn", () => {
+      const h = withResolution({ onBranchChange: () => {} });
+      typed(h, "feat/search");
+      h.resolve({ mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" } });
+      expect(h.base().disabled).toBe(true);
+
+      // The corroboration declined on a later look. Dropping every mode but
+      // reattach left the form armed for a repair the host had withdrawn.
+      h.resolve({ mode: { kind: "fresh" } });
+      expect(h.base().disabled).toBe(false);
+      expect(h.action().textContent).toContain("Creates a new branch");
+    });
+
+    it("refuses an unresolvable base before the create is attempted", () => {
+      const h = withResolution({ onBranchChange: () => {} });
+      typed(h, "brand-new");
+      h.resolve({
+        query: "brand-new",
+        mode: { kind: "fresh" },
+        baseValid: { ok: false, reason: '"nope" does not name a commit.' },
+      });
+
+      expect(h.action().textContent).toContain("does not name a commit");
+      expect(createBtn(h).disabled).toBe(true);
+    });
+
+    it("withholds a base verdict where the mode refuses a base at all", () => {
+      const h = withResolution({ onBranchChange: () => {} });
+      typed(h, "feat/search");
+      h.resolve({ mode: { kind: "reuse" }, baseValid: { ok: false, reason: "should not be read" } });
+
+      expect(h.action().textContent).not.toContain("should not be read");
+      expect(h.base().disabled).toBe(true);
+    });
+  });
+
 });
+

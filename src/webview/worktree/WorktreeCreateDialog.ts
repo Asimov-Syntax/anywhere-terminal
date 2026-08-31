@@ -13,7 +13,7 @@
 //  - A dangerous permission posture is labelled and never preselected.
 //  - The repo picker appears only once the workspace holds more than one repo.
 
-import type { WorktreeCreateResolutionMessage } from "../../types/messages";
+import type { ResolvedMode, WorktreeCreateResolutionMessage } from "../../types/messages";
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
 import { attachTooltip } from "../ui/Tooltip";
 import { createWorktreeAgentBox } from "./worktreeAgentBox";
@@ -501,7 +501,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const destNote = document.createElement("div");
   destNote.className = "wt-dest-note";
   destNote.hidden = true;
-  destWrap.append(dest, destNote);
+  /**
+   * What the create would DO, stated where the destination is.
+   *
+   * The spec requires the form to say which of create / check out / repair the
+   * create performs, and the base-ref rule to be legible. Both lived inside the
+   * collapsed Advanced body, so neither was discoverable without expanding
+   * unrelated content (round-1 B3, W6).
+   */
+  const actionNote = document.createElement("div");
+  actionNote.className = "wt-dest-note";
+  actionNote.id = "wt-action-note";
+  actionNote.hidden = true;
+  destWrap.append(dest, destNote, actionNote);
   shell.dialog.appendChild(destWrap);
   /** The exact path the line is currently shortening; read on every show. */
   let destExact = "";
@@ -820,6 +832,22 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const askKey = (branch: string): string => `${draft.repoId}\u0000${branch}`;
   /** True while a destination request has no answer yet. Submit waits for it. */
   let outstanding = false;
+  /**
+   * The ONE resolution this form is acting on (D8).
+   *
+   * Mode, the stated action and the guards all read this rather than each
+   * interpreting the answer for themselves — two interpretations of one answer
+   * is how a repair could act on a different path from the one on screen.
+   */
+  let effective: WorktreeCreateResolutionMessage | null = null;
+  /**
+   * True while the classification for the typed selection has not landed.
+   *
+   * Submit waits for it as well as the destination. Without this the form could
+   * submit an existing branch as fresh while its own classification was still in
+   * flight — the failure-after-submit this change exists to remove (round-1 B2).
+   */
+  let resolutionOutstanding = false;
 
   /** Ask the host for the destination this branch would take, at most once each. */
   function askForDestination(): void {
@@ -831,6 +859,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     askedFor = askKey(branch);
     if (deps.onBranchChange !== undefined) {
       outstanding = true;
+      // A new question invalidates the old answer immediately, rather than
+      // leaving the previous classification readable until the reply lands.
+      effective = null;
+      // Only where an answer is actually coming. With no resolver bound none
+      // ever arrives, and gating on it would leave Create permanently disabled
+      // rather than waiting for something.
+      resolutionOutstanding = deps.bindResolution !== undefined;
       deps.onBranchChange(draft.repoId, branch);
     }
   }
@@ -890,6 +925,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * A total map rather than a condition, so a mode added later has to answer
    * the question rather than inherit an answer nobody wrote for it.
    */
+  /**
+   * What the create will do, in the user's terms.
+   *
+   * The spec requires the form to state which of create / check out / repair the
+   * create would perform, before submit rather than as a failure after it.
+   */
+  const ACTION_BY_MODE: Record<ResolvedMode["kind"], string> = {
+    fresh: "Creates a new branch here.",
+    reuse: "Checks out the branch that already exists.",
+    reattach: "Repairs the stale registration of the checkout already on disk.",
+    adopt: "That checkout's administrative entry is gone, so a new worktree is created instead.",
+  };
+
   const BASE_REFUSED_BY: Record<WorktreeBranchMode, string | undefined> = {
     new: undefined,
     detached: undefined,
@@ -1052,6 +1100,20 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     baseInput.disabled = baseRefused !== undefined;
     baseNote.hidden = baseRefused === undefined;
     baseNote.textContent = baseRefused ?? "";
+    // The host's verdict on the base, which only applies where a base applies.
+    // Reported BEFORE submit rather than as a git failure after it (D7).
+    const verdict = baseRefused === undefined ? effective?.baseValid : undefined;
+    const baseUnresolvable = verdict !== undefined && verdict.ok === false;
+    // Stated where the destination is, so it is legible without expanding the
+    // Advanced body the base field lives in (round-1 W6).
+    const actionText = baseUnresolvable
+      ? (verdict as { ok: false; reason: string }).reason
+      : effective === null
+        ? undefined
+        : ACTION_BY_MODE[effective.mode.kind];
+    actionNote.hidden = actionText === undefined;
+    actionNote.textContent = actionText ?? "";
+    actionNote.classList.toggle("wt-dest-note--error", baseUnresolvable);
     // Said, rather than left to look complete: a capped list presented as the
     // repository's whole set is the one claim this control must not make.
     const truncated = repo.refs?.truncated === true;
@@ -1164,6 +1226,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       !named ||
       draft.path.trim().length === 0 ||
       outstanding ||
+      // Detached is the user's own toggle and asks no classification of the
+      // typed text, so it is not held behind one.
+      (resolutionOutstanding && !detached) ||
+      baseUnresolvable ||
       postureMissing;
     shell.refreshFocusTrap();
   }
@@ -1317,7 +1383,27 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // `adopt` is reported so the resolver can name the state it found; the form
     // does not offer it, and WT-012.15 is where it becomes an action. Until
     // then it behaves as the fresh it falls back to.
-    draft.branchMode = resolution.mode.kind === "reattach" ? "reattach" : draft.branchMode;
+    // Every mode, not only `reattach`. Dropping the others left `fresh`,
+    // `reuse` and `adopt` on whatever the local text derivation last guessed,
+    // so a declined corroboration kept the form armed for a repair the host had
+    // just withdrawn (round-1 B3).
+    effective = resolution;
+    resolutionOutstanding = false;
+    switch (resolution.mode.kind) {
+      case "reattach":
+        draft.branchMode = "reattach";
+        break;
+      case "reuse":
+        draft.branchMode = "existing";
+        break;
+      // `adopt` is reported so the resolver can name the state it found; the
+      // form does not offer it, and WT-012.15 is where it becomes an action.
+      // Until then it behaves as the fresh it falls back to.
+      case "adopt":
+      case "fresh":
+        draft.branchMode = "new";
+        break;
+    }
     syncDerived();
   });
 

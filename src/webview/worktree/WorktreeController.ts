@@ -286,6 +286,8 @@ export class WorktreeController {
    * apart. `token` separates openings; nothing else separates these (D1).
    */
   private probeSeq = 0;
+  /** The highest `seq` already applied. An answer below it is stale (D1). */
+  private appliedSeq = 0;
   /**
    * Which opening of the create dialog the refs conversation belongs to.
    *
@@ -730,6 +732,8 @@ export class WorktreeController {
     // opening state is "not told yet".
     this.repoRefs.clear();
     this.createResolutions.clear();
+    this.probeSeq = 0;
+    this.appliedSeq = 0;
     this.refsToken += 1;
     this.pendingCreate = {
       // Kept so a create that cannot open can name what it was waiting on: the
@@ -1058,6 +1062,14 @@ export class WorktreeController {
     if (msg.token !== this.refsToken) {
       return;
     }
+    // `token` separates two OPENINGS and `query` separates two edits, but an
+    // A → B → A edit sequence puts two answers on the wire identical in both.
+    // Without this an older answer could overwrite a newer one and restore a
+    // repair the latest classification withdrew (round-1 B5).
+    if (msg.seq < this.appliedSeq) {
+      return;
+    }
+    this.appliedSeq = msg.seq;
     this.createResolutions.set(msg.repoId, msg);
     this.applyResolution?.(msg);
   }

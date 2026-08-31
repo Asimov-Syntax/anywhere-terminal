@@ -791,6 +791,37 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     expect(h.posts).toEqual([]);
   });
 
+  it("[5_3] never applies an answer an earlier probe of the same opening produced", () => {
+    // `token` separates two OPENINGS and `query` separates two edits, but an
+    // A → B → A sequence puts two answers on the wire identical in both. The
+    // late one carried a repair the newest classification had withdrawn
+    // (round-1 B5).
+    const h = mount();
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: "/repo/.git",
+      token: 0,
+      seq: 2,
+      query: "feat",
+      mode: { kind: "fresh" },
+      freePath: "/trees/repo-feat",
+    });
+    expect(h.controller.resolutionFor("/repo/.git")?.seq, "the setup stored no newer answer").toBe(2);
+
+    h.controller.handleCreateResolution({
+      type: "worktreeCreateResolution",
+      repoId: "/repo/.git",
+      token: 0,
+      seq: 1,
+      query: "feat",
+      mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
+      freePath: "/trees/repo-feat",
+    });
+
+    expect(h.controller.resolutionFor("/repo/.git")?.seq).toBe(2);
+    expect(h.controller.resolutionFor("/repo/.git")?.mode).toEqual({ kind: "fresh" });
+  });
+
   it("[2_2] submits a repair the resolution corroborated, not a second worktree", () => {
     // 3_1 executes a repair and 2_1 offers one. Without this seam the form
     // could never reach either, and a stale registration would be answered by

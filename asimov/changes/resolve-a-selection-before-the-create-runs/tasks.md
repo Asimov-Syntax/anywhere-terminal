@@ -110,7 +110,7 @@
     8. Adding a required field to the pair breaks every existing sender and consumer, so the mechanical plumbing lands here rather than leaving the tree uncompilable between tasks: `src/webview/worktree/WorktreeController.ts` mints the monotonic `seq` it sends, and `src/webview/messaging/MessageRouter.test.ts`, `src/webview/worktree/WorktreeController.test.ts` and `src/extension.worktreeAssembly.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` carry it on their fixtures. Applying it — dropping an answer below the highest applied — is 5_3's.
   - **Boundary**: no change to `worktreeCreateDefaults`' own lifecycle — D1's scope note still holds
 
-- [ ] 5_3 One effective resolution drives the form, and submit waits for it
+- [x] 5_3 One effective resolution drives the form, and submit waits for it — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_2
   - **Refs**: design.md D5, D7, D8; specs/worktree-panel/spec.md#the-resolution-names-both-the-path-the-create-will-take-and-the-one-it-skipped
   - **Acceptance**:
@@ -122,7 +122,7 @@
     3. Submit gates on a matching resolution as well as the destination per D7. The current comment declines this deliberately, which is what lets a selection be submitted as fresh while its own classification is in flight.
     4. `src/webview/worktree/WorktreeController.ts` mints `seq` per probe, applies an answer only at or above the highest `seq` applied, and sends the current `candidatePath` and `base`.
     5. The base-ref reason moves out of the collapsed Advanced body into an always-visible accessible summary — the rule D5 exists to make legible is undiscoverable behind a disclosure.
-    6. Cover: an A to B to A edit sequence never applies the older answer; a declined repair returns the form to fresh rather than leaving reattach armed; the rendered destination is the path the submitted request carries; create is disabled while a classification is outstanding.
+    6. Covered in `src/webview/worktree/WorktreeCreateDialog.test.ts` and, for the seq gate, `src/webview/worktree/WorktreeController.test.ts`: an A to B to A edit sequence never applies the older answer; a declined repair returns the form to fresh rather than leaving reattach armed; the rendered destination is the path the submitted request carries; create is disabled while a classification is outstanding.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited
 
 - [ ] 5_4 The assembly walks a typed selection to the argv it issues
