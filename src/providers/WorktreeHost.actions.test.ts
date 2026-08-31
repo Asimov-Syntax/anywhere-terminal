@@ -4525,9 +4525,9 @@ describe("a removal is reported without being performed", () => {
     withRisk.host.handleMessage(withRisk.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
     await settle();
     const risky = withRisk.view.posts[0];
-    expect(risky?.type === "worktreeRemoveAssessment" && risky.result.kind === "assessed" && risky.result.fingerprint).toBe(
-      "fp-9",
-    );
+    expect(
+      risky?.type === "worktreeRemoveAssessment" && risky.result.kind === "assessed" && risky.result.fingerprint,
+    ).toBe("fp-9");
     withRisk.dispose();
 
     // D7: a clean report is not a weaker version of the same message, it is one
@@ -4537,9 +4537,9 @@ describe("a removal is reported without being performed", () => {
     clean.host.handleMessage(clean.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
     await settle();
     const post = clean.view.posts[0];
-    expect(post?.type === "worktreeRemoveAssessment" && post.result.kind === "assessed" && post.result.fingerprint).toBe(
-      null,
-    );
+    expect(
+      post?.type === "worktreeRemoveAssessment" && post.result.kind === "assessed" && post.result.fingerprint,
+    ).toBe(null);
     clean.dispose();
   });
 

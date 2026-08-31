@@ -656,7 +656,10 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     const { actions, posted } = controllerActions();
     actions.removeWorktree?.(worktree({ id: "/wt" }));
     expect(posted).toEqual([{ type: "worktreeRemoveAssess", worktreeId: "/wt" }]);
-    expect(posted.some((m) => m.type === "worktreeRemove"), "the menu click posted a removal").toBe(false);
+    expect(
+      posted.some((m) => m.type === "worktreeRemove"),
+      "the menu click posted a removal",
+    ).toBe(false);
   });
 
   it("offers neither launch item to a caller that supplied no launch", () => {
