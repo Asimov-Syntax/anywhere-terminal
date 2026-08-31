@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExtensionToWebViewMessage, ProvisionModel, WorktreeMutationResultMessage } from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
+import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
 import { createGitCapabilities, type GitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { OrphanProofs } from "../worktree/orphanProofs";
@@ -286,7 +287,7 @@ async function builtHost(
     createRoot?: string;
     exists?: (p: string) => boolean;
     probeGitEntry?: (p: string) => "present" | "absent" | "unknown";
-    issueDebrisAuthorization?: (p: string) => Promise<{ fingerprint: string; entries: readonly string[] } | null>;
+    issueDebrisAuthorization?: (p: string) => Promise<DebrisIssueResult>;
     /** Add a second, unrelated repository to the workspace. */
     sibling?: boolean;
     /** No watcher can be established, as on a host without file watching. */
@@ -1021,12 +1022,38 @@ describe("create validates the shape before it delegates", () => {
     dispose();
   }
 
-  it("refuses a debris disposition, which no producer in this change can have issued", async () => {
-    // The authorization would select `mustMatchDebrisAuthorization`, which drops
-    // the emptiness requirement — on an authorization the host never issued and
-    // has no store to redeem against. WT-012.12 builds the producer; until then
-    // the only admissible disposition is the exact `free` one.
-    await refuses({ disposition: { kind: "debris", authorization: { path: "/trees/feat", fingerprint: "forged" } } });
+  it("refuses a debris disposition whose authorization does not name this create's own path", async () => {
+    // Until 1_7 the debris variant was inadmissible outright, because nothing
+    // issued one. Now the panel does, so the check is the BINDING: an
+    // authorization that names another directory is not the create the panel
+    // composed, and it selects `mustMatchDebrisAuthorization` — which drops the
+    // emptiness requirement — on a path nobody authorized (round-1 B2).
+    await refuses({
+      disposition: { kind: "debris", authorization: { path: "/trees/elsewhere", fingerprint: "forged" } },
+    });
+  });
+
+  it("refuses a debris disposition whose authorization is malformed", async () => {
+    await refuses({ disposition: { kind: "debris", authorization: { path: "/trees/feat", fingerprint: "" } } });
+    await refuses({ disposition: { kind: "debris", authorization: { path: "", fingerprint: "fp" } } });
+    await refuses({ disposition: { kind: "debris" } });
+    await refuses({
+      disposition: { kind: "debris", authorization: { path: "/trees/feat", fingerprint: "fp", extra: 1 } },
+    });
+  });
+
+  it("[B2] admits the debris disposition the panel composes, and hands it on unchanged", async () => {
+    // `isKnownDisposition` accepted only `free`, so every debris create was
+    // dropped at this boundary and the whole recover path was unreachable in
+    // production while the service's own tests passed.
+    const { host, view, calls, dispose } = await builtHost();
+    const disposition = { kind: "debris", authorization: { path: "/trees/feat", fingerprint: "fp-1" } };
+    host.handleMessage(view, { ...REQ, mode: { kind: "fresh", branch: "feat" }, disposition } as never);
+    await settle();
+
+    expect(calls[0]?.[0]).toBe("createWorktree");
+    expect(calls[0]?.[1]).toMatchObject({ path: "/trees/feat", disposition });
+    dispose();
   });
 
   it("refuses a disposition that is not one of the documented ones", async () => {
@@ -2980,10 +3007,19 @@ describe("the host resolves a selection before the create runs", () => {
   it("issues an authorization over the entries it reports, when one is asked for", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
-      issueDebrisAuthorization: async (p: string) => ({ fingerprint: `fp-for-${p}`, entries: ["stale.log", "sub"] }),
+      issueDebrisAuthorization: async (p: string) => ({
+        ok: true as const,
+        fingerprint: `fp-for-${p}`,
+        entries: ["stale.log", "sub"],
+      }),
     });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    // The probe first: it is what PUBLISHES the debris candidate, and only a
+    // published candidate can be authorized (round-1 B1).
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
     host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
     await settle();
 
@@ -3000,16 +3036,78 @@ describe("the host resolves a selection before the create runs", () => {
   it("refuses to authorize a path the issuer will not vouch for", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
-      issueDebrisAuthorization: async () => null,
+      issueDebrisAuthorization: async () => ({ ok: false as const, because: "notDebris" as const }),
     });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
     host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
     await settle();
 
     const posted = view.posts.find((m) => m.type === "worktreeDebrisAuthorized");
     expect(posted).toMatchObject({ granted: false, because: "notDebris" });
     expect(JSON.stringify(posted)).not.toContain("fingerprint");
+    dispose();
+  });
+
+  it("[B1] issues nothing for a path this opening never published as debris", async () => {
+    // The endpoint used to take the request's path straight to the issuer, so a
+    // message could enumerate and obtain a delete token for any readable
+    // non-git directory on the machine. Only the candidate the panel actually
+    // showed is authorizable.
+    const asked: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      issueDebrisAuthorization: async (p: string) => {
+        asked.push(p);
+        return { ok: true as const, fingerprint: "fp", entries: [] };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+
+    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/Users/dev/Documents" });
+    await settle();
+
+    expect(asked, "the issuer read a directory the panel never showed").toEqual([]);
+    expect(view.posts.find((m) => m.type === "worktreeDebrisAuthorized")).toBeUndefined();
+
+    // The published candidate still works, so this is a binding and not a
+    // handler that stopped answering.
+    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    await settle();
+    expect(asked).toEqual(["/trees/repo-feat"]);
+    dispose();
+  });
+
+  it("[B1] stops authorizing a candidate a newer answer withdrew", async () => {
+    const asked: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      issueDebrisAuthorization: async (p: string) => {
+        asked.push(p);
+        return { ok: true as const, fingerprint: "fp", entries: [] };
+      },
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
+    await settle();
+    // A different branch resolves to a free destination, so this opening's
+    // latest answer publishes no debris at all.
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 1, query: "other" });
+    await settle();
+
+    host.handleMessage(view, { type: "worktreeAuthorizeDebris", repoId: REPO, token: 1, path: "/trees/repo-feat" });
+    await settle();
+
+    expect(asked).toEqual([]);
     dispose();
   });
 
@@ -3020,7 +3118,7 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
       issueDebrisAuthorization: async () => {
         asked += 1;
-        return { fingerprint: "fp", entries: [] };
+        return { ok: true as const, fingerprint: "fp", entries: [] };
       },
     });
     // No opening was minted for token 9.

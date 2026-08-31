@@ -91,3 +91,18 @@
     4. `src/webview/messaging/MessageRouter.ts` and `src/webview/main.ts`: route the authorization answer to the controller — a declared-but-unrouted message ships inert.
     5. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: the offer appears only for debris, composes with an existing-branch selection, and an unaccepted offer submits `free`.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are not edited
+- [x] 1_8 Close round 1 — every bound checked where the delete happens, and the path reachable — verified: pnpm exec vitest run 'src/worktree/clearDebris.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
+  - **Deps**: 1_7
+  - **Refs**: .reviews/round-1.md B1-B7, W1, W2; specs/worktree-panel/spec.md#clearing-debris-happens-only-under-an-authorization-bound-to-what-was-found; specs/worktree-panel/spec.md#a-create-never-reports-success-for-a-clearance-that-did-not-complete; design.md D3, D5, D6; docs/design/worktree-create.md#22-recover-deletes-and-says-so
+  - **Acceptance**:
+    - Outcome: A debris create reaches the mutation service through the host's own inbound validation, and every § 2.2 bound — identity, `.git`, entry set, component symlinks — is re-read inside the window that ends at the removal
+    - Verify: unit src/worktree/clearDebris.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: accept the `debris` disposition in `isKnownDisposition` — the exact variant, non-empty authorization fields, and `authorization.path` equal to the create's own path (B2); bind issuance to the debris candidate the opening's latest resolution published, re-checked after the read (B1); map a discriminated issuer failure to its own `because` (W1).
+    2. `src/worktree/worktreeMutationService.ts`: an unreadable directory refuses and forgets the authorization rather than redeeming as empty (B3); a `reattach` create carrying a debris disposition is refused (B7); the approved entry set travels into the clearance (B4).
+    3. `src/worktree/clearDebris.ts`: take the whole approval — identity AND entries — and re-read the entries, the `.git` and the component walk synchronously in the no-await window before `remove` (B4, B5); prove the destination absent after the removal rather than reading an unreadable directory as cleared (B6).
+    4. `src/worktree/debrisAuthorization.ts`: the issuer's discriminated result lives with the rest of the authorization vocabulary, so the host and the service share one definition rather than two structurally identical ones (W1).
+    5. `src/worktree/createPath.ts`: expose the component symlink walk synchronously so the clearance re-asks the same question this module already owns, rather than spelling a second walk of its own.
+    6. `src/webview/worktree/WorktreeCreateDialog.ts`: suppress the offer on the MODE, not on a path comparison that coincides with it (B7); discard an authorization that answers a request no longer outstanding (W2).
+    7. `src/worktree/clearDebris.test.ts`, `src/worktree/worktreeMutationService.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/worktree/createPath.test.ts`: one witness per accepted finding, each written so that reverting its fix fails it.
+  - **Boundary**: no new decision — every bound here is one worktree-create.md § 2.2 already states, and containment stays `isPathInside` / the `createPath` walk rather than a predicate this change writes

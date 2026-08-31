@@ -4,7 +4,8 @@
 // against the target the id names AFTER the rebuild.
 
 import { describe, expect, it, vi } from "vitest";
-import { createDebrisAuthorizationStore } from "./debrisAuthorization";
+import type { ClearDebrisDeps } from "./clearDebris";
+import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
 import type { ReattachVerdict } from "./reattachProbe";
 import type { RemovalEvidence } from "./worktreeBlockers";
@@ -1162,6 +1163,8 @@ describe("reattach repairs in place, and re-checks the pause", () => {
       branchBefore?: string;
       verdict?: ReattachVerdict;
       listing?: null;
+      /** Present only for the one test that pairs a repair with a clearance. */
+      debris?: { store: DebrisAuthorizationStore; deps: ClearDebrisDeps };
     } = {},
   ) {
     // The listing is read TWICE — once to prove the stale registration is still
@@ -1169,6 +1172,9 @@ describe("reattach repairs in place, and re-checks the pause", () => {
     // moving the other.
     let reads = 0;
     const h = harness({
+      ...(over.debris === undefined
+        ? {}
+        : { debrisAuthorizations: over.debris.store, clearDebrisDeps: over.debris.deps }),
       listWorktrees: async () => {
         reads += 1;
         if (over.listing === null) {
@@ -1231,6 +1237,44 @@ describe("reattach repairs in place, and re-checks the pause", () => {
   function argvOf(h: ReturnType<typeof harness>): string[][] {
     return (h.runner.run as ReturnType<typeof vi.fn>).mock.calls.map((c) => [...(c[0] as string[])]);
   }
+
+  it("[B7] refuses a repair that carries a clearance, rather than repairing and leaving the debris", async () => {
+    // A repair acts on the registration's own path and returns before the
+    // clearance runs. Without the refusal this create reports a SUCCESSFUL
+    // repair while the directory it promised to clear is untouched — which is
+    // why the assertion is on the repair not happening, not on `removed`.
+    const store = createDebrisAuthorizationStore();
+    const removed: string[] = [];
+    const h = reattachHarness({
+      debris: {
+        store,
+        deps: {
+          lstat: () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
+          readdir: () => ["stale.log"],
+          probeEntry: () => "absent",
+          remove: async (path: string) => {
+            removed.push(path);
+          },
+        },
+      },
+    });
+    const token = store.issue(STALE, { entries: ["stale.log"], identity: "1:9" }, 0);
+
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: STALE,
+      afterCreate: { kind: "none" },
+      mode: { kind: "reattach", branch: "feat", repairPath: STALE, expectedOid: "oid-1" },
+      disposition: { kind: "debris", authorization: { path: STALE, fingerprint: token } },
+    });
+
+    expect(
+      argvOf(h).some((a) => a[1] === "repair"),
+      "the repair ran on a create that promised a clearance",
+    ).toBe(false);
+    expect(removed).toEqual([]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+  });
 
   it("issues `worktree repair` and never `worktree add`", async () => {
     const h = reattachHarness();
@@ -1404,6 +1448,8 @@ describe("clearing crash debris", () => {
       ino?: number;
       removed?: string[];
       git?: "present" | "absent" | "unknown";
+      /** What the destination probe says AFTER the removal. Absent = it went. */
+      after?: "present" | "absent" | "unknown";
     } = {},
   ) {
     const removed = over.removed ?? [];
@@ -1411,11 +1457,12 @@ describe("clearing crash debris", () => {
     const h = harness({
       debrisAuthorizations: store,
       clearDebrisDeps: {
-        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: over.ino ?? 7 }),
-        // What REMAINS after the removal — a different question from what the
-        // evidence read before it.
-        readdir: async () => over.remaining ?? null,
-        probeGitEntry: () => over.git ?? "absent",
+        lstat: () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: over.ino ?? 7 }),
+        // The boundary's own read of the CONTENTS, and after the removal the
+        // question of what remains — both synchronous, because the window
+        // between the last reading and the delete is what they guard.
+        readdir: () => over.remaining ?? over.entries ?? [],
+        probeEntry: (p) => (p.endsWith(".git") ? (over.git ?? "absent") : (over.after ?? "absent")),
         remove: async (p: string) => {
           removed.push(p);
         },
@@ -1485,6 +1532,9 @@ describe("clearing crash debris", () => {
     const { service, store, argv, outcomes } = debrisHarness({
       entries: ["locked.db"],
       remaining: ["locked.db"],
+      // The destination is STILL THERE after `remove` returned — which is the
+      // only thing that makes this a partial clearance rather than a clean one.
+      after: "present",
     });
     const token = store.issue(DEBRIS, { entries: ["locked.db"], identity: "1:7" }, 0);
     await service.createWorktree({
@@ -1499,6 +1549,43 @@ describe("clearing crash debris", () => {
     expect(outcomes[0]).toMatchObject({ kind: "error" });
   });
 
+  it("[B3] refuses an unreadable directory rather than redeeming it as empty", async () => {
+    // `entries ?? []` made an unreadable directory a subset of every approved
+    // set, so contents nobody could inspect passed the comparison and a
+    // recursive delete followed.
+    const removed: string[] = [];
+    const { service, store, argv, outcomes } = debrisHarness({ removed, entries: null });
+    const token = store.issue(DEBRIS, { entries: ["stale.log"], identity: "1:7" }, 0);
+    await service.createWorktree({
+      repoId: REPO,
+      path: DEBRIS,
+      afterCreate: { kind: "none" },
+      mode: { kind: "fresh", branch: "feat" },
+      disposition: { kind: "debris", authorization: { path: DEBRIS, fingerprint: token } },
+    });
+
+    expect(removed).toEqual([]);
+    expect(argv.some((a) => a[0] === "worktree" && a[1] === "add")).toBe(false);
+    expect(outcomes[0]).toMatchObject({ kind: "error" });
+  });
+
+  it("[B3] spends the authorization on the refusal, so a retry cannot replay it", async () => {
+    const removed: string[] = [];
+    const { service, store } = debrisHarness({ removed, entries: null });
+    const token = store.issue(DEBRIS, { entries: ["stale.log"], identity: "1:7" }, 0);
+    const request = {
+      repoId: REPO,
+      path: DEBRIS,
+      afterCreate: { kind: "none" } as const,
+      mode: { kind: "fresh", branch: "feat" } as const,
+      disposition: { kind: "debris", authorization: { path: DEBRIS, fingerprint: token } } as const,
+    };
+    await service.createWorktree(request);
+
+    expect(store.size()).toBe(0);
+    expect(removed).toEqual([]);
+  });
+
   it("issues a token the create can actually spend, over the entries it reports", async () => {
     // The round trip. An issuer writing to a different store than the create
     // redeems from would mint tokens nothing can spend, and every unit test on
@@ -1506,37 +1593,47 @@ describe("clearing crash debris", () => {
     const removed: string[] = [];
     const h = debrisHarness({ removed });
     const issued = await h.service.issueDebrisAuthorization(DEBRIS);
-    expect(issued).not.toBeNull();
-    expect(issued?.entries).toEqual(["stale.log"]);
+    expect(issued.ok).toBe(true);
+    expect(issued.ok && issued.entries).toEqual(["stale.log"]);
 
     await h.service.createWorktree({
       repoId: REPO,
       path: DEBRIS,
       afterCreate: { kind: "none" },
       mode: { kind: "fresh", branch: "feat" },
-      disposition: { kind: "debris", authorization: { path: DEBRIS, fingerprint: issued?.fingerprint ?? "" } },
+      disposition: {
+        kind: "debris",
+        authorization: { path: DEBRIS, fingerprint: issued.ok ? issued.fingerprint : "" },
+      },
     });
 
     expect(removed).toEqual([DEBRIS]);
   });
 
-  it("issues nothing for a path holding a .git", async () => {
+  it("issues nothing for a path holding a .git, and says that is why", async () => {
     const h = debrisHarness({ git: "present" });
-    expect(await h.service.issueDebrisAuthorization(DEBRIS)).toBeNull();
+    expect(await h.service.issueDebrisAuthorization(DEBRIS)).toEqual({ ok: false, because: "notDebris" });
+  });
+
+  it("[W1] tells an unreadable directory apart from one holding a repository", async () => {
+    // Collapsed to one answer, a permission failure told the user their
+    // directory holds a repository — a claim the reading never made.
+    const unknown = debrisHarness({ git: "unknown" });
+    expect(await unknown.service.issueDebrisAuthorization(DEBRIS)).toEqual({ ok: false, because: "unreadable" });
   });
 
   it("issues nothing for a path whose entries could not be read", async () => {
     const h = debrisHarness({ entries: null });
-    expect(await h.service.issueDebrisAuthorization(DEBRIS)).toBeNull();
+    expect(await h.service.issueDebrisAuthorization(DEBRIS)).toEqual({ ok: false, because: "unreadable" });
   });
 
   it("removes nothing on an ordinary free-destination create", async () => {
     const removed: string[] = [];
     const h = harness({
       clearDebrisDeps: {
-        lstat: async () => null,
-        readdir: async () => null,
-        probeGitEntry: () => "absent",
+        lstat: () => null,
+        readdir: () => null,
+        probeEntry: () => "absent",
         remove: async (p: string) => {
           removed.push(p);
         },

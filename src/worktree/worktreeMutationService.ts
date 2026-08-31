@@ -13,10 +13,13 @@ import * as nodePath from "node:path";
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
 import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
 import { normalizePathForCompare } from "../utils/pathBoundary";
-import { type ClearDebrisDeps, clearDebris, removeRecursively } from "./clearDebris";
+import { type ClearDebrisDeps, clearDebris, nodeClearDebrisDeps } from "./clearDebris";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
-import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
-import { probeGitEntry } from "./debrisClassification";
+import {
+  createDebrisAuthorizationStore,
+  type DebrisAuthorizationStore,
+  type DebrisIssueResult,
+} from "./debrisAuthorization";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
@@ -277,24 +280,26 @@ export interface WorktreeMutationService extends WorktreeMutationCapabilities {
   /** Issue the confirmation token for what the user is about to be shown. */
   issueFingerprint(target: WorktreeMutationTarget, evidence: RemovalEvidence): string | null;
   /**
-   * Issue a clearance authorization for `path`, or `null` where it is not debris
-   * or could not be read.
+   * Issue a clearance authorization for `path`, or say why there is none.
+   *
+   * Discriminated rather than nullable: "this holds a repository" and "this
+   * could not be read" are different answers, and collapsing them told a user
+   * whose permissions failed that their directory holds a repository
+   * (round-1 W1).
    *
    * Lives here because the store it writes to is the one the create redeems
    * against — an issuer anywhere else would mint tokens nothing could spend.
    */
-  issueDebrisAuthorization(path: string): Promise<{ fingerprint: string; entries: readonly string[] } | null>;
+  issueDebrisAuthorization(path: string): Promise<DebrisIssueResult>;
 }
 
 export function createWorktreeMutationService(deps: MutationServiceDeps): WorktreeMutationService {
   const fingerprints = deps.fingerprints ?? createFingerprintStore();
   const debrisAuthorizations = deps.debrisAuthorizations ?? createDebrisAuthorizationStore();
-  const clearDebrisDeps: ClearDebrisDeps = deps.clearDebrisDeps ?? {
-    lstat: deps.pathDeps.lstat,
-    readdir: deps.pathDeps.readdir,
-    probeGitEntry,
-    remove: removeRecursively,
-  };
+  // The module's own, not deps assembled from `pathDeps`: the boundary's
+  // ordering rule holds only while every probe is synchronous, and the async
+  // path helpers would satisfy the types while reopening the window (round-1 B4).
+  const clearDebrisDeps: ClearDebrisDeps = deps.clearDebrisDeps ?? nodeClearDebrisDeps;
   const coordinator =
     deps.coordinator ??
     createMutationCoordinator({
@@ -373,17 +378,24 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // the token binds. Reading twice would let them disagree (design.md D6).
       const stat = await deps.pathDeps.lstat(path);
       const identity = identityOf(stat);
-      if (stat === null || !stat.isDirectory() || identity === null) {
-        return null;
+      if (stat === null || !stat.isDirectory()) {
+        return { ok: false, because: "unreadable" };
       }
-      if (clearDebrisDeps.probeGitEntry(nodePath.join(path, ".git")) !== "absent") {
-        return null;
+      // No identity is not "not debris": the reading succeeded and the platform
+      // supplied nothing to bind to, which is a failure to read what the
+      // authorization needs.
+      if (identity === null) {
+        return { ok: false, because: "unreadable" };
+      }
+      const git = clearDebrisDeps.probeEntry(nodePath.join(path, ".git"));
+      if (git !== "absent") {
+        return { ok: false, because: git === "present" ? "notDebris" : "unreadable" };
       }
       const entries = await deps.pathDeps.readdir(path);
       if (entries === null) {
-        return null;
+        return { ok: false, because: "unreadable" };
       }
-      return { fingerprint: debrisAuthorizations.issue(path, { entries, identity }, deps.now()), entries };
+      return { ok: true, fingerprint: debrisAuthorizations.issue(path, { entries, identity }, deps.now()), entries };
     },
 
     lockWorktree: (target, reason) =>
@@ -603,6 +615,15 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // creates nothing: it rewrites the link to a directory git already
       // registered. Its guard is D3's conditions, re-established below.
       if (request.mode.kind === "reattach") {
+        // BEFORE the branch, not inside the create body the branch never
+        // reaches: a repair that carries a clearance would otherwise report a
+        // successful repair while the directory it promised to clear is
+        // untouched (round-1 B7). The dialog withholds the offer for this mode
+        // too — neither side depends on the other having got it right.
+        if (request.disposition.kind === "debris") {
+          deps.report(fail("A repair does not clear a directory, so this create will not run."), request.origin);
+          return;
+        }
         const mode = request.mode;
         return coordinator
           .run<string, MutationOutcome>(request.repoId, {
@@ -757,16 +778,34 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             // comparison no longer describes the moment of the delete (D3).
             if (intent.kind === "mustMatchDebrisAuthorization") {
               const entries = await deps.pathDeps.readdir(check.path);
+              if (entries === null) {
+                // An unreadable directory is not an empty one. Redeeming it as
+                // `[]` made it a subset of every approved set, so contents
+                // nobody could inspect passed the comparison (round-1 B3). The
+                // authorization goes with it: it was issued over a reading that
+                // can no longer be taken.
+                debrisAuthorizations.forget(check.path);
+                return fail("That directory could not be read, so it will not be cleared.");
+              }
+              const identity = identityOf(await deps.pathDeps.lstat(check.path));
               const verdict = debrisAuthorizations.redeem(
                 check.path,
                 intent.authorization.fingerprint,
-                { entries: entries ?? [], identity: identityOf(await deps.pathDeps.lstat(check.path)) },
+                { entries, identity },
                 deps.now(),
               );
               if (verdict !== "proceed") {
                 return fail("That directory changed since it was shown to you. Please try again.");
               }
-              const cleared = await clearDebris(check.path, ctx, first.recheckIdentity, clearDebrisDeps);
+              // The whole approval travels, not just the identity: the entry set
+              // is re-compared at the boundary, because this redemption's read is
+              // several `await`s from the delete (round-1 B4).
+              const cleared = await clearDebris(
+                check.path,
+                ctx,
+                identity === null ? null : { identity, entries },
+                clearDebrisDeps,
+              );
               if (!cleared.ok) {
                 return fail(cleared.reason);
               }

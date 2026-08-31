@@ -16,6 +16,19 @@ import { FINGERPRINT_TTL_MS } from "./worktreeFingerprint";
 export type DebrisVerdict = "proceed" | "reprompt";
 
 /** What was found at the path, as the user was shown it. */
+/**
+ * The issuer's answer: a token over what it read, or which question failed.
+ *
+ * Discriminated rather than nullable — "this holds a repository" and "this could
+ * not be read" are different answers, and collapsing them told a user whose
+ * permissions failed that their directory holds a repository (round-1 W1).
+ * Declared here rather than beside either caller so the host and the mutation
+ * service share ONE definition of it.
+ */
+export type DebrisIssueResult =
+  | { ok: true; fingerprint: string; entries: readonly string[] }
+  | { ok: false; because: "notDebris" | "unreadable" };
+
 export interface DebrisEvidence {
   /** Immediate entry names. Order is not significant; the comparison is a set. */
   readonly entries: readonly string[];

@@ -222,6 +222,73 @@ export async function validateCreatePath(
   };
 }
 
+/**
+ * What a component walk found. `missing` and `unknown` are separate answers
+ * because the two callers want opposite things from them: a create walks a path
+ * whose leaf does not exist yet, and a delete walks one whose every component
+ * must (clearDebris.ts).
+ */
+export type ComponentWalk =
+  | { kind: "clean" }
+  | { kind: "symlink"; at: string }
+  | { kind: "missing"; at: string }
+  | { kind: "unknown"; at: string };
+
+/**
+ * The components of `raw` below its root, in walk order.
+ *
+ * The ROOT is not a component and must not be walked through as one. On
+ * win32 `api.sep` is a backslash, so splitting `C:\\safe\\link` and starting
+ * from a bare separator probes `\\C:` — a path that never exists, so a walk
+ * returns on its first step and the barrier fails OPEN on exactly the
+ * platform it was meant to guard. `parse().root` keeps `C:\\`, `\\\\server\\share\\`,
+ * or `/` intact (round-1 B3).
+ * And the SEPARATOR is the platform's, not both. Splitting on both everywhere
+ * broke POSIX, where a backslash is a legal filename character: `foo\bar` is
+ * ONE directory, and splitting it into two probes `/safe/foo`, which does not
+ * exist, so the walk returns early and never reaches the real symlink further
+ * down — the same fail-open this guard exists to prevent, moved to the
+ * platform that was previously correct (round-2 B3).
+ */
+function componentsOf(raw: string, api: nodePath.PlatformPath): { root: string; parts: string[] } {
+  const root = api.parse(raw).root;
+  const parts = raw
+    .slice(root.length)
+    .split(api === nodePath.win32 ? /[\\/]/ : "/")
+    .filter((p) => p.length > 0);
+  return { root, parts };
+}
+
+/**
+ * The same walk, taken synchronously.
+ *
+ * Exported for the clearance, which must read every bound inside one
+ * synchronous run that ends at the removal — an `await` between the walk and the
+ * delete would leave a window in which a component becomes a symlink, which is
+ * the bound worktree-create.md § 2.2 spells out (round-1 B5). One definition,
+ * two schedules: a second walk written next to the delete is a second chance to
+ * get the root and the separator wrong.
+ */
+export function walkComponentsSync(
+  raw: string,
+  api: nodePath.PlatformPath,
+  lstat: (p: string) => LstatLike | null,
+): ComponentWalk {
+  const { root, parts } = componentsOf(raw, api);
+  let current: string = root;
+  for (const part of parts) {
+    current = api.join(current, part);
+    const stat = lstat(current);
+    if (stat === null) {
+      return { kind: "missing", at: current };
+    }
+    if (stat.isSymbolicLink()) {
+      return { kind: "symlink", at: current };
+    }
+  }
+  return { kind: "clean" };
+}
+
 async function firstSymlinkedComponent(
   raw: string,
   api: nodePath.PlatformPath,
@@ -239,11 +306,7 @@ async function firstSymlinkedComponent(
   // exist, so the walk returns early and never reaches the real symlink further
   // down — the same fail-open this function exists to prevent, moved to the
   // platform that was previously correct (round-2 B3).
-  const root = api.parse(raw).root;
-  const parts = raw
-    .slice(root.length)
-    .split(api === nodePath.win32 ? /[\\/]/ : "/")
-    .filter((p) => p.length > 0);
+  const { root, parts } = componentsOf(raw, api);
   let current: string = root;
   for (const part of parts) {
     current = api.join(current, part);

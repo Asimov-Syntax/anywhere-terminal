@@ -2626,6 +2626,43 @@ describe("create worktree — recover a debris destination", () => {
     expect(h.submitted[0]?.disposition).toBeUndefined();
   });
 
+  it("[B7] makes no offer under a repair, even where the repair path is the free one", () => {
+    // The suppression used to be `targetOf === freePath`, which coincides
+    // whenever a stale registration's own path is also the first free
+    // candidate — so the offer appeared and armed a clearance the service's
+    // repair branch never performs.
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve({
+      mode: { kind: "reattach", repairPath: SUFFIXED, expectedOid: "abc123" },
+      freePath: SUFFIXED,
+      occupiedCandidate: { path: SKIPPED, disposition: { kind: "debris" } },
+    });
+
+    expect(h.offer().hidden).toBe(true);
+    h.create().click();
+    expect(h.submitted[0]?.disposition).toBeUndefined();
+  });
+
+  it("[W2] discards an answer to a request the user already withdrew", () => {
+    // The grant arrives after the uncheck. Keeping it let a later acceptance
+    // spend a reading that acceptance never asked for — so the entries shown
+    // would describe the directory as it was before, not as it is.
+    const h = withDebris();
+    h.commit("feat/search");
+    h.resolve();
+    check(h.accept());
+    h.accept().checked = false;
+    h.accept().dispatchEvent(new Event("change", { bubbles: true }));
+    h.authorize();
+    expect(h.asked).toEqual([SKIPPED]);
+
+    // Re-accepting asks AGAIN rather than reusing the discarded answer.
+    check(h.accept());
+    expect(h.asked).toEqual([SKIPPED, SKIPPED]);
+    expect(h.create().disabled, "the form submitted on a grant it had thrown away").toBe(true);
+  });
+
   it("makes no offer where nothing can answer the request", () => {
     const h = withDebris({ onAuthorizeDebris: undefined, bindDebrisAuthorization: undefined });
     h.commit("feat/search");

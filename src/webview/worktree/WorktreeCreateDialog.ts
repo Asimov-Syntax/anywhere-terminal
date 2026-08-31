@@ -965,8 +965,15 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   let recoverWanted = false;
   /** The authorization the host issued, and the entries it was digested over. */
   let recoverGrant: { path: string; authorization: DebrisAuthorization; entries: readonly string[] } | null = null;
-  /** A request is out and no answer has landed. Create waits for it, as it waits for the resolution. */
-  let recoverPending = false;
+  /**
+   * Which request is outstanding, or null.
+   *
+   * A generation rather than a flag: an answer that arrives after the offer was
+   * withdrawn names the same path and would otherwise be kept, so a later
+   * re-acceptance reused a reading that acceptance never made (round-1 W2).
+   */
+  let recoverAsked: number | null = null;
+  let recoverAsks = 0;
   /** Why the host refused, stated where the offer was — a refusal is an answer, not silence. */
   let recoverRefused: string | null = null;
 
@@ -992,6 +999,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (occupied === undefined || occupied.disposition.kind !== "debris") {
       return null;
     }
+    // The MODE, said outright. Comparing `targetOf` against `freePath` was a
+    // proxy for it, and the two coincide whenever a stale registration's own
+    // path is also the first free candidate — which armed a clearance the
+    // service's repair branch never performs (round-1 B7).
+    if (draft.branchMode !== "detached" && effective.mode.kind === "reattach") {
+      return null;
+    }
     return targetOf(effective) === effective.freePath ? occupied.path : null;
   }
 
@@ -1008,7 +1022,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   function withdrawRecover(): void {
     recoverWanted = false;
     recoverGrant = null;
-    recoverPending = false;
+    recoverAsked = null;
     recoverRefused = null;
     recoverBox.checked = false;
   }
@@ -1029,7 +1043,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (recoverGrant?.path !== offer) {
       // A grant for a different directory authorizes nothing here.
       recoverGrant = null;
-      recoverPending = true;
+      recoverAsks += 1;
+      recoverAsked = recoverAsks;
       deps.onAuthorizeDebris?.({ repoId: draft.repoId, path: offer });
     }
     syncDerived();
@@ -1365,7 +1380,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     recoverText.textContent = `Recover ${lastSegment(offer)} — clear this directory and create here.`;
     const note =
       recoverRefused ??
-      (recoverPending
+      (recoverAsked !== null
         ? "Reading what is there…"
         : recoverGrant !== null && recoverGrant.path === offer
           ? recoverGrant.entries.length === 0
@@ -1595,7 +1610,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // The user accepted a removal and the host has not said what it would
       // remove. Submitting here would submit a recover with no authorization,
       // which the host refuses — so the form waits instead of failing after.
-      recoverPending ||
+      recoverAsked !== null ||
       baseUnresolvable ||
       postureMissing;
     shell.refreshFocusTrap();
@@ -1797,10 +1812,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       return;
     }
     const offer = debrisOffer();
-    if (offer === null || answer.path !== offer) {
+    // Nothing outstanding means nothing asked for this: the acceptance was
+    // withdrawn while the host was reading, and keeping the answer would let a
+    // later acceptance spend a reading it never asked for (round-1 W2).
+    if (offer === null || recoverAsked === null || answer.path !== offer) {
       return;
     }
-    recoverPending = false;
+    recoverAsked = null;
     if (answer.granted) {
       recoverGrant = { path: answer.path, authorization: answer.authorization, entries: answer.entries };
       recoverRefused = null;

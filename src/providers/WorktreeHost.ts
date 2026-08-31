@@ -31,6 +31,7 @@ import type { CreateSessionOptions } from "../vault/VaultLauncher";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { resolveSelection } from "../worktree/createResolution";
+import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
 import { classifyDestination, type GitEntryProbe } from "../worktree/debrisClassification";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
@@ -194,11 +195,11 @@ export interface WorktreeHostOptions {
    */
   probeGitEntry?: GitEntryProbe;
   /**
-   * Issue a clearance authorization for this path, or `null` where it is not
-   * debris or could not be read. Supplied by the mutation assembly, which owns
-   * the store the create later redeems against (design.md D6).
+   * Issue a clearance authorization for this path, or say which question
+   * failed. Supplied by the mutation assembly, which owns the store the create
+   * later redeems against (design.md D6).
    */
-  issueDebrisAuthorization?(path: string): Promise<{ fingerprint: string; entries: readonly string[] } | null>;
+  issueDebrisAuthorization?(path: string): Promise<DebrisIssueResult>;
   /**
    * The filesystem the RESOLVED containment check reads. Must answer for the
    * same tree `exists` does — that check is what authorizes `exists`, so a
@@ -613,6 +614,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
      * form would have to un-apply (round-1 B5, B6).
      */
     latestSeq: number;
+    /**
+     * The debris candidate this opening's latest answer actually published.
+     *
+     * An authorization to delete is issued only for THIS path. The request
+     * carries a path, and a path a message names is not a path the panel
+     * resolved and showed — without this the issuer would read and fingerprint
+     * any readable non-git directory a message could name (round-1 B1).
+     */
+    debrisCandidate: string | null;
   }
   const openings = new Map<string, Opening>();
   const surfaceKeys = new WeakMap<WorktreeSurface, string>();
@@ -1107,7 +1117,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (typeof disposition !== "object" || disposition === null) {
       return false;
     }
-    return (disposition as { kind?: unknown }).kind === "free" && onlyKeys(disposition, ["kind"]);
+    const d = disposition as { kind?: unknown; authorization?: unknown };
+    if (d.kind === "free") {
+      return onlyKeys(disposition, ["kind"]);
+    }
+    // The debris variant authorizes a DELETE, so every field is checked rather
+    // than trusted: without this the create was dropped here and the whole
+    // recover path was unreachable in production (round-1 B2).
+    if (d.kind !== "debris" || !onlyKeys(disposition, ["kind", "authorization"])) {
+      return false;
+    }
+    const auth = d.authorization as { path?: unknown; fingerprint?: unknown } | null;
+    return (
+      typeof auth === "object" &&
+      auth !== null &&
+      typeof auth.path === "string" &&
+      auth.path.length > 0 &&
+      typeof auth.fingerprint === "string" &&
+      auth.fingerprint.length > 0 &&
+      onlyKeys(auth, ["path", "fingerprint"])
+    );
   }
 
   /** The same check for what happens afterwards; the agent variant must name an agent. */
@@ -1322,9 +1351,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // the one path that still uses it (round-3 B4).
     const takesBase = mode.kind === "fresh" || mode.kind === "adopt";
     const baseValid = takesBase ? await resolveBaseVerdict(repo, msg.base) : undefined;
-    if (disposed || !surfaces.has(surface) || stillOurs() === undefined) {
+    const publishing = stillOurs();
+    if (disposed || !surfaces.has(surface) || publishing === undefined) {
       return;
     }
+    // Recorded as it is PUBLISHED, so the only path an authorization can be
+    // issued for is the one this opening's latest answer put on screen. A newer
+    // answer replaces it; an answer naming no debris clears it (round-1 B1).
+    publishing.debrisCandidate =
+      occupiedCandidate !== undefined && occupiedCandidate.disposition.kind === "debris"
+        ? occupiedCandidate.path
+        : null;
     surface.post({
       type: "worktreeCreateResolution",
       repoId: msg.repoId,
@@ -1451,14 +1488,25 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return;
     }
     const issued = await issue(msg.path);
+    // The opening AND the candidate, re-asked after the read. A newer answer can
+    // have published a different destination while this one was reading, and a
+    // token bound to the superseded one is not an answer to any question now on
+    // screen (round-1 B1).
+    if (
+      disposed ||
+      !surfaces.has(surface) ||
+      openingFor(surface, msg.repoId, msg.token)?.debrisCandidate !== msg.path
+    ) {
+      return;
+    }
     answer(
-      issued === null
-        ? { granted: false, because: "notDebris" }
-        : {
+      issued.ok
+        ? {
             granted: true,
             authorization: { path: msg.path, fingerprint: issued.fingerprint },
             entries: issued.entries,
-          },
+          }
+        : { granted: false, because: issued.because },
     );
   }
 
@@ -1516,6 +1564,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           !isKnownAfterCreate(msg.afterCreate) ||
           !isKnownDisposition(msg.disposition)
         ) {
+          return;
+        }
+        // The authorization names the directory it authorizes, and this create
+        // names the directory it will take. A create whose disposition
+        // authorizes a DIFFERENT path is not a create the panel composed.
+        if (msg.disposition.kind === "debris" && msg.disposition.authorization.path !== msg.path) {
           return;
         }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
@@ -1616,7 +1670,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (repo === undefined) {
           return;
         }
-        if (openingFor(surface, msg.repoId, msg.token) === undefined) {
+        const opening = openingFor(surface, msg.repoId, msg.token);
+        // The path this opening's latest answer PUBLISHED as debris, and no
+        // other. A request naming any other directory is not the request the
+        // panel makes, and answering it would hand out a delete for a
+        // destination the user was never shown (round-1 B1).
+        if (opening === undefined || opening.debrisCandidate !== msg.path) {
           return;
         }
         void answerDebrisAuthorization(surface, msg);
@@ -1733,6 +1792,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           token: msg.token,
           read: inFlight,
           latestSeq: Number.NEGATIVE_INFINITY,
+          debrisCandidate: null,
         });
         void inFlight
           .then((answer) => {
