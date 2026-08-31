@@ -63,7 +63,7 @@ function open(
 ) {
   const host = document.createElement("div");
   document.body.appendChild(host);
-  const confirmed: string[] = [];
+  const confirmed: (string | null)[] = [];
   const shown: string[] = [];
   openWorktreeRemoveDialog(host, {
     info: over.info ?? SPIKE,
@@ -759,5 +759,49 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
 
     expect(host.querySelector("#wt-confirm-name")).not.toBeNull();
     expect(danger(host)?.disabled).toBe(true);
+  });
+});
+
+describe("[2_3] the confirmation carries only the authority its report was handed", () => {
+  /**
+   * What the host now sends for a worktree nothing is wrong with: every check
+   * passes, so `atRisk` is false and no fingerprint is issued (design.md D7).
+   * FULL_REPORT is the same shape WITH one, so the pair separates "forwards the
+   * fingerprint" from "forwards a fingerprint".
+   */
+  const CLEAN_REPORT: WorktreeRemoveReport = { ...FULL_REPORT, fingerprint: null };
+
+  it("hands back null for a report that authorized no force", () => {
+    const { host, confirmed } = open(CLEAN_REPORT, { info: CLEAN });
+
+    host.querySelector<HTMLButtonElement>("button.wt-btn--danger")?.click();
+
+    // `[null]`, not `[]` and not `[undefined]`: the confirmation HAPPENED and it
+    // carried nothing. An empty array would pass just as well if the button had
+    // never been mounted, which is the bug this pins.
+    expect(confirmed).toEqual([null]);
+  });
+
+  it("hands back the exact fingerprint a report carried, never a substitute", () => {
+    const { host, confirmed } = open(FULL_REPORT, { info: CLEAN });
+
+    host.querySelector<HTMLButtonElement>("button.wt-btn--danger")?.click();
+
+    expect(confirmed).toEqual(["sha256:full-v1"]);
+  });
+
+  it("asks for the ordinary confirmation when every risk merely does not apply", () => {
+    // D9: `notApplicable` is not `failed`, so it earns no speed bump. Pinned
+    // here rather than branched in `confirmationFor`, whose class test already
+    // lands on the right side — a second branch could only disagree with it.
+    const { host } = open({
+      ...CLEAN_REPORT,
+      checks: CLEAN_REPORT.checks.map((c) =>
+        c.cls === "confirmable" ? { ...c, outcome: "notApplicable" as const } : c,
+      ),
+    });
+
+    expect(host.querySelector("#wt-confirm-name"), "a notApplicable risk demanded a typed confirmation").toBeNull();
+    expect(host.querySelector("button.wt-btn--danger")?.textContent).toBe("Remove");
   });
 });

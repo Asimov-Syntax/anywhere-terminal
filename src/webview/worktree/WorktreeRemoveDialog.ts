@@ -39,8 +39,15 @@ export interface WorktreeRemoveDialogDeps {
    * wire value, which is the omission review found on two other surfaces.
    */
   degradedSources: readonly PresenceDegradation[];
-  /** Re-sends the remove with `force: true` AND the fingerprint the user was shown. */
-  onConfirm: (fingerprint: string) => void;
+  /**
+   * Answers the report the user just read, with whatever authority it carried.
+   *
+   * The fingerprint is FORWARDED, never synthesised: a null one means this
+   * removal has nothing to force past, and the caller sends the ordinary
+   * unforced request. That is the whole of what stops the dialog from becoming
+   * a way to manufacture deletion authority (design.md D7).
+   */
+  onConfirm: (fingerprint: string | null) => void;
   /** Reveal the agent that blocks the removal. */
   onShowAgent?: (row: WorktreeAgentRow) => void;
   onCancel?: () => void;
@@ -547,7 +554,7 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   const confirm = textButton(typed ? "Force remove" : "Remove", "danger", () => {
     // Re-sent with the fingerprint the user was SHOWN: this authorizes the
     // blocker set they read, not a blanket one. Typing raises the bar over that
-    // same set; it never widens it.
+    // same set; it never widens it. A null one authorizes no force at all.
     deps.onConfirm(deps.report.fingerprint);
     shell.dispose();
   });

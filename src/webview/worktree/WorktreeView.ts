@@ -159,7 +159,12 @@ export interface WorktreeViewDeps {
   /** Prune the repo after an indeterminate remove. */
   onPrune?: (repoId: string) => void;
   /** Re-send a remove with `force` and the fingerprint the user was shown. */
-  onForceRemove?: (info: WorktreeInfo, fingerprint: string) => void;
+  /**
+   * The user answered the report. `fingerprint` is what that report carried and
+   * nothing more: null means it authorized no force, and the caller sends the
+   * ordinary removal (design.md D7).
+   */
+  onForceRemove?: (info: WorktreeInfo, fingerprint: string | null) => void;
   /**
    * Ask again for an action whose risk could not be READ. Offered only there:
    * a failure already has its answer, and an unclear outcome has state to

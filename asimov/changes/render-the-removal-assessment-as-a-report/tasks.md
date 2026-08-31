@@ -110,15 +110,17 @@
     5. `src/worktree/worktreeMutationService.test.ts`: D7's real witness. The host test stubs the capability, so it cannot prove the `atRisk` tie — assert here that a clean assessment issues no fingerprint, a risky one does, a refusal issues none, and that no git removal command is run.
   - **Boundary**: `assessRemoval` and `evaluateRemoval` are called, never reimplemented, and no check is added, removed or reclassified
 
-- [ ] 2_3 The confirmation carries only the authority it was handed
+- [x] 2_3 The confirmation carries only the authority it was handed — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 2_1
   - **Refs**: design.md D7; specs/worktree-panel/spec.md#a-confirmation-carries-only-the-authority-its-report-was-granted
   - **Acceptance**:
     - Outcome: A report with no fingerprint confirms unforced
     - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
   - **Plan**:
-    1. `src/webview/worktree/WorktreeRemoveDialog.ts`: widen `onConfirm` to accept the nullable fingerprint and forward what the report carried, synthesising nothing.
-    2. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: a null-fingerprint report confirms and hands back null; a fingerprint-carrying one hands back that fingerprint; the control chosen for a `notApplicable` report is the ordinary one.
+    1. `src/webview/worktree/worktreeViewTypes.ts`: `WorktreeRemoveReport.fingerprint` becomes `string | null` — the panel's own type has to be able to HOLD "this report authorizes no force" before any control can honour it.
+    2. `src/webview/worktree/WorktreeRemoveDialog.ts`: widen `onConfirm` to accept the nullable fingerprint and forward what the report carried, synthesising nothing.
+    3. `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeController.ts`: carry the nullable through to the posted message — `force: true` with the fingerprint where there is one, `force: false` with no fingerprint key where there is not. The whole thread lands in ONE task because a nullable that stops at the dialog leaves a tree that does not compile; 2_4 then owns only how the report is obtained.
+    4. `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: a null-fingerprint report confirms and hands back null; a fingerprint-carrying one hands back that fingerprint; the control chosen for a `notApplicable` report is the ordinary one; the confirm posts `force: false` with no fingerprint key for a null report.
   - **Boundary**: `confirmationFor` is not touched — D9 is that `notApplicable` already lands on ordinary, and a test pins it rather than a new branch
 
 - [ ] 2_4 Remove Worktree opens the report

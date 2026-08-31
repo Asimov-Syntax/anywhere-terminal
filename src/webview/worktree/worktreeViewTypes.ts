@@ -68,8 +68,15 @@ export type WorktreeActivitySource = "hook" | "output" | "title" | "registry" | 
  * undone (worktree-rpc.md § 2.5).
  */
 export interface WorktreeRemoveReport {
-  /** Identifies THIS report; the confirmation is bound to it. */
-  fingerprint: string;
+  /**
+   * Identifies THIS report; the confirmation is bound to it.
+   *
+   * `null` where the removal needs no force — a worktree with nothing at risk,
+   * or a refusal, which has nothing to bind one to. Its PRESENCE is what makes a
+   * forced removal possible, so the panel can neither invent one nor mistake a
+   * report that authorizes nothing for a report that failed to say (design.md D7).
+   */
+  fingerprint: string | null;
   checks: readonly RemovalCheck[];
   /**
    * Worktrees registered INSIDE this one. Refused, never confirmable: git's
