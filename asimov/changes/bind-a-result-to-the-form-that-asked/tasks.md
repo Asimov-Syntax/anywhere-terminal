@@ -102,7 +102,7 @@
     2. `src/providers/WorktreeHost.actions.test.ts`: settle the first read, repeat the same opening, assert one read and a second destination reply; and a failed read followed by a repeat does read again.
   - **Boundary**: the destination reply stays unconditional — joining the read must not cost a repeat its answer
 
-- [ ] 4_3 The panel stops honouring an opening it retired
+- [x] 4_3 The panel stops honouring an opening it retired — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_2
   - **Refs**: design.md D5
   - **Acceptance**:

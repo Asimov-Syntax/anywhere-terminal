@@ -545,11 +545,25 @@ export class WorktreeController {
       // SUCCESSOR (round-1 B3).
       onCreateClosed: (opening: number) => {
         this.deps.postMessage({ type: "worktreeCreateClosed", opening });
-        // NOT followed by marking the token non-live here. Round-1 B6 asks for
-        // that too, and it is the same decision as B2: `refsToken` is the guard
-        // for refs, resolutions, probes and debris as well, so invalidating it
-        // withdraws those channels' authority — which D5 explicitly does not
-        // extend retirement to. Parked for planning rather than smuggled in.
+        // Posting the retirement is not the same as ceasing to honour the
+        // opening. A reply the host had already sent when the close reached it
+        // still carries the retired number, and a token comparison alone let it
+        // into a cache for a form that no longer exists (.reviews/round-1.md
+        // B6). Advancing the counter is what makes every EXISTING guard reject
+        // it — refs, resolutions, probe and debris as well as the two this
+        // change added, which is the panel's half of D5's one-token-one-
+        // retirement rule. No second predicate to keep in step, and the number
+        // stays monotonic, which is what the host's high-water mark relies on.
+        //
+        // Only when the form that closed is the one still being served. A
+        // superseded form is torn down AFTER its successor's requests have gone
+        // out — the panel asks for the new opening, and the old dialog is
+        // replaced when the answer arrives — so advancing on its teardown would
+        // retire the successor and drop the live form's replies. The same guard
+        // the host applies to a close naming an opening it no longer holds.
+        if (opening === this.refsToken) {
+          this.refsToken += 1;
+        }
       },
       // Create's shipped entry path. The dialog has existed since WT-002.1 and
       // nothing ever submitted it anywhere (round-1 B1); this is where the

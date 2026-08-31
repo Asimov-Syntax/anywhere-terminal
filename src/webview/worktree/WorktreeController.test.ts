@@ -1739,6 +1739,45 @@ describe("the create a toolbar with no repository opens", () => {
     expect(h.posts.filter((m) => m.type === "worktreeCreate")[1]).toMatchObject({ disposition: { kind: "free" } });
   });
 
+  it("[4_3] honours nothing that names the opening it just retired", () => {
+    // The host posts and the panel receives asynchronously, so a reply already
+    // in flight when the close was posted still carries the retired number.
+    // Three channels, one retirement: the two this change added and the refs
+    // enumeration that predates it.
+    const h = mount();
+    const view = (
+      h.controller as unknown as {
+        view: { deps: { createOpening(): number; onCreateClosed(opening: number): void } };
+      }
+    ).view;
+    h.controller.openCreate();
+    const opening = view.deps.createOpening();
+
+    view.deps.onCreateClosed(opening);
+
+    h.controller.handleCreateDefaults({ ...answer(REPO_A, "/trees/a"), opening });
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO_A,
+      opening,
+      offerId: "provision-1",
+      model: provisionModel(),
+    });
+    h.controller.handleRefs({
+      type: "worktreeRefs",
+      repoId: REPO_A,
+      token: opening,
+      refs: [{ name: "main" }],
+      truncated: false,
+    });
+
+    const defaults = (h.controller as unknown as { createDefaults: Map<string, unknown> }).createDefaults;
+    const offers = (h.controller as unknown as { provisionOffers: Map<string, unknown> }).provisionOffers;
+    expect(defaults.get(REPO_A), "a retired opening's destination was cached").toBeUndefined();
+    expect(offers.get(REPO_A), "a retired opening's offer was cached").toBeUndefined();
+    expect(refsHeld(h).get(REPO_A), "a retired opening's branch list was cached").toBeUndefined();
+  });
+
   it("[1_2][r1 W2] a list that outlived a dialog that really opened and closed changes nothing", () => {
     // The round-1 version asserted this with no dialog ever opened, so
     // `applyRefs` was null for a reason the test did not name — it could not
@@ -1767,8 +1806,11 @@ describe("the create a toolbar with no repository opens", () => {
     });
 
     expect(document.querySelector("#wt-branch-list")).toBeNull();
-    // Stored, though: the next OPEN clears the map before it asks again.
-    expect(refsHeld(h).get(REPO_A)).toBeDefined();
+    // NOT stored. This asserted the opposite until D5 was corrected: closing the
+    // form retires its opening across every channel the token carries, and refs
+    // is one of them, so an enumeration arriving after the close is a reply for
+    // a conversation that ended (.reviews/round-1.md B6).
+    expect(refsHeld(h).get(REPO_A)).toBeUndefined();
   });
 
   it("[1_2] opening a form drops the previous form's list", () => {
