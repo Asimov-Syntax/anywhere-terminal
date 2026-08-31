@@ -14,7 +14,7 @@ import {
   provisionOffer,
   REPO_ID,
 } from "./worktreeFixtures";
-import type { WorktreeCreateDraft } from "./worktreeViewTypes";
+import type { WorktreeCreateDraft, WorktreePullRequestOffer } from "./worktreeViewTypes";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -1495,6 +1495,44 @@ describe("the create dialog offers branches and a create-new entry in one list",
     expect(note?.hidden).toBe(false);
     expect(note?.textContent).toContain("pull requests");
     expect(note?.textContent).not.toContain("branches");
+  });
+
+  it("says a late capped pull-request answer is capped", () => {
+    // The path the forge ACTUALLY takes. The seeded offer was the only one the
+    // notice ever reached, because `bindPullRequests` stored the answer and
+    // re-rendered the rows without re-running the derivation that writes the
+    // notice (.reviews/round-2.md B3).
+    let apply: ((repoId: string, offer: WorktreePullRequestOffer) => void) | undefined;
+    const { host, q } = open({
+      repos: [createDefaults({ refs: { list: [...REFS], truncated: false } })],
+      bindPullRequests: (fn) => {
+        apply = fn;
+      },
+    });
+    q<HTMLInputElement>("#wt-branch").focus();
+    const note = host.querySelector<HTMLElement>("#wt-branch-partial");
+    expect(note?.hidden, "the notice was already showing, so the assertion below proves nothing").toBe(true);
+
+    apply?.(REPO_ID, { available: true, list: [...PRS], truncated: true });
+
+    expect(note?.hidden).toBe(false);
+    expect(note?.textContent).toContain("pull requests");
+  });
+
+  it("says nothing about a cap a late complete answer did not report", () => {
+    // The pair: the late path must not start ASSERTING a cap either.
+    let apply: ((repoId: string, offer: WorktreePullRequestOffer) => void) | undefined;
+    const { host, q } = open({
+      repos: [createDefaults({ refs: { list: [...REFS], truncated: false } })],
+      bindPullRequests: (fn) => {
+        apply = fn;
+      },
+    });
+    q<HTMLInputElement>("#wt-branch").focus();
+
+    apply?.(REPO_ID, { available: true, list: [...PRS], truncated: false });
+
+    expect(host.querySelector<HTMLElement>("#wt-branch-partial")?.hidden).toBe(true);
   });
 
   it("says both lists are capped when both are", () => {
@@ -3075,6 +3113,23 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
 
     type(h.branch(), "something-else");
 
+    expect(h.fork().hidden).toBe(true);
+  });
+
+  it("keeps the statement withdrawn after detached is turned back off", () => {
+    // The round-1 fix only HID the note under detached. Leaving detached hands
+    // the mode back to the box, which re-derives the still-present `pr/7` text
+    // as an ordinary branch — and the note came back describing a pull request
+    // nobody had re-selected (.reviews/round-2.md B2).
+    const h = withPrs();
+    h.pick(7);
+    expect(h.fork().hidden).toBe(false);
+
+    h.q<HTMLButtonElement>("#wt-detached").click();
+    expect(h.fork().hidden).toBe(true);
+    h.q<HTMLButtonElement>("#wt-detached").click();
+
+    expect(h.branch().value).toBe("pr/7");
     expect(h.fork().hidden).toBe(true);
   });
 

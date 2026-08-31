@@ -1292,9 +1292,13 @@ describe("the list of branches a create can pick from comes from the host", () =
       },
     });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    // Asked, so the claim above about the destination is one this test can
+    // actually make. It could not before (.reviews/round-2.md S1).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO });
     await settle();
 
     expect(view.posts.find((m) => m.type === "worktreeRefs")).toBeDefined();
+    expect(view.posts.find((m) => m.type === "worktreeCreateDefaults")).toMatchObject({ repoId: REPO });
     expect(view.posts.find((m) => m.type === "worktreePullRequests")).toMatchObject({
       repoId: REPO,
       token: 1,

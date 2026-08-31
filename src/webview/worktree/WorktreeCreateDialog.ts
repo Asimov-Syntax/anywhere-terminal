@@ -738,6 +738,15 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const now = draft.branchMode !== "detached";
     draft.branchMode = now ? "detached" : "new";
     detachToggle.setAttribute("aria-pressed", now ? "true" : "false");
+    if (now) {
+      // Detached SURRENDERS the pull request as the source: it creates at a ref
+      // and mints no branch, so `pr/<n>` is no longer what this create is about.
+      // Withdrawn here rather than hidden by the guard, because leaving detached
+      // re-derives the still-present text as an ordinary branch and would
+      // otherwise resurrect a statement nobody re-selected (.reviews/round-2.md
+      // B2).
+      forkHead = null;
+    }
     // Leaving detached hands the mode back to the box, which has to re-ask the
     // question: refs may have landed while detached was on, and `choice` was
     // not being maintained under it.
@@ -1596,7 +1605,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // mode that still uses the pull request as its source. Detached submits a
     // base and no branch at all, so the pull request is not what it creates
     // from and the statement would describe a different operation
-    // (.reviews/round-1.md B2).
+    // (.reviews/round-1.md B2). Entering detached also CLEARS `forkHead`, which
+    // is what stops the note coming back on the way out (round-2 B2); this
+    // condition stays so the note is off under detached whatever set the state.
     const forkStated =
       forkHead !== null &&
       forkHead.repoId === draft.repoId &&
@@ -1893,6 +1904,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (listOpen) {
       renderList();
     }
+    // The partial notice has exactly one writer, and this is the path the forge
+    // actually takes — the seeded offer was the only one that ever reached it
+    // (.reviews/round-2.md B3). Unsettled, as `bindRefs` leaves it: an answer
+    // arriving is not the user finishing an edit, and the destination gate is
+    // not this callback's to arm.
+    syncDerived();
   });
   deps.bindRefs?.((repoId, refs) => {
     if (closed) {

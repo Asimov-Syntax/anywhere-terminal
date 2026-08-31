@@ -105,3 +105,16 @@
     6. W3 — `src/worktree/repoPullRequests.ts` and `src/worktree/repoPullRequests.test.ts`: a cross-repository row with no owner login is dropped by the same rule that drops a row with no number or base.
     7. W4 — `src/webview/worktree/worktreeMessageHandlers.ts` (new): the pure-delegation worktree route table, built from a controller getter. `src/webview/main.ts` spreads it; `src/extension.worktreeAssembly.test.ts` uses it instead of hand-mirroring it, keeping its own entries only for the two routes main.ts genuinely writes differently.
   - **Boundary**: no fork remote is configured and no new resolution path is added — B1 is fixed by making the statement true, never by making the write happen
+
+- [x] 4_2 Fix the round-2 findings — B2, B3 and S1 — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: .reviews/round-2.md; docs/design/worktree-create.md#5-pull-request-as-a-source
+  - **Acceptance**:
+    - Outcome: A withdrawn pull-request statement stays withdrawn, and a late capped list says it is capped
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. B2 — `src/webview/worktree/WorktreeCreateDialog.ts`: entering detached withdraws the pull-request identity, because detached is where the source is surrendered. Leaving it can then resurrect nothing.
+    2. B3 — same file: a late pull-request answer for the open repository re-runs the derivation that owns the partial notice, exactly as the refs answer beside it already does.
+    3. `src/webview/worktree/WorktreeCreateDialog.test.ts`: the detach round trip, and a late `available: true, truncated: true` answer.
+    4. S1 — `src/providers/WorktreeHost.actions.test.ts`: the rejected-reader test asks for the destination and asserts the reply, making true the claim its comment already makes.
+  - **Boundary**: no new source kind is modelled and no resolution path moves — B2 is fixed by withdrawing state at the boundary that surrenders it
