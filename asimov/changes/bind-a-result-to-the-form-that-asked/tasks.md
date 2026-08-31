@@ -26,7 +26,7 @@
 
 ## 2. The host answers one opening
 
-- [ ] 2_1 Record the opening the panel named, and answer nothing for any other
+- [x] 2_1 Record the opening the panel named, and answer nothing for any other — verified: bun test 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-repeated-request-for-one-opening-never-starts-a-second-read; design.md D2, D4
   - **Acceptance**:

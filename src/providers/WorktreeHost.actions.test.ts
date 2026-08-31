@@ -1509,6 +1509,10 @@ describe("the destination the host resolves for a branch", () => {
     // form submitted `<parent>/<prefix>-<branch>`, so the path proved free and
     // the path created were different paths.
     const { host, view, dispose } = await builtHost([windowRow()], false, { createRoot: "/trees" });
+    // The form opens first. A branch ask is the user TYPING in a form already
+    // open, so it rides an opening the host was told about — one arriving
+    // against no opening at all is now answered with nothing (2_1).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     host.handleMessage(view, {
       type: "requestWorktreeCreateDefaults",
       repoId: REPO,
@@ -1517,7 +1521,11 @@ describe("the destination the host resolves for a branch", () => {
     });
     await settle();
 
-    const answer = view.posts.find((m) => m.type === "worktreeCreateDefaults") as { path: string };
+    // The reply for the BRANCH. The opening ask above is answered too, and its
+    // answer is the bare default this test exists to distinguish from.
+    const answer = view.posts.find((m) => m.type === "worktreeCreateDefaults" && m.branch !== undefined) as {
+      path: string;
+    };
     expect(answer.path).toBe("/trees/repo-feat-login-ui");
     dispose();
   });
@@ -2485,6 +2493,66 @@ describe("the provisioning offer the create form is given", () => {
     dispose();
   });
 
+  it("[2_1] a repeated ask for the LIVE opening starts no second read", async () => {
+    // A repeat is not a reopening. Superseding on one let a duplicated message
+    // retire the live read's right to publish and start another whose answer
+    // the form has no reason to prefer — so the duplicate could suppress the
+    // legitimate result, and reads grew per message rather than per form (D4).
+    let reads = 0;
+    const { host, view, dispose } = await builtHost(undefined, false, {
+      readProvisioning: async () => {
+        reads += 1;
+        return model(".env.only");
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 7 });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 7 });
+    await settle();
+
+    expect(reads, "the duplicate started its own read").toBe(1);
+    // And the form is still answered — joining the read must not cost the
+    // repeat its destination reply.
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(2);
+    expect(view.posts.find((m) => m.type === "worktreeProvisionOffer")).toMatchObject({ opening: 7 });
+    dispose();
+  });
+
+  it("[2_1] answers nothing for an opening this surface never held", async () => {
+    // A branch ask is the user typing in a form already open. One naming an
+    // opening the host was never told about is not that, and adopting it would
+    // let a malformed or replayed message spend a form's authority (D2).
+    let reads = 0;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => {
+        reads += 1;
+        return model(".env");
+      },
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 99, branch: "feat/x" });
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateDefaults")).toHaveLength(0);
+    expect(reads).toBe(0);
+    dispose();
+  });
+
+  it("[2_1] echoes the opening it is answering", async () => {
+    // The whole point of the field: without the echo the panel cached whatever
+    // arrived, because it had no way to ask which form an answer was for.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      readProvisioning: async () => model(".env"),
+    });
+
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 42 });
+    await settle();
+
+    expect(view.posts.find((m) => m.type === "worktreeCreateDefaults")).toMatchObject({ opening: 42 });
+    expect(view.posts.find((m) => m.type === "worktreeProvisionOffer")).toMatchObject({ opening: 42 });
+    dispose();
+  });
+
   it("[r2 B5] a reopened form never receives its predecessor's model", async () => {
     // Keying the read by surface+repo alone made a reopening JOIN the read
     // already in flight, so the second form was handed the first form's answer.
@@ -2504,7 +2572,10 @@ describe("the provisioning offer the create form is given", () => {
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
     // The form closes and a new one opens while the first read is unanswered.
-    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    // A reopening mints its OWN opening — that is what makes it a different
+    // form rather than a repeat of this one, and 2_1 tells the two apart by
+    // exactly this number.
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     await settle();
     expect(reads).toBe(2);
 

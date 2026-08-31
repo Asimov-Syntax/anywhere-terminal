@@ -587,15 +587,21 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   const provisionReading = new Map<string, number>();
   /**
-   * Which OPENING a read belongs to.
+   * The OPENING each surface's create form is currently on, as the PANEL named
+   * it.
    *
-   * Keying only by surface and repository made a form that closed and reopened
-   * inside the read window join its predecessor's read and receive its answer.
-   * "One read per form" is not the same property as "no two reads at once"
-   * (.reviews/round-2.md B5), so each opening takes a generation and a
-   * completion from a superseded one publishes nothing.
+   * Replaces the host-local generation this had before. A generation minted
+   * when the host processed a request could not be bound to the panel's live
+   * opening: the panel's reopening is not observable here until its message
+   * arrives, and in that window a predecessor's read resolved and published
+   * into a form that had already been replaced (design.md D2).
+   *
+   * Written synchronously inside the handler turn, before any await — the
+   * property the round-1 provisioning guard got wrong, kept explicit here.
+   * Absent means this surface holds no live opening, and a request naming one
+   * is answered with nothing rather than adopting it.
    */
-  let provisionGeneration = 0;
+  const liveOpening = new Map<string, number>();
   /**
    * The branch enumeration each repository's open dialog is riding.
    *
@@ -1741,13 +1747,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         const opening = msg.branch === undefined;
         const offerKey = { surface: surfaceKey(surface), repoId: msg.repoId };
         const reading = `${offerKey.surface} ${msg.repoId}`;
-        if (options.readProvisioning && opening) {
-          // Every opening supersedes the last, so a reopening does NOT join the
-          // read in flight — it starts its own and retires the other's right to
-          // publish. Marked before the await, which is what the round-1 guard
-          // got wrong.
-          provisionGeneration += 1;
-          const mine = provisionGeneration;
+        const key = surfaceKey(surface);
+        // Synchronously, before anything awaits. An opening ask ADOPTS the
+        // opening the panel named; any other request must already be riding one
+        // this surface holds, or it is answered with nothing — a retired or
+        // never-seen opening has no authority to spend (D2).
+        if (opening) {
+          liveOpening.set(key, msg.opening);
+        } else if (liveOpening.get(key) !== msg.opening) {
+          return;
+        }
+        // A DIFFERENT opening supersedes: it starts its own read and retires the
+        // previous one's right to publish. A repeat of the one already reading
+        // JOINS it — starting a second would let a duplicated message suppress
+        // the legitimate answer and grow reads without bound (D4). Only the READ
+        // joins: the destination reply below is cheap and idempotent, and
+        // withholding it would make a duplicate message cost the form its
+        // destination.
+        const joins = provisionReading.get(reading) === msg.opening;
+        if (options.readProvisioning && opening && !joins) {
+          const mine = msg.opening;
           provisionReading.set(reading, mine);
           void options
             .readProvisioning(repo.mainPath)
