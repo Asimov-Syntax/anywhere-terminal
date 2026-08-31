@@ -1224,6 +1224,54 @@ export interface WorktreeRemoveRequestMessage {
   fingerprint?: string;
 }
 
+/**
+ * WebView → Extension: what would this removal cost? Answered, never acted on.
+ *
+ * Its own message because the only other way to obtain a report is
+ * `worktreeMutationResult.result.kind === "blocked"`, which the host produces BY
+ * ATTEMPTING THE REMOVAL. So a worktree with nothing at risk was deleted from
+ * the first menu click, having never been reported at all — the ellipsis in
+ * `Remove Worktree…` promised a dialog that could not exist for it (round-3 B1,
+ * design.md D6). Declared in worktree-rpc.md § 2.1 since WT-013.1 and never
+ * implemented until now.
+ */
+export interface WorktreeRemoveAssessRequestMessage {
+  type: "worktreeRemoveAssess";
+  worktreeId: string;
+}
+
+/**
+ * Extension → WebView: the removal report, and what it does or does not authorize.
+ *
+ * DISCRIMINATED rather than flat, and that is load-bearing. `checksFor` marks the
+ * ENTIRE catalogue `unproven` for an assessment it could not make — refusal-class
+ * checks included — and `isRefusedByChecks` refuses on an unproven refusal since
+ * task 1_5. A flat payload would therefore render a worktree the host merely
+ * could not READ as a hard refusal, offering no control at all, which is the
+ * opposite of what the user needs (design.md D8).
+ */
+export interface WorktreeRemoveAssessmentMessage {
+  type: "worktreeRemoveAssessment";
+  worktreeId: string;
+  result:
+    | {
+        kind: "assessed";
+        assessment: WorktreeRemoveAssessmentPayload;
+        /**
+         * PRESENCE is the authority to force, and its absence is not a missing
+         * field but an answer: this removal has nothing to force past.
+         *
+         * Non-null under exactly the predicate the blocked path already issues
+         * under — `atRisk(evidence)` — and null for a refusal, as that path also
+         * already sends. So asking what a clean worktree would cost mints no
+         * deletion authority, and its confirmation travels the ordinary unforced
+         * path, which re-evaluates before it acts (design.md D7).
+         */
+        fingerprint: string | null;
+      }
+    | { kind: "unavailable"; unreadable: readonly string[] };
+}
+
 /** WebView → Extension: lock this worktree, optionally with a reason. */
 export interface WorktreeLockMessage {
   type: "worktreeLock";
@@ -1452,6 +1500,7 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateProbeMessage
   | WorktreeAuthorizeDebrisMessage
   | WorktreeRemoveRequestMessage
+  | WorktreeRemoveAssessRequestMessage
   | WorktreeLockMessage
   | WorktreeUnlockMessage
   | WorktreePruneMessage
@@ -1504,6 +1553,7 @@ export const WORKTREE_MESSAGE_TYPES = [
   "worktreeResumeHere",
   "worktreeCreate",
   "worktreeRemove",
+  "worktreeRemoveAssess",
   "worktreeLock",
   "worktreeUnlock",
   "worktreePrune",
@@ -2442,6 +2492,7 @@ export interface PullRequestOffer {
 
 export type ExtensionToWebViewMessage =
   | WorktreeMutationResultMessage
+  | WorktreeRemoveAssessmentMessage
   | WorktreeCreateDefaultsMessage
   | WorktreeRefsMessage
   | WorktreePullRequestsMessage

@@ -425,6 +425,7 @@ const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unk
     entryId: "claude:s1",
   },
   worktreeRemove: { type: "worktreeRemove", worktreeId: "/repo-wt/feat", force: false },
+  worktreeRemoveAssess: { type: "worktreeRemoveAssess", worktreeId: "/repo-wt/feat" },
   worktreeLock: { type: "worktreeLock", worktreeId: "/repo-wt/feat", reason: "release build" },
   worktreeUnlock: { type: "worktreeUnlock", worktreeId: "/repo-wt/feat" },
   worktreePrune: { type: "worktreePrune", repoId: "/repo", confirmedCount: 2 },

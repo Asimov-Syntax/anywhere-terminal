@@ -84,7 +84,7 @@
 
 ## 2. The menu asks before it deletes (round-3 B1)
 
-- [ ] 2_1 Put the assess round trip on the wire
+- [x] 2_1 Put the assess round trip on the wire — verified: pnpm run check-types && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: none
   - **Refs**: design.md D6, D8
   - **Acceptance**:
@@ -93,6 +93,7 @@
   - **Plan**:
     1. `src/types/messages.ts`: add `WorktreeRemoveAssessRequestMessage` and `WorktreeRemoveAssessmentMessage` as design.md § D8 declares them, and register the request in `WORKTREE_MESSAGE_TYPES` — it travels webview → extension.
     2. Same file: the assessment reuses `WorktreeRemoveAssessmentPayload`; do not define a second copy of it or of `RemovalCheck`.
+    3. `src/providers/TerminalViewProvider.worktree.test.ts`: the routing test is driven from `WORKTREE_MESSAGE_TYPES` and requires one sample message per listed type — add the `worktreeRemoveAssess` sample so the new door is proven to reach a provider.
   - **Boundary**: types only — no handler, no render, no behaviour changes here
 
 - [ ] 2_2 The host answers a report and removes nothing
