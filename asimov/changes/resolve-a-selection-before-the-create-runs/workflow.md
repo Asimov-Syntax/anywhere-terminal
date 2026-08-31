@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -73,3 +73,4 @@ Planned at: c7fc268d (re-planned after the cycle-2 handback)
 - 7_2: D9's re-identification is four checks, and mutation shows only three have an observable consequence — the windows after the enumeration, the corroboration and the base resolution each have work the next gate cannot undo, and each has its own case. The check before the enumeration has nothing but a synchronous derivation after it, so its mutant is caught by the next gate; it is kept because the read cannot be awaited off an opening that may be gone, and it is witnessed by the enumeration case rather than by one of its own.
 - 7_3: the two walks W7 asked for are non-vacuous against different mechanisms. The occupied-override walk fails on its own the moment the override wins at `stated`. The withdrawn-override walk needs BOTH the override winning and the refusal no longer withdrawing it — under either alone the repair target is still what the form states, because the resolution now owns the destination whether or not the withdrawal fires. Recorded rather than strengthened: the pair is what the decision changed, and a walk that failed on one mutation alone would be asserting a mechanism rather than the invariant.
 - Verify gate (cycle-3 build): check-types clean; `pnpm exec biome check src` at the recorded baseline — 3 errors / 14 warnings / 1 info, every one in `src/agentHooks`, `src/cursor`, `src/vault` and CSS files this change does not touch; `pnpm run test:unit` 5992/5992; `pnpm run gate:fs-deletion` I10 ok.
+- Cycle 3 closed APPROVE at round 7 (verification). Round 6 raised one blocker, B11 — the detached action note still stated the classification the toggle discards — fixed as 7_4 under D5 as amended, no D# changed. Rounds 3-5 were cycle 2; the handback between them is what this cycle verified.

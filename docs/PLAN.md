@@ -592,7 +592,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | None |
 | **Notes** | Recover is deliberately **not** here — it deletes, and is WT-012.12. Adopt is **not** here either: it writes into git's administrative directory and is WT-012.15. Reattach is the subtle one, and was verified against git 2.50.1: it applies **only** while the administrative entry survives, which is exactly git's own `prunable` flag that the model already carries. Once `git worktree prune` has removed that entry neither `repair` nor `add` can attach it, which is why that state is a separate task rather than a clause here. This task must also report the occupied candidate the suffixing skipped, or WT-012.12 has nothing to act on |
 | **Acceptance** | An existing branch resolves to reuse rather than a suffixed near-duplicate; a worktree git reports `prunable`, whose administrative entry still exists and whose directory is on that branch at the expected commit, resolves to reattach and repairs in place rather than running `worktree add`; a registration whose administrative entry is actually gone is never offered as reattach; reattach never rewrites the working tree; the resolution reports both the free path and the occupied candidate it skipped, with what was found there; base ref cannot be expressed for reuse or reattach and is validated for fresh, and a debris disposition does not disable it; each mode is resolved before submit rather than surfacing as a git failure after it |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.9] A Pull Request Is a Source, Not a Tab
 

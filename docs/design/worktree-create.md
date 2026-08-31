@@ -257,6 +257,22 @@ A `debris` disposition (§ 2.0) is the one exception to "non-existent or empty",
 disposition is explicit rather than an automatic fallback. `reattach` and `adopt` are further
 exceptions: their destination is the surviving directory by definition.
 
+**A supplied destination is a candidate, not the path submitted.** Where the user overrides the
+derived path, that value travels as the probe's `candidatePath` — it is part of what the question
+is about, so editing it asks a new one — and the resolution's own target is what the form states
+and what the create carries. The two agree whenever the candidate is free, which is the only case
+worth overriding for; where they differ, the candidate was occupied or resolved outside the create
+root, and honouring it would hand git a path the host had refused while the form displayed
+another. A mode that acts on a directory of its own — a repair acts on the registration's — refuses
+the destination control with its reason rather than accepting and ignoring it, on the same rule the
+base ref follows (§ 2.1), and withdraws any override standing at the time.
+
+**A create is not offered against an unresolved selection**, in every mode the form offers. A
+detached create is resolved like any other: the toggle outranks the classification's MODE and
+nothing else, so a detached create consumes the answer's destination, discards its mode, carries no
+`resolved` on the wire, and states a detached create rather than the action of the classification it
+threw away.
+
 ## 4. Form presentation
 
 The form is a worktree form, not a git-plumbing form. What the user states is a **branch name**;
