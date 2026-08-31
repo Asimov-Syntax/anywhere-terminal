@@ -7,13 +7,13 @@
 ## Plan
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
+- [x] `asm change validate` passes
 - [x] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-013.4
 Lane: full (standard) — MEDIUM risk: presentation only, but it decides what a user is told before authorizing an irreversible deletion, and retires an existing safety guard | flags: none
-Planned at: 7480a232
+Planned at: 4e7443c4
 - Worktree based on huybuidac/create-worktree-harden, not main: WT-013.1 and WT-013.2 are the deps and neither is merged to main yet — main's docs/PLAN.md has no WT-013 tasks at all and src/worktree has no orphan proofs. A first attempt on the default base was discarded before any work landed.
 - No new-api-contract flag: WT-013.1 and WT-013.2 already carry `cls`, the four-outcome vocabulary and the three proofs in the same checks array, so this change alters no message shape.
 - 1_2 leaves a residual D2/D3 composed: a REFUSAL-class check that is `unproven` no longer withholds anything (`isRefusedByChecks` refuses only on `failed`), so it falls to the confirmable classes — typed if one of those is failing or unproven, ordinary otherwise. Both the spec's "Otherwise ... ordinary" and D2 say this explicitly, so it is built as accepted; flagged here because the retired guard was the only thing covering it and review should see it named rather than infer it.
@@ -53,3 +53,55 @@ Planned at: 7480a232
 - Round-3 W3 fixed as task 1_7, and it was my own defect from 1_6: `refuser` selected the right check but the isMain and containsWorktrees branches still tested `failed(...)`, so two simultaneous failures rendered the later reason. Every branch now dispatches on `refuser`. Mutation testing then exposed a second gap — the isMain branch could revert undetected because every producer lists isMain first — so there is now a report whose host order puts busyAgents ahead of it.
 - Round-3 B1: my rebuttal was OVERRULED and I accepted it without further argument, as undertaken when filing it. The chair and the contracts specialist read the delta rescope as cutting scope the blueprint and task Acceptance establish. B1 is neither fixed nor risk-accepted; it is the user's decision and the change is parked on it with everything else complete.
 - Verify Gate after 1_7: 6014/6014, check-types clean, biome 3/14/1, I10 ok. The pre-existing src/vault/snapshotPool.test.ts flake appeared once more and cleared on re-run; already proven pre-existing on a clean tree at cf4492aa.
+
+HANDBACK (round-3 B1, 2026-08-31). Gate 2, All tasks done and Verify gate unticked per the handback
+rule; Review done and Gate: implementation approved were already unticked. Tasks 1_1 to 1_7 stay
+`[x]` — they are built, verified and untouched by this. Section 2 adds the B1 remedy: five tasks,
+waves `2_1 | 2_2, 2_3 | 2_4 | 2_5`.
+
+The remedy was planned separately, as change `report-what-was-checked-before-confirming`, before
+either session knew the other existed. That change is DELETED here rather than built: its part 2 was
+this change's 1_1 and 1_2 already shipped, and building it would have put two divergent
+`WorktreeRemoveDialog.ts` implementations on one branch. Its parts 1 and 3 are section 2 above, and
+its oracle dispositions are in design.md's ledger. Nothing else of it is kept.
+
+Rejected the SuggestedFix, deliberately: round-3 B1 proposes "a fingerprint-bound assessment for
+clean and proof-only removals". D7 does not, and the user approved that call. A fingerprint IS
+force-removal authority, so issuing one for a worktree with nothing wrong opens a deletion-authority
+door — the defect this project shipped twice, at round-1 B2 and round-3 B2 of WT-012.16, both walked
+back through by a replayed message. The FINDING binds; the suggested remedy does not. A clean confirm
+goes down the existing unforced path carrying no fingerprint, which re-checks at execution time
+anyway. Review should test this disagreement rather than assume it settled.
+
+Escalation flags for the next round, beyond the original `none`: `new-api-contract` (two wire
+messages) and `security-privacy` (the path is irrevocable deletion). The original Lane line predates
+section 2 and its `flags: none` no longer describes this change.
+
+Blueprint edit pending approval: worktree-rpc.md § 2.2 line 114 declares
+`worktreeRemoveAssessment { worktreeId, checks, fingerprint, branchDelete? }`. Three corrections at
+Blueprint Sync, per design.md D8 — `fingerprint` nullable, `contained` named (the shipped payload has
+carried it since WT-013.1 and the doc never caught up), and the reply discriminated so an
+`unavailable` assessment is not readable as a refusal. `branchDelete` stays documented and
+unimplemented as WT-013.3's obligation.
+
+FOLLOW-UP, needs its own PLAN task from the user — NOT in this change's scope and not closed by it:
+fingerprint redemption can be satisfied by evidence the user never saw. `isIdentityPreservingSubset`
+(worktreeBlockers.ts:35-36) compares the lock as a BOOLEAN and the digest
+(worktreeFingerprint.ts:179-189) omits `lockReason`, so lock-A → unlock → lock-B between report and
+confirm still redeems. Separately, the 150 ms presence projection cap can leave pane rows stale while
+an agent has begun running, and redemption compares pane IDENTITY, not activity. Both are reachable
+today through blocked→force; this change neither introduces nor widens them, which is why they are a
+ledger `n/a` here rather than a blocker.
+
+Knowledge candidate: a wire message documented in worktree-rpc.md is not necessarily implemented |
+Surprise: `worktreeRemoveAssess` and `worktreeRemoveAssessment` have been in § 2.1 line 97 and § 2.2
+line 114 through two prior tasks that read that section as authority, and neither exists in
+src/types/messages.ts | Evidence: docs/design/worktree-rpc.md:97,114 vs src/types/messages.ts |
+Consumer: plan | Action: when a task's Design Ref names a wire message, grep src/types/messages.ts
+for the type before planning on it.
+
+Knowledge candidate: `asm change list` is branch-local and cannot see a change built on another
+branch | Surprise: WT-013.4 was planned twice, in two sessions, because each ran `change list` in its
+own worktree and saw nothing | Evidence: this change vs report-what-was-checked-before-confirming,
+both on huybuidac/create-worktree-harden only after a merge | Consumer: plan | Action: run
+`git worktree list` and read the branch names in Stage 1 before scaffolding a PLAN task.

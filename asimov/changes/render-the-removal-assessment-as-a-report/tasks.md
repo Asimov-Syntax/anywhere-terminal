@@ -81,3 +81,63 @@
     1. `src/webview/worktree/WorktreeRemoveDialog.ts`: the `isMain` and `containsWorktrees` branches test the refusing check's id rather than `failed(checks, ...)`, so a second failing check cannot displace the first.
     2. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: cover two simultaneous failures, and a report whose host order puts another refusal check ahead of `isMain`.
   - **Boundary**: the lock-override clause in the consequence box keeps its own `failed` test — it states a fact about the lock, not which check refused
+
+## 2. The menu asks before it deletes (round-3 B1)
+
+- [ ] 2_1 Put the assess round trip on the wire
+  - **Deps**: none
+  - **Refs**: design.md D6, D8
+  - **Acceptance**:
+    - Outcome: The two assess messages exist and every caller names their fields
+    - Verify: command pnpm run check-types
+  - **Plan**:
+    1. `src/types/messages.ts`: add `WorktreeRemoveAssessRequestMessage` and `WorktreeRemoveAssessmentMessage` as design.md § D8 declares them, and register the request in `WORKTREE_MESSAGE_TYPES` — it travels webview → extension.
+    2. Same file: the assessment reuses `WorktreeRemoveAssessmentPayload`; do not define a second copy of it or of `RemovalCheck`.
+  - **Boundary**: types only — no handler, no render, no behaviour changes here
+
+- [ ] 2_2 The host answers a report and removes nothing
+  - **Deps**: 2_1
+  - **Refs**: design.md D6, D7, D8; specs/worktree-panel/spec.md#a-removal-is-reported-before-anything-is-deleted
+  - **Acceptance**:
+    - Outcome: An assess request answers with the report and deletes nothing
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: handle `worktreeRemoveAssess` by calling the existing `assessRemoval` binding and posting `worktreeRemoveAssessment` to the asking surface. A target that will not resolve posts nothing.
+    2. Same file: expose the fingerprint the assessment carries through the mutation bindings rather than reimplementing it — `WorktreeMutationService.issueFingerprint` exists but is not on `WorktreeMutationBindings`, so widen that seam.
+    3. `src/providers/WorktreeHost.actions.test.ts`: the removal capability is never invoked for an assess; an unresolvable target posts nothing.
+  - **Boundary**: `assessRemoval` and `evaluateRemoval` are called, never reimplemented, and no check is added, removed or reclassified
+
+- [ ] 2_3 The confirmation carries only the authority it was handed
+  - **Deps**: 2_1
+  - **Refs**: design.md D7; specs/worktree-panel/spec.md#a-confirmation-carries-only-the-authority-its-report-was-granted
+  - **Acceptance**:
+    - Outcome: A report with no fingerprint confirms unforced
+    - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeRemoveDialog.ts`: widen `onConfirm` to accept the nullable fingerprint and forward what the report carried, synthesising nothing.
+    2. `src/webview/worktree/WorktreeRemoveDialog.test.ts`: a null-fingerprint report confirms and hands back null; a fingerprint-carrying one hands back that fingerprint; the control chosen for a `notApplicable` report is the ordinary one.
+  - **Boundary**: `confirmationFor` is not touched — D9 is that `notApplicable` already lands on ordinary, and a test pins it rather than a new branch
+
+- [ ] 2_4 Remove Worktree opens the report
+  - **Deps**: 2_2, 2_3
+  - **Refs**: design.md D6, D7, D8; specs/worktree-panel/spec.md#{a-report-that-could-not-be-produced-is-not-a-refusal, a-confirmation-carries-only-the-authority-its-report-was-granted}
+  - **Acceptance**:
+    - Outcome: Choosing Remove Worktree deletes nothing until the report is answered
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeController.ts`: the `removeWorktree` action posts `worktreeRemoveAssess` rather than an unforced `worktreeRemove`; handle the reply by opening the report, and route the `unavailable` arm to the retry surface the host's own `unavailable` already uses.
+    2. Same file: the confirm posts `force: true` with the fingerprint where the report carried one, and `force: false` with no fingerprint key where it did not.
+    3. `src/webview/worktree/worktreeMessageHandlers.ts`: route the new inbound message.
+    4. `src/webview/worktree/WorktreeController.test.ts`: choosing remove posts an assess and no removal; an all-passed report confirms to `force: false`; a failed-check report confirms to `force: true` with its fingerprint; an `unavailable` reply mounts no confirmation control.
+  - **Boundary**: the existing blocked-result path stays — a removal blocked at execution time still reports and re-offers, and D7 depends on it
+
+- [ ] 2_5 Prove it through the shipped wiring
+  - **Deps**: 2_4
+  - **Refs**: design.md D6, D7
+  - **Acceptance**:
+    - Outcome: The assembled extension reports before removing and removes on confirmation
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts`: walk a clean worktree from the menu action to the report, assert nothing was removed before the confirm, then that the confirm removes it.
+    2. Same file: walk a worktree with a failed confirmable check and assert the typed confirmation is what authorizes the forced removal.
+  - **Boundary**: no production behaviour is added here — this task proves what 2_1 to 2_4 built, through the real assembly

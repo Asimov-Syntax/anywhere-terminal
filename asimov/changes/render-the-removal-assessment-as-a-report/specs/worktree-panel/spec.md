@@ -34,3 +34,40 @@ Given an assessment, the dialog SHALL decide its control from the classes and ou
 
 - **WHEN** a refusal-class check is reported as unproven
 - **THEN** no confirmation is offered, the same as if that check had failed
+
+### Requirement: A removal is reported before anything is deleted
+
+WHEN the user asks to remove a worktree, the panel SHALL present the removal report and SHALL NOT
+delete anything until the user answers it. Asking for the report SHALL NOT itself remove, modify, or
+delete anything.
+
+#### Scenario: A worktree with nothing wrong with it
+
+- **WHEN** the user asks to remove a worktree whose every confirmable check passed
+- **THEN** the report is presented with an ordinary confirmation, and the worktree is removed only after the user answers it
+
+#### Scenario: A worktree that is no longer there
+
+- **WHEN** the checks that inspect the worktree's contents report not applicable because it is gone
+- **THEN** the report is offered with an ordinary confirmation, the same as one whose checks passed
+
+### Requirement: A confirmation carries only the authority its report was granted
+
+A confirmation SHALL authorize a forced removal ONLY where the report it answers was itself granted
+that authority. Where it was not, the confirmation SHALL take the ordinary removal path.
+
+#### Scenario: Confirming a report that was granted nothing
+
+- **WHEN** the user confirms a report that carries no authority to force
+- **THEN** the ordinary removal is requested, and it is the removal itself that re-checks the worktree
+
+### Requirement: A report that could not be produced is not a refusal
+
+WHEN the worktree could not be assessed at all, the panel SHALL say the assessment could not be made
+and offer to ask again. It SHALL NOT render that state as a report, and SHALL NOT present it as a
+refusal to remove.
+
+#### Scenario: The worktree could not be read
+
+- **WHEN** the assessment cannot be produced because what it would inspect could not be read
+- **THEN** the panel says so and offers a retry, rather than showing a report with every check unproven

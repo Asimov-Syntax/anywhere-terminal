@@ -56,15 +56,11 @@ predicate changes rather than the rule. Fail-closed within each class is what D4
 meaning of `unproven`: it withholds whatever its own class gates — the removal for a refusal, an
 ordinary confirm for a risk, only the option it gated for a proof.
 
-**The ordinary branch is not reachable through today's producer.** The host gates on `atRisk`
-(`worktreeMutationService.ts`) and removes a clean worktree without sending a report at all, so
-every assessment that does reach this dialog carries a confirmable check that is failing or
-unproven. That gate is the host's pre-existing policy and is not in WT-013.4's acceptance, which
-governs what the dialog renders and which control it selects for an assessment it is given. The
-branch stays because `confirmationFor` is total over the assessments the wire permits, and a
-function that omits a wire-legal case is one the next producer breaks silently. Whether a clean
-removal should confirm at all is a real question — round-2 B1 — and it belongs to a task over the
-removal flow, not to this one.
+**The ordinary branch was unreachable, and D6 is what reaches it.** This paragraph used to argue
+that the host's `atRisk` gate — which removes a clean worktree without sending a report at all — was
+outside this change. Round 3 overruled that (B1) and the overrule is accepted. `confirmationFor`
+stays total over the assessments the wire permits, as it always was; what changed is that a producer
+now exists for its ordinary case. See D6 and D7.
 
 `isRefusedByChecks` is the single definition and has no host caller, so the correction changes what
 this dialog offers and no host behavior. The host reaches its own refusal through
@@ -121,3 +117,110 @@ where there are panes, and name the branch only where there is one.
 | Assessment state | n/a — the dialog holds one assessment for its lifetime and is disposed on answer. A newer assessment arrives as a new dialog |
 | Durable stores, caches, locks, spawned processes | n/a — this change writes nothing outside the DOM |
 | Two racing hosts | n/a — the fingerprint already binds an authorization to the set it was granted over, and worktree-panel's "A confirmation authorizes only the risks it was shown" is the contract |
+
+## Round-3 B1 remedy — the report is shown before anything is deleted
+
+D2 recorded that the ordinary branch is unreachable and argued the host's `atRisk` gate was not this
+change's business. That rebuttal was **overruled** in round 3 and the overrule is accepted: the
+blueprint Design Ref and task Acceptance both establish the ordinary confirmation as this change's,
+and a control the shipped flow can never mount is not delivered. The decisions below make it
+reachable. D1 through D5 are unchanged.
+
+### D6 — Asking what a removal would cost is its own message, and it acts on nothing
+
+`worktreeRemoveAssess { worktreeId }` is answered by `worktreeRemoveAssessment`. It resolves the
+target, evaluates, posts, and removes nothing.
+
+The contract is not invented here: [worktree-rpc.md](../../../docs/design/worktree-rpc.md) § 2.1
+line 97 and § 2.2 line 114 already declare both messages. Neither was ever implemented, so the only
+way the report reaches the panel today is `worktreeMutationResult.result.kind === "blocked"`, which
+the host produces **by attempting the removal**. That is the whole mechanism of B1: a clean worktree
+is deleted because there is no way to ask.
+
+Reuse, not new machinery — `WorktreeMutationBindings.assessRemoval`
+(`worktreeMutationService.ts:203`) already exists and is what the removal path itself calls.
+
+**Rejected — make every unforced removal report first.** The user would then need a way to say "I
+have seen it", which is either a second unforced request the host cannot tell from the first, or new
+per-worktree host state. That is more machinery than a read-only message, and it fuses "ask" with
+"act" in the one place this change exists to separate them.
+
+### D7 — The fingerprint's PRESENCE is the force authority, and the panel never mints it
+
+```
+fingerprint: string  →  confirm posts  worktreeRemove { force: true, fingerprint }
+fingerprint: null    →  confirm posts  worktreeRemove { force: false }
+```
+
+The assessment carries `fingerprint: string | null`, non-null under **exactly** the predicate the
+blocked path already uses — `atRisk(assessment.evidence)` at `worktreeMutationService.ts:467`. A
+refusal carries `null`, as the blocked path already sends (`:461`). A clean or `notApplicable`
+assessment carries `null` and its confirmation therefore goes down the **existing unforced path**,
+which re-evaluates and blocks if the worktree stopped being clean in the meantime.
+
+So assessing a healthy worktree mints no force authority. The alternative — issue on every assess,
+for symmetry, which is what round-3 B1's SuggestedFix proposes — is **rejected**: it would make "ask
+what this would cost" a deletion-authority door on a worktree where nothing is wrong. This project
+shipped exactly that door twice, at round-1 B2 and round-3 B2 of WT-012.16, both walked back through
+by a replayed message.
+
+This needs `WorktreeRemoveDialogDeps.onConfirm` to widen from `(fingerprint: string)` to
+`(fingerprint: string | null)`. That widening is the mechanism: the dialog forwards the authority it
+was handed and cannot manufacture one it was not.
+
+### D8 — An assessment that could not be made is not a refusal
+
+`checksFor({ kind: "unavailable" })` marks the **entire** catalogue `unproven`, refusal-class checks
+included (`removalChecks.ts:70-84`). Under D2's predicate — corrected in 1_5 so that an unproven
+refusal refuses — a flat assessment message would therefore make a worktree the host merely could not
+READ render as a hard refusal with no control at all.
+
+So the reply is discriminated and the panel routes on the discriminant, exactly as the host already
+routes its own `unavailable` away from the blocked path (`worktreeMutationService.ts:452`):
+
+```ts
+export interface WorktreeRemoveAssessRequestMessage {
+  type: "worktreeRemoveAssess";
+  worktreeId: string;
+}
+
+export interface WorktreeRemoveAssessmentMessage {
+  type: "worktreeRemoveAssessment";
+  worktreeId: string;
+  result:
+    | { kind: "assessed"; assessment: WorktreeRemoveAssessmentPayload; fingerprint: string | null }
+    | { kind: "unavailable"; unreadable: readonly string[] };
+}
+```
+
+`WorktreeRemoveAssessmentPayload` (`messages.ts:2249`) is reused verbatim — it already carries
+`checks` and the named `contained` list, and is already what the blocked path sends. Nothing about
+`RemovalCheck` moves.
+
+**Blueprint reconciliation.** § 2.2 line 114 declares the payload as
+`{ worktreeId, checks, fingerprint, branchDelete? }`. Three corrections, owned by this change's
+Blueprint Sync: `fingerprint` is `string | null` rather than required-and-present, matching the
+`blocked` result it mirrors; `contained` is named, because the shipped payload has carried it since
+WT-013.1 and the doc simply never caught up; and the reply is discriminated per D8. `branchDelete`
+stays in the doc **unimplemented and owned by WT-013.3** — this change adds no branch-delete offer.
+
+### D9 — `notApplicable` needs no new rule
+
+A worktree that is gone yields confirmable checks with outcome `notApplicable`
+(`removalChecks.ts:97-105`), which is neither "passed" nor "failed or unproven". `confirmationFor`
+already returns `"ordinary"` for it, because its typed predicate tests `failed || unproven` and its
+refusal predicate does the same within its own class. The fourth state was always handled; it was
+never *named*, and an unnamed reachable state is one a later edit breaks silently. The spec now names
+it and a test pins it. No code changes for this decision.
+
+## Obligation ledger
+
+| Claim | Semantics | Defeater | Witness / check | Disposition |
+|---|---|---|---|---|
+| Asking for a report removes, modifies or deletes nothing | For every `worktreeRemoveAssess`, no destructive call is reached | A handler that shares a path with `removeWorktree` and falls through to it | The handler calls `assessRemoval` — read-only at `WorktreeHost.ts:3017`, and the orphan proofs it runs are read-only at `orphanProofs.ts:87-93`, `:142-200` — and posts. A test asserts the removal capability is never invoked for an assess. `pnpm run gate:fs-deletion` runs in this change's Verify Gate | supported |
+| Assessing mints force authority under exactly the conditions that already minted it, and no others | `fingerprint !== null` ⟺ `atRisk(evidence)`, the same predicate and the same call the blocked path makes | Issuing unconditionally "for symmetry"; a clean confirm posting `force: true` | D7. Tests: an all-passed assessment carries `null` and its confirm posts `force: false`; a `notApplicable` one does the same; a failed-confirmable one carries a fingerprint and its confirm posts `force: true`; a refusal carries `null` and mounts no control | supported |
+| The report→confirm window is not lengthened by moving the report earlier | The user gesture count and the elapsed window between issue and redemption are unchanged | An assess issued long before any intent to remove — e.g. on hover, on selection, or eagerly per row | The only caller is the Remove Worktree action itself, so the sequence is click→read→confirm where it was click→blocked→read→force. One issue per explicit remove intent, as today | supported |
+| A worktree that could not be read cannot be rendered as refusing removal | An `unavailable` assessment reaches no code path that computes `confirmationFor` | A flat reply shape that erases the kind, leaving every check `unproven` | D8's discriminant. A test sends `kind: "unavailable"` and asserts the retry surface, not a report, and that no confirmation control exists | supported |
+| The panel cannot manufacture force authority | The dialog forwards `fingerprint` and never synthesises one | `onConfirm` defaulting a null to a string, or the controller posting `force: true` when it holds no fingerprint | D7's nullable `onConfirm`. A test drives a null-fingerprint confirm and asserts the posted message is `force: false` with no `fingerprint` key | supported |
+| Redemption cannot be satisfied by evidence the user never saw | — | Lock reason A → unlock → lock reason B between report and confirm redeems, because `isIdentityPreservingSubset` (`worktreeBlockers.ts:35-36`) compares the lock as a BOOLEAN and the digest (`worktreeFingerprint.ts:179-189`) omits `lockReason`. Second schedule: the 150 ms presence projection cap can leave pane rows stale while an agent has begun running, and redemption compares pane IDENTITY, not activity | **Not a claim this change makes.** Both defeaters are properties of the shipped force path, reachable today through blocked→force, and neither is introduced or widened here — see the window row above. Recorded so it is not mistaken for something this change closed | n/a — pre-existing; needs its own PLAN task, named in workflow.md Notes |
+| Typing never unlocks a proof-gated option | The typed predicate excludes `cls === "proof"` | A proof check misclassified `confirmable` | The class is the host's and the panel reads it. The witness is **vacuous until WT-013.3** ships a proof-gated control: with none in the DOM, no test can fail. Stated rather than dressed as covered | n/a — no proof-gated control exists to gate; WT-013.3 owns the real witness |
