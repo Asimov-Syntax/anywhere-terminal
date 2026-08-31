@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -66,3 +66,8 @@ Auto-decision (fastlane, D4): a FAILED provisioning read may be retried within i
 alternative — one attempt per opening, ever — makes a transient filesystem error cost the user the
 whole provisioning section until they close and reopen the form, and the spec bounds reads to one
 per opening for duplicate DELIVERY, not one attempt per opening.
+
+Round 1 closed: all six BLOCKs fixed (B1/B3/B5/B6a in ec53cc98; B2 in 8b06a240; B4 in 7ed9cd15;
+B6b in 9442228d), plus the cross-repository late publish asm-review-logic reported directly and the
+chair's report does not carry. Verify gate re-run green: 269 files / 6167 tests, check-types clean,
+biome 3/14/1 baseline.
