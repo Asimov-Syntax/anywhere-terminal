@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -113,3 +113,25 @@ rather than a choice: hand back to plan. Options 2 and 3 are unavailable anyway 
 risk-accepted anything, and the bounded extension was spent on round 3. The 1->1 trajectory that
 fired the guard is again supersession accounting: round 4 spawned no specialist and adjudicated
 nothing, so B2's fix has never been looked at. Adjudicated-round trajectory is 6 -> 1.
+
+Round 5 (discovery, cycle 3): WARN — 0 BLOCK, 1 WARN. Every prior blocker adjudicated fixed,
+including round-3 B2. Five lenses ran; four returned nil. Three of them reported out of band to the
+coordinator rather than the chair, and data-security's first report was a bare nil that the chair
+resumed for explicit coverage before accepting — worth remembering, since round 1 lost a finding
+exactly this way.
+
+W1 accepted and fixed in 50f90b8d (task 5_1) rather than deferred as an ordinary WARN. Reason is
+timing, not severity: `asm change apply` writes this spec delta into the durable specs at archive,
+so leaving it open would have committed "sent on every request that belongs to that opening" while
+`worktreeCreate` demonstrably carried none. Equality, not consumption — consumption would be a new
+decision needing its own `D#`.
+
+Auto-decision (fastlane, W1 fixture strategy): fixtures were given a real opening rather than having
+assertions relaxed. This mattered most for the refusal cases, which without a live opening would
+have passed by hitting the new guard instead of the shape checks they exist to exercise. Four panel
+cases now open a real form so the asserted opening is 1 rather than 0 — a value `openCreateForRepo`
+can never post, since it advances the counter before it asks.
+
+The `[4_1]` assembly walk caught a real regression this introduced: it hand-sent a create with no
+form open, and its `git worktree repair` assertion failed until the walk opened one. It failed in
+isolation, not only under the full suite, which is what distinguished it from the known flakes.
