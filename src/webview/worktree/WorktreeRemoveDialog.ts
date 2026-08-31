@@ -4,10 +4,12 @@
 // They are one dialog because they are one question with two answers, and keeping
 // them together is what stops the refusal from drifting into a disabled button:
 //
-//  - CONFIRMABLE: every blocker is named in one list, and the warning says what
-//    force actually authorizes — irrevocable deletion of everything under the path,
-//    INCLUDING files written after the confirmation — plus what it leaves behind
-//    (panes still running in a deleted directory, the branch kept).
+//  - CONFIRMABLE: every check is named in one list with its own outcome, and the
+//    warning says what the confirmation authorizes — irrevocable deletion of
+//    everything under the path, INCLUDING files written after the confirmation —
+//    plus what it leaves behind (panes still running in a deleted directory, the
+//    branch kept). Said for an ordinary confirmation as much as a forced one; a
+//    confirmable risk that failed or could not be read is what earns the force.
 //  - REFUSED: `busyAgents > 0` or `isMain`. No confirm button EXISTS to click; the
 //    dialog names the agent instead and offers to show it. A disabled confirm would
 //    imply some other input could enable it.
@@ -56,15 +58,21 @@ export function isRemoveRefused(checks: readonly RemovalCheck[]): boolean {
   return isRefusedByChecks(checks);
 }
 
-function blockerItem(icon: string, build: (span: HTMLElement) => void): HTMLLIElement {
-  const li = document.createElement("li");
-  const iconEl = document.createElement("span");
-  iconEl.innerHTML = icon;
-  iconEl.setAttribute("aria-hidden", "true");
-  const text = document.createElement("span");
-  build(text);
-  li.append(iconEl, text);
-  return li;
+/**
+ * Which confirmation this assessment earned, decided once (design.md D2).
+ *
+ * Reads the CLASS the host sent rather than a list of ids, which is why it lands
+ * on the right side for a check whose class is computed host-side —
+ * `externalAgents` is a refusal or a confirmable risk depending on what was found
+ * — without this file knowing that rule exists. A safety rule implemented in two
+ * places is one that will disagree with itself (worktree-removal.md § 2.2).
+ */
+export function confirmationFor(checks: readonly RemovalCheck[]): "refused" | "typed" | "ordinary" {
+  if (isRefusedByChecks(checks)) {
+    return "refused";
+  }
+  const earned = checks.some((c) => c.cls === "confirmable" && (c.outcome === "failed" || c.outcome === "unproven"));
+  return earned ? "typed" : "ordinary";
 }
 
 /** `<b>7 tracked files</b> have uncommitted changes.` */
@@ -74,60 +82,232 @@ function countLine(span: HTMLElement, count: string, rest: string): void {
   span.append(b, document.createTextNode(` ${rest}`));
 }
 
-/** Every non-zero blocker, in one list, so one confirmation covers the whole risk. */
+/**
+ * How one check is worded, per outcome.
+ *
+ * A table rather than a chain of `if (failed(...))`, because worktree-removal.md
+ * § 2.1 asks for every check including the ones that passed, and a chain can only
+ * express the failing half. It also silently owned the check inventory, which is
+ * how `notApplicable` stayed invisible despite being put on the wire precisely so
+ * the UI could tell it apart (design.md D1).
+ */
+interface Presenter {
+  readonly icon: string;
+  /** The failing sentence, which is where a count or a reason is named. */
+  readonly failed: (check: RemovalCheck, info: WorktreeInfo, span: HTMLElement) => void;
+  readonly passed: string;
+  readonly unproven: string;
+  readonly notApplicable: string;
+}
+
+const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
+
+/**
+ * What a refusal says when its own check could not be evaluated.
+ *
+ * Separate wording per check, because "could not tell" is only useful if it names
+ * WHICH question went unanswered — and each of these says what is unknown rather
+ * than what was found (round-2 W3).
+ */
+const UNPROVEN_REFUSAL: Record<string, string> = {
+  isMain: "Could not tell whether this is the repository's main worktree.",
+  busyAgents: "Could not tell whether an agent is mid-turn in this worktree.",
+  containsWorktrees: "Could not tell whether other worktrees live inside this one.",
+  externalAgents: "Could not tell whether a session in another window is rooted here.",
+};
+
+const REPORT: Record<string, Presenter> = {
+  isMain: {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => s.append(document.createTextNode("This is the repository's main worktree.")),
+    passed: "Not the repository's main worktree.",
+    unproven: "Could not tell whether this is the main worktree.",
+    notApplicable: "Does not apply to this worktree.",
+  },
+  busyAgents: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(s, `${c.count ?? 0} ${plural(c.count ?? 0, "agent", "agents")}`, "mid-turn in this worktree."),
+    passed: "No agent is mid-turn in this worktree.",
+    unproven: "Could not tell whether an agent is mid-turn here.",
+    notApplicable: "No agent has ever run here.",
+  },
+  containsWorktrees: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(s, `${c.count ?? 0} other ${plural(c.count ?? 0, "worktree", "worktrees")}`, "live inside this one."),
+    passed: "No other worktree lives inside this one.",
+    unproven: "Could not tell what lives inside this one.",
+    notApplicable: "Nothing can live inside this one.",
+  },
+  dirty: {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => countLine(s, "Tracked files", "have uncommitted changes."),
+    passed: "No tracked file has uncommitted changes.",
+    unproven: "Could not read the working tree's status.",
+    notApplicable: "There is no working tree to read.",
+  },
+  untracked: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(s, `${c.count ?? 0} untracked ${plural(c.count ?? 0, "file", "files")}`, "in the folder."),
+    passed: "No untracked files in the folder.",
+    unproven: "Could not count the untracked files.",
+    notApplicable: "There is no folder to count.",
+  },
+  idlePanes: {
+    icon: ICON_TERMINAL,
+    // Not "idle terminals", whatever the check is named: the producer counts
+    // every pane in the worktree that has not exited, running and waiting ones
+    // included, so calling them idle understates active use of a directory this
+    // dialog is about to delete (round-1 W2).
+    failed: (c, _i, s) =>
+      countLine(
+        s,
+        `${c.count ?? 0} ${plural(c.count ?? 0, "terminal", "terminals")}`,
+        `in this window ${plural(c.count ?? 0, "has", "have")} it as their working directory.`,
+      ),
+    passed: "No terminal in this window is working in it.",
+    unproven: "Could not tell which terminals are working in it.",
+    notApplicable: "This window has no terminals.",
+  },
+  externalAgents: {
+    icon: ICON_WINDOW,
+    failed: (c, _i, s) =>
+      countLine(
+        s,
+        `${c.count ?? 0} ${plural(c.count ?? 0, "session", "sessions")} in another window`,
+        `${plural(c.count ?? 0, "is", "are")} rooted here.`,
+      ),
+    passed: "No session in another window is rooted here.",
+    unproven: "Could not read the session registry.",
+    notApplicable: "No session registry applies here.",
+  },
+  locked: {
+    icon: ICON_LOCK,
+    failed: (_c, info, s) => {
+      const b = document.createElement("b");
+      b.textContent = "locked";
+      s.append(document.createTextNode("The worktree is "), b);
+      s.append(document.createTextNode(info.lockReason ? ` — “${info.lockReason}”.` : "."));
+    },
+    passed: "The worktree is not locked.",
+    unproven: "Could not tell whether the worktree is locked.",
+    notApplicable: "There is no lock to override.",
+  },
+  ignored: {
+    icon: ICON_WARNING,
+    failed: (c, _i, s) =>
+      countLine(
+        s,
+        `${c.count ?? 0} ignored ${plural(c.count ?? 0, "entry", "entries")}`,
+        c.detail ?? "will be deleted with the folder.",
+      ),
+    passed: "No ignored content to delete.",
+    unproven: "Could not measure the ignored content.",
+    notApplicable: "No ignored content applies here.",
+  },
+  lockAged: {
+    icon: ICON_LOCK,
+    failed: (_c, _i, s) => s.append(document.createTextNode("The lock is recent.")),
+    passed: "The lock is older than the abandonment threshold.",
+    unproven: "Could not read the lock's age.",
+    notApplicable: "The worktree is not locked, so it has no lock age.",
+  },
+  ownerGone: {
+    icon: ICON_WINDOW,
+    failed: (_c, _i, s) => s.append(document.createTextNode("A recorded process still owns this worktree.")),
+    passed: "No recorded process owns this worktree.",
+    unproven: "Could not tell whether a process owns this worktree.",
+    notApplicable: "No owning process was ever recorded.",
+  },
+  branchMerged: {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => s.append(document.createTextNode("The branch is not merged into the default branch.")),
+    passed: "The branch is merged into the default branch.",
+    unproven: "Could not tell whether the branch is merged.",
+    notApplicable: "There is no branch to compare.",
+  },
+};
+
+/**
+ * A check the table does not know. Rendered rather than dropped: the host owns
+ * the inventory, and a check that renders nowhere until someone edits the webview
+ * is the failure D1 exists to stop.
+ */
+function unknownPresenter(id: string): Presenter {
+  return {
+    icon: ICON_WARNING,
+    failed: (_c, _i, s) => s.append(document.createTextNode(`${id}: failed.`)),
+    passed: `${id}: passed.`,
+    unproven: `${id}: could not be evaluated.`,
+    notApplicable: `${id}: does not apply.`,
+  };
+}
+
+/** One line, carrying its own outcome so a reader can tell the four apart. */
+function checkItem(check: RemovalCheck, info: WorktreeInfo): HTMLLIElement {
+  const presenter = REPORT[check.id] ?? unknownPresenter(check.id);
+  const li = document.createElement("li");
+  li.dataset.check = check.id;
+  li.dataset.outcome = check.outcome;
+  const iconEl = document.createElement("span");
+  iconEl.innerHTML = presenter.icon;
+  iconEl.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  if (check.outcome === "failed") {
+    presenter.failed(check, info, text);
+  } else if (check.outcome === "passed") {
+    text.textContent = presenter.passed;
+  } else if (check.outcome === "unproven") {
+    text.textContent = presenter.unproven;
+  } else {
+    text.textContent = presenter.notApplicable;
+  }
+  li.append(iconEl, text);
+  return li;
+}
+
+/**
+ * Every check that describes a risk, in the order the host evaluated them.
+ *
+ * The order is the assessment's own: it evaluates them together and in a stable
+ * order, and a second ordering here is a second thing to disagree (design.md D1).
+ */
 export function buildBlockerList(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
-  const untracked = countOf(checks, "untracked");
-  const idlePanes = countOf(checks, "idlePanes");
-  const externalAgents = countOf(checks, "externalAgents");
   const list = document.createElement("ul");
   list.className = "wt-blockers";
-  if (failed(checks, "dirty")) {
-    list.appendChild(blockerItem(ICON_WARNING, (s) => countLine(s, "Tracked files", "have uncommitted changes.")));
-  }
-  if (untracked > 0) {
-    list.appendChild(
-      blockerItem(ICON_WARNING, (s) =>
-        countLine(s, `${untracked} untracked file${untracked === 1 ? "" : "s"}`, "in the folder."),
-      ),
-    );
-  }
-  if (idlePanes > 0) {
-    list.appendChild(
-      blockerItem(ICON_TERMINAL, (s) =>
-        countLine(
-          s,
-          `${idlePanes} idle terminal${idlePanes === 1 ? "" : "s"}`,
-          "in this window have it as their working directory.",
-        ),
-      ),
-    );
-  }
-  if (externalAgents > 0) {
-    list.appendChild(
-      blockerItem(ICON_WINDOW, (s) =>
-        countLine(
-          s,
-          `${externalAgents} session${externalAgents === 1 ? "" : "s"} in another window`,
-          externalAgents === 1 ? "is rooted here." : "are rooted here.",
-        ),
-      ),
-    );
-  }
-  if (failed(checks, "locked")) {
-    list.appendChild(
-      blockerItem(ICON_LOCK, (s) => {
-        const b = document.createElement("b");
-        b.textContent = "locked";
-        s.append(document.createTextNode("The worktree is "), b);
-        if (info.lockReason) {
-          s.append(document.createTextNode(` — “${info.lockReason}”.`));
-        } else {
-          s.append(document.createTextNode("."));
-        }
-      }),
-    );
+  for (const check of checks) {
+    if (check.cls !== "proof") {
+      list.appendChild(checkItem(check, info));
+    }
   }
   return list;
+}
+
+/**
+ * The proofs, apart from the risks and worded as what they would unlock.
+ *
+ * Rendered beside the confirmable checks a proof reads as a reason the removal is
+ * dangerous, which is the misreading that would make an unfetched default branch
+ * look like a hazard (design.md D4).
+ */
+export function buildProofList(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement | null {
+  const proofs = checks.filter((c) => c.cls === "proof");
+  if (proofs.length === 0) {
+    return null;
+  }
+  const box = document.createElement("div");
+  const heading = document.createElement("p");
+  heading.className = "wt-report-heading";
+  heading.textContent = "Whether this worktree looks abandoned. These unlock options; they never block the removal.";
+  const list = document.createElement("ul");
+  list.className = "wt-blockers wt-proofs";
+  for (const proof of proofs) {
+    list.appendChild(checkItem(proof, info));
+  }
+  box.append(heading, list);
+  return box;
 }
 
 /**
@@ -135,12 +315,24 @@ export function buildBlockerList(checks: readonly RemovalCheck[], info: Worktree
  * only appears when it is true — a warning that names two terminals that do not
  * exist is the same class of lie as a state dot that is not live.
  */
-function buildForceWarning(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
+/**
+ * What the removal destroys and what it spares — stated for the ordinary
+ * confirmation as well as the forced one (worktree-panel § A removal states what
+ * it destroys and what it spares, design.md D5).
+ *
+ * Each clause keeps its own truth condition: a lock is overridden only where one
+ * failed, panes keep running only where panes were counted, a branch is spared
+ * only where there is one. The lead names the control actually mounted — a box
+ * that opens "Force remove…" beside a button reading "Remove" describes an
+ * action the user was never offered.
+ */
+function buildRemovalWarning(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
   const idlePanes = countOf(checks, "idlePanes");
   const box = document.createElement("div");
   box.className = "wt-warnbox";
   const lead = document.createElement("b");
-  lead.textContent = "Force remove deletes everything under that path, irreversibly";
+  const action = confirmationFor(checks) === "typed" ? "Force remove" : "Remove";
+  lead.textContent = `${action} deletes everything under that path, irreversibly`;
   box.append(lead, document.createTextNode(" — including files written after you confirm."));
   if (failed(checks, "locked")) {
     box.append(document.createTextNode(" The lock is overridden."));
@@ -207,13 +399,32 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     const box = document.createElement("div");
     box.className = "wt-refusebox";
     const lead = document.createElement("b");
-    // Three refusal reasons, three explanations. An if/else over two of them
-    // would render the agent copy for a containment refusal — telling the user
-    // to stop an agent that is not running (round-1 P1 / oracle O3).
-    if (failed(checks, "isMain")) {
+    // EVERY branch dispatches on `refuser`, never on `failed(...)`: the check the
+    // host listed first is the one the user must act on, and a second failing
+    // check must not displace it. Mixing the two was round-3 W3 — a busy agent
+    // plus a nested worktree rendered the containment copy, because the agent
+    // case fell through to a `failed(containsWorktrees)` test below it.
+    // The unproven cases come through here too, from 1_5 (round-2 W3):
+    // a chain testing only `failed` sent them to the local-agent copy, asserting
+    // an agent "was mid-turn" from a check that had read nothing.
+    // worktree-panel § A refusal names the reason it actually has.
+    const refuser = checks.find((c) => c.cls === "refusal" && (c.outcome === "failed" || c.outcome === "unproven"));
+    if (refuser?.outcome === "unproven") {
+      lead.textContent = UNPROVEN_REFUSAL[refuser.id] ?? "A check that can refuse this removal could not be read.";
+      box.append(lead, document.createTextNode(" The removal is refused while it stays unknown."));
+    } else if (refuser?.id === "externalAgents") {
+      // Not the local-agent copy: "stop it first" points at a row this window
+      // does not have, because the session is in another one.
+      const n = countOf(checks, "externalAgents");
+      lead.textContent =
+        n === 1
+          ? "A session in another window is rooted in this worktree."
+          : `${n} sessions in another window are rooted in this worktree.`;
+      box.append(lead, document.createTextNode(" Close it there first — this window cannot stop it for you."));
+    } else if (refuser?.id === "isMain") {
       lead.textContent = "This is the repository's main worktree.";
       box.append(lead, document.createTextNode(" It cannot be removed — no confirmation overrides it."));
-    } else if (failed(checks, "containsWorktrees")) {
+    } else if (refuser?.id === "containsWorktrees") {
       const n = countOf(checks, "containsWorktrees");
       lead.textContent =
         n === 1 ? "Another worktree lives inside this one." : `${n} other worktrees live inside this one.`;
@@ -294,6 +505,16 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
       shell.dialog.appendChild(el);
     }
 
+    // The refusal reports what was checked too. The requirement names no dialog,
+    // and this is the one the user cannot argue with, so withholding the list
+    // here left the least answerable refusal the least evidenced (round-1 B2).
+    // No control is mounted below it: saying what ran is not offering a way past.
+    shell.dialog.append(buildBlockerList(checks, info));
+    const refusedProofs = buildProofList(checks, info);
+    if (refusedProofs !== null) {
+      shell.dialog.append(refusedProofs);
+    }
+
     const close = textButton("Close", "plain", cancel);
     shell.actions.append(close);
     // Point at a row the copy vouches for where there is one: offering to show an
@@ -314,34 +535,43 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     return shell.dispose;
   }
 
-  shell.dialog.append(buildBlockerList(checks, info), buildForceWarning(checks, info));
+  shell.dialog.append(buildBlockerList(checks, info));
+  const proofs = buildProofList(checks, info);
+  if (proofs !== null) {
+    shell.dialog.append(proofs);
+  }
+  shell.dialog.append(buildRemovalWarning(checks, info));
   const cancelBtn = textButton("Cancel", "plain", cancel);
   shell.actions.append(cancelBtn);
-  // A check nobody could evaluate renders nothing — `buildBlockerList` keys every
-  // line on `failed` or a positive count, and `unproven` is neither. Offering
-  // force underneath that empty list would ask the user to authorize destroying a
-  // risk set the dialog just failed to describe, which is the one direction this
-  // action must never fail in (round-1 W2).
-  //
-  // Withholding the button rather than explaining the gap is deliberate. The
-  // copy that makes an unreadable report legible is WT-013.4's.
-  //
-  // Proof-class checks are excluded, and that exclusion is the whole point of
-  // the class. The guard is about a RISK the dialog could not describe; a proof
-  // describes no risk, and every confirmable report now carries three of them
-  // that are routinely unproven — a locked file nobody can stat, a default
-  // branch that does not resolve. Counting those here would withhold force from
-  // every removal, which is a proof refusing one (worktree-removal.md § 2.2).
-  if (!checks.some((c) => c.cls !== "proof" && c.outcome === "unproven")) {
-    shell.actions.append(
-      textButton("Force remove", "danger", () => {
-        // Re-sent with the fingerprint the user was SHOWN: force is authorization for
-        // this blocker set, not a blanket one.
-        deps.onConfirm(deps.report.fingerprint);
-        shell.dispose();
-      }),
-    );
+  const typed = confirmationFor(checks) === "typed";
+  const confirm = textButton(typed ? "Force remove" : "Remove", "danger", () => {
+    // Re-sent with the fingerprint the user was SHOWN: this authorizes the
+    // blocker set they read, not a blanket one. Typing raises the bar over that
+    // same set; it never widens it.
+    deps.onConfirm(deps.report.fingerprint);
+    shell.dispose();
+  });
+  if (typed) {
+    // A speed bump for the cases that earned one. It replaces the round-1 W2
+    // guard, which withheld the button entirely whenever a confirmable check was
+    // unproven — correct while the report could not describe the gap, and wrong
+    // once it names it, because it left a worktree with an unreadable status
+    // permanently unremovable (design.md D3).
+    const label = document.createElement("label");
+    label.className = "wt-confirm-name";
+    label.htmlFor = "wt-confirm-name";
+    label.textContent = `Type ${branch} to confirm:`;
+    const field = document.createElement("input");
+    field.id = "wt-confirm-name";
+    field.type = "text";
+    field.autocomplete = "off";
+    confirm.disabled = true;
+    field.addEventListener("input", () => {
+      confirm.disabled = field.value !== branch;
+    });
+    shell.dialog.append(label, field);
   }
+  shell.actions.append(confirm);
   shell.dialog.appendChild(shell.actions);
   shell.refreshFocusTrap();
   // Focus lands on Cancel, never on the destructive button: an accidental Enter

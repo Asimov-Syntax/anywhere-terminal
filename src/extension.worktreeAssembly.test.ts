@@ -1732,6 +1732,20 @@ describe("the invariants that span the host and the webview", () => {
     expect(registryReads).toHaveLength(1);
   });
 
+  /**
+   * A report carrying a confirmable risk asks for the worktree's name before the
+   * destructive button will answer (WT-013.4). Typing it is part of authorizing,
+   * not a separate case, so the invariant tests below walk through it.
+   */
+  function typeConfirmation(name: string): void {
+    const field = document.querySelector<HTMLInputElement>('[role="dialog"] #wt-confirm-name');
+    if (field === null) {
+      return;
+    }
+    field.value = name;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
   it("[I14] re-prompts instead of removing when a blocker appears after the confirmation", async () => {
     dirtyPaths = ["a.txt"];
     await assemble();
@@ -1755,6 +1769,7 @@ describe("the invariants that span the host and the webview", () => {
       /remove/i.test(b.textContent ?? ""),
     );
     expect(confirm, "the dialog offered no confirm button").toBeDefined();
+    typeConfirmation("feature");
     confirm?.click();
     await settle();
 
@@ -1798,6 +1813,7 @@ describe("the invariants that span the host and the webview", () => {
       confirm,
       `offered: ${[...document.querySelectorAll('[role="dialog"] button')].map((b) => b.textContent).join(" | ")}`,
     ).toBeDefined();
+    typeConfirmation("feature");
 
     // NOW the agent starts working, while the confirmation the user is looking at stays open.
     publishedRow = { ...publishedRow, activity: "running" };

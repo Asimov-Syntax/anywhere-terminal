@@ -1978,8 +1978,9 @@ describe("dialogs", () => {
       throw new Error("fixture lost the spike worktree");
     }
     view.openRemoveDialog({ info, report: confirmableBlocker, degradedSources: [] });
-    // dirty, untracked, idle panes, an external session, and the lock — all five.
-    expect(host.querySelectorAll(".wt-blockers li").length).toBe(5);
+    // dirty, untracked, idle panes, an external session, and the lock — all five
+    // FAILING, in a report that now also lists what passed (worktree-removal.md § 2.1).
+    expect(host.querySelectorAll('.wt-blockers li[data-outcome="failed"]').length).toBe(5);
     expect(host.querySelector(".wt-btn--danger")?.textContent).toBe("Force remove");
   });
 
@@ -1998,7 +1999,11 @@ describe("dialogs", () => {
     });
     expect(host.querySelector(".wt-refusebox")).not.toBeNull();
     expect(host.querySelector(".wt-btn--danger")).toBeNull();
-    expect(host.querySelector(".wt-blockers")).toBeNull();
+    // The refusal reports what was checked as every other report does (round-1
+    // B2); what makes it a refusal is that no control follows the list.
+    expect([...host.querySelectorAll("[data-check]")].map((e) => e.getAttribute("data-check"))).toEqual(
+      refusedBlocker.checks.map((c) => c.id),
+    );
   });
 
   it("still refuses on an unreadable row, but stops claiming to know it is working", () => {
