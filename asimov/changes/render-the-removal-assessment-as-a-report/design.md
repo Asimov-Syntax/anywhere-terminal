@@ -247,6 +247,30 @@ So `assessRemovalReport` runs its assessment inside `coordinator.run` and the ho
 no mutation result. **No new invariant owner is minted** — the existing one is adopted, which is why
 this is an amendment rather than its own change.
 
+**What this closes is PARITY, not the whole window.** The plan attack refuted the stronger reading
+and the refutation is accepted. Taking the barrier fixes the target the assessment *starts* from; it
+does not freeze the worktree while the assessment runs. Its schedule: the barrier resolves A, the
+async status, ignored-content and proof reads at `WorktreeHost.ts:3084-3110` then read the path while
+A is replaced by B outside the panel, and `stillObserved` (`:3116`) does not notice because with the
+watcher deferred no rebuild has landed to change the observation. A token is minted over B's evidence.
+
+That window is **shared with the shipped `blocked` → force path**, which issues from inside the same
+coordinator body after the same reads, and it is what round-4 B3 measured this path against: the
+finding was that the assess path was *weaker than* the removal path, and parity is what answers it.
+The residual is recorded below as a row of its own and needs its own PLAN task, exactly like the
+lock-reason weakness — it is not something D10 closed.
+
+**Rejected — re-resolve after the reads and compare `incarnation`.** It would read as a binding that
+holds and would not: round-2 B5 established that `head:branch` repeats on a recreate onto the same
+commit, which is the case that matters. A check that fails silently in exactly its motivating case is
+worse than an honestly named residual.
+
+**One request at a time.** Every menu activation posts another assess, and each one now holds the
+per-repo mutation queue across two forced rebuilds, the git status and proof commands (10 s timeout)
+and the ignored-content scan (1.5 s bound). A burst therefore builds a backlog that delays any
+mutation queued behind it. The controller drops a duplicate assess while one is outstanding for the
+same worktree, which is what makes the "one human click" cost model true rather than assumed.
+
 **What this closes, and by which existing mechanism.** Binding the token to an incarnation was tried
 and rejected at round-2 B5: `head:branch` repeats on a recreate onto the same commit, and git reuses
 `.git/worktrees/<name>` once the name is free, so no field available can be made unique. The binding
@@ -272,17 +296,31 @@ row, so the panel's answer to the user is the row leaving the tree.
 Round-4 W4. `WorktreeView.openRemoveDialog` calls one global `closeDialog`, so an assessment answered
 late closes whatever dialog is open and puts an obsolete report in its place.
 
-The remedy is a **controller-local live-intent guard, not a wire field.** The controller is the only
-thing that opens a dialog — create, launch, prune and the report all go through it — so it can hold
-the one remove intent that is live and drop any reply that no longer answers it. A per-surface token
-echoed through the message was considered and rejected: it costs a contract change to distinguish two
-assessments **of the same worktree**, and those two render the same report, so the distinction buys
-nothing. Every boundary the finding names is closed without it:
+**A controller-local, id-only guard was drafted here and REFUTED.** It rested on "the controller is
+the only thing that opens a dialog", and that is false: the blocked-result notice's own *Force
+remove…* action calls `openRemoveReport` directly from the view (`WorktreeView.ts:1540-1547`), so a
+guard the controller clears is not cleared when the user opens that one. It also cannot order two
+assessments **of the same worktree** — reply 1 arriving after request 2 was made still matches an
+id-only intent and opens, leaving the user's latest request with no visible answer.
 
-| Late reply arrives after… | Guard |
+So the request carries a **token**, minted per request and echoed by the host:
+
+```
+worktreeRemoveAssess       { worktreeId, token }
+worktreeRemoveAssessment   { worktreeId, token, result }
+```
+
+The controller holds at most one live token. It is minted where the assess is posted, and cleared
+when any dialog opens — including the view's own opener, which tells the controller — when the report
+is answered or cancelled, and when a newer removal is asked. A reply whose token is not the live one
+is dropped, whatever its `worktreeId`.
+
+| Late reply arrives after… | Closed by |
 |---|---|
-| a removal was asked for a DIFFERENT worktree | intent names one worktree; a mismatch is dropped |
-| a create, launch or prune dialog opened | opening any dialog clears the intent |
+| a removal was asked for a DIFFERENT worktree | a newer request minted a newer token |
+| the SAME worktree was asked twice | the token orders them; only the latest opens |
+| a create, launch or prune dialog opened | opening any dialog clears the live token |
+| the blocked-notice *Force remove…* dialog opened | the view clears it through the controller |
 | the user cancelled the report | the dialog's own cancel clears it |
 | the row departed (`unavailable` arm) | Retry renders only while the target still resolves |
 
@@ -290,9 +328,8 @@ The last row is the second half of W4: a re-scoped `unavailable` result loses it
 `onRetryAction` then silently does nothing while the button is still on screen. A control that cannot
 act is not offered.
 
-Two assessments of the same worktree completing out of order remain possible and are harmless: with
-D10 in place both reports were produced behind the barrier, and a token issued over older evidence
-reprompts at redemption if the worktree has since changed.
+The token orders answers; it is **not** an authority. Force authority remains D7's fingerprint, and a
+reply carrying a stale token is discarded rather than trusted for anything.
 
 ### D12 — A failed assessment is answered, not swallowed
 
@@ -311,6 +348,17 @@ were weighed:
   It keeps D8's shape and its retry surface, and the sentence it renders is true: the assessment is
   what could not be read. The promise that the list is never empty is kept rather than weakened.
 
+**The rejection is not the only silent exit, and the plan attack was right that the claim outran the
+mechanism.** The coordinator's `missing` leg is the other one: when the barrier's rebuild finds the
+worktree gone, `resolve` returns null and the assessment returns null, and the host posts nothing.
+D10 first argued the row leaving the tree is the user's answer — but that holds only while the
+rebuild actually broadcasts, and a rebuild whose presence projection rejects publishes nothing at
+all (`WorktreeHost.ts:2518-2543`). The panel then keeps a stale row AND gets no reply.
+
+So the `missing` leg answers too, through the same `unavailable` arm, naming the departure rather
+than a read: `unreadable: ["the worktree is no longer registered"]`. One live request, one reply, with
+no exception.
+
 Fail-closed is preserved either way — nothing is deleted — but an explicit destructive request now
 always gets an answer.
 
@@ -324,7 +372,9 @@ always gets an answer.
 | A worktree that could not be read cannot be rendered as refusing removal | An `unavailable` assessment reaches no code path that computes `confirmationFor` | A flat reply shape that erases the kind, leaving every check `unproven` | D8's discriminant. A test sends `kind: "unavailable"` and asserts the retry surface, not a report, and that no confirmation control exists | supported |
 | The panel cannot manufacture force authority | The dialog forwards `fingerprint` and never synthesises one | `onConfirm` defaulting a null to a string, or the controller posting `force: true` when it holds no fingerprint | D7's nullable `onConfirm`. A test drives a null-fingerprint confirm and asserts the posted message is `force: false` with no `fingerprint` key | supported |
 | Redemption cannot be satisfied by evidence the user never saw | — | Lock reason A → unlock → lock reason B between report and confirm redeems, because `isIdentityPreservingSubset` (`worktreeBlockers.ts:35-36`) compares the lock as a BOOLEAN and the digest (`worktreeFingerprint.ts:179-189`) omits `lockReason`. Second schedule: the 150 ms presence projection cap can leave pane rows stale while an agent has begun running, and redemption compares pane IDENTITY, not activity | **Not a claim this change makes.** Both defeaters are properties of the shipped force path, reachable today through blocked→force, and neither is introduced or widened here — see the window row above. Recorded so it is not mistaken for something this change closed | n/a — pre-existing; needs its own PLAN task, named in workflow.md Notes |
-| A report and the removal its confirmation authorizes name the same registration | For every assessed reply, the tree the assessment resolved against is the tree the barrier had just rebuilt | A watcher rebuild still pending while the path was removed and recreated outside the panel: the old cached row is described, the replacement's evidence is read, and `forget` has not fired | D10. `coordinator.run` awaits `gate.request(force: true)` before `resolve`, so the rebuild that would call `forget` (`worktreeFingerprint.ts:44-53`) has completed. Test: a deferred-watcher replacement produces no assessed reply carrying a token redeemable against the replacement | supported |
-| A late assessment cannot replace what the user is looking at | An assessed reply opens a report only while it answers the live remove intent | `openRemoveDialog`'s single global `closeDialog` closing a newer create/launch/prune/report dialog | D11's controller-local intent guard. Tests: a reply for worktree A after a removal was asked for B opens nothing; a reply landing after another dialog opened leaves it standing; a re-scoped `unavailable` result renders no Retry | supported |
-| An explicit destructive request always gets an answer | Every `worktreeRemoveAssess` from a live surface is followed by exactly one reply or by the row leaving the tree | The `catch` posting nothing, leaving Remove Worktree inert | D12. Test: a rejecting assessment capability produces an `unavailable` reply and the retry surface, not silence | supported |
+| Assessing is no weaker than the removal path it reports for | The assess resolves its target behind the same forced-rebuild barrier, from the same coordinator body, as the shipped `blocked` → force path | Assessing straight off the cache, so `forget` (`worktreeFingerprint.ts:44-53`) has not fired for a path already removed and recreated | D10. `coordinator.run` awaits `gate.request(force: true)` before `resolve`. Test: a deferred `forceRebuild` proves neither `resolve` nor the assessment runs before the barrier releases, and a registration replaced ACROSS the barrier is assessed as the replacement | supported |
+| A registration replaced DURING the assessment's own reads cannot be told apart | — | Barrier resolves A; the async status, ignored and proof reads (`WorktreeHost.ts:3084-3110`) then read the path while A is replaced by B; `stillObserved` (`:3116`) sees no change because the deferred watcher has landed no rebuild; a token is minted over B's evidence | **Not a claim this change makes.** The shipped `blocked` → force path issues from inside the same body after the same reads and holds the identical window; round-4 B3 measured this path against that one, and parity is what it asked for. Named rather than dressed as closed — a re-resolve comparing `incarnation` was rejected in D10 because `head:branch` repeats on the recreate that motivates it (round-2 B5) | n/a — pre-existing and shared with blocked→force; needs its own PLAN task, named in workflow.md Notes |
+| A late assessment cannot replace what the user is looking at | An assessed reply opens a report only while its token is the controller's live one | Two assessments of the SAME worktree answered out of order; the blocked-notice *Force remove…* dialog, which the VIEW opens directly at `WorktreeView.ts:1540-1547` | D11's echoed token — an id-only guard was drafted, refuted on both counts, and replaced. Tests: reply for A after B was asked opens nothing; reply 1 of two same-worktree requests opens nothing; a reply after the view's own opener leaves that dialog standing; a re-scoped `unavailable` result renders no Retry | supported |
+| An explicit destructive request always gets an answer | Every `worktreeRemoveAssess` from a live surface is followed by exactly one reply carrying its token | The `catch` posting nothing; and the coordinator's `missing` leg returning null while the rebuild that would have removed the row published nothing because presence projection rejected (`WorktreeHost.ts:2518-2543`) | D12, which answers BOTH exits through the `unavailable` arm. Tests: a rejecting assessment capability produces one `unavailable` reply; a target that vanishes across the barrier produces one too, not silence | supported |
+| A burst of requests cannot back up the mutation queue behind it | At most one assess is outstanding per worktree | Repeated menu activations, each holding the per-repo queue across two forced rebuilds, git status/proof (10 s timeout) and the ignored scan (1.5 s) | D10's duplicate-request drop. Test: a second remove activation while one is outstanding posts nothing | supported |
 | Typing never unlocks a proof-gated option | The typed predicate excludes `cls === "proof"` | A proof check misclassified `confirmable` | The class is the host's and the panel reads it. The witness is **vacuous until WT-013.3** ships a proof-gated control: with none in the DOM, no test can fail. Stated rather than dressed as covered | n/a — no proof-gated control exists to gate; WT-013.3 owns the real witness |

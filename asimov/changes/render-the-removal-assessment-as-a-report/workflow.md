@@ -8,7 +8,7 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-013.4
 Lane: full (standard) — MEDIUM risk: presentation only, but it decides what a user is told before authorizing an irreversible deletion, and retires an existing safety guard | flags: none
-Planned at: 4e7443c4
+Planned at: 6e521950
 - Worktree based on huybuidac/create-worktree-harden, not main: WT-013.1 and WT-013.2 are the deps and neither is merged to main yet — main's docs/PLAN.md has no WT-013 tasks at all and src/worktree has no orphan proofs. A first attempt on the default base was discarded before any work landed.
 - No new-api-contract flag: WT-013.1 and WT-013.2 already carry `cls`, the four-outcome vocabulary and the three proofs in the same checks array, so this change alters no message shape.
 - 1_2 leaves a residual D2/D3 composed: a REFUSAL-class check that is `unproven` no longer withholds anything (`isRefusedByChecks` refuses only on `failed`), so it falls to the confirmable classes — typed if one of those is failing or unproven, ordinary otherwise. Both the spec's "Otherwise ... ordinary" and D2 say this explicitly, so it is built as accepted; flagged here because the retired guard was the only thing covering it and review should see it named rather than infer it.
@@ -154,3 +154,33 @@ registration is current.
 
 Verify Gate at the moment of parking (evidence retained, gate unticked per the handback rule):
 check-types clean, 6243/6243, gate:fs-deletion ok, biome 3/14/1 baseline.
+
+Round-4 remedy planned as section 3 — four tasks, fully serial (3_1 → 3_2 → 3_3 → 3_4); 3_3 was
+serialized behind 3_2 because both touch `WorktreeHost.ts`.
+
+The plan attack (`asm-oracle`) refuted three ledger rows and declined to sign off D10, D11 and D12 as
+first drafted. All four of its findings were accepted, one was rejected, and the artifacts were
+rewritten before Gate 2:
+- D10 claimed too much. Taking the barrier fixes the target the assessment STARTS from; it does not
+  freeze the worktree while the assessment's own async reads run, and `stillObserved` cannot see a
+  replacement that no rebuild has landed for. The claim is now PARITY with the shipped blocked→force
+  path — which holds the identical window and is what round-4 B3 measured this path against — and the
+  residual is its own ledger row, `n/a`, pre-existing and shared, needing its own PLAN task.
+- D11's premise was false and I asserted it without checking: the blocked-notice *Force remove…*
+  action opens the report from the VIEW (`WorktreeView.ts:1540-1547`), not the controller, and an
+  id-only intent cannot order two requests for the same worktree. The token I had rejected goes on
+  the wire after all. It orders answers and authorizes nothing.
+- D12 covered only the rejection. The coordinator's `missing` leg is the other silent exit: a rebuild
+  whose presence projection rejects publishes nothing, so the row does not depart AND no reply comes.
+  Both exits now answer through the `unavailable` arm.
+- D10 gained a duplicate-request drop: each assess holds the per-repo mutation queue across two
+  forced rebuilds, git status/proof (10 s timeout) and the ignored scan (1.5 s), so an unbounded
+  request door made the "one human click" cost model false rather than merely optimistic.
+- REJECTED: the oracle marked the vacuous proof-unlock witness `unresolved`. The row already says the
+  witness is vacuous until WT-013.3 ships a proof-gated control and names WT-013.3 as its owner. That
+  is the disposition, not a gap in it.
+
+Its task-acceptance notes were accepted too: 3_1 must hold `forceRebuild` unresolved to prove
+ordering rather than observe it, 3_3 gained the two falsifiers the id-only draft failed, and 3_4 must
+first give the assembly a controllable watcher — it has none today, so the walk as first written
+would have passed for want of anything happening.
