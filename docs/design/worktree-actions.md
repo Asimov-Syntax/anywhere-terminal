@@ -90,7 +90,9 @@ per surface today. A surface that gains a subset of the actions is when that bec
    deletion is a defect. This bounds *our* bugs, not git's consequences:
    `git worktree remove` still recursively deletes, so a wrong-but-valid path is data loss,
    not a safe failure. The invariant is worth keeping because it removes an entire class of
-   path-handling bug — it is not a safety net under the ones that remain.
+   path-handling bug — it is not a safety net under the ones that remain. The exception is named
+   in the invariant's own test as a single allowlisted module, so taking it a second time fails the
+   gate instead of passing quietly.
 4. **The main worktree is never removable**, and no confirmation overrides that.
 5. **Blockers are re-evaluated at execution time**, and a *newly appeared* blocker re-prompts
    rather than riding the previous confirmation (§ 3.3).
@@ -99,8 +101,8 @@ per surface today. A surface that gains a subset of the actions is when that bec
 
 ### 3.2 Create worktree
 
-Owned by **[worktree-create.md](worktree-create.md)** — the four creation modes (fresh, reuse,
-reattach, recover), path derivation and the `info/exclude` consequence, the branch/source
+Owned by **[worktree-create.md](worktree-create.md)** — the branch modes, the destination
+disposition that composes with them (§ 2.0), path derivation and the `info/exclude` consequence, the branch/source
 combobox, form presentation, the PR source, and where create is offered.
 
 What a new worktree is *filled with* is

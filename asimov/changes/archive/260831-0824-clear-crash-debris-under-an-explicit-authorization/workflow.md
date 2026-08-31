@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -65,3 +65,12 @@ Verify gate: `pnpm exec biome check src` is at the inherited baseline (3 errors 
 1 info — `src/agentHooks`, `src/cursor`, `src/vault`, `src/webview/*.css`, `worktreeFormat.ts`), none
 in files this change touches. The first `test:unit` run failed one test and a re-run on the same tree
 passed 6061/6061 — the known `src/vault/snapshotPool.test.ts` flake, untouched by this change.
+Review: 1 cycle, 3 rounds. Round 1 REJECT (7 BLOCK / 2 WARN), round 2 verification (1 BLOCK /
+2 WARN), round 3 WARN with 0 blockers — exit condition met, no thrash stop. Every accepted BLOCK
+fix is mutation-verified; no finding needed a new or changed `D#`.
+Follow-up (round-3 W2, non-gating): issuance is not generation-bound at the host/service boundary,
+so a withdrawn request's `issueDebrisAuthorization` can overwrite the store record a newer,
+correctly-correlated request already committed. Fails closed — redemption refuses and the dialog
+re-prompts — so no unapproved deletion or false success. Binding it mints an ordering owner across
+`WorktreeHost` -> `issueDebrisAuthorization` -> `debrisAuthorizations`, so it belongs to its own
+change, not a fix commit in this cycle.

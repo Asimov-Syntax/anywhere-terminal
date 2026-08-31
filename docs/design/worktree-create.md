@@ -70,8 +70,16 @@ So a selection resolves two values:
 | **Branch mode** | `fresh` · `fresh-detached` · `reuse` · `reattach` · `adopt` |
 | **Destination disposition** | `free` · `debris` (a directory with no `.git`) |
 
-`debris` is what the UI calls **recover**, and it composes with any branch mode. Its authorization
-is carried alongside the mode rather than replacing it (§ 2.2).
+`debris` is what the UI calls **recover**, and it composes with any branch mode **whose destination
+is the derived path**. Its authorization is carried alongside the mode rather than replacing it
+(§ 2.2).
+
+`reattach` is the exception, and not by special-casing: a repair acts on the stale registration's
+own path (§ 2.3), so the skipped candidate is a directory that create never touches. Offering to
+delete it would be an offer to delete something unrelated to the action being taken, so recover is
+not offered there — except where the probe classifies the base as detached and the form therefore
+discards the repair, leaving an ordinary derived destination. A repair that arrives carrying a
+debris disposition anyway is refused before any git command runs.
 
 ### 2.1 The base ref is contractual
 
@@ -115,6 +123,30 @@ The carve-out is bounded, and every bound is load-bearing:
 Failing any one means it is not debris, recover is not offered, and the create falls back to a
 suffixed fresh path. A partial deletion reports what remains rather than continuing, and never
 reports the create as successful.
+
+The carve-out is also machine-enforced: the "never delete files directly" gate names this one
+module as its allowlisted delete site, so a second one appearing anywhere under the scoped paths
+fails the invariant test rather than passing review unnoticed.
+
+**The authorization is asked for, never handed out.** It travels on its own request/answer pair
+rather than on the destination probe, because the probe fires on every settled edit — an
+authorization riding it would mint a delete token for paths nobody asked to delete, dozens of times
+per dialog. Accepting the recover offer is what sends the request; the answer carries the
+fingerprint and the entries that fingerprint was taken over, so the list the user is shown and the
+list the token binds are one read and cannot differ. A refusal is a stated reason ("that is not
+debris" / "the host could not tell"), not an absent field.
+
+Each request carries its own id and an answer is applied only against the request it answers. The
+offer is withdrawn on any change of selection and on unchecking, and the host stops honouring a
+withdrawn destination the moment a newer probe is admitted — not when that probe's answer arrives.
+
+**What the boundary compares, and what counts as done.** The entry set is re-read where the delete
+happens, not carried from the redemption, and it is compared against what the user approved: an
+approved entry that has since disappeared is inside the approval, an entry that was never approved
+refuses and is named. Success is *proven absence* — the destination is re-read after the removal and
+anything other than a confirmed absence, an unreadable directory included, is a failed clearance.
+Every one of these readings is synchronous, which is what makes "no `await` before the delete"
+enforceable rather than merely intended.
 
 ### 2.3 Reattach repairs a stale registration; it cannot resurrect a deleted one
 
