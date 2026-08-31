@@ -17,6 +17,7 @@ import type {
   WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
+  WorktreePullRequestsMessage,
   WorktreeRefsMessage,
   WorktreeSubscriptionLevel,
   WorktreeTreeResponseMessage,
@@ -37,6 +38,7 @@ import type {
   WorktreeOpenAfter,
   WorktreePresence,
   WorktreeProvisionOffer,
+  WorktreePullRequestOffer,
   WorktreeRefOffer,
   WorktreeRowActivation,
   WorktreeTree,
@@ -284,6 +286,14 @@ export class WorktreeController {
    */
   private readonly repoRefs = new Map<string, WorktreeRefsMessage>();
   /**
+   * The forge's answer per repository, held on the same terms as `repoRefs`.
+   *
+   * Its own map rather than a field on that one: the two answers arrive
+   * independently and either can be absent while the other is present, which is
+   * the property the separate message exists to give the form.
+   */
+  private readonly repoPullRequests = new Map<string, WorktreePullRequestsMessage>();
+  /**
    * The host's answer to the last settled selection, per repository.
    *
    * Kept beside `repoRefs` and cleared on the same terms: a resolution seeded
@@ -327,6 +337,7 @@ export class WorktreeController {
    * open — which is what drops an answer that outlived its dialog.
    */
   private applyRefs: ((repoId: string, refs: WorktreeRefOffer) => void) | null = null;
+  private applyPullRequests: ((repoId: string, offer: WorktreePullRequestOffer) => void) | null = null;
   private applyResolution: ((resolution: WorktreeCreateResolutionMessage) => void) | null = null;
   private applyDebrisAuthorization: ((answer: WorktreeDebrisAuthorizedMessage) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
@@ -463,6 +474,9 @@ export class WorktreeController {
         },
         bindProvisioning: (apply) => {
           this.applyProvisionOffer = apply;
+        },
+        bindPullRequests: (apply) => {
+          this.applyPullRequests = apply;
         },
         bindRefs: (apply) => {
           this.applyRefs = apply;
@@ -765,6 +779,7 @@ export class WorktreeController {
     // form describes a repository state that may have moved, and the honest
     // opening state is "not told yet".
     this.repoRefs.clear();
+    this.repoPullRequests.clear();
     this.createResolutions.clear();
     this.probeSeq = 0;
     this.refsToken += 1;
@@ -1021,6 +1036,7 @@ export class WorktreeController {
       }
       const offer = this.provisionOffers.get(repo.repoId);
       const refs = this.repoRefs.get(repo.repoId);
+      const prs = this.repoPullRequests.get(repo.repoId);
       repos.push({
         repoId: repo.repoId,
         repoLabel: repo.label,
@@ -1043,6 +1059,17 @@ export class WorktreeController {
         // Same terms as the offer: absent renders as "not told yet", never as
         // "this repository has no branches".
         ...(refs === undefined ? {} : { refs: { list: refs.refs, truncated: refs.truncated } }),
+        // Absent stays absent: "not asked yet" is not the unavailable row, and
+        // the form is what decides how each of those reads.
+        ...(prs === undefined
+          ? {}
+          : {
+              pullRequests: {
+                list: prs.pullRequests ?? [],
+                truncated: prs.truncated ?? false,
+                available: prs.available,
+              },
+            }),
       });
     }
     return repos;
@@ -1081,6 +1108,26 @@ export class WorktreeController {
     }
     this.repoRefs.set(msg.repoId, msg);
     this.applyRefs?.(msg.repoId, { list: msg.refs, truncated: msg.truncated });
+  }
+
+  /**
+   * The host's pull-request answer for one repo.
+   *
+   * Dropped on the same token as `handleRefs`, and for the same reason: both
+   * are answers to one opening's `requestWorktreeRefs`, so an answer that
+   * outlived its opening would otherwise seed a successor form with rows read
+   * for a form the user has already closed.
+   */
+  handlePullRequests(msg: WorktreePullRequestsMessage): void {
+    if (msg.token !== this.refsToken) {
+      return;
+    }
+    this.repoPullRequests.set(msg.repoId, msg);
+    this.applyPullRequests?.(msg.repoId, {
+      list: msg.pullRequests ?? [],
+      truncated: msg.truncated ?? false,
+      available: msg.available,
+    });
   }
 
   /**

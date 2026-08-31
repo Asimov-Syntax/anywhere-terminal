@@ -52,6 +52,7 @@ import type {
   WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
+  WorktreePullRequestsMessage,
   WorktreeRefsMessage,
   WorktreeRowActivationMessage,
   WorktreeShowPreviewMessage,
@@ -127,6 +128,7 @@ export interface MessageHandlers {
   onWorktreeCreateDefaults?(msg: WorktreeCreateDefaultsMessage): void;
   onWorktreeProvisionOffer?(msg: WorktreeProvisionOfferMessage): void;
   onWorktreeRefs?(msg: WorktreeRefsMessage): void;
+  onWorktreePullRequests?(msg: WorktreePullRequestsMessage): void;
   onWorktreeCreateResolution?(msg: WorktreeCreateResolutionMessage): void;
   /** Whether a destination may be cleared, answered to the request that named it. */
   onWorktreeDebrisAuthorized?(msg: WorktreeDebrisAuthorizedMessage): void;
@@ -289,6 +291,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeRefs":
         handlers.onWorktreeRefs?.(msg);
+        break;
+      case "worktreePullRequests":
+        handlers.onWorktreePullRequests?.(msg);
         break;
       case "worktreeCreateResolution":
         handlers.onWorktreeCreateResolution?.(msg);

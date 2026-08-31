@@ -40,7 +40,7 @@
     4. `src/webview/worktree/WorktreeCreateDialog.test.ts`: ordering, the unavailable row, create-new still last, and a repo-id mismatch rendering nothing.
   - **Boundary**: no tab, no mode switch, no second input — the ordering is the whole UI change
 
-- [ ] 2_2 Route the message to the dialog
+- [x] 2_2 Route the message to the dialog — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: design.md D3
   - **Acceptance**:

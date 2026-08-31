@@ -1431,6 +1431,110 @@ describe("the create a toolbar with no repository opens", () => {
     expect(refsHeld(h).get(REPO_A)).toBeDefined();
   });
 
+  it("[2_2] hands the forge's answer to the open form", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const applied: { repoId: string; offer: unknown }[] = [];
+    (h.controller as unknown as { applyPullRequests?: (r: string, x: unknown) => void }).applyPullRequests = (
+      repoId,
+      offer,
+    ) => applied.push({ repoId, offer });
+
+    h.controller.handlePullRequests({
+      type: "worktreePullRequests",
+      repoId: REPO_A,
+      token: 1,
+      pullRequests: [
+        { number: 9, title: "Ship it", headRefName: "ship", baseRefName: "main", fromFork: false, headOwner: "acme" },
+      ],
+      truncated: false,
+      available: true,
+    });
+
+    expect(applied).toEqual([
+      {
+        repoId: REPO_A,
+        offer: {
+          list: [
+            {
+              number: 9,
+              title: "Ship it",
+              headRefName: "ship",
+              baseRefName: "main",
+              fromFork: false,
+              headOwner: "acme",
+            },
+          ],
+          truncated: false,
+          available: true,
+        },
+      },
+    ]);
+  });
+
+  it("[2_2] carries the unavailable answer through rather than dropping it", () => {
+    // § 5 has a row for "the forge could not answer". Swallowing it here would
+    // leave the form on "not asked yet" forever, which says something else.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const applied: unknown[] = [];
+    (h.controller as unknown as { applyPullRequests?: (r: string, x: unknown) => void }).applyPullRequests = (
+      _repoId,
+      offer,
+    ) => applied.push(offer);
+
+    h.controller.handlePullRequests({
+      type: "worktreePullRequests",
+      repoId: REPO_A,
+      token: 1,
+      available: false,
+    });
+
+    expect(applied).toEqual([{ list: [], truncated: false, available: false }]);
+  });
+
+  it("[2_2] drops a forge answer that outlived its opening", () => {
+    // Same rule as the refs answer, and for the same reason: both answer one
+    // opening's `requestWorktreeRefs`, so a predecessor's rows must not seed
+    // the form the user has open now.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const applied: string[] = [];
+    (h.controller as unknown as { applyPullRequests?: (r: string, x: unknown) => void }).applyPullRequests = (repoId) =>
+      applied.push(repoId);
+
+    h.controller.handlePullRequests({
+      type: "worktreePullRequests",
+      repoId: REPO_A,
+      token: 1,
+      pullRequests: [],
+      truncated: false,
+      available: true,
+    });
+
+    expect(applied, "the first opening's forge answer reached the second opening's form").toEqual([]);
+
+    h.controller.handlePullRequests({
+      type: "worktreePullRequests",
+      repoId: REPO_A,
+      token: 2,
+      pullRequests: [],
+      truncated: false,
+      available: true,
+    });
+
+    expect(applied).toEqual([REPO_A]);
+  });
+
   it("[4_2][r2 W2] an answer to a PREVIOUS opening is dropped, and the current one still applies", () => {
     // `repoId` names a repository, not an opening. Reopened on the same
     // repository, the predecessor's answer is indistinguishable from the
