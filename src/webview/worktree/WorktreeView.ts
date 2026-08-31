@@ -169,6 +169,15 @@ export interface WorktreeViewDeps {
   /** Seeds the create form; absent → the create affordance does nothing. */
   createDialogDeps?: () => Omit<WorktreeCreateDialogDeps, "onSubmit" | "onCancel">;
   onCreateSubmit?: WorktreeCreateDialogDeps["onSubmit"];
+  /**
+   * The create conversation ended, by either door.
+   *
+   * One dep rather than a hook on each exit: a retirement wired into cancel
+   * alone leaves a submitted form's authority live, and one wired into submit
+   * alone leaves a cancelled form's live forever — which is the case that
+   * matters most, because nothing ever reopens to supersede it (design.md D3).
+   */
+  onCreateClosed?: () => void;
   /** What the launch dialog collected, for the worktree it was opened on. */
   onLaunchSubmit?: (request: WorktreeLaunchRequest) => void;
   /**
@@ -557,10 +566,15 @@ export class WorktreeView {
       initialRepoId: initialRepoId ?? seed.initialRepoId,
       onSubmit: (draft) => {
         this.closeDialog = null;
+        // The submission first, the retirement after it. The create cites the
+        // provisioning offer by id and retirement evicts it, so retiring first
+        // would strip the request of the model it was built from.
         this.deps.onCreateSubmit?.(draft);
+        this.deps.onCreateClosed?.();
       },
       onCancel: () => {
         this.closeDialog = null;
+        this.deps.onCreateClosed?.();
       },
     });
   }

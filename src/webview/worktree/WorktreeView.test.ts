@@ -1915,6 +1915,44 @@ describe("dialogs", () => {
     expect(host.querySelector(".wt-dialog")?.getAttribute("aria-label")).toBe("Create worktree");
   });
 
+  it("[3_1] retires the opening when the create form is cancelled", () => {
+    // Cancel is the exit a "supersede on the next opening" rule never reaches:
+    // the user may never open another form. Asserted separately from submit —
+    // a retirement wired into one exit is the same bug in a different position.
+    let retired = 0;
+    const { view, host } = mount({
+      createDialogDeps: () => ({ repos: [createDefaults()] }),
+      onCreateClosed: () => {
+        retired += 1;
+      },
+    });
+    view.setData(populated());
+    view.openCreateDialog();
+    [...host.querySelectorAll("button")].find((b) => b.textContent === "Cancel")?.click();
+    expect(retired).toBe(1);
+  });
+
+  it("[3_1] retires the opening when the create form is submitted", () => {
+    // Submitting ends the conversation too. The create it posts cites the offer
+    // by id, so the retirement follows the submission rather than preceding it.
+    const order: string[] = [];
+    const { view, host } = mount({
+      createDialogDeps: () => ({ repos: [createDefaults()] }),
+      onCreateSubmit: () => order.push("submit"),
+      onCreateClosed: () => order.push("closed"),
+    });
+    view.setData(populated());
+    view.openCreateDialog();
+    const name = host.querySelector<HTMLInputElement>("#wt-branch");
+    if (!name) {
+      throw new Error("the create form lost its branch field");
+    }
+    name.value = "feat/login";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Create worktree"))?.click();
+    expect(order).toEqual(["submit", "closed"]);
+  });
+
   it("supersedes an open launch dialog rather than stacking one over it", () => {
     // An untracked modal stays mounted under the next one, holding a focus trap
     // and a document listener nothing releases (round-1 W4).

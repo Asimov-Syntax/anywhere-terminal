@@ -673,6 +673,23 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     expect(typeof view.deps.createDialogDeps).toBe("function");
   });
 
+  it("[3_1] retires the opening the form was riding, not a fresh one", () => {
+    // The retirement has to name the SAME opening the form's defaults, refs and
+    // offer rode, or the host refuses it as a replay from a form it replaced —
+    // and refusing it is exactly right, which is what makes a wrong number here
+    // silently do nothing (D1, D2).
+    const h = mount();
+    const view = (h.controller as unknown as { view: { deps: { onCreateClosed(): void } } }).view;
+    h.controller.openCreate();
+    const opening = liveOpening(h.posts);
+
+    view.deps.onCreateClosed();
+
+    expect(h.posts.filter((m) => m.type === "worktreeCreateClosed")).toEqual([
+      { type: "worktreeCreateClosed", opening },
+    ]);
+  });
+
   it("maps a new-branch draft onto the create request", () => {
     const posted: WebViewToExtensionMessage[] = [];
     const h = mount();

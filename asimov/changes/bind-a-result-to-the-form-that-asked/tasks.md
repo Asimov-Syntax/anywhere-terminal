@@ -52,7 +52,7 @@
 
 ## 3. Both exits retire
 
-- [ ] 3_1 Cancel and submit both close the conversation
+- [x] 3_1 Cancel and submit both close the conversation — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2, 2_2
   - **Refs**: specs/worktree-panel/spec.md#closing-a-create-form-retires-its-opening; design.md D3
   - **Acceptance**:

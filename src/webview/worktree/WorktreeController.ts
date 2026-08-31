@@ -535,6 +535,13 @@ export class WorktreeController {
           deps.postMessage({ type: "worktreeRemove", worktreeId: result.worktreeId, force: false });
         }
       },
+      // Both doors of the create form, and the only signal the host has that
+      // the conversation ended. `refsToken` is the opening being retired — the
+      // same number the form's defaults, refs, probe and offer all ride, so
+      // there is one identity to reason about rather than two (D1).
+      onCreateClosed: () => {
+        this.deps.postMessage({ type: "worktreeCreateClosed", opening: this.refsToken });
+      },
       // Create's shipped entry path. The dialog has existed since WT-002.1 and
       // nothing ever submitted it anywhere (round-1 B1); this is where the
       // draft becomes the request the host validates.
