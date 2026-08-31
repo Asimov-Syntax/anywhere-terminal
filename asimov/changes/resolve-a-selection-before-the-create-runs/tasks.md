@@ -125,7 +125,7 @@
     6. Covered in `src/webview/worktree/WorktreeCreateDialog.test.ts` and, for the seq gate, `src/webview/worktree/WorktreeController.test.ts`: an A to B to A edit sequence never applies the older answer; a declined repair returns the form to fresh rather than leaving reattach armed; the rendered destination is the path the submitted request carries; create is disabled while a classification is outstanding.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and are NOT edited
 
-- [ ] 5_4 The assembly walks a typed selection to the argv it issues
+- [x] 5_4 The assembly walks a typed selection to the argv it issues — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1, 5_3
   - **Refs**: design.md D1, D7, D8
   - **Acceptance**:
