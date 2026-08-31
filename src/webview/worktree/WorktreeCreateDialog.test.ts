@@ -2853,3 +2853,126 @@ describe("create worktree — recover a debris destination", () => {
     expect(h.offer().hidden).toBe(true);
   });
 });
+
+// ── Selecting a pull request (§ 5, D4) ──────────────────────────────────────
+
+describe("selecting a pull request resolves to its own deterministic branch", () => {
+  const PR_REFS = [{ name: "main" }, { name: "release" }] as const;
+
+  const PRS = [
+    {
+      number: 42,
+      title: "Add search",
+      headRefName: "feat-search",
+      baseRefName: "main",
+      fromFork: false,
+      headOwner: "acme",
+    },
+    {
+      number: 7,
+      title: "Fix the lock",
+      headRefName: "fix-lock",
+      baseRefName: "release",
+      fromFork: true,
+      headOwner: "contributor",
+    },
+  ] as const;
+
+  /**
+   * The form as production wires it: a resolver bound, so a selection goes out
+   * to the host and comes back, which is the path a pull request has to feed
+   * rather than replace.
+   */
+  function withPrs(over: { refs?: readonly { name: string; heldBy?: string }[] } = {}) {
+    const asked: { branch: string; base?: { kind: string; ref?: string } }[] = [];
+    const h = open({
+      repos: [
+        createDefaults({
+          refs: { list: [...(over.refs ?? PR_REFS)], truncated: false },
+          pullRequests: { list: [...PRS], truncated: false, available: true },
+        }),
+      ],
+      onSelectionChange: (sel) => asked.push(sel as (typeof asked)[number]),
+    });
+    return {
+      ...h,
+      asked,
+      branch: () => h.q<HTMLInputElement>("#wt-branch"),
+      base: () => h.q<HTMLInputElement>("#wt-base"),
+      baseNote: () => h.q<HTMLElement>("#wt-base-note"),
+      error: () => h.q<HTMLElement>(".wt-ferror"),
+      /** Open the list and take the row for pull request `number`. */
+      pick: (number: number) => {
+        const input = h.q<HTMLInputElement>("#wt-branch");
+        input.focus();
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+        const row = h.host.querySelector<HTMLElement>(`#wt-branch-list [data-branch="pr-${number}"]`);
+        if (row === null) {
+          throw new Error(`the list offers no row for pull request ${number}`);
+        }
+        row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      },
+    };
+  }
+
+  it("names the branch from the number alone, and takes the request's own base", () => {
+    const h = withPrs();
+    h.pick(42);
+
+    expect(h.branch().value).toBe("pr/42");
+    expect(h.base().value).toBe("main");
+  });
+
+  it("derives the branch from the number, never from the title or the head ref", () => {
+    // #7 is "Fix the lock" on head `fix-lock`. Either would be a plausible
+    // branch name and both are wrong: D4 makes the branch a function of the
+    // number so the same pull request is the same worktree tomorrow, whatever
+    // its author renames.
+    const h = withPrs();
+    h.pick(7);
+
+    expect(h.branch().value).toBe("pr/7");
+    expect(h.branch().value).not.toContain("lock");
+    expect(h.base().value).toBe("release");
+  });
+
+  it("asks the host about the branch it derived, through the path a typed name takes", () => {
+    const h = withPrs();
+    h.pick(42);
+
+    expect(h.asked.at(-1)?.branch).toBe("pr/42");
+    expect(h.asked.at(-1)?.base).toEqual({ kind: "ref", ref: "main" });
+  });
+
+  it("treats a pull request whose branch does not exist yet as a new branch", () => {
+    const h = withPrs();
+    h.pick(42);
+
+    // `new` is what leaves the base applicable — the same verdict the same
+    // typed name would get. Asserted with the branch, because an untouched
+    // form also has an enabled base field: the pair is what says the
+    // selection landed and was classified.
+    expect(h.branch().value).toBe("pr/42");
+    expect(h.base().disabled).toBe(false);
+    expect(h.baseNote().hidden).toBe(true);
+  });
+
+  it("treats a pull request whose branch already exists as that existing branch", () => {
+    const h = withPrs({ refs: [{ name: "main" }, { name: "release" }, { name: "pr/42" }] });
+    h.pick(42);
+
+    expect(h.branch().value).toBe("pr/42");
+    expect(h.base().disabled).toBe(true);
+    expect(h.baseNote().textContent).toContain("already exists");
+  });
+
+  it("refuses a pull request whose branch another worktree holds, in the same words", () => {
+    const h = withPrs({ refs: [{ name: "main" }, { name: "release" }, { name: "pr/42", heldBy: "lock-spike" }] });
+    const before = h.branch().value;
+    h.pick(42);
+
+    expect(h.error().hidden).toBe(false);
+    expect(h.error().textContent).toBe("pr/42 is checked out in lock-spike");
+    expect(h.branch().value).toBe(before);
+  });
+});

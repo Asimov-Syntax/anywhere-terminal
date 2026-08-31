@@ -1386,12 +1386,31 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     shell.refreshFocusTrap();
   }
 
+  /**
+   * What a pull request names as a branch: `pr/<number>` and nothing else (D4).
+   *
+   * Not the title, not `headRefName` — both belong to the pull request's author
+   * and both can be renamed. A worktree that changes identity when someone edits
+   * a title is not the same worktree tomorrow.
+   */
+  function branchOfPullRequest(pr: PullRequestOffer): string {
+    return `pr/${pr.number}`;
+  }
+
   /** Take row `at` as the selection, close the list, and re-derive. */
   function commit(at: number): void {
-    const picked = choices[at];
-    if (picked === undefined || picked.kind === "prsUnavailable") {
+    const row = choices[at];
+    if (row === undefined || row.kind === "prsUnavailable") {
       return;
     }
+    // A pull request is a SOURCE, not a third kind of branch. It names a branch
+    // and a base, and from there it is the same question a typed name asks — so
+    // it is decided here against the same refs, and below by the same
+    // resolution: reuse, held-by and collision stay answered in one place.
+    const named = row.kind === "pr" ? branchOfPullRequest(row.pr) : undefined;
+    const already = named === undefined ? undefined : offeredRefs().find((ref) => ref.name === named);
+    const picked: BranchChoice =
+      named === undefined ? row : already === undefined ? { kind: "new" } : { kind: "existing", ref: already };
     if (picked.kind === "existing" && picked.ref.heldBy !== undefined) {
       // Refused, and SAID. Silence here is indistinguishable from a dropped
       // keypress, and the explanation already exists (round-1 S2).
@@ -1402,6 +1421,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     choice = picked;
     if (picked.kind === "existing") {
       nameInput.value = picked.ref.name;
+    }
+    if (named !== undefined && row.kind === "pr") {
+      // The two fields the pull request answers. `syncDerived` reads both back
+      // into the draft, so writing them here is the whole of what feeds the
+      // existing path — there is no second resolution for pull requests.
+      nameInput.value = named;
+      baseInput.value = row.pr.baseRefName;
     }
     if (draft.branchMode !== "detached") {
       draft.branchMode = choiceMode(choice);

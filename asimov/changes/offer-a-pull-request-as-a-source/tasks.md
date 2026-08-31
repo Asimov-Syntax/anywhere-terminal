@@ -54,7 +54,7 @@
 
 ## 3. What selecting one means
 
-- [ ] 3_1 Resolve a selected pull request to `pr/<number>` and its base
+- [x] 3_1 Resolve a selected pull request to `pr/<number>` and its base — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#a-pull-request-resolves-to-a-deterministic-branch-and-its-base; design.md D4
   - **Acceptance**:
