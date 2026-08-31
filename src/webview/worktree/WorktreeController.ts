@@ -282,6 +282,11 @@ export class WorktreeController {
    */
   private readonly createResolutions = new Map<string, WorktreeCreateResolutionMessage>();
   /**
+   * Minted per probe, so two asks for one query inside one opening can be told
+   * apart. `token` separates openings; nothing else separates these (D1).
+   */
+  private probeSeq = 0;
+  /**
    * Which opening of the create dialog the refs conversation belongs to.
    *
    * Bumped per open, echoed by the host, and compared on the way back — the
@@ -423,7 +428,14 @@ export class WorktreeController {
           // answer where a create would GO, and this one answers what it would
           // DO. Both ride the opening's token, because `repoId` names a
           // repository and not an opening (design.md D1).
-          deps.postMessage({ type: "worktreeCreateProbe", repoId, token: this.refsToken, query: branch });
+          this.probeSeq += 1;
+          deps.postMessage({
+            type: "worktreeCreateProbe",
+            repoId,
+            token: this.refsToken,
+            seq: this.probeSeq,
+            query: branch,
+          });
         },
         bindDefaults: (apply) => {
           this.applyCreateDefaults = apply;

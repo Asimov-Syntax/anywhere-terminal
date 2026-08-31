@@ -1091,10 +1091,31 @@ export type ResolvedMode =
  * dialog closed and reopened on the same repository leaves two conversations on
  * the wire whose answers are otherwise indistinguishable (design.md D1).
  */
+/** What the form would start a NEW branch from, so the host can resolve it (D7). */
+export type ProbeBase = { kind: "ref"; ref: string } | { kind: "detached" };
+
+/**
+ * Whether the base the probe carried resolves to a commit (D7).
+ *
+ * Absent from a resolution whose mode refuses a base at all — `reuse` and
+ * `reattach` start from something that already exists, and a verdict there
+ * would imply a control the form has disabled is still live.
+ */
+export type BaseVerdict = { ok: true; oid: string } | { ok: false; reason: string };
+
 export interface WorktreeCreateProbeMessage {
   type: "worktreeCreateProbe";
   repoId: string;
   token: number;
+  /**
+   * Monotonic per probe WITHIN one opening.
+   *
+   * `token` separates two openings and `query` separates two edits, but an
+   * A → B → A edit sequence puts two answers on the wire identical in both, so
+   * a delayed first answer could overwrite a newer one and restore a repair the
+   * newest classification withdrew (round-1 B5).
+   */
+  seq: number;
   query: string;
   /**
    * A destination to assess INSTEAD of the derived candidate.
@@ -1104,6 +1125,14 @@ export interface WorktreeCreateProbeMessage {
    * would turn the probe into an existence oracle for the whole filesystem.
    */
   candidatePath?: string;
+  /**
+   * What the form would start a NEW branch from, so the host can resolve it.
+   *
+   * D5 puts this validation host-side "riding the resolution"; without the
+   * field the wire could not carry the answer, and an unresolvable base stayed
+   * a post-submit git failure (round-1 B4).
+   */
+  base?: ProbeBase;
 }
 
 export interface WorktreeRemoveRequestMessage {
@@ -2213,6 +2242,8 @@ export interface WorktreeCreateResolutionMessage {
   repoId: string;
   /** Echoed from the request. An answer below the current opening is dropped. */
   token: number;
+  /** Echoed, so a later answer can be told from an earlier one for one query. */
+  seq: number;
   /** Echoed, so a form can tell a current answer from one it has typed past. */
   query: string;
   mode: ResolvedMode;
@@ -2228,6 +2259,7 @@ export interface WorktreeCreateResolutionMessage {
   occupiedCandidate?: { path: string; disposition: ResolvedDisposition };
   /** A branch checked out elsewhere: offered disabled, never submittable. */
   blockedBy?: { ownerPath: string };
+  baseValid?: BaseVerdict;
 }
 
 /**

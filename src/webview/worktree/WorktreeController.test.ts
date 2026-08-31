@@ -800,6 +800,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       type: "worktreeCreateResolution",
       repoId: "/repo/.git",
       token: 0,
+      seq: 0,
       query: "feat",
       mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
       freePath: "/trees/repo-feat",
@@ -829,6 +830,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       type: "worktreeCreateResolution",
       repoId: "/repo/.git",
       token: 0,
+      seq: 0,
       query: "something-else",
       mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc123" },
       freePath: "/trees/repo",
@@ -1394,6 +1396,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeCreateResolution",
       repoId: REPO_A,
       token: 1,
+      seq: 0,
       query: "feat",
       mode: { kind: "reuse" },
       freePath: "/trees/stale",
@@ -1405,6 +1408,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeCreateResolution",
       repoId: REPO_A,
       token: 2,
+      seq: 0,
       query: "feat",
       mode: { kind: "fresh" },
       freePath: "/trees/fresh",
@@ -1423,6 +1427,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeCreateResolution",
       repoId: REPO_A,
       token: 1,
+      seq: 0,
       query: "feat",
       mode: { kind: "fresh" },
       freePath: "/trees/fresh",
@@ -2102,7 +2107,7 @@ describe("the destination follows the branch the user typed", () => {
     // what it would DO. Still exhaustive — nothing else is asked.
     expect(h.posts).toEqual([
       { type: "requestWorktreeCreateDefaults", repoId: REPO, branch: "feat/login" },
-      { type: "worktreeCreateProbe", repoId: REPO, token: 0, query: "feat/login" },
+      { type: "worktreeCreateProbe", repoId: REPO, token: 0, seq: 1, query: "feat/login" },
     ]);
   });
 
@@ -2116,7 +2121,7 @@ describe("the destination follows the branch the user typed", () => {
     h.posts.length = 0;
     dialogDeps(h).onBranchChange(REPO, "feat/login");
 
-    expect(h.posts).toContainEqual({ type: "worktreeCreateProbe", repoId: REPO, token: 2, query: "feat/login" });
+    expect(h.posts).toContainEqual({ type: "worktreeCreateProbe", repoId: REPO, token: 2, seq: 1, query: "feat/login" });
   });
 
   it("pushes an unsolicited answer into the form the user already has open", () => {

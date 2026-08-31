@@ -93,7 +93,7 @@
     6. The reader and the corroboration reach the mutation as injected deps, so the assembly in `src/extension.ts` supplies the SAME `probeReattach` it already gives the host and the same `listRepoWorktrees` the tree uses — offer and mutation cannot then diverge on what they checked. Construction sites `src/extension.ts` and `src/extension.worktreeMutations.test.ts` take the new deps; the symlink case is covered in `src/worktree/reattachProbe.test.ts`, and `src/worktree/worktreeMutations.test.ts` loses the `prunablePaths` block along with the function it covered.
   - **Boundary**: still no `--force` and no fallback to `add`
 
-- [ ] 5_2 The host answers one probe per settled selection, for one owner
+- [x] 5_2 The host answers one probe per settled selection, for one owner — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D1, D2, D7
   - **Acceptance**:
@@ -107,6 +107,7 @@
     5. Extract the one destination resolver both the probe and the defaults handler use — they derive root, taken paths, slug and free suffix separately today, so `freePath` and the submitted destination can drift.
     6. `src/extension.ts` wires the base resolution beside the existing `probeReattach` assembly.
     7. Cover: an unresolvable base answers `ok: false`; `baseValid` is absent for reuse and reattach; two surfaces on one repository each classify against their own enumeration; a malformed probe is refused rather than throwing.
+    8. Adding a required field to the pair breaks every existing sender and consumer, so the mechanical plumbing lands here rather than leaving the tree uncompilable between tasks: `src/webview/worktree/WorktreeController.ts` mints the monotonic `seq` it sends, and `src/webview/messaging/MessageRouter.test.ts`, `src/webview/worktree/WorktreeController.test.ts` and `src/extension.worktreeAssembly.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` carry it on their fixtures. Applying it — dropping an answer below the highest applied — is 5_3's.
   - **Boundary**: no change to `worktreeCreateDefaults`' own lifecycle — D1's scope note still holds
 
 - [ ] 5_3 One effective resolution drives the form, and submit waits for it

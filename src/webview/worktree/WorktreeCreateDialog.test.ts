@@ -1884,6 +1884,7 @@ describe("the base ref states when it cannot apply", () => {
           type: "worktreeCreateResolution",
           repoId: REPO_ID,
           token: 1,
+          seq: 0,
           query: "feat/search",
           freePath: "/trees/repo-feat-search",
           ...msg,

@@ -314,6 +314,8 @@ async function builtHost(
     /** § 2.3's corroboration, and every subject it was asked about. */
     probeReattach?: (input: { repoPath: string; branch: string; repairPath: string }) => Promise<ReattachVerdict>;
     probeSubjects?: { repoPath: string; branch: string; repairPath: string }[];
+    /** D7's base resolution: the commit a ref names, or undefined for none. */
+    resolveBase?: (input: { repoPath: string; ref: string }) => Promise<string | undefined>;
   } = {},
 ) {
   const presence: WorktreePresence = { rowsByWorktreeId: { [MAIN_PATH]: rows }, scannedAt: 1, degradedSources: [] };
@@ -410,6 +412,7 @@ async function builtHost(
             return (await over.readRefs?.(input)) ?? { ok: true, refs: [], truncated: false };
           },
         }),
+    ...(over.resolveBase === undefined ? {} : { resolveBase: over.resolveBase }),
     ...(over.probeReattach === undefined && over.probeSubjects === undefined
       ? {}
       : {
@@ -2492,11 +2495,177 @@ describe("the host resolves a selection before the create runs", () => {
     freePath: string;
     occupiedCandidate?: { path: string; disposition: { kind: string } };
     blockedBy?: { ownerPath: string };
+    baseValid?: { ok: boolean; oid?: string; reason?: string };
   };
 
   function resolutionIn(view: { posts: ExtensionToWebViewMessage[] }): Resolution | undefined {
     return view.posts.find((m) => m.type === "worktreeCreateResolution") as Resolution | undefined;
   }
+
+  it("rides only its OWN opening's enumeration, and fails open when there is none", async () => {
+    // Keyed by repository alone, a probe borrowed whichever read arrived last —
+    // including one another surface or another opening started (round-1 W2).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    // A DIFFERENT opening. Nothing enumerated for it, so the documented
+    // fail-open applies rather than another opening's answer.
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 7, seq: 0, query: "idle" });
+    await settle();
+
+    expect(resolutionIn(view)).toMatchObject({ token: 7, mode: { kind: "fresh" } });
+    dispose();
+  });
+
+  it("answers only the newest probe of an opening, never the one it overtook", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 4 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 4, seq: 1, query: "idle" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 4, seq: 2, query: "other" });
+    await settle();
+
+    const answers = view.posts.filter((m) => m.type === "worktreeCreateResolution");
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({ seq: 2, query: "other" });
+    dispose();
+  });
+
+  it("drops a probe that was still suspended on the enumeration when a newer one arrived", async () => {
+    // The gate at dispatch cannot catch this one: probe A is already past it and
+    // suspended inside the refs read when B arrives. Without the check on the
+    // far side of the await, A resumes and posts a classification the form has
+    // moved past — and under a slow read every keystroke's continuation would
+    // resume and re-classify (round-1 B5, B6).
+    let release: ((r: RepoRefsRead) => void) | undefined;
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: () =>
+        new Promise<RepoRefsRead>((resolve) => {
+          release = resolve;
+        }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 9 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 9, seq: 1, query: "first" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 9, seq: 2, query: "second" });
+    // Both are now suspended on the SAME unresolved read.
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(0);
+    release?.({ ok: true, refs: [{ name: "first" }], truncated: false });
+    await settle();
+
+    const answers = view.posts.filter((m) => m.type === "worktreeCreateResolution");
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({ seq: 2, query: "second" });
+    dispose();
+  });
+
+  it("ignores a probe that arrives below the opening's newest seq", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 4 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 4, seq: 5, query: "newer" });
+    await settle();
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 4, seq: 2, query: "older" });
+    await settle();
+
+    const answers = view.posts.filter((m) => m.type === "worktreeCreateResolution");
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({ seq: 5 });
+    dispose();
+  });
+
+  it("refuses a malformed probe rather than carrying it into async work", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, { createRoot: "/trees" });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: Number.NaN,
+      query: "idle",
+    } as never);
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: 5 } as never);
+    await settle();
+
+    expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(0);
+    dispose();
+  });
+
+  it("reports a base that names no commit, before any create is attempted", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase: async () => undefined,
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 2,
+      seq: 0,
+      query: "brand-new",
+      base: { kind: "ref", ref: "no-such-ref" },
+    });
+    await settle();
+
+    expect(resolutionIn(view)).toMatchObject({
+      mode: { kind: "fresh" },
+      baseValid: { ok: false },
+    });
+    dispose();
+  });
+
+  it("carries the commit a valid base resolves to", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase: async () => "deadbeef",
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 2,
+      seq: 0,
+      query: "brand-new",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+
+    expect(resolutionIn(view)).toMatchObject({ baseValid: { ok: true, oid: "deadbeef" } });
+    dispose();
+  });
+
+  it("withholds a base verdict where the mode refuses a base at all", async () => {
+    // `reuse` starts from something that already exists, so a verdict here
+    // would imply a control the form has disabled is still live (D7).
+    const resolveBase = vi.fn(async () => "deadbeef");
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      resolveBase,
+    });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 3 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 3,
+      seq: 0,
+      query: "idle",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+
+    expect(resolutionIn(view)).toMatchObject({ mode: { kind: "reuse" } });
+    expect(resolutionIn(view)?.baseValid).toBeUndefined();
+    expect(resolveBase).not.toHaveBeenCalled();
+    dispose();
+  });
 
   it("reuses an existing branch no worktree holds, echoing the opening and the query", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
@@ -2505,8 +2674,8 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
-    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 7, query: "idle" });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 7 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 7, seq: 0, query: "idle" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({
@@ -2527,7 +2696,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ mode: { kind: "reuse" }, blockedBy: { ownerPath: "/repo-wt/feat" } });
@@ -2542,7 +2711,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "brand-new" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "brand-new" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" }, freePath: "/trees/repo-brand-new" });
@@ -2560,7 +2729,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" } });
@@ -2578,7 +2747,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(subjects).toEqual([{ repoPath: MAIN_PATH, branch: "feat", repairPath: "/repo-wt/feat" }]);
@@ -2597,7 +2766,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ mode: { kind: "adopt", adoptPath: "/repo-wt/feat" } });
@@ -2615,7 +2784,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" }, freePath: "/trees/repo-feat" });
@@ -2633,7 +2802,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" } });
@@ -2649,7 +2818,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     const answer = resolutionIn(view);
@@ -2669,7 +2838,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(resolutionIn(view)?.occupiedCandidate).toBeUndefined();
@@ -2689,7 +2858,7 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
       repoId: REPO,
-      token: 1,
+      token: 1, seq: 0,
       query: "feat",
       candidatePath: "/etc/secrets",
     });
@@ -2711,7 +2880,7 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
       repoId: REPO,
-      token: 1,
+      token: 1, seq: 0,
       query: "feat",
       candidatePath: "/trees/somewhere-else",
     });
@@ -2732,8 +2901,8 @@ describe("the host resolves a selection before the create runs", () => {
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
     });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "idle" });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "idle" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
     await settle();
 
     // Both settles classified against the list, and both classified correctly.
@@ -2757,7 +2926,7 @@ describe("the host resolves a selection before the create runs", () => {
       },
     });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "idle" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
     await settle();
     expect(resolutionIn(view), "the probe answered before the list it depends on").toBeUndefined();
 
@@ -2775,7 +2944,7 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
     });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, query: "idle" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ mode: { kind: "fresh" } });
@@ -2787,7 +2956,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
-    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: "/elsewhere/.git", token: 1, query: "feat" });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: "/elsewhere/.git", token: 1, seq: 0, query: "feat" });
     await settle();
 
     expect(resolutionIn(view)).toBeUndefined();

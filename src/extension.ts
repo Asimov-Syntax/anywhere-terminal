@@ -778,6 +778,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Assembled here rather than in the host for the same reason `readRefs` is:
     // the host holds a listing, and neither `.git` nor `refs/heads` is one.
     probeReattach: corroborateRepair,
+    // D5 puts the base validation host-side "riding the resolution". Asked with
+    // `^{commit}` so an annotated tag answers the commit it points at rather
+    // than the tag object, which is what `git worktree add` would start from.
+    resolveBase: async ({ repoPath, ref }) => {
+      const result = await worktreeTreeDeps.runner.run(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repoPath);
+      if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
+        return undefined;
+      }
+      const oid = result.stdout.toString("utf8").trim();
+      return oid.length === 0 ? undefined : oid;
+    },
     // The two evidence sources a removal blocker set needs and the tree does
     // not carry, from the same store and registry the projector reads.
     removalFacts: {

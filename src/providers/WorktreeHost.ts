@@ -8,8 +8,10 @@
 
 import type * as vscode from "vscode";
 import type {
+  BaseVerdict,
   DestinationDisposition,
   ExtensionToWebViewMessage,
+  ProbeBase,
   ProvisionModel,
   ResolvedDisposition,
   ResolvedMode,
@@ -232,6 +234,13 @@ export interface WorktreeHostOptions {
    * is a git read, and the host holds a listing, not a ref database.
    */
   probeReattach?(input: { repoPath: string; branch: string; repairPath: string }): Promise<ReattachVerdict>;
+  /**
+   * The commit a base ref names, or `undefined` when it names none (D7).
+   *
+   * Host-side because the webview has no ref database, and answered on the
+   * resolution because the resolver is already holding this repository's refs.
+   */
+  resolveBase?(input: { repoPath: string; ref: string }): Promise<string | undefined>;
 }
 
 /**
@@ -554,8 +563,27 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * at a time, and its latest ask is the only one anything reads.
    */
   const refsReads = new Map<string, Promise<RepoRefsRead>>();
+  /**
+   * The highest `seq` each opening has been asked for.
+   *
+   * Two probes for one query inside one opening are identical in `token` and
+   * `query`, so nothing but this separates them. A continuation that resumes to
+   * find a newer probe was asked drops rather than posting an answer the form
+   * would have to un-apply (round-1 B5, B6).
+   */
+  const latestProbe = new Map<string, number>();
   const surfaceKeys = new WeakMap<WorktreeSurface, string>();
   let surfaceSeq = 0;
+  /**
+   * One enumeration belongs to one surface's one opening of one repository.
+   *
+   * Keyed by repository alone, a second attached surface's `requestWorktreeRefs`
+   * replaced the promise the first surface's probe was about to consume, so a
+   * dialog could classify against an enumeration it was never shown (round-1 W2).
+   */
+  const openingKey = (s: WorktreeSurface, repoId: string, token: number): string =>
+    `${surfaceKey(s)}\u0000${repoId}\u0000${token}`;
+
   const surfaceKey = (s: WorktreeSurface): string => {
     const held = surfaceKeys.get(s);
     if (held !== undefined) {
@@ -1069,6 +1097,57 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   /**
+   * Where a create for this branch would go, and what it stepped over.
+   *
+   * ONE derivation for both answers. The probe and `worktreeCreateDefaults`
+   * each derived root, taken paths, slug, base and free suffix separately, so
+   * the destination the resolution named and the one the defaults reply named
+   * could drift apart (round-1 W4).
+   */
+  function resolveDestination(
+    repo: WorktreeRepo,
+    branch: string,
+    override?: string,
+  ): {
+    root: string;
+    /** The directory NAME the candidate is built from, not a path to it. */
+    base: string;
+    bare: string;
+    freePath: string;
+    occupiedCandidate?: { path: string; disposition: ResolvedDisposition };
+  } {
+    const linked = repo.worktrees.filter((w) => w.id !== repo.mainPath).map((w) => w.id);
+    const root = resolveCreateRoot({
+      configured: options.createRoot?.() ?? { value: undefined, explicitlySet: false },
+      linkedWorktrees: linked,
+      mainWorktree: repo.mainPath,
+    });
+    const registered = new Set(repo.worktrees.map((w) => w.id));
+    // Registrations AND the filesystem: a directory nobody registered still
+    // makes `git worktree add` fail, so proving a path free against the listing
+    // alone proves the wrong thing (round-3 B12).
+    const taken = (candidate: string): boolean => registered.has(candidate) || (options.exists?.(candidate) ?? false);
+    const slug = sanitizeBranchForPath(branch);
+    const base = slug.length > 0 ? `${repo.label}-${slug}` : repo.label;
+    // An override is honoured only inside the configured root. The answer states
+    // whether a path is occupied, and assessing an arbitrary one would turn a
+    // probe the form sends per edit into an existence oracle for the filesystem.
+    const inRoot = override !== undefined && isPathInside(override, root) ? override : undefined;
+    const bare = inRoot ?? suggestFreePath(root, base, () => false);
+    const freePath = taken(bare) ? suggestFreePath(root, base, taken) : bare;
+    return {
+      root,
+      base,
+      bare,
+      freePath,
+      // Present only when the suffixing actually skipped something. `debris` is
+      // the directory nobody registered — a registered worktree is not debris,
+      // and nothing here mints an authorization to delete either (D4).
+      ...(freePath === bare ? {} : { occupiedCandidate: { path: bare, disposition: dispositionOf(registered.has(bare)) } }),
+    };
+  }
+
+  /**
    * What a create against this selection would do, answered before submit.
    *
    * Every input but one is already in the host's hand — the listing answers
@@ -1083,35 +1162,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>,
     repo: WorktreeRepo,
   ): Promise<void> {
-    const linked = repo.worktrees.filter((w) => w.id !== repo.mainPath).map((w) => w.id);
-    const root = resolveCreateRoot({
-      configured: options.createRoot?.() ?? { value: undefined, explicitlySet: false },
-      linkedWorktrees: linked,
-      mainWorktree: repo.mainPath,
-    });
-    const registered = new Set(repo.worktrees.map((w) => w.id));
-    const taken = (candidate: string): boolean => registered.has(candidate) || (options.exists?.(candidate) ?? false);
-
-    // An override is honoured only inside the configured root. The answer
-    // states whether a path is occupied, and assessing an arbitrary one would
-    // turn a probe the form sends per edit into an existence oracle for the
-    // whole filesystem.
-    const override =
-      msg.candidatePath !== undefined && isPathInside(msg.candidatePath, root) ? msg.candidatePath : undefined;
-    const slug = sanitizeBranchForPath(msg.query);
-    const base = slug.length > 0 ? `${repo.label}-${slug}` : repo.label;
-    const bare = override ?? suggestFreePath(root, base, () => false);
-    const freePath = taken(bare) ? suggestFreePath(root, base, taken) : bare;
-    // Present only when the suffixing actually skipped something. `debris` is
-    // the directory nobody registered — a registered worktree is not debris,
-    // and nothing here mints an authorization to delete either (D4).
-    const occupiedCandidate =
-      freePath === bare
-        ? undefined
-        : {
-            path: bare,
-            disposition: dispositionOf(registered.has(bare)),
-          };
+    const { freePath, occupiedCandidate } = resolveDestination(repo, msg.query, msg.candidatePath);
 
     // The enumeration the dialog's opening already took, not a second one: a
     // probe per settled edit that re-asks git is the per-keystroke read D2
@@ -1121,7 +1172,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // resolves every query to `fresh`. That is the documented fail-OPEN: a
     // branch we cannot confirm exists is treated as one to create, and git's
     // own refusal at `add` is the backstop, surfaced verbatim (§ 6).
-    const read = await refsReads.get(msg.repoId)?.catch(() => undefined);
+    const opening = openingKey(surface, msg.repoId, msg.token);
+    const read = await refsReads.get(opening)?.catch(() => undefined);
+    // A newer probe was asked for this opening while this one was suspended on
+    // the enumeration. Answering now would post a classification the form has
+    // already moved past, and under a slow read every keystroke's continuation
+    // would resume and re-classify (round-1 B5, B6).
+    if ((latestProbe.get(opening) ?? msg.seq) > msg.seq) {
+      return;
+    }
     const refs = read !== undefined && read.ok === true ? read.refs : [];
     const selection = resolveSelection({ query: msg.query, refs, worktrees: repo.worktrees });
 
@@ -1152,19 +1211,48 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
 
     // The surface may have detached while git was answering. Posting to a dead
     // one is at best wasted, and the form it described is gone.
-    if (disposed || !surfaces.has(surface)) {
+    if (disposed || !surfaces.has(surface) || (latestProbe.get(opening) ?? msg.seq) > msg.seq) {
+      return;
+    }
+    // Only where a base can actually apply. `reuse` and `reattach` take their
+    // starting point from something that already exists, and a verdict on a
+    // control the form has disabled would imply it is still live (D7).
+    const baseValid = mode.kind === "fresh" ? await resolveBaseVerdict(repo, msg.base) : undefined;
+    if (disposed || !surfaces.has(surface) || (latestProbe.get(opening) ?? msg.seq) > msg.seq) {
       return;
     }
     surface.post({
       type: "worktreeCreateResolution",
       repoId: msg.repoId,
       token: msg.token,
+      seq: msg.seq,
       query: msg.query,
       mode,
       freePath,
       ...(occupiedCandidate === undefined ? {} : { occupiedCandidate }),
       ...(selection.blockedBy === undefined ? {} : { blockedBy: selection.blockedBy }),
+      ...(baseValid === undefined ? {} : { baseValid }),
     });
+  }
+
+  /**
+   * Does the base the form would start from resolve to a commit? (D7)
+   *
+   * `undefined` when nobody can ask — the same shape corroboration uses, so an
+   * unassembled reader reports "not told" rather than "invalid".
+   */
+  async function resolveBaseVerdict(repo: WorktreeRepo, base: ProbeBase | undefined): Promise<BaseVerdict | undefined> {
+    if (base === undefined || base.kind === "detached") {
+      return undefined;
+    }
+    const resolve = options.resolveBase;
+    if (resolve === undefined) {
+      return undefined;
+    }
+    const oid = await resolve({ repoPath: repo.mainPath, ref: base.ref }).catch(() => undefined);
+    return oid === undefined
+      ? { ok: false, reason: `"${base.ref}" does not name a commit in this repository.` }
+      : { ok: true, oid };
   }
 
   /** A registered worktree is not debris; a directory nobody registered is. */
@@ -1295,10 +1383,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         return;
       }
       case "worktreeCreateProbe": {
+        // The discriminant alone is not the payload. These four fields cross a
+        // trust boundary and then enter async logic, where a wrong type is an
+        // unhandled rejection rather than a refusal (round-1 W1).
+        if (
+          typeof msg.repoId !== "string" ||
+          !Number.isFinite(msg.token) ||
+          !Number.isFinite(msg.seq) ||
+          typeof msg.query !== "string" ||
+          (msg.candidatePath !== undefined && typeof msg.candidatePath !== "string")
+        ) {
+          return;
+        }
         const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
         if (repo === undefined) {
           return;
         }
+        // Marked BEFORE the await, which is the whole point: recording it after
+        // would leave the window every superseded continuation resumes inside.
+        const opening = openingKey(surface, msg.repoId, msg.token);
+        if ((latestProbe.get(opening) ?? Number.NEGATIVE_INFINITY) >= msg.seq) {
+          return;
+        }
+        latestProbe.set(opening, msg.seq);
         void answerCreateProbe(surface, msg, repo);
         return;
       }
@@ -1310,26 +1417,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (repo === undefined) {
           return;
         }
-        const linked = repo.worktrees.filter((w) => w.id !== repo.mainPath).map((w) => w.id);
-        const root = resolveCreateRoot({
-          configured: options.createRoot?.() ?? { value: undefined, explicitlySet: false },
-          linkedWorktrees: linked,
-          mainWorktree: repo.mainPath,
-        });
-        const registered = new Set(repo.worktrees.map((w) => w.id));
-        // Registrations AND the filesystem: a directory nobody registered still
-        // makes `git worktree add` fail, so proving a path free against the
-        // listing alone proves the wrong thing (round-3 B12).
-        const taken = (candidate: string): boolean =>
-          registered.has(candidate) || (options.exists?.(candidate) ?? false);
         // The repo's own name is the base a branch is appended to, so the form's
         // placeholder and the destination it opens on describe one scheme. With
         // a branch, the base is what the form would have shown for it — the
-        // host resolves the collision on THAT, not on the bare default.
-        const slug = sanitizeBranchForPath(msg.branch ?? "");
-        const base = slug.length > 0 ? `${repo.label}-${slug}` : repo.label;
-        const bare = suggestFreePath(root, base, () => false);
-        const path = suggestFreePath(root, base, taken);
+        // host resolves the collision on THAT, not on the bare default. Through
+        // the SAME resolver the probe answers with, so the destination the
+        // resolution names and the one this reply names cannot drift (W4).
+        const { root, base, bare, freePath: path } = resolveDestination(repo, msg.branch ?? "");
         // Resolved ONCE per form, not per keystroke. This message is re-sent
         // as the user types a branch, and a fresh offer each time would churn
         // ids under a dialog the user has not stopped looking at — and
@@ -1420,7 +1514,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // lands before the read resolves joins this one rather than starting
         // another. One entry per repository, replaced on every ask.
         const inFlight = read({ cwd: repo.mainPath, worktrees: repo.worktrees });
-        refsReads.set(msg.repoId, inFlight);
+        refsReads.set(openingKey(surface, msg.repoId, msg.token), inFlight);
         void inFlight
           .then((answer) => {
             // The surface may have detached while git was answering. Posting to
@@ -2127,6 +2221,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // them, so without this the store grows with every window ever opened
         // and a stale id stays resolvable (.reviews/round-1.md B6).
         offers.forgetSurface(surfaceKey(surface));
+        // A detached surface's openings can never be answered, and their
+        // enumerations would otherwise be retained for the life of the host.
+        const gone = `${surfaceKey(surface)}\u0000`;
+        for (const key of [...refsReads.keys()]) {
+          if (key.startsWith(gone)) {
+            refsReads.delete(key);
+          }
+        }
+        for (const key of [...latestProbe.keys()]) {
+          if (key.startsWith(gone)) {
+            latestProbe.delete(key);
+          }
+        }
         // Detaching is a falling edge too: the last showing surface going away
         // this way would otherwise leave the scan armed for the window's life.
         reconcileScan();
