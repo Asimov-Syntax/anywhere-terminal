@@ -105,3 +105,24 @@ branch | Surprise: WT-013.4 was planned twice, in two sessions, because each ran
 own worktree and saw nothing | Evidence: this change vs report-what-was-checked-before-confirming,
 both on huybuidac/create-worktree-harden only after a merge | Consumer: plan | Action: run
 `git worktree list` and read the branch names in Stage 1 before scaffolding a PLAN task.
+
+- Section 2 built as five tasks. Two task boundaries moved at build time rather than being improvised
+  around: 2_3 absorbed `WorktreeView`/`WorktreeController` because a nullable fingerprint that stops
+  at the dialog leaves a tree that does not compile, and 2_4 absorbed the four existing
+  menu-to-git walks in `src/extension.worktreeAssembly.test.ts` because they encoded the very
+  deletion B1 removes — a task that leaves the suite red is not done. 2_5 still owns the new proofs.
+- Two doors onto the old behaviour were closed beyond the planned Outcome, both in
+  `WorktreeController`: the `unavailable` RETRY now re-asks rather than posting a removal (it was the
+  one path where nothing about the worktree's risk is known), and a blocked refusal now carries
+  `fingerprint: null` rather than `""` — presence is the force authority, and an empty string is
+  present. Neither is reachable as a defect today; both are one edit away from being one.
+- `WorktreeView.openRemoveReport` was extracted rather than the two presence lookups copied into the
+  controller, so the blocked-result path and the assess path open the same dialog the same way.
+- Verify Gate: check-types clean, 6243/6243, `gate:fs-deletion` ok, biome check-mode back to the
+  3 errors / 14 warnings / 1 info baseline with a diagnostic set byte-identical to 4e7443c4 (measured
+  on a detached probe worktree, not estimated). Three call sites were hand-wrapped exactly as the
+  formatter printed them; write mode was never run.
+- The `.build/verified.ndjson` records for tasks 1_1 to 1_7 did not travel with the branch merge —
+  `.build/` is gitignored — so `verify-status` read seven `[x]` tasks as hand-ticked. Restored from
+  the sibling worktree that produced them rather than re-run or waived; the records are the CLI's own
+  output from those runs.
