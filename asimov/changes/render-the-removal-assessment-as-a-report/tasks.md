@@ -162,7 +162,7 @@
     2. `src/worktree/worktreeMutationService.test.ts`: hold `forceRebuild` unresolved and assert neither `resolve` nor the assessment has run — an assertion on the finished order would also pass if the barrier were removed and the calls merely happened to land that way. Then: a target that vanishes across the barrier answers `unavailable` rather than `null`; a registration replaced across the barrier is assessed as the replacement and mints the replacement's token.
   - **Boundary**: the coordinator's own contract is not touched — no opt-out flag for the post-attempt rebuild, because that `finally` is load-bearing for every mutation that shares it (D10)
 
-- [ ] 3_2 The host stops swallowing an assessment that failed
+- [x] 3_2 The host stops swallowing an assessment that failed — verified: bun test 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 3_1
   - **Refs**: design.md D12; specs/worktree-panel/spec.md#an-assessment-that-fails-outright-is-reported-not-swallowed
   - **Acceptance**:

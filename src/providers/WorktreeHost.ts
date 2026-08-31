@@ -1730,9 +1730,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         const assess = actions.assessRemovalReport;
         const assessTarget = msg.worktreeId;
         const assessRepo = repoIdOf(assessTarget);
-        // NOT `perform`: that wrapper takes the rebuild gate and publishes a
-        // mutation result, so a read routed through it would queue behind writes
-        // and announce itself as one.
+        // NOT `perform`: that wrapper publishes a mutation result, and a read
+        // must not announce itself as one. It also takes the rebuild gate — but
+        // that half was never a reason to avoid it, and the capability now takes
+        // that barrier itself, because a report read from the cache can describe
+        // a registration the confirmation will not act on (D10).
         if (assess === undefined || assessRepo === undefined || actionPath(assessTarget, true) === undefined) {
           return;
         }
@@ -1746,8 +1748,20 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             surface.post({ type: "worktreeRemoveAssessment", worktreeId: assessTarget, result });
           })
           .catch(() => {
-            // Posts nothing. Inventing an empty report would render a worktree
-            // of unknown risk as one with none.
+            // Inventing an empty report would render a worktree of unknown risk
+            // as one with none — but silence made an explicit destructive
+            // request look inert, with no retry. The `unavailable` arm D8
+            // already defines is the honest third answer, and naming the
+            // assessment itself keeps its promise that the list is never empty
+            // (D12).
+            if (!surfaces.has(surface)) {
+              return;
+            }
+            surface.post({
+              type: "worktreeRemoveAssessment",
+              worktreeId: assessTarget,
+              result: { kind: "unavailable", unreadable: ["the assessment"] },
+            });
           });
         return;
       }

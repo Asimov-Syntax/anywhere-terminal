@@ -217,7 +217,9 @@ const LAUNCH_TARGETS = [
   },
 ];
 
-function recordingActions(assessReport?: WorktreeRemoveAssessmentMessage["result"] | null) {
+type AssessReport = WorktreeRemoveAssessmentMessage["result"] | null;
+
+function recordingActions(assessReport?: AssessReport | (() => Promise<AssessReport>)) {
   const calls: Array<[string, ...unknown[]]> = [];
   const reconciles: string[][] = [];
   const track =
@@ -239,6 +241,9 @@ function recordingActions(assessReport?: WorktreeRemoveAssessmentMessage["result
     // NOT what an assess reached.
     assessRemovalReport: async (target) => {
       calls.push(["assessRemovalReport", target]);
+      if (typeof assessReport === "function") {
+        return await assessReport();
+      }
       return assessReport === undefined ? null : assessReport;
     },
     lockWorktree: track("lockWorktree") as NonNullable<WorktreeActions["lockWorktree"]>,
@@ -328,8 +333,11 @@ async function builtHost(
     claimedByPane?: ReadonlyMap<string, string>;
     /** Let `git status --porcelain` answer, so an assessment can reach a verdict. */
     statusReadable?: boolean;
-    /** What the read-only removal report should answer. Omitted means `null`. */
-    assessReport?: WorktreeRemoveAssessmentMessage["result"] | null;
+    /**
+     * What the read-only removal report should answer. Omitted means `null`; a
+     * function lets a test gate or reject the read the way production can.
+     */
+    assessReport?: AssessReport | (() => Promise<AssessReport>);
     /** § 2.3's corroboration, and every subject it was asked about. */
     probeReattach?: (input: { repoPath: string; branch: string; repairPath: string }) => Promise<ReattachVerdict>;
     probeSubjects?: { repoPath: string; branch: string; repairPath: string }[];
@@ -4567,5 +4575,49 @@ describe("a removal is reported without being performed", () => {
     const post = view.posts[0];
     expect(post?.type === "worktreeRemoveAssessment" && post.result.kind).toBe("unavailable");
     dispose();
+  });
+
+  it("[W5] answers an assessment that threw, rather than leaving the action unanswered", async () => {
+    // The catch used to post nothing, so a failed read made Remove Worktree look
+    // inert: nothing deleted, nothing said, and no retry — the surface D8
+    // defines is reachable only through a typed `unavailable` (D12).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      assessReport: async () => {
+        throw new Error("status read failed");
+      },
+    });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    await settle();
+
+    expect(view.posts).toEqual([
+      {
+        type: "worktreeRemoveAssessment",
+        worktreeId: RAW_ID,
+        result: { kind: "unavailable", unreadable: ["the assessment"] },
+      },
+    ]);
+    dispose();
+  });
+
+  it("[W5] posts nothing when the assessment throws after the surface detached", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, {
+      assessReport: async () => {
+        await gate;
+        throw new Error("status read failed");
+      },
+    });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID });
+    dispose();
+    release?.();
+    await settle();
+
+    // The read has to have actually been reached, or "posted nothing" is a
+    // claim about a walk that never happened.
+    expect(calls).toEqual([["assessRemovalReport", { repoId: REPO, worktreeId: RAW_ID, origin: view }]]);
+    expect(view.posts).toEqual([]);
   });
 });
