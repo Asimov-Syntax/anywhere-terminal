@@ -24,5 +24,6 @@ A VS Code extension that allows users to place terminal instances anywhere in th
 - **Lint**: `pnpm exec biome check src` (Biome — check mode; `pnpm run lint` is the auto-fix form and must not be used for a gate)
 - **Format**: `pnpm run format` (Biome — auto-format)
 - **Test**: `pnpm run test:unit` (Vitest)
+- **Bundle gate**: `pnpm run build:check-requires` (Node; needs `dist/` built) — regression tripwire: every `require()` surviving in `dist/extension.js` resolves, so a dependency that leaves an unfollowable relative require fails the build instead of the user's activation
 - **I10 gate**: `pnpm run gate:fs-deletion` (TypeScript Program; ~1.6 s) — regression tripwire: no recognised destructive `node:fs` reference in the worktree removal path
 - **E2E**: N/A

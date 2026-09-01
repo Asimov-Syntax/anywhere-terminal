@@ -12,7 +12,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. `scripts/bundleRequires.mjs` exports the classifier over bundle text, reading the externals from `esbuild.js` and the builtins from `node:module`.
     2. `src/test/invariants/bundleRequires.test.ts` drives it over the UMD factory relative-require signature the defect had, a builtin, a declared external, and an unbundled bare specifier.
 
-- [ ] 1_2 Fail the package build on a bundle that cannot resolve itself
+- [x] 1_2 Fail the package build on a bundle that cannot resolve itself — verified: node scripts/check-bundle-requires.mjs && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d1--the-gate-reads-distextensionjs-and-nothing-else, design.md#adoption
   - **Acceptance**:

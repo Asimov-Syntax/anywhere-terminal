@@ -7,7 +7,12 @@
 // test ever editing the build config it audits.
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — a build script, deliberately outside the typed source tree
-import { classify, declaredExternals, requiredSpecifiers, unresolvableRequires } from "../../../scripts/bundleRequires.mjs";
+import {
+  classify,
+  declaredExternals,
+  requiredSpecifiers,
+  unresolvableRequires,
+} from "../../../scripts/bundleRequires.mjs";
 
 const ESBUILD = `
   external: [
@@ -18,7 +23,10 @@ const ESBUILD = `
 
 /** Nothing is on disk, so a relative require resolves only if this says so. */
 const nothingThere = (_p: string) => false;
-const only = (...present: string[]) => (p: string) => present.some((q) => p.endsWith(q));
+const only =
+  (...present: string[]) =>
+  (p: string) =>
+    present.some((q) => p.endsWith(q));
 
 const verdicts = (bundle: string, exists: (p: string) => boolean = nothingThere) =>
   unresolvableRequires(bundle, { esbuildSource: ESBUILD, resolvesFrom: "/repo/dist", exists });
@@ -42,9 +50,7 @@ describe("[WT-011.12] the defect this gate exists for", () => {
   it("catches the relative require a UMD factory left behind", () => {
     const bundle = `function(require, exports){ var f = require("./impl/format"); }`;
 
-    expect(verdicts(bundle)).toEqual([
-      expect.objectContaining({ specifier: "./impl/format", ok: false }),
-    ]);
+    expect(verdicts(bundle)).toEqual([expect.objectContaining({ specifier: "./impl/format", ok: false })]);
   });
 
   it("says where it would have resolved, which is the whole diagnosis", () => {
@@ -69,9 +75,7 @@ describe("[WT-011.12] what the gate must not report", () => {
 
   it("fails a bare specifier that was never bundled", () => {
     // It resolves against a node_modules the VSIX does not carry.
-    expect(verdicts(`require("lodash")`)).toEqual([
-      expect.objectContaining({ specifier: "lodash", ok: false }),
-    ]);
+    expect(verdicts(`require("lodash")`)).toEqual([expect.objectContaining({ specifier: "lodash", ok: false })]);
   });
 
   it("does not treat a builtin as an external, nor the reverse", () => {

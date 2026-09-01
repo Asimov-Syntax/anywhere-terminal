@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.12`)_
@@ -36,3 +36,4 @@ Lane: light — S, one new gate script plus wiring | flags: infra
 - Adoption is `clean-now` (automated-rule reference): `dist/extension.js` at planning time carries only node builtins and `vscode`, so the rule passes on landing. No baseline, no ratchet.
 - Specs are NO-DELTA: a build-time gate changes nothing the shipped extension does.
 - Gate 2 taken under fastlane on the standing goal, with the user away.
+- The gate was proven against the REAL artifact, not only fixtures: appending `require("./impl/format")` to `dist/extension.js` made it exit 1 naming the path it would have resolved to, and restoring the file returned it to 0. `dist/` is build output and was left byte-identical.
