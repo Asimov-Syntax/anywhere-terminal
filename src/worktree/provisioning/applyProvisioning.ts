@@ -189,7 +189,22 @@ export async function applyProvisioning(
         continue;
       }
     }
-    answered.set(entry, await applyEntry(entry, roots, budget, deps));
+    // A contested member claims its top-level destination exclusively. The
+    // reading above says it was absent moments ago, so an `EEXIST` now is
+    // another writer taking it, not material this apply may merge into
+    // (.reviews/round-2.md F001).
+    const applied = await applyEntry(entry, roots, budget, deps, { exclusive: contest !== undefined });
+    if (contest !== undefined && applied.outcome.kind === "refused") {
+      await refuseContest(
+        contest,
+        "may name this same destination, and it was taken before this entry could create it",
+      );
+      for (const member of contest.held) {
+        held.delete(member);
+      }
+      continue;
+    }
+    answered.set(entry, applied);
   }
 
   // The held members, once the favoured one has had its ordinary turn. A

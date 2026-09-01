@@ -172,12 +172,35 @@ const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoExc
  * Every exit is a `ProvisionStepResult`: the caller reports it beside the
  * create's own outcome and the create's success does not depend on it.
  */
+/** What an entry that must own its destination outright asks for. */
+export interface ApplyEntryOptions {
+  /**
+   * The entry's own top-level destination must be created by THIS call, or the
+   * entry is refused rather than merged into what is there.
+   *
+   * Off by default, and deliberately: an ordinary entry merging into a
+   * directory `git worktree add` checked out is the behaviour the apply has
+   * always had. It is turned on only for a member of a contested group, where
+   * the destination was read `absent` moments earlier and no repository-owned
+   * flow can have created it since — so there, and only there, `EEXIST` is the
+   * exclusive claim being lost rather than an ambiguous signal
+   * (`applyProvisioning.ts`, design.md D3).
+   */
+  readonly exclusive?: boolean;
+}
+
 export async function applyEntry(
   entry: ProvisionEntry,
   roots: EntryGateRoots,
   budget: ApplyBudget,
   deps: ApplyFsDeps & ResolvedPathInsideDeps,
+  options: ApplyEntryOptions = {},
 ): Promise<ProvisionStepResult> {
+  const exclusive = options.exclusive === true;
+  const LOST = {
+    kind: "refused",
+    reason: "this destination was created by something else between the moment it was read and this write",
+  } as const;
   const step = (outcome: ProvisionStepResult["outcome"], details?: readonly Detail[]): ProvisionStepResult => ({
     id: entry.id,
     path: entry.path,
@@ -364,12 +387,18 @@ export async function applyEntry(
    * the same way: a symlink is a refusal, because an intermediate swap is the
    * escape `O_CREAT | O_EXCL` structurally cannot see (D5).
    */
-  async function makeDirectory(destination: string, mode: number): Promise<NodeResult> {
+  async function makeDirectory(destination: string, mode: number, mustCreate = false): Promise<NodeResult> {
     try {
       await deps.mkdir(destination, mode);
     } catch (error) {
       if (codeOf(error) !== "EEXIST") {
         throw error;
+      }
+      if (mustCreate) {
+        // A directory that is already here has a mode and children this apply
+        // did not install, and merging into it reports the declaration as the
+        // owner of both (.reviews/round-2.md F001).
+        return LOST;
       }
       const existing = await deps.lstat(destination);
       if (existing.isSymbolicLink()) {
@@ -424,7 +453,7 @@ export async function applyEntry(
     return WRITTEN;
   }
 
-  async function walk(source: string, destination: string): Promise<NodeResult> {
+  async function walk(source: string, destination: string, own = false): Promise<NodeResult> {
     spend();
     const node = await deps.lstat(source);
 
@@ -456,7 +485,8 @@ export async function applyEntry(
 
     if (node.isSymbolicLink()) {
       // Never traversed, which is also why a loop terminates here.
-      return copyLink(source, destination);
+      const linked = await copyLink(source, destination);
+      return own && exclusive && linked.kind === "skipped" ? LOST : linked;
     }
 
     if (node.isFile()) {
@@ -470,7 +500,7 @@ export async function applyEntry(
       } catch (error) {
         if (codeOf(error) === "EEXIST") {
           settleBytes(node.size, 0);
-          return { kind: "skipped", reason: "already there" };
+          return own && exclusive ? LOST : { kind: "skipped", reason: "already there" };
         }
         // A failure is not a refund. The bytes a partial transfer forwarded are
         // in the worktree — D9 never deletes them — so they are charged before
@@ -497,7 +527,7 @@ export async function applyEntry(
     // EEXIST is not "fine, carry on". What is actually THERE decides whether
     // there is anything to descend into — and a symlink there is the
     // intermediate-component escape the exclusive primitive cannot see.
-    const made = await makeDirectory(destination, node.mode);
+    const made = await makeDirectory(destination, node.mode, own && exclusive);
     if (made.kind !== "written") {
       return made;
     }
@@ -555,21 +585,23 @@ export async function applyEntry(
     if (entry.mode === "link") {
       const linked = await makeLink();
       if (linked !== "degrade") {
-        return linked.kind === "written"
-          ? step({ kind: "linked" })
-          : step({ kind: linked.kind, reason: linked.reason });
+        if (linked.kind === "written") {
+          return step({ kind: "linked" });
+        }
+        const lost = exclusive && linked.kind === "skipped" ? LOST : linked;
+        return step({ kind: lost.kind, reason: lost.reason });
       }
       // The material still arrives; it just arrives as a copy, and the report
       // says which — a link and a copy differ in the way the dialog told the
       // user about, so neither a silent success nor a failure is honest here.
-      const copied = await walk(entrySource, entryDestination);
+      const copied = await walk(entrySource, entryDestination, true);
       if (copied.kind !== "written") {
         return step({ kind: copied.kind, reason: copied.reason }, reported());
       }
       return step({ kind: "degradedToCopy" }, reported());
     }
 
-    const result = await walk(entrySource, entryDestination);
+    const result = await walk(entrySource, entryDestination, true);
     if (result.kind === "skipped" || result.kind === "refused") {
       return step({ kind: result.kind, reason: result.reason }, reported());
     }

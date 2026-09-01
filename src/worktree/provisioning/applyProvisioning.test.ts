@@ -332,4 +332,40 @@ describe("absence is established, never assumed", () => {
       deadline.cancel();
     }
   });
+
+  it("refuses the contest when another writer takes the destination after the second reading", async () => {
+    // The window the second reading cannot close: between it and the favoured
+    // member's own `mkdir`, a process outside this apply creates the name.
+    // `makeDirectory` answers `written` for a directory that is already there,
+    // so the declaration was reported as the owner of another writer's
+    // directory, its mode and its children (.reviews/round-2.md F001).
+    const fs = fakeFs(
+      { [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...CONTESTED },
+      { folds: true },
+    );
+    let taken = false;
+    fs.beforeLstat = (p) => {
+      // The source lstat that opens the favoured member's own walk, which is
+      // the last thing to happen before its `mkdir`.
+      if (!taken && p === `${MAIN}/MixedCase`) {
+        taken = true;
+        fs.nodes.set(`${WT}/MixedCase`, { kind: "dir", mode: 0o700 });
+      }
+    };
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("the fake could not prepare its roots");
+    }
+    const deadline = afterDelay(60_000);
+    try {
+      const steps = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+
+      expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
+      // The other writer's mode is untouched, and neither declaration's
+      // material went in under it.
+      expect(fs.nodes.get(`${WT}/MixedCase`)).toEqual({ kind: "dir", mode: 0o700 });
+    } finally {
+      deadline.cancel();
+    }
+  });
 });

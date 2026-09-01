@@ -567,3 +567,52 @@ describe("a link points at the main checkout, or says the platform would not let
     expect(fs.nodes.get("/wt/feature/.env")).toMatchObject({ kind: "file", size: 99 });
   });
 });
+
+describe("a destination that must be created by this call", () => {
+  const tree = {
+    "/repo/cfg": { kind: "dir" } as const,
+    "/repo/cfg/inner": { kind: "file", size: 5 } as const,
+  };
+
+  it("still merges into a directory that was already there, for an ordinary entry", async () => {
+    // The behaviour the apply has always had, and the reason the exclusive
+    // claim is opt-in: a worktree git checked out can legitimately hold the
+    // directory a declared entry lands in.
+    const { result, fs } = await apply(entry("cfg"), { ...tree, "/wt/feature/cfg": { kind: "dir", mode: 0o700 } });
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.has("/wt/feature/cfg/inner")).toBe(true);
+  });
+
+  it("refuses the same directory when the entry must create it itself", async () => {
+    const fs = fakeFs({ ...base, ...tree, "/wt/feature/cfg": { kind: "dir", mode: 0o700 } });
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const result = await applyEntry(entry("cfg"), roots, budget(), fs, { exclusive: true });
+
+    expect(result.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("created by something else"),
+    });
+    // Nothing went in under the other writer's mode.
+    expect(fs.nodes.has("/wt/feature/cfg/inner")).toBe(false);
+  });
+
+  it("refuses a file destination that is already there when it must create it itself", async () => {
+    const fs = fakeFs({
+      ...base,
+      "/repo/.env": { kind: "file", size: 3 },
+      "/wt/feature/.env": { kind: "file", size: 9 },
+    });
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const result = await applyEntry(entry(".env"), roots, budget(), fs, { exclusive: true });
+
+    expect(result.outcome.kind).toBe("refused");
+    expect(fs.nodes.get("/wt/feature/.env")).toMatchObject({ size: 9 });
+  });
+});

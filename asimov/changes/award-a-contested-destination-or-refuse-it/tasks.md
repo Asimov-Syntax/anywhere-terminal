@@ -79,7 +79,7 @@
 
 ## 5. Round-2 blockers
 
-- [ ] 5_1 Claim a contested top-level destination exclusively, or refuse it
+- [x] 5_1 Claim a contested top-level destination exclusively, or refuse it — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_3
   - **Refs**: design.md#d3-absence-is-observed-twice-and-only-enoent-establishes-it, .reviews/round-2.md#f001
   - **Acceptance**:
