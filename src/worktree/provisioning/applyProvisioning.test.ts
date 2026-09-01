@@ -369,32 +369,40 @@ describe("a contest's membership travels once", () => {
     expect(steps[1]?.outcome).toMatchObject({ reason: expect.not.stringContaining("declared in") });
   });
 
-  it("keeps the report linear in the members, not quadratic", async () => {
-    // One contest of N members costs N declarations, not N per member. Measured
-    // at two sizes rather than asserted against a magic number: quadratic growth
-    // from 4 to 16 members is ~16x, linear is ~4x
-    // (award-a-contested-destination-or-refuse-it/.reviews/round-3.md F008).
+  it("names each declaration exactly once in the whole report", async () => {
+    // A ratio between two measured sizes is calibration, not a claim: enough
+    // fixed overhead and a quadratic representation passes again
+    // (.reviews/round-1.md F004). This counts instead — each declaring token
+    // appears once, in the contest, and never inside a step's reason.
     const spelling = (at: number): string =>
       [..."shared"].map((letter, j) => ((at >> j) & 1 ? letter.toUpperCase() : letter)).join("");
-    const reportFor = async (count: number): Promise<number> => {
-      const many = Array.from({ length: count }, (_, at) =>
-        entry(spelling(at), "copy", at === 0 ? NATIVE : INHERITED, `m${at}`),
-      );
-      const applied = await applyTo(
-        Object.fromEntries(many.map((e) => [`${MAIN}/${e.path}`, { kind: "file", size: 1 } as const])),
-        many,
-        { folds: true },
-      );
-      expect(applied.contests).toHaveLength(1);
-      expect(applied.contests[0]?.members).toHaveLength(count);
-      return JSON.stringify({ steps: applied.steps, contests: applied.contests }).length;
-    };
+    const many = Array.from({ length: 16 }, (_, at) =>
+      entry(spelling(at), "copy", at === 0 ? NATIVE : INHERITED, `m${at}`),
+    );
+    const { steps, contests } = await applyTo(
+      Object.fromEntries(many.map((e) => [`${MAIN}/${e.path}`, { kind: "file", size: 1 } as const])),
+      many,
+      { folds: true },
+    );
 
-    const small = await reportFor(4);
-    const large = await reportFor(16);
-
-    // Measured: 4.3x carrying the membership once, 10.3x repeating it per member.
-    expect(large).toBeLessThan(small * 6);
+    expect(contests).toHaveLength(1);
+    expect(contests[0]?.members).toHaveLength(16);
+    const asContests = JSON.stringify(contests);
+    const asSteps = JSON.stringify(steps);
+    for (const member of contests[0]?.members ?? []) {
+      // `split` counts occurrences. Once in the membership, and once among the
+      // steps as that step's OWN path — never once per member per member.
+      expect(asContests.split(member.path).length - 1).toBe(1);
+      expect(asSteps.split(member.path).length - 1).toBe(1);
+    }
+    // The declaring file is named where the membership is, and nowhere else.
+    expect(asSteps).not.toContain("worktree.yaml");
+    expect(asSteps).not.toContain("worktree.json");
+    for (const step of steps) {
+      if ("reason" in step.outcome) {
+        expect(step.outcome.reason).not.toContain("declared in");
+      }
+    }
   });
 });
 

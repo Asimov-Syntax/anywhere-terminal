@@ -57,7 +57,7 @@ of result text over a wire whose input is capped at `T`. The membership travels 
     1. `src/worktree/provisioning/applyProvisioning.ts` attaches the contest index to a contested step of any outcome, not only a refused one.
     2. `src/worktree/provisioning/applyProvisioning.test.ts` asserts it for every member of a contest.
 
-- [ ] 2_3 Assert the shape, not a measured ratio
+- [x] 2_3 Assert the shape, not a measured ratio — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: .reviews/round-1.md#f004
   - **Acceptance**:
