@@ -117,9 +117,13 @@ interface Detail {
  * whose single file was skipped, or whose source turned out to be a socket, is
  * exactly the overclaim `skipped` and `refused` exist to prevent.
  */
-type NodeResult = { kind: "written" } | { kind: "skipped"; reason: string } | { kind: "refused"; reason: string };
+type NodeResult =
+  | { kind: "written" }
+  | { kind: "skipped"; reason: string }
+  | { kind: "refused"; reason: string }
+  | { kind: "claimLost" };
 
-const WRITTEN: NodeResult = { kind: "written" };
+const WRITTEN = { kind: "written" } as const;
 
 /**
  * How many per-descendant rows one entry reports.
@@ -172,35 +176,55 @@ const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoExc
  * Every exit is a `ProvisionStepResult`: the caller reports it beside the
  * create's own outcome and the create's success does not depend on it.
  */
-/** What an entry that must own its destination outright asks for. */
-export interface ApplyEntryOptions {
-  /**
-   * The entry's own top-level destination must be created by THIS call, or the
-   * entry is refused rather than merged into what is there.
-   *
-   * Off by default, and deliberately: an ordinary entry merging into a
-   * directory `git worktree add` checked out is the behaviour the apply has
-   * always had. It is turned on only for a member of a contested group, where
-   * the destination was read `absent` moments earlier and no repository-owned
-   * flow can have created it since — so there, and only there, `EEXIST` is the
-   * exclusive claim being lost rather than an ambiguous signal
-   * (`applyProvisioning.ts`, design.md D3).
-   */
-  readonly exclusive?: boolean;
-}
+/**
+ * The exclusive claim was lost — something else created the destination between
+ * the moment it was read and this write.
+ *
+ * Its own answer, not a `refused` reason: an entry has many rules that refuse
+ * it, the caller has to act on exactly one of them, and prose is not a channel
+ * it can read (design.md D4b, .reviews/round-3.md F006).
+ */
+export const CLAIM_LOST = "claim-lost";
 
-export async function applyEntry(
+/** Apply one entry, and answer for it. Never throws. */
+export function applyEntry(
   entry: ProvisionEntry,
   roots: EntryGateRoots,
   budget: ApplyBudget,
   deps: ApplyFsDeps & ResolvedPathInsideDeps,
-  options: ApplyEntryOptions = {},
 ): Promise<ProvisionStepResult> {
-  const exclusive = options.exclusive === true;
-  const LOST = {
-    kind: "refused",
-    reason: "this destination was created by something else between the moment it was read and this write",
-  } as const;
+  // `exclusive` is off, so the union's other arm is unreachable here.
+  return apply(entry, roots, budget, deps, false) as Promise<ProvisionStepResult>;
+}
+
+/**
+ * Apply one entry that must create its own top-level destination.
+ *
+ * An ordinary entry merging into a directory `git worktree add` checked out is
+ * the behaviour the apply has always had, which is why this is a separate door
+ * rather than a default. It is taken only for a member of a contested group,
+ * where the destination was read `absent` moments earlier and no
+ * repository-owned flow can have created it since — so there, and only there,
+ * `EEXIST` is the exclusive claim being lost rather than an ambiguous signal
+ * (design.md D3).
+ */
+export function applyExclusiveEntry(
+  entry: ProvisionEntry,
+  roots: EntryGateRoots,
+  budget: ApplyBudget,
+  deps: ApplyFsDeps & ResolvedPathInsideDeps,
+): Promise<ProvisionStepResult | typeof CLAIM_LOST> {
+  return apply(entry, roots, budget, deps, true);
+}
+
+async function apply(
+  entry: ProvisionEntry,
+  roots: EntryGateRoots,
+  budget: ApplyBudget,
+  deps: ApplyFsDeps & ResolvedPathInsideDeps,
+  exclusive: boolean,
+): Promise<ProvisionStepResult | typeof CLAIM_LOST> {
+  const LOST = { kind: "claimLost" } as const;
   const step = (outcome: ProvisionStepResult["outcome"], details?: readonly Detail[]): ProvisionStepResult => ({
     id: entry.id,
     path: entry.path,
@@ -538,6 +562,11 @@ export async function applyEntry(
     for (const child of children) {
       const childDestination = path.join(destination, child);
       const result = await walk(path.join(source, child), childDestination);
+      if (result.kind === "claimLost") {
+        // Unreachable: `own` is false for every child, and only an own
+        // top-level creation can lose a claim. Propagated rather than assumed.
+        return result;
+      }
       if (result.kind !== "written") {
         note({ path: shown(childDestination), reason: result.reason });
       }
@@ -554,7 +583,7 @@ export async function applyEntry(
    * gate put the target inside the main checkout and the link inside the
    * worktree.
    */
-  async function makeLink(): Promise<NodeResult | "degrade"> {
+  async function makeLink(): Promise<Exclude<NodeResult, { kind: "claimLost" }> | "degrade"> {
     // One node, charged and checked like any other. A root-level link creates
     // no parent, so `ensureParents` spends nothing and this arm reached the
     // filesystem with `maxNodes: 0` and an expired deadline both unconsulted
@@ -579,6 +608,9 @@ export async function applyEntry(
 
   try {
     const parents = await ensureParents();
+    if (parents.kind === "claimLost") {
+      return CLAIM_LOST;
+    }
     if (parents.kind !== "written") {
       return step({ kind: parents.kind, reason: parents.reason }, reported());
     }
@@ -588,13 +620,18 @@ export async function applyEntry(
         if (linked.kind === "written") {
           return step({ kind: "linked" });
         }
-        const lost = exclusive && linked.kind === "skipped" ? LOST : linked;
-        return step({ kind: lost.kind, reason: lost.reason });
+        if (exclusive && linked.kind === "skipped") {
+          return CLAIM_LOST;
+        }
+        return step({ kind: linked.kind, reason: linked.reason });
       }
       // The material still arrives; it just arrives as a copy, and the report
       // says which — a link and a copy differ in the way the dialog told the
       // user about, so neither a silent success nor a failure is honest here.
       const copied = await walk(entrySource, entryDestination, true);
+      if (copied.kind === "claimLost") {
+        return CLAIM_LOST;
+      }
       if (copied.kind !== "written") {
         return step({ kind: copied.kind, reason: copied.reason }, reported());
       }
@@ -602,6 +639,9 @@ export async function applyEntry(
     }
 
     const result = await walk(entrySource, entryDestination, true);
+    if (result.kind === "claimLost") {
+      return CLAIM_LOST;
+    }
     if (result.kind === "skipped" || result.kind === "refused") {
       return step({ kind: result.kind, reason: result.reason }, reported());
     }

@@ -10,7 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
 import { afterDelay } from "../deadline";
-import { applyEntry } from "./applyEntries";
+import { applyEntry, applyExclusiveEntry, CLAIM_LOST } from "./applyEntries";
 import { type FakeNode, fakeFs } from "./applyEntries.fake";
 import { prepareEntryGate } from "./entryGate";
 
@@ -590,12 +590,9 @@ describe("a destination that must be created by this call", () => {
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
-    const result = await applyEntry(entry("cfg"), roots, budget(), fs, { exclusive: true });
+    const result = await applyExclusiveEntry(entry("cfg"), roots, budget(), fs);
 
-    expect(result.outcome).toMatchObject({
-      kind: "refused",
-      reason: expect.stringContaining("created by something else"),
-    });
+    expect(result).toBe(CLAIM_LOST);
     // Nothing went in under the other writer's mode.
     expect(fs.nodes.has("/wt/feature/cfg/inner")).toBe(false);
   });
@@ -610,9 +607,9 @@ describe("a destination that must be created by this call", () => {
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
-    const result = await applyEntry(entry(".env"), roots, budget(), fs, { exclusive: true });
+    const result = await applyExclusiveEntry(entry(".env"), roots, budget(), fs);
 
-    expect(result.outcome.kind).toBe("refused");
+    expect(result).toBe(CLAIM_LOST);
     expect(fs.nodes.get("/wt/feature/.env")).toMatchObject({ size: 9 });
   });
 });

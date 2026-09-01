@@ -112,7 +112,7 @@
 
 ## 6. Round-3 blockers
 
-- [ ] 6_1 Report the rule that actually refused a contested entry
+- [x] 6_1 Report the rule that actually refused a contested entry — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_3
   - **Refs**: design.md#d4b-a-refusal-says-which-rule-refused-and-the-reason-string-is-not-a-channel, .reviews/round-3.md#f006
   - **Acceptance**:

@@ -323,6 +323,29 @@ describe("a contest larger than a pair", () => {
   });
 });
 
+describe("a refusal says which rule refused", () => {
+  it("keeps a contested entry's own refusal instead of calling it a lost claim", async () => {
+    // Every `refused` from a contested entry used to be replaced with the
+    // claim-loss text, so an unsupported file type reached the user as a
+    // destination collision that never happened (.reviews/round-3.md F006).
+    const material = {
+      [`${MAIN}/MixedCase`]: { kind: "special" } as const,
+      [`${MAIN}/mixedcase`]: { kind: "file", size: 22 } as const,
+    };
+    const { steps } = await applyTo(material, PAIR, { folds: true });
+
+    expect(steps[0]?.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("devices, sockets and FIFOs are never configuration"),
+    });
+    // And the contest still settles: the favoured member never claimed it.
+    expect(steps[1]?.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("never claimed"),
+    });
+  });
+});
+
 describe("absence is established, never assumed", () => {
   it("refuses the contest when an earlier uncontested copy created the destination first", async () => {
     // One reading, taken before the ordered pass, proves only what was in the

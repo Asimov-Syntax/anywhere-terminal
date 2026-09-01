@@ -12,7 +12,7 @@
 
 import type { ProvisionEntry, ProvisionStepResult } from "../../types/messages";
 import type { ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
-import { type ApplyBudget, type ApplyFsDeps, applyEntry } from "./applyEntries";
+import { type ApplyBudget, type ApplyFsDeps, applyEntry, applyExclusiveEntry, CLAIM_LOST } from "./applyEntries";
 import { admitEntry, type EntryGateRoots } from "./entryGate";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { contendersOf } from "./providerKit";
@@ -193,8 +193,11 @@ export async function applyProvisioning(
     // reading above says it was absent moments ago, so an `EEXIST` now is
     // another writer taking it, not material this apply may merge into
     // (.reviews/round-2.md F001).
-    const applied = await applyEntry(entry, roots, budget, deps, { exclusive: contest !== undefined });
-    if (contest !== undefined && applied.outcome.kind === "refused") {
+    const applied =
+      contest === undefined
+        ? await applyEntry(entry, roots, budget, deps)
+        : await applyExclusiveEntry(entry, roots, budget, deps);
+    if (contest !== undefined && applied === CLAIM_LOST) {
       await refuseContest(
         contest,
         "may name this same destination, and it was taken before this entry could create it",
@@ -204,7 +207,7 @@ export async function applyProvisioning(
       }
       continue;
     }
-    answered.set(entry, applied);
+    answered.set(entry, applied as ProvisionStepResult);
   }
 
   // The held members, once the favoured one has had its ordinary turn — and
