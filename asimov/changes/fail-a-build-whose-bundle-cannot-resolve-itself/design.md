@@ -123,6 +123,27 @@ artifact directory.
 Builtins come from `node:module`'s `builtinModules`, not a literal list, so a new builtin in a future
 Node does not become a false failure.
 
+### Coverage — what D2 claims, after round 5
+
+D2 makes **no completeness claim** for the bare and absolute classes, and its findings there **do not
+fail the build**; they are reported as warnings.
+
+Five rounds established the reason. Conditional aliases (`typeof require === "function" ? require : f`)
+and `.call` factories still escape the taint, and modelling every value branch of a minified artifact
+is the same unbounded question rounds 1-4 already lost four times (.reviews/round-5.md F008, F009).
+The reviewer's own remedy offered exactly this alternative: model the branches, or remove the classes
+from the coverage claim.
+
+Removing them costs nothing that was promised. PLAN WT-011.12 Acceptance requires a relative require
+that will not resolve to fail the build, and node builtins and the editor host not to be reported. It
+never required a bare or absolute specifier to be reported at all — that coverage was scope added past
+the acceptance, and every blocker surviving five rounds lived in it.
+
+Warning rather than failing is the load-bearing half of this decision. An incomplete detector that
+fails builds can reject a legitimate build (.reviews/round-5.md F010: a context-insensitive union
+flags innocent bare strings) in exchange for a guarantee the gate no longer makes. As a warning the
+signal is kept, and the cost of its imprecision is a message instead of a blocked release.
+
 ## D6 — The relative class is swept, not analysed
 
 Four rounds asked how a require CALL is spelled, and four found another spelling — a text scan, an
@@ -136,19 +157,66 @@ whoever calls it. That is sound over the shipped defect class by construction: a
 call still has to name its target, and a string literal is the only form this gate ever claimed to
 see.
 
-Measured before being adopted: the real 1 MB `dist/extension.js` carries exactly **one** distinct
-relative string literal, `"../"`, and it is an argument to `.startsWith()` in a path test. So the
-noise floor on the artifact this guards is one string.
+**What counts as relative.** Node accepts `./x`, `../x`, and on Win32 `.\\x` and `..\\x`. The first
+draft of this decision recognised only `./` and `../`, so four spellings walked past it
+(.reviews/round-5.md F014). The predicate covers all four prefixes.
 
-**The trade-off, recorded rather than hidden.** The sweep is SOUND but IMPRECISE: it can flag a
-relative string that was never a module load, and clearing one costs an explicit allowlist entry that
-someone has to justify. The previous mechanism was precise and demonstrably unsound, and four rounds
-did not make it sound. For a gate whose job is to stop a shipped activation failure, soundness is the
-property worth buying, and the allowlist is the visible price.
+**A bare prefix is not swept.** The six strings that are exactly a relative prefix and nothing more —
+`.`, `..`, `./`, `../`, `.\\`, `..\\` — are excluded. They are legal requests, but in a bundle they are
+overwhelmingly path DATA: on the real artifact they occur 95 times and never once as a specifier.
+Sweeping them would report false failures to catch a `require("../")` that a bundled extension would
+not contain.
 
-**It does not replace call detection.** A BARE specifier cannot be swept — every string in the bundle
-would be a candidate — so D2's binder-backed detection keeps the bare and absolute classes, where it
-is the only signal available. The two answer different questions and neither subsumes the other.
+This is a stated limit, not an allowlist and not an exemption. It is a property of six fixed strings,
+decided once here, and it does not depend on where the string appears. That distinction is what makes
+it safe: the value-keyed `NOT_SPECIFIERS` it replaces was refuted (.reviews/round-5.md F013), and so
+was the occurrence-scoped exemption drafted to replace THAT — an oracle attack showed
+`require("".concat("./missing"))` sits in a `String.prototype` argument position, so a role-based
+exemption would have hidden a real request while call detection ignored the outer `CallExpression`
+too. A syntax-only AST also cannot prove a method named `startsWith` is `String.prototype`'s.
+
+So there is no exemption mechanism at all. A prefixed literal with anything after the prefix is
+always swept, wherever it sits.
+
+**Measured after correction**, on the real 1 MB `dist/extension.js`: the only prefixed literals are
+`"../"` and `"..\\"`, both bare prefixes, so **zero** literals are swept — with no allowlist and no
+exemption in the mechanism. The round-4 draft claimed a "noise floor of one string"; that number was
+an artifact of the narrow predicate F014 reports, and is withdrawn.
+
+**The trade-off, recorded rather than hidden.** The sweep is SOUND over the relative class but
+IMPRECISE: it can flag a relative literal that was never a module load. The previous mechanism was
+precise and demonstrably unsound, and four rounds did not make it sound. For a gate whose job is to
+stop a shipped activation failure, soundness is the property worth buying. The price is paid in six
+named strings, fixed in this decision, rather than in a list that grows per artifact.
+
+**This sweep is the whole of what the gate GUARANTEES.** A bare specifier cannot be swept — every
+string in the bundle would be a candidate — so no sound mechanism for that class exists here. D2 is
+retained, but as a reporter without a coverage claim; see D2 § Coverage. Only the relative class
+fails a build.
+
+## D7 — A relative request that is computed is reported, not resolved
+
+PLAN acceptance says "a relative `require`", not "a relative literal". An oracle attack on D6 found
+the gap that wording exposes: esbuild preserves
+
+```js
+(function (factory) { factory(require) })(function (r) { r(`./${name}`); });
+```
+
+The argument is a `TemplateExpression`, so D6's literal sweep never sees it, and call detection
+ignores it too — yet at runtime it is exactly the UMD-factory relative request this whole change
+exists to catch.
+
+A template whose HEAD starts with a relative prefix is provably a relative request whatever its
+substitutions evaluate to. What it resolves to is not knowable without running the program, so the
+gate does not try: it reports the request as unverifiable and fails the build, naming the head.
+
+Failing rather than warning is affordable because it is not noisy: the real `dist/extension.js`
+carries **zero** relative-headed templates. If one ever appears legitimately, the fix is to make the
+specifier static, which is what a bundler needs anyway.
+
+A template with a NON-relative head is out of scope here, for the same reason a bare specifier is:
+every template in the bundle would be a candidate.
 
 ## D3 — Detection is a function, so the gate can be proven non-vacuous
 

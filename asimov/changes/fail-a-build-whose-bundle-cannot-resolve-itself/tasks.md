@@ -135,3 +135,62 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `scripts/bundleRequires.mjs`, replace the rescan loop in `requireBindings` with a worklist seeded from the ambient requires and the known callables.
     2. Build reverse indexes from a symbol to the assignments and to the call edges binding an argument to a parameter that read it, and enqueue only those when a fact is added.
     3. Witness the cost claim with a deep forwarding chain — the topology round 4's F006 measured — asserting it completes well inside the budget a rescan loop would blow.
+
+## 6. Round-5 handback — a sound relative predicate, and a warning where no guarantee exists
+
+- [ ] 6_1 Recognise every relative spelling Node accepts
+  - **Deps**: none
+  - **Refs**: design.md D6, .reviews/round-5.md F014
+  - **Acceptance**:
+    - Outcome: A relative request spelled with a Win32 separator is reported
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, widen `relativeLiterals`' predicate to the four prefixes `./`, `../`, `.\`, `..\`.
+    2. Exclude the six strings that are exactly a relative prefix and nothing more, as design.md D6 fixes them.
+    3. Witness each of the four prefixes reported when it does not resolve, and witness that each of the six bare prefixes is not swept, in `src/test/invariants/bundleRequires.test.ts`.
+
+- [ ] 6_2 Sweep a prefixed literal wherever it sits
+  - **Deps**: 6_1
+  - **Refs**: design.md D6, .reviews/round-5.md F013
+  - **Acceptance**:
+    - Outcome: A prefixed literal is reported from any syntactic position
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, delete the `NOT_SPECIFIERS` export and every value-keyed suppression, adding no exemption in its place.
+    2. Witness the F013 shape — an unrelated bare-prefix argument to `.startsWith` sharing a bundle with a genuine unresolvable relative request — asserting the genuine one is still reported.
+    3. Witness the oracle's counterexample — a relative literal passed through `String.prototype.concat` into `require` — which a role-based exemption would have hidden, as reported.
+    4. Witness that the real `dist/extension.js` sweeps clean with no allowlist and no exemption.
+
+- [ ] 6_3 Report bare and absolute findings as warnings that do not fail the build
+  - **Deps**: 6_2
+  - **Refs**: design.md D2 § Coverage, .reviews/round-5.md F008, F009, F010
+  - **Acceptance**:
+    - Outcome: The gate exits 0 on an unresolvable bare specifier
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, carry a severity on each verdict, set by specifier class rather than by which mechanism found it.
+    2. In `scripts/check-bundle-requires.mjs`, extract the exit decision into an exported function returning the code, so the CLI's own rule is reachable from a test rather than only from `process.exit`; the CLI body calls it and nothing else decides.
+    3. Witness that function returning 0 for a bare-only verdict list and nonzero for a relative one — the exit rule itself, not a proxy for it.
+    4. Update the two bare-specifier witnesses in `src/test/invariants/bundleRequires.test.ts` to assert warning severity, rather than deleting them.
+
+- [ ] 6_4 Bound callable fanout so each propagation edge is processed once
+  - **Deps**: 6_3
+  - **Refs**: design.md D2, .reviews/round-5.md F006
+  - **Acceptance**:
+    - Outcome: Each propagation edge is applied exactly once
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, record which call edges a newly discovered callable has already applied, so re-enqueueing it does not reapply them.
+    2. Expose a count of edge applications from the propagation, so the invariant is observable rather than inferred.
+    3. Witness the count equal to the edge count on the fanout topology round 5's F006 measured. A wall-clock budget is NOT the witness: the existing timing assertion passed while the fanout was still quadratic, so timing cannot tell the two apart.
+
+- [ ] 6_5 Report a relative request the gate cannot resolve
+  - **Deps**: 6_4
+  - **Refs**: design.md D7
+  - **Acceptance**:
+    - Outcome: A template whose head is a relative prefix fails the build
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, report a `TemplateExpression` whose head starts with one of the four relative prefixes as an unverifiable relative request, carrying the head text.
+    2. Witness the UMD shape `r(`./${name}`)` reported, and witness that a non-relative-headed template is not.
+    3. Witness that the real `dist/extension.js` carries none, so the rule fails no current build.

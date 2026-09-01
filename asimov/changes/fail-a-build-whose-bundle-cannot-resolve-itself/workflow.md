@@ -6,14 +6,14 @@
 
 ## Plan
 
-- [-] Gate 1: direction approved — no fork; the PLAN row fixes the artifact-not-sources constraint and the repo already has the gate idiom
+- [x] Gate 1: direction approved — user chose warn-not-fail for bare/absolute; the relative class keeps the guarantee
 - [x] `asm change validate` passes
 - [x] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.12`)_
@@ -46,3 +46,8 @@ Binder cost on the real artifact (round-3 F006): `node scripts/check-bundle-requ
 Arm check on that same artifact, all four shapes appended at once: ./umd-minified, ./scalar-alias and ./decl-factory are reported; ./legit-local — a local binding spelled `require` bound to a plain callback — is not, which is F007 closed in the direction that matters.
 Verify gate after the round-3 handback: check-types clean, 6756 unit tests pass, biome check at the 3/14/1 baseline, verify-status 0. One unrelated test in src/extension.worktreeAssembly.test.ts failed once under full-suite load and passed 3/3 standalone and on the re-run — the same infra flake recorded above, not reproduced on a clean tree.
 Verify gate after the round-4 handback: check-types clean, 6763 unit tests pass, biome at the 3/14/1 baseline, verify-status 0. Sweep arm check on the real artifact: the conditional alias, the .call factory, the constant argument and the object-carried loader are all reported when appended to dist/extension.js, and the unmodified artifact still exits 0.
+- Round-5 handback replan. Gate 1 asked the user the one product fork (bare/absolute: delete, warn, or keep failing) because fastlane never auto-chooses a scope cut; the user chose warn-not-fail. Gate 2 taken under the standing goal's grant to replan.
+- Plan attack before Gate 2, on frozen artifacts. It REFUTED C1, C2 and C4 and left one unresolved; every finding accepted, none rejected. C2 is the one that mattered: the occurrence-scoped exemption I had just written to replace the refuted value-keyed allowlist was itself unsound — `require("".concat("./x"))` sits in a String.prototype argument position, so the exemption would have hidden it while call detection ignored the outer CallExpression too. Fixed by deleting the exemption mechanism outright rather than refining it: the six bare relative prefixes become a stated limit on six fixed strings, and every other prefixed literal is swept wherever it sits. Measured: still zero survivors on the real artifact.
+- C1 refuted D6's scope against the PLAN wording — "a relative `require`" is not "a relative literal", and a `TemplateExpression` with a relative head escapes both mechanisms. That is the UMD-factory shape this change exists to catch, so it gained an owner as D7 rather than being recorded as a limit. Zero relative-headed templates in the real artifact, so it can fail rather than warn.
+- C4 caught two witnesses that could not establish their own acceptance: 6_3 asserted a CLI exit code from a unit test against a module that does not decide it (the exit rule is now extracted and witnessed directly), and 6_4 proposed wall-clock timings for an asymptotic claim — the existing timing assertion passed while the fanout was still quadratic, which is the proof that timing cannot witness it. Now a deterministic edge-application count.
+- C3 left the retention of D2 unresolved: if nothing consumes a warning, the machinery is dead weight and option A (delete) would be right. Recorded rather than argued away — the consumer is the developer running `pnpm run package` for a release, who sees the gate's output in that terminal, and 6_4's cost work is still owed because the D2 pass runs regardless of the severity it emits. If a future round finds that output is never read, deleting D2 is the honest follow-up.
