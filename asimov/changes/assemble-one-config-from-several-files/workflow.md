@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -95,3 +95,7 @@ Build notes:
   touch either. Two unrelated suites flaking under the same runner is the concurrency itself, not
   either suite's logic — so the follow-up task is about how `test:unit` is scheduled, not about
   fixing one file.
+- Verify gate: check-types clean, `pnpm exec biome check src` at the recorded 3/14/1 baseline with
+  none of the three errors in a file this change touched, `pnpm run gate:fs-deletion` ok,
+  `pnpm run test:unit` 279 files / 6544 tests green. The `test:unit` flakiness noted above did not
+  reproduce on any of tasks 2_1 through 3_2.
