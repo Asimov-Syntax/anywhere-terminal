@@ -53,7 +53,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     3. `src/worktree/provisioning/applyEntries.test.ts`: the symlink is relative and points at the main checkout; a platform refusing symlinks yields copied content and a `degradedToCopy` step; an unrelated symlink error yields `failed` and is not silently degraded.
   - **Boundary**: degradation is per entry and reported — no code path may report `linked` for an entry it copied
 
-- [ ] 1_5 Provision the worktree the create just made, without ever costing it
+- [x] 1_5 Provision the worktree the create just made, without ever costing it — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_4
   - **Refs**: design.md D1, D2, D3; specs/worktree-panel/spec.md#{the-material-a-worktree-was-promised-is-actually-put-there, provisioning-never-costs-the-user-the-worktree}
   - **Acceptance**:
@@ -61,7 +61,8 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     - Verify: unit src/providers/WorktreeHost.actions.test.ts
   - **Plan**:
     1. `src/providers/WorktreeHost.ts`: resolve `provision` against the surface-scoped offer store, filter the stored model's entries to the selected ids, and pass resolved entries on the create request. An offer the store no longer holds refuses the create with a stated reason (D3); an absent `provision` provisions nothing.
-    2. `src/worktree/worktreeMutationService.ts`: call apply between `addToGitExclude` and `afterCreate`, inside its OWN `.catch()` modelled on `afterCreate`'s at `:905-910`, so no rejection can reach the create body's outer arm at `:920-925` and report a successful git create as an error.
-    3. `src/providers/WorktreeHost.ts`: post `worktreeProvisionResult` to the originating surface after the create's own result.
-    4. `src/providers/WorktreeHost.actions.test.ts` and `src/worktree/worktreeMutationService.test.ts`: an apply that REJECTS still yields `ok` with a `failed` step — a fake returning a failed result does not exercise the outer arm and is not the witness for this; selected entries only; copy ordered before link; apply runs before `afterCreate`; a stale offer id creates nothing; a create with no `provision` field still succeeds and provisions nothing.
+    2. `src/worktree/provisioning/applyEntries.ts`: the production `node:fs/promises` binding for `ApplyFsDeps` — the no-follow open pair lives here, beside the walk that depends on it, rather than in wiring where the flags could drift.
+    3. `src/worktree/worktreeMutationService.ts`: call apply between `addToGitExclude` and `afterCreate`, inside its OWN `.catch()` modelled on `afterCreate`'s at `:905-910`, so no rejection can reach the create body's outer arm at `:920-925` and report a successful git create as an error.
+    4. `src/providers/WorktreeHost.ts` and `src/extension.ts`: post `worktreeProvisionResult` to the originating surface after the create's own result, through the host's existing mutation-report path rather than a second surface lookup — it already owns attachment, and posting straight at the providers is what missed every editor surface.
+    5. `src/providers/WorktreeHost.actions.test.ts` and `src/worktree/worktreeMutationService.test.ts`: an apply that REJECTS still yields `ok` with a `failed` step — a fake returning a failed result does not exercise the outer arm and is not the witness for this; selected entries only; copy ordered before link; apply runs before `afterCreate`; a stale offer id creates nothing; a create with no `provision` field still succeeds and provisions nothing.
   - **Boundary**: the service receives entry values, never ids and never a store handle — it must not become able to resolve an offer

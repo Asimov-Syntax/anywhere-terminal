@@ -13,6 +13,7 @@ import type {
   DestinationDisposition,
   ExtensionToWebViewMessage,
   ProbeBase,
+  ProvisionEntry,
   ProvisionModel,
   ResolvedDisposition,
   ResolvedMode,
@@ -22,6 +23,7 @@ import type {
   WorktreeAgentLaunchFields,
   WorktreeCreateMode,
   WorktreeMutationResultMessage,
+  WorktreeProvisionResultMessage,
   WorktreeRemoveAssessmentMessage,
   WorktreeSubscriptionLevel,
 } from "../types/messages";
@@ -333,6 +335,12 @@ export interface WorktreeActions {
     disposition: DestinationDisposition;
     /** The launch details live on the `agent` variant; no other variant can carry them. */
     afterCreate: WorktreeAfterCreate;
+    /**
+     * Entries the host resolved from the model it issued — values, never ids,
+     * and never anything the webview spelled (D2). Absent means provision
+     * nothing, which is every create made before this existed.
+     */
+    provision?: readonly ProvisionEntry[];
     origin?: WorktreeSurface;
   }): Promise<void>;
   removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
@@ -457,6 +465,15 @@ export interface WorktreeMutationReport {
   message: WorktreeMutationResultMessage;
   /** Set only on a successful create that asked for a terminal. */
   openTerminalAt?: string;
+  /**
+   * Posted to the same surface immediately after `message`.
+   *
+   * Provisioning results ride here rather than through a second surface lookup:
+   * this path already owns attachment, and posting straight at the providers is
+   * what missed every editor surface (D17). Ordering is the contract — the
+   * create's own outcome first, then what provisioning did.
+   */
+  provisionResult?: WorktreeProvisionResultMessage;
 }
 
 export interface ResolvedMutationTarget {
@@ -1852,6 +1869,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (msg.disposition.kind === "debris" && msg.disposition.authorization.path !== msg.path) {
           return;
         }
+        // The selection names ITEMS; the host holds the model. Resolved here,
+        // from the offer this surface was shown, so nothing the webview spelled
+        // reaches the filesystem — the property offerStore.ts exists for
+        // (worktree-rpc.md § 2.4, design.md D2).
+        //
+        // An id the store no longer holds means NO CREATE: § 2.4 requires a
+        // fresh model and a second submission, and honouring a stale offer
+        // would provision from a model the user is not looking at. The other
+        // half of that rule — resolving and re-presenting the fresh model — is
+        // a named follow-up, so the user's recovery today is to reopen the
+        // dialog.
+        let selected: readonly ProvisionEntry[] | undefined;
+        if (msg.provision !== undefined) {
+          const offered = offers.lookup({ surface: surfaceKey(surface), repoId: msg.repoId }, msg.provision.offerId);
+          if (offered === undefined) {
+            return;
+          }
+          const wanted = new Set(msg.provision.itemIds);
+          selected = offered.entries.filter((e) => wanted.has(e.id));
+        }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
           const request = {
             repoId: msg.repoId,
@@ -1859,6 +1896,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             mode: msg.mode,
             disposition: msg.disposition,
             afterCreate: msg.afterCreate,
+            ...(selected === undefined ? {} : { provision: selected }),
             origin: surface,
           };
           if (msg.afterCreate.kind !== "agent") {
@@ -3190,6 +3228,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       // itself still broadcasts to everyone, through the ordinary rebuild path,
       // because a worktree that vanished must vanish everywhere (D17).
       report.origin?.post(report.message);
+      if (report.provisionResult !== undefined) {
+        report.origin?.post(report.provisionResult);
+      }
       if (report.openTerminalAt !== undefined) {
         void report.origin?.openTerminal?.(report.openTerminalAt);
       }

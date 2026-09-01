@@ -24,7 +24,10 @@
 // leaves it — unwinding would mean deleting inside a live worktree, which is
 // what the I10 gate keeps out of these paths.
 
+import { constants } from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import type { ProvisionEntry, ProvisionStepResult } from "../../types/messages";
 import { isResolvedPathInsideRoot, type ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
 import type { Deadline } from "../deadline";
@@ -321,3 +324,44 @@ export async function applyEntry(
     budget.deadline.cancel();
   }
 }
+
+/**
+ * The production binding, beside the walk that depends on its flags.
+ *
+ * `O_NOFOLLOW` on the source and `O_CREAT | O_EXCL` on the destination are the
+ * two halves of "follows nothing at either end". Putting them in wiring instead
+ * would let them drift from the reasoning that needs them.
+ */
+export const nodeApplyFsDeps: ApplyFsDeps = {
+  lstat: (p) => fs.lstat(p),
+  readdir: (p) => fs.readdir(p),
+  readlink: (p) => fs.readlink(p),
+  mkdir: async (p, mode) => void (await fs.mkdir(p, { mode })),
+  symlink: (target, p) => fs.symlink(target, p),
+  copyFileNoFollow: async (source, destination, mode) => {
+    // Windows has no O_NOFOLLOW; `?? 0` degrades to a following open there
+    // rather than throwing, and the platform's own symlink story is why link
+    // entries degrade to copies on it at all (D7).
+    const source_ = await fs.open(source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      const stat = await source_.stat();
+      if (!stat.isFile()) {
+        const error = new Error(`not a regular file: ${source}`) as NodeJS.ErrnoException;
+        error.code = "EINVAL";
+        throw error;
+      }
+      const destination_ = await fs.open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
+      try {
+        await pipeline(
+          source_.createReadStream({ autoClose: false }),
+          destination_.createWriteStream({ autoClose: false }),
+        );
+      } finally {
+        await destination_.close();
+      }
+      return stat.size;
+    } finally {
+      await source_.close();
+    }
+  },
+};

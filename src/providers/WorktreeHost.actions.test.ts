@@ -4779,3 +4779,160 @@ describe("assessment traffic is bounded by one job per repository", () => {
     dispose();
   });
 });
+
+describe("the provisioning a create is actually given", () => {
+  const REQ = {
+    type: "worktreeCreate",
+    repoId: REPO,
+    opening: 1,
+    path: "/trees/feat",
+    mode: { kind: "fresh", branch: "feat" },
+    disposition: { kind: "free" },
+    afterCreate: { kind: "none" },
+  } as const;
+
+  const CREATED: WorktreeMutationResultMessage = {
+    type: "worktreeMutationResult",
+    verb: "create",
+    repoId: REPO,
+    result: { kind: "ok" },
+  };
+
+  function twoEntries(): ProvisionModel {
+    return {
+      entries: [
+        { id: "a", path: ".env", mode: "copy", source: "asimov/worktree.yaml" },
+        { id: "b", path: "node_modules", mode: "link", source: "asimov/worktree.yaml" },
+      ],
+      setup: [],
+      ports: [],
+      providers: [{ id: "asimov", file: "asimov/worktree.yaml", active: true }],
+      excluded: [],
+      problems: [],
+    };
+  }
+
+  /**
+   * A form open on a two-row model, plus the offer it was shown.
+   *
+   * The offer's ids are the store's, not `twoEntries`' — issuing remints them.
+   * Reading them back from the post is the only way a test can name a selection
+   * the way the panel does, and it is also what makes these assertions about
+   * RESOLUTION rather than about a list the test spelled twice.
+   */
+  async function formWithOffer() {
+    const built = await builtHost(undefined, false, { readProvisioning: async () => twoEntries() });
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (p) => p.type === "worktreeProvisionOffer",
+    ) as unknown as { offerId: string; model: ProvisionModel };
+    return { ...built, offer };
+  }
+
+  const creates = (calls: Array<[string, ...unknown[]]>) => calls.filter(([name]) => name === "createWorktree");
+  const given = (calls: Array<[string, ...unknown[]]>) =>
+    (creates(calls)[0]?.[1] as { provision?: readonly { path: string; mode: string }[] } | undefined)?.provision;
+
+  it("hands over the host's own entries, never a path the webview spelled", async () => {
+    const { host, view, calls, offer, dispose } = await formWithOffer();
+    host.handleMessage(view, {
+      ...REQ,
+      provision: { offerId: offer.offerId, itemIds: offer.model.entries.map((e) => e.id) },
+    });
+    await settle();
+
+    expect(creates(calls)).toHaveLength(1);
+    expect(given(calls)).toEqual(offer.model.entries);
+    dispose();
+  });
+
+  it("carries only the rows the user checked", async () => {
+    const { host, view, calls, offer, dispose } = await formWithOffer();
+    const second = offer.model.entries[1];
+    host.handleMessage(view, { ...REQ, provision: { offerId: offer.offerId, itemIds: [second?.id ?? ""] } });
+    await settle();
+
+    expect(given(calls)).toEqual([second]);
+    dispose();
+  });
+
+  it("invents no entry for an item id the offer never named", async () => {
+    // The selection arrives from the webview, so it is an input and not a fact.
+    // An id the model does not hold must resolve to nothing — the alternative
+    // is a create provisioning a row the user was never shown.
+    const { host, view, calls, offer, dispose } = await formWithOffer();
+    host.handleMessage(view, {
+      ...REQ,
+      provision: { offerId: offer.offerId, itemIds: ["../../etc/passwd", offer.model.entries[0]?.id ?? ""] },
+    });
+    await settle();
+
+    expect(given(calls)).toEqual([offer.model.entries[0]]);
+    dispose();
+  });
+
+  it("creates NOTHING against an offer the store no longer holds", async () => {
+    // D3, and the reason it is a refusal rather than a downgrade: honouring a
+    // stale id would provision from a model the user has stopped looking at,
+    // and creating the worktree WITHOUT its files would leave them a tree that
+    // silently lacks what they asked for. Neither half happens.
+    const { host, view, calls, offer, dispose } = await formWithOffer();
+    host.handleMessage(view, {
+      ...REQ,
+      provision: { offerId: `${offer.offerId}-stale`, itemIds: offer.model.entries.map((e) => e.id) },
+    });
+    await settle();
+
+    expect(creates(calls)).toEqual([]);
+    dispose();
+  });
+
+  it("asks for no provisioning at all when the form sent no selection", async () => {
+    const { host, view, calls, dispose } = await formWithOffer();
+    host.handleMessage(view, REQ);
+    await settle();
+
+    expect(creates(calls)).toHaveLength(1);
+    expect(creates(calls)[0]?.[1]).not.toHaveProperty("provision");
+    dispose();
+  });
+
+  it("reports what provisioning did after the create's own outcome, to that surface only", async () => {
+    // Ordering is the contract (D17): the user reads whether the worktree
+    // exists before they read what was put in it. A second surface holds no
+    // dialog this answers.
+    const { host, view, dispose } = await builtHost();
+    const other = surface();
+    host.attach(other).setDisplayed(true);
+    other.posts.length = 0;
+
+    host.reportMutation({
+      origin: view,
+      message: CREATED,
+      provisionResult: {
+        type: "worktreeProvisionResult",
+        worktreeId: "/trees/feat",
+        steps: [{ id: "a", path: ".env", outcome: { kind: "copied" } }],
+      },
+    });
+
+    expect(
+      (view.posts as ExtensionToWebViewMessage[])
+        .filter((m) => m.type === "worktreeMutationResult" || m.type === "worktreeProvisionResult")
+        .map((m) => m.type),
+    ).toEqual(["worktreeMutationResult", "worktreeProvisionResult"]);
+    expect((other.posts as ExtensionToWebViewMessage[]).filter((m) => m.type === "worktreeProvisionResult")).toEqual(
+      [],
+    );
+    dispose();
+  });
+
+  it("posts no provisioning result for a create that provisioned nothing", async () => {
+    const { host, view, dispose } = await builtHost();
+    host.reportMutation({ origin: view, message: CREATED });
+
+    expect((view.posts as ExtensionToWebViewMessage[]).filter((m) => m.type === "worktreeProvisionResult")).toEqual([]);
+    dispose();
+  });
+});

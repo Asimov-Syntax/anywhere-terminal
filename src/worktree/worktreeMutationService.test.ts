@@ -1838,3 +1838,86 @@ describe("a removal report is produced without performing the removal", () => {
     expect(report?.kind === "assessed" && typeof report.fingerprint).toBe("string");
   });
 });
+
+describe("provisioning rides the create without ever costing it", () => {
+  const entries = [
+    { id: "i1", path: ".env", mode: "copy" as const, source: "asimov/worktree.yaml" },
+    { id: "i2", path: "data", mode: "link" as const, source: "asimov/worktree.yaml" },
+  ];
+  const create = (over: Record<string, unknown> = {}) => ({
+    repoId: REPO,
+    path: "/repo/wt/new",
+    afterCreate: { kind: "none" as const },
+    mode: { kind: "fresh" as const, branch: "feat" },
+    disposition: { kind: "free" as const },
+    ...over,
+  });
+  const okOutcome = (h: ReturnType<typeof harness>) =>
+    h.outcomes.find((o) => (o as { verb?: string }).verb === "create") as
+      | { kind: string; provision?: { path: string; steps: readonly { id: string }[] } }
+      | undefined;
+
+  it("keeps the create successful when apply REJECTS, not merely when it reports a failure", async () => {
+    // The witness the plan attack asked for. A fake that RETURNS a failed step
+    // exercises the happy promise path and proves nothing: the defect is a
+    // rejection reaching the create body's outer arm, which reports a
+    // successful git create as a create error.
+    const h = harness({
+      applyProvision: async () => {
+        throw new Error("EIO: the walk blew up");
+      },
+    });
+    await h.service.createWorktree(create({ provision: entries }));
+    const outcome = okOutcome(h);
+    expect(outcome?.kind).toBe("ok");
+    // And it still answers for every entry rather than going silent.
+    expect(outcome?.provision?.steps.map((s) => s.id)).toEqual(["i1", "i2"]);
+  });
+
+  it("reports one step per entry on the create's own outcome", async () => {
+    const h = harness({
+      applyProvision: async (_main, _wt, given) =>
+        given.map((e) => ({ id: e.id, path: e.path, outcome: { kind: "copied" as const } })),
+    });
+    await h.service.createWorktree(create({ provision: entries }));
+    expect(okOutcome(h)?.provision?.steps).toHaveLength(2);
+    expect(okOutcome(h)?.provision?.path).toBe("/repo/wt/new");
+  });
+
+  it("provisions before the launch that reads what it provisioned", async () => {
+    const seen: string[] = [];
+    const h = harness({
+      applyProvision: async () => {
+        seen.push("provision");
+        return [];
+      },
+      afterCreate: async () => {
+        seen.push("afterCreate");
+      },
+    });
+    await h.service.createWorktree(create({ provision: entries }));
+    // An agent launched into the worktree must not start before its .env lands.
+    expect(seen).toEqual(["provision", "afterCreate"]);
+  });
+
+  it("provisions nothing, and reports nothing, for a create that carried no selection", async () => {
+    const applied = vi.fn(async () => []);
+    const h = harness({ applyProvision: applied });
+    await h.service.createWorktree(create());
+    expect(applied).not.toHaveBeenCalled();
+    expect(okOutcome(h)?.kind).toBe("ok");
+    expect(okOutcome(h)?.provision).toBeUndefined();
+  });
+
+  it("does not provision a repair, which brings nothing over", async () => {
+    const applied = vi.fn(async () => []);
+    const h = harness({ applyProvision: applied });
+    await h.service.createWorktree(
+      create({
+        provision: entries,
+        mode: { kind: "reattach" as const, branch: "feat", repairPath: "/repo-wt/stale", expectedOid: "oid-1" },
+      }),
+    );
+    expect(applied).not.toHaveBeenCalled();
+  });
+});

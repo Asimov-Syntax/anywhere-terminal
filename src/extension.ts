@@ -45,6 +45,7 @@ import {
 import { PtyLoadError } from "./types/errors";
 import type {
   ExtensionToWebViewMessage,
+  ProvisionStepResult,
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
@@ -60,6 +61,7 @@ import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
+import { afterDelay } from "./worktree/deadline";
 import { rosterFromDetail } from "./worktree/delegations";
 import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
@@ -69,7 +71,9 @@ import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
+import { applyEntry, nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
 import { readAsimovProvisioning } from "./worktree/provisioning/asimovProvider";
+import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { checksFor } from "./worktree/removalChecks";
@@ -554,6 +558,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (worktreeMutations === undefined) {
       const bindings = worktreeHost.mutationBindings();
       worktreeMutations = createWorktreeMutationService({
+        // Sequential, and every entry answers. `applyEntry` never throws, so a
+        // rejection here would be a bug rather than a bad entry — the call site
+        // catches one anyway, because the create has already succeeded by then.
+        applyProvision: async (mainCheckout, worktreePath, entries) => {
+          const roots = await prepareEntryGate(mainCheckout, worktreePath);
+          if (roots === null) {
+            return entries.map((entry) => ({
+              id: entry.id,
+              path: entry.path,
+              outcome: { kind: "failed" as const, reason: "the worktree could not be read after it was created" },
+            }));
+          }
+          const steps: ProvisionStepResult[] = [];
+          // Copy before link, whatever order the provider listed them in
+          // (worktree-apply.md § 1). A link is only ever to material the copy
+          // pass may have just put there.
+          const ordered = [...entries].sort((a, b) => Number(a.mode === "link") - Number(b.mode === "link"));
+          for (const entry of ordered) {
+            steps.push(
+              await applyEntry(
+                entry,
+                roots,
+                { maxNodes: 20_000, maxBytes: 512 * 1024 * 1024, deadline: afterDelay(60_000) },
+                nodeApplyFsDeps,
+              ),
+            );
+          }
+          return steps;
+        },
         runner: worktreeTreeDeps.runner,
         forceRebuild: bindings.forceRebuild,
         resolve: bindings.resolve,
@@ -638,6 +671,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             message: toResultMessage(outcome),
             ...(outcome.kind === "ok" && outcome.openTerminalAt !== undefined
               ? { openTerminalAt: outcome.openTerminalAt }
+              : {}),
+            // Through the SAME path, so provisioning cannot land on a surface
+            // the outcome did not, and cannot arrive before it.
+            ...(outcome.kind === "ok" && outcome.provision !== undefined
+              ? {
+                  provisionResult: {
+                    type: "worktreeProvisionResult" as const,
+                    worktreeId: outcome.provision.path,
+                    steps: outcome.provision.steps,
+                  },
+                }
               : {}),
           });
         },

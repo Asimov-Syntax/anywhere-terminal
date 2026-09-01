@@ -11,7 +11,7 @@
 
 import * as nodePath from "node:path";
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
-import type { WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
+import type { ProvisionEntry, ProvisionStepResult, WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
 import { normalizePathForCompare } from "../utils/pathBoundary";
 import { type ClearDebrisDeps, clearDebris, nodeClearDebrisDeps } from "./clearDebris";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
@@ -75,6 +75,14 @@ export type MutationOutcome =
        * a follow-up notice sharing this one's scope replaces it (round-4 W7).
        */
       openFailed?: string;
+      /**
+       * What provisioning did, per entry, and the worktree it did it in.
+       *
+       * Rides the create's OWN outcome so ordering is structural: the create is
+       * reported first and this follows it. Provisioning never decides whether
+       * the create succeeded (worktree-apply.md § 1).
+       */
+      provision?: { path: string; steps: readonly ProvisionStepResult[] };
     }
   /**
    * Something is at risk, so the removal has NOT run and is waiting on a
@@ -183,6 +191,20 @@ function declineReason(verdict: ReattachVerdict): string {
 }
 
 export interface MutationServiceDeps {
+  /**
+   * Materialize the entries the host resolved, and answer per entry.
+   *
+   * Optional: a host without it provisions nothing, which is every caller that
+   * existed before this. Its rejection is caught at the call site — the create
+   * has already succeeded by then, and nothing provisioning does may change
+   * that (design.md D1).
+   */
+  applyProvision?(
+    mainCheckout: string,
+    worktreePath: string,
+    entries: readonly ProvisionEntry[],
+  ): Promise<readonly ProvisionStepResult[]>;
+
   runner: GitCommandRunner;
   /**
    * Force a rebuild of `repoId` and wait for it. The coordinator calls this
@@ -902,6 +924,24 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             if (exclude !== null) {
               await deps.addToGitExclude(exclude.gitDir, excludePatternFor(exclude.relativePath));
             }
+            // BEFORE afterCreate, which launches an agent or a terminal INTO
+            // this worktree: the whole point of copying `.env` is that whatever
+            // starts here can read it (design.md D1).
+            //
+            // Inside its own catch, exactly like afterCreate's below. Without
+            // one, a rejection reaches this body's outer arm and reports a
+            // SUCCESSFUL git create as a create error — the defect the plan
+            // attack found by reading that arm rather than this line.
+            let provisioned: readonly ProvisionStepResult[] | undefined;
+            if (request.provision !== undefined && request.provision.length > 0 && deps.applyProvision !== undefined) {
+              provisioned = await deps.applyProvision(repoPath, check.path, request.provision).catch((error: unknown) =>
+                request.provision?.map((entry) => ({
+                  id: entry.id,
+                  path: entry.path,
+                  outcome: { kind: "failed" as const, reason: messageOf(error) },
+                })),
+              );
+            }
             // The worktree is already made. Whatever this rejects with, it
             // reports as a launch that did not happen — it never unmakes it.
             await deps.afterCreate(check.path, request.afterCreate, request.origin).catch((error: unknown) => {
@@ -913,6 +953,10 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               verb: "create",
               repoId: request.repoId,
               ...(openFailure === null ? {} : { openFailed: openFailure }),
+              // A repair provisions nothing, so this rides the create branch only:
+              // a reattach rewrites a link to a directory git already registered.
+              ...(provisioned === undefined ? {} : { provision: { path: check.path, steps: provisioned } }),
+              ...(provisioned === undefined ? {} : { provision: { path: check.path, steps: provisioned } }),
               // Only a SURFACE can open a terminal — it needs a view id and a
               // webview (D2). The host performs it on the origin.
               ...(request.afterCreate.kind === "terminal" ? { openTerminalAt: check.path } : {}),
