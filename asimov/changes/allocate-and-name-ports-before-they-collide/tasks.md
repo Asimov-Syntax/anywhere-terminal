@@ -79,7 +79,7 @@ The lock extraction and result skeleton can start together. Everything after the
     5. `src/worktree/worktreeMutationService.test.ts`: assert file materialization before ports before launch, ports-only apply, all-port failure with create success, partial success, warnings, common-dir exclusion, normalized identity, and absent-selection behavior.
     6. `src/extension.worktreeMutations.test.ts` and `src/extension.worktreeAssembly.test.ts`: prove production supplies both bindings and delivers port results and warnings after the create result.
 
-- [ ] 1_7 Render port movement and failure without naming unchanged successes
+- [x] 1_7 Render port movement and failure without naming unchanged successes — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit -- --maxWorkers=4 exit 0
   - **Deps**: 1_6
   - **Refs**: design.md D8; specs/worktree-panel/spec.md#{a-changed-preview-is-reported-by-variable, every-selected-port-gets-its-own-outcome, a-committed-allocation-stays-successful-when-lock-cleanup-fails, the-port-claim-file-stays-local-to-the-repository}
   - **Acceptance**:

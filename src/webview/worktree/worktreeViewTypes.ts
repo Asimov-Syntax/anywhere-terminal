@@ -21,6 +21,8 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 import type {
   DestinationDisposition,
   ProvisionModel,
+  ProvisionPortResult,
+  ProvisionPortWarning,
   ProvisionStepResult,
   PullRequestOffer,
   RemovalCheck,
@@ -145,6 +147,8 @@ export interface WorktreeActionResult {
    * worktree exists AND its files arrived — is one sentence, not two.
    */
   provisioned?: readonly ProvisionStepResult[];
+  ports?: readonly ProvisionPortResult[];
+  portWarnings?: readonly ProvisionPortWarning[];
 }
 
 /**

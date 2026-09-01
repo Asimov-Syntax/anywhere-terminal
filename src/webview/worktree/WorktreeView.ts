@@ -381,7 +381,7 @@ export class WorktreeView {
             // Provisioning lands as a SECOND message folded onto the same
             // notice, so its summary is part of the key — without it the merged
             // result is byte-different and renders identically.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned)}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.ports, r.portWarnings)}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -1514,6 +1514,7 @@ export class WorktreeView {
     }
     if (result.outcome === "ok") {
       const brought = provisionSummary(result.provisioned);
+      const ported = portSummary(result.ports, result.portWarnings);
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
       // Still a success — the worktree exists — but the notice says plainly
@@ -1523,15 +1524,22 @@ export class WorktreeView {
         // A create that succeeded while some of its material did not arrive is
         // still a success and still needs saying — the same rule the launch
         // failure above follows (round-4 W7).
-        tone: result.openFailed === undefined && brought?.tone !== "warn" ? "neutral" : "warn",
+        tone:
+          result.openFailed === undefined && brought?.tone !== "warn" && ported?.tone !== "warn" ? "neutral" : "warn",
         live: "status",
         title: `${titleForAction(result.action)} done.`,
         body: withAbout(
-          [result.openFailed === undefined ? undefined : "It could not be opened afterwards.", brought?.body]
+          [
+            result.openFailed === undefined ? undefined : "It could not be opened afterwards.",
+            brought?.body,
+            ported?.body,
+          ]
             .filter((line) => line !== undefined)
             .join(" ") || undefined,
         ),
-        reason: result.openFailed ?? brought?.reason,
+        reason:
+          [result.openFailed, brought?.reason, ported?.reason].filter((line) => line !== undefined).join("\n") ||
+          undefined,
         onDismiss: dismiss,
       });
     }
@@ -1795,8 +1803,72 @@ function titleForAction(action: WorktreeActionResult["action"]): string {
  * Every outcome, in order — a run where one entry turned from `copied` to
  * `refused` must not compare equal to the run before it.
  */
-function provisionKey(steps: readonly ProvisionStepResult[] | undefined): string {
-  return steps === undefined ? "" : steps.map((s) => `${s.id}=${s.outcome.kind}`).join(",");
+function provisionKey(
+  steps: readonly ProvisionStepResult[] | undefined,
+  ports: WorktreeActionResult["ports"],
+  warnings: WorktreeActionResult["portWarnings"],
+): string {
+  const material = steps?.map((step) => `${step.id}=${step.outcome.kind}`).join(",") ?? "";
+  const namedPorts =
+    ports
+      ?.map((port) => {
+        const outcome =
+          port.outcome.kind === "failed" ? port.outcome.reason : `${port.outcome.kind}:${port.outcome.port}`;
+        return `${port.id}:${port.name}:${port.preview ?? ""}:${outcome}`;
+      })
+      .join(",") ?? "";
+  return `${material}|${namedPorts}|${warnings?.join(",") ?? ""}`;
+}
+
+function portSummary(
+  ports: WorktreeActionResult["ports"],
+  warnings: WorktreeActionResult["portWarnings"],
+): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
+  if ((ports === undefined || ports.length === 0) && (warnings === undefined || warnings.length === 0)) {
+    return undefined;
+  }
+  const byName = new Map<string, NonNullable<WorktreeActionResult["ports"]>[number]>();
+  const priority = (port: NonNullable<WorktreeActionResult["ports"]>[number]): number => {
+    if (port.outcome.kind === "failed") {
+      return 3;
+    }
+    return port.preview !== undefined && port.preview !== port.outcome.port ? 2 : 1;
+  };
+  for (const port of ports ?? []) {
+    const current = byName.get(port.name);
+    if (current === undefined || priority(port) > priority(current)) {
+      byName.set(port.name, port);
+    }
+  }
+  const unique = [...byName.values()];
+  const ready = unique.filter((port) => port.outcome.kind !== "failed");
+  const failed = unique.filter((port) => port.outcome.kind === "failed");
+  const moved = ready.filter(
+    (port) => port.preview !== undefined && port.outcome.kind !== "failed" && port.preview !== port.outcome.port,
+  );
+  const warningText = [
+    ...(warnings?.includes("lockReleaseFailed")
+      ? ["The allocation lock could not be released; later port allocations may be blocked."]
+      : []),
+    ...(warnings?.includes("excludeFailed")
+      ? ["The repository-local exclude could not be updated; .env.worktree may appear in Git status."]
+      : []),
+  ];
+  const body = [
+    ...(unique.length === 0 ? [] : [`${ready.length} of ${unique.length} ports ready.`]),
+    ...warningText,
+  ].join(" ");
+  const reasons = [
+    ...moved.map(
+      (port) => `${port.name}: ${port.preview} → ${port.outcome.kind === "failed" ? "failed" : port.outcome.port}`,
+    ),
+    ...failed.map((port) => `${port.name}: ${port.outcome.kind === "failed" ? port.outcome.reason : "failed"}`),
+  ];
+  return {
+    body,
+    tone: failed.length > 0 || warningText.length > 0 ? "warn" : "neutral",
+    ...(reasons.length === 0 ? {} : { reason: reasons.join("\n") }),
+  };
 }
 
 /**

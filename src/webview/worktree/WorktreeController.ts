@@ -1389,6 +1389,8 @@ export class WorktreeController {
     this.showActionResult({
       ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
       provisioned: msg.steps,
+      ports: msg.ports,
+      ...(msg.portWarnings === undefined ? {} : { portWarnings: msg.portWarnings }),
     });
   }
 

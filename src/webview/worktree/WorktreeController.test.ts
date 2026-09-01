@@ -2362,7 +2362,11 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId,
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
-      ports: [],
+      ports: [
+        { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+        { id: "p2", name: "DB", outcome: { kind: "failed", reason: "no distinct port" } },
+      ],
+      portWarnings: ["excludeFailed"],
     });
 
     expect(results(h)).toHaveLength(1);
@@ -2372,6 +2376,11 @@ describe("what a mutation did comes back to the panel", () => {
       repoId: REPO,
       outcome: "ok",
       provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [
+        { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+        { id: "p2", name: "DB", outcome: { kind: "failed", reason: "no distinct port" } },
+      ],
+      portWarnings: ["excludeFailed"],
     });
   });
 

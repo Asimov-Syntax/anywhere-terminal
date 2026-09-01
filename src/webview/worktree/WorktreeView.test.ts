@@ -2500,6 +2500,73 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.className ?? "").toContain("wt-notice--warn");
   });
 
+  it("counts unique successful ports and names only movement or failure", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          ports: [
+            { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+            { id: "p2", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+            { id: "p3", name: "DB", preview: 5432, outcome: { kind: "allocated", port: 5432 } },
+            { id: "p4", name: "CACHE", outcome: { kind: "failed", reason: "no distinct port" } },
+            { id: "p5", name: "METRICS", outcome: { kind: "reused", port: 9000 } },
+          ],
+        },
+      ],
+    });
+
+    const text = view.element.querySelector(".wt-notice")?.textContent ?? "";
+    expect(text).toContain("3 of 4 ports ready.");
+    expect(text).toMatch(/APP.*5183.*5184/s);
+    expect(text.match(/APP/g)).toHaveLength(1);
+    expect(text).toContain("CACHE");
+    expect(text).toContain("no distinct port");
+    expect(text).not.toContain("DB");
+    expect(text).not.toContain("METRICS");
+    expect(text).not.toMatch(/reserv/i);
+  });
+
+  it("warns about lock cleanup and repository-local exclude failures", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5183 } }],
+          portWarnings: ["lockReleaseFailed", "excludeFailed"],
+        },
+      ],
+    });
+
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.className ?? "").toContain("wt-notice--warn");
+    expect(notice?.textContent ?? "").toContain("later port allocations may be blocked");
+    expect(notice?.textContent ?? "").toContain(".env.worktree may appear in Git status");
+  });
+
+  it("redraws when only an authoritative port value changes", () => {
+    const { view } = mount();
+    const result = (port: number): WorktreeActionResult => ({
+      action: "create",
+      repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      outcome: "ok",
+      ports: [{ id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port } }],
+    });
+
+    view.setData({ ...populated(), actionResults: [result(5184)] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("5184");
+    view.setData({ ...populated(), actionResults: [result(5185)] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("5185");
+  });
+
   it("[F005] says nothing about provisioning on a create that provisioned nothing", () => {
     const { view } = mount();
     view.setData({
