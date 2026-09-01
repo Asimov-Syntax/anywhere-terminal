@@ -29,14 +29,14 @@
 
 ## 2. The two new adapters
 
-- [ ] 2_1 Read orca's configuration pair into the model
+- [x] 2_1 Read orca's configuration pair into the model — verified: pnpm exec vitest run 'src/worktree/provisioning/orcaProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-repository-is-read-through-whichever-provisioning-file-it-already-keeps, a-source-is-reported-as-it-reads-not-as-it-would-resolve}; design.md D6, D7
   - **Acceptance**:
     - Outcome: An orca repo's shared directories link, its include list copies, its setup block is one step
     - Verify: unit src/worktree/provisioning/orcaProvider.test.ts
   - **Plan**:
-    1. Create `src/worktree/provisioning/orcaProvider.ts` exporting `ORCA_PROVIDER_FILES = ["orca.yaml", ".worktreeinclude"]` and a `ProviderAdapter` whose `read` returns `null` only when neither file is present, reading each through `openProviderFile`.
+    1. Add the `ProviderAdapter` interface design.md names to `src/worktree/provisioning/providerKit.ts`, so the first adapter to need it declares it once and 2_2 and 3_1 consume it. Then create `src/worktree/provisioning/orcaProvider.ts` exporting `ORCA_PROVIDER_FILES = ["orca.yaml", ".worktreeinclude"]` and a `ProviderAdapter` whose `read` returns `null` only when neither file is present, reading each through `openProviderFile`.
     2. In `src/worktree/provisioning/orcaProvider.ts`, map `worktree.sharedDirectories` to `entries[] { mode: "link" }` via the kit's `entriesFor` with an `orca.yaml` context, and `scripts.setup` to exactly ONE `setup[] { kind: "shell" }` carrying the block scalar verbatim with trailing whitespace trimmed, per design.md D7.
     3. In `src/worktree/provisioning/orcaProvider.ts`, read `.worktreeinclude` as lines, drop blanks and lines whose first non-space character is `#`, and map the rest to `entries[] { mode: "copy" }` with a `.worktreeinclude` context. An absent `.worktreeinclude` beside a present `orca.yaml` is not a problem, and neither is the reverse.
     4. In `src/worktree/provisioning/orcaProvider.ts`, add no problem for an `orca.yaml` key outside the two that map.

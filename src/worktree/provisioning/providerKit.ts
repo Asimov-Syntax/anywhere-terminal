@@ -315,8 +315,13 @@ export function refusal(ctx: ProviderContext, where: Containment, relPath: strin
 export type OpenedProviderFile =
   | { kind: "text"; text: string; root: PreparedRoot }
   | { kind: "absent"; root: PreparedRoot }
-  /** `at` says whether the REPOSITORY or the provider's own file is the thing that failed. */
-  | { kind: "problem"; at: "root" | "file"; problem: ProvisionProblem };
+  /**
+   * `at` says whether the REPOSITORY or the provider's own file is the thing
+   * that failed. A file problem still carries the root, because a provider that
+   * reads two files has a second one to open after the first is refused.
+   */
+  | { kind: "problem"; at: "file"; problem: ProvisionProblem; root: PreparedRoot }
+  | { kind: "problem"; at: "root"; problem: ProvisionProblem };
 
 /**
  * Prepare the root, prove the file is inside it, and only then open it.
@@ -349,7 +354,7 @@ export async function openProviderFile(
   // below is what tells absence from failure — so only a PROVEN escape
   // short-circuits, and everything else falls through to be classified there.
   if (where === "outside") {
-    return { kind: "problem", at: "file", problem: refusal(ctx, where, ctx.file) };
+    return { kind: "problem", at: "file", problem: refusal(ctx, where, ctx.file), root: prepared };
   }
   try {
     return { kind: "text", text: await deps.readFile(path.resolve(repoRoot, ctx.file)), root: prepared };
@@ -366,6 +371,7 @@ export async function openProviderFile(
       kind: "problem",
       at: "file",
       problem: problem(ctx, "unreadable", `\`${ctx.file}\` could not be read (${errnoOf(error)}).`),
+      root: prepared,
     };
   }
 }
@@ -523,4 +529,23 @@ export async function entriesFor(
       addEntry(draft, { id: nextId(), path: expanded, mode, source: ctx.file });
     }
   }
+}
+
+/**
+ * One provider, behind one shape.
+ *
+ * `files` is the whole list the provider reads, in read order — orca is one
+ * provider over two files, and D8 has the row the user sees name every one of
+ * them. `read` answers `null` for a provider that is not here at all, and a
+ * model for one that is, however empty or broken that model turns out to be:
+ * telling "absent" from "present and says nothing" is the whole of D3's
+ * detection rule, and a single `null` for both would collapse it.
+ *
+ * The budget is passed in rather than made here, so a read that consults more
+ * than one adapter spends one budget across all of them.
+ */
+export interface ProviderAdapter {
+  readonly id: ProvisionProvider["id"];
+  readonly files: readonly string[];
+  read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<ProvisionModel | null>;
 }
