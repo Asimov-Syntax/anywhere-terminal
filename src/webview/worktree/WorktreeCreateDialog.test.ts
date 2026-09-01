@@ -1101,9 +1101,7 @@ describe("Bring over — what the new worktree will lack", () => {
 
   it("states that a port preview is unavailable rather than inventing a number", () => {
     const { host } = withOffer();
-    const port = rows(host).find(
-      (r) => r.querySelector(".wt-brow-code")?.textContent === "APP · preview unavailable",
-    );
+    const port = rows(host).find((r) => r.querySelector(".wt-brow-code")?.textContent === "APP · preview unavailable");
 
     expect(port).toBeDefined();
     expect(port?.textContent).not.toMatch(/\d/);

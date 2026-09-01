@@ -65,17 +65,9 @@ describe("addToGitExclude", () => {
       mode: async () => undefined,
     };
 
-    await Promise.all([
-      addToGitExclude(gitDir, "/trees/", deps),
-      addToGitExclude(gitDir, "/.env.worktree", deps),
-    ]);
+    await Promise.all([addToGitExclude(gitDir, "/trees/", deps), addToGitExclude(gitDir, "/.env.worktree", deps)]);
 
-    expect((await readFile(excludePath, "utf8")).split("\n")).toEqual([
-      "*.log",
-      "/trees/",
-      "/.env.worktree",
-      "",
-    ]);
+    expect((await readFile(excludePath, "utf8")).split("\n")).toEqual(["*.log", "/trees/", "/.env.worktree", ""]);
   });
 
   it("reports a non-ENOENT read failure without replacing the file", async () => {
