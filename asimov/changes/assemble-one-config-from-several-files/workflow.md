@@ -110,3 +110,8 @@ The entry was never necessary. The fix loop needs the discipline — lease, RED,
 commit — not a new row in `tasks.md`, and 4_1's fixes all fell inside paths approved tasks already
 owned. Gate 2 is re-earned here for the entry that now exists; the next round is cycle 2's DISCOVERY
 round, which is not blocked by an amendment in its range.
+
+BLOCKED after round 3 (cycle 2, final automatic round): F001 case-equivalent path identity and F002
+the authorized `extends` snapshot behind a second containment check. Both accepted, both reproduced,
+and both now need amended decisions rather than remediation — F002's fix changes `ProviderAdapter.read`,
+which is D1. Round 4 needs an explicit user grant. Do not archive.
