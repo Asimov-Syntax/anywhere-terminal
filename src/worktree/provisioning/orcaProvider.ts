@@ -12,6 +12,7 @@
 // (design.md D6).
 
 import { parse as parseYaml } from "yaml";
+import { messageOf } from "../errorMessage";
 import {
   type AdapterRead,
   type Authorized,
@@ -164,11 +165,7 @@ export const orcaAdapter: ProviderAdapter = {
       try {
         parsed = parseYaml(opened.text);
       } catch (error) {
-        report(
-          draft,
-          `\`${ORCA_YAML_FILE}\``,
-          problem(YAML, "malformed", error instanceof Error ? error.message : String(error)),
-        );
+        report(draft, `\`${ORCA_YAML_FILE}\``, problem(YAML, "malformed", messageOf(error)));
         parsed = null;
       }
       if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {

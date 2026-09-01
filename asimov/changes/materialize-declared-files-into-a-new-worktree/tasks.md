@@ -179,7 +179,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     3. `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeController.test.ts`: a top-level skip, a degradation, and two creates in one repository where the first notice must survive the second.
   - **Boundary**: no new notice — provisioning reports on the create's own result, never beside it
 
-- [ ] 4_4 One owner for a thrown value in provisioning
+- [x] 4_4 One owner for a thrown value in provisioning — verified: pnpm exec vitest run 'src/worktree/provisioning/oneOwner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: .reviews/round-4.md#f011
   - **Acceptance**:

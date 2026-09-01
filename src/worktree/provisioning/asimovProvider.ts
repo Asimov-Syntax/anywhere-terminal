@@ -13,6 +13,7 @@
 
 import { parse as parseYaml } from "yaml";
 import type { ProvisionModel } from "../../types/messages";
+import { messageOf } from "../errorMessage";
 import {
   type AdapterRead,
   type Authorized,
@@ -129,7 +130,7 @@ async function fromOpened(
   try {
     parsed = parseYaml(opened.text);
   } catch (error) {
-    report(draft, label, problem(ASIMOV, "malformed", error instanceof Error ? error.message : String(error)));
+    report(draft, label, problem(ASIMOV, "malformed", messageOf(error)));
     return { ...modelFromDraft(draft), providers: PROVIDERS };
   }
   if (parsed === null || parsed === undefined) {

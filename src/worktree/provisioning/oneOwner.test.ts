@@ -118,3 +118,35 @@ describe("one owner for the four inline keys", () => {
     expect(INLINE_KEY_MAPPING.every((m) => m.test(caller))).toBe(false);
   });
 });
+
+/**
+ * A thrown value converted to display text, inline.
+ *
+ * `messageOf` was extracted on round-1 F011 after three copies had already
+ * drifted — two answered `String(error)` and the newest answered a literal
+ * `"unknown error"` on the wire. Round 4 found two more still here, so the
+ * property gets a test instead of a fourth review round (.reviews/round-4.md
+ * F011).
+ */
+const INLINE_CONVERSION = /instanceof Error\s*\?[\s\S]{0,80}?\.message\s*:/;
+
+describe("one owner for turning a thrown value into display text", () => {
+  it("is errorMessage.ts alone, and no provisioning module keeps its own", () => {
+    const owners = SHIPPED.filter((file) => INLINE_CONVERSION.test(sourceOf(file)));
+
+    expect(owners).toEqual([]);
+  });
+
+  it("catches a copy, so the assertion above is not vacuous", () => {
+    const copied =
+      'report(draft, label, problem(ASIMOV, "malformed", error instanceof Error ? error.message : String(error)));';
+
+    expect(INLINE_CONVERSION.test(copied)).toBe(true);
+  });
+
+  it("does not fire on a module that merely narrows a thrown value", () => {
+    const narrowing = 'if (err instanceof Error && err.code === "ENOENT") {\n  return null;\n}';
+
+    expect(INLINE_CONVERSION.test(narrowing)).toBe(false);
+  });
+});
