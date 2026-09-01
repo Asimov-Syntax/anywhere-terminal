@@ -128,10 +128,56 @@ function hasBackslash(p: string): boolean {
  * finding quotes leaves the instrument that made it work (round-2 F004), so
  * the rule now reads the same string the walk will write to.
  */
+const LOCKFILE_REASON = "a lockfile is never brought over — this branch's own lockfile is the authoritative one";
+
+/**
+ * The name the filesystem will act on, whatever spelling addressed it.
+ *
+ * Case folding was already here. Round 4 found two more spellings that name one
+ * object: Win32 strips terminal dots and spaces from a path, and `::$DATA`
+ * addresses a file's default data stream — so `pnpm-lock.yaml.` and
+ * `pnpm-lock.yaml::$DATA` both open the lockfile while missing the set
+ * (.reviews/round-4.md F004).
+ *
+ * To a fixed point, because the two compose in either order and one pass cannot
+ * follow them: `pnpm-lock.yaml::$DATA.` needs the dot stripped before the stream
+ * suffix is even visible, and `pnpm-lock.yaml. ::$DATA` needs the reverse.
+ * Lower-cased first, so the suffix match does not have to be case-blind twice.
+ *
+ * A spelling that folds to nothing matches nothing: the set holds no empty name.
+ * This reads the RESOLVED destination and never `entry.path` — a rule over the
+ * spelling would refuse `scratch./../.env`, whose offending segment resolution
+ * has already discarded, which is the raw-versus-resolved disagreement round-2
+ * F004 removed.
+ */
+function filesystemIdentity(base: string): string {
+  const STREAM = "::$data";
+  let name = base.toLowerCase();
+  for (;;) {
+    const trimmed = name.replace(/[. ]+$/, "");
+    const unstreamed = trimmed.endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
+    if (unstreamed === name) {
+      return name;
+    }
+    name = unstreamed;
+  }
+}
+
+/**
+ * The lockfile rule alone, by NAME, for a caller that has no mode to offer.
+ *
+ * `walk` needs exactly this and nothing else: the `node_modules` rule reads
+ * mode because it is about sharing a dependency tree, and a descendant of a
+ * copy shares nothing (design.md D6, D7).
+ */
+export function refusedLockfile(resolvedDestination: string): string | null {
+  return LOCKFILES.has(filesystemIdentity(path.basename(resolvedDestination))) ? LOCKFILE_REASON : null;
+}
+
 function refusedMaterial(resolvedDestination: string, mode: ProvisionEntry["mode"]): string | null {
-  const base = path.basename(resolvedDestination).toLowerCase();
+  const base = filesystemIdentity(path.basename(resolvedDestination));
   if (LOCKFILES.has(base)) {
-    return "a lockfile is never brought over — this branch's own lockfile is the authoritative one";
+    return LOCKFILE_REASON;
   }
   if (base === "node_modules" && mode === "link") {
     return "node_modules is never linked: a shared tree defeats per-branch lockfiles and corrupts concurrent installs";

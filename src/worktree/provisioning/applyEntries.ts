@@ -32,7 +32,7 @@ import type { ProvisionEntry, ProvisionStepResult } from "../../types/messages";
 import { isResolvedPathInsideRoot, type ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
 import type { Deadline } from "../deadline";
 import { messageOf } from "../errorMessage";
-import { admitEntry, type EntryGateRoots } from "./entryGate";
+import { admitEntry, type EntryGateRoots, refusedLockfile } from "./entryGate";
 
 /** The subset of `fs.Stats` this walk turns on. */
 export interface LstatLike {
@@ -375,6 +375,32 @@ export async function applyEntry(
   async function walk(source: string, destination: string): Promise<NodeResult> {
     spend();
     const node = await deps.lstat(source);
+
+    // The entry's material rule, applied where the material actually lands.
+    //
+    // It ran once, for the selected entry, so a lockfile inside a copied
+    // directory arrived and the step still reported `copied`
+    // (.reviews/round-4.md F025).
+    //
+    // Symlinks too, and that is not belt-and-braces: D6 asks where a link's
+    // target RESOLVES and never what the link is called, so
+    // `cfg/pnpm-lock.yaml → actual` beside a plain `cfg/actual` holding main's
+    // bytes passes both of its sides — and the destination then reads out the
+    // main checkout's lockfile under that name. A chain of inward links, and a
+    // link whose target a LATER entry fills, are the same bypass.
+    //
+    // Name only, never mode: refusing a descendant `node_modules` would make a
+    // copied dependency tree unreachable, which is D6's business and not this
+    // rule's. A directory keeps its own handling and a FIFO keeps its own
+    // reason, so neither is refused with a lockfile's.
+    //
+    // Ahead of `spendBytes`, so a node that is never written charges nothing.
+    if (node.isFile() || node.isSymbolicLink()) {
+      const material = refusedLockfile(destination);
+      if (material !== null) {
+        return { kind: "refused", reason: material };
+      }
+    }
 
     if (node.isSymbolicLink()) {
       // Never traversed, which is also why a loop terminates here.

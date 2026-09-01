@@ -154,3 +154,107 @@ describe("the binding production actually passes", () => {
     expect(result.outcome.kind).toBe("refused");
   });
 });
+
+describe("[round-4 F025] a lockfile reaches the worktree through no ancestor", () => {
+  it("refuses a lockfile found inside a copied directory, and keeps the rest", async () => {
+    // The entry-level rule ran once. A directory copy walked past it and the
+    // step still reported `copied` — the destination lockfile held the main
+    // checkout's bytes.
+    await fs.mkdir(path.join(main, "cfg"));
+    await fs.writeFile(path.join(main, "cfg", "pnpm-lock.yaml"), "lockfileVersion: 9");
+    await fs.writeFile(path.join(main, "cfg", "app.json"), "{}");
+
+    const result = await apply(entry({ path: "cfg" }));
+
+    await expect(fs.lstat(path.join(worktree, "cfg", "pnpm-lock.yaml"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(path.join(worktree, "cfg", "app.json"), "utf8")).toBe("{}");
+    // D8: the parent keeps ONE outcome and the refusal rides as a detail.
+    expect(result.outcome.kind).toBe("copied");
+    expect(result.details?.map((d) => d.reason)).toEqual([
+      "a lockfile is never brought over — this branch's own lockfile is the authoritative one",
+    ]);
+  });
+
+  it("refuses an INWARD symlink named like a lockfile, which D6 would happily recreate", async () => {
+    // The hole the oracle found in the first fix. D6 asks where a link's target
+    // resolves, never what the link is CALLED: `pnpm-lock.yaml → actual` is
+    // inside main and inside the worktree on both sides, so it is recreated —
+    // and reading it in the new worktree reads the main checkout's lockfile.
+    // The plain file beside it passes on its own name.
+    await fs.mkdir(path.join(main, "cfg"));
+    await fs.writeFile(path.join(main, "cfg", "actual"), "lockfileVersion: 9");
+    await fs.symlink("actual", path.join(main, "cfg", "pnpm-lock.yaml"));
+
+    await apply(entry({ path: "cfg" }));
+
+    await expect(fs.lstat(path.join(worktree, "cfg", "pnpm-lock.yaml"))).rejects.toMatchObject({ code: "ENOENT" });
+    // `actual` is not a lockfile by name and is not what the rule is about.
+    expect(await fs.readFile(path.join(worktree, "cfg", "actual"), "utf8")).toBe("lockfileVersion: 9");
+  });
+
+  it("refuses the head of an inward symlink CHAIN, so the alias never lands", async () => {
+    await fs.mkdir(path.join(main, "cfg"));
+    await fs.writeFile(path.join(main, "cfg", "actual"), "lockfileVersion: 9");
+    await fs.symlink("actual", path.join(main, "cfg", "alias"));
+    await fs.symlink("alias", path.join(main, "cfg", "pnpm-lock.yaml"));
+
+    await apply(entry({ path: "cfg" }));
+
+    await expect(fs.lstat(path.join(worktree, "cfg", "pnpm-lock.yaml"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not refuse a DIRECTORY named like a lockfile, nor give a FIFO the wrong reason", async () => {
+    // The rule is about lockfile bytes, not about the string. Refusing by name
+    // before the kind is known would hand both of these a reason that is not
+    // true of them.
+    await fs.mkdir(path.join(main, "cfg"));
+    await fs.mkdir(path.join(main, "cfg", "pnpm-lock.yaml"));
+    await fs.writeFile(path.join(main, "cfg", "pnpm-lock.yaml", "README.md"), "notes");
+
+    const result = await apply(entry({ path: "cfg" }));
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(await fs.readFile(path.join(worktree, "cfg", "pnpm-lock.yaml", "README.md"), "utf8")).toBe("notes");
+  });
+
+  it("charges no bytes for a descendant it refuses", async () => {
+    // The refusal sits ahead of `spendBytes`, so a node that is never written
+    // cannot push a later sibling over the cap.
+    await fs.mkdir(path.join(main, "cfg"));
+    await fs.writeFile(path.join(main, "cfg", "pnpm-lock.yaml"), "0123456789");
+    await fs.writeFile(path.join(main, "cfg", "app.json"), "{}");
+
+    const shared = budget({ maxBytes: 4 });
+    const result = await apply(entry({ path: "cfg" }), shared);
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(await fs.readFile(path.join(worktree, "cfg", "app.json"), "utf8")).toBe("{}");
+  });
+});
+
+describe("[round-4 F004] the classifier reads the identity the filesystem acts on", () => {
+  it.each([
+    ["pnpm-lock.yaml.", "a trailing dot Win32 strips"],
+    ["pnpm-lock.yaml ", "a trailing space Win32 strips"],
+    ["pnpm-lock.yaml::$DATA", "the default data stream"],
+    ["pnpm-lock.yaml::$DATA.", "a stream spelling behind a stripped dot"],
+    ["pnpm-lock.yaml. ::$DATA", "a stream spelling ahead of a stripped dot and space"],
+  ])("refuses %s — %s", async (spelling) => {
+    await fs.writeFile(path.join(main, "pnpm-lock.yaml"), "lockfileVersion: 9");
+
+    const result = await apply(entry({ path: spelling }));
+
+    expect(result.outcome.kind).toBe("refused");
+  });
+
+  it("still admits an entry whose offending segment resolution discards", async () => {
+    // A rule over the SPELLING would refuse this for the `scratch.` segment,
+    // which `path.resolve` removes before the walk ever sees it — the
+    // raw-versus-resolved disagreement round-2 F004 removed.
+    await fs.writeFile(path.join(main, ".env"), "TOKEN=1");
+
+    const result = await apply(entry({ path: "scratch./../.env" }));
+
+    expect(result.outcome.kind).toBe("copied");
+  });
+});

@@ -143,7 +143,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
 
 ## 4. Round-4 fixes (cycle 2 discovery)
 
-- [ ] 4_1 Refuse a lockfile wherever it would land, on the identity the filesystem uses
+- [x] 4_1 Refuse a lockfile wherever it would land, on the identity the filesystem uses — verified: pnpm exec vitest run 'src/worktree/provisioning/applyEntries.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: design.md#d6; design.md#d7; .reviews/round-4.md#f025; .reviews/round-4.md#f004
   - **Acceptance**:
