@@ -1,3 +1,6 @@
+import nodeFs from "node:fs/promises";
+import os from "node:os";
+import nodePath from "node:path";
 import { describe, expect, it } from "vitest";
 import { ASIMOV_PROVIDER_FILE } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
@@ -684,46 +687,62 @@ describe("[round-3 F002] authorization is a result, not a byte source", () => {
   });
 });
 
-describe("[round-3 F001] identity is the destination, and folds exactly when the filesystem folds", () => {
+describe("[round-3 F001, round-4 F005] identity is the destination the filesystem resolves to", () => {
   // One destination declared twice, once per file, differing only in case.
   const CASE_REPO: Repo = {
     native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
     orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
   };
-  const TOGGLED = `${ROOT}/.vscode/WORKTREE.JSON`;
 
-  /** A volume that answers to the native file under a case-toggled spelling. */
-  function insensitive(spec: Repo = CASE_REPO): ProviderDeps {
-    return fs(spec);
-  }
+  /**
+   * A volume, stated as what `realpath` answers.
+   *
+   * That is the whole mechanism now: two declarations are one destination when
+   * the filesystem resolves them to one path. A fake that resolves every path to
+   * itself is a case-SENSITIVE volume, and it has to say so rather than leaving
+   * the question to a probe about some other file (design.md D11).
+   */
+  const enoent = (p: string) => Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
 
-  /** The same repository on a volume where that spelling is nothing. */
-  function sensitive(spec: Repo = CASE_REPO): ProviderDeps {
+  function volume(spec: Repo, canonical: Record<string, string> = {}, absent: readonly string[] = []): ProviderDeps {
     return {
       ...fs(spec),
+      realpath: async (p) => {
+        if (absent.includes(p)) {
+          throw enoent(p);
+        }
+        return canonical[p] ?? p;
+      },
+      // Both, or nothing is absent: `isResolvedPathInsideRoot` reads an ENOENT
+      // from `realpath` beside a SUCCEEDING `lstat` as a link it cannot follow,
+      // and refuses the entry. A fake that answers every `lstat` makes an absent
+      // path indistinguishable from a broken one.
       lstat: async (p) => {
-        if (p === TOGGLED) {
-          throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+        if (absent.includes(p)) {
+          throw enoent(p);
         }
         return {};
       },
     };
   }
 
+  /** `MixedCase` and `mixedcase` are one file, stored under the lower spelling. */
+  const FOLDS = { [`${ROOT}/MixedCase`]: `${ROOT}/mixedcase`, [`${ROOT}/mixedcase`]: `${ROOT}/mixedcase` };
+
   it("offers one row for one destination when the filesystem folds case", async () => {
     // The reviewer reproduced this on the shipping macOS default: `MixedCase`
     // and `mixedcase` are ONE file, and offering an inherited link beside a
     // native copy for it is two rows for one place on disk.
-    const model = await readProvisioning(insensitive(), ROOT);
+    const model = await readProvisioning(volume(CASE_REPO, FOLDS), ROOT);
 
     expect(model.entries.map((e) => [e.path, e.mode, e.source])).toEqual([["MixedCase", "copy", NATIVE_PROVIDER_FILE]]);
   });
 
-  it("keeps both rows when the filesystem does not fold case", async () => {
+  it("keeps both rows when the two spellings are two files", async () => {
     // Folding unconditionally is the same defect pointing the other way: here
     // they are two genuinely different files, and merging them drops a row the
     // repository asked for.
-    const model = await readProvisioning(sensitive(), ROOT);
+    const model = await readProvisioning(volume(CASE_REPO), ROOT);
 
     expect(model.entries.map((e) => [e.path, e.mode, e.source])).toEqual([
       ["mixedcase", "link", ORCA_YAML_FILE],
@@ -731,24 +750,65 @@ describe("[round-3 F001] identity is the destination, and folds exactly when the
     ]);
   });
 
+  it("[oracle] a case-toggled symlink to the native file does not fold the whole repository", async () => {
+    // The witness that refuted the probe this replaced, before it was built. On
+    // a case-SENSITIVE volume `.vscode/WORKTREE.JSON` can be a symlink to
+    // `.vscode/worktree.json`: both spellings then resolve to one path, so any
+    // probe about THAT file answers "insensitive" for a volume that folds
+    // nothing — and two genuinely distinct declarations were merged. Asking
+    // about the paths being merged cannot be fooled by a third file.
+    const model = await readProvisioning(
+      volume(CASE_REPO, {
+        [`${ROOT}/.vscode/WORKTREE.JSON`]: `${ROOT}/${NATIVE_PROVIDER_FILE}`,
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["mixedcase", "MixedCase"]);
+  });
+
+  it("[oracle] folds what the volume folds, including a fold `toLowerCase` does not make", async () => {
+    // `Straße` and `STRASSE` are one file on ordinary case-insensitive APFS and
+    // two keys under `toLowerCase`. Nothing here lower-cases, so the volume's
+    // answer is the only one that counts.
+    const model = await readProvisioning(
+      volume(
+        {
+          native: `{"extends": "orca.yaml", "copy": ["STRASSE"]}`,
+          orcaYaml: "worktree:\n  sharedDirectories: [Stra\u00dfe]\n",
+        },
+        {
+          [`${ROOT}/STRASSE`]: `${ROOT}/Stra\u00dfe`,
+          [`${ROOT}/Stra\u00dfe`]: `${ROOT}/Stra\u00dfe`,
+        },
+      ),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["STRASSE"]);
+  });
+
   it("matches an exclusion against the destination, not the spelling", async () => {
     const model = await readProvisioning(
-      insensitive({
-        native: `{"extends": "orca.yaml", "exclude": ["MIXEDCASE"]}`,
-        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
-      }),
+      volume(
+        {
+          native: `{"extends": "orca.yaml", "exclude": ["MIXEDCASE"]}`,
+          orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+        },
+        { [`${ROOT}/MIXEDCASE`]: `${ROOT}/mixedcase`, [`${ROOT}/mixedcase`]: `${ROOT}/mixedcase` },
+      ),
       ROOT,
     );
 
     expect(model.entries).toEqual([]);
     // The excluded row keeps the spelling and the source its own file wrote —
-    // folding is for identity, never for display (§ 4.3).
+    // identity is for merging, never for display (§ 4.3).
     expect(model.excluded.map((e) => [e.path, e.source])).toEqual([["mixedcase", ORCA_YAML_FILE]]);
   });
 
   it("still reports the contradiction when the two spellings are the file's own", async () => {
     const model = await readProvisioning(
-      insensitive({ native: `{"copy": ["MixedCase"], "exclude": ["mixedcase"]}` }),
+      volume({ native: `{"copy": ["MixedCase"], "exclude": ["mixedcase"]}` }, FOLDS),
       ROOT,
     );
 
@@ -757,24 +817,35 @@ describe("[round-3 F001] identity is the destination, and folds exactly when the
     expect(model.excluded).toEqual([]);
   });
 
-  it("asks `realpath` when the interface carries no `lstat`", async () => {
-    // Both are optional and either can answer. With neither, the probe has
-    // nothing to ask and the answer is case-SENSITIVE — but that interface
-    // never gets this far, because the root itself resolves through the same
-    // two, so the reachable default is this fallback.
-    const { lstat, ...deps } = fs(CASE_REPO);
-    void lstat;
+  it("keys a destination the repository does not carry by its spelling", async () => {
+    // The ordinary case: a declared file that is not there cannot be resolved,
+    // so two case-variant spellings of it stay two rows even on a folding
+    // volume. A visible extra row rather than a silently dropped one, which is
+    // the direction D11 takes throughout.
+    const model = await readProvisioning(volume(CASE_REPO, {}, [`${ROOT}/mixedcase`, `${ROOT}/MixedCase`]), ROOT);
+
+    // Neither spelling resolves, so neither can be told to be the other's.
+    expect(model.entries.map((e) => e.path)).toEqual(["mixedcase", "MixedCase"]);
+  });
+
+  it("keys everything by spelling when the interface carries no `realpath`", async () => {
+    // `realpath` is optional on `ProviderDeps`, and without it there is nothing
+    // to ask. Round-4 F006 established this branch is reachable — an earlier
+    // comment here wrongly called it unreachable, on the strength of a FAKE root
+    // that a real repository root does not share.
+    // On a REAL root, because `prepareResolvedRoot` falls back to node's own
+    // `realpath` and the fake `/repo` fails there before assembly is reached —
+    // the very confusion F006 corrected.
+    const root = await nodeFs.realpath(await nodeFs.mkdtemp(nodePath.join(os.tmpdir(), "identity-")));
+    await nodeFs.mkdir(nodePath.join(root, ".vscode"), { recursive: true });
+    await nodeFs.writeFile(nodePath.join(root, NATIVE_PROVIDER_FILE), CASE_REPO.native ?? "");
+    await nodeFs.writeFile(nodePath.join(root, ORCA_YAML_FILE), CASE_REPO.orcaYaml ?? "");
     const model = await readProvisioning(
       {
-        ...deps,
-        realpath: async (p) => {
-          if (p === TOGGLED) {
-            throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
-          }
-          return p;
-        },
+        readFile: (p) => nodeFs.readFile(p, "utf8"),
+        readdir: (p) => nodeFs.readdir(p),
       },
-      ROOT,
+      root,
     );
 
     expect(model.entries.map((e) => e.path)).toEqual(["mixedcase", "MixedCase"]);

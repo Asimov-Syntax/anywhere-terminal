@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -142,3 +142,9 @@ per-volume and, on Windows, per-directory attribute, so one repository-wide bool
 SHAPE; and `toLowerCase` is not the volume's fold even when the answer is right (`Straße`/`STRASSE`).
 D11 now puts the question to the filesystem about the paths actually being merged and folds nothing
 itself. Third attempt at this invariant, which is why it was attacked before landing rather than after.
+
+6_1's `--test-change` record names six files and +53 assertions, wider than the task: the tree stamp
+it diffs from predates WT-012.2's round-5 commits, which landed test edits on this same branch in
+between. The task itself touched `readProvisioning.test.ts` alone. Same artefact as 4_4's record.
+Verify gate re-run after the handback: check-types clean, biome 3 errors / 14 warnings / 1 info
+(baseline), 6599 tests pass.

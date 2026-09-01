@@ -144,7 +144,7 @@
 
 ## 6. Round-4 handback
 
-- [ ] 6_1 Ask the filesystem about the paths being merged, not about one probe
+- [x] 6_1 Ask the filesystem about the paths being merged, not about one probe — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_2
   - **Refs**: design.md#d11-identity-is-the-destination-and-folds-exactly-when-the-filesystem-folds; .reviews/round-4.md#f005; .reviews/round-4.md#f006
   - **Acceptance**:

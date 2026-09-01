@@ -19,6 +19,7 @@ import {
   type Authorized,
   type Draft,
   emptyModel,
+  MAX_MODEL_ROWS,
   newBudget,
   newDraft,
   openProviderFile,
@@ -146,7 +147,7 @@ async function baseFor(
 }
 
 /**
- * Which destination on disk a declared path names.
+ * Which destination on disk each declared path names.
  *
  * Two files spelling one destination differently — `node_modules` against
  * `./node_modules`, or `a/../node_modules` — compared as raw strings stayed two
@@ -155,64 +156,75 @@ async function baseFor(
  * (.reviews/round-1.md F001). The spec says exactly one row is offered for that
  * PATH, and a path is a destination, not a spelling.
  *
- * Lexical normalization alone was refuted: on a case-insensitive volume — the
- * macOS default, reproduced on the reviewer's own host — `MixedCase` and
- * `mixedcase` are ONE file, so both were offered and `exclude` matched neither
- * (.reviews/round-3.md F001). Folding unconditionally is the same defect
- * inverted: on a case-sensitive volume they are two real files, and merging them
- * drops a row the repository asked for. So the fold is the filesystem's own
- * answer, not a platform guess (design.md D11).
+ * Lexical normalization alone was refuted on a case-insensitive volume — the
+ * macOS default — where `MixedCase` and `mixedcase` are ONE file, so both were
+ * offered and `exclude` matched neither (.reviews/round-3.md F001). What
+ * replaced it was refuted twice more, and both refutations were of the same
+ * idea: probe ONE file, then apply the answer to every other path.
+ *
+ * - Asking whether a case-toggled spelling EXISTS proves existence, not folding:
+ *   on a case-sensitive volume both spellings can be two real files
+ *   (.reviews/round-4.md F005).
+ * - Asking whether both spellings RESOLVE ALIKE is fooled by a case-toggled
+ *   symlink to the probed file, answers for a volume other than the one a given
+ *   destination lives on — case sensitivity is per-volume, and on Windows
+ *   per-directory — and still leaves `toLowerCase` doing a fold no filesystem
+ *   performs: `Straße` and `STRASSE` are one file on APFS and two keys in
+ *   JavaScript. All three were reproduced by the oracle attack on design.md D11.
+ *
+ * So nothing here folds anything. Each DISTINCT declared path is resolved under
+ * the repository root, and two declarations are one destination exactly when the
+ * filesystem hands back one path for them. A nested volume answers for itself; a
+ * Unicode equivalence is whatever the volume says it is.
+ *
+ * A path that does not resolve — the ordinary case for a destination the
+ * repository declares but does not carry — keys by its spelling, so two
+ * case-variant spellings of an absent file stay two rows: a visible extra row
+ * rather than a silently dropped one, which is the direction this decision takes
+ * throughout. The two kinds of key are namespaced apart, because a resolved
+ * answer is an absolute path and a declaration could spell one too.
+ *
+ * One resolution per distinct path rather than one per read, bounded by
+ * `MAX_MODEL_ROWS`: entries are capped, but `exclude` is a raw list off the file
+ * and is capped nowhere else. Past the bound the remainder keys lexically, which
+ * splits rather than merges.
  *
  * Used for identity only. What a row DISPLAYS and what it names as its `source`
  * are never touched — § 4.3 forbids rewriting either, and a row that showed the
  * canonical form would be telling the user something their file does not say.
  */
-function keyer(fold: boolean): (declared: string) => string {
-  return (declared) => {
-    const normalized = path.posix.normalize(declared);
-    const trimmed = normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
-    return fold ? trimmed.toLowerCase() : trimmed;
+async function identityOf(
+  deps: ProviderDeps,
+  repoRoot: string,
+  declared: readonly string[],
+): Promise<(path: string) => string> {
+  const lexical = (raw: string): string => {
+    const normalized = path.posix.normalize(raw);
+    return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
   };
-}
-
-/** The same name with every letter of its last segment in the other case. */
-function toggleCase(relPath: string): string {
-  const cut = relPath.lastIndexOf("/");
-  const head = relPath.slice(0, cut + 1);
-  const tail = relPath.slice(cut + 1);
-  return head + [...tail].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join("");
-}
-
-/**
- * Does this repository's filesystem treat two spellings as one file?
- *
- * Asked of the volume rather than of `process.platform`: a case-sensitive
- * volume mounted on macOS and a case-insensitive one on Linux are both ordinary,
- * and a platform guess is wrong for each. The question is put to a file already
- * PROVEN present — the native file, which is the only reason assembly is
- * running — so a "yes" can only mean the volume folded, never that something
- * else happens to be there under that name.
- *
- * Once per read, not per path. `lstat` and `realpath` are both optional on the
- * interface and either answers; with neither there is nothing to ask and the
- * answer is case-SENSITIVE, which errs toward a visible extra row rather than a
- * silently dropped one (design.md D11).
- */
-async function foldsCase(deps: ProviderDeps, repoRoot: string, present: string): Promise<boolean> {
-  const toggled = toggleCase(present);
-  if (toggled === present) {
-    return false;
+  const resolved = new Map<string, string>();
+  const ask = deps.realpath;
+  if (ask !== undefined) {
+    let spent = 0;
+    for (const spelling of new Set(declared.map(lexical))) {
+      if (spent >= MAX_MODEL_ROWS) {
+        break;
+      }
+      spent += 1;
+      try {
+        resolved.set(spelling, await ask(path.resolve(repoRoot, spelling)));
+      } catch {
+        // Not there, or not reachable. Keyed by its spelling below — this is a
+        // read that must not fail on a declaration the repository has not made
+        // true yet.
+      }
+    }
   }
-  const ask = deps.lstat ?? deps.realpath;
-  if (ask === undefined) {
-    return false;
-  }
-  try {
-    await ask(path.resolve(repoRoot, toggled));
-    return true;
-  } catch {
-    return false;
-  }
+  return (raw) => {
+    const spelling = lexical(raw);
+    const answer = resolved.get(spelling);
+    return answer === undefined ? `spelling\u0000${spelling}` : `resolved\u0000${answer}`;
+  };
 }
 
 /**
@@ -296,9 +308,13 @@ async function assemble(
   const inherited = resolved === null ? null : await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized);
   const baseModel = inherited?.model ?? emptyModel();
 
-  // The probe is on the READ, not on the entry: one stat per offer rather than
-  // one per declared path.
-  const pathKey = keyer(await foldsCase(deps, repoRoot, NATIVE_PROVIDER_FILE));
+  // Asked about the paths being merged, not about a probe file whose answer
+  // would then be generalized to them (design.md D11).
+  const pathKey = await identityOf(deps, repoRoot, [
+    ...baseModel.entries.map((e) => e.path),
+    ...native.model.entries.map((e) => e.path),
+    ...(native.exclude ?? []),
+  ]);
   const merged = mergeEntries(baseModel.entries, native.model.entries, pathKey);
   const { kept, excluded } = applyExclude(merged.entries, merged.inline, native.exclude ?? [], draft, pathKey);
 
