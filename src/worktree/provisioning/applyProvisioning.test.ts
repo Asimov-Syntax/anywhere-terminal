@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ProvisionEntry, ProvisionResultContest, ProvisionStepResult } from "../../types/messages";
 import { afterDelay } from "../deadline";
 import { fakeFs } from "./applyEntries.fake";
-import { applyProvisioning } from "./applyProvisioning";
+import { applyProvisioning, failEveryEntry } from "./applyProvisioning";
 import { prepareEntryGate } from "./entryGate";
 
 const MAIN = "/repo";
@@ -497,5 +497,41 @@ describe("absence is established, never assumed", () => {
     } finally {
       deadline.cancel();
     }
+  });
+});
+
+describe("[round-5 F011] the worktree could not be read at all", () => {
+  const WHY = "the worktree could not be read after it was created";
+
+  it("still says which declarations were contesting", () => {
+    // The apply never ran, so it has no opinion about who wins. It still owes
+    // the dialog the dispute: a contested row whose step carries no contest
+    // index renders as a row unrelated to the contest beside it.
+    const { steps, contests } = failEveryEntry(PAIR, WHY);
+
+    expect(steps.map((s) => s.outcome)).toEqual([
+      { kind: "failed", reason: WHY },
+      { kind: "failed", reason: WHY },
+    ]);
+    for (const step of steps) {
+      expect(named(contests, step)).toEqual([
+        "MixedCase (declared in .vscode/worktree.json)",
+        "mixedcase (declared in asimov/worktree.yaml)",
+      ]);
+    }
+  });
+
+  it("carries the membership once, not once per member", () => {
+    const { contests } = failEveryEntry(PAIR, WHY);
+
+    expect(contests).toHaveLength(1);
+  });
+
+  it("leaves an uncontested entry with no contest to point at", () => {
+    const alone = [entry(".env", "copy", NATIVE, "i9")];
+    const { steps, contests } = failEveryEntry(alone, WHY);
+
+    expect(steps[0]?.contest).toBeUndefined();
+    expect(contests).toEqual([]);
   });
 });

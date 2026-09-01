@@ -93,8 +93,8 @@ For a contested group `G` with favoured `f` and each other selected member `m`:
 |---|---|
 | Any member reads anything but `absent` in either D3 reading | `f` and every `m` are `refused`, naming each other; nothing is written for the group |
 | `f`'s own top-level creation answers `EEXIST` | `f` and every `m` are `refused`; the claim was lost between reading 2 and the write |
-| `f` did not claim — refused, skipped or failed | every `m` is `refused`, naming every member |
-| `f` claimed | every `m` is `refused`, naming every member |
+| `f` did not claim — refused, skipped or failed | every `m` is `refused`, carrying the contest index that identifies every member |
+| `f` claimed | every `m` is `refused`, carrying the contest index that identifies every member |
 
 An `inadmissible` member outside a contest is untouched by all of this: it is applied in its
 ordinary place and the gate reports the refusal it actually has. Inside a contest it refuses the
@@ -146,11 +146,28 @@ the contest on `CLAIM_LOST` and passes every other refusal through with the rule
 DECORATED with the contest's membership, never replaced by it, because D4a is about what a refusal
 says and not about which one it is (.reviews/round-4.md F009, F010).
 
-### D4a — Every refusal names every member, by path and declaring file
+### D4a — Every refusal identifies every member, by path and declaring file
 
 A step's own `path` says which row lost; it does not say which declaration it lost to, and the row
-a person reads is one entry's. Each refusal reason therefore names **every member of the contest**,
-its own included, each as `<path> (declared in <source>)`.
+a person reads is one entry's. Every refusal therefore reaches the reader identifying **every member
+of the contest**, its own included, each as `<path> (declared in <source>)`.
+
+**What carries it is not the reason string.** The first draft put the whole membership INSIDE each
+member's reason, which is `O(N**2)` text for one `N`-member contest — the input is row-capped and
+that output was not (.reviews/round-4.md F008). That representation was withdrawn and re-owned by
+`carry-a-contest-membership-once`, now archived. The shipped one composes at rendering:
+
+```
+step  →  { …, contest: <index> }          the local reason, plus a pointer
+result → { steps, contests: [{ members }] }   each membership ONCE, per contest
+notice →  "<reason> [contest N]" + one "Contest N, one destination these may all name: …" line
+```
+
+So D4a is a requirement on what the READER ends up identifying, not on what any one string contains.
+A step's own reason keeps the rule that actually fired — an unsupported file type stays an
+unsupported file type (D4b) — and the contest index is what makes its membership recoverable. Every
+contested step carries that index whatever its outcome, including the failure path where the
+worktree could not be read at all (.reviews/round-5.md F011).
 
 ### D5 — One orchestration, out of the extension entry point
 
@@ -196,7 +213,8 @@ twin-create probe this change does not assume.
 | Provisioning still deletes nothing | No unlink, truncate, or overwrite on any path this change touches | A repair that "clears" a contested destination | `pnpm run gate:fs-deletion`, which already scans every production module under `src/worktree/`; `ApplyFsDeps` offers no destructive primitive to call | supported |
 | Copy-before-link still holds where it was relied on | `P1` over every entry that is not a contested non-favoured member | A deferred copy that a link was waiting on | D2's argument that no link can depend on a contested loser's material — a link entry points out of the worktree, a recreated in-tree link resolves inside its own tree | supported |
 | An awarded destination is never attributed to a write the apply cannot prove | No outcome claims `f` created what `m` names | Reporting `m` as skipped-because-folded when a descendant walk or another process created that name | D4 row 3 refuses instead of attributing; witness that a name created by an unrelated entry's directory copy still refuses rather than awards | supported |
-| A refusal names every member | Every D4 refusal carries each member's path and declaring file, its own included | A reason naming only the counterparty, which leaves a reader unable to say which row lost | Unit witnesses on the reason text of all three refusal rows, asserting the refused member's own spelling and source appear | supported |
+| A refusal identifies every member | Every D4 refusal resolves, through its `contest` index, to each member's path and declaring file, its own included | A step with no index, or an index into a membership the result never carried, which leaves a reader unable to say which row lost | Unit witnesses on all three refusal rows resolve the membership THROUGH the step's index (`named(contests, step)`), so a dropped index fails them; plus the `failEveryEntry` witnesses for the unreadable-root path | supported |
+| The report's size is linear in the declarations | One membership per contest, referenced by index — not one copy per member | The withdrawn per-reason expansion, `O(N**2)` in text against a row-capped input | `carry-a-contest-membership-once` (archived) owns this; its witnesses count the membership's tokens per region rather than measuring a ratio | supported, owned by the child |
 | No outcome claims who did or did not create a destination | Row 3's reason states only that creation cannot be attributed | A reason asserting "not put there by this apply", which is the same unfounded causal claim inverted | Unit witness on row 3's text | supported |
 | Absence is established, never assumed | Only `ENOENT` reads as absent; any other `lstat` failure refuses the contest | Collapsing `EACCES`/`EIO` into absence, which authorizes the write path after failing to prove the destination free | D3's four states; witness with a fake whose `lstat` rejects `EACCES` | supported |
 | The extraction did not change what the caller receives | Results are returned in the order they were produced, as the closure did | Returning them in provider order, which the webview's comparison key can see | Unit witness on the returned order for a mixed model | supported |

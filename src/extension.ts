@@ -72,7 +72,7 @@ import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
 import { nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
-import { applyProvisioning } from "./worktree/provisioning/applyProvisioning";
+import { applyProvisioning, failEveryEntry } from "./worktree/provisioning/applyProvisioning";
 import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
@@ -582,11 +582,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         applyProvision: async (mainCheckout, worktreePath, entries) => {
           const roots = await prepareEntryGate(mainCheckout, worktreePath);
           if (roots === null) {
-            return entries.map((entry) => ({
-              id: entry.id,
-              path: entry.path,
-              outcome: { kind: "failed" as const, reason: "the worktree could not be read after it was created" },
-            }));
+            // Through the same builder as the ordinary path, and staging its
+            // memberships the same way: a contested declaration is in a contest
+            // whether or not the apply could read the worktree, and a step with
+            // no index reads as a row unrelated to the dispute beside it
+            // (.reviews/round-5.md F011).
+            const unread = failEveryEntry(entries, "the worktree could not be read after it was created");
+            if (unread.contests.length > 0) {
+              provisionContests.set(worktreePath, unread.contests);
+            }
+            return unread.steps;
           }
           // ONE budget for the whole apply, shared by every entry. Minting it
           // per iteration multiplied D10's bound by the entry count — against

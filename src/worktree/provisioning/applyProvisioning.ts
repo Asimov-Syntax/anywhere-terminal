@@ -87,6 +87,56 @@ type Reading = "absent" | "present" | "unreadable" | "inadmissible";
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | null)?.code;
 
 /**
+ * The contest index of every member, by entry id.
+ *
+ * One map for both the ordinary pass and the failure path below, so a member's
+ * index cannot be right in one and absent in the other.
+ */
+function indexByMember(contests: readonly Contest[]): Map<string, number> {
+  const at = new Map<string, number>();
+  for (const [index, contest] of contests.entries()) {
+    for (const member of [contest.favoured, ...contest.held]) {
+      at.set(member.id, index);
+    }
+  }
+  return at;
+}
+
+/** The contests as the wire carries them: membership once, per contest. */
+const wireContests = (contests: readonly Contest[]): ProvisionResultContest[] =>
+  contests.map((contest) => ({ members: [contest.favoured, ...contest.held].map(memberOf) }));
+
+/**
+ * Every entry failed, for one reason that is nothing to do with any entry.
+ *
+ * The caller that could not read the worktree at all still owes the dialog the
+ * same structured answer the ordinary path gives: a contested declaration is in
+ * a contest whether or not the apply ever got far enough to have an opinion
+ * about it, and a step with no `contest` tells the renderer the row is
+ * unrelated to the dispute it is displaying (.reviews/round-5.md F011).
+ *
+ * Built here rather than at the call site because `contestsOf` is the only
+ * definition of which entries are contesting, and a second one in the error
+ * path is the drift this module exists to prevent.
+ */
+export function failEveryEntry(entries: readonly ProvisionEntry[], reason: string): ApplyProvisioningResult {
+  const contests = contestsOf(entries);
+  const at = indexByMember(contests);
+  return {
+    steps: entries.map((entry) => {
+      const contest = at.get(entry.id);
+      return {
+        id: entry.id,
+        path: entry.path,
+        outcome: { kind: "failed" as const, reason },
+        ...(contest === undefined ? {} : { contest }),
+      };
+    }),
+    contests: wireContests(contests),
+  };
+}
+
+/**
  * Apply every selected entry, and answer for every one of them.
  *
  * The answer is in the order the answers were PRODUCED — copies before links,
@@ -270,10 +320,5 @@ export async function applyProvisioning(
       });
     }
   }
-  return {
-    steps: produced,
-    contests: contests.map((contest) => ({
-      members: [contest.favoured, ...contest.held].map(memberOf),
-    })),
-  };
+  return { steps: produced, contests: wireContests(contests) };
 }

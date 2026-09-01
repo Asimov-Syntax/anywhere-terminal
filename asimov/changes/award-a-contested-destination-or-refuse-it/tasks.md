@@ -69,13 +69,13 @@
 
 - [x] 4_3 Say who is contesting, and claim nothing about who created what — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_2
-  - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, .reviews/round-1.md#f004
+  - **Refs**: design.md#d4a-every-refusal-identifies-every-member-by-path-and-declaring-file, .reviews/round-1.md#f004
   - **Acceptance**:
     - Outcome: Every refusal names every member by path and declaring file, its own included
     - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
   - **Plan**:
-    1. Each refusal reason in `src/worktree/provisioning/applyProvisioning.ts` names the whole contest, and the appeared-during-the-apply reason says creation cannot be attributed rather than naming a non-creator.
-    2. `src/worktree/provisioning/applyProvisioning.test.ts` asserts the refused member's own spelling and source appear in its own row.
+    1. Each refusal in `src/worktree/provisioning/applyProvisioning.ts` identifies the whole contest — since `carry-a-contest-membership-once` that is the step's `contest` index against one membership per contest, not the membership repeated in the reason text — and the appeared-during-the-apply reason says creation cannot be attributed rather than naming a non-creator.
+    2. `src/worktree/provisioning/applyProvisioning.test.ts` resolves the membership through the step's own index and asserts the refused member's own spelling and source are in it.
 
 ## 5. Round-2 blockers
 
@@ -102,13 +102,13 @@
 
 - [x] 5_3 Name every member of a contest larger than a pair — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_2
-  - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, .reviews/round-2.md#f004
+  - **Refs**: design.md#d4a-every-refusal-identifies-every-member-by-path-and-declaring-file, .reviews/round-2.md#f004
   - **Acceptance**:
     - Outcome: Every refusal names every member of its contest, at any cardinality
     - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
   - **Plan**:
-    1. Every deferred reason in `src/worktree/provisioning/applyProvisioning.ts` is built from the whole contest rather than the current member and the favoured one.
-    2. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses a three-member contest in which each refusal names all three.
+    1. Every deferred refusal in `src/worktree/provisioning/applyProvisioning.ts` points at the whole contest rather than the current member and the favoured one.
+    2. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses a three-member contest in which each refusal resolves to all three.
 
 ## 6. Round-3 blockers
 
@@ -125,10 +125,22 @@
 
 - [x] 6_2 Name the contest in a contested entry's own refusal — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 6_1
-  - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, design.md#d4b-a-refusal-says-which-rule-refused-and-the-reason-string-is-not-a-channel, .reviews/round-4.md#f009
+  - **Refs**: design.md#d4a-every-refusal-identifies-every-member-by-path-and-declaring-file, design.md#d4b-a-refusal-says-which-rule-refused-and-the-reason-string-is-not-a-channel, .reviews/round-4.md#f009
   - **Acceptance**:
     - Outcome: A contested entry's own refusal carries its rule and every member of its contest
     - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
   - **Plan**:
     1. `src/worktree/provisioning/applyProvisioning.ts` decorates an ordinary refusal from a contested entry with the whole contest's membership instead of storing it unchanged.
     2. `src/worktree/provisioning/applyProvisioning.test.ts` asserts both the rule that fired and every member's path and declaring file in that row.
+
+- [x] 7_1 Close round 5's three integration blockers — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Refs**: .reviews/round-5.md#f007, .reviews/round-5.md#f008, .reviews/round-5.md#f011
+  - **Acceptance**:
+    - Outcome: Every contested step carries its contest, on the error path too, and no yielder is counted as arriving
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts` excludes a selected yielder from the counts while its favoured member is also selected (F007).
+    2. `src/worktree/provisioning/applyProvisioning.ts` exports one builder for "every entry failed for one reason" that recomputes the contests and attaches each member's index (F011).
+    3. `src/extension.ts` builds the unreadable-root result through it, and stages its memberships like the ordinary path.
+    4. `asimov/changes/award-a-contested-destination-or-refuse-it/design.md` D4a and the ledger describe the shipped representation — local reason, contest index, membership once — not the withdrawn per-reason expansion (F008).
+    5. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/worktree/provisioning/applyProvisioning.test.ts` witness each. The unreadable-root case is witnessed on the builder rather than through the activation path: `src/extension.worktreeAssembly.test.ts` has no harness that can make `prepareEntryGate` answer `null`, and the staging the call site does on that path is the same two lines the ordinary path already has under integration test.

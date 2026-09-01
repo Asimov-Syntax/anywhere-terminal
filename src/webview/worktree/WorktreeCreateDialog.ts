@@ -470,7 +470,19 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
   // pre-existing — a setup step is offered unticked and still counted, because
   // the line says what the repository asks for and the checkbox says whether it
   // is granted — and this change does not own it.
-  const brought = model.entries.filter((e) => selected.has(e.id));
+  const yielding = yieldsTo(model);
+  const brought = model.entries.filter((e) => {
+    if (!selected.has(e.id)) {
+      return false;
+    }
+    // Selected is not the same as arriving. A yielder the user ticked BACK ON
+    // while its counterpart is still selected is refused by the apply exactly
+    // as if it had been left unticked, so counting it says the row will arrive
+    // while the note on that same row says it will be refused
+    // (`.reviews/round-5.md` F007).
+    const favoured = yielding.get(e.id);
+    return favoured === undefined || !selected.has(favoured.id);
+  });
   const copied = brought.filter((e) => e.mode === "copy").length;
   const linked = brought.length - copied;
   const parts: string[] = [];
