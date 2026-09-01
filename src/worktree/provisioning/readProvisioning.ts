@@ -10,7 +10,7 @@
 // named and one click away (design.md D3, D5).
 
 import * as path from "node:path";
-import type { ProvisionEntry, ProvisionModel, ProvisionProvider } from "../../types/messages";
+import type { ProvisionContenders, ProvisionEntry, ProvisionModel, ProvisionProvider } from "../../types/messages";
 import { asimovAdapter } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { orcaAdapter } from "./orcaProvider";
@@ -247,7 +247,11 @@ function applyExclude(
       report(
         draft,
         `\`${declared}\``,
-        problem(NATIVE, "unknownKey", `\`${declared}\` is excluded here but nothing declares it; the rule did nothing.`),
+        problem(
+          NATIVE,
+          "unknownKey",
+          `\`${declared}\` is excluded here but nothing declares it; the rule did nothing.`,
+        ),
       );
       continue;
     }
@@ -260,6 +264,77 @@ function applyExclude(
     kept: entries.filter((e) => !removed.has(pathKey(e.path))),
     excluded: entries.filter((e) => removed.has(pathKey(e.path))),
   };
+}
+
+/**
+ * The key a common filesystem might fold two spellings onto.
+ *
+ * Deliberately NOT a proof, and never used to merge. It answers "could these be
+ * one destination", and it is allowed to say yes when the answer is no: a false
+ * positive costs an ordering constraint on two entries that never collide. A
+ * false NEGATIVE is the one that still loses a guarantee, so this folds
+ * everything a supported filesystem is known to fold and does not try to be
+ * exact (design.md D4):
+ *
+ *  - Win32 ignores trailing dots and spaces and the `::$DATA` stream suffix, so
+ *    `foo` and `foo.` are one object there — and no case fold closes that.
+ *  - APFS and NTFS both compare case-insensitively by default, though NOT by the
+ *    same table, which is why the answer belongs to the volume and not here.
+ *  - macOS stores NFD and compares canonically, so `é` composed and `é` decomposed
+ *    are one name.
+ */
+function foldable(declared: string): string {
+  let folded = identityOf(declared);
+  const STREAM = "::$data";
+  for (;;) {
+    const trimmed = folded.replace(/[. ]+$/, "");
+    const unstreamed = trimmed.toLowerCase().endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
+    if (unstreamed === folded) {
+      break;
+    }
+    folded = unstreamed;
+  }
+  return folded.normalize("NFC").toLowerCase();
+}
+
+/**
+ * Entries whose spellings differ but which a filesystem might fold together.
+ *
+ * Grouped by one canonical key, so the relation is an equivalence and three
+ * spellings of one name are ONE group rather than three pairs. A group is
+ * favoured only when exactly one member is the repository's own: two native
+ * members have no rule to pick between them, and none means there is nothing
+ * for the merge rule to prefer. Both cases leave `favoured` absent rather than
+ * fabricating a winner (design.md D3).
+ */
+function contendersOf(entries: readonly ProvisionEntry[]): ProvisionContenders[] {
+  const byKey = new Map<string, ProvisionEntry[]>();
+  for (const entry of entries) {
+    const key = foldable(entry.path);
+    const held = byKey.get(key);
+    if (held === undefined) {
+      byKey.set(key, [entry]);
+    } else {
+      held.push(entry);
+    }
+  }
+  const groups: ProvisionContenders[] = [];
+  for (const members of byKey.values()) {
+    if (members.length < 2) {
+      continue;
+    }
+    // By declaring FILE, not by id: `ids()` mints a fresh sequence per adapter,
+    // so a base row and a native row can carry the same id, and identifying the
+    // repository's own row that way silently matched both — which cost every
+    // group its favoured member. The source is what "the repository's own
+    // declaration" actually means anyway (§ 4.3).
+    const native = members.filter((e) => e.source === NATIVE_PROVIDER_FILE);
+    groups.push({
+      members: members.map((e) => e.id),
+      ...(native.length === 1 && native[0] !== undefined ? { favoured: native[0].id } : {}),
+    });
+  }
+  return groups;
 }
 
 /** What the native file's answer becomes once the base it named is resolved. */
@@ -299,6 +374,9 @@ async function assemble(
       ports: [...baseModel.ports, ...native.model.ports],
       providers: [],
       excluded,
+      // Built from the rows that SURVIVED merge and exclusion, so a group never
+      // names an id the offer will not carry.
+      contenders: contendersOf(kept),
       // Base-first, matching the entry order. The build order is the other way
       // round, so problem order is chosen here rather than falling out of it.
       problems: [...baseModel.problems, ...native.model.problems, ...draft.problems],

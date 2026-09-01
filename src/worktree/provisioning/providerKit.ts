@@ -273,6 +273,7 @@ export function modelFromDraft(draft: Draft): ProvisionModel {
     ports: draft.ports,
     providers: [],
     excluded: [],
+    contenders: [],
     problems: draft.problems,
   };
 }
@@ -358,7 +359,7 @@ export async function readInlineKeys(
 }
 
 export function emptyModel(): ProvisionModel {
-  return { entries: [], setup: [], ports: [], providers: [], excluded: [], problems: [] };
+  return { entries: [], setup: [], ports: [], providers: [], excluded: [], contenders: [], problems: [] };
 }
 
 /**

@@ -345,6 +345,7 @@ export function provisionModel(over: Partial<ProvisionModel> = {}): ProvisionMod
     setup: [{ id: "i5", kind: "shell", script: "pnpm install --frozen-lockfile", source: YAML }],
     providers: [{ id: "asimov", files: [YAML], active: true }],
     excluded: [],
+    contenders: [],
     problems: [],
     ...over,
   };
@@ -357,7 +358,8 @@ export function provisionOffer(over: Partial<WorktreeProvisionOffer> = {}): Work
 
 /** A repository that declares nothing — no provider file at all, not a failed read. */
 export function emptyProvisionModel(): ProvisionModel {
-  return { entries: [], ports: [], setup: [], providers: [], excluded: [], problems: [] };
+  return { entries: [], ports: [], setup: [], providers: [], excluded: [],
+    contenders: [], problems: [] };
 }
 
 /** A provider file that is present and unusable. The model survives; the file is named. */

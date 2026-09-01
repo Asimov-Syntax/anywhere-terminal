@@ -818,6 +818,73 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
     expect(model.excluded.map((e) => [e.path, e.source])).toEqual([["mixedcase", ORCA_YAML_FILE]]);
   });
 
+  it.each([
+    ["MixedCase", "mixedcase", true, "native and inherited"],
+    ["foo.", "foo", true, "Win32 trailing dot, which no case fold closes"],
+    ["\u00E9clair", "e\u0301clair", true, "NFC against NFD"],
+  ])("groups %s with %s as one contender pair", async (native, inherited, favoured) => {
+    const model = await readProvisioning(
+      fs({
+        native: JSON.stringify({ extends: "orca.yaml", copy: [native] }),
+        orcaYaml: `worktree:\n  sharedDirectories: [${JSON.stringify(inherited)}]\n`,
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    const group = model.contenders[0];
+    expect(group?.members.length).toBe(2);
+    // Favoured is the repository's own row — the one the merge rule would have
+    // picked if it could have proved the two are one destination.
+    const native_ = model.entries.find((e) => e.path === native);
+    expect(group?.favoured === undefined).toBe(!favoured);
+    expect(group?.favoured).toBe(native_?.id);
+  });
+
+  it("leaves a group of two inherited declarations with no favoured member", async () => {
+    // Nothing for the merge rule to prefer, so nothing is claimed. A fabricated
+    // winner here would be a decision no file asked for.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml"}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase, MixedCase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.favoured).toBeUndefined();
+  });
+
+  it("makes three spellings of one name ONE group, not three pairs", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["STRASSE"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [strasse, Strasse]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(3);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.members.length).toBe(3);
+  });
+
+  it("groups nothing when the spellings are unrelated", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": [".env"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [node_modules]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders).toEqual([]);
+  });
+
   it("reports an exclusion that matched nothing, and keeps the row it missed", async () => {
     // Both halves. Reporting alone would be noise; keeping the row alone is the
     // old silent behaviour. Under D1 the spelling IS the identity, so a rule

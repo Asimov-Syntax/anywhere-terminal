@@ -89,11 +89,30 @@ export interface ProvisionOfferStore {
  * occupies that slot (worktree-provisioning.md § 4.0).
  */
 function remint(model: ProvisionModel, seq: () => string): ProvisionModel {
+  const reminted = new Map<string, string>();
+  const entries = model.entries.map((e) => {
+    const id = seq();
+    reminted.set(e.id, id);
+    return { ...e, id };
+  });
   return {
     ...model,
-    entries: model.entries.map((e) => ({ ...e, id: seq() })),
+    entries,
     ports: model.ports.map((p) => ({ ...p, id: seq() })),
     setup: model.setup.map((s) => ({ ...s, id: seq() })),
+    // Groups name entry ids, and every entry id just changed. Carrying them
+    // through untranslated would leave each group pointing at ids nobody holds
+    // — silent, total, and invisible to any test that only counts rows.
+    contenders: model.contenders.map((group) => {
+      const favoured = group.favoured === undefined ? undefined : reminted.get(group.favoured);
+      return {
+        members: group.members.flatMap((id) => {
+          const next = reminted.get(id);
+          return next === undefined ? [] : [next];
+        }),
+        ...(favoured === undefined ? {} : { favoured }),
+      };
+    }),
     // `excluded` rows are shown as deliberate omissions, never selected, so they
     // are carried through untouched rather than given ids that mean nothing.
   };

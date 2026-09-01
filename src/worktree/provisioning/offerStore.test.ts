@@ -9,6 +9,7 @@ function model(path: string): ProvisionModel {
     ports: [],
     providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
     excluded: [],
+    contenders: [],
     problems: [],
   };
 }
@@ -19,6 +20,61 @@ const B: ProvisionOfferKey = { surface: "surface-2", repoId: "/repo" };
 const A2: ProvisionOfferKey = { surface: "surface-1", repoId: "/other" };
 
 describe("createProvisionOfferStore", () => {
+  it("rewrites contender group ids along with the entries they name", () => {
+    // Groups name entry ids, and `issue` remints every entry id. Carrying the
+    // groups through untranslated leaves each one pointing at ids nobody holds
+    // — a failure no row count can see, because the rows are all still there.
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, {
+      ...model("MixedCase"),
+      entries: [
+        { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+        { id: "i2", path: "mixedcase", mode: "link", source: "orca.yaml" },
+      ],
+      contenders: [{ members: ["i1", "i2"], favoured: "i1" }],
+    });
+
+    const live = new Set(offer.model.entries.map((e) => e.id));
+    const group = offer.model.contenders[0];
+
+    expect(group?.members.length).toBe(2);
+    for (const id of group?.members ?? []) {
+      expect(live.has(id)).toBe(true);
+    }
+    expect(live.has(group?.favoured ?? "")).toBe(true);
+    // The favoured member is still the repository's own row after reminting,
+    // not merely some id that happens to be live.
+    expect(offer.model.entries.find((e) => e.id === group?.favoured)?.path).toBe("MixedCase");
+    // And the pre-remint ids are gone, so a stale group could not resolve.
+    expect(live.has("i1")).toBe(false);
+  });
+
+  it("offers both members of a contender group rather than withholding either", () => {
+    // The alternative D3 rejected was to offer NEITHER member of a pair that
+    // could not be told apart. The host redeems a selection by filtering the
+    // offered entries on the ids the webview ticked
+    // (`WorktreeHost.ts:1980-1981`), so a withheld member is one that no id can
+    // reach — which is what this reproduces rather than describes.
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, {
+      ...model("MixedCase"),
+      entries: [
+        { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+        { id: "i2", path: "mixedcase", mode: "link", source: "orca.yaml" },
+      ],
+      contenders: [{ members: ["i1", "i2"], favoured: "i1" }],
+    });
+
+    const redeemed = store.lookup(A, offer.offerId);
+    const ticked = new Set(offer.model.contenders[0]?.members ?? []);
+    const selected = (redeemed?.entries ?? []).filter((e) => ticked.has(e.id));
+
+    expect(selected.map((e) => [e.path, e.mode])).toEqual([
+      ["MixedCase", "copy"],
+      ["mixedcase", "link"],
+    ]);
+  });
+
   it("returns the model an id names", () => {
     const store = createProvisionOfferStore();
     const offer = store.issue(A, model(".env"));
@@ -149,6 +205,7 @@ describe("ids are scoped to the offer, not to the adapter (round-2 W4)", () => {
         { id: "vscodeTasks", files: [".vscode/worktree.json"], active: false },
       ],
       excluded: [],
+      contenders: [],
       problems: [],
     };
   }

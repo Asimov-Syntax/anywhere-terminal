@@ -917,6 +917,26 @@ export interface ProvisionProblem {
   readonly detail: string;
 }
 
+/**
+ * Declarations that may turn out to name one destination.
+ *
+ * Ids, never paths: the wire carries one copy of a path, on the row that
+ * declared it. Both members stay offered — withholding them would deliver
+ * nothing in the ordinary case where a repository and the source it builds on
+ * spell one path two ways.
+ */
+export interface ProvisionContenders {
+  /** Two or more entry ids from the same model. */
+  readonly members: readonly string[];
+  /**
+   * The member the merge rule favours, present only when exactly one of them is
+   * the repository's own declaration. Two native members, or none, leave this
+   * absent rather than picking one — a fabricated winner is worse than an
+   * honest "this needs deciding where it can be observed".
+   */
+  readonly favoured?: string;
+}
+
 export interface ProvisionModel {
   readonly entries: readonly ProvisionEntry[];
   readonly setup: readonly ProvisionSetupStep[];
@@ -925,6 +945,15 @@ export interface ProvisionModel {
   readonly providers: readonly ProvisionProvider[];
   /** Entries an `exclude` rule removed, kept so the UI can show them as deliberate. */
   readonly excluded: readonly ProvisionEntry[];
+  /**
+   * Entries that MAY name one destination, grouped.
+   *
+   * Never a claim that they do. Whether two spellings are one file is a property
+   * of the directory they land in, and this model is built before that directory
+   * exists — so the read path groups what a common filesystem could fold and
+   * leaves the answer to the apply side (worktree-provisioning.md § 4.2).
+   */
+  readonly contenders: readonly ProvisionContenders[];
   /** Populated when a provider file was found but could not be read. */
   readonly problems: readonly ProvisionProblem[];
 }

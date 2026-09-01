@@ -29,14 +29,14 @@
 
 ## 2. A pair that may be one destination
 
-- [ ] 2_1 Group declarations that may name one destination, and say which one wins
+- [x] 2_1 Group declarations that may name one destination, and say which one wins — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md#d3-a-contender-group-offered-in-full, design.md#d4-detecting-a-contender-is-allowed-to-be-wrong-in-one-direction, specs/worktree-panel/spec.md#declarations-that-may-name-one-destination-are-offered-together-favouring-the-repository-s-own
   - **Acceptance**:
     - Outcome: Foldable spellings travel as one group naming the native declaration as favoured
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
-    1. Add the contender relation to `ProvisionModel` in `src/types/messages.ts` as a list of groups, each naming its member ids and an OPTIONAL favoured id — ids only, so the wire carries no second copy of a path.
+    1. Add the contender relation to `ProvisionModel` in `src/types/messages.ts` as a list of groups, each naming its member ids and an OPTIONAL favoured id — ids only, so the wire carries no second copy of a path. `emptyModel` and `modelFromDraft` in `src/worktree/provisioning/providerKit.ts` answer the field too, so a reader never has to defend against its absence. Widening a required field reaches every literal that builds one: `src/webview/worktree/worktreeFixtures.ts`, `src/providers/WorktreeHost.actions.test.ts` and `src/worktree/provisioning/offerStore.test.ts` all construct models and answer the field with an empty list — collateral of the widening, not behaviour.
     2. In `src/worktree/provisioning/readProvisioning.ts`, build the groups after the merge from a generous detector: ASCII case folding unioned with Unicode case folding over the normalized spelling. Never use it to merge.
     3. Favour the native member only when there is exactly one; a group with none, or with several, carries no favoured id and is still a group, because WT-012.18 still needs the ordering. Groups are connected components, so three spellings of one name are one group, not three pairs.
     4. In `src/worktree/provisioning/offerStore.ts`, rewrite group member and favoured ids inside `remint()` alongside the entries it already remints — a group naming pre-remint ids points at ids nobody holds, which is silent and total.
