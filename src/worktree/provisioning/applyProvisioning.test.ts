@@ -363,7 +363,9 @@ describe("a contest's membership travels once", () => {
     // The reason says what happened to THIS row and nothing about who else was
     // named — that repetition is what made the report quadratic
     // (award-a-contested-destination-or-refuse-it/.reviews/round-3.md F008).
-    expect(steps[1]?.contest).toBe(0);
+    // Every member, not only the one that lost: the favoured row belongs to the
+    // dispute too (.reviews/round-1.md F003).
+    expect(steps.map((step) => step.contest)).toEqual([0, 0]);
     expect(steps[1]?.outcome).toMatchObject({ reason: expect.not.stringContaining("declared in") });
   });
 

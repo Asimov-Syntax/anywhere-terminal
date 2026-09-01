@@ -47,7 +47,7 @@ of result text over a wire whose input is capped at `T`. The membership travels 
     2. An index that does not resolve is reported rather than silently dropped.
     3. `src/webview/worktree/WorktreeView.test.ts` asserts per row, not against the combined notice, and covers an unresolvable index.
 
-- [ ] 2_2 Associate every contested step, whatever its outcome
+- [x] 2_2 Associate every contested step, whatever its outcome — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: .reviews/round-1.md#f003
   - **Acceptance**:

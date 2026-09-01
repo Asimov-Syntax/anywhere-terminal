@@ -216,15 +216,13 @@ export async function applyProvisioning(
       continue;
     }
     const result = applied as ProvisionStepResult;
-    // A contested entry refused by its own rule keeps that rule AND points at
-    // the contest, so the report can name every member beside it. D4a is about
-    // what a refusal says, not about which one it is (.reviews/round-4.md F009).
-    answered.set(
-      entry,
-      contest === undefined || result.outcome.kind !== "refused"
-        ? result
-        : { ...result, contest: indexOf.get(contest) },
-    );
+    // EVERY contested step points at its contest, whatever its outcome: the
+    // favoured member that copied belongs to the dispute as much as the one
+    // that lost it, and the type says the index is there when the step is a
+    // member (`.reviews/round-1.md` F003 of this change). A refused one keeps
+    // its own rule as well — D4a is about what a refusal says, not about which
+    // one it is.
+    answered.set(entry, contest === undefined ? result : { ...result, contest: indexOf.get(contest) });
   }
 
   // The held members, once the favoured one has had its ordinary turn — and
