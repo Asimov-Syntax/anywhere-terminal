@@ -3,7 +3,7 @@
 A dependency left a relative `require` in the bundle that resolved against `dist/` at runtime, and
 the extension failed to activate. No suite could catch it, because every suite imports sources.
 
-- [ ] 1_1 Classify every require the bundle still carries
+- [x] 1_1 Classify every require the bundle still carries — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: design.md#d2--what-counts-as-a-require-the-runtime-cannot-satisfy, design.md#d3--detection-is-a-function-so-the-gate-can-be-proven-non-vacuous
   - **Acceptance**:
     - Outcome: The defect's own signature is classified unresolvable and each allowed form is not
