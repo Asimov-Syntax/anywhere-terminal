@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -96,3 +96,32 @@ refutations were accepted; nothing was rebutted.
   single live token; `isBusy` has no production consumer; and the delta does not contradict the
   shipped create-form repeat rule, because join-for-create and supersede-for-assess are different
   message discriminants with different authority lifecycles.
+
+- Built as four tasks, waves `1_1, 2_1 | 1_2 | 1_3`. No filler subagents: both waves were solo-sized.
+- Verify Gate: check-types clean, `pnpm run test:unit` 6262/6262 across 269 files, `gate:fs-deletion`
+  ok (46 modules, 1 declared carve-out), biome CHECK mode at the 3 errors / 14 warnings / 1 info
+  baseline with none of them in this change's files. Write mode was never run.
+- Every load-bearing line was mutation-checked rather than assumed. Dropping the lane's outstanding
+  guard fails all four host witnesses and both scale witnesses (80 assessments in flight where 2 are
+  allowed, 11 ahead of a removal where 1 is); dropping the rotation cycle fails the fairness witness;
+  reusing the live token for a same-worktree repeat fails both D4 witnesses; and reverting
+  `assessRemovalReport` to read the cache fails the strengthened assembly walk, so the barrier
+  falsifier round 6 adjudicated still bites.
+- The detach sweep SURVIVES its mutation and is kept anyway, with its comment corrected to say so.
+  `pending` is non-empty only while a job is outstanding and `takeNextAssess` already drops a departed
+  surface's entry, so the sweep buys retention promptness rather than an outcome. Recorded rather than
+  dressed as covered — a reviewer should see the gap named.
+- Two defects the tests caught that I would otherwise have shipped: the admission guard tested
+  `pending`, which service had already cleared, so the rotation grew an entry on every re-ask — an
+  unbounded list inside the change that exists to bound one; and the first fairness test could not
+  tell round-robin from newest-first, because both surfaces' asks arrived in an order where the two
+  agree. Reordering them so the newest belongs to the other surface kills newest-first.
+
+Knowledge candidate: a rotation guard must be tested against the rotation, not against the queue it
+serves | Surprise: `!lane.pending.has(key)` reads as the obvious "is this surface already waiting?"
+and is wrong precisely for the surface being served, whose entry was just taken — so every re-ask
+appended a duplicate and the fairness list grew without bound | Evidence:
+`src/providers/WorktreeHost.ts` assess admission, caught by the fairness witness rather than by
+review | Consumer: build | Action: when a structure is both a membership set and an order, assert the
+membership against the ORDER, and write one test whose expected sequence differs under the
+alternative policy.
