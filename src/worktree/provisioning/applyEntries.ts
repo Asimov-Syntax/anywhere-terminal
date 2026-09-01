@@ -324,6 +324,18 @@ export async function applyEntry(
     ]);
     const fromSource = path.resolve(sourceDir, target);
     const fromDestination = path.resolve(destinationDir, target);
+    // Before containment, not after: a self-referential link cannot be resolved
+    // at all, so the checks below answer "outside" for a path that is plainly
+    // inside and the refusal names the wrong rule. It resolves to itself on
+    // every filesystem, which is reason enough on its own.
+    //
+    // EXACT self-reference only. The folding key is over-inclusive by
+    // construction, so refusing `Foo -> foo` beside a real `foo` would destroy
+    // material to prevent a loop a case-sensitive volume cannot have
+    // (design.md D6).
+    if (fromDestination === path.join(destinationDir, path.basename(destination))) {
+      return { kind: "refused", reason: "a symlink whose target is its own name would resolve to itself" };
+    }
     const [sourceInside, destinationInside] = await Promise.all([
       isResolvedPathInsideRoot(fromSource, roots.source.prepared, deps),
       isResolvedPathInsideRoot(fromDestination, roots.destination.prepared, deps),

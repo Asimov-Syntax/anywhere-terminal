@@ -155,6 +155,35 @@ describe("the walk never follows something it did not check", () => {
     expect(fs.nodes.get("/wt/feature/cfg/link.json")).toEqual({ kind: "link", target: "target.json" });
   });
 
+  it("refuses a recreated symlink that would resolve to itself", async () => {
+    // `self -> self` resolves to its own destination on every filesystem, so
+    // recreating it puts a loop in the worktree that no reader can follow.
+    // Nothing else in the walk catches it: both containment sides pass, because
+    // the path it resolves to IS inside the worktree.
+    const { result, fs } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/self": { kind: "link", target: "self" },
+    });
+
+    expect(result.details?.[0]?.reason).toMatch(/resolve to itself/);
+    expect(fs.nodes.get("/wt/feature/cfg/self")).toBeUndefined();
+  });
+
+  it("still recreates a link whose target differs from its own name only by case", async () => {
+    // The refusal above is EXACT self-reference, never the folding key. On a
+    // case-sensitive volume `Foo -> foo` beside a real `foo` is an ordinary
+    // in-repository link, and refusing it on a shared fold would destroy
+    // material to prevent a loop this filesystem cannot have (design.md D6).
+    const { result, fs } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/foo": { kind: "file" },
+      "/repo/cfg/Foo": { kind: "link", target: "foo" },
+    });
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.get("/wt/feature/cfg/Foo")).toEqual({ kind: "link", target: "foo" });
+  });
+
   it("refuses a relative link that is inside at its source and outside once relocated", async () => {
     // The plan attack's construction. `../../../inside.txt` resolves to
     // /repo/deep/inside.txt from the source, and to /inside.txt from the

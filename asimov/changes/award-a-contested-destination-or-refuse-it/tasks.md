@@ -37,7 +37,7 @@
 
 ## 3. The link that would point at itself
 
-- [ ] 3_1 Refuse a recreated symlink whose target folds onto its own name
+- [x] 3_1 Refuse a recreated symlink whose target folds onto its own name — verified: pnpm exec vitest run 'src/worktree/provisioning/applyEntries.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: design.md#d6-a-recreated-symlink-that-folds-onto-its-own-name-is-refused, specs/worktree-panel/spec.md#a-symlink-that-would-resolve-to-itself-is-never-created
   - **Acceptance**:
     - Outcome: A symlink that would resolve to itself is refused with that reason
