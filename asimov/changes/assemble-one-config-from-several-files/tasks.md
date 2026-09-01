@@ -45,7 +45,7 @@
     4. Add the new module to `src/worktree/provisioning/readOnly.test.ts`'s read-path list, whose completeness check fails until it is named.
   - **Boundary**: this task resolves no base and merges nothing — it reads one file
 
-- [ ] 2_2 Assemble one model from the native file and the base it names
+- [x] 2_2 Assemble one model from the native file and the base it names — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#{exactly-one-detected-source-supplies-the-offer, the-repository-s-own-declaration-wins-the-path-it-shares, a-path-the-repository-removed-is-shown-as-deliberate, setup-commands-from-two-sources-run-as-both-files-wrote-them}; design.md#{d2-extends-resolves-by-file-membership-not-by-provider-name, d3-the-native-rows-are-built-first-and-assembled-second, d4-active-marks-every-provider-that-contributed, d5-prefer-names-the-model-to-show-and-skips-the-native-file}
   - **Acceptance**:
