@@ -282,6 +282,7 @@ export function declaredExternals(esbuildSource, outfile) {
     const unreadable = node.properties.find(
       (p) =>
         ts.isSpreadAssignment(p) ||
+        ts.isShorthandPropertyAssignment(p) ||
         ts.isGetAccessorDeclaration(p) ||
         ts.isSetAccessorDeclaration(p) ||
         (p.name !== undefined && ts.isComputedPropertyName(p.name)),
@@ -289,6 +290,8 @@ export function declaredExternals(esbuildSource, outfile) {
     if (unreadable !== undefined) {
       const kind = ts.isSpreadAssignment(unreadable)
         ? "a spread"
+        : ts.isShorthandPropertyAssignment(unreadable)
+          ? "a shorthand property"
         : unreadable.name !== undefined && ts.isComputedPropertyName(unreadable.name)
           ? "a computed property name"
           : "an accessor";

@@ -332,3 +332,18 @@ describe("[round-3 F001] a manifest is read before its sibling index", () => {
     expect(verdicts(`require("./pkg")`, both, isDir, () => "{}")).toEqual([]);
   });
 });
+
+// [round-3 F003] The guard names element forms the extractor cannot interpret,
+// and shorthand was the one the first cut forgot: a trailing `{ external }`
+// overrides an earlier literal at runtime while a literal read keeps the stale
+// value — the fail-open direction.
+describe("[round-3 F003] a shorthand property is refused too", () => {
+  it("refuses a shorthand that could override the externals", () => {
+    const config = `const external = ["live"]; const c = { outfile: "./dist/extension.js", external: ["stale"], external };`;
+    expect(() => declaredExternals(config, OUT)).toThrow(/shorthand|cannot read/i);
+  });
+
+  it("still reads the plain literal shape the repo actually has", () => {
+    expect([...declaredExternals(ESBUILD, OUT)]).toEqual(["vscode", "node-pty"]);
+  });
+});

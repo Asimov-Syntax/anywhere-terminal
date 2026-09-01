@@ -100,7 +100,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     2. Keep Node's index fallback for a valid manifest whose `main` is absent or does not resolve.
     3. Witness both orderings in `src/test/invariants/bundleRequires.test.ts`.
 
-- [ ] 4_3 Refuse a shorthand property in the build config
+- [x] 4_3 Refuse a shorthand property in the build config — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_2
   - **Refs**: design.md D5
   - **Acceptance**:
