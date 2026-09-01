@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -175,3 +175,17 @@ content identity. D3 builds the safety half; neither missing half is in WT-012.2
   removed. The oracle also found a third alias the round missed, `pnpm-lock.yaml::$DATA`. 4_1 is
   written against the revised approach: fold the RESOLVED basename to the filesystem's own identity,
   and apply the existing classifier only in the `isFile()` branch.
+- Round-4 fixes complete: 4_4 (`01155fe3`), 4_1 (`50899700`), 4_3 (`f0bebb7a`), 4_2 (`64ee6296`).
+  Nine of the ten accepted findings are closed; F002's listing half stays open as the recorded
+  residual it already was. Verify Gate re-run clean on the whole tree: types, the I10 fs-deletion
+  gate, biome at the 3/14/1 baseline, 6581 unit tests, `verify-status` exit 0.
+- Every fix carries a witness confirmed failing against the code it replaced, not merely against no
+  code — for 4_1 that meant reverting each half separately, and for F027 a guard test that fails if
+  the machine's umask is 0, because the pair beneath it would otherwise pass while proving nothing.
+- Correction to 4_4's recorded `--test-change`: it names seven test files, but that task edited only
+  `oneOwner.test.ts`. The tree stamp dated from task 3_2 and another change (WT-012.4) had landed
+  test edits on this branch in between, so the diff the flag reported was wider than the task's own.
+  4_1, 4_2 and 4_3's records are accurate.
+- Round 5 is a cycle 3 DISCOVERY round and needs the user's grant. Under the cycle cap it is also the
+  last fix window: a third cycle never opens another fix loop, so anything it finds is fixed once and
+  then the change either exits or hands back to planning for a designed fix.
