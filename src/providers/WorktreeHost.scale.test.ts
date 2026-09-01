@@ -18,7 +18,7 @@ import { REBUILD_FLOOR_MS } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import { createWatcherPool, DEBOUNCE_MS } from "./fsWatcherPool";
-import { createWorktreeHost, type WorktreeSurface } from "./WorktreeHost";
+import { createWorktreeHost, type WorktreeActions, type WorktreeSurface } from "./WorktreeHost";
 
 /** Paced so the trailing debounce delivers, and the floor still has to collapse them. */
 const STREAM_INTERVAL_MS = DEBOUNCE_MS + 50;
@@ -85,7 +85,7 @@ function gitFor(folders: string[]) {
 }
 
 /** Real pool, real host, real gate — all on the one clock vi.useFakeTimers controls. */
-async function joined(folders: string[] = ["/a", "/b"]) {
+async function joined(folders: string[] = ["/a", "/b"], actions?: WorktreeActions) {
   const git = gitFor(folders);
   const factory = watcherFactory();
   const pool = createWatcherPool({
@@ -114,6 +114,7 @@ async function joined(folders: string[] = ["/a", "/b"]) {
     pool,
     onDidChangeWorkspaceFolders: () => ({ dispose: () => {} }),
     clock,
+    ...(actions === undefined ? {} : { actions }),
   });
   const view: WorktreeSurface = { isReady: () => true, post: () => {} };
   host.attach(view).setDisplayed(true);
@@ -128,7 +129,7 @@ async function joined(folders: string[] = ["/a", "/b"]) {
     expect(owned.length, `no watcher for ${repo}`).toBeGreaterThan(0);
     owned[0].change.fire({ fsPath: `${repo}/.git/worktrees/x/HEAD` } as vscode.Uri);
   };
-  return { host, git, fireOn, factory };
+  return { host, git, fireOn, factory, view };
 }
 
 beforeEach(() => {
@@ -222,5 +223,92 @@ describe("watcher burst and sustained stream, composed", () => {
 
     expect(git.listsFor("/a") - beforeA).toBe(GIT_INVOCATIONS_PER_BURST.exactly);
     expect(git.listsFor("/b") - beforeB).toBe(GIT_INVOCATIONS_PER_BURST.exactly);
+  });
+});
+
+describe("assessment traffic against the shared mutation queue", () => {
+  /**
+   * The growth axis round-6 B5 named: requests per repository. Each assessment
+   * runs inside `coordinator.run`, so an admitted one is a job on that
+   * repository's mutation queue and everything queued behind it waits.
+   */
+  function heldActions() {
+    const started: string[] = [];
+    const waiting: Array<() => void> = [];
+    const removals: string[] = [];
+    const actions = {
+      assessRemovalReport: (target: { worktreeId: string }) => {
+        started.push(target.worktreeId);
+        return new Promise<null>((resolve) => {
+          waiting.push(() => resolve(null));
+        });
+      },
+      removeWorktree: async (target: { worktreeId: string }) => {
+        removals.push(target.worktreeId);
+      },
+    } as unknown as WorktreeActions;
+    return {
+      actions,
+      started,
+      removals,
+      /** In flight right now — admitted and not yet answered. */
+      inFlight: () => waiting.length,
+      release: async () => {
+        for (let guard = 0; guard < 40 && waiting.length > 0; guard += 1) {
+          waiting.shift()?.();
+          await drain();
+        }
+      },
+    };
+  }
+
+  it("admits one assessment per repository however large the burst", async () => {
+    const held = heldActions();
+    const { host, view } = await joined(["/a", "/b"], held.actions);
+    const second: WorktreeSurface = { isReady: () => true, post: () => {} };
+    host.attach(second).setDisplayed(true);
+
+    // Alternating two repositories from two surfaces, forty times. Under the
+    // panel-side guard this was forty jobs; the bound is now structural and
+    // lives on the repository, which is the key the queue itself uses.
+    for (let i = 0; i < 20; i += 1) {
+      for (const surface of [view, second]) {
+        host.handleMessage(surface, { type: "worktreeRemoveAssess", worktreeId: "/a", token: `a-${i}` });
+        host.handleMessage(surface, { type: "worktreeRemoveAssess", worktreeId: "/b", token: `b-${i}` });
+      }
+    }
+    await drain();
+
+    // Two repositories, one lane each — never eighty, and never one shared lane
+    // that would let a busy repository hold up a question about the other.
+    expect(held.inFlight()).toBe(2);
+    expect([...held.started].sort()).toEqual(["/a", "/b"]);
+
+    await held.release();
+  });
+
+  it("runs a removal ahead of every assessment admitted after it", async () => {
+    const held = heldActions();
+    const { host, view } = await joined(["/a", "/b"], held.actions);
+
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: "/a", token: "first" });
+    await drain();
+    expect(held.inFlight()).toBe(1);
+
+    host.handleMessage(view, { type: "worktreeRemove", worktreeId: "/a", force: false });
+    for (let i = 0; i < 10; i += 1) {
+      host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: "/a", token: `late-${i}` });
+    }
+    await drain();
+
+    // Nothing later was admitted: the lane already had its one job, so the
+    // removal is behind exactly one assessment rather than eleven.
+    expect(held.started).toEqual(["/a"]);
+
+    await held.release();
+    expect(held.removals, "the removal never ran").toEqual(["/a"]);
+    // And the one request still owed was served afterwards, not dropped: the
+    // last token wins, and the nine it superseded cost no job at all.
+    expect(held.started).toEqual(["/a", "/a"]);
   });
 });

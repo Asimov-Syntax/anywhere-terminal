@@ -26,7 +26,7 @@
     1. In `src/webview/worktree/WorktreeController.ts`, drop the same-worktree refusal from `beginAssess` so every ask mints a token and replaces `liveAssess`; `beginAssess` then returns `string`, and `askRemoval` and the `worktreeMenuActions` parameter lose their null branch.
     2. Add tests: a second ask for the same worktree posts a second `worktreeRemoveAssess`; the first reply opens nothing and the second opens the report; an ask after a reply that never arrived still opens a report.
 
-- [ ] 1_3 Hold the lane bound against a mutation and a request burst
+- [x] 1_3 Hold the lane bound against a mutation and a request burst — verified: pnpm exec vitest run 'src/providers/WorktreeHost.scale.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 1_1, 1_2
   - **Refs**: specs/worktree-panel/spec.md#an-assessment-the-user-moved-on-from-does-not-delay-what-they-do-next; design.md D1
   - **Acceptance**:
