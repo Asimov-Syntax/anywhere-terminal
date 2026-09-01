@@ -22,7 +22,7 @@
         },
         {
           "from": 1788300950268,
-          "to": null
+          "to": 1788303237539
         }
       ],
       "phases": [
@@ -32,19 +32,19 @@
         }
       ],
       "firstAt": 1788298172203,
-      "lastAt": 1788301781205,
+      "lastAt": 1788303230442,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "plan",
           "agent": "asm-review-master",
           "model": "gpt-5.6-sol",
-          "messages": 76,
-          "inputTokens": 323267,
-          "outputTokens": 46294,
+          "messages": 79,
+          "inputTokens": 475615,
+          "outputTokens": 47263,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 7410688,
+          "cacheReadTokens": 7702528,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -93,12 +93,12 @@
           "phase": "plan",
           "agent": "asm-review-logic",
           "model": "gpt-5.6-terra",
-          "messages": 10,
-          "inputTokens": 79979,
-          "outputTokens": 5225,
+          "messages": 11,
+          "inputTokens": 108293,
+          "outputTokens": 5262,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 221184,
+          "cacheReadTokens": 244224,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -129,15 +129,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 53,
-          "inputTokens": 106,
-          "outputTokens": 37265,
-          "reasoningTokens": 8910,
-          "cacheWriteTokens": 57155,
-          "cacheReadTokens": 14873676,
+          "messages": 91,
+          "inputTokens": 182,
+          "outputTokens": 73889,
+          "reasoningTokens": 17025,
+          "cacheWriteTokens": 107429,
+          "cacheReadTokens": 23542723,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 57155,
+            "cacheWrite1hTokens": 107429,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }

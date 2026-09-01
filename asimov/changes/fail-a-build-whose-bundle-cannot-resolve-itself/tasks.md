@@ -109,3 +109,29 @@ the extension failed to activate. No suite could catch it, because every suite i
   - **Plan**:
     1. In `scripts/bundleRequires.mjs`, add `ts.isShorthandPropertyAssignment` to the refusal guard in `declaredExternals`.
     2. Witness the shorthand refusal, and that the repo's own config still reads, in `src/test/invariants/bundleRequires.test.ts`.
+
+## 5. Round-4 handback — sweep the class instead of the spelling
+
+- [ ] 5_1 Resolve every relative string literal in the artifact
+  - **Deps**: none
+  - **Refs**: design.md D6, D3
+  - **Acceptance**:
+    - Outcome: An unresolvable relative specifier is reported however it is called
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, export a function collecting every distinct relative string literal in the bundle, in first-seen order, independent of call detection.
+    2. Classify each through the existing `resolveShipped` path so directory, manifest, and containment rules are shared rather than duplicated.
+    3. Accept an explicit allowlist of literals known not to be module specifiers, defaulting to the one the current artifact carries, each entry carrying its reason in a comment.
+    4. Union the sweep's verdicts with the call-detected ones in `unresolvableRequires`, deduplicating by specifier.
+    5. Witness the conditional-alias and `.call` shapes from round 4's F008 and F009, plus a computed-argument and an object-carried loader from its F012, asserting each is reported without any call analysis seeing it.
+
+- [ ] 5_2 Process each propagation edge once
+  - **Deps**: 5_1
+  - **Refs**: design.md D2
+  - **Acceptance**:
+    - Outcome: Propagation cost grows with edges rather than with edges times facts
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, replace the rescan loop in `requireBindings` with a worklist seeded from the ambient requires and the known callables.
+    2. Build reverse indexes from a symbol to the assignments and to the call edges binding an argument to a parameter that read it, and enqueue only those when a fact is added.
+    3. Witness the cost claim with a deep forwarding chain — the topology round 4's F006 measured — asserting it completes well inside the budget a rescan loop would blow.

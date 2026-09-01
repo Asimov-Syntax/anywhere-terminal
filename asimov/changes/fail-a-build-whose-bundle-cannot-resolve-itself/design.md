@@ -79,8 +79,14 @@ The fixed point runs over SYMBOLS rather than node identity:
    or a function declaration — so a callee resolves to the functions it may hold.
 3. Bind parameters positionally to arguments, and propagate through identifier initializers and
    assignments, both monotonically.
-4. Worklist with reverse indexes, so each propagation edge is processed once rather than triggering a
-   whole re-scan (F006).
+4. Worklist with reverse indexes — symbol → the assignments and argument/parameter edges that depend
+   on it — so each propagation edge is processed once rather than triggering a whole re-scan. The
+   first cut wrote a rescan loop and quoted a 0.47s artifact measurement as though it answered this;
+   that measurement shows the bundle's graph is SHALLOW, which is a fact about the input rather than
+   about the algorithm (.reviews/round-4.md F006).
+
+D2's reach narrows accordingly: after D6 it answers for the bare and absolute classes, and the
+relative class — the one that actually shipped — no longer depends on it.
 
 A call is a require call when its callee is a tainted identifier and it has exactly one
 string-literal argument. This catches the direct `require("./x")` spelling — `require` is tainted by
@@ -116,6 +122,33 @@ artifact directory.
 
 Builtins come from `node:module`'s `builtinModules`, not a literal list, so a new builtin in a future
 Node does not become a false failure.
+
+## D6 — The relative class is swept, not analysed
+
+Four rounds asked how a require CALL is spelled, and four found another spelling — a text scan, an
+identifier match, a scope resolver, then binder-backed taint that still misses
+`typeof require === "function" ? require : f` and `factory.call(null, require)`
+(.reviews/round-4.md F008, F009). Over a minified artifact that question has no bounded answer.
+
+The defect class is not a call shape. It is **a relative specifier that does not resolve beside the
+bundle**. So every relative string LITERAL in the artifact is resolved, whatever it is passed to and
+whoever calls it. That is sound over the shipped defect class by construction: any spelling of any
+call still has to name its target, and a string literal is the only form this gate ever claimed to
+see.
+
+Measured before being adopted: the real 1 MB `dist/extension.js` carries exactly **one** distinct
+relative string literal, `"../"`, and it is an argument to `.startsWith()` in a path test. So the
+noise floor on the artifact this guards is one string.
+
+**The trade-off, recorded rather than hidden.** The sweep is SOUND but IMPRECISE: it can flag a
+relative string that was never a module load, and clearing one costs an explicit allowlist entry that
+someone has to justify. The previous mechanism was precise and demonstrably unsound, and four rounds
+did not make it sound. For a gate whose job is to stop a shipped activation failure, soundness is the
+property worth buying, and the allowlist is the visible price.
+
+**It does not replace call detection.** A BARE specifier cannot be swept — every string in the bundle
+would be a candidate — so D2's binder-backed detection keeps the bare and absolute classes, where it
+is the only signal available. The two answer different questions and neither subsumes the other.
 
 ## D3 — Detection is a function, so the gate can be proven non-vacuous
 
