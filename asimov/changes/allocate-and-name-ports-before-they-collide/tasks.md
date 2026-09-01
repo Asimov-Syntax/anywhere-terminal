@@ -15,7 +15,7 @@ The lock extraction and result skeleton can start together. Everything after the
     2. `src/agentHooks/install/lockedJsonFile.ts`: retain the old module as a compatibility re-export, with no second implementation.
     3. `src/agentHooks/install/ClaudeHookInstaller.ts`: import the primitive from its shared home; keep its authorization and replacement flow unchanged.
 
-- [ ] 1_2 Serialize and atomically publish repository-local exclude edits
+- [x] 1_2 Serialize and atomically publish repository-local exclude edits — verified: pnpm exec vitest run 'src/worktree/gitExclude.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D7; specs/worktree-panel/spec.md#the-port-claim-file-stays-local-to-the-repository
   - **Acceptance**:
