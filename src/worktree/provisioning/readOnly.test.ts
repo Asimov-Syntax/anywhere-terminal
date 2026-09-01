@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * The modules that turn three checked-in, untrusted files into a model.
+ * The modules that turn four checked-in, untrusted files into a model.
  *
  * The obligation these tests hold: nothing on this path can run a command or
  * change a byte on disk. `ProviderDeps` offers four reads and withholds
@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 const READ_PATH = [
   "providerKit.ts",
   "asimovProvider.ts",
+  "nativeProvider.ts",
   "orcaProvider.ts",
   "vscodeTasksProvider.ts",
   "readProvisioning.ts",

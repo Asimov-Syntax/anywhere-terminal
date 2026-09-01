@@ -32,7 +32,7 @@
 
 ## 2. The native file and the merge
 
-- [ ] 2_1 Read `.vscode/worktree.json` into a model
+- [x] 2_1 Read `.vscode/worktree.json` into a model — verified: pnpm exec vitest run 'src/worktree/provisioning/nativeProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-repository-can-build-on-a-source-instead-of-replacing-it, one-unreadable-part-never-discards-the-rest-of-a-configuration}
   - **Acceptance**:
