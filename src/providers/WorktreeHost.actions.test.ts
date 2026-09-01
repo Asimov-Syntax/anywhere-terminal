@@ -2538,7 +2538,7 @@ describe("the provisioning offer the create form is given", () => {
       ports: [],
       providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
-    contenders: [],
+      contenders: [],
       problems: [],
     };
   }
@@ -5117,7 +5117,7 @@ describe("the provisioning a create is actually given", () => {
       ports: [],
       providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
-    contenders: [],
+      contenders: [],
       problems: [],
     };
   }
