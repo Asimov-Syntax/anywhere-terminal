@@ -108,7 +108,7 @@
     2. Extend `src/extension.worktreeAssembly.test.ts` with a second walk where the repository carries both `asimov/worktree.yaml` and `orca.yaml`: assert the asimov rows plus exactly one inactive-provider row, then take the switch and assert the orca rows replace them with no create issued.
   - **Boundary**: no fake may stand in for the host, the router or the dialog — this task exists because module tests cannot see the entry point
 
-- [ ] 3_5 Prove the read path holds no way to run or write anything
+- [x] 3_5 Prove the read path holds no way to run or write anything — verified: pnpm exec vitest run 'src/worktree/provisioning/readOnly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: design.md § Obligation ledger
   - **Acceptance**:
