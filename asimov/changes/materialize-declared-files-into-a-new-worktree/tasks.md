@@ -112,3 +112,30 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     5. `src/webview/worktree/worktreeViewTypes.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeView.ts`: carry the steps on the create's own `WorktreeActionResult` and render them in the notice that already reports the create. A second notice would compete with the first for the same row.
     6. Tests in `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/messaging/MessageRouter.test.ts`, `src/webview/worktree/WorktreeView.test.ts`: a ticked row reaches the post; an unticked one does not; a form with no offer posts no `provision`; a result message routes rather than falling into the default; a refused entry is named in the notice.
   - **Boundary**: no new wire type — task 1_1 already defined both directions; this task only connects them
+
+- [ ] 3_1 Classify on what will be written, and make one budget mean one budget
+  - **Deps**: 2_3
+  - **Refs**: design.md D5, D8, D10; .reviews/round-2.md F004, F002, F007, F016, F019, F020, F021, F022, F024
+  - **Acceptance**:
+    - Outcome: No spelling of a refused name is admitted
+    - Verify: unit src/worktree/provisioning/entryGate.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/entryGate.ts`: classify the material rules on the RESOLVED destination's basename — the string `path.resolve` produced and the walk will write — with the lockfile set case-folded. Round 1 fixed the spelling the finding quoted and left the instrument that made it work, so a trailing-dot spelling and an upper-case one reopened it (F004).
+    2. `src/worktree/provisioning/applyEntries.ts`: move `nodes` and `bytes` onto the budget so all three bounds have one lifetime — only the deadline was ever apply-wide (F007); charge each child once by checking the listing against the budget rather than reserving it (F016); refund a precharge the destination skipped (F020) and reconcile against the bytes actually written (F021); stop cancelling a deadline the caller owns, which after F007 is reused by every later entry (F024).
+    3. `src/worktree/provisioning/applyEntries.ts`: pass an `AbortSignal` driven by the deadline into `pipeline`, so a copy already running is stopped rather than only the next one refused (F002, in-flight half). The listing half stays open and is a workflow Note, not a ledger row: `readdir` materializes before anything can charge it, and `opendir` would change `ApplyFsDeps` for every caller.
+    4. `src/worktree/provisioning/applyEntries.ts`: `realpath` required on `ApplyFsDeps` — optional is the shape that produced F003 (F022); `ensureParents` refuses rather than silently no-oping when the resolved root and the spelled destination disagree (F019).
+    5. `src/worktree/provisioning/entryGate.test.ts`, `src/worktree/provisioning/applyEntries.test.ts`, `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/applyEntries.fake.ts`: acceptance per SPELLING rather than per rule — every variant the chair ran against both material rules; the node budget at its exact boundary; a refunded skip; an aborted in-flight copy.
+  - **Boundary**: no deletion primitive may appear in this module — D9 and the I10 gate both still hold
+
+- [ ] 3_2 Give the create notice the id its own result carries
+  - **Deps**: 3_1
+  - **Refs**: design.md D1; .reviews/round-2.md F017, F018, F023
+  - **Acceptance**:
+    - Outcome: One create produces one notice, carrying what provisioning did
+    - Verify: unit src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts`: the create outcome carries the normalized `worktreeId` it already computes. Without it the merge key never matches and every real create synthesizes a second notice with a fabricated `outcome: "ok"` (F017).
+    2. `src/worktree/worktreeMutationService.ts`: compute `provisionedAt` inside the selection guard and under its own `.catch()`. It was the one unguarded await in the body D1 exists to protect, and it ran on reattaches too (F023).
+    3. `src/webview/worktree/WorktreeView.ts`: render the `details` rows the host bounds and sends — a directory reporting `copied` currently hides every skipped descendant, which is what D8 minted the field for (F018).
+    4. `src/worktree/worktreeMutationService.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeView.test.ts`: the merge witness rebuilt from what the service actually emits rather than from a literal — the round-2 finding names my own fixture as the reason the defect survived.
+  - **Boundary**: no new notice — provisioning reports on the create's own result, never beside it
