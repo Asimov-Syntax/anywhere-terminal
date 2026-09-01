@@ -213,7 +213,7 @@
     4. `src/worktree/worktreeMutationService.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/providers/WorktreeHost.scale.test.ts`, and `src/extension.worktreeMutations.test.ts`: reverse the direct-unforced fallthrough, prove a clean fingerprint redeems to ordinary Git and a risky one to forced Git, and keep refusal, unavailable, expiry, mismatch and one-shot spend fail-closed.
   - **Boundary**: no check, `atRisk` predicate, fingerprint digest/subset/TTL/spend rule, observation barrier, branch-delete contract, or Git argv rule is reimplemented or widened
 
-- [ ] 4_2 Require authority before the dialog can confirm
+- [x] 4_2 Require authority before the dialog can confirm — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' 'src/webview/worktree/WorktreeRemoveDialog.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 4_1
   - **Refs**: specs/worktree-panel/spec.md#a-confirmation-carries-only-the-authority-its-report-was-granted; design.md D7
   - **Acceptance**:
