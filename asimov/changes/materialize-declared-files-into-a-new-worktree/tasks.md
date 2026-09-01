@@ -192,7 +192,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
 
 ## 5. Round-5 fixes (cycle 3 discovery, no blockers)
 
-- [ ] 5_1 Fold only where the filesystem folds, and charge what the transfer wrote
+- [x] 5_1 Fold only where the filesystem folds, and charge what the transfer wrote — verified: pnpm exec vitest run 'src/worktree/provisioning/applyEntries.node.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_2
   - **Refs**: design.md#d10; .reviews/round-5.md#f028; .reviews/round-5.md#f021; .reviews/round-5.md#f029
   - **Acceptance**:
@@ -202,7 +202,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     1. `src/worktree/provisioning/entryGate.ts`: apply the trailing-dot, trailing-space and `::$DATA` folds only under Win32 path semantics. A Darwin probe shows the three spellings coexisting as distinct inodes, so they are aliases of one object only where the platform makes them one — folding everywhere refuses legitimate POSIX names (F028). Case folding is unchanged; it was already there and is not this round's claim.
     2. `src/worktree/provisioning/entryGate.ts`: `refusedMaterial` delegates its lockfile branch to `refusedLockfile` rather than repeating the fold, the set lookup and the reason. Task 4_1 left one rule with two maintained owners, which is the shape that lets a top-level entry and a descendant drift apart (F029).
     3. `src/worktree/provisioning/applyEntries.ts`: reconcile the bytes a LIMITED transfer actually forwarded when it fails. The counting transform aborts mid-stream and the precharge is settled only on success or `EEXIST`, so a partial write left its bytes uncharged and a later entry spent them again (F021).
-    4. `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/entryGate.test.ts`: a failed limited transfer followed by a second entry, asserting the apply-wide cap over BYTES ON DISK rather than over the counter; the three POSIX spellings admitted; one owner for the lockfile reason.
+    4. `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/entryGate.test.ts`, `src/worktree/provisioning/oneOwner.test.ts`: a failed limited transfer followed by a second entry, asserting the apply-wide cap over BYTES ON DISK rather than over the counter; the three POSIX spellings admitted; one owner for the lockfile reason. The last belongs beside the directory's other structural claims, not in the behavioural suite — a correct duplicate emits identical output.
   - **Boundary**: no deletion primitive may appear in this module — D9 and the I10 gate both still hold
 
 - [ ] 5_2 Give a notice its row back when the row arrives

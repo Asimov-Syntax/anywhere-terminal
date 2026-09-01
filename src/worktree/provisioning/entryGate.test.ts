@@ -5,10 +5,11 @@
 // back and that an admitted entry names paths that were checked against two
 // different roots (design.md D4).
 
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
 import type { ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
-import { admitEntry, prepareEntryGate } from "./entryGate";
+import { admitEntry, prepareEntryGate, refusedLockfile } from "./entryGate";
 
 const MAIN = "/repo";
 const WT = "/wt/feature";
@@ -264,5 +265,38 @@ describe("[F004] a spelling cannot walk past a refusal", () => {
     if (!verdict.ok) {
       expect(verdict.reason).toMatch(/backslash/i);
     }
+  });
+});
+
+describe("[round-5 F028] a Win32 alias is folded where Win32 decides, not everywhere", () => {
+  // Task 4_1 justified these three transforms as filesystem identity, which is
+  // true of Win32 and false here: a Darwin probe held `pnpm-lock.yaml`,
+  // `pnpm-lock.yaml.` and `pnpm-lock.yaml::$DATA` at once, with three different
+  // inodes and three different contents. Folding them everywhere refuses a file
+  // the material rule was never about.
+  const win32Only = ["pnpm-lock.yaml.", "pnpm-lock.yaml ", "pnpm-lock.yaml::$DATA", "pnpm-lock.yaml::$DATA."];
+
+  it.each(win32Only)("admits `%s` on a platform whose filenames are bytes", async (spelling) => {
+    if (path.sep === "\\") {
+      // On Win32 the opposite claim holds and the block below is the one that
+      // runs; asserting admission there would encode the alias as a distinct
+      // file, which is the defect this pair exists to prevent.
+      return;
+    }
+    const deps = fs();
+
+    expect((await admitEntry(entry(spelling), await gate(deps), deps)).ok).toBe(true);
+  });
+
+  it.each(win32Only)("still refuses `%s` under Win32 filename identity", (spelling) => {
+    // The rule itself, asked directly, so the Win32 half is exercised on every
+    // host rather than only on the one that cannot run this suite in CI.
+    expect(refusedLockfile(spelling, true)).toMatch(/lockfile/i);
+  });
+
+  it("keeps case folding, which is a different question this round did not reopen", async () => {
+    const deps = fs();
+
+    expect((await admitEntry(entry("PNPM-LOCK.YAML"), await gate(deps), deps)).ok).toBe(false);
   });
 });

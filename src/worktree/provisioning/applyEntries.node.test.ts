@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
 import { afterDelay } from "../deadline";
 import { type ApplyBudget, applyEntry, nodeApplyFsDeps } from "./applyEntries";
-import { type EntryGateRoots, prepareEntryGate } from "./entryGate";
+import { type EntryGateRoots, prepareEntryGate, refusedLockfile } from "./entryGate";
 
 let tmp: string;
 let main: string;
@@ -239,12 +239,20 @@ describe("[round-4 F004] the classifier reads the identity the filesystem acts o
     ["pnpm-lock.yaml::$DATA", "the default data stream"],
     ["pnpm-lock.yaml::$DATA.", "a stream spelling behind a stripped dot"],
     ["pnpm-lock.yaml. ::$DATA", "a stream spelling ahead of a stripped dot and space"],
-  ])("refuses %s — %s", async (spelling) => {
+  ])("folds %s — %s — where the filesystem does", async (spelling) => {
+    // Round 4 asserted a refusal here on every platform. That was wrong on this
+    // one, and this suite runs against the REAL filesystem, which is the thing
+    // best placed to say so: writing the alias and the lockfile side by side
+    // gives two files, so the alias is not the object the rule protects
+    // (.reviews/round-5.md F028). The Win32 half of the claim is asserted
+    // directly in `entryGate.test.ts`, on every host.
     await fs.writeFile(path.join(main, "pnpm-lock.yaml"), "lockfileVersion: 9");
+    await fs.writeFile(path.join(main, spelling), "not the lockfile");
 
     const result = await apply(entry({ path: spelling }));
 
-    expect(result.outcome.kind).toBe("refused");
+    expect(result.outcome.kind).toBe(path.sep === "\\" ? "refused" : "copied");
+    expect(refusedLockfile(spelling, true)).toMatch(/lockfile/i);
   });
 
   it("still admits an entry whose offending segment resolution discards", async () => {
@@ -362,5 +370,62 @@ describe("[round-4 F019] a name that begins with two dots is not an escape", () 
 
     expect(result.outcome.kind).toBe("copied");
     expect(await fs.readFile(path.join(worktree, "..cache", "seed"), "utf8")).toBe("s");
+  });
+});
+
+describe("[round-5 F021] a transfer that fails partway is charged for the bytes it forwarded", () => {
+  /**
+   * The reachable race, written down rather than mocked: `lstat` answers with
+   * the size it really saw, and the source grows before the copy opens it. Every
+   * other dependency is the production binding, which is the whole point — the
+   * injected fake owns its own copy and ignores `limit`, so no assertion over
+   * there can see this.
+   */
+  function growsAfterStat(target: string, extra: number): typeof nodeApplyFsDeps {
+    return {
+      ...nodeApplyFsDeps,
+      lstat: async (p: string) => {
+        const stat = await nodeApplyFsDeps.lstat(p);
+        if (p === target) {
+          await fs.appendFile(p, "g".repeat(extra));
+        }
+        return stat;
+      },
+    };
+  }
+
+  it("does not let a later entry spend the bytes a failed copy already wrote", async () => {
+    const CAP = 100 * 1024;
+    const grows = path.join(main, "grows.bin");
+    await fs.writeFile(grows, "g".repeat(1024));
+    await fs.writeFile(path.join(main, "after.bin"), "a".repeat(60 * 1024));
+    const shared = budget({ maxBytes: CAP });
+
+    const failed = await applyEntry(entry({ path: "grows.bin" }), roots, shared, growsAfterStat(grows, 150 * 1024));
+    const after = await applyEntry(entry({ id: "e2", path: "after.bin" }), roots, shared, nodeApplyFsDeps);
+
+    expect(failed.outcome.kind).toBe("failed");
+    // The claim D10 makes is over the worktree, not over the counter — so this
+    // adds up what is ON DISK. The first step left a partial file standing on
+    // purpose (D9 never deletes), and the cap has to hold anyway.
+    const landed = await fs.readdir(worktree);
+    const sizes = await Promise.all(landed.map(async (n) => (await fs.stat(path.join(worktree, n))).size));
+    expect(sizes.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(CAP);
+    expect(after.outcome.kind).toBe("failed");
+  });
+
+  it("charges nothing for a failure that never opened the destination", async () => {
+    // The other direction, so the fix cannot be "always consume the ceiling":
+    // an unreadable source forwards no bytes and must leave the budget free for
+    // the entries behind it.
+    const shared = budget({ maxBytes: 64 * 1024 });
+    await fs.writeFile(path.join(main, "fine.txt"), "f".repeat(1024));
+
+    const missing = await applyEntry(entry({ path: "gone.txt" }), roots, shared, nodeApplyFsDeps);
+    const fine = await applyEntry(entry({ id: "e2", path: "fine.txt" }), roots, shared, nodeApplyFsDeps);
+
+    expect(missing.outcome.kind).toBe("failed");
+    expect(fine.outcome.kind).toBe("copied");
+    expect(shared.spent?.bytes).toBe(1024);
   });
 });

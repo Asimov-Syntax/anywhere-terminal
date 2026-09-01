@@ -150,3 +150,44 @@ describe("one owner for turning a thrown value into display text", () => {
     expect(INLINE_CONVERSION.test(narrowing)).toBe(false);
   });
 });
+
+/**
+ * A site that decides for itself whether a name is a lockfile.
+ *
+ * The direct entry and the descendant walk answer the same question, and rounds
+ * 2 and 4 were both about the two answers drifting apart. Whoever classifies
+ * reaches into `LOCKFILES` — so counting reaches counts owners, and a caller of
+ * `refusedLockfile` reaches zero times (.reviews/round-5.md F029).
+ */
+const LOCKFILE_CLASSIFIER = /LOCKFILES\.has\(/g;
+
+describe("one owner for the lockfile rule", () => {
+  it("decides it in exactly one place", () => {
+    const reaches = SHIPPED.map((file) => [file, sourceOf(file).match(LOCKFILE_CLASSIFIER)?.length ?? 0] as const);
+
+    expect(reaches.filter(([, n]) => n > 0)).toEqual([["entryGate.ts", 1]]);
+  });
+
+  it("catches the second owner this replaced", () => {
+    // The shape task 4_1 left behind, verbatim in structure: `refusedMaterial`
+    // folding and looking up for itself instead of asking the exported rule.
+    const copied = [
+      "export function refusedLockfile(d: string): string | null {",
+      "  return LOCKFILES.has(filesystemIdentity(path.basename(d))) ? LOCKFILE_REASON : null;",
+      "}",
+      "function refusedMaterial(d: string, mode: Mode): string | null {",
+      "  const base = filesystemIdentity(path.basename(d));",
+      "  if (LOCKFILES.has(base)) {",
+      "    return LOCKFILE_REASON;",
+      "  }",
+      "  return null;",
+      "}",
+    ].join("\n");
+
+    expect(copied.match(LOCKFILE_CLASSIFIER)?.length).toBe(2);
+  });
+
+  it("does not fire on a module that merely asks the rule", () => {
+    expect("const material = refusedLockfile(destination);".match(LOCKFILE_CLASSIFIER)).toBeNull();
+  });
+});

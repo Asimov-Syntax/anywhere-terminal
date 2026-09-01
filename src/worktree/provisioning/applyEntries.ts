@@ -66,6 +66,12 @@ export interface ApplyFsDeps {
    * Copy one regular file, following nothing at either end, and answer with the
    * bytes written. Rejects `ELOOP` when the source is a symlink and `EEXIST`
    * when the destination already exists.
+   *
+   * A rejection that already forwarded bytes MUST report them, via
+   * `withBytesForwarded`. D9 leaves the partial destination standing on purpose,
+   * so those bytes are in the worktree whatever the step answers, and a caller
+   * that cannot see them lets the next entry spend them a second time
+   * (.reviews/round-5.md F021).
    */
   copyFileNoFollow(
     source: string,
@@ -125,6 +131,30 @@ const MAX_DETAILS = 100;
 
 /** Thrown to stop a walk at once; carries the reason the entry reports. */
 class BudgetExceeded extends Error {}
+
+/** The property `copyFileNoFollow` reports a partial transfer through. */
+const FORWARDED = "provisionBytesForwarded";
+
+/**
+ * Mark a rejection with the bytes it had already put on disk.
+ *
+ * On the error rather than in the resolution because the operation FAILED and
+ * still has to answer for what it wrote — a resolved value would have to claim
+ * a success that did not happen, and the alternative of charging the whole
+ * remaining ceiling would let one unreadable source end the apply.
+ */
+export function withBytesForwarded<E>(error: E, written: number): E {
+  if (typeof error === "object" && error !== null) {
+    Object.defineProperty(error, FORWARDED, { value: written, enumerable: false, configurable: true });
+  }
+  return error;
+}
+
+/** What a rejection says it forwarded, or `undefined` when it says nothing. */
+function bytesForwarded(error: unknown): number | undefined {
+  const held = (error as Record<string, unknown> | null | undefined)?.[FORWARDED];
+  return typeof held === "number" && Number.isFinite(held) && held >= 0 ? held : undefined;
+}
 
 /**
  * The platform saying it has no symlink to give — Windows without Developer
@@ -430,6 +460,16 @@ export async function applyEntry(
           settleBytes(node.size, 0);
           return { kind: "skipped", reason: "already there" };
         }
+        // A failure is not a refund. The bytes a partial transfer forwarded are
+        // in the worktree — D9 never deletes them — so they are charged before
+        // this unwinds, or the next entry spends them again and the apply-wide
+        // cap is false on a path that reports failure (F021). Silence means it
+        // wrote nothing measurable, and the precharge stands as the estimate it
+        // always was.
+        const forwarded = bytesForwarded(error);
+        if (forwarded !== undefined) {
+          settleBytes(node.size, forwarded);
+        }
         throw error;
       }
       return WRITTEN;
@@ -585,17 +625,29 @@ export const nodeApplyFsDeps: ApplyFsDeps & ResolvedPathInsideDeps = {
       let written = 0;
       const counted = new Transform({
         transform(chunk: Buffer, _encoding, done): void {
-          written += chunk.length;
-          if (limit !== undefined && written > limit) {
+          const next = written + chunk.length;
+          if (limit !== undefined && next > limit) {
             // Refused DURING the transfer. Reconciling a second stat after the
             // write bounds a sequence of copies and bounds no single one (F021).
+            //
+            // The breaching chunk is never forwarded, so it is never counted:
+            // `written` is what went downstream, which is what the caller has to
+            // charge for.
             done(new BudgetExceeded(`too large to bring over — stopped after ${limit} bytes`));
             return;
           }
+          written = next;
           done(null, chunk);
         },
       });
-      await pipeline(source_.createReadStream(), counted, destination_.createWriteStream(), { signal });
+      try {
+        await pipeline(source_.createReadStream(), counted, destination_.createWriteStream(), { signal });
+      } catch (error) {
+        // Every termination path after the destination exists, not just the
+        // ceiling: an aborted deadline and a full disk leave the same partial
+        // file behind (round-5 F021).
+        throw withBytesForwarded(error, written);
+      }
       return written;
     } finally {
       if (unstreamed) {

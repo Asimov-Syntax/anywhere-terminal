@@ -144,22 +144,43 @@ const LOCKFILE_REASON = "a lockfile is never brought over — this branch's own 
  * suffix is even visible, and `pnpm-lock.yaml. ::$DATA` needs the reverse.
  * Lower-cased first, so the suffix match does not have to be case-blind twice.
  *
+ * All three are Win32 identity and only Win32 identity. On POSIX they are bytes
+ * in a name: a Darwin probe held `pnpm-lock.yaml`, `pnpm-lock.yaml.` and
+ * `pnpm-lock.yaml::$DATA` at once, three inodes with three different contents,
+ * so folding them everywhere refuses a file the material rule was never about
+ * (.reviews/round-5.md F028). The case fold stays unconditional — it is a
+ * separate question, decided on its own terms, that this round did not reopen.
+ *
  * A spelling that folds to nothing matches nothing: the set holds no empty name.
  * This reads the RESOLVED destination and never `entry.path` — a rule over the
  * spelling would refuse `scratch./../.env`, whose offending segment resolution
  * has already discarded, which is the raw-versus-resolved disagreement round-2
  * F004 removed.
  */
-function filesystemIdentity(base: string): string {
+/**
+ * Whether this platform's filenames are Win32 filenames.
+ *
+ * `path` is the platform-bound module, so its separator is the plainest true
+ * statement about which naming rules the kernel underneath will apply. Asked of
+ * the platform rather than of a mount, which is the same narrowing D11's own
+ * case probe already accepts.
+ */
+const ON_WIN32 = path.sep === "\\";
+
+function filesystemIdentity(base: string, win32: boolean): string {
+  const name = base.toLowerCase();
+  if (!win32) {
+    return name;
+  }
   const STREAM = "::$data";
-  let name = base.toLowerCase();
+  let folded = name;
   for (;;) {
-    const trimmed = name.replace(/[. ]+$/, "");
+    const trimmed = folded.replace(/[. ]+$/, "");
     const unstreamed = trimmed.endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
-    if (unstreamed === name) {
-      return name;
+    if (unstreamed === folded) {
+      return folded;
     }
-    name = unstreamed;
+    folded = unstreamed;
   }
 }
 
@@ -170,15 +191,20 @@ function filesystemIdentity(base: string): string {
  * mode because it is about sharing a dependency tree, and a descendant of a
  * copy shares nothing (design.md D6, D7).
  */
-export function refusedLockfile(resolvedDestination: string): string | null {
-  return LOCKFILES.has(filesystemIdentity(path.basename(resolvedDestination))) ? LOCKFILE_REASON : null;
+export function refusedLockfile(resolvedDestination: string, win32: boolean = ON_WIN32): string | null {
+  return LOCKFILES.has(filesystemIdentity(path.basename(resolvedDestination), win32)) ? LOCKFILE_REASON : null;
 }
 
 function refusedMaterial(resolvedDestination: string, mode: ProvisionEntry["mode"]): string | null {
-  const base = filesystemIdentity(path.basename(resolvedDestination));
-  if (LOCKFILES.has(base)) {
-    return LOCKFILE_REASON;
+  // Asked, not repeated. The direct entry and the descendant walk answer the
+  // same question, and rounds 2 and 4 were both about those two answers
+  // drifting apart — a rule with two maintained sites is the shape that lets
+  // them (.reviews/round-5.md F029).
+  const lockfile = refusedLockfile(resolvedDestination);
+  if (lockfile !== null) {
+    return lockfile;
   }
+  const base = filesystemIdentity(path.basename(resolvedDestination), ON_WIN32);
   if (base === "node_modules" && mode === "link") {
     return "node_modules is never linked: a shared tree defeats per-branch lockfiles and corrupts concurrent installs";
   }
