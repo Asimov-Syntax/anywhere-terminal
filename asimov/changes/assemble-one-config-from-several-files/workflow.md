@@ -90,4 +90,8 @@ Build notes:
   the suite passes 3/3 in isolation (52 tests). It fails only inside `test:unit`, so it is cross-file
   interference under concurrency. It cost 1_1 two verify attempts. Worth its own PLAN task; it is on
   the critical path for every remaining task here.
-
+- And it is not one suite. 1_2's first verify failed in `src/webview/vault/VaultPanel.test.ts`
+  instead ("no nested detail request for cursor:project:bucket:child-1"), which this change does not
+  touch either. Two unrelated suites flaking under the same runner is the concurrency itself, not
+  either suite's logic — so the follow-up task is about how `test:unit` is scheduled, not about
+  fixing one file.

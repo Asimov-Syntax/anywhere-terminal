@@ -24,8 +24,11 @@ function fs(spec: { files?: Record<string, string>; links?: Record<string, strin
   };
 }
 
-const read = (text: string) =>
-  vscodeTasksAdapter.read(fs({ files: { [`${ROOT}/${VSCODE_TASKS_FILE}`]: text } }), ROOT, newBudget());
+// `read()` answers a record now (design.md D1); every assertion below is about
+// the model inside it, so it is unwrapped here rather than at ~30 call sites.
+const read = async (text: string) =>
+  (await vscodeTasksAdapter.read(fs({ files: { [`${ROOT}/${VSCODE_TASKS_FILE}`]: text } }), ROOT, newBudget()))
+    ?.model ?? null;
 
 /** A task declared to run on worktree creation, plus whatever else. */
 function tasksFile(...entries: string[]): string {
@@ -77,7 +80,7 @@ describe("[D1] the file is read on the terms its own format defines", () => {
         throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
       },
     };
-    const model = await vscodeTasksAdapter.read(deps, ROOT, newBudget());
+    const model = (await vscodeTasksAdapter.read(deps, ROOT, newBudget()))?.model ?? null;
 
     expect(opened).toBe(0);
     expect(model?.problems.map((p) => p.file)).toEqual([VSCODE_TASKS_FILE]);

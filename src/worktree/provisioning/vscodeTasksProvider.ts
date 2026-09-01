@@ -10,9 +10,9 @@
 // shell later, and the quoting below is what keeps those two the same command.
 
 import { type ParseError, parse as parseJsonc } from "jsonc-parser";
-import type { ProvisionModel } from "../../types/messages";
 import { posixShellQuote } from "../../utils/posixShellQuote";
 import {
+  type AdapterRead,
   addSetup,
   type Draft,
   ids,
@@ -115,7 +115,7 @@ export const vscodeTasksAdapter: ProviderAdapter = {
   id: "vscodeTasks",
   files: [VSCODE_TASKS_FILE],
 
-  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<ProvisionModel | null> {
+  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null> {
     const opened = await openProviderFile(deps, repoRoot, TASKS);
     if (opened.kind === "absent" || (opened.kind === "problem" && opened.at === "root")) {
       // Root failure is neither presence nor absence, and the dispatcher reads
@@ -131,7 +131,7 @@ export const vscodeTasksAdapter: ProviderAdapter = {
       // Present and refused — reported, never read as "this repository declared
       // nothing".
       report(draft, `\`${VSCODE_TASKS_FILE}\``, opened.problem);
-      return modelFromDraft(draft);
+      return { model: modelFromDraft(draft) };
     }
 
     const errors: ParseError[] = [];
@@ -148,21 +148,21 @@ export const vscodeTasksAdapter: ProviderAdapter = {
         `\`${VSCODE_TASKS_FILE}\``,
         problem(TASKS, "malformed", `\`${VSCODE_TASKS_FILE}\` is not valid JSON with comments.`),
       );
-      return modelFromDraft(draft);
+      return { model: modelFromDraft(draft) };
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       if (parsed !== undefined) {
         report(draft, `\`${VSCODE_TASKS_FILE}\``, problem(TASKS, "malformed", "The file is not a mapping of keys."));
       }
-      return modelFromDraft(draft);
+      return { model: modelFromDraft(draft) };
     }
     const declared = (parsed as Record<string, unknown>).tasks;
     if (declared === undefined) {
-      return modelFromDraft(draft);
+      return { model: modelFromDraft(draft) };
     }
     if (!Array.isArray(declared)) {
       report(draft, "`tasks`", problem(TASKS, "malformed", "`tasks` must be a list."));
-      return modelFromDraft(draft);
+      return { model: modelFromDraft(draft) };
     }
 
     // File order, so the section lists the steps in the order the repository
@@ -194,6 +194,6 @@ export const vscodeTasksAdapter: ProviderAdapter = {
         break;
       }
     }
-    return modelFromDraft(draft);
+    return { model: modelFromDraft(draft) };
   },
 };

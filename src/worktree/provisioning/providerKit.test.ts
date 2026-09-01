@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { asimovAdapter } from "./asimovProvider";
+import { orcaAdapter } from "./orcaProvider";
 import {
+  type AdapterRead,
   addSetup,
   contained,
   emitted,
+  emptyModel,
   entriesFor,
   ids,
   MAX_MODEL_ROWS,
@@ -16,6 +20,7 @@ import {
   refusal,
   scanNames,
 } from "./providerKit";
+import { vscodeTasksAdapter } from "./vscodeTasksProvider";
 
 const ROOT = "/repo";
 
@@ -389,5 +394,65 @@ describe("[round-1 F005] an exhausted scan account reads nothing more", () => {
 
     expect(listed).toBe(0);
     expect(draft.entries).toEqual([]);
+  });
+});
+
+describe("[D1] an adapter answers from one open of each file it reads", () => {
+  // The seam widened so `.vscode/worktree.json` can hand back the file it
+  // builds on ALONGSIDE its model. The tempting alternative — leave `read()`
+  // returning a model and ask the module again for its `extends` — is what this
+  // refuses: a second open is a second chance for the file to change under the
+  // check, so the target could name a file other than the one whose inline keys
+  // were parsed. Counting opens is how that stays refused.
+  const ADAPTERS = [
+    { name: "asimov", adapter: asimovAdapter, files: { "asimov/worktree.yaml": "copy:\n  - .env\n" } },
+    {
+      name: "orca",
+      adapter: orcaAdapter,
+      files: { "orca.yaml": "worktree:\n  sharedDirectories: [node_modules]\n", ".worktreeinclude": "shared.txt\n" },
+    },
+    {
+      name: "vscodeTasks",
+      adapter: vscodeTasksAdapter,
+      files: {
+        ".vscode/tasks.json":
+          '{ "tasks": [{ "label": "i", "type": "shell", "command": "pnpm i", "runOptions": { "runOn": "worktreeCreated" } }] }',
+      },
+    },
+  ];
+
+  it.each(ADAPTERS)("$name opens each of its files once", async ({ adapter, files }) => {
+    const opens: string[] = [];
+    const held: Record<string, string> = {};
+    for (const [rel, text] of Object.entries(files)) {
+      held[`${ROOT}/${rel}`] = text;
+    }
+    const deps: ProviderDeps = {
+      readFile: async (p) => {
+        opens.push(p);
+        const text = held[p];
+        if (text === undefined) {
+          throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+        }
+        return text;
+      },
+      readdir: async () => [],
+      realpath: async (p) => p,
+      lstat: async () => ({}),
+    };
+
+    const answer = await adapter.read(deps, ROOT, newBudget());
+
+    expect(answer).not.toBeNull();
+    expect(opens.length).toBe(new Set(opens).size);
+  });
+
+  it("carries a declared base and exclusions out of the same record", () => {
+    // The shape the native adapter fills in 2_1. Asserted here so the seam is
+    // not silently narrowed back to a bare model before anything uses it.
+    const answer: AdapterRead = { model: emptyModel(), extends: "asimov/worktree.yaml", exclude: [".cache"] };
+
+    expect(answer.extends).toBe("asimov/worktree.yaml");
+    expect(answer.exclude).toEqual([".cache"]);
   });
 });

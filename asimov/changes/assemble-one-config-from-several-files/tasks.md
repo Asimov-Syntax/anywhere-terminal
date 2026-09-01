@@ -16,7 +16,7 @@
     5. Confirm the matcher fails against the pre-extraction source before committing — an extraction emits identical output, so a green suite proves nothing on its own.
   - **Boundary**: behaviour-preserving — the asimov suite is the regression half and must pass unedited
 
-- [ ] 1_2 Let an adapter answer with more than a model
+- [x] 1_2 Let an adapter answer with more than a model — verified: pnpm exec vitest run 'src/worktree/provisioning/providerKit.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d1-read-answers-a-record-not-a-model
   - **Acceptance**:

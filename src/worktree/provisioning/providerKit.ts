@@ -678,8 +678,29 @@ export async function entriesFor(
  * The budget is passed in rather than made here, so a read that consults more
  * than one adapter spends one budget across all of them.
  */
+/**
+ * What one adapter answers for a repository.
+ *
+ * A record rather than a bare model, because `.vscode/worktree.json` can name a
+ * file to build on and a set of inherited paths to drop, and both must come out
+ * of the SAME read that parsed its inline keys. Asking the module a second time
+ * would open the file twice, and this directory already rejected that: a second
+ * open is a second chance for the file to change under the check
+ * (`asimovProvider.fromOpened`, design.md D1).
+ *
+ * The three framework adapters answer `{ model }` — no format but the native one
+ * has an `extends`.
+ */
+export interface AdapterRead {
+  readonly model: ProvisionModel;
+  /** Repo-relative path of a file to build on, exactly as the file spelled it. */
+  readonly extends?: string;
+  /** Repo-relative paths to drop from what was inherited. */
+  readonly exclude?: readonly string[];
+}
+
 export interface ProviderAdapter {
   readonly id: ProvisionProvider["id"];
   readonly files: readonly string[];
-  read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<ProvisionModel | null>;
+  read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null>;
 }

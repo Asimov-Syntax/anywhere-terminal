@@ -12,8 +12,8 @@
 // (design.md D6).
 
 import { parse as parseYaml } from "yaml";
-import type { ProvisionModel } from "../../types/messages";
 import {
+  type AdapterRead,
   addSetup,
   type Draft,
   entriesFor,
@@ -134,7 +134,7 @@ export const orcaAdapter: ProviderAdapter = {
    * yields a model plus a problem, never a throw. `null` means neither of the
    * two files is there — the one answer that lets detection move on (D3).
    */
-  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<ProvisionModel | null> {
+  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null> {
     const opened = await openProviderFile(deps, repoRoot, YAML);
     if (opened.kind === "problem" && opened.at === "root") {
       // Nothing about this provider can be decided when the checkout itself
@@ -191,6 +191,6 @@ export const orcaAdapter: ProviderAdapter = {
     if (!present) {
       return null;
     }
-    return modelFromDraft(draft);
+    return { model: modelFromDraft(draft) };
   },
 };

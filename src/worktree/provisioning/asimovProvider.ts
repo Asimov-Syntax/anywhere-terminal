@@ -14,6 +14,7 @@
 import { parse as parseYaml } from "yaml";
 import type { ProvisionModel } from "../../types/messages";
 import {
+  type AdapterRead,
   type Draft,
   emptyModel,
   ids,
@@ -78,12 +79,12 @@ export const asimovAdapter: ProviderAdapter = {
    * present-but-empty file would offer another tool's answer to a question this
    * repository has already answered (design.md D3).
    */
-  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<ProvisionModel | null> {
+  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null> {
     const opened = await openProviderFile(deps, repoRoot, ASIMOV);
     if (opened.kind === "absent" || (opened.kind === "problem" && opened.at === "root")) {
       return null;
     }
-    return fromOpened(opened, deps, repoRoot, budget);
+    return { model: await fromOpened(opened, deps, repoRoot, budget) };
   },
 };
 

@@ -86,12 +86,12 @@ export async function readProvisioning(
 
   for (const adapter of adapters) {
     if (chosen === null) {
-      const model = await adapter.read(deps, repoRoot, budget);
-      if (model === null) {
+      const answer = await adapter.read(deps, repoRoot, budget);
+      if (answer === null) {
         // Not here at all. The one answer that lets detection move on.
         continue;
       }
-      chosen = { adapter, model };
+      chosen = { adapter, model: answer.model };
       providers.push({ id: adapter.id, files: [...adapter.files], active: true });
       continue;
     }

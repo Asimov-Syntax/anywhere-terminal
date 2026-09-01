@@ -44,7 +44,9 @@ function repo(spec: { yaml?: string; include?: string; dirs?: Record<string, str
   return fs({ files, dirs: spec.dirs });
 }
 
-const read = (deps: ProviderDeps) => orcaAdapter.read(deps, ROOT, newBudget());
+// `read()` answers a record now (design.md D1); every assertion below is about
+// the model inside it, so it is unwrapped here rather than at each call site.
+const read = async (deps: ProviderDeps) => (await orcaAdapter.read(deps, ROOT, newBudget()))?.model ?? null;
 
 /** What an orca repository actually looks like. */
 const YAML = `
@@ -207,7 +209,7 @@ describe("a file that is present and wrong is named, never thrown", () => {
         throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
       },
     };
-    const model = await orcaAdapter.read(deps, ROOT, newBudget());
+    const model = (await orcaAdapter.read(deps, ROOT, newBudget()))?.model ?? null;
 
     // Opening it is what would follow the link, so the refusal has to come
     // first — not after.
@@ -226,7 +228,7 @@ describe("a file that is present and wrong is named, never thrown", () => {
         throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
       },
     };
-    const model = await orcaAdapter.read(deps, ROOT, newBudget());
+    const model = (await orcaAdapter.read(deps, ROOT, newBudget()))?.model ?? null;
 
     expect(model?.problems.map((p) => p.reason)).toEqual(["unreadable"]);
     expect(model?.problems[0]?.detail).toContain("EACCES");
@@ -251,7 +253,7 @@ describe("[round-1 F002] the setup step is charged like every other row", () => 
       },
     });
 
-    const model = await orcaAdapter.read(deps, ROOT, budget);
+    const model = (await orcaAdapter.read(deps, ROOT, budget))?.model ?? null;
 
     // One row past a cap already reached is still past it, and this is the
     // append that had no check in front of it.
