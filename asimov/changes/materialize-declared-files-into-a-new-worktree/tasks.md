@@ -167,7 +167,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     3. `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/applyEntries.test.ts`: mode witnesses under a nonzero umask against the production binding, a link at the exact node boundary, a file that grows after its size is read, and `..cache` admitted.
   - **Boundary**: no deletion primitive may appear in this module — D9 and the I10 gate both still hold
 
-- [ ] 4_3 Say what happened to every entry, not what was hoped for
+- [x] 4_3 Say what happened to every entry, not what was hoped for — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: design.md#d7; design.md#d8; .reviews/round-4.md#f026; .reviews/round-4.md#f017
   - **Acceptance**:

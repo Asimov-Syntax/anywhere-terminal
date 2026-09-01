@@ -1813,21 +1813,36 @@ function provisionSummary(
   if (steps === undefined || steps.length === 0) {
     return undefined;
   }
+  // Arrival is what this apply WROTE. `skipped` means the destination was
+  // already there, so counting it said "1 of 1 brought over" for an apply that
+  // wrote nothing (.reviews/round-4.md F026).
   const bad = steps.filter((s) => s.outcome.kind === "refused" || s.outcome.kind === "failed");
-  const arrived = steps.length - bad.length;
+  const untouched = steps.filter((s) => s.outcome.kind === "skipped");
+  // A link the platform refused is not a link the provider got. PLAN Acceptance
+  // requires the degradation be said per entry, and rendered as a plain copy it
+  // was said nowhere.
+  const degraded = steps.filter((s) => s.outcome.kind === "degradedToCopy");
+  const arrived = steps.length - bad.length - untouched.length;
   // A directory entry has one outcome and many nodes: it reports `copied` while
   // descendants inside it were skipped or refused. Counting only the top level
   // told the user everything arrived when some of it had not (round-2 F018).
   const inside = steps.flatMap((s) => s.details ?? []);
-  if (bad.length === 0 && inside.length === 0) {
-    return { body: `${arrived} of ${steps.length} brought over.`, tone: "neutral" };
+  const counts = [
+    `${arrived} of ${steps.length} brought over.`,
+    ...(degraded.length === 0 ? [] : [`${degraded.length} copied instead of linked.`]),
+    ...(untouched.length === 0 ? [] : [`${untouched.length} already there.`]),
+  ];
+  if (bad.length === 0 && inside.length === 0 && degraded.length === 0 && untouched.length === 0) {
+    return { body: counts[0] ?? "", tone: "neutral" };
   }
-  const body = `${arrived} of ${steps.length} brought over.`;
+  const body = counts.join(" ");
   return {
     body: inside.length === 0 ? body : `${body} ${inside.length} inside them did not arrive.`,
     tone: "warn",
     reason: [
       ...bad.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`),
+      ...degraded.map((s) => `${s.path}: the platform had no symlink to give, so it was copied`),
+      ...untouched.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`),
       ...inside.map((d) => `${d.path}: ${d.reason}`),
     ].join("\n"),
   };

@@ -2395,6 +2395,46 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").not.toMatch(/couldn.t create/i);
   });
 
+  it("[round-4 F026] does not call a skipped entry brought over", () => {
+    // `skipped` means the destination was already there — this apply wrote
+    // nothing, and "1 of 1 brought over" says the opposite.
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          provisioned: [{ id: "i1", path: ".env", outcome: { kind: "skipped", reason: "already there" } }],
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.textContent ?? "").not.toContain("1 of 1 brought over.");
+    expect(notice?.textContent ?? "").toContain("already there");
+  });
+
+  it("[round-4 F026] says a link was degraded to a copy, per entry", () => {
+    // PLAN Acceptance: where the platform cannot symlink, the entry degrades to
+    // a copy AND SAYS SO. Rendered as an ordinary copy, the user cannot tell a
+    // link they asked for from one the platform refused them.
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          provisioned: [{ id: "i1", path: "third_party", outcome: { kind: "degradedToCopy" } }],
+        },
+      ],
+    });
+
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toMatch(/copied instead|degrad/i);
+  });
+
   it("[F005] says how much was brought over, and names what was not", () => {
     const { view } = mount();
     view.setData({

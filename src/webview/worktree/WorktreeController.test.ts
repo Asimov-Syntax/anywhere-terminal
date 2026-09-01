@@ -2322,6 +2322,28 @@ describe("what a mutation did comes back to the panel", () => {
     ]);
   });
 
+  it("[round-4 F017] a second create in one repo does not replace the first worktree's notice", () => {
+    // Both worktrees are made a moment ago, so neither is in the tree yet and
+    // `rescope` drops the `worktreeId` off each notice — leaving the dedupe key
+    // `action + worktreeId + repoId` identical for the two. The canonical
+    // identity survives only as `orphanedLabel`, which the key never reads.
+    const h = ready();
+    const first = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/alpha";
+    const second = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/beta";
+    for (const worktreeId of [first, second]) {
+      h.controller.handleMutationResult({
+        type: "worktreeMutationResult",
+        verb: "create",
+        repoId: REPO,
+        worktreeId,
+        result: { kind: "ok" },
+      });
+    }
+
+    expect(results(h)).toHaveLength(2);
+    expect(results(h).map((r) => r.worktreeId ?? r.orphanedLabel)).toEqual([first, second]);
+  });
+
   it("[F005] folds provisioning onto the create notice instead of replacing it", () => {
     // `showActionResult` keys by action + worktree + repo, so a second notice
     // for the same create REPLACES the first. The user would be told what was

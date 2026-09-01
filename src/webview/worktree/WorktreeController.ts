@@ -1422,9 +1422,15 @@ export class WorktreeController {
   /** One notice per scope and verb, wherever the outcome came from. */
   private showActionResult(raw: WorktreeActionResult): void {
     const result = this.rescope(raw);
+    // Keyed on the CANONICAL identity, not on the field that happens to hold it.
+    // `rescope` moves a `worktreeId` the tree has not seen yet into
+    // `orphanedLabel`, and a worktree made a moment ago is exactly that — so two
+    // creates in one repository both keyed as `undefined` and the second ate the
+    // first (.reviews/round-4.md F017).
+    const identity = (r: WorktreeActionResult): string | undefined => r.worktreeId ?? r.orphanedLabel;
     this.actionResults = [
       ...this.actionResults.filter(
-        (r) => !(r.action === result.action && r.worktreeId === result.worktreeId && r.repoId === result.repoId),
+        (r) => !(r.action === result.action && identity(r) === identity(result) && r.repoId === result.repoId),
       ),
       result,
     ];
