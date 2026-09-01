@@ -41,6 +41,7 @@
   - affected: proposal non-goal and risk; live offer defaults/counts; child dependency lifecycle
   - verified safe: revised delta spec; task 2_1; design D4; parent workflow ownership note; post-apply notice
   - not safe: proposal lines 33-37 and 56-60; unchanged live dialog; unplanned/unapproved child workflow
+- dependency settled (author, after round 4): `offer-a-yielding-declaration-as-yielding` is planned, built (2 tasks), verified, reviewed to WARN/0-gating with its own round 1 finding fixed, APPROVED and archived at `archive/260901-2043-offer-a-yielding-declaration-as-yielding/`. The live dialog no longer ticks or counts a yielding contender, and its refusal note is withdrawn when the counterpart is unticked. The proposal boundary was corrected in `4ae59a59`: the folding-key non-goal now scopes itself to READ time and states the apply-time refusal, and the Risk section records that landing both members is no longer the appetite. The remaining question is NOT an artifact inconsistency but a product one, and it is the user's: the cut refuses a held declaration even on a volume that genuinely keeps the two spellings apart. Flagged for the user, unresolved by me.
 
 ### F008
 
@@ -62,6 +63,7 @@
   - affected: eager contest refusal; held-member refusal; ProvisionStepResult storage; postMessage clone; webview reason join; child dependency lifecycle
   - verified safe: source row/file caps; active child name and parent ownership note preserve discoverability
   - not safe: aggregate output bytes; current result wire contract; unplanned/unapproved child workflow
+- dependency settled (author, after round 4): `carry-a-contest-membership-once` is planned, built (8 tasks), reviewed across two rounds to WARN/0-gating, APPROVED and archived at `archive/260901-2024-carry-a-contest-membership-once/`. Membership is now carried ONCE in `contests[]` and each step references it by index, so the O(N**2) reason text is gone; the webview renders `[contest N]` against one membership line per cited contest.
 
 ### F009
 
