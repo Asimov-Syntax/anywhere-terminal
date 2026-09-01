@@ -392,8 +392,39 @@ describe("[round-4 D6] a relative specifier is resolved however it is called", (
     ).toEqual([]);
   });
 
-  it("does not report an allowlisted literal that is not a specifier", () => {
+  it("does not report a bare prefix that is not a specifier", () => {
     expect(swept(`var isUp = (p) => p.startsWith("../");`)).not.toContain("../");
+  });
+});
+
+// [round-5 F013] The allowlist keyed suppression on the decoded string, so one
+// unrelated `.startsWith("../")` hid every real request spelling it. An oracle
+// attack then refuted the occurrence-scoped exemption drafted to replace it:
+// `require("".concat("./x"))` sits in a String method's argument. So there is
+// no exemption at all — a prefixed literal is swept wherever it sits (D6).
+describe("[round-5 F013] a prefixed literal is swept from any position", () => {
+  const swept = (bundle: string) => verdicts(bundle).map((v) => v.specifier);
+
+  it("reports a genuine request sharing a bundle with an unrelated prefix test", () => {
+    expect(swept(`var isUp = (p) => p.startsWith("../"); var r = require; r("./gone");`)).toContain(
+      "./gone",
+    );
+  });
+
+  it("reports a literal a string method carries into require", () => {
+    expect(swept(`require("".concat("./gone"));`)).toContain("./gone");
+  });
+
+  it("reports one an object method carries, where a name-based exemption would not", () => {
+    expect(swept(`var box = { startsWith: (s) => require(s) }; box.startsWith("./gone");`)).toContain(
+      "./gone",
+    );
+  });
+
+  it("leaves the real artifact's own prefix test alone", () => {
+    expect(
+      swept('var f = (rel) => rel === ".." || rel.startsWith("../") || rel.startsWith("..\\");'),
+    ).toEqual([]);
   });
 });
 

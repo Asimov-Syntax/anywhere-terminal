@@ -149,7 +149,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     2. Exclude the six strings that are exactly a relative prefix and nothing more, as design.md D6 fixes them.
     3. Witness each of the four prefixes reported when it does not resolve, and witness that each of the six bare prefixes is not swept, in `src/test/invariants/bundleRequires.test.ts`.
 
-- [ ] 6_2 Sweep a prefixed literal wherever it sits
+- [x] 6_2 Sweep a prefixed literal wherever it sits — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 6_1
   - **Refs**: design.md D6, .reviews/round-5.md F013
   - **Acceptance**:

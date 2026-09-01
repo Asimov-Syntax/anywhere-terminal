@@ -328,12 +328,6 @@ export function isRelativeRequest(text) {
   return RELATIVE_PREFIXES.some((prefix) => text.startsWith(prefix)) && !BARE_PREFIXES.has(text);
 }
 
-export const NOT_SPECIFIERS = new Set([
-  // `t.startsWith("../")` — a path-prefix test in the workspace path helpers.
-  // The only relative literal the production bundle carries.
-  "../",
-]);
-
 /**
  * Every distinct relative string literal in the bundle, in first-seen order.
  *
@@ -349,7 +343,7 @@ export function relativeLiterals(bundleSource) {
       return;
     }
     const text = node.text;
-    if (isRelativeRequest(text) && !NOT_SPECIFIERS.has(text)) {
+    if (isRelativeRequest(text)) {
       seen.add(text);
     }
   });
