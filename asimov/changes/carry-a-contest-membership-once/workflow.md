@@ -6,9 +6,9 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [-] Gate 1: direction approved — no fork; the shape follows directly from F008
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -32,3 +32,5 @@
 Blueprint: none
 Lane: light
 Planned at: 2559e6c2
+- Split out of `award-a-contested-destination-or-refuse-it` at its round-3 thrash stop: F008's fix is a changed wire contract with its own owner, which the remediation boundary keeps out of the parent's fix loop. The parent depends on this reaching APPROVE.
+- No PLAN.md row: adding blueprint tasks is the user's call and they were away. The parent's workflow.md carries the same follow-up.
