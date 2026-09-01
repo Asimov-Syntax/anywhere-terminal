@@ -1,6 +1,6 @@
 ## 1. The shared half
 
-- [ ] 1_1 Extract the reader's shared half and give it the caller's identity
+- [x] 1_1 Extract the reader's shared half and give it the caller's identity — verified: pnpm exec vitest run 'src/worktree/provisioning/providerKit.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D2
   - **Acceptance**:

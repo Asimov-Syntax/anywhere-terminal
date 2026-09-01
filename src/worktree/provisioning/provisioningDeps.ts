@@ -1,12 +1,12 @@
 // src/worktree/provisioning/provisioningDeps.ts — The real filesystem behind
-// `readAsimovProvisioning`.
+// every provider adapter.
 //
-// The adapter takes its reads injected so its suite needs no disk. This is the
+// An adapter takes its reads injected so its suite needs no disk. This is the
 // one place that supplies the real ones, and the one place the byte budget is
-// enforced — the adapter classifies failures, it does not perform them.
+// enforced — an adapter classifies failures, it does not perform them.
 
 import { lstat, open, opendir, realpath } from "node:fs/promises";
-import type { AsimovProviderDeps } from "./asimovProvider";
+import type { ProviderDeps } from "./providerKit";
 
 /**
  * The most a provider file may weigh.
@@ -54,16 +54,16 @@ async function readBounded(filePath: string, maxBytes: number): Promise<string> 
 }
 
 /**
- * The adapter's dependencies over the real filesystem.
+ * Every adapter's dependencies over the real filesystem.
  *
  * `realpath` and `lstat` are supplied because containment is decided on the
  * RESOLVED path — the answer authorizes a read, so a symlinked component has to
  * be followed before it is trusted (design.md D4).
  */
-export function createProvisioningDeps(): AsimovProviderDeps {
+export function createProvisioningDeps(): ProviderDeps {
   return {
     readFile: (p) => readBounded(p, MAX_PROVIDER_BYTES),
-    // `opendir` rather than `readdir`: the adapter scans under a budget, and a
+    // `opendir` rather than `readdir`: the kit scans under a budget, and a
     // whole-directory read would materialize a hostile directory before any
     // budget could apply (.reviews/round-2.md B7).
     readdir: async function* (p: string) {
