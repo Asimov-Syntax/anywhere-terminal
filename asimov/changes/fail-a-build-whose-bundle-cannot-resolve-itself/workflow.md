@@ -37,3 +37,5 @@ Lane: light — S, one new gate script plus wiring | flags: infra
 - Specs are NO-DELTA: a build-time gate changes nothing the shipped extension does.
 - Gate 2 taken under fastlane on the standing goal, with the user away.
 - The gate was proven against the REAL artifact, not only fixtures: appending `require("./impl/format")` to `dist/extension.js` made it exit 1 naming the path it would have resolved to, and restoring the file returned it to 0. `dist/` is build output and was left byte-identical.
+Round 3 was opened by an `asm review round-start` run made to read the trajectory; no round-3 review ran. The cycle closes as superseded by the round-2 F002 handback, not by that round.
+Handback (round 2 F002): design.md D2 detects a BARE `require` identifier, and the "Known limit" section asserts the shipped defect left a direct literal call. Both are false for the artifact the gate inspects — production esbuild renames the UMD factory's `require` parameter, so the defect ships as `e("./impl/format")`. Reproduced locally with a UMD fixture under `--bundle --platform=node --minify`. D2's mechanism has to change, so this is not remediation.
