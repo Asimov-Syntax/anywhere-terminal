@@ -177,3 +177,35 @@ describe("[WT-011.12] what the gate must not report", () => {
     expect(classify("vscode", { externals, resolvesFrom: DIST }).why).toBe("declared external");
   });
 });
+
+// [round-2 F002] The gate reads a --production bundle, and minification renames
+// the UMD factory's `require` parameter. The literal below is esbuild's own
+// output for a jsonc-parser-shaped dependency under
+// `--bundle --platform=node --minify`: `require` survives only as an ARGUMENT,
+// and the call that carries the defect is on the renamed binding `e`.
+const MINIFIED_UMD = `var i=(e,o)=>()=>(o||e((o={exports:{}}).exports,o),o.exports);var f=i((r,t)=>{(function(e){if(typeof t=="object"&&typeof t.exports=="object"){var o=e(require,r);o!==void 0&&(t.exports=o)}})(function(e,o){"use strict";var n=e("./impl/format");o.go=function(){return n}})});var c=f();console.log(c.go());`;
+
+describe("[round-2 F002] a require whose callee minification renamed", () => {
+  it("reports the specifier the renamed binding requires", () => {
+    expect(requiredSpecifiers(MINIFIED_UMD)).toContain("./impl/format");
+  });
+
+  it("still reports it as unresolvable against an artifact that lacks it", () => {
+    const found = unresolvableRequires(MINIFIED_UMD, {
+      esbuildSource: ESBUILD,
+      outfile: OUT,
+      resolvesFrom: "/nowhere/dist",
+      exists: () => false,
+      isDirectory: () => false,
+    });
+    expect(found.map((v) => v.specifier)).toContain("./impl/format");
+  });
+
+  it("does not taint a method that merely shares the name", () => {
+    expect(requiredSpecifiers(`var loader={require(x){}};loader.require("./nope");`)).toEqual([]);
+  });
+
+  it("leaves an untainted local call alone", () => {
+    expect(requiredSpecifiers(`function t(m){return m}t("./not-a-require");`)).toEqual([]);
+  });
+});

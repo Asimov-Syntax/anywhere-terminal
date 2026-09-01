@@ -48,7 +48,11 @@ jsonc-parser-shaped UMD fixture emits exactly the line above.
 So the callee is identified by **what it is bound to, not what it is called**. One intra-module
 fixed point over the parsed bundle:
 
-1. Seed the tainted set with the identifier `require`.
+1. Seed the tainted set twice: with the AMBIENT `require` — an identifier the bundle never declares
+   — and with any binding still spelled `require`, which is what an unminified factory parameter is.
+   Spelling remains sufficient; round 2's defect was treating it as *necessary*, and replacing it
+   rather than widening it would have traded one blind spot for another (an uninvoked factory is
+   statically connected to nothing, so binding alone cannot see it).
 2. Record every binding — `var`/`let`/`const` initializer, or parameter bound at a call site — whose
    value is a function expression, so a callee identifier can be resolved back to a function.
 3. For every call whose callee resolves to a known function expression, bind that function's

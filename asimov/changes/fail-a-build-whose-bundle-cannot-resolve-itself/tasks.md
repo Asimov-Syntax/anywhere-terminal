@@ -40,7 +40,7 @@ the extension failed to activate. No suite could catch it, because every suite i
 
 ## 3. Round-2 handback — the gate was blind to the shipped artifact
 
-- [ ] 3_1 Find a require call whose callee minification renamed
+- [x] 3_1 Find a require call whose callee minification renamed — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D2, D3
   - **Acceptance**:

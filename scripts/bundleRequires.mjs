@@ -30,28 +30,217 @@ function walk(node, visit) {
   node.forEachChild((child) => walk(child, visit));
 }
 
+/** Parentheses are syntax, not a value — `(f)(x)` calls `f`. */
+function unwrap(node) {
+  let cur = node;
+  while (cur !== undefined && ts.isParenthesizedExpression(cur)) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+const isFunction = (node) => node !== undefined && (ts.isFunctionExpression(node) || ts.isArrowFunction(node));
+
 /**
- * A direct `require("literal")` call — never `x.require(...)`, never a
- * computed argument, and never text that merely looks like one.
+ * Name → declaration for one scope's own parameters and `var`/`let`/`const`.
+ *
+ * Built once per scope and cached. The first cut recomputed this on every
+ * identifier on every pass of the fixed point, which on a real 1 MB minified
+ * bundle did not terminate in any useful time — a gate that never answers is
+ * worse than one that answers wrongly, because it stops the build either way.
  */
-function requireLiteral(node) {
+function scopeNames(scope, cache) {
+  const hit = cache.get(scope);
+  if (hit !== undefined) {
+    return hit;
+  }
+  const names = new Map();
+  if (ts.isFunctionLike(scope) && scope.parameters !== undefined) {
+    for (const parameter of scope.parameters) {
+      if (ts.isIdentifier(parameter.name)) {
+        names.set(parameter.name.text, parameter);
+      }
+    }
+  }
+  const statements = ts.isSourceFile(scope)
+    ? scope.statements
+    : scope.body !== undefined && ts.isBlock(scope.body)
+      ? scope.body.statements
+      : undefined;
+  for (const statement of statements ?? []) {
+    if (!ts.isVariableStatement(statement)) {
+      continue;
+    }
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && !names.has(declaration.name.text)) {
+        names.set(declaration.name.text, declaration);
+      }
+    }
+  }
+  cache.set(scope, names);
+  return names;
+}
+
+/**
+ * The declaration an identifier resolves to, innermost scope first.
+ *
+ * `undefined` means nothing in this bundle declares it — which is how the
+ * AMBIENT `require` is told apart from a parameter that merely shares its name.
+ * Memoized per identifier node: the fixed point below asks repeatedly, and the
+ * answer cannot change between passes.
+ */
+function makeResolver() {
+  const scopes = new Map();
+  const answers = new Map();
+  return (identifier) => {
+    const cached = answers.get(identifier);
+    if (cached !== undefined) {
+      return cached.binding;
+    }
+    let binding;
+    for (let cur = identifier.parent; cur !== undefined && binding === undefined; cur = cur.parent) {
+      if (ts.isSourceFile(cur) || ts.isFunctionLike(cur)) {
+        binding = scopeNames(cur, scopes).get(identifier.text);
+      }
+    }
+    answers.set(identifier, { binding });
+    return binding;
+  };
+}
+
+/**
+ * Which names hold `require`, by BINDING rather than by spelling.
+ *
+ * The gate reads a `--production` bundle, and minification renames parameters.
+ * A UMD dependency receives `require` as a factory ARGUMENT, so the shipped
+ * defect is a call on a renamed binding and `require` itself is never the
+ * callee (.reviews/round-2.md F002). One fixed point over the parsed bundle:
+ * resolve a callee identifier back to the function it is bound to, bind that
+ * function's parameters positionally to the call's arguments, and let taint
+ * flow. Finite, and each pass only adds, so it terminates.
+ */
+function requireBindings(root) {
+  /**
+   * Binding declaration → every function expression it may hold.
+   *
+   * A SET, and only ever added to. Holding a single function let one binding
+   * flip between two values on alternate passes — a minified bundle wraps every
+   * module with the same helper, so one parameter legitimately receives dozens
+   * of different factories — and `growing` then never went false. Monotone
+   * growth is what makes the fixed point terminate at all.
+   */
+  const holds = new Map();
+  /** Binding declarations that hold `require`. */
+  const tainted = new Set();
+  const calls = [];
+  const resolve = makeResolver();
+
+  walk(root, (node) => {
+    if (ts.isCallExpression(node)) {
+      calls.push(node);
+    }
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && isFunction(unwrap(node.initializer))) {
+      holds.set(node, new Set([unwrap(node.initializer)]));
+    }
+  });
+
+  /**
+   * Two seeds. Ambient `require` — an identifier this bundle never declares —
+   * and any binding still SPELLED `require`, which is the unminified factory
+   * parameter. Spelling stays sufficient; round 2's defect was treating it as
+   * necessary, so dropping it now would trade one blind spot for another.
+   */
+  const isTainted = (identifier) => {
+    if (identifier.text === "require") {
+      return true;
+    }
+    const binding = resolve(identifier);
+    return binding !== undefined && tainted.has(binding);
+  };
+
+  /** Returns whether this added anything, which is the fixed point's clock. */
+  const hold = (binding, fn) => {
+    const held = holds.get(binding);
+    if (held === undefined) {
+      holds.set(binding, new Set([fn]));
+      return true;
+    }
+    if (held.has(fn)) {
+      return false;
+    }
+    held.add(fn);
+    return true;
+  };
+
+  const targetsOf = (call) => {
+    const callee = unwrap(call.expression);
+    if (isFunction(callee)) {
+      return [callee];
+    }
+    if (!ts.isIdentifier(callee)) {
+      return [];
+    }
+    const binding = resolve(callee);
+    return binding === undefined ? [] : [...(holds.get(binding) ?? [])];
+  };
+
+  for (let growing = true; growing; ) {
+    growing = false;
+    for (const call of calls) {
+      for (const target of targetsOf(call)) {
+        target.parameters.forEach((parameter, index) => {
+          const argument = unwrap(call.arguments[index]);
+          if (argument === undefined || !ts.isIdentifier(parameter.name)) {
+            return;
+          }
+          if (isFunction(argument)) {
+            growing = hold(parameter, argument) || growing;
+            return;
+          }
+          if (!ts.isIdentifier(argument)) {
+            return;
+          }
+          if (isTainted(argument) && !tainted.has(parameter)) {
+            tainted.add(parameter);
+            growing = true;
+          }
+          const from = resolve(argument);
+          for (const fn of (from === undefined ? undefined : holds.get(from)) ?? []) {
+            growing = hold(parameter, fn) || growing;
+          }
+        });
+      }
+    }
+  }
+
+  return isTainted;
+}
+
+/**
+ * The specifier a call requires — never `x.require(...)`, never a computed
+ * argument, and never text that merely looks like one.
+ */
+function requireLiteral(node, isTainted) {
   if (!ts.isCallExpression(node) || node.arguments.length !== 1) {
     return undefined;
   }
   // `ts.isIdentifier` is what rejects `loader.require`: a property access is a
   // PropertyAccessExpression, not an Identifier.
-  if (!ts.isIdentifier(node.expression) || node.expression.text !== "require") {
+  const callee = unwrap(node.expression);
+  if (!ts.isIdentifier(callee) || !isTainted(callee)) {
     return undefined;
   }
-  const [arg] = node.arguments;
+  const arg = unwrap(node.arguments[0]);
   return ts.isStringLiteralLike(arg) ? arg.text : undefined;
 }
 
 /** Every distinct specifier the bundle still requires, in first-seen order. */
 export function requiredSpecifiers(bundleSource) {
+  const root = parse(bundleSource, "bundle.js");
+  const isTainted = requireBindings(root);
   const seen = new Set();
-  walk(parse(bundleSource, "bundle.js"), (node) => {
-    const specifier = requireLiteral(node);
+  walk(root, (node) => {
+    const specifier = requireLiteral(node, isTainted);
     if (specifier !== undefined) {
       seen.add(specifier);
     }
