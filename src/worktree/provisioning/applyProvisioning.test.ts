@@ -12,8 +12,12 @@ function entry(path: string, mode: ProvisionEntry["mode"], source: string, id = 
   return { id, path, mode, source };
 }
 
-async function applyTo(nodes: Parameters<typeof fakeFs>[0], entries: readonly ProvisionEntry[]) {
-  const fs = fakeFs({ [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...nodes });
+async function applyTo(
+  nodes: Parameters<typeof fakeFs>[0],
+  entries: readonly ProvisionEntry[],
+  options: Parameters<typeof fakeFs>[1] = {},
+) {
+  const fs = fakeFs({ [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...nodes }, options);
   const roots = await prepareEntryGate(MAIN, WT, fs);
   if (roots === null) {
     throw new Error("the fake could not prepare its roots");
@@ -88,5 +92,109 @@ describe("applyProvisioning", () => {
     } finally {
       deadline.cancel();
     }
+  });
+});
+
+/**
+ * A destination two selected declarations may both name.
+ *
+ * `MixedCase` and `mixedcase` are one entry on a folding volume and two on a
+ * case-sensitive one, and the read path cannot tell which — it never asks a
+ * filesystem anything (worktree-provisioning.md § 4.4). So both arrive
+ * selected, and this is where the question is finally answerable.
+ */
+const NATIVE = ".vscode/worktree.json";
+const INHERITED = "asimov/worktree.yaml";
+const CONTESTED = {
+  [`${MAIN}/MixedCase`]: { kind: "file", size: 11 },
+  [`${MAIN}/mixedcase`]: { kind: "file", size: 22 },
+} as const;
+const PAIR = [entry("MixedCase", "copy", NATIVE, "i1"), entry("mixedcase", "copy", INHERITED, "i2")];
+
+describe("a destination two declarations may both name", () => {
+  it("leaves the repository's own declaration holding it, and refuses the other", async () => {
+    const { steps, fs } = await applyTo(CONTESTED, PAIR, { folds: true });
+
+    expect(fs.nodes.get(`${WT}/MixedCase`)).toMatchObject({ size: 11 });
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "refused"]);
+    // Both declarations, so the user can see what it was weighed against.
+    expect(steps[1]?.outcome).toMatchObject({
+      reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)"),
+    });
+  });
+
+  it("lands BOTH when this filesystem keeps the two spellings apart", async () => {
+    // The folding key is over-inclusive on purpose, so a group is a question,
+    // not a verdict. Refusing the loser unconditionally would delete a
+    // declaration the repository made — the failure this whole line of work
+    // exists to prevent.
+    const { steps, fs } = await applyTo(CONTESTED, PAIR);
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "copied"]);
+    expect(fs.nodes.get(`${WT}/MixedCase`)).toMatchObject({ size: 11 });
+    expect(fs.nodes.get(`${WT}/mixedcase`)).toMatchObject({ size: 22 });
+  });
+
+  it("refuses BOTH when the destination was already there, and writes nothing", async () => {
+    // Left to run, the favoured member merges into a destination it did not
+    // create — `makeDirectory` answers `written` for an existing directory —
+    // and installs neither its material nor its mode, while only the loser is
+    // reported.
+    const occupied = { ...CONTESTED, [`${WT}/MixedCase`]: { kind: "file", size: 99 } as const };
+    const { steps, fs } = await applyTo(occupied, PAIR, { folds: true });
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
+    expect(fs.created).toEqual([]);
+    expect(fs.nodes.get(`${WT}/MixedCase`)).toMatchObject({ size: 99 });
+  });
+
+  it("refuses the other when the repository's own declaration never claimed it", async () => {
+    // Neither source is there, so the favoured member fails before it claims
+    // anything. One source would not do it: on a folding volume the fake
+    // resolves the favoured spelling onto the other declaration's file.
+    const { steps } = await applyTo({}, PAIR, { folds: true });
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["failed", "refused"]);
+    expect(steps[1]?.outcome).toMatchObject({ reason: expect.stringContaining("did not claim it") });
+  });
+
+  it("is not a contest at all when the repository's own declaration is unticked", async () => {
+    // An unchecked favoured member must neither claim nor block a selected
+    // inherited one (design.md D1).
+    const { steps, fs } = await applyTo(CONTESTED, [PAIR[1] as ProvisionEntry], { folds: true });
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied"]);
+    expect(fs.nodes.get(`${WT}/mixedcase`)).toMatchObject({ size: 22 });
+  });
+
+  it("moves no uncontested entry out of its place to settle a contest", async () => {
+    // Promoting the favoured LINK ahead of the copy pass would create
+    // `/wt/MixedCase` as a symlink out of the worktree, and the uncontested
+    // `MixedCase/seed` copy would then resolve its parent through it and be
+    // refused — a new refusal for an entry with no part in the dispute.
+    const { steps } = await applyTo(
+      {
+        [`${MAIN}/MixedCase`]: { kind: "dir" },
+        [`${MAIN}/MixedCase/seed`]: { kind: "file" },
+        [`${MAIN}/mixedcase`]: { kind: "file", size: 22 },
+      },
+      [
+        entry("MixedCase", "link", NATIVE, "i1"),
+        entry("mixedcase", "copy", INHERITED, "i2"),
+        entry("MixedCase/seed", "copy", INHERITED, "i3"),
+      ],
+      { folds: true },
+    );
+
+    // What the uncontested entry gets is the outcome it has today. The favoured
+    // LINK loses its own slot to the directory `MixedCase/seed` had to create —
+    // a third entry, not the inherited declaration, which is still refused. The
+    // ledger claims the inherited declaration never WINS, not that the favoured
+    // one always does; promoting it is what the witness above rules out.
+    expect(steps.map((s) => [s.path, s.outcome.kind])).toEqual([
+      ["MixedCase", "skipped"],
+      ["mixedcase", "refused"],
+      ["MixedCase/seed", "copied"],
+    ]);
   });
 });

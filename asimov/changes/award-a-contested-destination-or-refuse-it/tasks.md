@@ -14,7 +14,7 @@
 
 ## 2. The contested destination
 
-- [ ] 2_1 Award a contested destination to the repository's own declaration
+- [x] 2_1 Award a contested destination to the repository's own declaration — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d1-contested-groups-are-recomputed-from-the-selected-entries-not-carried-on-the-wire, design.md#d2-the-favoured-member-claims-first-copy-before-link-yields-inside-the-group-only, design.md#d3-what-was-already-there-is-observed-before-anything-is-written, design.md#d4-the-adjudication, specs/worktree-panel/spec.md#a-destination-two-declarations-may-both-name-is-held-by-the-repository-s-own
   - **Acceptance**:
