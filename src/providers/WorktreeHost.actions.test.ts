@@ -32,7 +32,13 @@ import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTree } from "../worktree/types";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import type { PaneFact, SessionRecord } from "../worktree/worktreeBlockers";
-import { createWorktreeHost, type WorktreeActions, type WorktreeHost, type WorktreeSurface } from "./WorktreeHost";
+import {
+  createWorktreeHost,
+  type WorktreeActions,
+  type WorktreeHost,
+  type WorktreeHostOptions,
+  type WorktreeSurface,
+} from "./WorktreeHost";
 
 const MAIN_PATH = "/repo";
 const FEAT_PATH = "/repo-wt/feat";
@@ -313,6 +319,7 @@ async function builtHost(
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
+    previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"];
     /** What the ref reader should answer. */
     readRefs?: (input: RepoRefsInput) => Promise<RepoRefsRead>;
     /** Collects every input the ref reader was handed. */
@@ -443,6 +450,7 @@ async function builtHost(
     ...(over.issueDebrisAuthorization === undefined ? {} : { issueDebrisAuthorization: over.issueDebrisAuthorization }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
     ...(over.readProvisioning === undefined ? {} : { readProvisioning: over.readProvisioning }),
+    ...(over.previewProvisioningPorts === undefined ? {} : { previewProvisioningPorts: over.previewProvisioningPorts }),
     ...(over.readRefs === undefined && over.refsInputs === undefined
       ? {}
       : {
@@ -3061,9 +3069,13 @@ describe("[D5] a switch is a new request with its own identity", () => {
   }
 
   /** A host whose form is already open with the asimov offer published. */
-  async function opened(readProvisioning: (main: string, prefer?: string) => Promise<ProvisionModel>) {
+  async function opened(
+    readProvisioning: (main: string, prefer?: string) => Promise<ProvisionModel>,
+    previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"],
+  ) {
     const h = await builtHost(undefined, false, {
       readProvisioning: readProvisioning as never,
+      ...(previewProvisioningPorts === undefined ? {} : { previewProvisioningPorts }),
     });
     h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
@@ -3089,6 +3101,40 @@ describe("[D5] a switch is a new request with its own identity", () => {
     // A NEW id, and the old one evicted with it: a submission naming the
     // superseded offer would name the model the user stopped looking at.
     expect((offers[1] as { offerId: string }).offerId).not.toBe((offers[0] as { offerId: string }).offerId);
+    h.dispose();
+  });
+
+  it("previews once for the initial offer and once for a switched-provider offer", async () => {
+    const previewed: string[][] = [];
+    const h = await opened(
+      async (_main, prefer) => ({
+        ...forProvider(prefer),
+        ports: [
+          {
+            id: "port",
+            name: prefer === "orca" ? "ORCA_PORT" : "APP_PORT",
+            source: prefer === "orca" ? "orca.yaml" : "asimov/worktree.yaml",
+          },
+        ],
+      }),
+      async (ports) => {
+        previewed.push(ports.map((item) => item.name));
+        return ports.map((item) => ({ ...item, port: item.name === "ORCA_PORT" ? 5184 : 5183 }));
+      },
+    );
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+
+    const offers = offersIn(h.view);
+    expect(previewed).toEqual([["APP_PORT"], ["ORCA_PORT"]]);
+    expect(offers.map((offer) => offer.model.ports[0]?.port)).toEqual([5183, 5184]);
     h.dispose();
   });
 
@@ -3152,6 +3198,55 @@ describe("[D5] a switch is a new request with its own identity", () => {
     const offers = offersIn(h.view);
     expect(offers).toHaveLength(2);
     expect(pathsIn(offers[1])).toEqual([".env"]);
+    h.dispose();
+  });
+
+  it("does not publish a superseded offer whose preview resolves late", async () => {
+    let releaseOrca: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      releaseOrca = resolve;
+    });
+    const h = await opened(
+      async (_main, prefer) => ({
+        ...forProvider(prefer),
+        ports: [
+          {
+            id: "port",
+            name: prefer === "orca" ? "ORCA_PORT" : "APP_PORT",
+            source: "provider",
+          },
+        ],
+      }),
+      async (ports) => {
+        if (ports[0]?.name === "ORCA_PORT") {
+          await held;
+        }
+        return ports.map((item) => ({ ...item, port: item.name === "ORCA_PORT" ? 5184 : 5183 }));
+      },
+    );
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 2,
+      provider: "asimov",
+    });
+    await settle();
+    expect(offersIn(h.view)).toHaveLength(2);
+
+    releaseOrca?.();
+    await settle();
+    expect(offersIn(h.view)).toHaveLength(2);
+    expect(offersIn(h.view).at(-1)?.model.ports[0]).toMatchObject({ name: "APP_PORT", port: 5183 });
     h.dispose();
   });
 
@@ -5140,6 +5235,92 @@ describe("the provisioning a create is actually given", () => {
   const creates = (calls: Array<[string, ...unknown[]]>) => calls.filter(([name]) => name === "createWorktree");
   const given = (calls: Array<[string, ...unknown[]]>) =>
     (creates(calls)[0]?.[1] as { provision?: readonly { path: string; mode: string }[] } | undefined)?.provision;
+
+  it("previews named ports before issuing the offer", async () => {
+    const previews: Array<{ names: readonly string[]; paths: readonly string[] }> = [];
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      ports: [{ id: "port-a", name: "APP", source: "asimov/worktree.yaml" }],
+    };
+    const built = await builtHost(undefined, false, {
+      readProvisioning: async () => model,
+      previewProvisioningPorts: async (ports, paths) => {
+        previews.push({ names: ports.map((item) => item.name), paths });
+        return ports.map((item) => ({ ...item, port: 5183 }));
+      },
+    });
+
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    expect(offer?.type === "worktreeProvisionOffer" && offer.model.ports[0]).toMatchObject({ name: "APP", port: 5183 });
+    expect(previews).toEqual([{ names: ["APP"], paths: expect.arrayContaining([MAIN_PATH]) }]);
+    built.dispose();
+  });
+
+  it("issues one unavailable preview when previewing fails", async () => {
+    let attempts = 0;
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      ports: [{ id: "port-a", name: "APP", source: "asimov/worktree.yaml", port: 5000 }],
+    };
+    const built = await builtHost(undefined, false, {
+      readProvisioning: async () => model,
+      previewProvisioningPorts: async () => {
+        attempts += 1;
+        throw new Error("probe failed");
+      },
+    });
+
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    expect(attempts).toBe(1);
+    expect(offer?.type === "worktreeProvisionOffer" && offer.model.ports[0]?.port).toBeUndefined();
+    built.dispose();
+  });
+
+  it("hands selected ports to create separately from selected entries", async () => {
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      ports: [
+        { id: "port-a", name: "APP", source: "asimov/worktree.yaml", port: 5183 },
+        { id: "port-b", name: "APP", source: "asimov/worktree.yaml", port: 5183 },
+      ],
+    };
+    const built = await builtHost(undefined, false, { readProvisioning: async () => model });
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    if (offer?.type !== "worktreeProvisionOffer") {
+      throw new Error("expected provisioning offer");
+    }
+
+    built.host.handleMessage(built.view, {
+      ...REQ,
+      provision: {
+        offerId: offer.offerId,
+        itemIds: [offer.model.entries[0]?.id ?? "", offer.model.ports[1]?.id ?? ""],
+      },
+    });
+    await settle();
+
+    const request = creates(built.calls)[0]?.[1] as
+      | { provision?: readonly ProvisionModel["entries"][number][]; ports?: readonly ProvisionModel["ports"][number][] }
+      | undefined;
+    expect(new Set(offer.model.ports.map((item) => item.id)).size).toBe(2);
+    expect(request?.provision).toEqual([offer.model.entries[0]]);
+    expect(request?.ports).toEqual([offer.model.ports[1]]);
+    built.dispose();
+  });
 
   it("hands over the host's own entries, never a path the webview spelled", async () => {
     const { host, view, calls, offer, dispose } = await formWithOffer();

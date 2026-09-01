@@ -53,7 +53,7 @@ The lock extraction and result skeleton can start together. Everything after the
     4. `src/worktree/worktreePorts.ts`: update `/.env.worktree` through `addToGitExclude` after the claim transaction; preserve committed successes on lock-release failure and return typed batch warnings for lock release or exclude failure.
     5. `src/worktree/worktreePorts.test.ts`: cover concurrent allocators; every incomplete-list shape; sibling exclusion; unreadable or malformed claims; duplicate and invalid names or values; retained, partial and conflicting files; target substitution; bounded probes; atomic failure; and warnings.
 
-- [ ] 1_5 Put previews in host-issued offers and redeem selected ports only
+- [x] 1_5 Put previews in host-issued offers and redeem selected ports only — verified: pnpm exec vitest run 'src/providers/WorktreeHost.test.ts' 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit -- --maxWorkers=4 exit 0
   - **Deps**: 1_3, 1_4
   - **Refs**: design.md D1, design.md D8; specs/worktree-panel/spec.md#{a-named-port-carries-a-numeric-preview, every-selected-port-gets-its-own-outcome}
   - **Boundary**: the host resolves ids to its stored `ProvisionPort` values; no name or preview from the webview reaches create

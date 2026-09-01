@@ -15,6 +15,7 @@ import type {
   ProbeBase,
   ProvisionEntry,
   ProvisionModel,
+  ProvisionPort,
   ProvisionProvider,
   ProvisionSelection,
   ResolvedDisposition,
@@ -242,6 +243,11 @@ export interface WorktreeHostOptions {
    * checkout that declares it, not to the worktree being made from it.
    */
   readProvisioning?(mainWorktree: string, prefer?: ProvisionProvider["id"]): Promise<ProvisionModel>;
+  /** Best-effort numeric previews, computed from the current sibling paths before each offer is issued. */
+  previewProvisioningPorts?(
+    ports: readonly ProvisionPort[],
+    worktreePaths: readonly string[],
+  ): Promise<readonly ProvisionPort[]>;
   /**
    * Enumerate a repository's local branches. Absent — every surface but the
    * real extension entry point — and the create form gets no list, exactly as
@@ -344,6 +350,8 @@ export interface WorktreeActions {
      * nothing, which is every create made before this existed.
      */
     provision?: readonly ProvisionEntry[];
+    /** Ports resolved from the same host-held offer, kept separate from path-bearing entries. */
+    ports?: readonly ProvisionPort[];
     origin?: WorktreeSurface;
   }): Promise<void>;
   removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
@@ -609,6 +617,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * unreachable — which is the same answer as an expired id.
    */
   const offers = createProvisionOfferStore();
+  const previewProvisioning = async (repo: WorktreeRepo, model: ProvisionModel): Promise<ProvisionModel> => {
+    const preview = options.previewProvisioningPorts;
+    if (preview === undefined) {
+      return model;
+    }
+    try {
+      return {
+        ...model,
+        ports: await preview(
+          model.ports,
+          repo.worktrees.map((worktree) => worktree.displayPath),
+        ),
+      };
+    } catch {
+      return {
+        ...model,
+        ports: model.ports.map(({ port: _preview, ...item }) => item),
+      };
+    }
+  };
   /**
    * Provider reads in flight, marked BEFORE the await.
    *
@@ -1950,6 +1978,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // a named follow-up, so the user's recovery today is to reopen the
         // dialog.
         let selected: readonly ProvisionEntry[] | undefined;
+        let selectedPorts: readonly ProvisionPort[] | undefined;
         if (msg.provision !== undefined) {
           // Checked at RUNTIME like its three neighbours above. It was the one
           // field that got only a `!== undefined` before `.offerId` and
@@ -1979,7 +2008,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             return;
           }
           const wanted = new Set(msg.provision.itemIds);
-          selected = offered.entries.filter((e) => wanted.has(e.id));
+          selected = offered.entries.filter((entry) => wanted.has(entry.id));
+          selectedPorts = offered.ports.filter((port) => wanted.has(port.id));
         }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
           const request = {
@@ -1989,6 +2019,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             disposition: msg.disposition,
             afterCreate: msg.afterCreate,
             ...(selected === undefined ? {} : { provision: selected }),
+            ...(selectedPorts === undefined ? {} : { ports: selectedPorts }),
             origin: surface,
           };
           if (msg.afterCreate.kind !== "agent") {
@@ -2184,7 +2215,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         const mine = msg.switch;
         void options
           .readProvisioning(repo.mainPath, msg.provider)
-          .then((model) => {
+          .then(async (model) => {
             if (disposed || !surfaces.has(surface)) {
               return;
             }
@@ -2201,10 +2232,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
               return;
             }
+            const previewed = await previewProvisioning(repo, model);
+            if (
+              disposed ||
+              !surfaces.has(surface) ||
+              provisionSwitch.get(slot) !== mine ||
+              liveOpening.get(key) !== msg.opening
+            ) {
+              return;
+            }
             // A fresh id, and the old one evicted with it: a submission naming
             // the superseded offer would name the model the user is no longer
             // looking at.
-            const offer = offers.issue(offerKey, model);
+            const offer = offers.issue(offerKey, previewed);
             surface.post({
               type: "worktreeProvisionOffer",
               repoId: msg.repoId,
@@ -2330,7 +2370,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           provisionReading.set(reading, mine);
           void options
             .readProvisioning(repo.mainPath)
-            .then((model) => {
+            .then(async (model) => {
               // The surface may have detached while the file was being read. A
               // post to a dead surface is at best wasted and at worst revives an
               // offer the detach was supposed to forget (B6).
@@ -2355,7 +2395,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               if (provisionReading.get(reading) !== mine || liveOpening.get(key) !== mine) {
                 return;
               }
-              const offer = offers.issue(offerKey, model);
+              const previewed = await previewProvisioning(repo, model);
+              if (
+                disposed ||
+                !surfaces.has(surface) ||
+                provisionReading.get(reading) !== mine ||
+                liveOpening.get(key) !== mine
+              ) {
+                return;
+              }
+              const offer = offers.issue(offerKey, previewed);
               surface.post({
                 type: "worktreeProvisionOffer",
                 repoId: msg.repoId,
