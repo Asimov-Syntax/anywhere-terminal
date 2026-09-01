@@ -504,3 +504,37 @@ test. (Currently unobservable — see F005.)
 - No `audit-backlog`, `external-blocker` or `risk-accepted` entries exist for this change.
 - The webview lens (`asm-review-frontend`) was skipped deliberately; if F005 is closed by landing the
   dialog halves, the next discovery round must include it.
+
+---
+
+## A016 — Every production file copy hung forever (author-found, during the 2_1 fix)
+
+- Severity: BLOCK · Confidence: HIGH (reproduced standalone) · Priority: P0 · Class: feature
+- Agent: author, via the F003 remediation's real-filesystem suite
+- File: `src/worktree/provisioning/applyEntries.ts` — `nodeApplyFsDeps.copyFileNoFollow`
+- Status: accepted · Triage:
+
+Found by writing F003's witness, not by reading the diff, and not reported by the round — a
+review reads code and this only exists at runtime.
+
+**Evidence.** `copyFileNoFollow` created both streams with `autoClose: false` and then `await`ed
+`destination_.close()` in a `finally`. A `FileHandle.close()` waits for every outstanding stream
+reference to be released, and `autoClose: false` is the guarantee that the stream never releases
+one. The promise therefore never settles. Reproduced standalone on Node v24.7.0 outside the test
+runner: the `pipeline` completes, the file is written, and `close()` hangs.
+
+**Impact.** The first file of the first entry never returns. `applyEntry` never resolves, so the
+create body never reaches `afterCreate`, the mutation result is never posted, and the
+per-repository mutation queue is held forever — every later lock, unlock, remove, prune and create
+on that repository is blocked for the life of the extension host. Strictly worse than every
+blocker the round found.
+
+**Why the suite could not see it.** `applyEntries.fake.ts` copies by assigning into a map; it has
+no file descriptors and no streams. The injected fake and the production binding disagreed about
+whether the function terminates, and only the production binding runs in production. This is the
+same shape as F003 and is the second instance in one diff, which is the finding worth keeping:
+a dependency seam that is only ever exercised through a fake is unverified, not verified.
+
+**Fix.** The streams own the handles: default `autoClose`, no manual `close()` once a stream
+exists, and an explicit close only on the path where the destination open failed before any stream
+was created.
