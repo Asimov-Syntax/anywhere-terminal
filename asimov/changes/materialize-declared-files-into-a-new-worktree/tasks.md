@@ -113,7 +113,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     6. Tests in `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/messaging/MessageRouter.test.ts`, `src/webview/worktree/WorktreeView.test.ts`: a ticked row reaches the post; an unticked one does not; a form with no offer posts no `provision`; a result message routes rather than falling into the default; a refused entry is named in the notice.
   - **Boundary**: no new wire type — task 1_1 already defined both directions; this task only connects them
 
-- [ ] 3_1 Classify on what will be written, and make one budget mean one budget
+- [x] 3_1 Classify on what will be written, and make one budget mean one budget — verified: pnpm exec vitest run 'src/worktree/provisioning/entryGate.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: design.md D5, D8, D10; .reviews/round-2.md F004, F002, F007, F016, F019, F020, F021, F022, F024
   - **Acceptance**:

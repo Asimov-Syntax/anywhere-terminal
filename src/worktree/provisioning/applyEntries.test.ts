@@ -291,6 +291,172 @@ describe("the walk is bounded", () => {
   });
 });
 
+describe("[F007/F016/F020] the budget is an exact account, not an estimate", () => {
+  const eight = (): Record<string, FakeNode> => {
+    const tree: Record<string, FakeNode> = { "/repo/big": { kind: "dir" } };
+    for (let i = 0; i < 8; i += 1) {
+      tree[`/repo/big/f${i}`] = { kind: "file", size: 1 };
+    }
+    return tree;
+  };
+
+  // Nine nodes: the entry's own directory plus eight children. Round 2 found
+  // the listing charged twice — reserved whole at `readdir`, then charged again
+  // per child — so an entry that fits its budget exactly was refused. The pair
+  // is the point: at the boundary it copies, one below it stops.
+  it("copies all nine nodes at a budget of exactly nine", async () => {
+    const { result, fs } = await apply(entry("big"), eight(), { maxNodes: 9 });
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.created).toHaveLength(9);
+  });
+
+  it("stops one node short of the budget, before writing any child", async () => {
+    const { result, fs } = await apply(entry("big"), eight(), { maxNodes: 8 });
+
+    expect(result.outcome.kind).toBe("failed");
+    expect(fs.created).toEqual(["/wt/feature/big"]);
+  });
+
+  it("refunds the bytes it precharged for a file it then skipped", async () => {
+    // Bytes are charged BEFORE the copy, because the copy is what must be
+    // stopped. A destination that already exists writes nothing, so the charge
+    // has to come back — or a skip silently spends another file's budget.
+    const tree: Record<string, FakeNode> = {
+      "/repo/pair": { kind: "dir" },
+      "/repo/pair/f0": { kind: "file", size: 1000 },
+      "/repo/pair/f1": { kind: "file", size: 1000 },
+      "/wt/feature/pair": { kind: "dir" },
+      "/wt/feature/pair/f0": { kind: "file", size: 1000 },
+    };
+    const { result, fs } = await apply(entry("pair"), tree, { maxBytes: 1500 });
+
+    expect(result.outcome.kind).toBe("copied");
+    // Unrefunded, f0's 1000 plus f1's 1000 exceeds 1500 and f1 is never written.
+    expect(fs.created).toContain("/wt/feature/pair/f1");
+  });
+
+  it("spends ONE budget across every entry it is passed to", async () => {
+    // Each entry used to get the whole budget to itself, so N entries could
+    // spend N times the cap the caller set.
+    const fs = fakeFs({
+      ...base,
+      "/repo/a": { kind: "dir" },
+      "/repo/a/f0": { kind: "file", size: 1 },
+      "/repo/a/f1": { kind: "file", size: 1 },
+      "/repo/b": { kind: "dir" },
+      "/repo/b/f0": { kind: "file", size: 1 },
+      "/repo/b/f1": { kind: "file", size: 1 },
+    });
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const shared = { ...budget(), maxNodes: 5 };
+
+    const first = await applyEntry(entry("a"), roots, shared, fs);
+    const second = await applyEntry(entry("b"), roots, shared, fs);
+
+    expect(first.outcome.kind).toBe("copied");
+    // Three nodes are already spent; `b` needs three more and only two remain.
+    expect(second.outcome.kind).toBe("failed");
+    expect(fs.created).not.toContain("/wt/feature/b/f0");
+  });
+
+  it("[F002] aborts a copy already in flight when the deadline elapses", async () => {
+    // The deadline used to be read only between nodes. One large file starting
+    // just inside it ran to completion however long it took, so the bound held
+    // on file COUNT and not on time.
+    const fs = fakeFs({ ...base, "/repo/slow": { kind: "file", size: 1 } });
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    let aborted: unknown;
+    const hangs = {
+      ...fs,
+      copyFileNoFollow: (_source: string, _destination: string, _mode: number, signal?: AbortSignal) =>
+        new Promise<number>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            aborted = signal.reason;
+            reject(signal.reason);
+          });
+        }),
+    };
+
+    const result = await applyEntry(entry("slow"), roots, { ...budget(), deadline: afterDelay(5) }, hangs);
+
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.reason).toMatch(/too long|deadline|time/i);
+    }
+    // Without the signal the copy never settles and this test times out rather
+    // than failing, so assert the abort actually reached the primitive.
+    expect(aborted).toBeInstanceOf(Error);
+  });
+});
+
+describe("[F019/F024] the walk fails loudly rather than quietly", () => {
+  it("[F019] refuses an entry whose parent chain resolves outside the worktree", async () => {
+    // `entryDestination` is built from `roots.destination.path`, while the
+    // parent walk descends from `.prepared.resolved`. They agree for every
+    // caller today; when they do not, the old code answered "nothing to do"
+    // and let the copy proceed against an unchecked parent.
+    const fs = fakeFs({
+      "/repo": { kind: "dir" },
+      "/wt": { kind: "dir" },
+      "/wt/real": { kind: "dir" },
+      "/wt/feature": { kind: "link", target: "/wt/real" },
+      "/repo/apps": { kind: "dir" },
+      "/repo/apps/web": { kind: "dir" },
+      "/repo/apps/web/.env": { kind: "file", size: 1 },
+    });
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+
+    const result = await applyEntry(entry("apps/web/.env"), roots, budget(), fs);
+
+    expect(result.outcome.kind).toBe("refused");
+    if (result.outcome.kind === "refused") {
+      expect(result.outcome.reason).toMatch(/outside/i);
+    }
+    expect(fs.created).toEqual([]);
+  });
+
+  it("[F024] still stops a later entry, having not cancelled the deadline it shares", { timeout: 3000 }, async () => {
+    // One deadline now spans every entry (F007). Cancelling it when the FIRST
+    // entry returns leaves every later entry running against a timer that can
+    // no longer fire, so an in-flight copy hangs forever.
+    const fs = fakeFs({
+      ...base,
+      "/repo/fast": { kind: "file", size: 1 },
+      "/repo/slow": { kind: "file", size: 1 },
+    });
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const deps = {
+      ...fs,
+      copyFileNoFollow: (source: string, destination: string, mode: number, signal?: AbortSignal) =>
+        source.endsWith("fast")
+          ? fs.copyFileNoFollow(source, destination, mode, signal)
+          : new Promise<number>((_resolve, reject) => {
+              signal?.addEventListener("abort", () => reject(signal.reason));
+            }),
+    };
+    const shared = { ...budget(), deadline: afterDelay(40) };
+
+    const first = await applyEntry(entry("fast"), roots, shared, deps);
+    const second = await applyEntry(entry("slow"), roots, shared, deps);
+
+    expect(first.outcome.kind).toBe("copied");
+    expect(second.outcome.kind).toBe("failed");
+  });
+});
+
 describe("a link points at the main checkout, or says the platform would not let it", () => {
   const linkable: Record<string, FakeNode> = {
     "/repo/.env": { kind: "file", size: 12 },

@@ -52,6 +52,8 @@ export type EntryVerdict =
  * authoritative one (worktree-apply.md § 2.1). Matched on the basename, so a
  * lockfile nested in a package is refused like one at the root.
  */
+// Lower-cased, and matched lower-cased: macOS and Windows are case-insensitive,
+// so `PNPM-LOCK.YAML` names the same file the rule is about (round-2 F004).
 const LOCKFILES: ReadonlySet<string> = new Set([
   "package-lock.json",
   "npm-shrinkwrap.json",
@@ -59,9 +61,9 @@ const LOCKFILES: ReadonlySet<string> = new Set([
   "yarn.lock",
   "bun.lockb",
   "bun.lock",
-  "Cargo.lock",
+  "cargo.lock",
   "poetry.lock",
-  "Gemfile.lock",
+  "gemfile.lock",
   "composer.lock",
 ]);
 
@@ -117,13 +119,21 @@ function hasBackslash(p: string): boolean {
  *
  * `node_modules` is the one rule that reads mode, because it is a rule about
  * SHARING a dependency tree — which a copy does not do.
+ *
+ * Classified on the RESOLVED destination, never on the spelling. Round 1 read
+ * `path.posix.basename(entry.path)` while admission resolved with
+ * `path.resolve`, and every spelling those two disagree about walked straight
+ * past the rule: `pnpm-lock.yaml/.` has basename `"."`, `a/../node_modules`
+ * has basename `node_modules` only after resolution. Fixing the one spelling a
+ * finding quotes leaves the instrument that made it work (round-2 F004), so
+ * the rule now reads the same string the walk will write to.
  */
-function refusedMaterial(entry: ProvisionEntry): string | null {
-  const base = path.posix.basename(entry.path);
+function refusedMaterial(resolvedDestination: string, mode: ProvisionEntry["mode"]): string | null {
+  const base = path.basename(resolvedDestination).toLowerCase();
   if (LOCKFILES.has(base)) {
     return "a lockfile is never brought over — this branch's own lockfile is the authoritative one";
   }
-  if (base === "node_modules" && entry.mode === "link") {
+  if (base === "node_modules" && mode === "link") {
     return "node_modules is never linked: a shared tree defeats per-branch lockfiles and corrupts concurrent installs";
   }
   return null;
@@ -140,10 +150,6 @@ export async function admitEntry(
   roots: EntryGateRoots,
   deps: ResolvedPathInsideDeps = {},
 ): Promise<EntryVerdict> {
-  const material = refusedMaterial(entry);
-  if (material !== null) {
-    return { ok: false, reason: material };
-  }
   if (isAbsoluteSpelling(entry.path)) {
     return { ok: false, reason: "an entry names a path relative to the repository, not an absolute one" };
   }
@@ -155,6 +161,14 @@ export async function admitEntry(
 
   const source = path.resolve(roots.source.path, entry.path);
   const destination = path.resolve(roots.destination.path, entry.path);
+
+  // Resolution is lexical and touches no filesystem, so this is still ahead of
+  // every read — the ordering rule was "no resolution before a name refusal",
+  // and `path.resolve` is not one.
+  const material = refusedMaterial(destination, entry.mode);
+  if (material !== null) {
+    return { ok: false, reason: material };
+  }
 
   // Both, separately, and both must hold. Checked in parallel because neither
   // answer depends on the other and a refusal names which side failed anyway.

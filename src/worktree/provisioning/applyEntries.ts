@@ -46,6 +46,16 @@ export interface LstatLike {
 export interface ApplyFsDeps {
   /** No-follow by definition — reports the link, never its target. */
   lstat(p: string): Promise<LstatLike>;
+  /**
+   * Resolve every component, the way the kernel will when it walks the path.
+   *
+   * REQUIRED, not optional. `ResolvedPathInsideDeps` declares it optional with
+   * an internal fallback, and inheriting that optionality is what let
+   * `nodeApplyFsDeps` omit it while the fake supplied one — D6's two-sided
+   * check then ran on lexical dirnames in production only (round-1 F003,
+   * round-2 F022). A binding that forgets it now fails to compile.
+   */
+  realpath(p: string): Promise<string>;
   readdir(p: string): Promise<readonly string[]>;
   readlink(p: string): Promise<string>;
   /** Non-recursive. `EEXIST` is expected and handled, never pre-empted by a probe. */
@@ -56,7 +66,7 @@ export interface ApplyFsDeps {
    * bytes written. Rejects `ELOOP` when the source is a symlink and `EEXIST`
    * when the destination already exists.
    */
-  copyFileNoFollow(source: string, destination: string, mode: number): Promise<number>;
+  copyFileNoFollow(source: string, destination: string, mode: number, signal?: AbortSignal): Promise<number>;
 }
 
 /**
@@ -70,6 +80,15 @@ export interface ApplyBudget {
   readonly maxNodes: number;
   readonly maxBytes: number;
   readonly deadline: Deadline;
+  /**
+   * Spent so far, ACROSS every entry this budget is passed to.
+   *
+   * Mutable and shared on purpose. Holding these as locals inside `applyEntry`
+   * meant only the deadline was ever apply-wide, so "one budget for the whole
+   * apply" bounded wall clock and let nodes and bytes multiply by the entry
+   * count (round-2 F007). Callers start them at zero and do not read them.
+   */
+  spent?: { nodes: number; bytes: number };
 }
 
 interface Detail {
@@ -139,8 +158,18 @@ export async function applyEntry(
 
   const details: Detail[] = [];
   let dropped = 0;
-  let nodes = 0;
-  let bytes = 0;
+  const spent = (budget.spent ??= { nodes: 0, bytes: 0 });
+
+  // The deadline stops work ALREADY RUNNING, not only the next node. Polling
+  // between nodes bounds how many operations start and bounds no single one, so
+  // a legal-sized copy over a slow disk outran the budget entirely (round-2
+  // F002). `pipeline` takes a signal; this is what feeds it.
+  const stopping = new AbortController();
+  const abort = (): void => stopping.abort(new BudgetExceeded("provisioning took too long and was stopped partway"));
+  if (budget.deadline.expired) {
+    abort();
+  }
+  void budget.deadline.elapsed.then(abort);
 
   /**
    * `details` rides one `postMessage` and is documented display-ready, so its
@@ -162,18 +191,16 @@ export async function applyEntry(
   /**
    * Resolve a directory the way the KERNEL will when it walks it.
    *
-   * The fallback is `fs.realpath`, not the spelled path — the same one
-   * `resolvedPathBoundary.ts` uses. Falling back to the spelling made an
-   * omitted dependency degrade silently into lexical resolution, which is
-   * exactly how round-1 F003 shipped: the test fake supplied `realpath` and
-   * `nodeApplyFsDeps` did not, so the suite proved a path production never ran.
+   * `deps.realpath` is required on `ApplyFsDeps`, so there is no fallback to
+   * omit and no way for a binding to degrade this into lexical resolution —
+   * the optionality is what shipped round-1 F003 (round-2 F022).
    *
-   * A path that cannot be resolved at all still answers with its spelling; the
+   * A path that cannot be resolved AT ALL still answers with its spelling; the
    * containment check downstream then refuses it.
    */
   const realpath = async (p: string): Promise<string> => {
     try {
-      return await (deps.realpath ?? ((q: string) => fs.realpath(q)))(p);
+      return await deps.realpath(p);
     } catch {
       return p;
     }
@@ -187,13 +214,25 @@ export async function applyEntry(
    * read that produced it.
    */
   const spend = (extra = 1): void => {
+    check(extra);
+    spent.nodes += extra;
+  };
+
+  /**
+   * Would `extra` more nodes fit — without taking them.
+   *
+   * The listing check needs this: reserving `children.length` and then letting
+   * each child spend one charged every child twice, so `maxNodes: 20_000`
+   * admitted about ten thousand files and the refusal named a number the walk
+   * could never reach (round-2 F016).
+   */
+  const check = (extra: number): void => {
     if (budget.deadline.expired) {
       throw new BudgetExceeded("provisioning took too long and was stopped partway");
     }
-    if (nodes + extra > budget.maxNodes) {
+    if (spent.nodes + extra > budget.maxNodes) {
       throw new BudgetExceeded(`too many files to bring over — stopped after ${budget.maxNodes}`);
     }
-    nodes += extra;
   };
 
   /**
@@ -204,10 +243,23 @@ export async function applyEntry(
    * cap simply did not apply to a one-file entry (round-1 F002).
    */
   const spendBytes = (size: number): void => {
-    if (bytes + size > budget.maxBytes) {
+    if (spent.bytes + size > budget.maxBytes) {
       throw new BudgetExceeded(`too large to bring over — stopped after ${budget.maxBytes} bytes`);
     }
-    bytes += size;
+    spent.bytes += size;
+  };
+
+  /**
+   * Give back a precharge the write did not spend, and reconcile against what
+   * it did.
+   *
+   * The precharge is what BOUNDS the operation — it has to happen before the
+   * copy — but `lstat`'s size is an estimate and a skipped destination costs
+   * nothing at all. Keeping either made the cap arbitrarily tighter on a re-run
+   * than on a first run (round-2 F020, F021).
+   */
+  const settleBytes = (precharged: number, written: number): void => {
+    spent.bytes += written - precharged;
   };
 
   /** Relative spelling of an absolute destination, for a `details` row. */
@@ -293,8 +345,17 @@ export async function applyEntry(
    */
   async function ensureParents(): Promise<NodeResult> {
     const relative = path.relative(roots.destination.prepared.resolved, path.dirname(entryDestination));
-    if (relative === "" || relative.startsWith("..")) {
+    if (relative === "") {
       return WRITTEN;
+    }
+    // The entry's destination is built from `roots.destination.path` and this
+    // walks down from `.prepared.resolved`; they agree for every caller today
+    // because `validateCreatePath` hands over a normalized path with no
+    // symlinked component. Resting on an invariant three modules away is
+    // fragile enough — but resting on it and answering "nothing to do" when it
+    // fails is the wrong failure mode (round-2 F019).
+    if (relative.startsWith("..")) {
+      return { kind: "refused", reason: "a parent directory of this entry resolves outside the worktree" };
     }
     let at = roots.destination.prepared.resolved;
     for (const segment of relative.split(path.sep)) {
@@ -323,9 +384,10 @@ export async function applyEntry(
     if (node.isFile()) {
       spendBytes(node.size);
       try {
-        await deps.copyFileNoFollow(source, destination, node.mode);
+        settleBytes(node.size, await deps.copyFileNoFollow(source, destination, node.mode, stopping.signal));
       } catch (error) {
         if (codeOf(error) === "EEXIST") {
+          settleBytes(node.size, 0);
           return { kind: "skipped", reason: "already there" };
         }
         throw error;
@@ -349,7 +411,8 @@ export async function applyEntry(
     }
 
     const children = await deps.readdir(source);
-    spend(children.length);
+    // Checked, not reserved — each child charges itself below.
+    check(children.length);
     for (const child of children) {
       const childDestination = path.join(destination, child);
       const result = await walk(path.join(source, child), childDestination);
@@ -420,8 +483,6 @@ export async function applyEntry(
       return step({ kind: "failed", reason: error.message }, reported());
     }
     return step({ kind: "failed", reason: messageOf(error) }, reported());
-  } finally {
-    budget.deadline.cancel();
   }
 }
 
@@ -442,7 +503,7 @@ export const nodeApplyFsDeps: ApplyFsDeps & ResolvedPathInsideDeps = {
   realpath: (p) => fs.realpath(p),
   mkdir: async (p, mode) => void (await fs.mkdir(p, { mode })),
   symlink: (target, p) => fs.symlink(target, p),
-  copyFileNoFollow: async (source, destination, mode) => {
+  copyFileNoFollow: async (source, destination, mode, signal) => {
     // Windows has no O_NOFOLLOW; `?? 0` degrades to a following open there
     // rather than throwing, and the platform's own symlink story is why link
     // entries degrade to copies on it at all (D7).
@@ -464,7 +525,7 @@ export const nodeApplyFsDeps: ApplyFsDeps & ResolvedPathInsideDeps = {
       }
       const destination_ = await fs.open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
       unstreamed = false;
-      await pipeline(source_.createReadStream(), destination_.createWriteStream());
+      await pipeline(source_.createReadStream(), destination_.createWriteStream(), { signal });
       return stat.size;
     } finally {
       if (unstreamed) {

@@ -195,6 +195,58 @@ describe("some material is refused however it was asked for", () => {
   });
 });
 
+describe("[F004] every spelling of a refused name is refused", () => {
+  // Round 1 fixed the backslash this block already covers and left the
+  // instrument that made it work: the rule read `path.posix.basename` while
+  // admission resolved with `path.resolve`. Acceptance is per SPELLING now,
+  // not per rule — the chair reproduced all four of these admitting.
+  it.each([
+    ["pnpm-lock.yaml", "copy"],
+    ["pnpm-lock.yaml/.", "copy"],
+    ["./pnpm-lock.yaml", "copy"],
+    ["a/../pnpm-lock.yaml", "copy"],
+    ["PNPM-LOCK.YAML", "copy"],
+    ["Cargo.lock", "copy"],
+    ["deps/../Gemfile.lock", "copy"],
+  ] as const)("refuses the lockfile spelled %s", async (spelling, mode) => {
+    const deps = fs();
+    const verdict = await admitEntry(entry(spelling, mode), await gate(deps), deps);
+
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.reason).toMatch(/lockfile/i);
+    }
+  });
+
+  it.each([
+    ["node_modules"],
+    ["node_modules/."],
+    ["./node_modules"],
+    ["a/../node_modules"],
+    ["NODE_MODULES"],
+  ])("refuses linking node_modules spelled %s", async (spelling) => {
+    const deps = fs();
+    const verdict = await admitEntry(entry(spelling, "link"), await gate(deps), deps);
+
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.reason).toMatch(/node_modules/i);
+    }
+  });
+
+  it("still admits a lockfile-like name that is not one, so the rule is not just refusing", async () => {
+    const deps = fs();
+
+    expect((await admitEntry(entry("pnpm-lock.yaml.example"), await gate(deps), deps)).ok).toBe(true);
+    expect((await admitEntry(entry("node_modules.txt"), await gate(deps), deps)).ok).toBe(true);
+  });
+
+  it("copies node_modules when asked to copy it — the rule is about SHARING", async () => {
+    const deps = fs();
+    expect((await admitEntry(entry("node_modules", "copy"), await gate(deps), deps)).ok).toBe(true);
+  });
+});
+
 describe("[F004] a spelling cannot walk past a refusal", () => {
   // `path.posix.basename` does not split a backslash, so every basename rule
   // below matched nothing — while `path.resolve` on Windows DOES split it, so
