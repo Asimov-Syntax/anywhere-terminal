@@ -1638,7 +1638,7 @@ export class WorktreeController {
    * which one comes second is not the controller's choice.
    */
   private rescope(result: WorktreeActionResult, present?: ReadonlySet<string>): WorktreeActionResult {
-    const worktreeId = result.worktreeId;
+    const worktreeId = result.worktreeId ?? result.canonicalId;
     if (worktreeId === undefined) {
       return result;
     }
@@ -1649,10 +1649,28 @@ export class WorktreeController {
     }
     const rows = present ?? new Set((this.tree?.repos ?? []).flatMap((r) => r.worktrees.map((w) => w.id)));
     if (rows.has(worktreeId)) {
-      return result;
+      // Both directions, because a create's notice arrives BEFORE the row it is
+      // about: every real create is re-scoped first and reattached here, and a
+      // one-way move left it at the repository anchor forever, still counted
+      // against the orphan bound that can evict it (round-5 F017).
+      const { orphanedLabel: _shown, ...named } = result;
+      return result.worktreeId === undefined ? { ...named, worktreeId } : result;
     }
+    const label = result.orphanedLabel ?? this.departed.get(worktreeId);
     const { worktreeId: _gone, ...rest } = result;
-    return { ...rest, orphanedLabel: result.orphanedLabel ?? this.departed.get(worktreeId) ?? worktreeId };
+    return {
+      ...rest,
+      // Identity is kept only for a row that has NOT ARRIVED yet. A row that
+      // DEPARTED can be recreated at the same id, and handing the old notice
+      // back to it would report someone else's action on a worktree that never
+      // had it — so `departed`, which reconciliation has already filled by the
+      // time a removal's result lands, is what tells the two apart. An id aged
+      // out of that bounded map reads as never-arrived; the notice is then
+      // reattachable, which is the same answer it would get if it had been made
+      // after the eviction.
+      ...(label === undefined ? { canonicalId: worktreeId } : {}),
+      orphanedLabel: label ?? worktreeId,
+    };
   }
 
   /** The reply is the next envelope, carrying the roster on the row itself. */

@@ -205,13 +205,13 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     4. `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/entryGate.test.ts`, `src/worktree/provisioning/oneOwner.test.ts`: a failed limited transfer followed by a second entry, asserting the apply-wide cap over BYTES ON DISK rather than over the counter; the three POSIX spellings admitted; one owner for the lockfile reason. The last belongs beside the directory's other structural claims, not in the behavioural suite — a correct duplicate emits identical output.
   - **Boundary**: no deletion primitive may appear in this module — D9 and the I10 gate both still hold
 
-- [ ] 5_2 Give a notice its row back when the row arrives
+- [x] 5_2 Give a notice its row back when the row arrives — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_3
   - **Refs**: .reviews/round-5.md#f017
   - **Acceptance**:
     - Outcome: A create notice re-attaches to its worktree once a rebuild carries the row
     - Verify: unit src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
-    1. `src/webview/worktree/WorktreeController.ts`: `rescope` restores `worktreeId` when the incoming row set contains the `orphanedLabel` it was moved to. The round-4 fix keyed dedupe on the canonical identity but left the move one-way, so a notice for a worktree that is now live stayed repository-scoped and stayed in the orphan pool, where the orphan bound can evict it (F017).
+    1. `src/webview/worktree/worktreeViewTypes.ts`, `src/webview/worktree/WorktreeController.ts`: keep the row's id in a `canonicalId` of its own and restore `worktreeId` from it when the incoming row set carries it. `orphanedLabel` is what the notice CALLS the row and may be a human label, so it cannot be read back as an id — identity and the render anchor are two facts. The round-4 fix keyed dedupe on the canonical identity but left the move one-way, so a notice for a worktree that is now live stayed repository-scoped and stayed in the orphan pool, where the orphan bound can evict it (F017).
     2. `src/webview/worktree/WorktreeController.test.ts`: a create whose row arrives on the NEXT rebuild — assert the notice is worktree-scoped again and is no longer counted as an orphan.
   - **Boundary**: no new notice — provisioning reports on the create's own result, never beside it

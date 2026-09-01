@@ -2373,6 +2373,62 @@ describe("what a mutation did comes back to the panel", () => {
     });
   });
 
+  it("[round-5 F017] gives the notice its row back once the rebuild carries it", () => {
+    // The round-4 fix keyed dedupe on the canonical identity and left the move
+    // one-way: `rescope` drops `worktreeId` and then returns immediately for
+    // anything without one, so no rebuild could ever put it back. The notice
+    // stayed at the repository anchor and stayed in the orphan pool, where the
+    // W6 bound can evict a live worktree's own report.
+    const h = ready();
+    const worktreeId = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/brand-new";
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId: REPO,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+    });
+    // The premise, so the assertion below is not passing for the wrong reason:
+    // the merged notice really is repository-scoped at this point.
+    expect(results(h)).toHaveLength(1);
+    expect(results(h)[0]).not.toHaveProperty("worktreeId");
+
+    // The rebuild production sends next: the same fixture plus the new row.
+    const tree = singleRepoTree();
+    const repo = tree.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    const sibling = repo.worktrees[0];
+    if (!sibling) {
+      throw new Error("fixture lost its worktrees");
+    }
+    repo.worktrees = [...repo.worktrees, { ...sibling, id: worktreeId }];
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree,
+      presence: singleRepoPresence(1_000_000),
+    });
+
+    // The whole assembly the round asked for: create result, provision result,
+    // then the rebuild that carries the row — one notice, on that row, saying
+    // both halves.
+    expect(results(h)).toHaveLength(1);
+    expect(results(h)[0]).toMatchObject({
+      action: "create",
+      worktreeId,
+      provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+    });
+    // And out of the orphan pool: the W6 bound only counts rows nothing can
+    // retire, and this one now has a row that will.
+    expect(results(h)[0]).not.toHaveProperty("orphanedLabel");
+  });
+
   it("[F017] folds it onto a create the tree does not carry YET, which every real create is", () => {
     // The test above picks a worktree already in the tree, so `rescope` leaves
     // its id alone and the merge key matches. A worktree made a moment ago is

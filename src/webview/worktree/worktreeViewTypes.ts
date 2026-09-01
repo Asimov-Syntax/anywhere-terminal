@@ -125,6 +125,16 @@ export interface WorktreeActionResult {
    * to name what it is reporting on.
    */
   orphanedLabel?: string;
+  /**
+   * The row this notice is about, kept across a re-scope.
+   *
+   * Separate from `orphanedLabel` because that is what the notice CALLS the row
+   * — a human name when one is known — and a name cannot be read back as an id.
+   * Identity and the render anchor are two facts, and a notice that loses the
+   * first can never be reattached when the row it describes finally appears
+   * (.reviews/round-5.md F017).
+   */
+  canonicalId?: string;
   /** The action succeeded; what it was asked to do next did not. */
   openFailed?: string;
   /**
