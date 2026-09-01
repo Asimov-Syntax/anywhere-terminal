@@ -68,14 +68,19 @@ async function drain(): Promise<void> {
   }
 }
 
-/** One repo per folder, each listing only its own main worktree. */
-function gitFor(folders: string[]) {
+/** One repository per folder, optionally with linked worktrees in the same listing. */
+function gitFor(folders: string[], linkedByRepo: Readonly<Record<string, readonly string[]>> = {}) {
   const run = vi.fn(async (args: readonly string[], cwd: string): Promise<GitCommandResult> => {
     if (args[0] === "--version") {
       return res({ stdout: Buffer.from("git version 2.50.1\n") });
     }
     if (args[0] === "worktree") {
-      return res({ stdout: nul([`worktree ${cwd}`, "HEAD abc", "branch refs/heads/main"]) });
+      const linked = (linkedByRepo[cwd] ?? []).map((worktree, index) => [
+        `worktree ${worktree}`,
+        `HEAD ${index + 1}`,
+        `branch refs/heads/linked-${index + 1}`,
+      ]);
+      return res({ stdout: nul([`worktree ${cwd}`, "HEAD abc", "branch refs/heads/main"], ...linked) });
     }
     return res({ stdout: Buffer.from(`${cwd}/.git\n`) });
   });
@@ -85,8 +90,12 @@ function gitFor(folders: string[]) {
 }
 
 /** Real pool, real host, real gate — all on the one clock vi.useFakeTimers controls. */
-async function joined(folders: string[] = ["/a", "/b"], actions?: WorktreeActions) {
-  const git = gitFor(folders);
+async function joined(
+  folders: string[] = ["/a", "/b"],
+  actions?: WorktreeActions,
+  linkedByRepo: Readonly<Record<string, readonly string[]>> = {},
+) {
+  const git = gitFor(folders, linkedByRepo);
   const factory = watcherFactory();
   const pool = createWatcherPool({
     createFileSystemWatcher: factory.fn,
@@ -236,15 +245,31 @@ describe("assessment traffic against the shared mutation queue", () => {
     const started: string[] = [];
     const waiting: Array<() => void> = [];
     const removals: string[] = [];
+    const tails = new Map<string, Promise<void>>();
+    const enqueue = (repoId: string, label: string, hold: boolean): Promise<void> => {
+      const run = (tails.get(repoId) ?? Promise.resolve()).then(async () => {
+        started.push(label);
+        if (hold) {
+          await new Promise<void>((resolve) => waiting.push(resolve));
+        }
+      });
+      tails.set(
+        repoId,
+        run.catch(() => {}),
+      );
+      return run;
+    };
     const actions = {
-      assessRemovalReport: (target: { worktreeId: string }) => {
-        started.push(target.worktreeId);
-        return new Promise<null>((resolve) => {
-          waiting.push(() => resolve(null));
-        });
+      assessRemovalReport: async (target: { repoId: string; worktreeId: string }) => {
+        await enqueue(target.repoId, `assess:${target.worktreeId}`, true);
+        return null;
       },
-      removeWorktree: async (target: { worktreeId: string }) => {
-        removals.push(target.worktreeId);
+      removeWorktree: async (target: { repoId: string; worktreeId: string }, fingerprint: string | undefined) => {
+        const confirmed = fingerprint !== undefined;
+        await enqueue(target.repoId, `${confirmed ? "remove" : "raw"}:${target.worktreeId}`, !confirmed);
+        if (confirmed) {
+          removals.push(target.worktreeId);
+        }
       },
     } as unknown as WorktreeActions;
     return {
@@ -254,10 +279,11 @@ describe("assessment traffic against the shared mutation queue", () => {
       /** In flight right now — admitted and not yet answered. */
       inFlight: () => waiting.length,
       release: async () => {
-        for (let guard = 0; guard < 40 && waiting.length > 0; guard += 1) {
+        for (let guard = 0; guard < 80 && waiting.length > 0; guard += 1) {
           waiting.shift()?.();
           await drain();
         }
+        await drain();
       },
     };
   }
@@ -282,7 +308,7 @@ describe("assessment traffic against the shared mutation queue", () => {
     // Two repositories, one lane each — never eighty, and never one shared lane
     // that would let a busy repository hold up a question about the other.
     expect(held.inFlight()).toBe(2);
-    expect([...held.started].sort()).toEqual(["/a", "/b"]);
+    expect([...held.started].sort()).toEqual(["assess:/a", "assess:/b"]);
 
     await held.release();
   });
@@ -295,7 +321,7 @@ describe("assessment traffic against the shared mutation queue", () => {
     await drain();
     expect(held.inFlight()).toBe(1);
 
-    host.handleMessage(view, { type: "worktreeRemove", worktreeId: "/a" });
+    host.handleMessage(view, { type: "worktreeRemove", worktreeId: "/a", fingerprint: "fp-confirmed" });
     for (let i = 0; i < 10; i += 1) {
       host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: "/a", token: `late-${i}` });
     }
@@ -303,12 +329,49 @@ describe("assessment traffic against the shared mutation queue", () => {
 
     // Nothing later was admitted: the lane already had its one job, so the
     // removal is behind exactly one assessment rather than eleven.
-    expect(held.started).toEqual(["/a"]);
+    expect(held.started).toEqual(["assess:/a"]);
 
     await held.release();
     expect(held.removals, "the removal never ran").toEqual(["/a"]);
     // And the one request still owed was served afterwards, not dropped: the
     // last token wins, and the nine it superseded cost no job at all.
-    expect(held.started).toEqual(["/a", "/a"]);
+    expect(held.started).toEqual(["assess:/a", "remove:/a", "assess:/a"]);
+  });
+
+  it("bounds raw and explicit report requests together ahead of a confirmed removal", async () => {
+    const held = heldActions();
+    const { host, view } = await joined(["/a", "/b"], held.actions, { "/a": ["/a-one", "/a-two"] });
+    const second: WorktreeSurface = { isReady: () => true, post: () => {} };
+    host.attach(second).setDisplayed(true);
+
+    host.handleMessage(view, { type: "worktreeRemove", worktreeId: "/a-one" });
+    await drain();
+    expect(held.inFlight()).toBe(1);
+
+    for (let i = 0; i < 12; i += 1) {
+      host.handleMessage(view, { type: "worktreeRemove", worktreeId: i % 2 === 0 ? "/a-one" : "/a-two" });
+      host.handleMessage(second, { type: "worktreeRemoveAssess", worktreeId: "/a-two", token: `second-${i}` });
+      const churn: WorktreeSurface = { isReady: () => true, post: () => {} };
+      const attachment = host.attach(churn);
+      attachment.setDisplayed(true);
+      host.handleMessage(churn, { type: "worktreeRemove", worktreeId: "/a-one" });
+      attachment.dispose();
+    }
+    host.handleMessage(view, {
+      type: "worktreeRemove",
+      worktreeId: "/a-one",
+      fingerprint: "fp-confirmed",
+    });
+    await drain();
+
+    expect(held.inFlight()).toBe(1);
+    await held.release();
+
+    const mutationAt = held.started.indexOf("remove:/a-one");
+    expect(mutationAt, "the confirmed removal never entered the repository queue").toBeGreaterThanOrEqual(0);
+    expect(
+      held.started.slice(0, mutationAt).filter((label) => label.startsWith("raw:") || label.startsWith("assess:")),
+    ).toHaveLength(1);
+    expect(held.removals).toEqual(["/a-one"]);
   });
 });

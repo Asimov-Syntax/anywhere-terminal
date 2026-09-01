@@ -250,3 +250,17 @@
     3. Same file: keep the failed-confirmable walk and prove the same callback reaches `--force`.
     4. `src/worktree/worktreeMutationService.ts`: temporarily restore the clean fingerprint-free fallthrough, then map fingerprint presence directly to force; each mutation must fail this assembly file, and both are restored before verification.
   - **Boundary**: no production behaviour is added here; this is the menu-to-git and direct-message-to-git witness round-1 B1 was missing
+
+## 5. Review fixes
+
+- [x] 5_1 Route every report-producing request through the repository assessment lane — verified: pnpm exec vitest run 'src/providers/WorktreeHost.scale.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=1 exit 0
+  - **Deps**: 4_4
+  - **Refs**: design.md D10; .reviews/round-7.md B5; `asimov/changes/archive/260901-0348-coalesce-assessment-requests-at-the-host/design.md` D1, D2, D6
+  - **Acceptance**:
+    - Outcome: Raw fingerprint-free and explicit assessment requests collectively queue at most one assessment job per repository, while a fingerprint-bearing removal remains a mutation
+    - Verify: unit src/providers/WorktreeHost.scale.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: generalize the existing per-repository assessment lane so its pending request can be either an explicit assessment reply or a raw fingerprint-free removal intent; both replace per-surface pending state and share one outstanding queue job.
+    2. Same file: serve explicit requests through `assessRemovalReport` and raw intents through `removeWorktree(..., undefined)` so the raw path keeps its blocked mutation-result notice; fingerprint-bearing removals bypass the lane and remain non-coalescing mutations.
+    3. `src/providers/WorktreeHost.scale.test.ts`: hold the shared lane behind an unresolved capability, burst repeated and alternating requests of both kinds across worktrees and surfaces (including detach), then queue a fingerprint-bearing removal and prove at most one report job precedes it.
+  - **Boundary**: no change to the mutation queue, assessment service, fingerprint rules, raw blocked-notice result, or confirmed-removal ordering
