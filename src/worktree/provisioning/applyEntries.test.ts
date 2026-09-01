@@ -1,0 +1,253 @@
+// src/worktree/provisioning/applyEntries.test.ts
+//
+// Every case here exists because the obvious walk passes without it. The plan
+// attack on this change's ledger supplied most of them: an intermediate
+// component swapped after validation, a source swapped after `lstat`, and a
+// relative symlink that is inside the repository where it was found and outside
+// the worktree where it lands.
+
+import { describe, expect, it } from "vitest";
+import type { ProvisionEntry } from "../../types/messages";
+import { afterDelay } from "../deadline";
+import { applyEntry } from "./applyEntries";
+import { type FakeNode, fakeFs } from "./applyEntries.fake";
+import { prepareEntryGate } from "./entryGate";
+
+const MAIN = "/repo";
+const WT = "/wt/feature";
+
+const entry = (path: string, mode: "copy" | "link" = "copy"): ProvisionEntry => ({
+  id: "i1",
+  path,
+  mode,
+  source: "asimov/worktree.yaml",
+});
+
+/** Roots exist in every case; only what hangs beneath them varies. */
+const base: Record<string, FakeNode> = {
+  "/repo": { kind: "dir" },
+  "/wt": { kind: "dir" },
+  "/wt/feature": { kind: "dir" },
+};
+
+const budget = () => ({ maxNodes: 1000, maxBytes: 1 << 20, deadline: afterDelay(60_000) });
+
+async function apply(e: ProvisionEntry, tree: Record<string, FakeNode>, over: Partial<ReturnType<typeof budget>> = {}) {
+  const fs = fakeFs({ ...base, ...tree });
+  const roots = await prepareEntryGate(MAIN, WT, fs);
+  if (roots === null) {
+    throw new Error("roots did not prepare");
+  }
+  const result = await applyEntry(e, roots, { ...budget(), ...over }, fs);
+  return { result, fs };
+}
+
+describe("a copy replaces nothing that already existed", () => {
+  it("copies a plain file into the new worktree", async () => {
+    const { result, fs } = await apply(entry(".env"), { "/repo/.env": { kind: "file", mode: 0o600 } });
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.get("/wt/feature/.env")).toEqual({ kind: "file", mode: 0o600, size: 1 });
+  });
+
+  it("skips a destination that already exists rather than replacing it", async () => {
+    const { result, fs } = await apply(entry(".env"), {
+      "/repo/.env": { kind: "file", size: 7 },
+      "/wt/feature/.env": { kind: "file", size: 99 },
+    });
+    expect(result.outcome.kind).toBe("skipped");
+    // The point of the claim: the existing bytes are still the existing bytes.
+    expect(fs.nodes.get("/wt/feature/.env")).toMatchObject({ size: 99 });
+    expect(fs.created).toEqual([]);
+  });
+
+  it("skips one descendant of an existing destination directory and copies its siblings", async () => {
+    const { result, fs } = await apply(entry("config"), {
+      "/repo/config": { kind: "dir" },
+      "/repo/config/local.json": { kind: "file", size: 1 },
+      "/repo/config/other.json": { kind: "file", size: 2 },
+      "/wt/feature/config": { kind: "dir" },
+      "/wt/feature/config/local.json": { kind: "file", size: 42 },
+    });
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.get("/wt/feature/config/local.json")).toMatchObject({ size: 42 });
+    expect(fs.nodes.get("/wt/feature/config/other.json")).toMatchObject({ size: 2 });
+    // A directory entry has one outcome and many nodes; the skipped file has to
+    // be reportable or the spec's scenario cannot be observed at all.
+    expect(result.details?.map((d) => d.path)).toContain("config/local.json");
+  });
+});
+
+describe("the walk never follows something it did not check", () => {
+  it("fails rather than copying through a source that became a symlink after its lstat", async () => {
+    const fs = fakeFs({
+      ...base,
+      "/repo/.env": { kind: "file" },
+      "/outside": { kind: "dir" },
+      "/outside/secret": { kind: "file" },
+    });
+    // The swap happens between the walk's lstat and its open — the exact window
+    // a following copyFile would read through.
+    fs.beforeLstat = (p) => {
+      if (p === "/repo/.env") {
+        fs.nodes.set("/repo/.env", { kind: "link", target: "/outside/secret" });
+      }
+    };
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const result = await applyEntry(entry(".env"), roots, budget(), fs);
+    expect(result.outcome.kind).not.toBe("copied");
+    expect(fs.nodes.has("/wt/feature/.env")).toBe(false);
+  });
+
+  it("refuses to descend through a destination directory that is a symlink out of the worktree", async () => {
+    const { result, fs } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/app.json": { kind: "file" },
+      "/outside": { kind: "dir" },
+      // The destination's own parent leads out. COPYFILE_EXCL would not have
+      // noticed: it guards the final component only.
+      "/wt/feature/cfg": { kind: "link", target: "/outside" },
+    });
+    expect(result.outcome.kind).toBe("refused");
+    expect(fs.nodes.has("/outside/app.json")).toBe(false);
+  });
+
+  it("refuses a NESTED destination component that is a symlink, which the entry gate never sees", async () => {
+    // The gate checks the entry's own path; `cfg` is contained and absent, so it
+    // is admitted. The escape is one level down, which is exactly where an
+    // exclusive final-component primitive stops protecting anything.
+    const { result, fs } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/sub": { kind: "dir" },
+      "/repo/cfg/sub/app.json": { kind: "file" },
+      "/outside": { kind: "dir" },
+      "/wt/feature/cfg": { kind: "dir" },
+      "/wt/feature/cfg/sub": { kind: "link", target: "/outside" },
+    });
+    expect(fs.nodes.has("/outside/app.json")).toBe(false);
+    expect(result.details?.some((d) => /symlink/i.test(d.reason))).toBe(true);
+  });
+
+  it("reports a source directory over a destination file, rather than ENOTDIR on its children", async () => {
+    const { result } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/app.json": { kind: "file" },
+      "/wt/feature/cfg": { kind: "file" },
+    });
+    expect(["refused", "skipped"]).toContain(result.outcome.kind);
+    if (result.outcome.kind === "refused" || result.outcome.kind === "skipped") {
+      expect(result.outcome.reason).not.toMatch(/ENOTDIR/);
+    }
+  });
+
+  it("recreates an in-repo symlink as a symlink rather than dereferencing it", async () => {
+    const { result, fs } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/target.json": { kind: "file" },
+      "/repo/cfg/link.json": { kind: "link", target: "target.json" },
+      "/wt/feature/cfg": { kind: "dir" },
+      "/wt/feature/cfg/target.json": { kind: "file" },
+    });
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.get("/wt/feature/cfg/link.json")).toEqual({ kind: "link", target: "target.json" });
+  });
+
+  it("refuses a relative link that is inside at its source and outside once relocated", async () => {
+    // The plan attack's construction. `../../../inside.txt` resolves to
+    // /repo/deep/inside.txt from the source, and to /inside.txt from the
+    // destination — validating only at the source admits the escape.
+    const { result, fs } = await apply(entry("alias/tree"), {
+      "/repo/deep": { kind: "dir" },
+      "/repo/deep/a": { kind: "dir" },
+      "/repo/deep/a/b": { kind: "dir" },
+      "/repo/deep/a/b/tree": { kind: "dir" },
+      "/repo/deep/a/b/tree/link": { kind: "link", target: "../../../inside.txt" },
+      "/repo/deep/inside.txt": { kind: "file" },
+      "/repo/alias": { kind: "link", target: "deep/a/b" },
+      "/wt/feature/alias": { kind: "dir" },
+    });
+    expect(fs.nodes.has("/wt/feature/alias/tree/link")).toBe(false);
+    expect(result.details?.some((d) => /outside/i.test(d.reason))).toBe(true);
+  });
+
+  it("still recreates a relative link that is inside from BOTH sides", async () => {
+    // The companion to the case above, and the reason the check is two-sided
+    // rather than destination-only: this link is legitimate and must survive.
+    const { result, fs } = await apply(entry("alias/tree"), {
+      "/repo/deep": { kind: "dir" },
+      "/repo/deep/a": { kind: "dir" },
+      "/repo/deep/a/b": { kind: "dir" },
+      "/repo/deep/a/b/tree": { kind: "dir" },
+      "/repo/deep/a/b/tree/sibling.txt": { kind: "file" },
+      "/repo/deep/a/b/tree/link": { kind: "link", target: "sibling.txt" },
+      "/repo/alias": { kind: "link", target: "deep/a/b" },
+      "/wt/feature/alias": { kind: "dir" },
+    });
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.get("/wt/feature/alias/tree/link")).toEqual({ kind: "link", target: "sibling.txt" });
+  });
+
+  it("terminates on a symlink loop instead of expanding it", async () => {
+    const { result, fs } = await apply(entry("loop"), {
+      "/repo/loop": { kind: "dir" },
+      "/repo/loop/self": { kind: "link", target: "." },
+    });
+    // The claim is termination, not any particular outcome: a walk that
+    // traversed the link would not have returned at all.
+    expect(result.outcome.kind).toBeDefined();
+    expect(fs.created.length).toBeLessThan(10);
+  });
+
+  it("refuses a special file", async () => {
+    const { result, fs } = await apply(entry("sock"), { "/repo/sock": { kind: "special" } });
+    expect(result.outcome.kind).toBe("refused");
+    expect(fs.created).toEqual([]);
+  });
+});
+
+describe("the walk is bounded", () => {
+  const wide = (): Record<string, FakeNode> => {
+    const tree: Record<string, FakeNode> = { "/repo/big": { kind: "dir" } };
+    for (let i = 0; i < 50; i += 1) {
+      tree[`/repo/big/f${i}`] = { kind: "file", size: 1000 };
+    }
+    return tree;
+  };
+
+  it("stops an entry that exceeds the node budget, naming the budget", async () => {
+    const { result } = await apply(entry("big"), wide(), { maxNodes: 5 });
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.reason).toMatch(/too many|node/i);
+    }
+  });
+
+  it("stops an entry that exceeds the byte budget, naming the budget", async () => {
+    const { result } = await apply(entry("big"), wide(), { maxBytes: 2000 });
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.reason).toMatch(/large|byte/i);
+    }
+  });
+
+  it("stops an entry whose deadline has already passed", async () => {
+    const past = afterDelay(0);
+    await past.elapsed;
+    const { result, fs } = await apply(entry("big"), wide(), { deadline: past });
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.reason).toMatch(/too long|deadline|time/i);
+    }
+    // It actually stopped, rather than reporting failure while still writing.
+    expect(fs.created.length).toBeLessThan(50);
+  });
+
+  it("leaves what it had already written when it stops partway", async () => {
+    const { result, fs } = await apply(entry("big"), wide(), { maxNodes: 5 });
+    expect(result.outcome.kind).toBe("failed");
+    // D9: a partial copy is reported, never unwound.
+    expect(fs.created.length).toBeGreaterThan(0);
+  });
+});
